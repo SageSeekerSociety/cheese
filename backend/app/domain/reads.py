@@ -19,11 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 
-class _HasId[IdT: Hashable](Protocol):
+class HasId[IdT: Hashable](Protocol):
     id: Mapped[IdT]
 
 
-async def get_by_ids[IdT: Hashable, RowT: _HasId[Any]](
+async def get_by_ids[IdT: Hashable, RowT: HasId[Any]](
     session: AsyncSession,
     model: type[RowT],
     ids: Iterable[IdT],
@@ -36,12 +36,18 @@ async def get_by_ids[IdT: Hashable, RowT: _HasId[Any]](
     ``Model.deleted_at.is_(None)``), and returns ``{row.id: row}`` with missing
     or filtered-out ids omitted.
     """
+    return await rows_by_ids(session, select(model).where(*where), model, ids)
+
+
+async def rows_by_ids[IdT: Hashable, RowT: HasId[Any]](
+    session: AsyncSession,
+    stmt: Select[tuple[RowT]],
+    model: type[RowT],
+    ids: Iterable[IdT],
+) -> dict[IdT, RowT]:
+    """``get_by_ids`` on a caller-built base statement, such as a repository's."""
     unique_ids = list(dict.fromkeys(ids))
     if not unique_ids:
         return {}
-    stmt: Select[tuple[RowT]] = select(model).where(
-        model.id.in_(unique_ids),
-        *where,
-    )
-    result = await session.execute(stmt)
+    result = await session.execute(stmt.where(model.id.in_(unique_ids)))
     return {row.id: row for row in result.scalars().all()}

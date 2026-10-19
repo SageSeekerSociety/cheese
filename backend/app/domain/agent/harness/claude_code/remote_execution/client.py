@@ -71,6 +71,7 @@ if __package__:
         write_claude_state,
     )
     from app.domain.agent.harness.claude_code.remote_execution.send_user_file import (
+        chat_send_attachments,
         deliver_send_user_file,
     )
     from app.domain.agent.harness.claude_code.remote_execution.shell_prefix import (
@@ -133,7 +134,7 @@ else:
         touch_skills,
         write_claude_state,
     )
-    from send_user_file import deliver_send_user_file
+    from send_user_file import chat_send_attachments, deliver_send_user_file
     from shell_prefix import run_in_place, shell
     from shell_stop import deliver_stop
 
@@ -865,7 +866,12 @@ def transport(config, target_path):
                 payload = request["params"]["arguments"]
                 # The arguments each of these takes, from the call's.
                 picked = {
-                    "chat_send": ("content", "reply_to", "request_id"),
+                    "chat_send": (
+                        "content",
+                        "reply_to",
+                        "attachments",
+                        "request_id",
+                    ),
                 }
                 if tool in picked:
                     payload = {
@@ -905,17 +911,21 @@ def transport(config, target_path):
                     with active_lock:
                         return request["id"] in cancelled
 
-                if tool == "send_user_file":
+                if tool == "chat_send":
+                    if args.get("attachments"):
+                        args = chat_send_attachments(
+                            client, config, args, invoke, payload
+                        )
+                    receipt = client.publish_message(payload, args)
+                elif tool == "send_user_file":
                     receipt = deliver_send_user_file(
                         client, config, payload, args, invoke
                     )
-                elif tool != "chat_send" and tool in cheese.PLATFORM_TOOLS:
+                elif tool in cheese.PLATFORM_TOOLS:
                     receipt = platform_tool(tool, args, payload["id"], invoke)
                 else:
                     receipt = (
-                        client.publish_message(payload, args)
-                        if tool == "chat_send"
-                        else client.permission(payload, args, notice)
+                        client.permission(payload, args, notice)
                         if tool == "permission"
                         else invoke(payload, args, abandoned)
                     )

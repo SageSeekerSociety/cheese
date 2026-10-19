@@ -1,8 +1,8 @@
 """A session's transcript stays in the bucket for good; the app can read it for
 thirty days, and not at all once its conversation is deleted.
 
-The rules, stated without the code (Zhifei's ruling on #4398, 2026-10-19:
-"R2上的得留 transcripts非常有价值 一定要留"): a sealed transcript object is never
+The rules, stated without the code (a decision to keep transcripts
+permanently, #4398): a sealed transcript object is never
 deleted, neither when it is older than thirty days nor when its conversation
 is deleted; what goes is the database's copy of the index, so the app stops
 returning those records. A record that only exists in the database (no bucket

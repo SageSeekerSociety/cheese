@@ -16,6 +16,7 @@ import pytest
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.claude_code import ClaudeLaunch, device_launch
+from tests.support.machine_path import resolved
 
 _FLAG = "--append-system-prompt-file"
 _STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
@@ -122,7 +123,7 @@ async def test_device_screen_opens_with_the_system_prompt(_pg_schema):
     script = hub.shipped[0]
     assert _heredoc_body(script) == _PROMPT
     assert _FLAG in script
-    assert "/.cheese/launch/" in hub.opened[0].command[2]
+    assert "/.cheese/launch/" in resolved(hub.opened[0].command[2])
 
 
 def test_device_launch_turns_off_claude_codes_own_feedback_tool():

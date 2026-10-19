@@ -77,7 +77,7 @@ class SessionRecord(UuidPk, Base):
     # The conversation (`conversations.id`), without a foreign key:
     # `retention.forget_gone` deletes the rows of a conversation that is gone
     # and of a channel a person deleted (whose row stays), in one place. Their
-    # objects stay in the bucket either way (Zhifei's ruling on #4398).
+    # objects stay in the bucket either way (transcripts are kept permanently, #4398).
     conversation_id: Mapped[uuid.UUID] = mapped_column()
     # The turn the runner stamped on these records (`cheese.work_id`); empty for
     # what a session wrote before its first input.

@@ -1,8 +1,8 @@
 """Session records: the expiry index covers every sealed run.
 
 Archive runs (`archive/user-messages/`) are no longer written: transcripts are
-kept in the bucket for good and only rows expire (#4398, Zhifei 2026-10-19), so
-the index no longer leaves them out. The live predicate is the one
+kept in the bucket for good and only rows expire (#4398), so the index no
+longer leaves them out. The live predicate is the one
 `app.domain.session_record.retention.expire` filters on.
 
 Built CONCURRENTLY: the sealer and every session's drain write this table. An
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "5d3e8a1f2b7c"
-down_revision = "302a73cbc344"
+down_revision = "9c1f2a7b4e60"
 branch_labels = None
 depends_on = None
 

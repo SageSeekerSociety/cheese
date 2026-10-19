@@ -1,8 +1,8 @@
 <!--
-  「模型连接」的画法（#2991）：你的 Claude Code 在各台设备上登录的账号或模型服务，每一份
-  保存在哪台设备、上次检查和上次使用的时间，以及重新检查、改名、解除和使用自定义模型服务；
-  还有保存在账号里的 API key 和模型服务，每一份的密钥后四位、服务地址、模型和上次检查，
-  以及添加、测试、改名和解除。取数和动作在同目录的 ModelConnections.vue。
+  「模型连接」的画法（#2991）：两张卡。「设备上的登录」是你的 Claude Code 在各台设备上登录的
+  账号或模型服务，可以重新检查、改名、解除，也能让一台在线设备使用自定义模型服务；「保存在账号里」
+  是 API key 和模型服务，可以添加、测试、改名和解除。每份连接收起时是一行摘要（名称、档位、
+  在哪、状态），点这一行就地展开成详情和操作。取数和动作在同目录的 ModelConnections.vue。
 -->
 <template>
   <div class="settings-page">
@@ -13,120 +13,194 @@
 
     <p v-if="error" role="alert" class="mc__notice c-danger">{{ error }}</p>
 
-    <section class="settings-card" :aria-label="t('account.settings.modelConnections')">
+    <section class="settings-card" :aria-label="t('account.modelConnections.devicesTitle')">
       <div class="settings-card__head mc-head">
-        <div class="settings-card__title">Claude Code</div>
-        <div class="mc-actions">
-          <BaseButton kind="secondary" size="sm" prepend-icon="mdi-plus" @click="openHeld('api_key')">
-            {{ t('account.modelConnections.addApiKey') }}
-          </BaseButton>
-          <BaseButton kind="secondary" size="sm" prepend-icon="mdi-plus" @click="openHeld('model_service')">
-            {{ t('account.modelConnections.addAccountService') }}
-          </BaseButton>
-          <BaseButton kind="ghost" size="sm" @click="openService">
-            {{ t('account.modelConnections.addService') }}
-          </BaseButton>
-        </div>
-      </div>
-
-      <div v-if="loading && !connections.length && !held.length" class="d-flex justify-center py-6">
-        <v-progress-circular indeterminate size="24" />
-      </div>
-      <BaseEmptyState
-        v-else-if="!connections.length && !held.length"
-        size="inline"
-        class="settings-empty"
-        :title="t('account.modelConnections.empty')"
-      />
-
-      <div v-for="h in held" :key="h.id" class="mc-row" :data-connection="h.id">
-        <div class="mc-row__head">
-          <div class="mc-row__id">
-            <div class="mc-row__name">{{ h.name || heldLabel(h) }}</div>
-            <div v-if="h.name" class="mc-row__sub">{{ heldLabel(h) }}</div>
-            <div v-if="h.service_host" class="mc-row__sub">
-              {{ t('account.modelConnections.serviceHost', { host: h.service_host }) }}
-            </div>
-          </div>
-          <span class="mc-state" :class="h.check_error ? 'mc-state--failed' : 'mc-state--ok'">
-            <span class="mc-state__dot" aria-hidden="true" />{{
-              h.check_error ? t('account.modelConnections.checkFailedState') : t('account.modelConnections.ready')
-            }}
-          </span>
-        </div>
-        <dl class="mc-spec">
-          <dt>{{ t('account.modelConnections.storedOn') }}</dt>
-          <dd>{{ t('account.modelConnections.keptOnAccount') }}</dd>
-          <dt>{{ t('account.thisDevice.modelServiceToken') }}</dt>
-          <dd>····{{ h.key_last4 }}</dd>
-          <dt>{{ t('account.modelConnections.checkedAt') }}</dt>
-          <dd>{{ h.checked_at ? relTime(h.checked_at) : t('account.modelConnections.notChecked') }}</dd>
-        </dl>
-        <p v-if="h.check_error" class="mc-row__sub mc-row__failed">
-          {{ t('account.modelConnections.checkFailed', { reason: h.check_error }) }}
-        </p>
-        <div class="mc-actions">
-          <BaseButton kind="ghost" size="sm" :loading="busy === `${h.id}:check`" @click="emit('checkHeld', h.id)">
-            {{ t('account.modelConnections.check') }}
-          </BaseButton>
-          <BaseButton kind="ghost" size="sm" @click="openRename(h.id, h.name, false)">
-            {{ t('account.modelConnections.rename') }}
-          </BaseButton>
-          <BaseButton kind="ghost" size="sm" :loading="busy === `${h.id}:revoke`" @click="removingHeld = h">
-            {{ t('account.modelConnections.remove') }}
-          </BaseButton>
-        </div>
-      </div>
-
-      <div v-for="c in connections" :key="c.id" class="mc-row" :data-connection="c.id">
-        <div class="mc-row__head">
-          <div class="mc-row__id">
-            <div class="mc-row__name">{{ c.name || kindLabel(c) }}</div>
-            <div v-if="c.name" class="mc-row__sub">{{ kindLabel(c) }}</div>
-            <div v-if="c.service_host" class="mc-row__sub">
-              {{ t('account.modelConnections.serviceHost', { host: c.service_host }) }}
-            </div>
-          </div>
-          <span class="mc-state" :class="c.revoking ? 'mc-state--pending' : 'mc-state--ok'">
-            <span class="mc-state__dot" aria-hidden="true" />{{
-              c.revoking ? t('account.modelConnections.revoking') : t('account.modelConnections.ready')
-            }}
-          </span>
-        </div>
-        <dl class="mc-spec">
-          <dt>{{ t('account.modelConnections.storedOn') }}</dt>
-          <dd>
-            {{ c.device_name }} ·
-            <span :class="c.online ? 'c-ok' : 'mc-row__muted'">{{
-              c.online ? t('account.devices.online') : t('account.devices.offline')
-            }}</span>
-          </dd>
-          <dt>{{ t('account.modelConnections.checkedAt') }}</dt>
-          <dd>{{ relTime(c.checked_at) }}</dd>
-          <dt>{{ t('account.modelConnections.lastUsed') }}</dt>
-          <dd>{{ c.last_used_at ? relTime(c.last_used_at) : t('account.modelConnections.neverUsed') }}</dd>
-        </dl>
-        <p v-if="c.revoking" class="mc-row__sub">
-          {{ t('account.modelConnections.revokingHint', { device: c.device_name }) }}
-        </p>
-        <div v-else class="mc-actions">
+        <div class="settings-card__title">{{ t('account.modelConnections.devicesTitle') }}</div>
+        <div class="mc-headbtns">
+          <!-- The visible text is the short form; the accessible name keeps the full action. -->
           <BaseButton
             kind="ghost"
             size="sm"
-            :disabled="!c.online"
-            :title="c.online ? undefined : t('account.modelConnections.offlineHint')"
-            :loading="busy === `${c.id}:check`"
-            @click="emit('recheck', c.id)"
+            prepend-icon="mdi-plus"
+            :aria-label="t('account.modelConnections.addService')"
+            @click="openService"
           >
-            {{ t('account.modelConnections.recheck') }}
-          </BaseButton>
-          <BaseButton kind="ghost" size="sm" @click="openRename(c.id, c.name, true)">
-            {{ t('account.modelConnections.rename') }}
-          </BaseButton>
-          <BaseButton kind="ghost" size="sm" :loading="busy === `${c.id}:revoke`" @click="removing = c">
-            {{ t('account.modelConnections.remove') }}
+            {{ t('account.modelConnections.useService') }}
           </BaseButton>
         </div>
+      </div>
+
+      <div v-if="firstLoad" class="d-flex justify-center py-6">
+        <v-progress-circular indeterminate size="24" />
+      </div>
+      <BaseEmptyState
+        v-else-if="!connections.length"
+        size="inline"
+        class="settings-empty"
+        :title="t('account.modelConnections.devicesEmpty')"
+      />
+
+      <div
+        v-for="c in connections"
+        :key="c.id"
+        class="mc-item"
+        :class="{ 'mc-item--open': isOpen(c.id) }"
+        :data-connection="c.id"
+      >
+        <button
+          type="button"
+          class="mc-sum"
+          :aria-expanded="isOpen(c.id)"
+          :aria-controls="isOpen(c.id) ? `${uid}-${c.id}` : undefined"
+          @click="toggle(c.id)"
+        >
+          <v-icon class="mc-sum__chev" icon="mdi-chevron-right" size="18" aria-hidden="true" />
+          <span class="mc-sum__name">{{ c.name || kindLabel(c) }}</span>
+          <span v-if="c.name" class="mc-sum__kind">{{ kindLabel(c) }}</span>
+          <span class="mc-sum__where">
+            <span class="mc-dot" :class="{ 'mc-dot--on': c.online }" aria-hidden="true" />
+            <span class="mc-sum__device">{{ c.device_name }}</span>
+            <span class="visually-hidden">{{
+              c.online ? t('account.devices.online') : t('account.devices.offline')
+            }}</span>
+          </span>
+          <span class="mc-state" :class="c.revoking ? 'mc-state--pending' : 'mc-state--ok'">{{
+            c.revoking ? t('account.modelConnections.revoking') : t('account.modelConnections.ready')
+          }}</span>
+        </button>
+        <Transition name="mc-body">
+          <div v-if="isOpen(c.id)" :id="`${uid}-${c.id}`" class="mc-body">
+            <div class="mc-body__inner">
+              <div class="mc-body__pad">
+                <dl class="mc-spec">
+                  <dt>{{ t('account.modelConnections.storedOn') }}</dt>
+                  <dd>
+                    {{ c.device_name }} ·
+                    <span :class="c.online ? 'c-ok' : 'mc-muted'">{{
+                      c.online ? t('account.devices.online') : t('account.devices.offline')
+                    }}</span>
+                  </dd>
+                  <template v-if="c.service_host">
+                    <dt>{{ t('account.thisDevice.modelServiceUrl') }}</dt>
+                    <dd>{{ c.service_host }}</dd>
+                  </template>
+                  <dt>{{ t('account.modelConnections.checkedAt') }}</dt>
+                  <dd>{{ relTime(c.checked_at) }}</dd>
+                  <dt>{{ t('account.modelConnections.lastUsed') }}</dt>
+                  <dd>{{ c.last_used_at ? relTime(c.last_used_at) : t('account.modelConnections.neverUsed') }}</dd>
+                </dl>
+                <p v-if="c.revoking" class="mc-note">
+                  {{ t('account.modelConnections.revokingHint', { device: c.device_name }) }}
+                </p>
+                <div v-else class="mc-actions">
+                  <BaseButton
+                    kind="secondary"
+                    size="sm"
+                    :disabled="!c.online"
+                    :title="c.online ? undefined : t('account.modelConnections.offlineHint')"
+                    :loading="busy === `${c.id}:check`"
+                    @click="emit('recheck', c.id)"
+                  >
+                    {{ t('account.modelConnections.recheck') }}
+                  </BaseButton>
+                  <BaseButton kind="ghost" size="sm" @click="openRename(c.id, c.name, true)">
+                    {{ t('account.modelConnections.rename') }}
+                  </BaseButton>
+                  <BaseButton kind="ghost" size="sm" :loading="busy === `${c.id}:revoke`" @click="removing = c">
+                    {{ t('account.modelConnections.remove') }}
+                  </BaseButton>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </div>
+    </section>
+
+    <section class="settings-card" :aria-label="t('account.modelConnections.heldTitle')">
+      <div class="settings-card__head mc-head">
+        <div class="settings-card__title">{{ t('account.modelConnections.heldTitle') }}</div>
+        <div class="mc-headbtns">
+          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="openHeld('api_key')">
+            {{ t('account.modelConnections.addApiKey') }}
+          </BaseButton>
+          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="openHeld('model_service')">
+            {{ t('account.modelConnections.addAccountService') }}
+          </BaseButton>
+        </div>
+      </div>
+
+      <div v-if="firstLoad" class="d-flex justify-center py-6">
+        <v-progress-circular indeterminate size="24" />
+      </div>
+      <BaseEmptyState
+        v-else-if="!held.length"
+        size="inline"
+        class="settings-empty"
+        :title="t('account.modelConnections.heldEmpty')"
+      />
+
+      <div
+        v-for="h in held"
+        :key="h.id"
+        class="mc-item"
+        :class="{ 'mc-item--open': isOpen(h.id) }"
+        :data-connection="h.id"
+      >
+        <button
+          type="button"
+          class="mc-sum"
+          :aria-expanded="isOpen(h.id)"
+          :aria-controls="isOpen(h.id) ? `${uid}-${h.id}` : undefined"
+          @click="toggle(h.id)"
+        >
+          <v-icon class="mc-sum__chev" icon="mdi-chevron-right" size="18" aria-hidden="true" />
+          <span class="mc-sum__name">{{ h.name || heldLabel(h) }}</span>
+          <span v-if="h.name" class="mc-sum__kind">{{ heldLabel(h) }}</span>
+          <span class="mc-sum__where">····{{ h.key_last4 }}</span>
+          <span class="mc-state" :class="h.check_error ? 'mc-state--failed' : 'mc-state--ok'">{{
+            h.check_error ? t('account.modelConnections.checkFailedState') : t('account.modelConnections.ready')
+          }}</span>
+        </button>
+        <Transition name="mc-body">
+          <div v-if="isOpen(h.id)" :id="`${uid}-${h.id}`" class="mc-body">
+            <div class="mc-body__inner">
+              <div class="mc-body__pad">
+                <p v-if="h.check_error" class="mc-note mc-note--failed">
+                  {{ t('account.modelConnections.checkFailed', { reason: h.check_error }) }}
+                </p>
+                <dl class="mc-spec">
+                  <dt>{{ t('account.modelConnections.storedOn') }}</dt>
+                  <dd>{{ t('account.modelConnections.keptOnAccount') }}</dd>
+                  <template v-if="h.service_host">
+                    <dt>{{ t('account.thisDevice.modelServiceUrl') }}</dt>
+                    <dd>{{ h.service_host }}</dd>
+                  </template>
+                  <dt>{{ t('account.thisDevice.modelServiceToken') }}</dt>
+                  <dd>····{{ h.key_last4 }}</dd>
+                  <dt>{{ t('account.modelConnections.checkedAt') }}</dt>
+                  <dd>{{ h.checked_at ? relTime(h.checked_at) : t('account.modelConnections.notChecked') }}</dd>
+                </dl>
+                <div class="mc-actions">
+                  <BaseButton
+                    kind="secondary"
+                    size="sm"
+                    :loading="busy === `${h.id}:check`"
+                    @click="emit('checkHeld', h.id)"
+                  >
+                    {{ t('account.modelConnections.check') }}
+                  </BaseButton>
+                  <BaseButton kind="ghost" size="sm" @click="openRename(h.id, h.name, false)">
+                    {{ t('account.modelConnections.rename') }}
+                  </BaseButton>
+                  <BaseButton kind="ghost" size="sm" :loading="busy === `${h.id}:revoke`" @click="removingHeld = h">
+                    {{ t('account.modelConnections.remove') }}
+                  </BaseButton>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Transition>
       </div>
     </section>
 
@@ -198,7 +272,7 @@
               : t('account.thisDevice.modelServiceToken')
           "
         />
-        <p class="mc-row__sub">
+        <p class="mc-note">
           {{
             addingKind === 'api_key'
               ? t('account.modelConnections.apiKeyHint')
@@ -240,7 +314,7 @@
       @primary="save"
     >
       <template v-if="adding">
-        <p v-if="!devices.length" class="mc-row__sub">{{ t('account.modelConnections.noDevice') }}</p>
+        <p v-if="!devices.length" class="mc-note">{{ t('account.modelConnections.noDevice') }}</p>
         <template v-else>
           <v-select
             v-model="form.deviceId"
@@ -263,7 +337,7 @@
             :label="t('account.thisDevice.modelServiceToken')"
           />
           <v-text-field v-model="form.model" autocomplete="off" :label="t('account.thisDevice.modelServiceModel')" />
-          <p class="mc-row__sub">{{ t('account.modelConnections.serviceHint') }}</p>
+          <p class="mc-note">{{ t('account.modelConnections.serviceHint') }}</p>
         </template>
       </template>
     </AdaptiveDialog>
@@ -280,7 +354,7 @@ import type {
 } from '@/types/modelConnections'
 import type { ModelServiceInput } from '@/types/ownAgents'
 
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, useId, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -317,6 +391,20 @@ const emit = defineEmits<{
   renameDevice: [loginId: string, name: string]
   removeHeld: [id: string]
 }>()
+
+const uid = useId()
+
+// 第一次取数还没回来：两张卡里先转圈，不先说「暂无」。
+const firstLoad = computed(() => props.loading && !props.connections.length && !props.held.length)
+
+// 展开了哪几份；一份收起时它的详情和按钮都不在页面上。
+const opened = ref(new Set<string>())
+const isOpen = (id: string) => opened.value.has(id)
+function toggle(id: string) {
+  const next = new Set(opened.value)
+  if (!next.delete(id)) next.add(id)
+  opened.value = next
+}
 
 function heldLabel(h: AccountConnection): string {
   return h.kind === 'model_service'
@@ -440,65 +528,119 @@ watch(
   line-height: var(--lh-14);
 }
 
-.mc-row {
+.mc-headbtns {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px 24px 16px;
+  flex-shrink: 0;
+  gap: 4px;
+  margin-top: 16px;
+}
+
+.mc-item {
   border-top: 1px solid var(--line);
 }
 
-.mc-row__head {
+/* The whole summary line is the toggle: one button, so it is one tab stop and
+   says expanded / collapsed. */
+.mc-sum {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 24px 8px 16px;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 
-.mc-row__id {
-  flex: 1;
+.mc-sum:hover {
+  background: var(--fill);
+}
+
+.mc-sum:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.mc-sum__chev {
+  flex-shrink: 0;
+  color: var(--faint);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+
+.mc-item--open .mc-sum__chev {
+  transform: rotate(90deg);
+}
+
+.mc-sum__name {
+  flex: 0 1 auto;
   min-width: 0;
-}
-
-.mc-row__name {
+  overflow: hidden;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: var(--lh-14);
   color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.mc-row__sub {
-  margin: 0;
+.mc-sum__kind {
+  flex: 0 10 auto;
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.mc-row__muted {
+.mc-sum__where {
+  display: inline-flex;
+  flex: 0 1 auto;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  max-width: 40%;
+  margin-left: auto;
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--muted);
+  white-space: nowrap;
+}
+
+.mc-sum__device {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mc-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  background: var(--faint);
+  border-radius: var(--radius-pill);
+}
+
+.mc-dot--on {
+  background: var(--ok);
 }
 
 .mc-state {
-  display: inline-flex;
   flex-shrink: 0;
-  gap: 6px;
-  align-items: center;
+  min-width: 64px;
   font-size: 13px;
   line-height: var(--lh-13);
-}
-
-.mc-state__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-pill);
+  text-align: end;
 }
 
 .mc-state--ok {
   color: var(--ok-ink);
-}
-
-.mc-state--ok .mc-state__dot {
-  background: var(--ok);
 }
 
 .mc-state--pending {
@@ -509,21 +651,35 @@ watch(
   color: var(--danger-ink);
 }
 
-.mc-state--failed .mc-state__dot {
-  background: var(--danger);
+/* Expand / collapse animates the height (§9.2): rows 0fr -> 1fr while the
+   details enter, back to 0fr, one step quicker, while they leave. */
+.mc-body {
+  display: grid;
+  grid-template-rows: 1fr;
 }
 
-.mc-row__failed {
-  color: var(--danger-ink);
+.mc-body-enter-active {
+  transition: grid-template-rows var(--dur-base) var(--ease-out);
 }
 
-.mc-head {
-  flex-wrap: wrap;
-  gap: 8px;
+.mc-body-leave-active {
+  transition: grid-template-rows var(--dur-quick) var(--ease-in);
 }
 
-.mc-state--pending .mc-state__dot {
-  background: var(--faint);
+.mc-body-enter-from,
+.mc-body-leave-to {
+  grid-template-rows: 0fr;
+}
+
+.mc-body__inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mc-body__pad {
+  display: grid;
+  gap: 12px;
+  padding: 0 24px 16px 42px;
 }
 
 .mc-spec {
@@ -537,7 +693,7 @@ watch(
 }
 
 .mc-spec dt {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .mc-spec dd {
@@ -546,17 +702,60 @@ watch(
   overflow-wrap: anywhere;
 }
 
+.mc-muted {
+  color: var(--muted);
+}
+
+.mc-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.mc-note--failed {
+  color: var(--danger-ink);
+}
+
 .mc-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  justify-content: flex-end;
 }
 
-/* 断点对齐共享 token（`styles/breakpoints.scss`），和 `settings-card.css` 同一条线。 */
+/* 断点对齐共享 token（`styles/breakpoints.scss`），和 `settings-card.css` 同一条线。
+   手机上一行放不下四样，先省掉档位；名称和设备名各自省略，状态始终完整。 */
 @media (max-width: 767.98px) {
-  .mc-row {
-    padding: 12px 16px 14px;
+  .mc-sum {
+    padding-right: 16px;
+  }
+
+  .mc-sum__kind {
+    display: none;
+  }
+
+  .mc-body__pad {
+    padding: 0 16px 16px 42px;
+  }
+
+  /* The title keeps its line; add buttons that do not fit beside it go under it. */
+  .mc-head {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-bottom: 8px;
+  }
+
+  .mc-head .settings-card__title {
+    padding-bottom: 0;
+    white-space: nowrap;
+  }
+
+  .mc-headbtns {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+    min-width: 0;
+    margin-left: 12px;
   }
 }
 </style>

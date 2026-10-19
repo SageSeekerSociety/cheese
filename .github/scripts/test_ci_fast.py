@@ -1220,6 +1220,36 @@ sys.exit(0)
         self.assertIn("pure", row["command"])
         self.assertIn("ci_fast_pytest_plugin", row["command"])
 
+    @unittest.skipIf(_cores() < 2, "a one-core box starts no parallel pool")
+    def test_quick_tier_tells_the_backend_about_the_tree_it_shares(self):
+        # Two trees at once: the backend run gets pytest workers and is told
+        # the wall clock the sharing costs, in the env the report records.
+        self.write_hooks()
+        self.commit_file("backend/app/base.py")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.commit_file("backend/tests/unit/test_probe.py")
+        self.commit_file("frontend/src/probe.ts")
+        env = self.quick_tools()
+        self.backend_tools(folder=self.tmp / "tools")
+        proc = self.run_ci_fast("--tier", "quick", "--jobs", "2", "--memory-mib", "9216",
+                                "--title", "feat: run two trees", env_extra=env)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        row = next(r for r in self.report()["ran"] if r["id"] == "backend-pure")
+        self.assertIn("-n", row["command"])
+        # The allowance exists only when the tier's demand outgrows the cores;
+        # a many-core box legitimately writes no factor.
+        from ci_fast_checks import pytest_workers, vitest_workers
+        expected = max(1.0, (pytest_workers(9216) + vitest_workers(9216) + 1) / _cores())
+        if expected > 1:
+            self.assertIn("CHEESE_TEST_CEILING_SCALE", row["env"])
+            # The report carries the factor rounded to two decimals (ci-fast.py
+            # formats it), so an exact float compare fails on a host whose
+            # demand/cores has more digits (6, 7 and 9 cores).
+            self.assertAlmostEqual(
+                float(row["env"]["CHEESE_TEST_CEILING_SCALE"]), expected, places=2)
+        else:
+            self.assertNotIn("CHEESE_TEST_CEILING_SCALE", row["env"])
+
     def test_quick_backend_does_not_judge_what_the_tier_cannot_run(self):
         # The pinned Claude Code/Codex/pi builds come from the environment; a
         # tier that does not install them gets FAILURES, not skips, from the
@@ -1769,6 +1799,61 @@ class SelectionEvidenceTest(unittest.TestCase):
                                                     {"name": "/repo/frontend/src/i18n/english.spec.ts"}]}))
         self.assertEqual(validate_evidence(evidence)["result"], "pass")
 
+    def test_a_suite_that_failed_to_load_is_a_failure_not_an_empty_run(self):
+        # Vitest counts a file that failed before running a test in
+        # numFailedTestSuites, leaving numFailedTests at 0. The "no tests ran"
+        # rule read that as nothing to judge: 408 s of suites that could not
+        # load came back unknown, and a run where some suites passed and one
+        # failed to load came back green.
+        from ci_fast_checks import validate_evidence
+        path = self.root / "vitest.json"
+        evidence = {"kind": "vitest", "path": str(path), "mode": "full",
+                    "required_files": ["src/i18n/catalog.spec.ts"]}
+        load_error = "Failed to load url @/views/x.vue (imported by /repo/frontend/src/x.spec.ts)"
+        path.write_text(json.dumps({
+            "numPassedTests": 0, "numFailedTests": 0, "numPendingTests": 0,
+            "numFailedTestSuites": 2,
+            "testResults": [
+                {"name": "/repo/frontend/src/i18n/catalog.spec.ts", "status": "failed",
+                 "message": load_error},
+                {"name": "/repo/frontend/src/views/x.spec.ts", "status": "failed",
+                 "message": load_error},
+            ]}))
+        verdict = validate_evidence(evidence)
+        self.assertEqual(verdict["result"], "fail")
+        self.assertIn("failed before running a test", verdict["reason"])
+        self.assertIn("Failed to load url", verdict["reason"])
+        self.assertEqual(verdict["evidence"]["failed_suites"], 2)
+        # Some suites ran: without this the report is green even though the
+        # changed component never loaded.
+        path.write_text(json.dumps({
+            "numPassedTests": 5, "numFailedTests": 0, "numPendingTests": 0,
+            "numFailedTestSuites": 1,
+            "testResults": [
+                {"name": "/repo/frontend/src/i18n/catalog.spec.ts", "status": "passed"},
+                {"name": "/repo/frontend/src/views/x.spec.ts", "status": "failed",
+                 "message": load_error},
+            ]}))
+        self.assertEqual(validate_evidence(evidence)["result"], "fail")
+
+    def test_a_worker_crash_is_unknown_not_a_verdict(self):
+        # The worker died before the suite could report (killed, out of
+        # memory). Nothing about the change is known, so it is unknown — the
+        # tier's own rule — not a red check.
+        from ci_fast_checks import validate_evidence
+        path = self.root / "vitest.json"
+        evidence = {"kind": "vitest", "path": str(path), "mode": "full"}
+        path.write_text(json.dumps({
+            "numPassedTests": 0, "numFailedTests": 0, "numPendingTests": 0,
+            "numFailedTestSuites": 1,
+            "testResults": [
+                {"name": "/repo/frontend/src/views/x.spec.ts", "status": "failed",
+                 "message": "Worker exited unexpectedly (exit code 137) during load state"},
+            ]}))
+        verdict = validate_evidence(evidence)
+        self.assertEqual(verdict["result"], "unknown")
+        self.assertIn("crashed", verdict["reason"])
+
     def test_related_run_holding_only_the_seeds_is_an_empty_selection(self):
         # The seeds run whatever changed, so a report that holds only them says
         # nothing about the change: the graph selected no test file for the
@@ -1810,7 +1895,6 @@ class SelectionEvidenceTest(unittest.TestCase):
             (["frontend/src/keep.ts"], True),                                   # no merge base / unknown
             (["frontend/src/test/harness.ts", "frontend/src/keep.ts"], False),   # test harness
             (["frontend/package.json", "frontend/src/keep.ts"], False),         # config edit
-            ([".github/workflows/ci-fast.yml", "frontend/src/keep.ts"], False),  # .github edit
             # Not because they are config — because they are the whole change
             # and seed no root, so nothing can narrow them. Either file beside a
             # surviving src root stays `related`.
@@ -1821,6 +1905,43 @@ class SelectionEvidenceTest(unittest.TestCase):
             unit = next(p for p in plan if p["id"] == "frontend-unit")
             self.assertEqual(unit["evidence"]["mode"], "full", changed)
             self.assertFalse(any(p["id"] == "frontend-i18n" for p in plan), changed)
+        # A .github/ edit is not frontend runtime: no workflow or script under
+        # it is imported by the graph, so beside a changed root the related run
+        # stays narrowed (it used to select the whole 850-second suite).
+        for index, changed in enumerate((
+            [".github/workflows/ci-fast.yml", "frontend/src/keep.ts"],
+            [".github/workflows/frontend.yml", "frontend/src/keep.ts"],
+        )):
+            narrow_tmp = self.root / f"narrow-github-{index}"
+            narrow_tmp.mkdir()
+            plan, _ = test_plan(self.root, changed, {"frontend": True}, narrow_tmp,
+                                frontend_scope=["frontend/src/keep.ts"])
+            unit = next(p for p in plan if p["id"] == "frontend-unit")
+            self.assertEqual(unit["evidence"]["mode"], "related", changed)
+            self.assertTrue(any(p["id"] == "frontend-typecheck-changed" for p in plan), changed)
+            self.assertFalse(any(p["id"] == "frontend-typecheck-full" for p in plan), changed)
+        # Alone, a frontend workflow carries no source root and nothing the
+        # suite executes: the unit run is a stated omission, not the full suite
+        # and not an unknown.
+        plan, omissions = test_plan(
+            self.root, [".github/workflows/frontend.yml"], {"frontend": True}, self.root,
+            frontend_scope=[".github/workflows/frontend.yml"])
+        self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
+        self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
+        self.assertEqual([o["id"] for o in omissions],
+                         ["frontend-unit", "frontend-typecheck-changed"])
+        # A path the shared map does not name is not frontend content either:
+        # the caller hands the planner only the paths the map routed into
+        # frontend scope, and the narrowing decision must not read the unknown
+        # path as runtime that has to widen the suite (#4393 fixed the scope
+        # side; this holds the plan side).
+        narrow_tmp = self.root / "narrow-unknown"
+        narrow_tmp.mkdir()
+        plan, _ = test_plan(
+            self.root, ["strange/thing.xyz", "frontend/src/keep.ts"], {"frontend": True},
+            narrow_tmp, frontend_scope=["frontend/src/keep.ts"])
+        self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
+                         "related")
         plan, _ = test_plan(self.root, ["frontend/src/gone.ts", "frontend/src/keep.ts"],
                             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
@@ -2081,6 +2202,44 @@ class SelectionEvidenceTest(unittest.TestCase):
         if _cores() >= 3:
             self.assertNotIn("--no-file-parallelism", flags)
 
+    def test_pytest_workers_follow_the_memory_ceiling(self):
+        # The full backend suite runs `-n auto`; the fast tier was one process
+        # and spent its budget waiting. The pool is bounded by the same sampled
+        # group ceiling as everything else, so the work machine's 3072 MiB still
+        # backs two and a huge ceiling is capped by the cores.
+        from ci_fast_checks import MIB_PER_PYTEST_WORKER, pytest_workers
+        self.assertEqual(MIB_PER_PYTEST_WORKER, 1536)
+        self.assertEqual(pytest_workers(1024), 1)
+        self.assertEqual(pytest_workers(3072), min(2, _cores()))
+        self.assertEqual(pytest_workers(1024 * 1024), _cores())
+
+    @unittest.skipIf(_cores() < 2, "a one-core box starts no parallel pool")
+    def test_backend_plan_uses_workers_and_scales_when_two_trees_run(self):
+        from ci_fast_checks import (ceiling_scale, pytest_workers, test_plan,
+                                    vitest_workers)
+        self.put("backend/app/x.py", "x = 1\n")
+        self.put("backend/tests/unit/test_x.py", "from app.x import x\n")
+        self.put("frontend/src/keep.ts", "export const x = 1\n")
+        narrow = self.root / "narrow-parallel"
+        narrow.mkdir()
+        plan, _ = test_plan(
+            self.root,
+            ["backend/app/x.py", "backend/tests/unit/test_x.py", "frontend/src/keep.ts"],
+            {"backend": True, "frontend": True}, narrow, memory_mib=9216,
+            frontend_scope=["frontend/src/keep.ts"])
+        backend = next(p for p in plan if p["id"] == "backend-pure")
+        workers = pytest_workers(9216)
+        self.assertIn("-n", backend["command"])
+        self.assertEqual(backend["command"][backend["command"].index("-n") + 1], str(workers))
+        # Two trees and jobs=2: the backend is told the wall clock it loses.
+        # The factor is the tier's own demand over the cores; on a box with
+        # more cores than that demand it is 1 and nothing is written.
+        expected = max(1.0, (workers + vitest_workers(9216) + 1) / _cores())
+        self.assertEqual(ceiling_scale(plan, 9216, 2), expected)
+        # One tree at a time keeps the strict ceilings, however many jobs.
+        self.assertEqual(ceiling_scale([backend], 9216, 2), 1.0)
+        self.assertEqual(ceiling_scale(plan, 9216, 1), 1.0)
+
     def test_frontend_meta_and_ambient_force_full_typecheck(self):
         from ci_fast_checks import test_plan
         self.put("frontend/src/new.vue", "<template><p>x</p></template>")
@@ -2272,6 +2431,7 @@ class PytestPluginTest(unittest.TestCase):
         self.sidecar = self.root / "nodes.json"
         plugin._OUT = str(self.sidecar)
         plugin._STATE = {"selected": [], "deselected": [], "executed": []}
+        plugin._WORKER = None
 
     def drive(self, selected=(), deselected=(), reports=()):
         self.plugin.pytest_collection_modifyitems(None, None, [self.Item(n, l) for n, l in selected])
@@ -2322,7 +2482,10 @@ class PytestPluginTest(unittest.TestCase):
         self.assertEqual(verdict["result"], "unknown")
         self.assertEqual(verdict["evidence"]["hidden"], ["tests/unit/test_x.py::test_a"])
 
-    def test_skipped_pure_node_is_unknown(self):
+    def test_skipped_pure_node_counts_as_reached(self):
+        # The hosted runner deliberately lacks bubblewrap, sandbox-exec, ripgrep
+        # and tmux; those tests report a setup skip. The node was reached and
+        # declined, so it is not unrun — only a node with no report at all is.
         from ci_fast_checks import validate_evidence
         data = self.drive(
             selected=[("tests/unit/test_x.py::test_a", "pure")],
@@ -2330,8 +2493,8 @@ class PytestPluginTest(unittest.TestCase):
         self.assertEqual(data["executed"],
                          [{"node": "tests/unit/test_x.py::test_a", "when": "setup", "outcome": "skipped"}])
         verdict = validate_evidence(self.evidence(data, ["tests/unit/test_x.py"]))
-        self.assertEqual(verdict["result"], "unknown")
-        self.assertEqual(verdict["evidence"]["unrun"], ["tests/unit/test_x.py::test_a"])
+        self.assertEqual(verdict["result"], "pass")
+        self.assertEqual(verdict["evidence"]["unrun"], [])
 
     def test_teardown_failure_fails(self):
         from ci_fast_checks import validate_evidence
@@ -2340,6 +2503,44 @@ class PytestPluginTest(unittest.TestCase):
             reports=[("tests/unit/test_x.py::test_a", "call", "passed"),
                      ("tests/unit/test_x.py::test_a", "teardown", "failed")])
         self.assertEqual(validate_evidence(self.evidence(data))["result"], "fail")
+
+    def test_xdist_worker_parts_are_merged_not_overwritten(self):
+        # With -n every worker writes its own part and the controller merges
+        # them. One shared file would leave the last worker's selection as the
+        # run's, and the reader would call every other worker's tests unrun
+        # (unknown) — or, if the executed set were what got lost, green a run
+        # whose tests never all ran.
+        from ci_fast_checks import validate_evidence
+        plugin = self.plugin
+
+        class Config:
+            def __init__(self, workerid):
+                self.workerinput = {"workerid": workerid}
+
+        plugin.pytest_configure(None)  # the controller has no workerinput
+        self.assertIsNone(plugin._WORKER)
+        for worker, node in (("gw0", "tests/unit/test_a.py::test_a"),
+                             ("gw1", "tests/unit/test_b.py::test_b")):
+            plugin.pytest_configure(Config(worker))
+            plugin._STATE = {
+                "selected": [{"node": node, "layer": "pure"}],
+                "deselected": [],
+                "executed": [{"node": node, "when": "call", "outcome": "passed"}],
+            }
+            plugin.pytest_sessionfinish(None, 0)
+        # The controller can also hold every report the workers forwarded; the
+        # merge must fold it in without double-counting.
+        plugin.pytest_configure(None)
+        plugin._STATE = {"selected": [], "deselected": [],
+                         "executed": [{"node": "tests/unit/test_a.py::test_a",
+                                       "when": "call", "outcome": "passed"}]}
+        plugin.pytest_sessionfinish(None, 0)
+        data = json.loads(self.sidecar.read_text())
+        self.assertEqual([row["node"] for row in data["selected"]],
+                         ["tests/unit/test_a.py::test_a",
+                          "tests/unit/test_b.py::test_b"])
+        self.assertEqual(len(data["executed"]), 2)
+        self.assertEqual(validate_evidence(self.evidence(data))["result"], "pass")
 
 
 class PlanConcurrencyTest(unittest.TestCase):

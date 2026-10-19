@@ -13,6 +13,15 @@ guess from a report written after the fact:
     runner fails it rather than letting a ``-k`` hide it.
   * ``executed``  — every node that reported, with its outcome.
 
+Under ``-n`` the run is several processes. Each xdist worker sees the whole
+collection (``pytest_collection_modifyitems`` runs before distribution) and
+only its own reports, so a single shared file would be overwritten by
+whichever worker finished last: the reader would then take that worker's
+selection for the run and report every other worker's tests as never
+executed. A worker therefore writes ``<sidecar>.<workerid>.json``, and the
+controller — the one process without ``workerinput`` — merges the parts after
+the workers exit. A plain run keeps writing the one file, exactly as before.
+
 ``pytest_collection_modifyitems`` is ``trylast`` so it runs after conftest has
 added the layer markers and after pytest has applied the ``-m``/``-k`` filters;
 without it the layers would not be on the items yet. The file is written with a
@@ -23,6 +32,7 @@ otherwise valid run into a usage error (pytest exit 4, reported unknown), so its
 own job must not be what breaks a run.
 """
 
+import glob
 import json
 import os
 
@@ -34,24 +44,92 @@ except ImportError:  # pragma: no cover - pytest is the process that loads us
 _LAYERS = ("pure", "contract", "integration")
 _OUT = os.environ.get("CI_FAST_NODES")
 _STATE = {"selected": [], "deselected": [], "executed": []}
+#: The xdist worker id, or None in a plain run and in the xdist controller.
+_WORKER = None
 
 
-def _layer(item):
-    for name in _LAYERS:
-        if item.get_closest_marker(name) is not None:
-            return name
-    return None
+def pytest_configure(config):
+    """Note which xdist worker this process is, so the workers do not collide.
+
+    A worker's config carries ``workerinput``; the controller's does not. A
+    plain run has neither and keeps writing the one sidecar.
+    """
+    global _WORKER
+    workerinput = getattr(config, "workerinput", None) if config is not None else None
+    _WORKER = (workerinput.get("workerid") or workerinput.get("id")
+               if isinstance(workerinput, dict) else None)
+
+
+def _write(state, path):
+    try:
+        with open(path + ".tmp", "w") as handle:
+            json.dump(state, handle)
+        os.replace(path + ".tmp", path)
+    except OSError:
+        pass
 
 
 def _flush():
     if not _OUT:
         return
-    try:
-        with open(_OUT + ".tmp", "w") as handle:
-            json.dump(_STATE, handle)
-        os.replace(_OUT + ".tmp", _OUT)
-    except OSError:
-        pass
+    _write(_STATE, _OUT if _WORKER is None else f"{_OUT}.{_WORKER}.json")
+
+
+def _dedupe(rows, key):
+    """Keep the last record per key; every worker may name the same node."""
+    seen, out = set(), []
+    for row in reversed(rows):
+        marker = key(row)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        out.append(row)
+    out.reverse()
+    return out
+
+
+def _merge_parts():
+    """Fold the xdist workers' parts, and the controller's own state, into one.
+
+    Only the controller calls this: it runs after the workers exit, so every
+    part is complete. A part that cannot be read is left out rather than
+    guessed at; the nodes it held then read as never executed, which is
+    unknown, never a pass.
+    """
+    if not _OUT:
+        return
+    directory, base = os.path.split(_OUT)
+    parts = sorted(glob.glob(os.path.join(directory, base + ".*.json")))
+    if not parts:
+        return
+    merged = {"selected": [], "deselected": [], "executed": []}
+    for part in parts:
+        try:
+            with open(part) as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key in merged:
+            rows = data.get(key)
+            if isinstance(rows, list):
+                merged[key].extend(row for row in rows if isinstance(row, dict))
+    # The controller also receives every report the workers send; its own
+    # state is the same evidence and is folded in so a worker whose part was
+    # lost still counts for what it reported.
+    for key in merged:
+        merged[key].extend(_STATE.get(key, []))
+    merged["selected"] = _dedupe(merged["selected"], lambda row: row.get("node"))
+    merged["deselected"] = _dedupe(merged["deselected"], lambda row: row.get("node"))
+    merged["executed"] = _dedupe(merged["executed"],
+                                 lambda row: (row.get("node"), row.get("when")))
+    _write(merged, _OUT)
+    for part in parts:
+        try:
+            os.unlink(part)
+        except OSError:
+            pass
 
 
 def pytest_deselected(items):
@@ -77,6 +155,15 @@ def pytest_runtest_logreport(report):
 
 def pytest_sessionfinish(session, exitstatus):
     _flush()
+    if _WORKER is None:
+        _merge_parts()
+
+
+def _layer(item):
+    for name in _LAYERS:
+        if item.get_closest_marker(name) is not None:
+            return name
+    return None
 
 
 if pytest is not None:

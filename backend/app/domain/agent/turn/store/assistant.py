@@ -59,6 +59,27 @@ class StoredAssistant:
     payload: dict | None
     written: bool
     author: str | None
+    #: The attachment blocks written in the same transaction, in send order.
+    attachments: tuple[dict, ...] = ()
+
+
+async def stored_publication(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    topic_id: uuid.UUID,
+    author: str,
+    publication_id: str,
+) -> dict | None:
+    """The result a request with this id already stored, or None.
+
+    `chat_send`'s retry path asks before it reads or writes any attachment: a
+    retry of a message the room already has must not leave a second copy of
+    the bytes behind. The decision stays here, under the same key and the same
+    input rule `persist_assistant_message` applies.
+    """
+    key = action_key(topic_id, "chat-publish", author, publication_id)
+    async with sessions() as session:
+        return await idem.stored_result(session, key)
 
 
 async def persist_assistant_message(
@@ -87,6 +108,7 @@ async def persist_assistant_message(
     own_output: bool = False,
     extra_meta: dict | None = None,
     closing: bool = False,
+    attachments: list[dict] | None = None,
 ) -> StoredAssistant:
     as_progress = not publish
     meta: dict | None = {"in_room": False, "progress": True} if as_progress else None
@@ -104,6 +126,15 @@ async def persist_assistant_message(
         publication_input = {
             "text": text,
             "reply_to": str(reply_to) if reply_to else None,
+            # The pictures are part of what this request_id stands for: the
+            # same id with a different picture is a different publication, not
+            # a retry. The digest is stable across a retry; the stored path is
+            # not (each upload gets its own directory).
+            **(
+                {"attachments": [a.get("digest") for a in attachments]}
+                if attachments
+                else {}
+            ),
         }
         if publication_id is not None:
             publication_key = action_key(
@@ -181,6 +212,29 @@ async def persist_assistant_message(
             created_at=at,
             own_output=own_output,
         )
+        # 图片随消息一起落库：每张图一块 `attachment`，和消息同一个事务、同一个
+        # turn。它们是这条消息的一部分（读者在气泡旁边直接看到），不是房间里另
+        # 摆出来的一份文件，所以 kind 是 attachment 而不是 artifact。
+        attachment_payloads: list[dict] = []
+        for attachment in attachments or []:
+            att_block = await append_output(
+                session,
+                project_id=landed.project_id,
+                conversation_id=landed.conversation_id,
+                author=author,
+                author_type=AuthorType.participant,
+                content=str(attachment.get("path") or ""),
+                kind=BlockKind.attachment,
+                mime_type=str(attachment.get("mime") or "") or None,
+                turn_id=block.id,
+                # 纯图片的一条消息也要守住回复线程（和人发图时同一条规矩）。
+                reply_to=None if text else reply_to,
+                created_at=at,
+                own_output=own_output,
+            )
+            attachment_payloads.append(
+                BlockOut.model_validate(att_block).model_dump(mode="json")
+            )
         # <@handle> mentions in 芝士's message → strong notify (the token is
         # the single source of truth: what's shown = who's notified).
         # Hallucinated handles get flagged in 现场, never silently no-op.
@@ -196,4 +250,4 @@ async def persist_assistant_message(
                 {"input": publication_input, "block": payload},
             )
         await session.commit()
-    return StoredAssistant(payload, True, author)
+    return StoredAssistant(payload, True, author, tuple(attachment_payloads))

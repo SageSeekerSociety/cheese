@@ -14,12 +14,16 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import LOST_KEY, AgentSession, SessionPlace
-from app.domain.agent_session.repositories import AgentSessionRepository
+from app.domain.agent_session.repositories import (
+    AgentReadRepository,
+    AgentSessionRepository,
+)
 
 
 class AgentSessionService:
     def __init__(self, session: AsyncSession):
         self._repo = AgentSessionRepository(session)
+        self._reads = AgentReadRepository(session)
 
     async def ensure(
         self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
@@ -60,6 +64,28 @@ class AgentSessionService:
         """The project state this agent's conversation was last told, by section."""
         row = await self._repo.get(conversation_id, agent_handle, harness)
         return row.told if row is not None else None
+
+    async def read_cursor(
+        self, conversation_id: uuid.UUID, agent_handle: str
+    ) -> tuple[datetime, uuid.UUID] | None:
+        """Where this seat's reading of the conversation stands, or None."""
+        return await self._reads.cursor(conversation_id, agent_handle)
+
+    async def advance_read(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        at: datetime,
+        block_id: uuid.UUID,
+    ) -> None:
+        """Move this seat's reading forward to ``(at, block_id)``."""
+        await self._reads.advance(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            at=at,
+            block_id=block_id,
+        )
 
     async def remember_told(
         self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str, told: dict

@@ -259,29 +259,41 @@ everything is still allowed to answer unknown.
 - Scope comes from the same `select()` + path map as Required CI; the guards
   run on every invocation. Changes include committed, staged, unstaged,
   untracked, deleted and both sides of a rename.
-- A path the map does not name could be any kind of code, so this tier widens
-  the scope to both product suites. Prose cannot be, so a diff of only `.md`
-  files (`DOC_GLOBS`) is not an unknown path: `README.md`, `AGENTS.md` and a
-  skill's `SKILL.md` are named nowhere in the map, and treating them as unknown
-  turned a docs-only draft into the full suite, which the tier cannot fit — it
-  answered unknown. The doc checks that do read them (anchors, links, titles,
-  repo rules) are guards and run either way; a non-doc path next to a `.md`
-  still widens.
+- A path the map does not name is recorded under `unknown_paths` and judged by
+  the guards and the static tier alone; it does not turn the product suites on
+  (changed in #4393). Widening them made a quick run need the full suite, which
+  it cannot fit, so the whole run answered unknown and the guards' own verdict
+  was lost with it. Prose is not an unknown path either: a diff of only `.md`
+  files (`DOC_GLOBS`) is named nowhere in the map, and `README.md`, `AGENTS.md`
+  and a skill's `SKILL.md` would otherwise turn a docs-only draft into a run
+  with no product suite that could answer. The doc checks that do read them
+  (anchors, links, titles, repo rules) are guards and run either way.
 - Backend test selection is a pure static reverse-import graph over the AST
   (never file-name tokens), plus the always-on tree/i18n guard files. The
   pytest run loads a small audit plugin (`-p ci_fast_pytest_plugin`) that
   records, in the same run, which nodes survived `-m`/`-k` (with their
-  fixture-derived layer), which were deselected, and which executed. A green
-  run must show every selected `pure` node executed and none hidden by a
-  filter; a required consumer file's tests are matched by classname module
-  prefix (pytest writes no `file` attribute). Running only the guards never
-  proves a changed module has coverage; a change whose modules have no `pure`
-  consumer at all is unknown. Excluded `integration`/`contract` nodes are the
-  tier working as designed — recorded not-run and owned by full CI — not a
-  silent gap. Unresolvable dynamic imports (`import_module(name)`,
+  fixture-derived layer), which were deselected, and which were reached. A
+  green run must show every selected `pure` node reached and none hidden by a
+  filter; a node the machine skips — it declares a missing capability such as
+  bubblewrap, sandbox-exec, ripgrep or tmux — counts as reached, while a node
+  with no report at all does not. A required consumer file's tests are matched
+  by classname module prefix (pytest writes no `file` attribute). Running only
+  the guards never proves a changed module has coverage; a change whose
+  modules have no `pure` consumer at all is unknown. Excluded
+  `integration`/`contract` nodes are the tier working as designed — recorded
+  not-run and owned by full CI — not a silent gap. Unresolvable dynamic imports (`import_module(name)`,
   `__import__(expr)`) widen conservatively; a giant strongly-connected group may
   select many tests, in which case the run is honest about the size and may end
   unknown.
+  The run's own parallelism comes from the same memory ceiling: one
+  pytest-xdist worker per 1536 MiB, at most the CPUs, and one process (the
+  form this tier had) below that. The full suite's `-n auto` cannot be used
+  here because the ceiling is a bound, not the machine. The audit plugin
+  writes one part per worker and the controller merges them, so a worker's
+  tests are never reported as unrun because another finished last. When the
+  plan runs the backend beside a frontend tree, the backend is told the wall
+  clock it loses through `CHEESE_TEST_CEILING_SCALE`, which multiplies the
+  layer ceilings in `backend/tests/conftest.py`; full CI never sets it.
 - A frontend catalog edit under `frontend/src/i18n/messages/**` is read back by
   the backend refusal/sentences tree guards, but the shared CI path map names
   only `roomNotice`/`apiError`/`global`. This tier widens backend scope locally
@@ -291,15 +303,21 @@ everything is still allowed to answer unknown.
   an edit to one of the six frontend config files this script watches
   (`frontend/package.json`, `frontend/pnpm-lock.yaml`, `frontend/vite.config.ts`
   and the three `frontend/tsconfig*.json`) or to `.pre-commit-config.yaml`, a
-  `.github/` edit, a `frontend/src/test/` or `frontend/scripts/` edit, an
-  unknown path, no merge base, or a change that seeds no related root while
-  carrying runtime content — a catalog, a ratchet baseline, a stylesheet, a
-  deletion with no surviving root, a path outside `frontend/` that the scope map
-  still routes here (a site stylesheet, a ratchet script). Whether a change
-  carries that content is read from the paths the scope map routed into frontend
-  scope, not from the whole diff: a change that also touches the backend brings
-  its `.py` files along, and they are not frontend content the suite can
-  execute. A backend change does not reach the frontend type check here
+  `frontend/src/test/` or `frontend/scripts/` edit, no merge base, or a change
+  that seeds no related root while carrying runtime content — a catalog, a
+  ratchet baseline, a stylesheet, a deletion with no surviving root, a path
+  outside `frontend/` that the scope map still routes here (a site stylesheet,
+  a ratchet script). Whether a change carries that content is read from the
+  paths the scope map routed into frontend scope, not from the whole diff: a
+  change that also touches the backend brings its `.py` files along, and they
+  are not frontend content the suite can execute. Nor is a `.github/` edit: no
+  workflow or CI script is imported by the frontend graph, so it leaves a
+  related run seeded by the surviving roots and, alone, runs no unit test at
+  all (`frontend-unit` is recorded as an omission, not as the full suite or an
+  unknown). A path the map does not name is not frontend content either; since
+  #4393 it does not even turn frontend scope on. The full type check follows
+  the same rule: `.github/` is not part of the compiler project, so it no
+  longer forces `pnpm run typecheck`. A backend change does not reach the frontend type check here
   either: whether it moved the API document the frontend's types are
   generated from is decided only by Required CI's `api` job, so a route
   change that breaks those types passes this tier and goes red there. A
@@ -345,6 +363,14 @@ everything is still allowed to answer unknown.
   OpenAPI document and generates the API types from it
   (`frontend/scripts/typecheck.mjs` — neither half is committed); a deleted non-spec source file forces the full
   typecheck instead, since only the whole project sees its dangling importers.
+  A suite that failed before running a test — an import or collection error or
+  a broken `beforeAll` — is a failure, not an empty
+  selection: Vitest counts it in `numFailedTestSuites` while `numFailedTests`
+  stays 0, which used to read as "no tests ran" after 408 s of suites that
+  never started. An unhandled error that never reaches a file's report stays a
+  process failure and reads as unknown. A Vitest worker crash is the other
+  exception: the pool died before the suite could report, which says nothing
+  about the change, so it is also unknown.
   Non-spec is read from the name's ending, not from the text: a helper module
   called `migrationContract.spec.helper.ts` is imported by thirteen surviving
   specs, and it is the full typecheck that sees them.
@@ -360,7 +386,7 @@ everything is still allowed to answer unknown.
 |------|---------|
 | 0 | every selected check actually ran and passed. Not full CI. |
 | 1 | a selected check really failed. |
-| 2 | **unknown** — nothing could be honestly judged: budget/time exhausted, a check killed by signal, a memory-ceiling stop, an empty or skipped test report, a selected file that produced no executed case, an unavailable merge base, a hook/config drift, a worktree that changed during the run, a `--pull-request` payload that could not be read (the title is the only check that costs), or an unreadable report. |
+| 2 | **unknown** — nothing could be honestly judged: budget/time exhausted, a check killed by signal, a memory-ceiling stop, an empty test report, a selected file that produced no test case at all, an unavailable merge base, a hook/config drift, a worktree that changed during the run, a `--pull-request` payload that could not be read (the title is the only check that costs), or an unreadable report. |
 | 3 | **blocked** — a required tool or dependency is missing (`backend/.venv`, `frontend/node_modules`, pre-commit, a machine without `ps`), or the platform is not Linux. |
 
 A single missed memory sample is not blocked. The sampler rides a few misses

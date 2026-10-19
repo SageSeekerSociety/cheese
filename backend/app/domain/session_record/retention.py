@@ -1,8 +1,8 @@
 """How long a session's raw records stay readable through the app.
 
-The transcripts themselves are kept for good: Zhifei's ruling on #4398
-(2026-10-19), "R2上的得留 transcripts非常有价值 一定要留". Nothing here, or
-anywhere else, deletes a sealed run's object from the private bucket.
+The transcripts themselves are kept for good, by a decision to keep
+transcripts permanently (#4398). Nothing here, or anywhere else, deletes a
+sealed run's object from the private bucket.
 
 What goes is the row. A sealed run's row is deleted `RETENTION` (30 days)
 after its last record, so the database holds an index of the last month, and
@@ -71,7 +71,7 @@ async def sweep(sessions: SessionFactory) -> dict[str, int]:
 async def expire(sessions: SessionFactory, *, now: datetime | None = None) -> int:
     """Delete the rows of sealed runs older than `RETENTION`; how many.
 
-    Only the row: the run's object stays in the bucket for good (the ruling
+    Only the row: the run's object stays in the bucket for good (the decision
     above), so no storage call is made here.
     """
     cutoff = (now or datetime.now(UTC)) - RETENTION
@@ -90,11 +90,11 @@ async def forget_gone(sessions: SessionFactory) -> int:
     """Delete the rows of conversations that are gone; how many rows.
 
     Rows only, never objects: a deleted conversation's transcript stays in the
-    bucket by Zhifei's ruling on #4398 (2026-10-19, "R2上的得留 transcripts非常
-    有价值 一定要留"); what goes is the app's way to read it. With a bucket, a
-    row not yet sealed is left for the sealer, so the conversation's last
-    minutes, and whatever its sessions write after it was deleted, reach the
-    bucket too. Without one the row is the only copy there is, and goes.
+    bucket, by a decision to keep transcripts permanently (#4398); what goes
+    is the app's way to read it. With a bucket, a row not yet sealed is left
+    for the sealer, so the conversation's last minutes, and whatever its
+    sessions write after it was deleted, reach the bucket too. Without one
+    the row is the only copy there is, and goes.
     """
     deleted_room = exists().where(
         _rooms.c.id == SessionRecord.conversation_id, _rooms.c.deleted_at.is_not(None)

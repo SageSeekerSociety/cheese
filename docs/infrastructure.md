@@ -421,10 +421,14 @@ allow a later merge without another local review check.
 Run `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>` in the background
 under the owning session's monitor. `--enqueue` checks `ready` for the current
 head, re-reads that head, and squash-merges with `--match-head-commit`, without
-arming auto-merge. The watcher follows the merged commit's push-to-main
-Required CI run, reports a failure on main, then follows a dev deployment whose
-released commit and live version contain the merge. A superseding main batch
-can cover a cancelled run; a cancelled deployment waits for a later release.
+arming auto-merge. The watcher follows the push-to-main Required CI runs of
+main commits that contain the merge, then a dev deployment whose released
+commit and live version contain the merge. Main CI has passed for the merge
+once any containing run succeeded. A red run is reported and waits for a newer
+containing batch; the watch fails when the newest containing run is red and no
+newer one starts within an hour. A merge reverted before that green run or
+the live version fails the watch, naming the revert. A cancelled deployment
+waits for a later release.
 
 `.github/workflows/required-ci.yml` runs the quick tier on every pull request.
 Ready PRs aggregate as `CI required`; drafts aggregate as

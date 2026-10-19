@@ -8,8 +8,12 @@
 #   --enqueue  squash-merge once `pr-review.sh ready` prints 可递 for the current
 #              head. Re-read the head before merging and pin the mutation to it.
 #              Never arm auto-merge. Without this flag, observe only.
-#   After merging, follow Required CI's push-to-main run for the merge commit
-#   (or the containing batch when its run was superseded). A red main fails the watch.
+#   After merging, follow Required CI's push-to-main runs of main commits that
+#   contain the merge: passed as soon as any of them succeeded. A red run is not
+#   final while a newer containing batch may still fix main; the watch fails
+#   once the newest containing run is red and nothing newer starts within
+#   PR_WATCH_MAIN_RED_WAIT seconds (default 3600). A merge reverted before a
+#   green batch or the live version fails the watch, naming the revert.
 #   --deploy   after a PR merges, follow the dev deploys (deploy-dev.yml) of
 #              main commits that contain it: deployed as soon as any of them
 #              succeeded, otherwise the newest one's result.
@@ -33,6 +37,10 @@ DEV_VERSION_URL=https://okcheese.com/api/version
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 INTERVAL=${PR_WATCH_INTERVAL:-60}
 QUIET=${PR_WATCH_QUIET:-3600}
+# Main goes red after a merge mostly because of another PR in the same batch,
+# and the batch after it usually fixes main within half an hour; an hour with no
+# newer batch means nobody is fixing it, so the watch gives up then.
+MAIN_RED_WAIT=${PR_WATCH_MAIN_RED_WAIT:-3600}
 enqueue=0 deploy=0 prs=()
 for a in "$@"; do
   case "$a" in
@@ -44,7 +52,7 @@ for a in "$@"; do
 done
 [ ${#prs[@]} -gt 0 ] || { echo "usage: $0 [--enqueue] [--deploy] PR..." >&2; exit 2; }
 
-declare -A last ended ok spoke main_last
+declare -A last ended ok spoke main_last red_run red_since subject_of
 say() { echo "$(date -u +%H:%M:%SZ) #$1 $2"; spoke[$1]=$(date +%s); }
 quiet() { # $1 PR, $2 where it is waiting; speaks only after QUIET seconds of silence
   [ $(( $(date +%s) - ${spoke[$1]:-0} )) -ge "$QUIET" ] && say "$1" "no change in $((QUIET / 60)) min: $2"
@@ -85,22 +93,65 @@ contains() {
   gh api "repos/$REPO/compare/$1...$2" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'
 }
 
-main_ci_of() { # exact merge's run, or a successful containing batch if it was cancelled
-  local merge=$1 id st co sha newest= passed=
+# The commit between merge $1 and $2 that reverts the merge of PR $3, nothing,
+# or "unknown" when the commits could not be read: a failed lookup must not
+# read as "not reverted". Ancestry alone says $2 contains the merge even after
+# a revert, so a green batch or a live version past a revert would otherwise
+# count as this PR's. Recognised: git revert's "This reverts commit <sha>",
+# GitHub's revert button ("Reverts <repo>#<PR>"), a `Revert "<merge subject>`
+# headline, and this repo's own squash form, a `revert(scope): ... (#<PR>)`
+# headline naming the PR, which carries no other marker (27e7f268d). The
+# subject comes from subject_of, filled once per merge.
+reverter_of() {
+  local merge=$1 sha=$2 commits csha msg head
+  local reverts="Reverts $REPO#$3([^0-9]|$)" typed="^[Rr][Ee][Vv][Ee][Rr][Tt][(:].*#$3([^0-9]|$)"
+  [ "$sha" != "$merge" ] || return 0
+  [ -n "${subject_of[$merge]+set}" ] || { echo unknown; return; }
+  # Without per_page a compare call lists only the newest 250 commits, and main
+  # takes more than that in a couple of days, so the range is read page by
+  # page, 1000 per page (the most the endpoint serves). Each page says
+  # "#T <total> <listed>"; a range whose pages do not add up is unknown.
+  commits=$(gh api --paginate "repos/$REPO/compare/$merge...$sha?per_page=1000" \
+              -q '"#T \(.total_commits) \(.commits|length)", (.commits[]|[.sha, .commit.message]|@tsv)' 2>/dev/null) \
+    || { echo unknown; return; }
+  [ "$(awk '$1 == "#T" {t = $2; n += $3} END {print (t != "" && t == n) ? "all" : "cut"}' <<<"$commits")" = all ] \
+    || { echo unknown; return; }
+  while IFS=$'\t' read -r csha msg; do
+    head=${msg%%'\n'*}   # @tsv writes a newline as backslash-n
+    if [[ "$msg" == *"This reverts commit ${merge:0:7}"* || "$msg" =~ $reverts || "$head" =~ $typed ]] \
+       || { [ -n "${subject_of[$merge]}" ] && [[ "$head" == "Revert \"${subject_of[$merge]}"* ]]; }; then
+      echo "$csha"; return
+    fi
+  done < <(awk '$1 != "#T"' <<<"$commits")
+}
+
+# "<status> <conclusion> <run id>" of main's Required CI for merge $1 of PR $2:
+# the newest successful run on a main commit containing it, or else the newest
+# such run not cancelled, or nothing. "reverted <commit> <run id>" when that
+# successful run's commit comes after a revert of the merge, "unchecked <run
+# id>" when the commits in between could not be read. Once a containing run
+# has succeeded the merge has passed, whatever its own run or a later batch did.
+main_ci_of() {
+  local merge=$1 pr=$2 id st co sha newest= rev
   while read -r id st co sha; do
     [ "$sha" = "$merge" ] || contains "$merge" "$sha" || continue
-    [ "$co" = cancelled ] && continue
-    [ -n "$newest" ] || newest="$st $co $id"
-    if [ "$sha" = "$merge" ]; then echo "$st $co $id"; return; fi
-    # A later failed batch does not revoke an earlier green batch containing
-    # this merge; keep the newest such success for a watcher that restarts.
-    if [ "$st $co" = "completed success" ] && [ -z "$passed" ]; then
-      passed="$st $co $id"
+    if [ "$co" != cancelled ]; then
+      if [ "$st $co" = "completed success" ]; then
+        rev=$(reverter_of "$merge" "$sha" "$pr")
+        case "$rev" in
+          "") echo "$st $co $id" ;;
+          unknown) echo "unchecked $id" ;;
+          *) echo "reverted $rev $id" ;;
+        esac
+        return
+      fi
+      [ -n "$newest" ] || newest="$st $co $id"
     fi
+    # Runs come newest first; those older than the merge's own cannot contain it.
+    [ "$sha" = "$merge" ] && break
   done < <(gh run list -R "$REPO" --workflow required-ci.yml --event push --branch main --limit 30 \
              --json databaseId,status,conclusion,headSha \
              -q '.[]|"\(.databaseId) \(.status) \(.conclusion // "" | if . == "" then "none" else . end) \(.headSha)"')
-  [ -z "$passed" ] || { echo "$passed"; return; }
   [ -z "$newest" ] || echo "$newest"
 }
 
@@ -139,17 +190,47 @@ while :; do
     IFS='|' read -r state head merge mergeable mstate auto <<<"$fields"
 
     if [ "$state" = MERGED ]; then
-      c=$(main_ci_of "$merge")
+      if [ -z "${subject_of[$merge]+set}" ] \
+         && subject=$(gh api "repos/$REPO/commits/$merge" -q '.commit.message|split("\n")[0]' 2>/dev/null); then
+        subject_of[$merge]=$subject
+      fi
+      c=$(main_ci_of "$merge" "$p")
+      # Runs do not disappear: finding none after a run was seen is a failed
+      # gh call, so the last state stands rather than counting as a change.
+      [ -n "$c" ] || c=${main_last[$p]:-}
       if [ "${main_last[$p]:-unseen}" != "$c" ]; then
-        [ -z "$c" ] && say "$p" "merged as ${merge:0:9}; waiting for main Required CI" \
-                    || say "$p" "main Required CI run ${c##* }: ${c% *}"
+        case "$c" in
+          "") say "$p" "merged as ${merge:0:9}; waiting for main Required CI" ;;
+          "reverted "*) ;;
+          "unchecked "*) say "$p" "could not read the commits after merge ${merge:0:9} up to main Required CI run ${c##* }; checking again" ;;
+          *) say "$p" "main Required CI run ${c##* }: ${c% *}" ;;
+        esac
+        # The red run seen again in another state was re-run: its next failure
+        # restarts the red wait. A newer red run restarts it by its own id.
+        [ "${c##* }" != "${red_run[$p]:-}" ] || red_run[$p]=
         main_last[$p]=$c
       fi
       case "$c" in
         "completed success "*) ;;
-        "completed failure "*|"completed timed_out "*|"completed action_required "*|"completed startup_failure "*|"completed stale "*)
-          say "$p" "stopped watching: main Required CI failed after merge ${merge:0:9}"
+        "reverted "*)
+          rev=${c#reverted }; rev=${rev% *}
+          say "$p" "stopped watching: merge ${merge:0:9} was reverted by ${rev:0:9}, which main Required CI run ${c##* } contains"
           ended[$p]=1; continue ;;
+        "completed failure "*|"completed timed_out "*|"completed action_required "*|"completed startup_failure "*|"completed stale "*)
+          # The newest containing run is red. A newer batch may still fix main,
+          # so wait for one.
+          if [ "${red_run[$p]:-}" != "${c##* }" ]; then
+            red_run[$p]=${c##* } red_since[$p]=$(date +%s)
+            say "$p" "main is red after merge ${merge:0:9} (run ${c##* }); waiting up to $((MAIN_RED_WAIT / 60)) min for a newer main batch containing it"
+          fi
+          if [ $(( $(date +%s) - ${red_since[$p]} )) -ge "$MAIN_RED_WAIT" ]; then
+            say "$p" "stopped watching: main Required CI failed after merge ${merge:0:9} (run ${c##* }; no newer batch in $((MAIN_RED_WAIT / 60)) min)"
+            ended[$p]=1
+          else
+            quiet "$p" "merged; main is red (run ${c##* }), waiting for a newer batch"
+          fi
+          continue ;;
+        "unchecked "*) quiet "$p" "merged; could not check main Required CI run ${c##* } for a revert"; continue ;;
         *) quiet "$p" "merged; waiting for main Required CI"; continue ;;
       esac
       if [ "$deploy" = 0 ]; then
@@ -157,7 +238,9 @@ while :; do
         ended[$p]=1 ok[$p]=1; continue
       fi
       d=$(deploy_of "$merge"); key="merged ${d% *}"
-      if [ "${last[$p]:-}" != "$key" ]; then
+      # "$key live" and "$key unchecked" below are states within this deploy
+      # state; reprinting the deploy line for them would repeat it every poll.
+      if [ "${last[$p]:-}" != "$key" ] && [[ "${last[$p]:-}" != "$key "* ]]; then
         [ -z "$d" ] && say "$p" "merged as ${merge:0:9}; waiting for a dev deploy that contains it" \
                     || say "$p" "dev deploy run ${d##* }: ${d% *}"
         last[$p]=$key
@@ -167,8 +250,21 @@ while :; do
           # A run can succeed while shipping an older commit whose images were
           # the newest built, so deployed means the live version contains it.
           live=$(curl -fsS "$DEV_VERSION_URL" 2>/dev/null | live_sha)
-          if [ -n "$live" ] && gh api "repos/$REPO/compare/$merge...$live" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'; then
-            say "$p" "live on dev at ${live:0:9}"; ended[$p]=1 ok[$p]=1
+          if [ -n "$live" ] && contains "$merge" "$live"; then
+            rev=$(reverter_of "$merge" "$live" "$p")
+            if [ "$rev" = unknown ]; then
+              if [ "${last[$p]:-}" = "$key unchecked" ]; then
+                quiet "$p" "merged; could not check dev's ${live:0:9} for a revert"
+              else
+                say "$p" "could not read the commits after merge ${merge:0:9} up to dev's ${live:0:9}; checking again"
+              fi
+              last[$p]="$key unchecked"
+            elif [ -n "$rev" ]; then
+              say "$p" "stopped watching: dev runs ${live:0:9}, after ${rev:0:9} reverted merge ${merge:0:9}"
+              ended[$p]=1
+            else
+              say "$p" "live on dev at ${live:0:9}"; ended[$p]=1 ok[$p]=1
+            fi
           elif [ "${last[$p]:-}" != "$key live" ]; then
             say "$p" "deploy run ${d##* } succeeded but dev runs ${live:0:9}, which lacks it; waiting"
             last[$p]="$key live"

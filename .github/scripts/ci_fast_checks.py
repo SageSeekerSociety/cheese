@@ -13,12 +13,23 @@ commands and turns each command's report into a verdict nobody can fake:
     is an empty selection wearing their exit code.
   * The report decides pass/fail for suites; the exit code only widens it to
     unknown (pytest 2/3/4/5, Vitest --no-passWithNoTests on an empty graph).
+    A file that failed before running a test — a collection/import error or a
+    broken beforeAll — is a failure, not an empty selection. (An unhandled
+    error that never reaches a file's report stays a process failure, which
+    reads as unknown.) Vitest counts it in numFailedTestSuites while numFailedTests
+    stays 0, so the "no tests ran" rule used to report a run of failing suites
+    as nothing to judge (measured: 408 s of suites that could not load read as
+    "empty/skipped/uncovered tests"). A worker crash is the one exception: it
+    says nothing about the change and is unknown.
   * Frontend scope only falls back to the full Vitest run when the change
     cannot be narrowed — an edit to one of the frontend config files this
     module watches (FRONTEND_META: the two package manifests, the vite and
-    tsconfig files, .pre-commit-config.yaml), a .github/ edit, a test-harness
-    source or an unknown scope. A config outside that list does not widen by
-    itself: beside a changed source root the related run keeps it narrowed,
+    tsconfig files, .pre-commit-config.yaml), a test-harness source or an
+    unknown scope. A .github/ edit does not widen: no workflow or script under
+    it is imported by the frontend graph, and a routine workflow change was
+    spending the whole 850-second suite on an answer the full tier gives after
+    landing. A config outside that list does not widen by itself: beside a
+    changed source root the related run keeps it narrowed,
     and alone it seeds no root and widens like any other runtime file. A style
     edit, a prose change, a declaration file or a deletion whose
     references went with it keeps the related run seeded by the surviving roots.
@@ -56,6 +67,13 @@ commands and turns each command's report into a verdict nobody can fake:
   * The frontend's parallelism is derived from the memory ceiling the caller
     passed (vitest_workers), not pinned: a run given a ceiling that backs
     several forks gets several, and the local default still gets one.
+  * The backend's parallelism is derived the same way (pytest_workers): the
+    full suite runs ``-n auto``; this tier gets one worker per 1536 MiB, at
+    most the CPUs, and the local default still runs one process. When two
+    trees run at once the backend is told the wall clock it lost through
+    CHEESE_TEST_CEILING_SCALE (ceiling_scale), which multiplies the layer
+    ceilings in ``backend/tests/conftest.py``; full CI never sets it and keeps
+    the strict numbers.
 """
 
 import json
@@ -135,7 +153,18 @@ VITEST_FLAGS = ["--no-passWithNoTests", "--no-allowOnly"]
 # frontend suite at three forks (the 4 vCPU / 16 GiB runner's own pool) peaked
 # at 3580 MiB on 2026-10-12, against a 9216 MiB ceiling and this budget per fork.
 MIB_PER_VITEST_WORKER = 3072
+# Sampled group RSS one pytest-xdist worker is allowed. A single-process pure
+# run peaked at 1.1 GiB across the 12 CI runs measured on 2026-10-19, and the
+# workers share one sampled ceiling. 1536 MiB leaves that peak ~35% headroom
+# while keeping the work machine's 3072 MiB ceiling at two workers.
+MIB_PER_PYTEST_WORKER = 1536
 TSC_CANNOT_JUDGE = 2
+# A Vitest pool/worker failure, not a test failure: the worker died (killed,
+# out of memory) before the suite could report. Vitest puts one of these in the
+# file's `message`; it says nothing about the change, so it is unknown rather
+# than a red check. Both spellings are from vitest 5.0.3's pool code.
+WORKER_CRASH = re.compile(
+    r"Worker exited unexpectedly|\[vitest-pool\]: Worker .* emitted error")
 
 
 def _cores():
@@ -169,6 +198,48 @@ def vitest_flags(memory_mib):
     workers = vitest_workers(memory_mib)
     serial = ["--no-file-parallelism"] if workers == 1 else []
     return [f"--maxWorkers={workers}", *serial, *VITEST_FLAGS]
+
+
+def pytest_workers(memory_mib):
+    """How many pytest-xdist workers a run with this memory ceiling may start.
+
+    The full backend suite runs ``-n auto``; the fast tier ran one process and
+    spent its whole budget waiting. The ceiling that bounds the run is the same
+    sampled group RSS the caller passes, so the pool is capped by it as well:
+    one worker per MIB_PER_PYTEST_WORKER, at most the CPUs, and at least one.
+    The work machine's 3072 MiB cap still backs two; the 9216 MiB a CI draft
+    gets backs the runner's four.
+    """
+    return max(1, min(_cores(), memory_mib // MIB_PER_PYTEST_WORKER))
+
+
+def ceiling_scale(plan, memory_mib, jobs):
+    """The wall-clock allowance for the checks this tier starts at once.
+
+    The layer ceilings in ``backend/tests/conftest.py`` were measured on a run
+    that had the machine to itself. When two trees run together, every test in
+    the backend still takes the same number of CPU cycles but gets
+    ``demand / cores`` times the wall clock, and the pure layer's 10 s ceiling
+    would fail it for the machine sharing rather than for a wait. The factor
+    covers a second tree's demand, not the backend pool itself: a dedicated CI
+    runner ran the whole pure selection at ``-n 4`` with no test over its
+    ceiling, while an overloaded shared box pushed tree guards to 17.7 s. This
+    returns the factor the backend run multiplies its ceilings by — only when
+    the plan really has another tree to share with, and only above one. Full
+    CI never asks: it runs one tree at a time and keeps the strict numbers.
+    """
+    if jobs <= 1 or len({str(check["cwd"]) for check in plan}) <= 1:
+        return 1.0
+    ids = {check["id"] for check in plan}
+    demand = 0
+    if "backend-pure" in ids:
+        demand += pytest_workers(memory_mib)
+    if ids & {"frontend-unit", "frontend-i18n"}:
+        # The Vitest parent runs beside its forks and is part of the load.
+        demand += vitest_workers(memory_mib) + 1
+    if not demand:
+        return 1.0
+    return max(1.0, demand / max(1, _cores()))
 
 
 def _narrow_config(root, tmp, ts_files):
@@ -322,14 +393,24 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         # Which paths carry that content is the caller's answer when it has one:
         # the paths the path map routed into frontend scope. A change that also
         # touches the backend brings its .py files along, and those are not
-        # content this suite can execute.
-        carries_runtime = any(not p.endswith((".md", ".d.ts"))
-                              for p in (changed if frontend_scope is None else frontend_scope))
+        # content this suite can execute. Nor is anything under .github/: the
+        # map routes a workflow into frontend scope because it configures the
+        # suite, not because Vitest imports it. Counting it as content made a
+        # workflow-only edit (or a workflow beside one changed component) fall
+        # back to the full 850-second run, which the full tier answers after
+        # landing anyway.
+        runtime_paths = changed if frontend_scope is None else frontend_scope
+        carries_runtime = any(
+            not p.startswith(".github/") and not p.endswith((".md", ".d.ts"))
+            for p in runtime_paths)
         # Config, ambient hooks, test-harness sources and unknown scopes cannot
         # be narrowed: nothing tells the related graph what they affect.
+        # A .github/ edit is not one of them: no workflow or ci script is
+        # imported by the frontend graph, so it leaves the related run seeded
+        # by the surviving roots and, on its own, runs no unit test at all
+        # (frontend-unit is reported as an omission) rather than the full suite.
         unjudgeable = (conservative
                        or any(p in FRONTEND_META for p in changed)
-                       or any(p.startswith(".github/") for p in changed)
                        or any(p.startswith(("frontend/src/test/", "frontend/scripts/")) for p in frontend_paths)
                        or (carries_runtime and not roots)
                        # Last: the scan reads the frontend tree, so it runs only
@@ -378,9 +459,14 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         deleted_sources = [p for p in deleted
                            if p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
                            and not re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", p)]
+        # A .github/ edit does not change the compiler project either: the
+        # narrow project inherits frontend/tsconfig.json and is judged by the
+        # changed files, and no CI script is part of that program. It used to
+        # force the repository's whole typecheck (87s) for the same reason the
+        # full test run was forced — a rule about files that configure the
+        # suite, applied to files the suite never reads.
         full_types = (conservative
                       or any(p in FRONTEND_META or p.endswith(".d.ts") for p in changed)
-                      or any(p.startswith(".github/") for p in changed)
                       or bool(deleted_sources))
         if full_types:
             # Config/ambient/deletion cannot be judged by a project built from a
@@ -423,10 +509,17 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         env = {"TEST_PG_BASE": "postgresql://cheese:cheese@127.0.0.1:1/cheese_ci_fast",
                "DATABASE_URL": "postgresql+asyncpg://cheese:cheese@127.0.0.1:1/cheese_ci_fast",
                "PYTHONPATH": pythonpath, "CI_FAST_NODES": str(nodes)}
+        # The full suite's own parallelism, bounded by what this machine was
+        # said to back rather than by `auto` (which ignores the ceiling). One
+        # worker keeps the single-process form the tier had, so the work
+        # machine's 3072 MiB cap still runs the suite exactly as before.
+        workers = pytest_workers(memory_mib)
+        parallel = ["-n", str(workers)] if workers > 1 else []
         plan.append({"id": "backend-pure", "cwd": root / "backend", "env": env,
                      "command": ["uv", "run", "--no-sync", "pytest", *selected, "-m", "pure", "-q",
                                  "--ignore=tests/forgejo", "-k", "not kotlin",
-                                 "-p", "ci_fast_pytest_plugin", "--junitxml", str(output)],
+                                 "-p", "ci_fast_pytest_plugin", *parallel,
+                                 "--junitxml", str(output)],
                      "evidence": {"kind": "junit", "path": str(output), "nodes": str(nodes),
                                   "files": selected, "required": targets, "selection": reason}})
     return plan, omissions
@@ -484,17 +577,25 @@ def _audit(evidence, details):
     The sidecar records the selection the run itself made — its selected pure
     nodes, the nodes ``-m``/``-k`` removed with their layer, and every outcome —
     so this checks what a JUnit report alone cannot: that no pure node was
-    hidden by a filter, and that every selected pure node executed. An excluded
-    ``integration``/``contract`` node is the layer working as designed (recorded
-    as not_run, owned by full CI), not treated as missing coverage; a required
-    file with no pure node at all is the same, but a change whose modules have
-    no pure consumer at all is unknown.
+    hidden by a filter, and that every selected pure node was reached. A node
+    the machine skips declares a missing capability (bubblewrap, sandbox-exec,
+    ripgrep, tmux) and counts as reached; a node with no report at all does
+    not. An excluded ``integration``/``contract`` node is the layer working as
+    designed (recorded as not_run, owned by full CI), not treated as missing
+    coverage; a required file with no pure node at all is the same, but a
+    change whose modules have no pure consumer at all is unknown.
     """
     data = json.loads(Path(evidence["nodes"]).read_text())
     selected_pure = {item["node"] for item in data.get("selected", []) if item.get("layer") == "pure"}
     hidden = sorted(item["node"] for item in data.get("deselected", []) if item.get("layer") == "pure")
     executed = data.get("executed", [])
-    ran = {e["node"] for e in executed if e.get("when") == "call" and e.get("outcome") == "passed"}
+    # A skip is the test itself saying this machine cannot run it; the node was
+    # reached and declined, not missed. The hosted runner deliberately lacks
+    # those capabilities, so counting skips as unrun made every full selection
+    # unknown there.
+    ran = {e["node"] for e in executed
+           if (e.get("when") == "call" and e.get("outcome") == "passed")
+           or e.get("outcome") == "skipped"}
     failures = sum(e.get("outcome") in ("failed", "error") for e in executed)
     unrun = sorted(selected_pure - ran)
     pure_files = {node.split("::", 1)[0] for node in selected_pure}
@@ -539,13 +640,26 @@ def validate_evidence(evidence):
     """Judge one report file alone. Types are decided by the exit code, in resolve()."""
     kind = evidence["kind"]
     details = {k: v for k, v in evidence.items() if k not in ("path", "nodes")}
+    failed_suites, failed = 0, []
     try:
         if kind == "vitest":
             data = json.loads(Path(evidence["path"]).read_text())
             passed = int(data.get("numPassedTests", 0))
             skipped = int(data.get("numPendingTests", 0)) + int(data.get("numTodoTests", 0))
             errors = int(data.get("numFailedTests", 0))
-            files = {row["name"] for row in data.get("testResults", [])}
+            rows = [row for row in data.get("testResults", []) if isinstance(row, dict)]
+            files = {row["name"] for row in rows if row.get("name")}
+            # A file that failed before running a test is counted in
+            # numFailedTestSuites, not numFailedTests. Without this, a run of
+            # suites that could not load (an import/collection error, a broken
+            # beforeAll) has passed=0, errors=0 and is called an empty
+            # selection below — it read "no tests ran" after 408 s of suites
+            # that never started. An unhandled error that never reaches the
+            # file's report is a process failure, which resolve() reads as
+            # unknown.
+            failed = [row for row in rows
+                      if row.get("status") == "failed" or row.get("message")]
+            failed_suites = max(int(data.get("numFailedTestSuites", 0)), len(failed))
             missing = [p for p in evidence.get("required_files", [])
                        if not any(f.endswith("/" + p) for f in files)]
         else:
@@ -557,9 +671,24 @@ def validate_evidence(evidence):
             missing = _runs(cases, evidence.get("required", []))
     except (OSError, ValueError, KeyError, TypeError, ET.ParseError) as exc:
         return {"result": "unknown", "reason": f"unreadable {kind} report: {exc}", "evidence": details}
-    details.update(passed=passed, skipped=skipped, errors=errors, missing=missing)
+    details.update(passed=passed, skipped=skipped, errors=errors,
+                   failed_suites=failed_suites, missing=missing)
     if errors:
         return {"result": "fail", "reason": "test report contains errors/failures", "evidence": details}
+    if failed_suites:
+        crashed = [row for row in failed
+                   if WORKER_CRASH.search(str(row.get("message") or ""))]
+        if failed and len(crashed) == len(failed):
+            # The worker died before the suite could report; that is the
+            # environment, not a verdict on the change.
+            return {"result": "unknown",
+                    "reason": f"vitest workers crashed before reporting ({len(crashed)} files)",
+                    "evidence": details}
+        reason = f"{failed_suites} test suite(s) failed before running a test"
+        first = next((row.get("message") for row in failed if row.get("message")), "")
+        if first:
+            reason += f": {str(first)[:200]}"
+        return {"result": "fail", "reason": reason, "evidence": details}
     if kind == "vitest" and evidence.get("mode") == "related" and not _picked_for_the_change(evidence, files):
         return {"result": "unknown",
                 "reason": "the changed roots selected no test file; the always-on seeds ran alone",
