@@ -13,6 +13,8 @@ became a task (``place="became"``) the session works like any task's
 (``place="task"``).
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -81,9 +83,10 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
             await devices.start("ada"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
         topic = await db.get(Topic, room_id)
         assert topic is not None
@@ -287,9 +290,7 @@ async def _move(client, monkeypatch, held: dict) -> dict:
     response = client.put(
         f"/topics/{held['conversation']}/sessions/{held['session']}/environment",
         headers={"X-Cheese-Token": held["turn"]},
-        json={
-            "environment": {"kind": "sandbox", "spec": f"devices_of:{held['owner']}"}
-        },
+        json={"environment": {"kind": "sandbox", "spec": "team_devices"}},
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]

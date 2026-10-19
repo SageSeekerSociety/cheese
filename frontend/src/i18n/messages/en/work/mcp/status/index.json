@@ -8,7 +8,7 @@
   "idle": "Not started",
   "running": "Running",
   "failed": "Failed to start",
-  "awaiting": "Waiting for {name} to allow",
-  "refused": "{name} did not allow it",
+  "awaiting": "Waiting for a team administrator",
+  "refused": "A team administrator did not allow it",
   "authorizedBy": "Authorized by {name}, {when}"
 }

@@ -11,6 +11,8 @@ room. Everyone in the project sees whose agent each is and what kind of
 connection it uses; the machine it runs on is its owner's business alone.
 """
 
+from tests.support.devices import enrollment_team
+
 import asyncio
 from datetime import UTC, datetime
 
@@ -42,7 +44,10 @@ def _log_in(client, handle: str, machine: str, **login) -> str:
             devices = sql_device_service(db)
             code = await devices.start(machine)
             device = await devices.approve(
-                code, owner_user_id=user.id, supply=Supply.self_hosted
+                code,
+                owner_user_id=user.id,
+                supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, user.id),
             )
             db.add(
                 DeviceClaudeLoginRow(

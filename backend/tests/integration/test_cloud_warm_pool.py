@@ -5,6 +5,9 @@ Taking a warm machine into the host pool is covered with placement
 (``test_cloud_host_pool.py``).
 """
 
+from tests.support.devices import enrollment_team
+
+
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -13,7 +16,8 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.device.models import DeviceRow, DeviceTeamRow
+from app.domain.device.models import DeviceRow
+from app.domain.device.wiring import sql_device_service
 from app.domain.device.supply import Supply
 from app.domain.identity.services import IdentityService
 from app.domain.machine.microcloud import MicroCloudError
@@ -98,6 +102,7 @@ def warm_case(client, monkeypatch):
                 handle="cheese-warm-pool"
             )
             device = DeviceRow(
+                team_id=await enrollment_team(sql_device_service(session), owner.id),
                 device_id="warm-test",
                 name="Unused",
                 token="test-warm-token",
@@ -173,7 +178,13 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
             assert row.state == "ready"
             assert row.bootstrap_key is None
             assert row.enrolled_at is not None
-            assert (await session.scalars(select(DeviceTeamRow))).all() == []
+            enrolled = await session.get(DeviceRow, row.device_id)
+            assert (
+                await sql_device_service(session).list_devices_for_team(
+                    enrolled.team_id
+                )
+                == []
+            )
 
         async with client.test_request_factory() as session:
             device = await session.get(DeviceRow, "warm-test")

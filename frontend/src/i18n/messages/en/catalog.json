@@ -1156,33 +1156,6 @@
       "note": "Two Claude subscriptions on the workstation, a custom model service on the laptop and an API key on an offline server, plus an API key and a model service kept on the account: each closed to one line with its name, plan, where it is and its status."
     }
   },
-  "thisDeviceView": {
-    "about": "Account settings 'This device': whether the computer the desktop app runs on is connected, what it's called, which teams it's offered to, the owner's own Claude Code, and disconnecting the device.",
-    "s1": {
-      "name": "Still asking the connection state",
-      "note": "Not yet asked whether this device is connected: a row with a spinning progress ring, nothing else drawn."
-    },
-    "s2": {
-      "name": "Not connected yet",
-      "note": "When not connected, an empty card: a 'Not connected' line and one line of explanation (once connected, AI teammates can run tasks on this device), plus an entry to connect."
-    },
-    "s3": {
-      "name": "Connected, online",
-      "note": "Connected and online: a lit dot precedes the status row reading 'Connected / Online'; below are the device name, teams, Claude Code and disconnect."
-    },
-    "s4": {
-      "name": "Connected, offline",
-      "note": "The same device dropped: only the status dot and that line change, the rest stay."
-    },
-    "s5": {
-      "name": "Not offered to any team",
-      "note": "When no team is checked, the teams row writes 'Not offered to any team' in place, not a blank."
-    },
-    "s6": {
-      "name": "Carries an error",
-      "note": "A reason like a failed connection-state read is written on a full top line, the blocks below still drawn as usual."
-    }
-  },
   "channelBrowseView": {
     "about": "The project's 'All channels': channels I can see in a list (findable, joinable, leavable); project managers can create channels on this page too. The sidebar lists only what I've joined; others are found here.",
     "s1": {
@@ -1304,33 +1277,6 @@
     "s5": {
       "name": "No permission",
       "note": "401/403 means \"you may not see this\", not \"this read failed\": it says so and offers no retry."
-    }
-  },
-  "computeView": {
-    "about": "The team-compute page: register devices your members have connected to the team, and see at a glance which are online, who is using them and which screens they run.",
-    "s1": {
-      "name": "Two devices",
-      "note": "Default state: one card per device with online/offline, machine id and, when another project is using it, that project and the screens running on it."
-    },
-    "s2": {
-      "name": "First load",
-      "note": "Not back yet: a spinner in the middle, not an empty \"No self-hosted devices yet\"."
-    },
-    "s3": {
-      "name": "Could not load",
-      "note": "A failed read states the reason and offers a retry, rather than an empty device list."
-    },
-    "s4": {
-      "name": "No permission",
-      "note": "On 401/403 it says there is no access and offers no retry."
-    },
-    "s5": {
-      "name": "Not a single device",
-      "note": "Read, and there really are none: it shows the empty state and keeps the \"Add a self-hosted device\" button."
-    },
-    "s6": {
-      "name": "Add failed",
-      "note": "A failed register/remove is a dismissible error bar (not a read failure): the page stays, the device list stays."
     }
   },
   "adminIntegrationsPageView": {
@@ -1647,6 +1593,12 @@
     "s4": {
       "name": "Could not load",
       "note": "No board was ever fetched: the page shows only that line and a retry."
+    }
+  },
+  "thisDeviceView": {
+    "sleepOff": {
+      "name": "No sessions, sleep prevention off",
+      "note": "The session list is empty and the switch is off. The computer can sleep when idle."
     }
   }
 }

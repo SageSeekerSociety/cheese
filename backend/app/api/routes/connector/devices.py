@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from app.core.errors import ForbiddenError
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
@@ -63,6 +64,7 @@ from app.domain.device import owner_reads, sandbox
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply
+from app.domain.team.services import team_service
 from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import push_grants_on_connect
 from app.domain.machine.session_work import checkpoint_room
@@ -250,15 +252,16 @@ async def device_connect(
     service: DeviceServiceDep,
     db: DbSession,
 ) -> dict[str, Any]:
-    """Approve a device on behalf of the logged-in human (fusion-design §4: approve is
-    behind a login). Mints an agent-user + ``device`` binding, binds the device to the
-    owner, and optionally assigns it to ``project_id``."""
+    """Enroll a device in the selected team under its administrator’s authority."""
     actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
         raise UnauthorizedError(say("deviceApproveSignIn"))
 
-    if body.project_id is not None:
-        await resolver.authorize_project(actor, project_id=body.project_id)
+    team_id = body.team_id
+    if team_id is None:
+        team_id = (await team_service(db).ensure_personal_team(actor.user_id)).id
+    if not await team_service(db).is_team_at_least_admin(team_id, actor.user_id):
+        raise ForbiddenError(say("deviceTeamAdminOnly"))
 
     # Approve binds the device to its owner + mints the durable token. The device is
     # PURE COMPUTE (execution-architecture v3: a ComputePool node) — enrolling a machine
@@ -267,6 +270,7 @@ async def device_connect(
     device = await service.approve(
         body.device_code,
         owner_user_id=actor.user_id,
+        team_id=team_id,
         # 入口决定待遇 (#282 决定 2): a human ran the connector on a machine they
         # already keep running, so the platform may never stop or destroy it —
         # only stop using it. A CONSTANT here, the mirror of the MicroCloud
@@ -274,14 +278,10 @@ async def device_connect(
         supply=Supply.self_hosted,
         name=body.device_name,
     )
-    if body.project_id is not None:
-        await service.assign_to_project(
-            device.device_id, body.project_id, actor_user_id=actor.user_id
-        )
     return {
         "device_id": device.device_id,
         "device_name": device.name,
-        "project_id": str(body.project_id) if body.project_id else None,
+        "team_id": device.team_id,
     }
 
 

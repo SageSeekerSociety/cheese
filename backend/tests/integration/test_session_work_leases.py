@@ -4,6 +4,8 @@
 出来的那台机器上；换机器是整个房间一起换。
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -74,9 +76,10 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
                 code,
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, owner.id),
             )
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=owner.id
+            await place_in_project_team(
+                devices, device.device_id, project_id, actor_user_id=owner.id
             )
             session = await AgentSessionService(db).ensure(
                 topic_id, handle, harness="claude-code"
@@ -402,9 +405,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
         assert (await db.get(DispatchRow, dispatch_id)).outcome is None
 
     async with client.test_factory() as db:
-        await sql_device_service(db).unassign_from_project(
-            second_device, project_id, actor_user_id=owner.id
-        )
+        await sql_device_service(db).remove(second_device, actor_user_id=owner.id)
         await db.commit()
     revoked = client.post(
         f"/topics/{topic_id}/execution/{resource}",
@@ -482,9 +483,10 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
                 code,
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, owner.id),
             )
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=owner.id
+            await place_in_project_team(
+                devices, device.device_id, project_id, actor_user_id=owner.id
             )
             session = await AgentSessionService(db).ensure(
                 topic_id, handle, harness="claude-code"
@@ -493,7 +495,7 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             await AgentSessionService(db).set_environment(
                 topic_id,
                 handle,
-                {"kind": "sandbox", "spec": f"devices_of:{owner.id}"},
+                {"kind": "sandbox", "spec": "team_devices"},
                 chosen_by=None,
             )
             session.runtime_location = {
@@ -800,14 +802,16 @@ async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch
             code,
             owner_user_id=actor_id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, actor_id),
         )
-        await devices.assign_to_project(
+        await place_in_project_team(
+            devices,
             device.device_id,
             project_id,
             actor_user_id=actor_id,
         )
         await db.commit()
-    replacement = {"kind": "sandbox", "spec": f"devices_of:{actor_id}"}
+    replacement = {"kind": "sandbox", "spec": "team_devices"}
     switched = client.put(path, headers=headers, json={"environment": replacement})
     assert switched.status_code == 200, switched.text
     async with client.test_factory() as db:
@@ -865,9 +869,10 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
             await devices.start("worker"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
         session = await AgentSessionService(db).ensure(
             topic_id, "ada", harness="claude-code"
@@ -878,7 +883,7 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
         await AgentSessionService(db).set_environment(
             topic_id,
             session.agent_handle,
-            {"kind": "sandbox", "spec": f"devices_of:{owner.id}"},
+            {"kind": "sandbox", "spec": "team_devices"},
             chosen_by=None,
         )
         session.runtime_location = {
@@ -969,13 +974,14 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
             await devices.start("ada"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
         topic.default_environment = {
             "kind": "sandbox",
-            "spec": f"devices_of:{owner.id}",
+            "spec": "team_devices",
         }
         session = await AgentSessionService(db).ensure(
             topic_id, "cheese", harness="claude-code"
@@ -1092,13 +1098,14 @@ async def test_a_recheck_that_outlasts_its_request_leaves_the_session_startable(
             await devices.start("ada"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
         topic.default_environment = {
             "kind": "sandbox",
-            "spec": f"devices_of:{owner.id}",
+            "spec": "team_devices",
         }
         session = await AgentSessionService(db).ensure(
             topic_id, "cheese", harness="claude-code"
@@ -1214,13 +1221,14 @@ async def test_an_own_machine_that_just_dropped_is_called_not_refused(
             await devices.start("laptop"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
         topic.default_environment = {
             "kind": "sandbox",
-            "spec": f"devices_of:{owner.id}",
+            "spec": "team_devices",
         }
         session = await AgentSessionService(db).ensure(
             topic_id, "cheese", harness="claude-code"
@@ -1299,13 +1307,14 @@ async def _a_room_on_its_own_machine(client):
             await devices.start("ada"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
         topic.default_environment = {
             "kind": "sandbox",
-            "spec": f"devices_of:{owner.id}",
+            "spec": "team_devices",
         }
         session = await AgentSessionService(db).ensure(
             topic_id, "cheese", harness="claude-code"
@@ -1534,13 +1543,14 @@ async def test_a_machine_whose_environment_state_cannot_be_read_is_answered_in_w
             await devices.start("laptop"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
         topic.default_environment = {
             "kind": "sandbox",
-            "spec": f"devices_of:{owner.id}",
+            "spec": "team_devices",
         }
         session = await AgentSessionService(db).ensure(
             topic_id, "cheese", harness="claude-code"

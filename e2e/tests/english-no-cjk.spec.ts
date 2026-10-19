@@ -451,7 +451,6 @@ test("account settings and devices", async ({ page }) => {
   await check(page, [
     { name: "profile", path: "/users/settings/profile" },
     { name: "password and security", path: "/users/settings/security" },
-    { name: "devices", path: "/users/settings/devices" },
     { name: "connections", path: "/users/settings/connections" },
     { name: "public profile", path: "/users/alice" },
     { name: "archived projects", path: "/my/archived-projects" },

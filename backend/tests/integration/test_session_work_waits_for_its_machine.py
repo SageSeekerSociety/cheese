@@ -5,6 +5,8 @@ and the agent retried it in a loop until the machine was up. A native session
 on that machine would simply have run the command once it could.
 """
 
+from tests.support.devices import enrollment_team
+
 import json
 import time
 import uuid
@@ -416,6 +418,7 @@ def test_each_session_on_a_cloud_host_has_its_executor_sandboxed(cloud_rooms):
                 await devices.start("pool-host"),
                 owner_user_id=owner.id,
                 supply=Supply.cloud,
+                team_id=await enrollment_team(devices, owner.id),
             )
             await db.commit()
             return device.device_id

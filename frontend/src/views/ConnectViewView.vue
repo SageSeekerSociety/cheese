@@ -18,6 +18,7 @@ const props = defineProps<{
   error: string | null
   approved: DeviceApproval | null
   /** The name the cli proposed (this machine's hostname), or '' while unknown. */
+  teams: import('@/types/devices').MyTeam[]
   proposedName: string
 }>()
 
@@ -27,6 +28,7 @@ defineEmits<{
 
 const loginLink = { name: 'SignIn' }
 const deviceName = ref('')
+const teamId = defineModel<number | null>('teamId', { required: true })
 
 // The container prefills the cli-proposed name once the lookup lands; keep the
 // field in step with it so the human can just edit a real default.
@@ -70,6 +72,18 @@ watch(
         <div class="t-caption c-muted mb-1">{{ t('project.connect.code') }}</div>
         <div class="device-code mb-4">{{ code || '—' }}</div>
 
+        <v-select
+          v-model="teamId"
+          autocomplete="off"
+          :items="teams"
+          item-title="name"
+          item-value="id"
+          :label="t('project.connect.teamLabel')"
+          variant="outlined"
+          class="mb-4"
+          hide-details
+          :disabled="loading"
+        />
         <v-text-field
           v-model="deviceName"
           autocomplete="off"
@@ -87,7 +101,13 @@ watch(
           {{ error }}
         </v-alert>
 
-        <BaseButton kind="primary" :loading="loading" :disabled="!code" block @click="$emit('approve', deviceName)">
+        <BaseButton
+          kind="primary"
+          :loading="loading"
+          :disabled="!code || teamId === null"
+          block
+          @click="$emit('approve', deviceName)"
+        >
           {{ t('project.connect.approve') }}
         </BaseButton>
       </v-card>
@@ -107,9 +127,11 @@ watch(
             <template #command><code>cheesehost link connect</code></template>
           </i18n-t>
         </div>
-        <BaseButton kind="secondary" :to="{ name: 'UserSettingsDevices' }">{{
-          t('project.connect.viewDevices')
-        }}</BaseButton>
+        <BaseButton
+          kind="secondary"
+          :to="`/teams/${teams.find((team) => team.id === approved?.team_id)?.handle ?? ''}/compute`"
+          >{{ t('project.connect.viewDevices') }}</BaseButton
+        >
       </v-card>
     </v-container>
   </div>

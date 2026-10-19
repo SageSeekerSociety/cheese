@@ -2,6 +2,8 @@
 teammate knows about them; the guide in the project reads what has really
 happened."""
 
+from tests.support.devices import enrollment_team
+
 import re
 import uuid
 from datetime import UTC, datetime
@@ -185,6 +187,7 @@ def _computer(db_session, _portal, owner_id: int) -> str:
             await devices.start("laptop"),
             owner_user_id=owner_id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner_id),
         )
         await db_session.flush()
         return device.device_id
@@ -208,7 +211,7 @@ def test_from_the_desktop_app_the_teammate_works_on_this_computer(
     assert done["on_device"] is True
     assert _room_default(api_client, token, done["root_topic_id"]) == {
         "kind": "sandbox",
-        "spec": f"devices_of:{person.user_id}",
+        "spec": "team_devices",
     }
 
 

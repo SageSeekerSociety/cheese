@@ -4,6 +4,8 @@ session (push first), and a session whose room is mid-turn is left alone with
 the reason 「正在运行任务，稍后再换」.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -72,9 +74,10 @@ async def _project_on_a_device(client):
                 await devices.start(name),
                 owner_user_id=alice.id,
                 supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, alice.id),
             )
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=alice.id
+            await place_in_project_team(
+                devices, device.device_id, project_id, actor_user_id=alice.id
             )
             ids.append(device.device_id)
         old, new = ids

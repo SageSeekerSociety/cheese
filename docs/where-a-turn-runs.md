@@ -30,8 +30,8 @@ The remaining sections describe ordinary work topics and their selected compute 
 |---|---|---|
 | **沙箱**，规格 `standard` | 平台机器上的一个沙箱，每条会话一个；放在哪台宿主机上由平台调度，多个项目的沙箱共用一台 | 平台的，随时可以销毁重建，按时长计费 |
 | **沙箱**，规格 `vm` | 一整台虚拟机做的沙箱，有 sudo，能跑 Docker、要 KVM 的任务和内核模块 | 平台的，会话用完就删，按规格和时长计费 |
-| **沙箱**，规格 `devices_of:<用户>` | 这个人接入这个项目、给得出沙箱的某一台电脑上的沙箱 | 那个人的，不收费 |
-| **不进沙箱**（`self_hosted`） | 直接跑在选定的那台人自己的电脑上，看得见整台机器 | 那个人的；只有他本人能选 |
+| **沙箱**，规格 `team_devices` | 项目所属团队中能提供沙箱的一台设备上的沙箱 | 团队的，不收费 |
+| **不进沙箱**（`self_hosted`） | 直接跑在选定的那台人自己的电脑上，看得见整台机器 | 团队的；只有团队管理员能选 |
 
 规格之间是平级的，沙箱从不点名机器：放在哪台由规格说（`machine/environments.py` 的 `device_for_spec`，平台的规格交给 `HostPool.place`）。平台的规格只在这个部署配了云平台的地址和密钥时可选；`vm` 还要运维配了虚拟机的规格（`MICROCLOUD_VM_OFFERING_ID`）。
 
@@ -133,11 +133,11 @@ typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 
 一位队友第一次要手时，平台按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目的默认（`settings.execution_environment`）→ 标准沙箱 取一份，写成它自己的（`machine/environments.py` 的 `environment_of`）。之后默认再改，已经有环境的队友一个也不动。
 
-能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目里每位有电脑给得出沙箱的人各有一个 `devices_of:<用户>`。市场页列的是同样几种（`agent/market.py` 的 `compute_listings`）。
+能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目所属团队有能提供沙箱的电脑时，列出一个 `team_devices`。市场页列的是同样几种（`agent/market.py` 的 `compute_listings`）。
 
 ## 三、放不下的时候
 
-**一个沙箱没地方放时，这次工具调用得到一句明确的话，对话和平台工具照常。** 平台的规格在没配云平台的部署上放不下，会说这个部署没有平台的机器、可以换一种规格；某个人的设备都不在线或都给不了沙箱时，说这个规格的电脑现在用不了。不会悄悄换到别的规格上。
+**一个沙箱没地方放时，这次工具调用得到一句明确的话，对话和平台工具照常。** 平台的规格在没配云平台的部署上放不下，会说这个部署没有平台的机器、可以换一种规格；团队设备都不在线或都给不了沙箱时，说这个规格的电脑现在用不了。不会悄悄换到别的规格上。
 
 配了云平台时，一条会话第一次要动手，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。项目的额度用完时，平台的规格拒绝，并说额度用完了。`vm` 规格每条会话第一次要动手时都现开一台，房间里收到的是「正在准备虚拟机沙箱」；虚拟机不休眠，会话闲置后推送、释放，下次要用再开一台。
 
@@ -147,7 +147,7 @@ typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 
 macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`）：规则跟着命令行传进去，不落在会话能改的文件里。它没有 pid 命名空间，所以信号只能发给同一个沙箱里的进程，Unix socket 只能连会话自己的目录，LaunchServices 和剪贴板也不给用，这几样都会替沙箱在外面办事。停房间时，会话的进程一起结束，用 `setsid` 脱离、被 launchd 收养的也在内：认它们靠的是每个进程甩不掉的 Seatbelt 规则——在沙箱里、能写这个会话的目录、不能写装着各会话目录的那一层（`environment_runner.end_seatbelt`，系统的 `sandbox_check`）。Windows 没有沙箱：Windows 设备上不放沙箱，只能不进沙箱地用。沙箱怎么搭见 `docs/remote-execution.md`。
 
-不进沙箱的会话看得见整台机器：能操作上面的服务、进得去别的会话的目录。只有那台电脑的主人本人以人的身份登录时能选（`PUT /topics/{id}/sessions/{session}/environment`），会话凭据选不了。
+不进沙箱的会话看得见整台机器：能操作上面的服务、进得去别的会话的目录。只有设备所属团队的管理员以人的身份登录时能选（`PUT /topics/{id}/sessions/{session}/environment`），会话凭据选不了。
 
 `vm` 规格的虚拟机就是这条会话自己的，执行器不再套沙箱，有 sudo 和 Docker（`session_work._sandboxed`），那台机器上没有别的会话。沙箱的网络规则不在那里，虚拟机里有 root 的人可以改掉机器内的任何规则，所以虚拟机连得到哪里由云平台那一侧限制。MicroCloud 把新开的虚拟机和它所在的私网隔开：MicroCloud 的接口和控制台、私网里部署的服务器、Proxmox 的内网地址和别的虚拟机都连不上，公网、DNS、apt 照常，平台经 SSH 反向转发连接器的那条路也照常。Proxmox 的公网地址也连不上它的 8006 和 22 端口：直连由虚拟机的防火墙挡住，按域名经实验室路由器的那条路由路由器的规则挡住。这一档默认不开（`MICROCLOUD_VM_OFFERING_ID` 为 0），由部署配置打开。
 

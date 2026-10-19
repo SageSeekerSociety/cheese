@@ -6,6 +6,8 @@ project teammate carries that teammate's name; one that names no teammate
 carries the name of the project's default agent.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import json
 import uuid
 from datetime import UTC, datetime
@@ -62,7 +64,7 @@ async def _teammates_on_bobs_device(client):
             TeamUserRelation(
                 team_id=(await db.get(Project, project_id)).team_id,
                 user_id=bob,
-                role=TeamMemberRole.MEMBER,
+                role=TeamMemberRole.ADMIN,
                 created_at=now,
                 updated_at=now,
             )
@@ -104,8 +106,11 @@ async def _teammates_on_bobs_device(client):
             await devices.start("workstation"),
             owner_user_id=bob,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, bob),
         )
-        await devices.assign_to_project(device.device_id, project_id, actor_user_id=bob)
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=bob
+        )
         topic = await db.get(Topic, topic_id)
         resource = str(topic.resource_id or topic_id)
         leases = {}
@@ -213,7 +218,7 @@ async def test_the_team_page_names_each_sessions_teammate(client, monkeypatch):
     assert _by_handle(p, device["in_use"]) == EXPECTED
 
 
-async def test_the_owner_is_told_which_teammate_started(client, monkeypatch):
+async def test_the_team_admin_is_told_which_teammate_started(client, monkeypatch):
     p = await _all_at_work(client, monkeypatch)
 
     async with client.test_factory() as db:

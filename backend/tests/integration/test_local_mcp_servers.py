@@ -22,7 +22,8 @@ from datetime import UTC, datetime
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.device.models import DeviceProjectRow, DeviceRow
+from app.domain.device.models import DeviceRow
+from app.domain.project.models import Project
 from app.domain.device.supply import Supply
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
@@ -87,13 +88,13 @@ def _computer(client, pid, owner: str, *, supply=Supply.self_hosted) -> str:
                     device_id=device_id,
                     name=f"{owner} 的笔记本",
                     token=f"tok-{device_id}",
+                    team_id=(await session.get(Project, pid)).team_id,
                     owner_user_id=user.id,
                     created_at=datetime.now(UTC),
                     supply=supply,
                 )
             )
             await session.flush()
-            session.add(DeviceProjectRow(device_id=device_id, project_id=pid))
             await session.commit()
 
     asyncio.run(enrol())
@@ -161,7 +162,7 @@ def test_a_name_the_default_branch_does_not_declare_gets_nothing(client, room):
     assert response.json()["data"]["values"] == {}
 
 
-def test_a_command_waits_on_a_members_computer_for_its_owner(client, room):
+def test_a_command_waits_for_the_devices_team_admin(client, room):
     pid, tid, session = room
     device = _computer(client, pid, "dana")
 
@@ -178,15 +179,15 @@ def test_a_command_waits_on_a_members_computer_for_its_owner(client, room):
     assert said["state"] == "awaiting"
 
     run = _servers(client, pid)["notes"]["run"]
-    assert (run["state"], run["owner"]) == ("awaiting", "dana")
-    [asked] = _waiting(client, "dana")
+    assert (run["state"], run["owner"]) == ("awaiting", "alice")
+    [asked] = _waiting(client, "alice")
     assert asked["server"] == "notes"
     assert asked["device"] == "dana 的笔记本"
     assert asked["command"] == "uvx notes-mcp --token '${NOTES_TOKEN}'"
-    assert _waiting(client, "alice") == []
+    assert _waiting(client, "dana") == []
 
-    assert _decide(client, asked["id"], "alice", True) == 403
-    assert _decide(client, asked["id"], "dana", True) == 200
+    assert _decide(client, asked["id"], "dana", True) == 403
+    assert _decide(client, asked["id"], "alice", True) == 200
     assert _start(client, tid, session, device)["allowed"] == ["f" * 64]
     assert _servers(client, pid)["notes"]["run"]["state"] == "idle"
     assert _waiting(client, "dana") == []
@@ -202,9 +203,9 @@ def test_a_refused_command_stays_refused(client, room):
         "command": "uvx notes-mcp",
     }
     _report(client, tid, session, **ask)
-    [asked] = _waiting(client, "dana")
+    [asked] = _waiting(client, "alice")
 
-    assert _decide(client, asked["id"], "dana", False) == 200
+    assert _decide(client, asked["id"], "alice", False) == 200
 
     assert _report(client, tid, session, **ask)["state"] == "refused"
     assert _waiting(client, "dana") == [], "the same command is not asked again"

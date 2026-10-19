@@ -22,7 +22,6 @@ from tests.integration.test_switch_pushes_first import (
     PUSHED,
     _environment,
     _machines,
-    _owner_id,
     _room,
     _session,
     _to_new,
@@ -62,7 +61,7 @@ async def test_an_install_that_stopped_does_not_hold_the_room(client, monkeypatc
 
     # Its agent switches by itself: nothing is refused over work that could
     # not be pushed, and an install that stopped is no allocation in progress.
-    sandbox = {"kind": "sandbox", "spec": f"devices_of:{await _owner_id(client)}"}
+    sandbox = {"kind": "sandbox", "spec": "team_devices"}
     agent = client.put(room.path, headers=room.agent, json={"environment": sandbox})
 
     assert agent.status_code == 200, agent.text
@@ -179,7 +178,7 @@ async def test_a_sandbox_leaves_an_unbound_machine_for_an_online_one(
         await AgentSessionService(db).set_environment(
             room.conversation_id,
             room.agent_handle,
-            {"kind": "sandbox", "spec": f"devices_of:{await _owner_id(client)}"},
+            {"kind": "sandbox", "spec": "team_devices"},
             chosen_by=None,
         )
         await db.commit()

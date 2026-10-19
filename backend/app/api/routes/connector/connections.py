@@ -19,7 +19,6 @@ from app.api.routes.connector.devices import DeviceServiceDep
 from app.api.routes.connector.schemas import (
     AccountConnectionIn,
     AccountConnectionOut,
-    BindTeamRequest,
     ClaudeCodeLoginOut,
     ConnectionRename,
     ModelConnectionsOut,
@@ -45,7 +44,6 @@ from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
 from app.domain.machine.session_work import device_users, screen_agent_name
-from app.domain.project.services import ProjectService
 from app.domain.team.repositories import TeamRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -102,10 +100,7 @@ async def _device_view(
         "device_id": device.device_id,
         "name": device.name,
         "online": device_hub.is_online(device.device_id),
-        "project_ids": [str(p) for p in device.project_ids],
-        # Teams this machine is registered for (为团队注册设备): every project of
-        # these teams may run on it.
-        "team_ids": list(device.team_ids),
+        "team_id": device.team_id,
         "last_seen_at": device.last_seen_at.isoformat()
         if device.last_seen_at
         else None,
@@ -119,7 +114,7 @@ async def my_devices(
 ) -> dict[str, Any]:
     """List the devices the logged-in human owns, with liveness + their open agents."""
     user_id = await _require_user(resolver)
-    devices = await service.list_owned(user_id)
+    devices = await service.list_enrolled_by(user_id)
     by_device = _screens_by_device()
     # Every machine's owner-login in one query, before the loop: one query per
     # self-hosted machine is what this list cost before (#2991).
@@ -147,12 +142,30 @@ async def my_devices(
     return {"devices": views}
 
 
+@router.get("/my/team-devices")
+async def accessible_devices(
+    resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+) -> dict[str, Any]:
+    """Enrollments visible through current team membership, for the desktop app."""
+    user_id = await _require_user(resolver)
+    devices = []
+    for team in await TeamRepository(db).list_teams_of_user(user_id):
+        devices.extend(await service.list_devices_for_team(team.id))
+    logins = await owner_login.connections(db, [d.device_id for d in devices])
+    return {
+        "devices": [
+            {**await _device_view(db, d, []), "logins": logins.get(d.device_id, [])}
+            for d in devices
+        ]
+    }
+
+
 async def _my_self_hosted(
     device_id: str, resolver: ActorResolverDep, service: DeviceService
 ) -> None:
     """Only the machine's owner, and only for a machine they enrolled."""
     user_id = await _require_user(resolver)
-    owned = {d.device_id: d for d in await service.list_owned(user_id)}
+    owned = {d.device_id: d for d in await service.list_enrolled_by(user_id)}
     device = owned.get(device_id)
     if device is None or device.supply != Supply.self_hosted:
         raise NotFoundError(say("deviceNotYours"))
@@ -387,10 +400,11 @@ async def check_my_sandbox(
     sandbox: after its owner changed what it lacked, the page asks rather than
     leaving the answer from its last connection standing."""
     user_id = await _require_user(resolver)
-    owned = {d.device_id: d for d in await service.list_owned(user_id)}
-    device = owned.get(device_id)
-    if device is None or device.supply != Supply.self_hosted:
-        raise NotFoundError(say("deviceNotYours"))
+    device = await service.get_hosted_device(device_id)
+    if device is None:
+        raise NotFoundError(say("deviceNotFound"))
+    if not await service.may_manage(device, user_id):
+        raise ForbiddenError(say("deviceTeamAdminOnly"))
     if device_hub.is_online(device_id):
         try:
             await sandbox.refresh(
@@ -413,7 +427,7 @@ async def rename_my_device(
 ) -> dict[str, Any]:
     """Rename a device the caller owns (the service enforces ownership)."""
     user_id = await _require_user(resolver)
-    device = await service.rename_owned(device_id, body.name, actor_user_id=user_id)
+    device = await service.rename(device_id, body.name, actor_user_id=user_id)
     return await _device_view(db, device, _screens_by_device().get(device_id, []))
 
 
@@ -423,34 +437,8 @@ async def unbind_my_device(
 ) -> dict[str, Any]:
     """Unbind (forget) a device the caller owns — its durable token stops working."""
     user_id = await _require_user(resolver)
-    await service.delete_owned(device_id, actor_user_id=user_id)
+    await service.remove(device_id, actor_user_id=user_id)
     return {"deleted": True, "device_id": device_id}
-
-
-@router.post("/my/devices/{device_id}/teams", dependencies=[ROUTE_DECIDES])
-async def register_device_for_team(
-    device_id: str,
-    body: BindTeamRequest,
-    resolver: ActorResolverDep,
-    service: DeviceServiceDep,
-    db: DbSession,
-) -> dict[str, Any]:
-    """为团队注册设备 (execution-architecture v4): bind a machine the caller owns to a
-    team they belong to, so every project of that team can run on it. Owner-only, and
-    the owner must be a member of the target team."""
-    user_id = await _require_user(resolver)
-    device = await service.get_hosted_device(device_id)
-    if device is None or device.owner_user_id != user_id:
-        raise NotFoundError(say("deviceNotYours"))
-    if not await TeamRepository(db).is_team_member(body.team_id, user_id):
-        raise ForbiddenError(say("deviceTeamMemberOnly"))
-    await service.assign_to_team(device_id, body.team_id, actor_user_id=user_id)
-    device = await service.get_hosted_device(device_id)
-    return await _device_view(
-        db,
-        device,  # type: ignore[arg-type]
-        _screens_by_device().get(device_id, []),
-    )
 
 
 @router.get("/teams/{team_id}/devices")
@@ -460,56 +448,23 @@ async def team_devices(
     service: DeviceServiceDep,
     db: DbSession,
 ) -> dict[str, Any]:
-    """Every self-hosted machine the team's projects can run on, with liveness:
-    the ones registered for the team, and the ones attached directly to one of
-    its projects (``attached_projects`` names those projects). Any team member
-    may view."""
     user_id = await _require_user(resolver)
-    if not await TeamRepository(db).is_team_member(team_id, user_id):
+    teams = TeamRepository(db)
+    if not await teams.is_team_member(team_id, user_id):
         raise ForbiddenError(say("notTeamMember"))
-
-    names = {p.id: p.name for p in await ProjectService(db).list_for_team(team_id)}
     devices = await service.list_devices_for_team(team_id)
-    listed = {d.device_id for d in devices}
-    devices += [
-        d
-        for d in await service.list_devices_attached_to_projects(list(names))
-        if d.device_id not in listed
-    ]
-    # Its owner sees who works on each of their machines, in any project (#1900
-    # step 5). Nobody else does: a room's title is not every team member's.
-    users = await device_users(
-        db, [d.device_id for d in devices if d.owner_user_id == user_id]
-    )
+    may_manage = await teams.is_team_at_least_admin(team_id, user_id)
     by_device = _screens_by_device()
+    users = await device_users(db, [d.device_id for d in devices]) if may_manage else {}
+    logins = await owner_login.connections(db, [d.device_id for d in devices])
     return {
+        "can_manage": may_manage,
         "devices": [
             {
                 **await _device_view(db, d, by_device.get(d.device_id, [])),
-                "attached_projects": [
-                    {"id": str(p), "name": names[p]}
-                    for p in d.project_ids
-                    if p in names
-                ],
                 "in_use": users.get(d.device_id),
+                "logins": logins.get(d.device_id, []),
             }
             for d in devices
-        ]
+        ],
     }
-
-
-@router.delete("/my/devices/{device_id}/teams/{team_id}", dependencies=[ROUTE_DECIDES])
-async def unregister_device_from_team(
-    device_id: str,
-    team_id: int,
-    resolver: ActorResolverDep,
-    service: DeviceServiceDep,
-    db: DbSession,
-) -> dict[str, Any]:
-    """Unbind a machine the caller owns from a team (为自己 / 换团队). Owner-only."""
-    user_id = await _require_user(resolver)
-    await service.unassign_from_team(device_id, team_id, actor_user_id=user_id)
-    device = await service.get_hosted_device(device_id)
-    if device is None:
-        raise NotFoundError(say("deviceNotFound"))
-    return await _device_view(db, device, _screens_by_device().get(device_id, []))

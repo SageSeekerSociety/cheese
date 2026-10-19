@@ -2,9 +2,7 @@
 
 Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 ``device`` (shared connector identity), ``hosted_device`` (human-owned machines),
-``device_auth_code``
-(short-lived device-flow codes), ``device_project`` (device↔project assignments),
-``device_team`` (device↔team bindings — compute belongs to the team, v4) and
+``device_auth_code`` (short-lived device-flow codes) and
 ``device_health``
 (a machine's rolling failure streak / quarantine — #186) and
 ``claude_logins`` (each login its owner's own Claude Code has for the platform
@@ -19,18 +17,19 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Column,
     DateTime,
     Enum,
     ForeignKey,
     Integer,
     String,
+    Table,
     UniqueConstraint,
     Uuid,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.domain.common import Timestamps
 from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.supply import Supply
 
@@ -48,8 +47,18 @@ class DeviceRow(Base):
     token: Mapped[str] = mapped_column(
         String(128), nullable=False, unique=True, index=True
     )
-    owner_user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    # Enrollment provenance; device management is authorized by team_id.
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("team.id", name="fk_device_team_id_team"),
+        nullable=False,
+        index=True,
+    )
+    owner_user_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("user.id", ondelete="SET NULL", name="fk_device_owner_user_id_user"),
+        nullable=True,
+        index=True,
     )
     # NOTE: a device is PURE COMPUTE (execution-architecture v3: AIPool ⊥ ComputePool;
     # a self-hosted device is a ComputePool node). It carries NO agent identity — the
@@ -81,8 +90,13 @@ class HostedDeviceRow(Base):
     device_id: Mapped[str] = mapped_column(
         ForeignKey("device.device_id", ondelete="CASCADE"), primary_key=True
     )
-    owner_user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    owner_user_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey(
+            "user.id", ondelete="SET NULL", name="fk_hosted_device_owner_user_id_user"
+        ),
+        nullable=True,
+        index=True,
     )
 
 
@@ -99,36 +113,27 @@ class DeviceAuthCodeRow(Base):
     )
 
 
-class DeviceProjectRow(Timestamps, Base):
-    """A device↔project assignment: which projects a device may run agents in.
-    The device's owner manages these (many-to-many)."""
-
-    __tablename__ = "device_project"
-    __table_args__ = (
-        UniqueConstraint("device_id", "project_id", name="uq_device_project"),
+# Schema metadata only: the previous deployment may still write these tables.
+# Runtime code no longer maps or queries them; the following release drops them.
+for _name, _target, _type in (
+    ("device_project", "project_id", Uuid),
+    ("device_team", "team_id", BigInteger),
+):
+    Table(
+        _name,
+        Base.metadata,
+        Column("id", Uuid, primary_key=True),
+        Column(
+            "device_id",
+            ForeignKey("device.device_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        Column(_target, _type, nullable=False, index=True),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("updated_at", DateTime(timezone=True), nullable=False),
+        UniqueConstraint("device_id", _target, name=f"uq_{_name}"),
     )
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    device_id: Mapped[str] = mapped_column(
-        ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-
-
-class DeviceTeamRow(Timestamps, Base):
-    """A device↔team binding (execution-architecture v4: compute belongs to the team).
-    A device bound to a team is usable by every project of that team — 为团队注册设备.
-    The device's owner manages these (many-to-many). ``team_id`` is a bare BigInteger
-    (no cross-table FK, matching ``device_project.project_id``)."""
-
-    __tablename__ = "device_team"
-    __table_args__ = (UniqueConstraint("device_id", "team_id", name="uq_device_team"),)
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    device_id: Mapped[str] = mapped_column(
-        ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    team_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
 
 
 class DeviceHealthRow(Base):

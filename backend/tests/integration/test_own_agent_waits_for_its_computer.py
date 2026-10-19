@@ -6,6 +6,8 @@ message waits — the periodic scan of waiting messages starts it once one comes
 back — and the room is told so once, not once per scan.
 """
 
+from tests.support.devices import enrollment_team
+
 import uuid
 from datetime import UTC, datetime
 
@@ -62,7 +64,10 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
         code = await devices.start("laptop")
         laptop = (
             await devices.approve(
-                code, owner_user_id=alice.id, supply=Supply.self_hosted
+                code,
+                owner_user_id=alice.id,
+                supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, alice.id),
             )
         ).device_id
         db.add(
