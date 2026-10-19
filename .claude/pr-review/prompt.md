@@ -128,10 +128,11 @@ say.
   Run these mutations in parallel, not one after another. Give each test its
   own detached copy (`git worktree add --detach <path> <pinned sha>`), revert
   into it the non-test part of the change, and start each check in the
-  background so all of them are in flight before you read the diff; then read
-  the diff and collect results as they finish, so the reading overlaps the
-  runs. One copy per mutation: two reverts in one tree would report each
-  other as the change. Remove the copies afterwards.
+  background — as many at once as the machine can hold — so the runs are in
+  flight before you read the diff; then read the diff and collect results as
+  they finish, so the reading overlaps the runs. One copy per mutation: two
+  reverts in one tree would report each other as the change. Remove the
+  copies afterwards.
 
   Run the narrowest command that exercises the test — the test file, or one
   test by name, not the whole suite where the runner can select what it
