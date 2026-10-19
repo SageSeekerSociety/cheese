@@ -95,7 +95,7 @@ describe('人做成了一件会了结待办的事，角标当场重读', () => {
   it.each([
     ['在房间里回答提问', () => postChatMessage('room-1', { content: '用方案 A', request_id: 'r1' })],
     ['在待办页拍板', () => resolveAlert(7, '先灰度')],
-    ['采纳一份改动', () => acceptCard('card-1', 'andy', null)],
+    ['采纳一份改动', () => acceptCard('card-1', 'andy', null, null)],
     ['在动态里把变更提醒标为已读', () => NotificationsApi.updateStatus(3, true)],
   ])('%s：不等 30 秒', async (_what, act) => {
     const utils = await mountBadge(2)

@@ -67,6 +67,7 @@
   "cheeseAsk": "Ask the user",
   "cheeseAcceptRequest": "Submit for review",
   "cheeseDescribe": "Edit the review notes",
+  "cheeseRedeliver": "Replace the deliverable under review",
   "cheeseReady": "Mark ready for review",
   "cheeseMilestone": "Add a milestone",
   "cheeseMembers": "List channel members",
