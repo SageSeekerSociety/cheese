@@ -279,15 +279,19 @@ async def get_user(
     )
 
 
-@router.patch(
-    "/{userId}", summary="Update user profile (partial)", dependencies=[ROUTE_DECIDES]
-)
-async def patch_user_profile(
-    user_id: Annotated[int, Path(ge=0, alias="userId")],
-    payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    profile_service: UserProfileService = Depends(get_user_profile_service),
+async def _update_profile(
+    *,
+    user_id: int,
+    payload: dict,
+    auth_user: AuthUserInfo,
+    profile_service: UserProfileService,
 ) -> dict:
+    """The one profile update PATCH and PUT both perform.
+
+    They differ only in how much of the body a client may omit, which the
+    request model decides; the ownership check and the write live here so a
+    rule added for one verb cannot silently miss the other.
+    """
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can update their profile.")
     await profile_service.update_profile(
@@ -297,6 +301,23 @@ async def patch_user_profile(
         avatar_id=payload.get("avatarId"),
     )
     return ok({})
+
+
+@router.patch(
+    "/{userId}", summary="Update user profile (partial)", dependencies=[ROUTE_DECIDES]
+)
+async def patch_user_profile(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: dict = Body(...),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    profile_service: UserProfileService = Depends(get_user_profile_service),
+) -> dict:
+    return await _update_profile(
+        user_id=user_id,
+        payload=payload,
+        auth_user=auth_user,
+        profile_service=profile_service,
+    )
 
 
 @router.put(
@@ -308,12 +329,9 @@ async def put_user_profile(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     profile_service: UserProfileService = Depends(get_user_profile_service),
 ) -> dict:
-    if auth_user.user_id != user_id:
-        raise ForbiddenError("Only the user themselves can update their profile.")
-    await profile_service.update_profile(
+    return await _update_profile(
         user_id=user_id,
-        nickname=payload.get("nickname"),
-        intro=payload.get("intro"),
-        avatar_id=payload.get("avatarId"),
+        payload=payload,
+        auth_user=auth_user,
+        profile_service=profile_service,
     )
-    return ok({})

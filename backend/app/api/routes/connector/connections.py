@@ -158,6 +158,18 @@ async def _my_self_hosted(
         raise NotFoundError(say("deviceNotYours"))
 
 
+async def _my_login(
+    db: DbSession, resolver: ActorResolverDep, service: DeviceService, login_id: str
+) -> str:
+    """The machine holding one of the caller's logins, on a machine they
+    enrolled, and only theirs."""
+    device_id = await owner_login.machine_of(db, login_id)
+    if device_id is None:
+        raise NotFoundError(say("ownAgentConnectionNotFound"))
+    await _my_self_hosted(device_id, resolver, service)
+    return device_id
+
+
 def _login_out(login: dict | None) -> ClaudeCodeLoginOut | None:
     return None if login is None else ClaudeCodeLoginOut.model_validate(login)
 
@@ -262,56 +274,72 @@ async def remove_account_connection(
 async def check_my_claude_code(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
 ) -> dict[str, Any] | None:
-    """Ask one of the caller's machines again whether their own Claude Code is
-    logged in there (#2991). They log in on the machine itself, which tells the
-    server nothing; the page showing that machine asks, rather than leaving the
-    answer from its last connection standing. A logout its owner asked for
-    while it was away is carried out first."""
+    """Ask one of the caller's machines again which logins their own Claude
+    Code has there (#2991), and answer the one the machine shows. They log in
+    on the machine itself, which tells the server nothing; the page showing
+    that machine asks, rather than leaving the answer from its last connection
+    standing. A logout its owner asked for while it was away is carried out
+    first."""
     await _my_self_hosted(device_id, resolver, service)
-    if device_hub.is_online(device_id):
-        try:
-            await owner_login.settle(db, device_hub, device_id)
-            login = await owner_login.ask(device_hub, device_id)
-        except Exception:
-            # Gone or slow to answer: what it said last still stands.
-            logger.warning("claude login not checked on %s", device_id, exc_info=True)
-            login = None
-        if login is not None:
-            await owner_login.remember(db, device_id, login)
-            await db.commit()
-    return await owner_login.status(db, device_id)
+    await _ask_again(db, device_id)
+    return (await owner_login.statuses(db, [device_id])).get(device_id)
+
+
+async def _ask_again(db: DbSession, device_id: str) -> None:
+    if not device_hub.is_online(device_id):
+        return
+    try:
+        await owner_login.settle(db, device_hub, device_id)
+        logins = await owner_login.ask(device_hub, device_id)
+    except Exception:
+        # Gone or slow to answer: what it said last still stands.
+        logger.warning("claude login not checked on %s", device_id, exc_info=True)
+        return
+    await owner_login.remember(db, device_id, logins)
+    await db.commit()
+
+
+# The handler decides: only the machine's owner, a person, may ask it.
+@router.post("/my/claude-logins/{login_id}/check", dependencies=[ROUTE_DECIDES])
+async def check_my_claude_login(
+    login_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+) -> ClaudeCodeLoginOut | None:
+    """Ask the machine holding one of the caller's logins again what it is
+    (「模型连接」's 重新检查). The machine answers for all of its logins at once."""
+    await _ask_again(db, await _my_login(db, resolver, service, login_id))
+    return _login_out(await owner_login.status(db, login_id))
 
 
 # The handler decides: only the machine's owner, a person, may remove it.
-@router.delete("/my/devices/{device_id}/claude-code", dependencies=[ROUTE_DECIDES])
-async def revoke_my_claude_code(
-    device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+@router.delete("/my/claude-logins/{login_id}", dependencies=[ROUTE_DECIDES])
+async def revoke_my_claude_login(
+    login_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
 ) -> ClaudeCodeLoginOut | None:
-    """Log the caller's own Claude Code out on one of their machines, from any
-    browser (#2991). Out of use at once; the machine logs out now when online,
-    else as it next connects."""
-    await _my_self_hosted(device_id, resolver, service)
-    await owner_login.revoke(db, device_hub, device_id)
-    return _login_out(await owner_login.status(db, device_id))
+    """Log one of the caller's own Claude Code logins out on its machine, from
+    any browser (#2991); the machine's other logins stay. Out of use at once;
+    the machine logs out now when online, else as it next connects."""
+    await _my_login(db, resolver, service, login_id)
+    await owner_login.revoke(db, device_hub, login_id)
+    return _login_out(await owner_login.status(db, login_id))
 
 
 # The handler decides: only the machine's owner, a person, may name it.
-@router.patch("/my/devices/{device_id}/claude-code", dependencies=[ROUTE_DECIDES])
-async def rename_my_claude_code(
-    device_id: str,
+@router.patch("/my/claude-logins/{login_id}", dependencies=[ROUTE_DECIDES])
+async def rename_my_claude_login(
+    login_id: str,
     body: ConnectionRename,
     resolver: ActorResolverDep,
     service: DeviceServiceDep,
     db: DbSession,
 ) -> ClaudeCodeLoginOut:
-    """Name the login the caller's own Claude Code has on one of their machines
-    (#2991); the own agents on it are named after it, whatever the machine
-    reports later. The machine need not be online."""
-    await _my_self_hosted(device_id, resolver, service)
-    if not await owner_login.rename(db, device_id, body.name):
+    """Name one of the caller's own Claude Code logins (#2991); the own agents
+    on it are named after it, whatever the machine reports later. The machine
+    need not be online."""
+    await _my_login(db, resolver, service, login_id)
+    if not await owner_login.rename(db, login_id, body.name):
         raise NotFoundError(say("ownAgentConnectionNotFound"))
     await db.commit()
-    return ClaudeCodeLoginOut.model_validate(await owner_login.status(db, device_id))
+    return ClaudeCodeLoginOut.model_validate(await owner_login.status(db, login_id))
 
 
 # The handler decides: only the machine's owner, a person, may set it.
@@ -325,14 +353,15 @@ async def use_my_model_service(
     service: DeviceServiceDep,
     db: DbSession,
 ) -> ClaudeCodeLoginOut | None:
-    """Point the caller's own Claude Code on one of their machines at another
-    model service, from any browser (#2991). The key is handed to the machine,
-    which keeps it; it is not stored here. The machine has to be online."""
+    """Add a login to the caller's own Claude Code on one of their machines
+    that calls another model service, from any browser (#2991), and answer it.
+    The key is handed to the machine, which keeps it; it is not stored here.
+    The machine has to be online."""
     await _my_self_hosted(device_id, resolver, service)
     if not device_hub.is_online(device_id):
         raise ConflictError(say("modelServiceMachineOffline"))
     try:
-        await owner_login.use_model_service(
+        local_id = await owner_login.use_model_service(
             db,
             device_hub,
             device_id,
@@ -346,7 +375,7 @@ async def use_my_model_service(
         ) from None
     except (DeviceOffline, TimeoutError):
         raise ConflictError(say("modelServiceMachineOffline")) from None
-    return _login_out(await owner_login.status(db, device_id))
+    return _login_out(await owner_login.status_on(db, device_id, local_id))
 
 
 # The handler decides: only the machine's owner, a person, may ask it.

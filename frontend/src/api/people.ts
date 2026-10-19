@@ -52,3 +52,10 @@ export function getUserTopics(
 export function deleteUnderstanding(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/users/me/understanding/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
+
+// Of these handles, the ones whose account was closed (注销): their old messages
+// are signed 「已注销用户」 instead of a bare handle.
+export function listClosedAccounts(handles: string[]): Promise<{ handles: string[] }> {
+  const query = new URLSearchParams({ handles: handles.join(',') })
+  return request<{ handles: string[] }>(`/closed-accounts?${query}`)
+}

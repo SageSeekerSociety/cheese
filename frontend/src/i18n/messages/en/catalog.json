@@ -1127,6 +1127,10 @@
     "s9": {
       "name": "Enable two-step: backup codes",
       "note": "The third step: list this set of backup codes, remind that they're shown only this once and each works once, and offer a button to copy the whole set."
+    },
+    "s10": {
+      "name": "Closing refused: still a team's only owner",
+      "note": "The server refuses the close: this person is still the only owner of a team that others are in, or that someone can still enter through a pending invitation or joining without approval. The reason stays in the dialog, names the team, and says to transfer ownership, or cancel the invitations and turn on join approval, first."
     }
   },
   "modelConnectionsView": {
@@ -1142,6 +1146,10 @@
     "s3": {
       "name": "A key on the account fails its check",
       "note": "The service refused the key when it was tested again: marked as failing the check, with what the service said below; it can still be tested again, renamed or removed."
+    },
+    "s4": {
+      "name": "Two logins on one device",
+      "note": "Two Claude accounts logged in on the workstation: one row each, each checked again, renamed and removed on its own; removing one leaves the other in use."
     }
   },
   "thisDeviceView": {

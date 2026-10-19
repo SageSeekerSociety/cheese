@@ -441,7 +441,6 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "delivery_overdue_check_interval_s",
         "task_deadline_sweep_interval_s",
         "memory_dream_sweep_interval_s",
-        "wake_watch_interval_s",
         "sandbox_disk_check_s",
         "draft_pr_sweep_interval_s",
         "ci_activity_sweep_interval_s",
@@ -458,7 +457,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("pr poll", 101),
         ("task pr poll", 101),
         ("landing watch", 101),
-        ("draft pr sweep", 120),
+        ("draft pr sweep", 119),
         ("orphan sweep", 102),
         ("closed task stop", 103),
         ("queued message sweep", 104),
@@ -469,7 +468,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("cloud sandbox lifecycle", 107),
         ("cloud compute metering", 107),
         ("cloud warm pool", 107),
-        ("sandbox disk guard", 119),
+        ("sandbox disk guard", 118),
         ("subscription usage ingest", 108),
         ("backend error flush", 109),
         ("run record expiry", 110),
@@ -489,7 +488,6 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("task deadline sweep", 116),
         ("memory dream", 117),
         ("ci activity sweep", 300),
-        ("wake watch", 118),
     ]
     assert all(job.owner_only for job in world.jobs.values())
     world.get_runner.assert_not_called()
