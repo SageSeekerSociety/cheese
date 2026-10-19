@@ -270,30 +270,6 @@ class DocumentJournal:
         )
         await self.session.flush()
 
-    async def seed_existing(
-        self,
-        *,
-        document_id: uuid.UUID,
-        version: int,
-        content: str,
-        actor: str,
-    ) -> None:
-        """Preserve the deployed snapshot; do not invent pre-journal history."""
-        existing = await self.session.scalar(
-            select(DocumentVersion.id).where(
-                DocumentVersion.document_id == document_id,
-                DocumentVersion.version == version,
-            )
-        )
-        if existing is None:
-            await self.append(
-                document_id=document_id,
-                version=version,
-                content=content,
-                actor=actor,
-                base_version=None,
-            )
-
     async def finish(self, operation: DocumentOperation, receipt: dict) -> None:
         operation.receipt = receipt
         await self.session.flush()

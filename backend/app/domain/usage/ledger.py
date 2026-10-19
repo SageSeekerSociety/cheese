@@ -237,31 +237,6 @@ class Ledger(LedgerQueries):
             route="gateway",
         )
 
-    async def charge_spent(
-        self,
-        payer: Payer,
-        *,
-        user_id: int,
-        model: str,
-        input_tokens: int,
-        output_tokens: int,
-        cost_usd: float,
-        kind: str,
-    ) -> float:
-        """Record what the gateway says a call ``user_id`` made outside any
-        project spent, and charge it. Returns the credits deducted."""
-        return await self.record(
-            payer,
-            credits=spend_to_credits(cost_usd),
-            user_id=user_id,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=cost_usd,
-            kind=kind,
-            route="gateway",
-        )
-
     async def record(
         self,
         payer: Payer,
