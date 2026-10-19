@@ -168,10 +168,14 @@ model_list:
   # RMB 0.00022 per second (Beijing), 2026-10-18:
   # https://help.aliyun.com/zh/model-studio/model-pricing
   # ÷ 25 tokens ÷ 7.1 RMB/USD = $1.2394e-6 per token.
+  # The base URL is the account's own business: a workspace may hand out a
+  # dedicated `{WorkspaceId}.cn-beijing.maas.aliyuncs.com`, which only that
+  # workspace's key may call. It comes from the environment (compose fills in
+  # the shared DashScope domain when unset), so no workspace id is in the repo.
   - model_name: qwen-audio-asr
     litellm_params:
       model: qwen-asr/qwen-audio-3.0-asr-flash
-      api_base: https://dashscope.aliyuncs.com
+      api_base: os.environ/DASHSCOPE_API_BASE
       api_key: os.environ/DASHSCOPE_API_KEY
       input_cost_per_token: 0.0000012394
       output_cost_per_token: 0
