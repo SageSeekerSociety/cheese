@@ -96,13 +96,16 @@ def test_the_questions_go_out_in_one_request_and_the_agent_is_told_to_stop(
     cli, host, calls, _ = platform
     questions = [_question(i) for i in range(total)]
     result = cli.run_platform_tool(
-        "cheese_ask", {"questions": questions, "author": "spoof"}, host
+        "cheese_ask",
+        {"questions": questions, "author": "spoof", "to_owner": True},
+        host,
     )
 
     assert len(calls) == 1
     path, body, headers = calls[0]
     assert path == "/topics/room/asks"
     assert body["questions"] == questions
+    assert body["to_owner"] is True
     assert "author" not in body
     uuid.UUID(body["request_id"])
     assert headers["X-Cheese-Token"] == "fixture-agent-credential"

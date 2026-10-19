@@ -174,3 +174,55 @@ def test_team_plan_requires_an_agreed_real_plan(client, actors):
         ]["key"]
         == "research"
     )
+
+
+def test_reward_history_belongs_only_to_the_authenticated_person(client, actors):
+    assert client.get("/users/me/credits/rewards").status_code == 401
+    client.post("/users/me/credits/beta", headers=actors["owner"])
+    report = client.post(
+        "/feedback",
+        headers=actors["owner"],
+        json={"title": "Reward history", "visibility": "private"},
+    ).json()["data"]["id"]
+    awarded = client.post(f"/admin/feedback/{report}/reward", headers=actors["triager"])
+    assert awarded.status_code == 200, awarded.text
+    response = client.get("/users/me/credits/rewards", headers=actors["owner"])
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["feedback_count"] == 1
+    assert data["feedback_credits"] == 100
+    assert {(item["kind"], item["credits"]) for item in data["items"]} == {
+        ("beta", 500),
+        ("feedback", 100),
+    }
+    other = client.get("/users/me/credits/rewards", headers=actors["outsider"])
+    assert other.status_code == 200, other.text
+    assert other.json()["data"] == {
+        "feedback_count": 0,
+        "feedback_credits": 0,
+        "items": [],
+    }
+
+
+def test_members_can_read_published_plans_without_administrator_data(client, actors):
+    assert client.get("/credits/plans").status_code == 401
+    created = client.post(
+        "/admin/plans",
+        headers=actors["admin"],
+        json={
+            "key": "research-ui",
+            "name": "Research Team",
+            "audience": "team",
+            "credits_per_period": 5000,
+        },
+    )
+    assert created.status_code == 201, created.text
+    response = client.get("/credits/plans", headers=actors["owner"])
+    assert response.status_code == 200, response.text
+    plans = response.json()["data"]["plans"]
+    assert "reserve" not in {plan["key"] for plan in plans}
+    research = next(plan for plan in plans if plan["key"] == "research-ui")
+    assert research["credits_per_period"] == 5000
+    assert research["audience"] == "team"
+    assert isinstance(research["models"], list)
+    assert not {"admin_only", "team_count", "is_default", "rank"} & research.keys()

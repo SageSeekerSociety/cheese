@@ -44,7 +44,6 @@ from app.domain.agent_instance.adapters import (
     named_teammate,
     project_team,
 )
-from app.domain.agent_instance.own import may_chat_with
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.adapters import platform_line
 from app.domain.block.queries import weeklies_for_project
@@ -690,12 +689,6 @@ async def get_private_chat(
         for handle in (user_handle, peer_handle):
             if not await seats.on_project(project_id, handle, team=project_team):
                 raise ForbiddenError(say("privateChatProjectMembersOnly"))
-    if peer_handle is None:
-        project = await ProjectService(db).get_or_404(project_id)
-        if not await may_chat_with(
-            db, project_id, agent_handle, user_handle, project.settings
-        ):
-            raise ForbiddenError(say("ownAgentOwnerOnlyChat"))
     topic = await TopicService(db).get_or_create_private(
         project_id=project_id,
         user_handle=user_handle,

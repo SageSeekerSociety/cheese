@@ -668,7 +668,7 @@ func removeFootprint(cfgPath, home string, last bool) error {
 // and skill cache that no single enrollment owns.
 var (
 	sharedConfigEntries = map[string]bool{"profiles": true, "bin": true}
-	sharedRootEntries   = map[string]bool{"profiles": true, place.ClaudeLogin: true, "claude": true, "tools": true, "skill-bundles": true}
+	sharedRootEntries   = map[string]bool{"profiles": true, place.ClaudeLogin: true, place.ClaudeLogins: true, "claude": true, "tools": true, "skill-bundles": true}
 )
 
 func removeEntries(directory string, keep map[string]bool) error {

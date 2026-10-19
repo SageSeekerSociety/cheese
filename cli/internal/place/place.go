@@ -49,15 +49,25 @@ func CurrentRoot() string {
 	return Root
 }
 
-// ClaudeLogin is the directory under Root that holds the Claude Code login the
-// machine's owner gives the platform (`cheesehost claude login`), apart from
-// their own `~/.claude`. The backend names it in `place.py`
+// ClaudeLogin is the directory under Root that holds the first Claude Code login
+// the machine's owner gives the platform (`cheesehost claude login`), apart
+// from their own `~/.claude`. The backend names it in `place.py`
 // (`CLAUDE_LOGIN_DIR`) and `backend/tests/unit/test_footprint_root.py` fails if
 // the two disagree.
 const ClaudeLogin = "claude-login"
 
-// ModelService is the file in ClaudeLogin that holds another model service the
-// owner set instead of the login (`cheesehost claude login --base-url`). The
-// backend's launch and probe name it in `place.py` (`MODEL_SERVICE_FILE`), held
-// to this one by the same test.
+// ClaudeLogins is the directory under Root that holds every further login,
+// one directory each, named by its id. `place.py` names it
+// (`CLAUDE_LOGINS_DIR`), held to this one by the same test.
+const ClaudeLogins = "claude-logins"
+
+// FirstClaudeLogin is the id of the login in ClaudeLogin, the one a machine had
+// before it could hold several. The backend names it in `login_kind.py`
+// (`FIRST_LOGIN`), held to this one by the same test.
+const FirstClaudeLogin = "default"
+
+// ModelService is the file in a login's directory that holds another model
+// service the owner set instead of the login (`cheesehost claude login
+// --base-url`). The backend's launch and probe name it in `place.py`
+// (`MODEL_SERVICE_FILE`), held to this one by the same test.
 const ModelService = "model-service.json"

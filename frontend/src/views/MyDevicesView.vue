@@ -318,6 +318,13 @@ useCommands(() =>
     : []
 )
 
+// 在这台设备上登录的命令；这台设备显示的那份登录存在时点名它，重新登录的就是它。
+function claudeLoginCommand(d: MyDevice): string {
+  const cheesehost = systemOf(d) === 'windows' ? 'cheesehost' : '~/.local/bin/cheesehost'
+  const login = claudeLoginOf(d)
+  return login ? `${cheesehost} claude login --login ${login.local_id}` : `${cheesehost} claude login`
+}
+
 // 订阅档位按厂商的写法首字母大写（max → Max）；API key 登录没有档位。
 function claudePlan(plan: string | null | undefined): string {
   return plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : t('account.devices.claudeCodeApiKey')
@@ -448,11 +455,11 @@ function claudePlan(plan: string | null | undefined): string {
               {{ t('account.devices.claudeCodeLoggedIn', { plan: claudePlan(claudeLoginOf(d)?.subscription_type) }) }}
             </template>
             <i18n-t v-else keypath="account.devices.claudeCodeLoggedOut" tag="span">
-              <!-- Windows 的安装程序把 cheesehost 放进了命令搜索路径；Mac 和 Linux 上它在 ~/.local/bin，默认不在。 -->
+              <!-- Windows 的安装程序把 cheesehost 放进了命令搜索路径；Mac 和 Linux 上它在 ~/.local/bin，默认不在。
+                   这里显示的那份登录没登上时，命令点名它：重新登录它，用它加入项目的 Claude Code 才回来；
+                   不点名的 `claude login` 会另添一份。 -->
               <template #command
-                ><code>{{
-                  systemOf(d) === 'windows' ? 'cheesehost claude login' : '~/.local/bin/cheesehost claude login'
-                }}</code></template
+                ><code>{{ claudeLoginCommand(d) }}</code></template
               >
             </i18n-t>
           </div>

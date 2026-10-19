@@ -84,7 +84,6 @@
   "moveOnlyPersonal": "Only a personal project can be moved into a team",
   "notARoomFile": "That isn't a file in the channel",
   "overTierInvalid": "over_tier must be one of {values}",
-  "ownAgentOwnerOnlyChat": "Only its owner can chat privately with their own Claude Code",
   "ownerCannotLeave": "The project's owner cannot leave it; transfer the project first",
   "pathEmpty": "Path can't be empty",
   "pathMustBeRelative": "Path must be relative to the workspace",

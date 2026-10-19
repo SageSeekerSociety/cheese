@@ -147,7 +147,7 @@ func TestUninstallWithAnotherEnrollmentPreservesSharedModelLogin(t *testing.T) {
 	if err := os.WriteFile(login, []byte("shared-model"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	shared := []string{"tools/pi/bin", "skill-bundles/one/skill.md"}
+	shared := []string{"tools/pi/bin", "skill-bundles/one/skill.md", "claude-logins/second/model-service.json"}
 	for _, relative := range shared {
 		path := filepath.Join(home, ".cheese", relative)
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {

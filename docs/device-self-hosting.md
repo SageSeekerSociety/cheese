@@ -97,7 +97,7 @@ Commands without `--profile` address `default`. An explicit login to an already 
 
 The connector supplies `CHEESE_PROFILE_ROOT` to execution commands and screens. Backend paths, harness state, executor releases, sandbox records and cleanup resolve that root on the machine. The connector announces `profiles` in `hello`; a connector that does not (one built before profiles) is a default-profile machine, and the hub writes `.cheese` into the paths it resolves itself until its update lands. Uninstall removes the selected profile's service, config and workspace. Uninstalling `default` preserves the other profiles under `profiles/`.
 
-Claude subscription login is independent of execution enrollment. `~/.cheese/claude-login`, its `model-service.json`, and the shared model binaries retain their existing paths. While another enrollment remains, uninstall preserves them, the model runtime's shared skill cache, and the connector binary with its PATH entry. Uninstalling the last enrollment removes the whole installation, as on a machine with one enrollment: the config directory, `~/.cheese`, and the binary.
+Claude subscription login is independent of execution enrollment. `~/.cheese/claude-login`, every further login under `~/.cheese/claude-logins/<id>`, their `model-service.json`, and the shared model binaries stay at the computer's `~/.cheese`, outside any profile root: logins are the computer's, shared by its enrollments. While another enrollment remains, uninstall preserves them, the model runtime's shared skill cache, and the connector binary with its PATH entry. Uninstalling the last enrollment removes the whole installation, as on a machine with one enrollment: the config directory, `~/.cheese`, and the binary.
 
 ---
 
@@ -159,9 +159,9 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 ### 机主自己的 Claude Code 登录
 
-机主可以把自己的 Claude 账号或 API key 交给这台机器上平台运行的 Claude Code（#2991）：在机器上运行 `cheesehost claude login`。它先向服务器问平台钉的版本（`GET <origin>/connector/claude/pin`），机器上没有就从上面那条路由下载到 `~/.cheese/claude/versions/<version>`，再以 `CLAUDE_CONFIG_DIR=~/.cheese/claude-login` 运行 `claude auth login`。登录只在这个目录里，机主自己的 `~/.claude` 不读也不写，两边各有一对 token、各自续期。`cheesehost claude status` 和 `cheesehost claude logout` 查看和注销这份登录。机主也可以不用 Claude 账号，改用兼容 Anthropic 接口的其他模型服务：`cheesehost claude login --base-url <地址> --model <模型>`，密钥从环境变量 `CHEESE_MODEL_TOKEN` 读，没有就在终端里问。三项存在 `~/.cheese/claude-login/model-service.json`（只有机主可读），有这个文件时启动会话导出 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`，并把 `ANTHROPIC_MODEL`、三档默认模型和分身模型都设成这个模型；平台探测登录时只带回模型名，不带密钥。不带 `--base-url` 再登录一次，或者 `logout`，都会删掉这个文件。
+机主可以把自己的 Claude 账号或 API key 交给这台机器上平台运行的 Claude Code（#2991）：在机器上运行 `cheesehost claude login`。它先向服务器问平台钉的版本（`GET <origin>/connector/claude/pin`），机器上没有就从上面那条路由下载到 `~/.cheese/claude/versions/<version>`，再以这份登录自己的目录为 `CLAUDE_CONFIG_DIR` 运行 `claude auth login`。每运行一次添一份登录：机器的第一份在 `~/.cheese/claude-login`（macOS 上它的钥匙串条目按这个路径命名，所以一直留在这里），之后的每份在 `~/.cheese/claude-logins/<编号>`；`--login <编号>` 重新登录已有的一份。登录只在这些目录里，机主自己的 `~/.claude` 不读也不写，各有一对 token、各自续期。`cheesehost claude status` 列出每份登录，`cheesehost claude logout <编号>` 注销其中一份（机器只有一份时可以不写编号）。平台为每份登录记一行（`claude_logins`），成员的 Claude Code 加入项目时选其中一份，会话只用那一份的目录。机主也可以不用 Claude 账号，改用兼容 Anthropic 接口的其他模型服务：`cheesehost claude login --base-url <地址> --model <模型>`，密钥从环境变量 `CHEESE_MODEL_TOKEN` 读，没有就在终端里问。三项存在那份登录目录下的 `model-service.json`（只有机主可读），有这个文件时启动会话导出 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`，并把 `ANTHROPIC_MODEL`、三档默认模型和分身模型都设成这个模型；平台探测登录时只带回模型名，不带密钥。不带 `--base-url` 用 `--login <编号>` 重新登录那一份，或者 `logout` 它，都会删掉这个文件。
 
-机器每次连上，后端经 `hub.exec(["python3", "-"])` 在机器上跑 `claude auth status`（不调用模型），把答案记进 `device_claude_login`（`harness/claude_code/owner_login.py`）。只问人接入的机器，云机器不问。
+机器每次连上，后端经 `hub.exec(["python3", "-"])` 在机器上跑 `claude auth status`（不调用模型），对每份登录各跑一次，把答案记进 `claude_logins`，每份一行（`harness/claude_code/owner_login.py`）。只问人接入的机器，云机器不问。
 
 **入册时缺任何一样都是 fatal**，理由同 §0：留到后面发现的失败，全都出现在没人看的地方。
 

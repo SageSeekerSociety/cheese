@@ -195,8 +195,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     request_concurrency: int = Field(default=16, ge=1)
     request_queue_depth: int = Field(default=64, ge=0)
     request_queue_timeout_s: float = Field(default=15.0, ge=0)
-    # How long a rate check may wait on Redis before the request goes through
-    # unchecked: a hung Redis must not hang every request with it.
+    # How long a rate check, or the closed-account check
+    # (``app.core.deleted_accounts``), may wait on Redis before the request goes
+    # through unchecked: a hung Redis must not hang every request with it.
     request_limit_redis_timeout_s: float = Field(default=0.25, gt=0)
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
@@ -898,14 +899,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     #: 报警，但同一个问题一小时只报一条。
     delivery_overdue_check_interval_s: int = 600
     task_deadline_sweep_interval_s: int = 900
-    #: 叫醒链的两拍（#1343 的定时器、看门狗的心跳）多久核一遍
-    #: （`domain/wake_watch/`，只跑在平台自己那一侧）。比拍的周期密得多就行 ——
-    #: 判停摆的线是 60 分钟，它只决定「多久发现」。0 关闭。
-    wake_watch_interval_s: int = 300
-    #: 判到停摆之后，要不要真的点 #1343 那条线上的座位补一跳
-    #: （`domain/wake_watch/catchup.py`）。关掉就是影子期：只判、只记，判据一个字
-    #: 不变 —— 判据在真实数据上核过之后才默认打开。
-    wake_watch_catchup: bool = True
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having

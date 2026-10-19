@@ -127,15 +127,17 @@ fn cancel_connect(running: State<'_, connect::Running>) {
 struct ClaudeLogin(connect::Running);
 
 /// Logs in the platform's Claude Code here: in the browser, no terminal. The
-/// channel hears "preparing" and "browser".
+/// channel hears "preparing" and "browser". `login_id` names a login this
+/// computer has, to log in again; without it a login is added.
 #[tauri::command]
 async fn claude_login(
     running: State<'_, ClaudeLogin>,
     console: bool,
+    login_id: Option<String>,
     progress: Channel<Progress>,
 ) -> Result<(), connect::Failure> {
     let step = |id: &'static str| drop(progress.send(Progress::Step { id }));
-    connect::claude_login(&running.0, console, &step).await
+    connect::claude_login(&running.0, console, login_id.as_deref(), &step).await
 }
 
 #[tauri::command]
@@ -143,23 +145,33 @@ fn cancel_claude_login(running: State<'_, ClaudeLogin>) {
     connect::cancel(&running.0);
 }
 
-/// Points the platform's Claude Code here at another model service. The
-/// channel hears "preparing" while the build downloads.
+/// Points a login of the platform's Claude Code here at another model service:
+/// the one `login_id` names, or a new one. The channel hears "preparing"
+/// while the build downloads.
 #[tauri::command]
 async fn claude_model_service(
     running: State<'_, ClaudeLogin>,
     base_url: String,
     token: String,
     model: String,
+    login_id: Option<String>,
     progress: Channel<Progress>,
 ) -> Result<(), connect::Failure> {
     let step = |id: &'static str| drop(progress.send(Progress::Step { id }));
-    connect::claude_model_service(&running.0, &base_url, &token, &model, &step).await
+    connect::claude_model_service(
+        &running.0,
+        &base_url,
+        &token,
+        &model,
+        login_id.as_deref(),
+        &step,
+    )
+    .await
 }
 
 #[tauri::command]
-async fn claude_logout() -> Result<(), String> {
-    connect::claude_logout().await
+async fn claude_logout(login_id: String) -> Result<(), String> {
+    connect::claude_logout(login_id).await
 }
 
 /// Stops this computer's connector after the page has unbound the device.

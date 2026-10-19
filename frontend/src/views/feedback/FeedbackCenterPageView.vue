@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { FeedbackCard as FeedbackCardItem, FeedbackKind, FeedbackMeta, FeedbackStatus } from '@/cx_types'
 import type { FeedbackTab as TabName } from '@/stores/feedback'
+import type { BetaCredits, CreditRewards } from '@/types/creditOffers'
 
 import { computed, ref, watch } from 'vue'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
@@ -91,6 +94,9 @@ const props = defineProps<{
   hotHalfLifeDays: number
   hotThreshold: number
   hotMinItems: number
+  beta?: BetaCredits | null
+  rewards?: CreditRewards | null
+  rewardsError?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -112,7 +118,18 @@ const emit = defineEmits<{
   'dismiss-error': []
   /** 某一行点了支持 / 取消支持。请求在容器里发。 */
   support: [id: string]
+  'retry-rewards': []
 }>()
+
+const navigation = useNavigation()
+const showRules = ref(false)
+watch(
+  () => navigation?.route?.hash,
+  (hash) => {
+    if (hash === '#rewards') showRules.value = true
+  },
+  { immediate: true }
+)
 
 /* ---- 搜索 ----
  *
@@ -266,7 +283,7 @@ function clearFilters() {
 </script>
 
 <template>
-  <FeedbackPageShell :title="t('feedback.center.title')">
+  <FeedbackPageShell :title="t('feedback.center.title')" wide>
     <template #actions>
       <!-- 这里原先还有一个「数据与架构」的入口，通向 /design/feedback。删了：那是
            给人核对实现用的页面，挂在产品里用户会当成功能点进去；两张图现在在
@@ -290,121 +307,142 @@ function clearFilters() {
       </BaseButton>
     </template>
 
-    <p class="fb-rewards">
-      {{ t('usage.offers.feedbackBody', { n: 100 }) }}
-      <NavLink to="/users/settings/usage">{{ t('usage.viewUsage') }}</NavLink>
-    </p>
+    <section id="rewards" class="fb-rewards">
+      <div class="fb-rewards__lead">
+        <v-icon icon="mdi-gift-outline" size="22" />
+        <div>
+          <h2>{{ t('usage.rewards.activityTitle') }}</h2>
+          <p>{{ t('usage.rewards.activityLead', { n: beta?.feedback_credits ?? 100 }) }}</p>
+        </div>
+        <button
+          type="button"
+          class="fb-rules-toggle"
+          :aria-expanded="showRules"
+          aria-controls="reward-rules"
+          @click="showRules = !showRules"
+        >
+          {{ t('usage.rewards.rules') }}<v-icon :icon="showRules ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="16" />
+        </button>
+      </div>
+      <div v-if="showRules" id="reward-rules" class="fb-rewards__rules">
+        <p>{{ t('usage.rewards.betaRule', { n: beta?.credits ?? 500 }) }}</p>
+        <p>{{ t('usage.rewards.feedbackRule', { n: beta?.feedback_credits ?? 100 }) }}</p>
+        <NavLink to="/users/settings/usage">{{ t('usage.rewards.claimLink') }}</NavLink>
+      </div>
+    </section>
 
-    <!-- 栏位切换走一个 action，不直接改那一格：栏位是**服务端**的筛选，改了的
+    <div class="fb-center-columns" :class="{ 'fb-center-columns--summary': rewards || rewardsError }">
+      <div class="fb-center-list">
+        <!-- 栏位切换走一个 action，不直接改那一格：栏位是**服务端**的筛选，改了的
          下一件事必然是重新拉一页，绑赋值就把那一步留在模板外面了。 -->
-    <AdminTabs
-      :model-value="tab"
-      :options="tabs"
-      :label="t('feedback.center.tab.label')"
-      class="fb-tabs"
-      @update:model-value="emit('set-tab', $event as TabName)"
-    />
-
-    <!-- 筛选条。默认全部「不限」，所以这一页第一眼的样子没变；那一排药丸说的是
-         「这一栏里哪些」，栏位页签说的是「哪一栏」。 -->
-    <div class="fb-tools">
-      <div class="fb-search">
-        <v-icon icon="mdi-magnify" size="16" class="fb-search__icon" aria-hidden="true" />
-        <input
-          :value="query"
-          type="text"
-          class="fb-search__input"
-          :placeholder="t('feedback.center.search.placeholder')"
-          :aria-label="t('feedback.center.search.placeholder')"
-          autocomplete="off"
-          spellcheck="false"
-          @input="onSearch"
+        <AdminTabs
+          :model-value="tab"
+          :options="tabs"
+          :label="t('feedback.center.tab.label')"
+          class="fb-tabs"
+          @update:model-value="emit('set-tab', $event as TabName)"
         />
-      </div>
 
-      <div class="fb-fgroup" role="radiogroup" :aria-label="t('feedback.center.filter.kind')">
-        <span class="fb-fgroup__label">{{ t('feedback.center.filter.kind') }}</span>
-        <button
-          v-for="option in kindOptions"
-          :key="String(option.value)"
-          type="button"
-          class="fb-pill"
-          :class="{ 'fb-pill--on': kind === option.value }"
-          role="radio"
-          :aria-checked="kind === option.value"
-          @click="setKind(option.value)"
-        >
-          {{ option.title }}
-        </button>
-      </div>
+        <!-- 筛选条。默认全部「不限」，所以这一页第一眼的样子没变；那一排药丸说的是
+         「这一栏里哪些」，栏位页签说的是「哪一栏」。 -->
+        <div class="fb-tools">
+          <div class="fb-search">
+            <v-icon icon="mdi-magnify" size="16" class="fb-search__icon" aria-hidden="true" />
+            <input
+              :value="query"
+              type="text"
+              class="fb-search__input"
+              :placeholder="t('feedback.center.search.placeholder')"
+              :aria-label="t('feedback.center.search.placeholder')"
+              autocomplete="off"
+              spellcheck="false"
+              @input="onSearch"
+            />
+          </div>
 
-      <div class="fb-fgroup" role="radiogroup" :aria-label="t('feedback.center.filter.status')">
-        <span class="fb-fgroup__label">{{ t('feedback.center.filter.status') }}</span>
-        <button
-          v-for="option in statusOptions"
-          :key="String(option.value)"
-          type="button"
-          class="fb-pill"
-          :class="{ 'fb-pill--on': status === option.value }"
-          role="radio"
-          :aria-checked="status === option.value"
-          @click="setStatus(option.value)"
-        >
-          {{ option.title }}
-        </button>
-      </div>
+          <div class="fb-fgroup" role="radiogroup" :aria-label="t('feedback.center.filter.kind')">
+            <span class="fb-fgroup__label">{{ t('feedback.center.filter.kind') }}</span>
+            <button
+              v-for="option in kindOptions"
+              :key="String(option.value)"
+              type="button"
+              class="fb-pill"
+              :class="{ 'fb-pill--on': kind === option.value }"
+              role="radio"
+              :aria-checked="kind === option.value"
+              @click="setKind(option.value)"
+            >
+              {{ option.title }}
+            </button>
+          </div>
 
-      <div class="fb-fgroup" role="radiogroup" :aria-label="t('feedback.center.filter.days')">
-        <span class="fb-fgroup__label">{{ t('feedback.center.filter.days') }}</span>
-        <button
-          v-for="option in dayOptions"
-          :key="String(option.value)"
-          type="button"
-          class="fb-pill"
-          :class="{ 'fb-pill--on': days === option.value }"
-          role="radio"
-          :aria-checked="days === option.value"
-          @click="setDays(option.value)"
-        >
-          {{ option.title }}
-        </button>
-      </div>
+          <div class="fb-fgroup" role="radiogroup" :aria-label="t('feedback.center.filter.status')">
+            <span class="fb-fgroup__label">{{ t('feedback.center.filter.status') }}</span>
+            <button
+              v-for="option in statusOptions"
+              :key="String(option.value)"
+              type="button"
+              class="fb-pill"
+              :class="{ 'fb-pill--on': status === option.value }"
+              role="radio"
+              :aria-checked="status === option.value"
+              @click="setStatus(option.value)"
+            >
+              {{ option.title }}
+            </button>
+          </div>
 
-      <!-- 「作者」是这一排里唯一要打字的：它的取值不是三五个，是一个 handle。
+          <div class="fb-fgroup" role="radiogroup" :aria-label="t('feedback.center.filter.days')">
+            <span class="fb-fgroup__label">{{ t('feedback.center.filter.days') }}</span>
+            <button
+              v-for="option in dayOptions"
+              :key="String(option.value)"
+              type="button"
+              class="fb-pill"
+              :class="{ 'fb-pill--on': days === option.value }"
+              role="radio"
+              :aria-checked="days === option.value"
+              @click="setDays(option.value)"
+            >
+              {{ option.title }}
+            </button>
+          </div>
+
+          <!-- 「作者」是这一排里唯一要打字的：它的取值不是三五个，是一个 handle。
            清除的叉**只在框里有字时出现** —— 常驻的话它是一颗平时没有任何作用的按钮。 -->
-      <div class="fb-fgroup">
-        <!-- for 已关联下方原生 input；标签与含清除按钮的输入框分开，不重复嵌套控件。 -->
-        <label class="fb-fgroup__label" for="fb-author">{{ t('feedback.center.filter.author') }}</label>
-        <div class="fb-author">
-          <input
-            id="fb-author"
-            v-model="author"
-            type="text"
-            class="fb-author__input"
-            :placeholder="t('feedback.center.filter.authorPlaceholder')"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <button
-            v-if="author"
-            type="button"
-            class="fb-author__x"
-            :aria-label="t('feedback.center.filter.clear')"
-            @click="author = ''"
-          >
-            <v-icon size="12" aria-hidden="true">mdi-close</v-icon>
+          <div class="fb-fgroup">
+            <!-- for 已关联下方原生 input；标签与含清除按钮的输入框分开，不重复嵌套控件。 -->
+            <label class="fb-fgroup__label" for="fb-author">{{ t('feedback.center.filter.author') }}</label>
+            <div class="fb-author">
+              <input
+                id="fb-author"
+                v-model="author"
+                type="text"
+                class="fb-author__input"
+                :placeholder="t('feedback.center.filter.authorPlaceholder')"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button
+                v-if="author"
+                type="button"
+                class="fb-author__x"
+                :aria-label="t('feedback.center.filter.clear')"
+                @click="author = ''"
+              >
+                <v-icon size="12" aria-hidden="true">mdi-close</v-icon>
+              </button>
+            </div>
+          </div>
+
+          <!-- 「清除筛选」只在真有筛选时出现：常驻的话它是一颗平时没有任何作用的按钮，
+           而这一排里已经有五组控件了。 -->
+          <button v-if="hasFilters" type="button" class="fb-clear" @click="clearFilters">
+            {{ t('feedback.center.filter.clear') }}
           </button>
         </div>
-      </div>
 
-      <!-- 「清除筛选」只在真有筛选时出现：常驻的话它是一颗平时没有任何作用的按钮，
-           而这一排里已经有五组控件了。 -->
-      <button v-if="hasFilters" type="button" class="fb-clear" @click="clearFilters">
-        {{ t('feedback.center.filter.clear') }}
-      </button>
-    </div>
-
-    <!-- 「热门」凭什么这么排，是这一页唯一一处读者猜不出来的规则：它看着像按支持数
+        <!-- 「热门」凭什么这么排，是这一页唯一一处读者猜不出来的规则：它看着像按支持数
          排，其实是按「支持数按半衰期折过的分数」排 —— 一条二十个支持的老反馈排在一条
          今天刚爆的上面，不解释一句就只是「这个排序坏了」。
          三个数都由服务端随 `meta` 发下来，这里只负责把它们说成人话：前端自己再算一遍
@@ -412,63 +450,204 @@ function clearFilters() {
          「说明和实际排序对不上」，页面上看不出任何异常。
          加载中不藏它：这句话说的是这一栏的规则，不是这一栏的结果，跟着骨架一起闪一下
          反倒是多一次闪动。 -->
-    <p v-if="tab === 'hot'" class="t-meta-read t-num fb-hot-note">
-      {{
-        t('feedback.center.hot.note', {
-          halfLife: hotHalfLifeDays,
-          threshold: hotThreshold,
-          minItems: hotMinItems,
-        })
-      }}
-    </p>
+        <p v-if="tab === 'hot'" class="t-meta-read t-num fb-hot-note">
+          {{
+            t('feedback.center.hot.note', {
+              halfLife: hotHalfLifeDays,
+              threshold: hotThreshold,
+              minItems: hotMinItems,
+            })
+          }}
+        </p>
 
-    <!-- 列表**非空**时的失败也要画出来。以前 error 只在下面那块「一条也没有」里
+        <!-- 列表**非空**时的失败也要画出来。以前 error 只在下面那块「一条也没有」里
          渲染，于是从卡片上点「支持」失败（已办完的条目回 412）时页面上什么都不动：
          按钮按得下去、数字不变、一句话也没有 —— 和「这个按钮坏了」长得一模一样。
          列表为空时下面那块画同一句话（并且带重试），这里不重复画。 -->
-    <FeedbackErrorBanner v-if="error && items.length" :message="error" @dismiss="emit('dismiss-error')" />
+        <FeedbackErrorBanner v-if="error && items.length" :message="error" @dismiss="emit('dismiss-error')" />
 
-    <!-- 列表：一张面 + 头发丝分隔的行（`FeedbackList`）。骨架行数由它自己定（§9.4），
+        <!-- 列表：一张面 + 头发丝分隔的行（`FeedbackList`）。骨架行数由它自己定（§9.4），
          这一页的「一行」是一条 60 来像素的反馈行，不是 132px 的卡。 -->
-    <FeedbackList
-      :loading="loading"
-      :count="items.length"
-      :has-more="listHasMore"
-      :loading-more="loadingMore"
-      :shown="items.length"
-      :total="total"
-      @more="emit('more')"
-    >
-      <!-- 打开详情那条链接在行自己身上（`router-link`），这里不再接一个 `@open`
+        <FeedbackList
+          :loading="loading"
+          :count="items.length"
+          :has-more="listHasMore"
+          :loading-more="loadingMore"
+          :shown="items.length"
+          :total="total"
+          @more="emit('more')"
+        >
+          <!-- 打开详情那条链接在行自己身上（`router-link`），这里不再接一个 `@open`
            去 push —— 那就又回到「只有鼠标够得着」了，见 FeedbackCard.vue。
            点支持在卡片上报上来（带 id），请求由容器发给服务端。 -->
-      <FeedbackCard v-for="item in items" :key="item.id" :item="item" @support="emit('support', $event)" />
+          <FeedbackCard v-for="item in items" :key="item.id" :item="item" @support="emit('support', $event)" />
 
-      <template #empty>
-        <AdminEmptyState
-          :title="emptyState.title"
-          :desc="emptyState.desc"
-          :icon="emptyState.icon"
-          :tone="emptyState.tone"
-          :action="emptyState.action"
-          @action="onEmptyAction"
-        >
-          <!-- 服务端那句话照直画出来：上面那句说的是「这类事现在是什么样」，
+          <template #empty>
+            <AdminEmptyState
+              :title="emptyState.title"
+              :desc="emptyState.desc"
+              :icon="emptyState.icon"
+              :tone="emptyState.tone"
+              :action="emptyState.action"
+              @action="onEmptyAction"
+            >
+              <!-- 服务端那句话照直画出来：上面那句说的是「这类事现在是什么样」，
                这一句说的是「这一次为什么没成」—— 两句不是一回事，少一句就只剩
                「检查网络后重试」，而失败可能压根不是网络（比如没有权限）。 -->
-          <p v-if="error" class="fb-empty__raw t-meta-read">{{ error }}</p>
-        </AdminEmptyState>
-      </template>
+              <p v-if="error" class="fb-empty__raw t-meta-read">{{ error }}</p>
+            </AdminEmptyState>
+          </template>
 
-      <!-- 页脚说的是**在这个页面上提交**会发生什么，而这条路提出来的反馈没有房间来源
+          <!-- 页脚说的是**在这个页面上提交**会发生什么，而这条路提出来的反馈没有房间来源
            （`topic_id` 只有 accept 端点解得出），所以不提房间那一档——详情页和卡片上的
            那句说的是一条已经存在的行，它可能有房间，两处不一样是对的。 -->
-      <template #foot>{{ t('feedback.center.foot') }}</template>
-    </FeedbackList>
+          <template #foot>{{ t('feedback.center.foot') }}</template>
+        </FeedbackList>
+      </div>
+      <aside v-if="rewards || rewardsError" class="fb-reward-summary">
+        <h2>{{ t('usage.rewards.summaryTitle') }}</h2>
+        <template v-if="rewards"
+          ><dl>
+            <div>
+              <dt>{{ t('usage.rewards.awardedCount') }}</dt>
+              <dd>{{ t('usage.rewards.count', { n: rewards.feedback_count }) }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('usage.rewards.awardedCredits') }}</dt>
+              <dd>{{ t('usage.points', { n: rewards.feedback_credits }) }}</dd>
+            </div>
+          </dl>
+          <p>{{ t('usage.rewards.summaryNote') }}</p>
+          <NavLink to="/users/settings/usage"
+            >{{ t('usage.rewards.history') }}<v-icon icon="mdi-chevron-right" size="16" /></NavLink
+        ></template>
+        <template v-else
+          ><p>{{ rewardsError }}</p>
+          <BaseButton size="sm" @click="emit('retry-rewards')">{{ t('usage.retry') }}</BaseButton></template
+        >
+      </aside>
+    </div>
   </FeedbackPageShell>
 </template>
 
 <style scoped>
+.fb-rewards {
+  padding: 16px 24px;
+  margin-bottom: 24px;
+  background: var(--accent-wash);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.fb-rewards__lead {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.fb-rewards__lead > .v-icon {
+  color: var(--muted);
+}
+.fb-rewards h2,
+.fb-reward-summary h2 {
+  font-size: 15px;
+  line-height: var(--lh-15);
+  font-weight: 600;
+  margin: 0;
+}
+.fb-rewards p,
+.fb-reward-summary p {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+.fb-rules-toggle {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  flex: none;
+  margin-left: auto;
+  min-height: 32px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+.fb-rewards__rules {
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.fb-rewards__rules :deep(a),
+.fb-reward-summary :deep(a) {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  margin-top: 12px;
+}
+.fb-center-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+.fb-center-columns--summary {
+  grid-template-columns: minmax(0, 1fr) 230px;
+}
+.fb-center-list {
+  min-width: 0;
+}
+.fb-reward-summary {
+  border-left: 1px solid var(--line);
+  padding-left: 24px;
+}
+.fb-reward-summary dl {
+  margin: 24px 0;
+}
+.fb-reward-summary dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.fb-reward-summary dt {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+.fb-reward-summary dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: var(--lh-18);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 959.98px) {
+  .fb-center-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .fb-reward-summary {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: 24px 0 0;
+  }
+}
+@media (max-width: 599.98px) {
+  .fb-rewards {
+    padding: 16px;
+  }
+  .fb-rewards__lead {
+    flex-wrap: wrap;
+  }
+  .fb-rewards__lead > div {
+    flex: 1;
+  }
+  .fb-rules-toggle {
+    min-height: 44px;
+    margin-left: 34px;
+  }
+}
 /* 栏位页签下面那条底线由 `AdminTabs` 自己画（选中项的 2px 琥珀下划线），这里只给它
    和下面一排控件之间的距离。 */
 .fb-tabs {
