@@ -1974,6 +1974,32 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(omissions[0]["id"], "frontend-unit")
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
+    def test_a_demo_scene_seeds_its_loader_instead_of_the_full_suite(self):
+        # A scene is data its loader globs in; the graph has no edge from the
+        # JSON, so without a seed a one-line scene edit ran the whole suite
+        # (measured 900 s, the per-check timeout).
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/views/demo/scenes/index.ts", "export const SCENES = {}\n")
+        self.put("frontend/src/views/demo/scenes/seats.json", "{}\n")
+        plan, _ = test_plan(self.root, ["frontend/src/views/demo/scenes/seats.json"],
+                            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "related")
+        self.assertEqual(unit["evidence"]["roots"], ["src/views/demo/scenes/index.ts"])
+        # The docs build holds the same scene's step titles to the fence.
+        self.assertTrue(any(p["id"] == "docs-build" for p in plan))
+
+    def test_the_docs_build_runs_only_for_docs_or_scene_changes(self):
+        from ci_fast_checks import test_plan
+        plan, _ = test_plan(self.root, ["docs/manual/dev/turn.md"], {"guards": True}, self.root)
+        ids = [p["id"] for p in plan]
+        self.assertIn("docs-deps", ids)
+        build = next(p for p in plan if p["id"] == "docs-build")
+        self.assertEqual(build["command"], ["npm", "run", "build"])
+        self.assertEqual(build["env"], {"OUT": str(self.root / "docs")})
+        plan, _ = test_plan(self.root, ["backend/app/core/config.py"], {}, self.root)
+        self.assertFalse(any(p["id"].startswith("docs-") for p in plan))
+
     def test_frontend_deleted_spec_is_not_a_dangling_import(self):
         # A deleted spec leaves no importer behind, so the narrow project
         # judges the change; the full typecheck is not called for.

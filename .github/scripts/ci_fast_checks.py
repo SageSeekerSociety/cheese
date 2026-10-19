@@ -376,6 +376,15 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         roots = [p.removeprefix("frontend/") for p in surviving
                  if p.startswith("frontend/src/") and p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
                  and not p.endswith(".d.ts")]
+        # A demo scene is data its loader globs in (`scenes/index.ts`); the
+        # static graph has no edge from the JSON to the specs that read the
+        # scenes, so seed the loader. Without this a one-line scene edit
+        # widened to the whole suite (measured 900 s, the per-check timeout).
+        if any(p.startswith("frontend/src/views/demo/scenes/") and p.endswith(".json")
+               for p in surviving):
+            loader = "src/views/demo/scenes/index.ts"
+            if (root / "frontend" / loader).is_file() and loader not in roots:
+                roots.append(loader)
         # A frontend change with no surviving source root cannot be narrowed
         # when it carries runtime content: `related` is seeded from the changed
         # source files, and a file the suite reads off disk rather than imports
@@ -522,6 +531,19 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
                                  "--junitxml", str(output)],
                      "evidence": {"kind": "junit", "path": str(output), "nodes": str(nodes),
                                   "files": selected, "required": targets, "selection": reason}})
+    if any(p.startswith("docs/") or p.startswith("frontend/src/views/demo/scenes/")
+           for p in changed):
+        # The docs build checks links, anchors and the demo scene/fence step
+        # titles. Full CI runs it only after merge, so an edit that breaks it
+        # lands red on main (2026-10-19: turn.md step 4 did). It is cheap:
+        # three npm packages, about ten seconds, and OUT keeps it out of the
+        # checkout.
+        site = root / "docs" / "site"
+        plan.append({"id": "docs-deps", "cwd": site,
+                     "command": ["npm", "ci", "--no-audit", "--no-fund"]})
+        plan.append({"id": "docs-build", "cwd": site,
+                     "env": {"OUT": str(tmp / "docs")},
+                     "command": ["npm", "run", "build"]})
     return plan, omissions
 
 
