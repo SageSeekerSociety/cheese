@@ -182,10 +182,19 @@ class CreditBudgets:
         }
 
     async def project_refusal(self, project_id: uuid.UUID) -> Refusal | None:
-        capped = (await self.project_caps([project_id])).get(project_id)
-        if capped is not None and capped[1] >= capped[0]:
-            return Refusal(say("projectCreditBudgetSpent"), None)
-        return None
+        return (await self.project_refusals([project_id])).get(project_id)
+
+    async def project_refusals(
+        self, project_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, Refusal]:
+        """The projects among ``project_ids`` whose own credit budget is spent,
+        in one read."""
+        caps = await self.project_caps(project_ids)
+        return {
+            pid: Refusal(say("projectCreditBudgetSpent"), None)
+            for pid, (limit, spent) in caps.items()
+            if spent >= limit
+        }
 
     async def project_caps(
         self, project_ids: list[uuid.UUID]
