@@ -147,6 +147,11 @@ function avatar(who, agent) {
   return `<span class="dp-av" aria-hidden="true">${esc([...String(who)][0] || '')}</span>`
 }
 
+// The composer's teammate button is the teammate's face, as in the product: `button` is
+// what it reads as, which the build checks against the product's own words.
+const summonFace = (label, p) =>
+  `<span class="dp-summon" role="img" aria-label="${esc(label)}"${p.press !== undefined && (!p.pressing || p.pressing === label) ? ` data-press="${p.press}"` : ''}>${AGENT_AVATAR ? `<img src="${esc(AGENT_AVATAR)}" alt="">` : ''}</span>`
+
 const button = (label, p, cls = 'dp-btn') => `<span class="${cls}"${p.press !== undefined && (!p.pressing || p.pressing === label) ? ` data-press="${p.press}"` : ''}>${esc(label)}</span>`
 
 function partHtml(p, cfg) {
@@ -175,7 +180,7 @@ function partHtml(p, cfg) {
     case 'tabs':
       return `<div class="dp-tabs"${a}>${p.items.map((x) => `<span${x === p.active ? ' class="on"' : ''}>${esc(x)}</span>`).join('')}</div>`
     case 'composer':
-      return `<div class="dp-composer"${a}><span class="dp-input">${p.type ? `<span class="dp-typed" data-at="${p.at}" data-until="${p.press ?? p.until}" data-type hidden>${esc(p.type)}</span>` : ''}<span class="dp-ph">${esc(p.placeholder)}</span></span>${p.button ? button(p.button, p, 'dp-btn dp-btn-quiet') : ''}</div>`
+      return `<div class="dp-composer"${a}><span class="dp-input">${p.type ? `<span class="dp-typed" data-at="${p.at}" data-until="${p.press ?? p.until}" data-type hidden>${esc(p.type)}</span>` : ''}<span class="dp-ph">${esc(p.placeholder)}</span></span>${p.button ? summonFace(p.button, p) : ''}</div>`
     case 'head':
       return `<div class="dp-head"${a}><span class="dp-title">${p.room ? `<span class="dp-room"># ${esc(p.room)} /</span>` : ''}${esc(p.title)}</span>${p.status ? `<span class="dp-chip">${esc(p.status)}</span>` : ''}<span class="dp-head-end">${p.owner ? `<span class="dp-owner">${avatar(p.who || '你', cfg.agent)}${esc(p.owner)}</span>` : ''}${p.note ? `<span class="dp-note">${esc(p.note)}</span>` : ''}${p.button ? button(p.button, p, p.plain === true ? 'dp-btn' : 'dp-btn dp-btn-primary') : ''}</span></div>`
     case 'files':

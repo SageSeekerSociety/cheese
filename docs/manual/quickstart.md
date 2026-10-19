@@ -78,7 +78,7 @@ parts:
     at: 5
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
-    button: 交给芝士
+    button: 发送并交给芝士（⌘/Ctrl+Enter）
     at: 5
 ```
 :::
@@ -127,7 +127,7 @@ parts:
     until: 2
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
-    button: 交给芝士
+    button: 发送并交给芝士（⌘/Ctrl+Enter）
     until: 2
   - kind: head
     room: 综合
