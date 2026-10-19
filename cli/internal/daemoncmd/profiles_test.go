@@ -201,3 +201,37 @@ func TestUninstallCustomConfigPreservesUnrelatedFiles(t *testing.T) {
 		t.Fatalf("default enrollment changed: %+v, %v", first, err)
 	}
 }
+
+// A --config file outside the profiles is the default profile's, so enrolling
+// one while the default is enrolled would run two credentials on one workspace.
+func TestAConfigBesideTheEnrolledDefaultIsRefused(t *testing.T) {
+	t.Setenv("CHEESE_PROFILE_ROOT", "")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var starts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/device/start" {
+			starts.Add(1)
+		}
+		fmt.Fprint(w, `{"device_code":"one","approve_url":"https://example.test/approve","interval":1,"status":"approved","token":"t","device_id":"d"}`)
+	}))
+	defer server.Close()
+	if err := config.Save(config.DefaultPath(), &config.Config{Base: server.URL, Token: "default-token"}); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "other.json")
+	root := &cobra.Command{Use: "cheese", SilenceUsage: true, SilenceErrors: true}
+	root.AddCommand(Commands()...)
+	root.SetArgs([]string{"auth", "login", "--config", other, server.URL})
+	if err := root.Execute(); err == nil {
+		t.Fatal("a second credential was enrolled on the default profile's workspace")
+	}
+	if starts.Load() != 0 {
+		t.Fatalf("started %d approvals for a config that cannot be enrolled", starts.Load())
+	}
+	if _, err := os.Stat(other); err == nil {
+		if cfg, _ := config.Load(other); cfg != nil && cfg.Token != "" {
+			t.Fatalf("the refused config holds a credential: %+v", cfg)
+		}
+	}
+}

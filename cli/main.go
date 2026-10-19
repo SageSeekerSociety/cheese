@@ -28,6 +28,9 @@ func main() {
 	selection := pflag.NewFlagSet("profile", pflag.ContinueOnError)
 	selection.ParseErrorsWhitelist.UnknownFlags = true
 	selection.StringVar(&config.CLIProfile, "profile", "default", "enrollment profile")
+	// Declared so that -h/--help is Cobra's to answer: an undeclared help flag
+	// makes pflag stop here with ErrHelp.
+	selection.BoolP("help", "h", false, "")
 	if err := selection.Parse(os.Args[1:]); err != nil {
 		os.Exit(1)
 	}

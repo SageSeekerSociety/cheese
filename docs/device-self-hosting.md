@@ -95,7 +95,7 @@ Commands without `--profile` address `default`. An explicit login to an already 
 
 `<user-config>` is `~/.config` on Linux unless `XDG_CONFIG_HOME` is set, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows. The desktop app keeps using the default profile at its existing path.
 
-The connector supplies `CHEESE_PROFILE_ROOT` to execution commands and screens. Backend paths, harness state, executor releases, sandbox records and cleanup resolve that root on the machine. Uninstall removes the selected profile's service, config and workspace. Uninstalling `default` preserves the other profiles under `profiles/`.
+The connector supplies `CHEESE_PROFILE_ROOT` to execution commands and screens. Backend paths, harness state, executor releases, sandbox records and cleanup resolve that root on the machine. The connector announces `profiles` in `hello`; a connector that does not (one built before profiles) is a default-profile machine, and the hub writes `.cheese` into the paths it resolves itself until its update lands. Uninstall removes the selected profile's service, config and workspace. Uninstalling `default` preserves the other profiles under `profiles/`.
 
 Claude subscription login is independent of execution enrollment. `~/.cheese/claude-login`, its `model-service.json`, and the shared model binaries retain their existing paths. While another enrollment remains, uninstall preserves them, the model runtime's shared skill cache, and the connector binary with its PATH entry. Uninstalling the last enrollment removes the whole installation, as on a machine with one enrollment: the config directory, `~/.cheese`, and the binary.
 

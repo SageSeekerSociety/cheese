@@ -60,9 +60,15 @@ def footprint_root() -> str:
     return _ROOT
 
 
+#: How a machine path names the enrollment's root: the connector running that
+#: enrollment supplies CHEESE_PROFILE_ROOT (`.cheese`, or a named profile's
+#: `.cheese/profiles/<name>`), and expands this where it resolves a path itself.
+ROOT_PLACEHOLDER = "${CHEESE_PROFILE_ROOT:-" + _ROOT + "}"
+
+
 def machine_root() -> str:
     """Execution root, resolved by the enrollment process on the machine."""
-    return "$HOME/${CHEESE_PROFILE_ROOT:-.cheese}"
+    return f"$HOME/{ROOT_PLACEHOLDER}"
 
 
 def session_platform_dirs() -> tuple[str, ...]:

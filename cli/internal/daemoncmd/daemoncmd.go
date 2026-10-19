@@ -196,6 +196,14 @@ func doLogin(cfgPath, serverArg string) (*config.Config, error) {
 }
 
 func completeLogin(cfgPath, serverArg string) (*config.Config, error) {
+	// A config outside the profiles is the default profile's: its workspace,
+	// service and screens are the default's. A second credential there would
+	// run as the same machine on the same files.
+	if config.Profile(cfgPath) == "default" && !samePath(cfgPath, config.DefaultPath()) {
+		if enrolled, err := config.Load(config.DefaultPath()); err == nil && enrolled.Token != "" {
+			return nil, fmt.Errorf("the default profile is already enrolled (%s); enroll this one with --profile <name> instead of --config", config.DefaultPath())
+		}
+	}
 	cfg, _ := config.Load(cfgPath)
 	if cfg == nil {
 		cfg = &config.Config{}
@@ -680,6 +688,12 @@ func removeEntries(directory string, keep map[string]bool) error {
 		}
 	}
 	return nil
+}
+
+func samePath(a, b string) bool {
+	a, _ = filepath.Abs(a)
+	b, _ = filepath.Abs(b)
+	return a == b
 }
 
 // otherEnrollments reports whether an enrollment other than cfgPath's holds a

@@ -317,7 +317,7 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         assert place.runtime == {
             "harness": CODEX,
             "agent_handle": actual_agent,
-            "state": f"$HOME/.cheese/{live.ref.home}",
+            "state": live.ref.state,
         }
         assert place.lease is None
         central._hub.call_executor.side_effect = None
@@ -376,7 +376,7 @@ async def test_pi_starts_on_the_session_host_and_recovers_only_as_pi(
         assert place.runtime == {
             "harness": PI,
             "agent_handle": actual_agent,
-            "state": f"$HOME/.cheese/{live.ref.home}",
+            "state": live.ref.state,
         }
         # Nothing was taken for it: the session's hands come with its work.
         assert place.lease is None
@@ -1416,7 +1416,7 @@ async def test_a_room_session_is_the_runner_its_screen_started(
         session = ref(project, topic)
         live = await sessions(central).ensure(session, system_prompt="System")
         place = await session_place(client.test_request_factory, topic)
-        assert place.runtime["state"] == f"$HOME/.cheese/{live.ref.home}"
+        assert place.runtime["state"] == live.ref.state
         assert live.conversation
         state = place.runtime["state"]
 

@@ -375,7 +375,7 @@ func (h *Host) createSession(m link.Msg) {
 		env = append(env, runtimepath.Var+"="+dirs)
 	}
 	for k, v := range m.Env {
-		env = append(env, k+"="+strings.ReplaceAll(v, "${CHEESE_PROFILE_ROOT:-.cheese}", place.CurrentRoot()))
+		env = append(env, k+"="+place.ExpandRoot(v))
 	}
 	env = append(env, place.ProfileRootEnv+"="+place.CurrentRoot())
 
@@ -553,7 +553,7 @@ func (h *Host) release(s *sess) {
 }
 
 func resolveScreenWorkDir(workDir string) (string, error) {
-	workDir = strings.ReplaceAll(workDir, "${CHEESE_PROFILE_ROOT:-.cheese}", place.CurrentRoot())
+	workDir = place.ExpandRoot(workDir)
 	if workDir == "" {
 		return "", fmt.Errorf("screen has no work directory")
 	}
@@ -615,10 +615,9 @@ func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Ms
 	}
 	env := os.Environ()
 	for k, v := range m.Env {
-		env = append(env, k+"="+v)
+		env = append(env, k+"="+place.ExpandRoot(v))
 	}
-	cmd.Env = env
-	cmd.Env = append(cmd.Env, place.ProfileRootEnv+"="+place.CurrentRoot())
+	cmd.Env = append(env, place.ProfileRootEnv+"="+place.CurrentRoot())
 	if m.Stdin != "" {
 		cmd.Stdin = strings.NewReader(m.Stdin)
 	}

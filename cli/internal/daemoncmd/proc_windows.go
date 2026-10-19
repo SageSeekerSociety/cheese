@@ -82,7 +82,7 @@ func stopFootprintProcesses(root string, keepShared bool) {
 	// from under it (their profiles, the shared Claude install) keeps running.
 	keep := ""
 	if keepShared {
-		keep = ` -and -not $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\profiles\', [StringComparison]::OrdinalIgnoreCase) -and -not $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\claude\', [StringComparison]::OrdinalIgnoreCase)`
+		keep = ` -and -not $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\profiles\', [StringComparison]::OrdinalIgnoreCase) -and -not $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\claude\', [StringComparison]::OrdinalIgnoreCase) -and -not $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\tools\', [StringComparison]::OrdinalIgnoreCase)`
 	}
 	script := `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\', [StringComparison]::OrdinalIgnoreCase)` + keep + ` } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)

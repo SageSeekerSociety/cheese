@@ -125,3 +125,70 @@ def test_a_claude_runner_keeps_its_state_inside_its_execution_profile(tmp_path):
         text=True,
     )
     assert Path(resolved).is_relative_to(tmp_path / ".cheese/profiles/research/harness")
+
+
+class _Transport:
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send_json(self, msg: dict) -> None:
+        self.sent.append(msg)
+
+
+@pytest.mark.parametrize("profiles", [False, True])
+async def test_a_connector_is_sent_paths_it_can_resolve(profiles):
+    """A connector from before enrollments had roots of their own expands only
+    `$HOME` and runs the default profile, so the paths it resolves itself name
+    `.cheese`; one that resolves the root is left to name its own."""
+    import asyncio
+
+    from app.domain.agent.device_hub import DeviceHub
+    from app.domain.agent.place import ROOT_PLACEHOLDER
+
+    hub = DeviceHub()
+    transport = _Transport()
+    await hub.attach_device("dev1", transport)
+    await hub.on_device_message(
+        "dev1", {"t": "hello", "executor": True, "profiles": profiles}
+    )
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home = device_provider.device_home_dir(project, resource)
+    await hub.open_screen(
+        "dev1", ["true"], agent_user_id=1, agent_handle="a", env={"CHEESE_HOME": home}
+    )
+    calls = [
+        asyncio.create_task(hub.exec("dev1", ["true"], cwd=home, env={"DIR": home})),
+        asyncio.create_task(hub.call_executor("dev1", home, "ping", {})),
+    ]
+    await asyncio.sleep(0)
+    assert len(transport.sent) == 4
+    frames = json.dumps(transport.sent[1:])
+    for call in calls:
+        call.cancel()
+    await asyncio.gather(*calls, return_exceptions=True)
+    if profiles:
+        assert frames.count(ROOT_PLACEHOLDER) == 4
+    else:
+        assert ROOT_PLACEHOLDER not in frames
+        assert frames.count(f"$HOME/.cheese/home/{project}/{resource}") == 4
+
+
+@pytest.mark.parametrize("profile", [".cheese", ".cheese/profiles/research"])
+def test_a_running_executor_prepares_its_own_room_and_no_other(
+    tmp_path, monkeypatch, profile
+):
+    from types import SimpleNamespace
+
+    from app.domain.agent.harness.claude_code.remote_execution import runtime_calls
+
+    monkeypatch.setenv("CHEESE_PROFILE_ROOT", profile)
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    state = tmp_path / profile / "home" / project / resource / ".cheese/executor"
+    # No programs to run: getting past the ownership check is what is asked.
+    executor = SimpleNamespace(state=state, programs=tmp_path / "absent", config={})
+    with pytest.raises(FileNotFoundError):
+        runtime_calls.prepare(executor, {"project": project, "resource": resource})
+    with pytest.raises(ValueError, match="another room"):
+        runtime_calls.prepare(
+            executor, {"project": project, "resource": str(uuid.uuid4())}
+        )

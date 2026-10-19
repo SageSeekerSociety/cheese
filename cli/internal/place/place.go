@@ -9,7 +9,10 @@
 // spells it differently drops a file where nothing will ever look for it.
 package place
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 // Root is the directory under the machine owner's home that the platform writes
 // everything into: session homes, checkouts, the shared package store, the
@@ -28,6 +31,15 @@ import "os"
 const Root = ".cheese"
 
 const ProfileRootEnv = "CHEESE_PROFILE_ROOT"
+
+// RootPlaceholder is how the backend spells the enrollment's root in the
+// paths it sends; the connector names that root (CurrentRoot).
+const RootPlaceholder = "${" + ProfileRootEnv + ":-" + Root + "}"
+
+// ExpandRoot puts this enrollment's root where a path names the placeholder.
+func ExpandRoot(value string) string {
+	return strings.ReplaceAll(value, RootPlaceholder, CurrentRoot())
+}
 
 // CurrentRoot is relative to the machine owner's home, never a session home.
 func CurrentRoot() string {
