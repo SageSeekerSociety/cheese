@@ -37,7 +37,6 @@
   "loadFailed": "Couldn't load the participants",
   "loading": "Loading",
   "memberWithId": "{name} ({id})",
-  "more": "More",
   "noMatch": "No matching participants",
   "passed": "Passed",
   "reject": "Decline",

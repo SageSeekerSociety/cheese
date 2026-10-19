@@ -1,5 +1,6 @@
-// 一列行，每行一颗 ⋯：右键一行弹的就是那一行的 ⋯ 菜单，弹在鼠标那一点上。点 ⋯
-// 打开时照旧挂在 ⋯ 下面。同一时间只有一行的菜单开着，所以一列只要一份状态。
+// 一列行：右键一行，弹出那一行的操作菜单，弹在鼠标那一点上。行尾没有 ⋯——三个点
+// 全去掉了，右键（手机上是长按）就是入口。同一时间只有一行的菜单开着，所以一列只要
+// 一份状态。
 //
 //   const rowMenu = useRowMenu()
 //   <li @contextmenu="rowMenu.open(file.path, $event)">
@@ -19,7 +20,11 @@ export function useRowMenu<K extends string | number>() {
     if (target?.closest('a[href], input, textarea, [contenteditable="true"]')) return
     if (window.getSelection()?.isCollapsed === false) return
     event.preventDefault()
-    point.value = [event.clientX, event.clientY]
+    // 键盘（Shift+F10 / 菜单键）发来的 contextmenu 没有鼠标坐标，落在 (0,0)：这时把
+    // 菜单开在焦点所在那一行的左下角，而不是屏幕左上角。
+    const keyboard = event.clientX === 0 && event.clientY === 0
+    const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+    point.value = keyboard && rect ? [rect.left + 12, rect.top + rect.height] : [event.clientX, event.clientY]
     openKey.value = key
   }
 

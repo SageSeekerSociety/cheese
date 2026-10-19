@@ -77,10 +77,10 @@ function mount(over: Partial<Topic> = {}) {
   return { ...utils, onRenameTopic }
 }
 
-/** 点开这一行的 ⋯，等菜单出来，返回菜单里每一行的字。 */
+/** 右键这一行，等菜单出来，返回菜单里每一行的字。 */
 async function menuOn(container: Element, baseElement: Element, title: string): Promise<string[]> {
   const row = rowFor(container, title)
-  await fireEvent.click(row.querySelector('[title="更多操作"]') as HTMLElement)
+  await fireEvent.contextMenu(row, { clientX: 40, clientY: 60 })
   return waitFor(() => {
     const found = Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).map((el) =>
       el.textContent?.trim()
@@ -105,7 +105,7 @@ async function startRenameOn(
   title: string
 ): Promise<{ row: HTMLElement; input: HTMLInputElement }> {
   const row = rowFor(container, title)
-  await fireEvent.click(row.querySelector('[title="更多操作"]') as HTMLElement)
+  await fireEvent.contextMenu(row, { clientX: 40, clientY: 60 })
   const item = await waitFor(() => {
     const found = Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).find(
       (el) => el.textContent?.trim() === t('work.room.menu.rename')

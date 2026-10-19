@@ -116,7 +116,11 @@ describe('资料库那一列的行', () => {
 
   it('行上的「删除」只是把这一份报上去，自己不问也不动', async () => {
     const view = mount([fileRow])
-    await fireEvent.click(screen.getByRole('button', { name: /^报价\.xlsx 的操作/ }))
+    const row = Array.from(document.querySelectorAll('.library-row')).find((el) =>
+      el.textContent?.includes('报价.xlsx')
+    )
+    expect(row).toBeTruthy()
+    await fireEvent.contextMenu(row as HTMLElement, { clientX: 40, clientY: 60 })
     const item = await waitFor(() => {
       const found = Array.from(document.querySelectorAll('.v-list-item, [role="menuitem"]')).find(
         (b) => b.textContent?.trim() === '删除'

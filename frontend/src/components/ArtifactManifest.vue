@@ -26,7 +26,6 @@ import AdaptiveMenu from './common/AdaptiveMenu.vue'
 import NavLink from './common/NavLink.vue'
 import PublishedSite from './PublishedSite.vue'
 
-import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 
@@ -49,7 +48,6 @@ const emit = defineEmits<{ count: [number] }>()
 
 const rows = ref<ProjectArtifact[]>([])
 const actionError = ref('')
-const busy = ref('')
 const rowMenu = useRowMenu<string>()
 
 // 总览上只列前几项，其余的收着，点开才全列出来：这一块和「谁在做什么」摞在一栏里，
@@ -129,16 +127,13 @@ function openMerge(row: ProjectArtifact) {
   actionError.value = ''
 }
 
-async function act(id: string, run: () => Promise<unknown>, failed: string) {
-  busy.value = id
+async function act(run: () => Promise<unknown>, failed: string) {
   actionError.value = ''
   try {
     await run()
     await load()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : failed
-  } finally {
-    busy.value = ''
   }
 }
 
@@ -146,7 +141,7 @@ async function rename() {
   const row = renaming.value
   if (!row) return
   renaming.value = null
-  await act(row.id, () => props.api.rename(props.projectId, row.id, newName.value), t('project.artifacts.renameFailed'))
+  await act(() => props.api.rename(props.projectId, row.id, newName.value), t('project.artifacts.renameFailed'))
 }
 
 async function merge() {
@@ -154,14 +149,14 @@ async function merge() {
   const into = mergeInto.value
   if (!row || !into) return
   merging.value = null
-  await act(row.id, () => props.api.merge(props.projectId, row.id, into), t('project.artifacts.mergeFailed'))
+  await act(() => props.api.merge(props.projectId, row.id, into), t('project.artifacts.mergeFailed'))
 }
 
 async function remove() {
   const row = removing.value
   if (!row) return
   removing.value = null
-  await act(row.id, () => props.api.remove(props.projectId, row.id), t('project.artifacts.deleteFailed'))
+  await act(() => props.api.remove(props.projectId, row.id), t('project.artifacts.deleteFailed'))
 }
 
 watch(
@@ -207,15 +202,7 @@ watch(
           <span class="made-row__when t-meta c-faint">{{ version(row) }}</span>
         </div>
         <AdaptiveMenu v-bind="rowMenu.bind(row.id)" :actions="rowActions(row)" :title="row.name">
-          <template #activator="{ props: menu }">
-            <BaseButton
-              v-bind="menu"
-              icon="mdi-dots-horizontal"
-              size="sm"
-              :loading="busy === row.id"
-              :aria-label="t('project.artifacts.actionsOf', { name: row.name })"
-            />
-          </template>
+          <template #activator />
         </AdaptiveMenu>
       </li>
       <li v-if="rows.length > FOLDED" class="made__fold t-meta">

@@ -120,9 +120,7 @@
                 {{ t('tasks.roster.view') }}
               </BaseButton>
               <AdaptiveMenu v-if="row.approved === 'APPROVED'" v-bind="rowMenu.bind(row.id)" :actions="rowActions(row)">
-                <template #activator="{ props: menu }">
-                  <BaseButton v-bind="menu" icon="mdi-dots-horizontal" size="sm" :aria-label="t('tasks.roster.more')" />
-                </template>
+                <template #activator />
               </AdaptiveMenu>
             </div>
           </td>

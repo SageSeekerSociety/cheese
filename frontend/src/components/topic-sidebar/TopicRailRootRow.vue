@@ -45,12 +45,9 @@ const props = defineProps<{
  *  也就没有灯。 */
 const rootLight = computed(() => (props.rootTopic ? props.lightOf?.(props.rootTopic.id) ?? null : null))
 
-// 和频道行一样：行尾那颗 ⋯ 是操作入口，右键弹的是同一份、只是弹在鼠标那一点上；
-// 手机上长按（父级那一个 useLongPress 认 data-row-actions）。
+// 和频道行一样：右键这一行，菜单弹在鼠标那一点上（行尾没有 ⋯）；手机上长按
+// （父级那一个 useLongPress 认 data-row-actions）。
 const rowMenu = useRowMenu<'root'>()
-
-/** 这一行的 ⋯ 菜单开着没有——开着的时候那颗按钮必须留屏幕上，它是菜单的根。 */
-const menuOpen = computed(() => rowMenu.bind('root').modelValue)
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
@@ -69,13 +66,7 @@ const emit = defineEmits<{
       :active="rootTopic.id === selectedTopicId"
       rounded="lg"
       class="nav-row pinned-row"
-      :class="{
-        'is-active': rootTopic.id === selectedTopicId,
-        'is-menu-open': menuOpen,
-        'pinned-row--hover-actions': !page,
-        'pinned-row--tasks': !!taskCount,
-        'pinned-row--tasks-collapsed': !!taskCount && tasksCollapsed === true,
-      }"
+      :class="{ 'is-active': rootTopic.id === selectedTopicId }"
       :style="ROW_INDENT"
       :data-row-actions="rootTopic.id"
       @click="emit('select-topic', rootTopic.id)"
@@ -123,26 +114,16 @@ const emit = defineEmits<{
           :light="taskLight ?? null"
           @toggle="emit('toggle-tasks')"
         />
-        <!-- hover 浮出的操作入口：一颗 ⋯，和频道行那一套同形（那一半写在
-             `TopicRailRow.vue`）。整页形态（手机）没有它：那里长按一行打开同一组操作。 -->
-        <div v-if="!page && rootActions?.length" class="row-actions" @click.stop>
-          <AdaptiveMenu v-bind="rowMenu.bind('root')" :actions="rootActions" :title="topicTitle(rootTopic)">
-            <template #activator="{ props: menuProps }">
-              <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
-              <v-btn
-                v-bind="menuProps"
-                :tabindex="rootTopic.id === selectedTopicId ? 0 : -1"
-                icon="mdi-dots-horizontal"
-                size="small"
-                variant="text"
-                color="on-surface-variant"
-                density="comfortable"
-                :title="t('work.sidebar.moreActions')"
-                class="row-actions__btn"
-              />
-            </template>
-          </AdaptiveMenu>
-        </div>
+        <!-- 操作只有右键，和频道行同一份（那一半写在 `TopicRailRow.vue`）。整页形态
+             （手机）没有右键，那里由父级的长按打开同一组操作。 -->
+        <AdaptiveMenu
+          v-if="!page && rootActions?.length"
+          v-bind="rowMenu.bind('root')"
+          :actions="rootActions"
+          :title="topicTitle(rootTopic)"
+        >
+          <template #activator />
+        </AdaptiveMenu>
       </template>
     </v-list-item>
     <!-- 挂在这个房间下面的任务。 -->
@@ -244,85 +225,11 @@ const emit = defineEmits<{
   margin-left: 6px;
 }
 
-/* Hover-only action overlay: absolutely positioned over the row's tail, zero layout
-   width — the title gets the full rail. Hover detection is the WHOLE row. 「综合」和
-   别的频道行是同一颗 ⋯（`.topic-row` 那一半在 `TopicRailRow.vue`）；两份有意各写一份，
-   好让两个组件都能单独渲染（/demo/catalog），不靠对方在场。 */
-.row-actions {
-  position: absolute;
-  right: 5px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  opacity: 0;
-  pointer-events: none;
-  /* 有意为之的浮动工具条（Linear 手法）：白底+细边+微影，
-     在任何行底色上都成立——不再试图和行底色融为一体。 */
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-1);
-  transition: opacity var(--dur-quick) var(--ease-standard);
-  color: var(--muted);
-}
-/* 工具条里的那颗 ⋯ 要有自己的悬停反馈——否则不像能按的东西。这颗按钮就是整条白底的
-   内芯：内边距收掉、让它撑满，白底上就没有一圈「看着是它、点着不算」的边，悬停的灰
-   也铺满整块。留 3px 内边距时点到那圈上什么都不发生，灰只在中间铺一小块方片
-   （2026-10-13 lz123y 报的）。外面那 1px 描边不吃点击。
-   舒适可点，但必须小于行高（~36px）：29px 按钮 + 16px 图标，稳稳落在行内。 */
-.row-actions :deep(.v-btn) {
-  width: 31px;
-  height: 29px;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-}
-.row-actions :deep(.v-btn .v-icon) {
-  font-size: 16px;
-}
-.row-actions :deep(.v-btn:hover) {
-  background: var(--fill);
-  color: var(--text);
-}
-/* 触摸屏没有 hover，键盘焦点又要先 Tab 到它——这两条规则加起来，⋯ 菜单在桌面宽度
-   的触屏上（平板横屏、带触摸屏的笔记本）根本摸不到。所以在没有 hover 能力的设备上
-   它常驻。整页形态（手机）不画这颗 ⋯，那里长按一行打开同一组操作。 */
+/* 没有 hover 能力的设备（平板、带触摸屏的笔记本）：未读数常驻。那里没有 ⋯ 可盖，
+   但触屏上点过一行之后 :hover 会一直粘着，数字不能因此消失。 */
 @media (hover: none) {
-  .row-actions {
-    opacity: 1;
-    pointer-events: auto;
-  }
   .nav-row .unread-badge {
     opacity: 1;
   }
-}
-/* 菜单展开时那颗 ⋯ 必须留着：它是菜单的 activator，跟 hover 一起消失的话
-   鼠标一离开行、菜单就没了根。键盘焦点这里用 :focus-visible（行自己）加
-   :has(:focus-visible)（行里的 ⋯），不用 :focus-within：鼠标点一下行也会让它拿到
-   焦点，:focus-within 从那以后一直命中，⋯ 就挂在行尾不走了。 */
-.nav-row:hover .row-actions,
-.nav-row:focus-visible .row-actions,
-.nav-row:has(:focus-visible) .row-actions,
-.nav-row.is-menu-open .row-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-/* While the actions are out, the count steps aside (they share the tail). 只在有那颗
-   ⋯ 的行上：手机上点过一行之后 :hover 会一直粘着，未读数不能因此消失。 */
-.pinned-row--hover-actions:hover .unread-badge,
-.pinned-row--hover-actions:focus-visible .unread-badge,
-.pinned-row--hover-actions:has(:focus-visible) .unread-badge,
-.nav-row.is-menu-open .unread-badge {
-  opacity: 0;
-}
-/* 有折叠加手的行，那颗 ⋯ 往左让出一个把手的宽度：不让的话它正好压住把手，而把手是
-   那一块唯一的入口，压住就成了「看着有、点不着」。两档的数和话题行那一份一样（见
-   `TopicRailRow.vue` 的同名规则）：展开态 45px，收起态 81px——收起时把手还顶着一盏灯
-   和一颗条数。这些数跟着字号走，字号变了要重量。 */
-.pinned-row--tasks .row-actions {
-  right: 45px;
-}
-.pinned-row--tasks-collapsed .row-actions {
-  right: 81px;
 }
 </style>

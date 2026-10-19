@@ -16,7 +16,6 @@
     "mergeFailed": "未能合并",
     "deleteFailed": "未能删除",
     "empty": "暂无产物",
-    "actionsOf": "{name} 的操作",
     "collapse": "收起",
     "expand": "展开其余 {count} 项",
     "nameLabel": "名字",

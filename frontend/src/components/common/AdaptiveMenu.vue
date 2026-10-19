@@ -5,7 +5,15 @@
 // 全应用同一时间只留一份菜单：谁开谁登记，右键那一份（弹在鼠标那一点上）开的时候把
 // 当时开着的那一份收掉（见 openMenus）。
 //
-//   <AdaptiveMenu :actions="actions" title="话题">
+// 有一行可点的地方 —— 侧栏的频道行、名册里的成员行、调用清单上的产物行 —— 行尾不
+// 再放一颗 ⋯：右键那一行就是入口（手机上是长按），那几处只给 #activator 一个空的
+// 插槽内容，不画按钮。还留着按钮的地方照旧把 props 传进去。
+//
+//   <AdaptiveMenu :actions="actions" title="话题" v-bind="rowMenu.bind(row.id)">
+//     <template #activator />
+//   </AdaptiveMenu>
+//
+//   <AdaptiveMenu :actions="actions">
 //     <template #activator="{ props }">
 //       <v-btn v-bind="props" icon="mdi-dots-horizontal" :aria-label="…" />
 //     </template>

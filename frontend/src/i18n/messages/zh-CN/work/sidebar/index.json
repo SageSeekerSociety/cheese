@@ -18,7 +18,6 @@
   "fillInTip": "这个频道里和你有关的不到三条，这一条是别人负责的，凑够三条才排在这儿",
   "hiddenCount": "收起了 {count} 项",
   "hiddenUnread": "含收起的子频道 {count} 条新消息",
-  "moreActions": "更多操作",
   "moreMembers": "+{count}",
   "moreTasks": "展开其余 {count} 个",
   "noOtherChannels": "还没有别的频道",

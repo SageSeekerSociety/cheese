@@ -517,17 +517,7 @@ useCommands(() => [
               :actions="memberActions(m)"
               :title="memberName(m) || m.user_handle"
             >
-              <template #activator="{ props: menuProps }">
-                <BaseButton
-                  v-bind="menuProps"
-                  size="sm"
-                  icon="mdi-dots-horizontal"
-                  class="tap-target"
-                  :aria-label="t('work.members.manage')"
-                  :loading="busyHandle === m.user_handle"
-                  @click.stop
-                />
-              </template>
+              <template #activator />
             </AdaptiveMenu>
           </div>
         </v-card>

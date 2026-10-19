@@ -148,7 +148,7 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
   it.each([true, false])('archive controls follow server permission: %s', async (allowed) => {
     const active = { ...topic('managed', 'root'), can_manage: allowed, joined: true }
     const { container, queryByText } = mount({ topics: [topic('root', null, 'root'), active] })
-    await fireEvent.click(rowFor(container, 'managed').querySelector('[title="更多操作"]') as HTMLElement)
+    await fireEvent.contextMenu(rowFor(container, 'managed'), { clientX: 40, clientY: 60 })
     await waitFor(() => expect(Boolean(queryByText(t('work.room.menu.archive')))).toBe(allowed))
   })
 
