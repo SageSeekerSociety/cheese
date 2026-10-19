@@ -247,6 +247,24 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
     needs: UI_T_R,
     args: {
       loading: false,
+      sessions: [
+        {
+          session_id: 'preview-session',
+          agent_name: '芝士',
+          agent_name_source: 'default',
+          project_id: 'preview-project',
+          project_name: '校园协作',
+          team_id: 2,
+          team_name: '数据组',
+          conversation_id: 'preview-task',
+          conversation_kind: 'task',
+          conversation_title: '整理项目文档',
+          room_id: 'preview-room',
+          roles: ['center', 'executor'],
+          since: '2026-10-19T10:00:00Z',
+        },
+      ],
+      preventSleep: true,
       teams: DEVICE_TEAMS,
       error: null,
       enrollments: [
@@ -264,8 +282,18 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
     states: [
       { name: '多次接入', note: '每次接入各有在线状态。', props: {}, expect: '数据组' },
       { name: '读取中', note: '正在读取。', props: { loading: true }, expectSelector: '[role="progressbar"]' },
-      { name: '暂无接入', note: '没有接入。', props: { enrollments: [] }, expect: '暂无接入' },
+      { name: '暂无接入', note: '没有接入。', props: { enrollments: [], sessions: [] }, expect: '暂无接入' },
       { name: '读取失败', note: '显示原因。', props: { error: '接入状态读取失败' }, expect: '接入状态读取失败' },
+      {
+        get name() {
+          return t('catalog.thisDeviceView.sleepOff.name')
+        },
+        get note() {
+          return t('catalog.thisDeviceView.sleepOff.note')
+        },
+        props: { sessions: [], preventSleep: false },
+        expectSelector: '.v-selection-control:not(.v-selection-control--dirty)',
+      },
     ],
   },
 ]
