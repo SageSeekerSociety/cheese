@@ -10,8 +10,8 @@
 哪些 settings 读，在 `OAuthService._get_provider_config`（包的 `__init__.py`）—— 前者
 不随部署变，后者随。
 
-`github_app` 是 cheesex-app 自己的用户授权：用 GitHub 登录和关联 GitHub 走的都是
-它，回调只有一个（`api/routes/users/github_account.py`），按 state 分给两头。
+`github_app` 是 cheesex-app 自己的用户授权，回调在
+`api/routes/users/oauth.py`。
 """
 
 from __future__ import annotations
@@ -57,9 +57,10 @@ class OAuthProvider(ABC):
         params = {
             "client_id": self.config.client_id,
             "redirect_uri": self.config.redirect_url,
-            "scope": " ".join(self.config.scope),
             "response_type": "code",
         }
+        if self.config.scope:
+            params["scope"] = " ".join(self.config.scope)
         if state:
             params["state"] = state
         return f"{self.config.authorization_url}?{urlencode(params)}"

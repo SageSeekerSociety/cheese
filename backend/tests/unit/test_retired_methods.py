@@ -21,6 +21,11 @@
 
 下面两条自测证明第 2 道的收集器两个方向都会动：造一份带回流名字的类，它要收集到；
 造一份干净的类，它不能凭空多出名字。
+
+候选池第二十二批戊又补进 `check_run_names`：`GitHubPrClient` 声明它，
+`HttpxGitHubPrClient` 与 Forgejo 的实现类 `ForgejoClient` 各实现一份，全仓零调用
+——docstring 提到的 #468 轮询器早改读 `check_state` / `list_check_runs`。协议本身
+也进这张表，所以把方法加回协议声明就会红。
 """
 
 import ast
@@ -33,6 +38,9 @@ from app.core.metrics import MetricsRegistry
 from app.domain.avatars.repositories import AvatarRepository
 from app.domain.feedback.proposals import ProposalService
 from app.domain.machine.microcloud import MicroCloudClient
+from app.domain.review.forgejo_pr import ForgejoClient
+from app.domain.review.github_pr.httpx_client import HttpxGitHubPrClient
+from app.domain.review.github_pr.protocol import GitHubPrClient
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 
 APP_ROOT = Path(app.__file__).resolve().parent
@@ -45,6 +53,11 @@ RETIRED = {
     "app.domain.machine.microcloud": {
         "MicroCloudClient": ("suspend_machine", "resume_machine")
     },
+    "app.domain.review.forgejo_pr": {"ForgejoClient": ("check_run_names",)},
+    "app.domain.review.github_pr.httpx_client": {
+        "HttpxGitHubPrClient": ("check_run_names",)
+    },
+    "app.domain.review.github_pr.protocol": {"GitHubPrClient": ("check_run_names",)},
     "app.domain.task.task_pdf_draft_service": {
         "TaskPdfDraftService": ("generate_task_payload_from_pdf",)
     },
@@ -56,6 +69,9 @@ CLASSES = {
     "AvatarRepository": AvatarRepository,
     "ProposalService": ProposalService,
     "MicroCloudClient": MicroCloudClient,
+    "ForgejoClient": ForgejoClient,
+    "HttpxGitHubPrClient": HttpxGitHubPrClient,
+    "GitHubPrClient": GitHubPrClient,
     "TaskPdfDraftService": TaskPdfDraftService,
 }
 

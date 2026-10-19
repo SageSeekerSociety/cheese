@@ -474,6 +474,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("delivery resend", 114),
         ("docs question retention", 86400),
         ("turn resumes", 30),
+        ("failed turn resume deliveries", 30),
         ("timed deliveries", 30),
         ("overdue deliveries", 115),
         ("routines", 30),

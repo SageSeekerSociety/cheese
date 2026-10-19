@@ -10,7 +10,7 @@
 //   2. 分支保护 —— 在 `useBranchProtection` 里，GET 要问 GitHub，可能比这一页慢。
 //
 // 连接仓库的结果落在仓库那一块自己的 notice 里，不落进页面级的 `error` —— 那一块会
-// 顶掉整页，上面没有按钮可以再试。关联 GitHub 的结果由外框统一说（`useGithubAccountLink`）。
+// 顶掉整页，上面没有按钮可以再试。
 import type { CommitCredit, CommitCreditMode, ForgeConnection, OAuthConnectionInfo } from '@/cx_types'
 
 import { ref } from 'vue'

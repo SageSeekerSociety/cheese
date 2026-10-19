@@ -930,9 +930,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     oauth_ruc_client_id: str | None = None
     oauth_ruc_client_secret: str | None = None
     oauth_ruc_redirect_url: str | None = None
-    # cheesex-app's own user authorization: signing in with GitHub, and 关联
-    # GitHub. Its redirect URL is `/users/me/github-account/callback`, the one
-    # callback registered on the App, which serves both.
+    # cheesex-app's user authorization signs in with GitHub. Keep the App's
+    # registered callback URL even though the separate account link is gone.
     oauth_github_app_client_id: str | None = None
     oauth_github_app_client_secret: str | None = None
     oauth_github_app_redirect_url: str | None = None
