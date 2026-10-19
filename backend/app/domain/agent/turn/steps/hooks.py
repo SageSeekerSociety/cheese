@@ -64,6 +64,7 @@ class LandedEvent:
     frame: dict | None = None
     error_line: str = ""
     error_code: str | None = None
+    recovering: bool = False
 
 
 async def execute_event(
@@ -147,7 +148,7 @@ async def execute_event(
         await activity(
             project_id, topic_id, input_turn, False, agent_handle=event.agent_handle
         )
-    if event.is_error and not event.late:
+    if event.is_error and not event.late and not landed.recovering:
         frame = error_frame(
             landed.error_line or event.text, type="error", persisted=True
         )
