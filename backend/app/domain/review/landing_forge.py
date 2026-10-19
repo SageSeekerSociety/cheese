@@ -9,7 +9,7 @@ none to report.
 
 GitHub also answers the four reads a batched main gate needs (#4249): the run
 whose gate covers a merge commit, the commit `main-green` names, the commits a
-batch covers and what each changed, and the tests a red job's log names.
+batch covers and what each changed, and the failing files a red job's log names.
 Forgejo answers none of them: it gates each merge on its own, and a commit
 with no runs there has simply not been checked yet.
 """
@@ -29,6 +29,7 @@ from app.core.forge_http import forge_client
 from app.domain.project.forge import binding_for_project, tokens_for_project
 from app.domain.review.forge_clients import proposal_client
 from app.domain.review.github_pr.failure_logs import (
+    _LOG_DOWNLOAD_MAX_BYTES,
     _clean_log_line,
     _download_log_tail,
 )
@@ -132,8 +133,10 @@ class LandingReads(Protocol):
         """What one commit changed; None when the forge has no such commit."""
         ...
 
-    async def failed_tests(self, head: str) -> list[str]:
-        """The test files the red jobs on ``head`` name in their logs."""
+    async def failed_paths(self, head: str, *, tests_only: bool = False) -> list[str]:
+        """Files named by failed tests or static checks in the red jobs' logs.
+        ``tests_only`` returns no paths when any static diagnostic is present:
+        a test rerun cannot judge that failure, even in the same file."""
         ...
 
     async def is_ancestor(self, commit: str, descendant: str) -> bool:
@@ -195,7 +198,7 @@ _COMMIT_MAX_FILES = 300
 #: rather than express a rule: a batch is a handful of commits.
 _LOOK_AHEAD = 20
 _LOOK_BACK = 20
-#: How many red jobs get their log read for failed test names.
+#: How many red jobs get their log read for failing file names.
 _RED_LOGS = 3
 #: How far the search goes when `main-green` names nothing. Before the first
 #: green batch no anchor exists, and a batch can be as long as the attribution
@@ -209,6 +212,21 @@ _TEST_PATH = re.compile(
     r"(?<![\w/.-])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+"
     r"\.(?:py|pyi|ts|tsx|js|jsx|vue|go|rs|java))"
 )
+
+#: Ruff's full/concise locations, Pyright, tsc/vue-tsc, and Go vet errors.
+_SOURCE_FILE = r"[^\s:()]+\.(?:py|pyi|[cm]?[jt]sx?|vue|css|scss|go)"
+_STATIC_DIAGNOSTIC = re.compile(
+    rf"^\s*(?:-->\s+)?({_SOURCE_FILE})(?:"
+    r":\d+:\d+(?:\s*$|:\s*[A-Z]+\d+\b|\s+-\s+error:)"
+    r"|\(\d+,\d+\):\s*error TS\d+\b"
+    r"|(?<=\.go):\d+:\d+:\s+\S"
+    r"|:\d+:\d+\s{2,}\S|:\d+\s+\S"
+    r"|:\s+(?:[B-Z]|A -> [B-Z])\s*$)"
+)
+#: Grouped diagnostics put the path above location/severity or issue-label rows.
+_DIAGNOSTIC_FILE = re.compile(rf"^\s*({_SOURCE_FILE})\s*$")
+_GROUPED_ERROR = re.compile(r"^\s+(?:\d+:\d+\s+error\s|\d+:\s+\[[^]]+\]\s)")
+_TAGGED_DIAGNOSTIC = re.compile(r"^\s+(?:NEW|BASELINE GREW):\s+(.+)$")
 
 #: The step in the probe workflow whose failure alone means "the tests fail on
 #: that commit"; the workflow itself is the project's (`main_gate`).
@@ -252,15 +270,40 @@ def gate_run(runs: list[Check], name: str = "") -> Check | None:
     return gates[0]
 
 
-def _failed_test_paths(log: str) -> list[str]:
-    """The test files a failed job's log names: pytest's `FAILED tests/x.py::…`
-    summary, vitest's/jest's `FAIL tests/x.test.ts > …`."""
+def _failed_paths(log: str, *, tests_only: bool = False) -> list[str]:
+    """Files named by test failures and static diagnostics in a job log.
+
+    Test probes must use ``tests_only``: rerunning a test file cannot judge a
+    lint or type error in it.
+    """
     found: list[str] = []
+    diagnostic_file: str | None = None
+    failure_report = False
     for raw in log.splitlines():
         line = _clean_log_line(raw)
-        if not _FAILED_LINE.search(line):
+        if _FAILED_LINE.search(line):
+            found += [match.group(1) for match in _TEST_PATH.finditer(line)]
+            failure_report = True
+        elif not line.strip():
+            failure_report = False
+        if tests_only:
             continue
-        found += [match.group(1) for match in _TEST_PATH.finditer(line)]
+        diagnostic = _STATIC_DIAGNOSTIC.match(line)
+        if diagnostic:
+            found.append(diagnostic.group(1))
+        tagged = _TAGGED_DIAGNOSTIC.match(line) if failure_report else None
+        if tagged:
+            found += [match.group(1) for match in _TEST_PATH.finditer(tagged.group(1))]
+        header = _DIAGNOSTIC_FILE.fullmatch(line)
+        if header:
+            diagnostic_file = header.group(1)
+            if diagnostic_file and diagnostic_file.endswith(".go"):
+                # gofmt -l reports an unformatted file as a bare path.
+                found.append(diagnostic_file)
+        elif diagnostic_file and _GROUPED_ERROR.match(line):
+            found.append(diagnostic_file)
+        elif not re.match(r"^\s+\d+:\d+\s+warning\s", line):
+            diagnostic_file = None
     return found
 
 
@@ -434,7 +477,7 @@ class GitHubLandingReads:
             complete=len(listed) < _COMMIT_MAX_FILES,
         )
 
-    async def failed_tests(self, head: str) -> list[str]:
+    async def failed_paths(self, head: str, *, tests_only: bool = False) -> list[str]:
         try:
             data = await self._get(
                 f"/commits/{quote(head, safe='')}/check-runs", {"per_page": 100}
@@ -453,11 +496,18 @@ class GitHubLandingReads:
             job = actions_job_id(run)
             if job is None:
                 continue
-            found += _failed_test_paths(await self._job_log(job))
+            log = await self._job_log(job)
+            paths = _failed_paths(log)
+            if tests_only:
+                tests = _failed_paths(log, tests_only=True)
+                if paths != tests:
+                    return []
+                paths = tests
+            found += paths
         return sorted(set(found))
 
     async def _job_log(self, job_id: int) -> str:
-        """A failed Actions job's log tail, or "" when it cannot be read."""
+        """A failed Actions job's bounded log, or "" when it cannot be read."""
         try:
             token, _ = await self._tokens.installation_token()
             async with forge_client(transport=self._transport, timeout=20.0) as http:
@@ -475,9 +525,13 @@ class GitHubLandingReads:
                     # The redirect goes to a third-party blob host; the
                     # pre-signed URL needs no Authorization, and replaying it
                     # to another host is exactly what must not happen.
-                    return await _download_log_tail(http, location)
+                    # Static checks can fail before a long test collection;
+                    # attribution needs those early diagnostics too.
+                    return await _download_log_tail(
+                        http, location, keep_bytes=_LOG_DOWNLOAD_MAX_BYTES
+                    )
                 if resp.status_code == 200:
-                    return resp.text[-256 * 1024 :]
+                    return resp.text[:_LOG_DOWNLOAD_MAX_BYTES]
         except Exception as exc:  # a log that cannot be read attributes nothing
             logger.info("could not read job %s log: %s", job_id, exc)
         return ""
@@ -666,7 +720,7 @@ class ForgejoLandingReads:
     async def commit_change(self, sha: str) -> CommitChange | None:
         return None
 
-    async def failed_tests(self, head: str) -> list[str]:
+    async def failed_paths(self, head: str, *, tests_only: bool = False) -> list[str]:
         return []
 
     async def is_ancestor(self, commit: str, descendant: str) -> bool:
