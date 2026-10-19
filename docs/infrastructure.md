@@ -793,14 +793,14 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **Session records** (what each session's runner journaled,
   `session_records`): the last few minutes sit in the table and go out with the
   DB dump; older runs are gzip objects under `session-records/` in the private
-  `TRANSCRIPT_S3_BUCKET`, which nothing else backs up. They are kept 30 days;
-  the inputs each session was sent are then kept under
-  `archive/user-messages/` for as long as the conversation exists.
+  `TRANSCRIPT_S3_BUCKET`, which nothing else backs up. The objects are kept
+  for good, a deleted conversation's included; a sealed run's row (and so the
+  app's way to read it) goes after 30 days.
 - **Transcripts** (the CLI's own `.jsonl` files: Claude Code's, Codex's, pi's)
   of an archived room are compressed on the central session host when its
-  cleanup removes the room's home, sent to the private `TRANSCRIPT_S3_BUCKET`
-  under `transcripts/rooms/`, and kept there for good; the host's copy goes 30
-  days later, once the bucket's is confirmed — see
+  cleanup removes the room's resource there, sent to the private
+  `TRANSCRIPT_S3_BUCKET` under `transcripts/rooms/`, and kept there for good;
+  the host's copy goes 30 days later, once the bucket's is confirmed — see
   [archived-room cleanup deployment](../deploy/README-room-cleanup.md).
   Transcript objects uploaded to the private `TRANSCRIPT_S3_BUCKET` before
   uploading stopped are still there, indexed by the `raw_transcripts` table;
