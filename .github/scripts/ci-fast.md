@@ -361,13 +361,14 @@ everything is still allowed to answer unknown.
   OpenAPI document and generates the API types from it
   (`frontend/scripts/typecheck.mjs` — neither half is committed); a deleted non-spec source file forces the full
   typecheck instead, since only the whole project sees its dangling importers.
-  A suite that failed before running a test — an import or collection error, a
-  broken `beforeAll`, an unhandled error — is a failure, not an empty
+  A suite that failed before running a test — an import or collection error or
+  a broken `beforeAll` — is a failure, not an empty
   selection: Vitest counts it in `numFailedTestSuites` while `numFailedTests`
   stays 0, which used to read as "no tests ran" after 408 s of suites that
-  never started. A Vitest worker crash is the one exception: the pool died
-  before the suite could report, which says nothing about the change, so it is
-  unknown.
+  never started. An unhandled error that never reaches a file's report stays a
+  process failure and reads as unknown. A Vitest worker crash is the other
+  exception: the pool died before the suite could report, which says nothing
+  about the change, so it is also unknown.
   Non-spec is read from the name's ending, not from the text: a helper module
   called `migrationContract.spec.helper.ts` is imported by thirteen surviving
   specs, and it is the full typecheck that sees them.

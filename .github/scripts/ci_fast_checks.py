@@ -13,9 +13,10 @@ commands and turns each command's report into a verdict nobody can fake:
     is an empty selection wearing their exit code.
   * The report decides pass/fail for suites; the exit code only widens it to
     unknown (pytest 2/3/4/5, Vitest --no-passWithNoTests on an empty graph).
-    A file that failed before running a test — a collection/import error, a
-    broken beforeAll, an unhandled error — is a failure, not an empty
-    selection. Vitest counts it in numFailedTestSuites while numFailedTests
+    A file that failed before running a test — a collection/import error or a
+    broken beforeAll — is a failure, not an empty selection. (An unhandled
+    error that never reaches a file's report stays a process failure, which
+    reads as unknown.) Vitest counts it in numFailedTestSuites while numFailedTests
     stays 0, so the "no tests ran" rule used to report a run of failing suites
     as nothing to judge (measured: 408 s of suites that could not load read as
     "empty/skipped/uncovered tests"). A worker crash is the one exception: it
@@ -643,9 +644,11 @@ def validate_evidence(evidence):
             # A file that failed before running a test is counted in
             # numFailedTestSuites, not numFailedTests. Without this, a run of
             # suites that could not load (an import/collection error, a broken
-            # beforeAll, an unhandled error) has passed=0, errors=0 and is
-            # called an empty selection below — it read "no tests ran" after
-            # 408 s of suites that never started.
+            # beforeAll) has passed=0, errors=0 and is called an empty
+            # selection below — it read "no tests ran" after 408 s of suites
+            # that never started. An unhandled error that never reaches the
+            # file's report is a process failure, which resolve() reads as
+            # unknown.
             failed = [row for row in rows
                       if row.get("status") == "failed" or row.get("message")]
             failed_suites = max(int(data.get("numFailedTestSuites", 0)), len(failed))
