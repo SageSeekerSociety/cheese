@@ -104,7 +104,7 @@ def run(run_id, status, conclusion, title, deploy="success"):
 
 class DeployRunForAMergedPR(unittest.TestCase):
     def watch(self, runs, live, first=None, ci=None, ci_first=None, red_wait="0", ci_polls=None,
-              reverts=None, commits_fail=0, commits_cut=0, commits_page=100):
+              reverts=None, commits_fail=0, commits_cut=0, commits_page=100, quiet="3600"):
         with tempfile.TemporaryDirectory() as directory:
             fake = Path(directory)
             (fake / "gh").write_text(FAKE_GH)
@@ -139,7 +139,8 @@ class DeployRunForAMergedPR(unittest.TestCase):
             result = subprocess.run(
                 ["bash", str(WATCH), "--deploy", "3055"], capture_output=True, text=True, timeout=20,
                 env={**os.environ, "PATH": f"{fake}:{os.environ['PATH']}", "FAKE": str(fake),
-                     "PR_WATCH_INTERVAL": "0", "PR_WATCH_MAIN_RED_WAIT": red_wait})
+                     "PR_WATCH_INTERVAL": "0", "PR_WATCH_MAIN_RED_WAIT": red_wait,
+                     "PR_WATCH_QUIET": quiet})
         return result
 
     def test_a_cancelled_deploy_of_an_earlier_build_is_not_this_prs_deploy(self):
@@ -352,6 +353,13 @@ class DeployRunForAMergedPR(unittest.TestCase):
         self.assertIn(f"could not read the commits after merge {MERGE[:9]}", result.stdout)
         self.assertIn(f"merge {MERGE[:9]} was reverted by {LATER[:9]}", result.stdout)
         self.assertNotIn("live on dev", result.stdout)
+
+    def test_a_live_version_that_stays_unchecked_still_reports_where_it_waits(self):
+        result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER, quiet="0",
+                            reverts={f"{MERGE}...{LATER}": [f"Revert it\n\nThis reverts commit {MERGE}."]},
+                            commits_fail=3)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"merged; could not check dev's {LATER[:9]} for a revert", result.stdout)
 
     def test_a_failed_revert_lookup_of_the_live_version_is_not_live(self):
         result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER,
