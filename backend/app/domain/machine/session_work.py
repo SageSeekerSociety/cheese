@@ -38,7 +38,7 @@ from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.conversation.services import of_room, room_column, room_of
+from app.domain.conversation.services import of_room, room_of
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.device import sandbox as device_sandbox
@@ -167,37 +167,6 @@ async def _session_author(db, project, handle: str) -> str:
     if teammate is None:
         return handle
     return await AgentInstanceService(db).ensure_identity(teammate)
-
-
-async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
-    """Who works on each of these devices now: every agent session whose lease
-    is there, in a room that is not archived, with its project, room and agent.
-    """
-
-    out: dict[str, list[dict]] = {device_id: [] for device_id in device_ids}
-    if not device_ids:
-        return out
-    on_device = AgentSession.work_lease["device_id"].as_string()
-    rows = await db.execute(
-        select(AgentSession, Topic, Project, on_device)
-        .select_from(AgentSession)
-        .join(Topic, Topic.id == room_column(AgentSession.conversation_id))
-        .join(Project, Project.id == Topic.project_id)
-        .where(on_device.in_(device_ids), Topic.status != TopicStatus.archived)
-        .order_by(Project.name, Topic.title, AgentSession.agent_handle)
-    )
-    for session, topic, project, device_id in rows:
-        out[device_id].append(
-            {
-                "project_id": str(project.id),
-                "project_name": project.name,
-                "topic_id": str(topic.id),
-                "topic_title": topic.title,
-                "agent_handle": session.agent_handle,
-                **await _agent_name(db, project, topic, session.agent_handle),
-            }
-        )
-    return out
 
 
 async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> None:
