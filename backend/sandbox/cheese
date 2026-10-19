@@ -185,8 +185,9 @@ FEEDBACK_DESCRIPTION = (
     "查到答案的事。**先确认这不是用户的使用方式问题**——这条卡问的就是"
     "「平台坏了」和「用户不会用」之间的那句话。\n"
     "\n"
-    "写之前先看 `user_said`:它是必填的,要么引用用户原话,要么照抄那句"
-    "「用户没有就这个问题说过话」。不许猜用户怎么想。\n"
+    "写之前先想清楚用户说过什么:用户就这个问题说过话,就在 `user_said` 里引用原话;"
+    "没说过,就不填 `user_said`,改填 `user_said_absent: true`。两者必须且只能填一个。"
+    "不许猜用户怎么想。\n"
     "\n"
     "同一段对话每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
     "的不会再问)。超了平台会拒绝,不要重试。\n"
@@ -863,7 +864,12 @@ PLATFORM_TOOLS = ToolTable(
                     "description": "private 只有管理员、提交者和提出它时"
                     "对话里的人看得见",
                 },
-                "user_said": _text("引用用户原话；用户没说过就照抄那句规定好的"),
+                "user_said": _text("引用用户原话；用户没说过就不填，改填 user_said_absent"),
+                "user_said_absent": {
+                    "type": "boolean",
+                    "description": "用户没有就这个问题说过话时填 true，"
+                    "这时不填 user_said",
+                },
                 "why": {"type": "string"},
                 "what_happened": {"type": "string"},
                 "expectation": {"type": "string"},
@@ -875,7 +881,7 @@ PLATFORM_TOOLS = ToolTable(
                 "environment": {"type": "string"},
                 "tags": _text("逗号分隔"),
             },
-            ["title", "kind", "visibility", "user_said"],
+            ["title", "kind", "visibility"],
         ),
         _tool(
             "cheese_feedback_list",
@@ -1626,6 +1632,8 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "user_said",
             ),
         }
+        if args.get("user_said_absent") is True:
+            body["user_said_absent"] = True
         if args.get("tags"):
             body["tags"] = [
                 value.strip() for value in args["tags"].split(",") if value.strip()

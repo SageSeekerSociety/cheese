@@ -33,7 +33,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domain.feedback.models import (
     Feedback,
@@ -103,10 +103,12 @@ class FeedbackProposalIn(BaseModel):
 
     The shape is cc's `SendFeedback` draft (§5.0/§5.5), which the requirement
     asked us to copy: a fixed skeleton, bullets rather than prose, and —
-    the part that matters most — **「谁说的」必须自证**. `user_said` is a required
-    position that has to hold either a quote or the sentence 「用户没有就这个
-    问题说过话」. A required slot with one honest way to fill it beats a prompt
-    begging the model to be truthful.
+    the part that matters most — **「谁说的」必须自证**. Exactly one of two
+    answers is required: `user_said` holding the user's own words, or
+    `user_said_absent=True` saying the user never spoke about it. A required
+    slot with one honest way to fill it beats a prompt begging the model to be
+    truthful; making "said nothing" a flag rather than an agreed sentence keeps
+    the card from quoting that sentence back as if the user had said it.
     """
 
     kind: FeedbackKind = FeedbackKind.bug
@@ -124,8 +126,19 @@ class FeedbackProposalIn(BaseModel):
     session_id: str | None = Field(default=None, max_length=64)
     environment: str | None = Field(default=None, max_length=255)
     tags: list[str] = Field(default_factory=list, max_length=20)
-    #: 用户原话，或者那句规定好的「用户没有就这个问题说过话」。必填，理由见类说明。
-    user_said: str = Field(min_length=1, max_length=2000)
+    #: 用户原话。和 `user_said_absent` 二选一，必填其一，理由见类说明。
+    user_said: str | None = Field(default=None, min_length=1, max_length=2000)
+    #: 用户没有就这个问题说过话（芝士自己发现的）。
+    user_said_absent: bool = False
+
+    @model_validator(mode="after")
+    def _says_who_said_it(self) -> FeedbackProposalIn:
+        if (self.user_said is None) != self.user_said_absent:
+            raise ValueError(
+                "give exactly one of user_said (the user's words) "
+                "or user_said_absent=true (the user said nothing about it)"
+            )
+        return self
 
 
 class FeedbackProposalOut(BaseModel):
