@@ -211,6 +211,7 @@ TREE_GUARD_READS = {
     "test_one_roster_agents_included.py": ("backend/**", "frontend/src/**"),
     "test_local_fs_sharing_guard.py": ("backend/**",),
     "test_get_by_id_has_batch_sibling.py": ("backend/**", ".claude/scripts/**"),
+    "test_repositories_read_by_id_through_the_base.py": ("backend/**",),
     "test_changed_runner.py": (".claude/scripts/**",),
     "test_postgres_version_pins.py":
         (".github/workflows/**", "deploy/**", ".claude/scripts/**", "backend/alembic/**",

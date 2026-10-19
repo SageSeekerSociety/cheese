@@ -32,7 +32,6 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host import claude_code as claude_driver
 from app.domain.agent.session_host.contract import StartRefused
 from app.domain.agent.session_host.host import SessionHost
-from tests.support.machine_path import on_machine
 
 PROJECT, TOPIC = uuid.uuid4(), uuid.uuid4()
 AGENT = "cheese-agent"
@@ -80,7 +79,7 @@ class Host:
         )
 
     def expand(self, state: str) -> Path:
-        return Path(on_machine(state, self.home))
+        return Path(state.replace("$HOME", str(self.home)))
 
     async def precheck(self, session, *, needs_place):
         return Placement(DEVICE, 1, AGENT, rented=False)

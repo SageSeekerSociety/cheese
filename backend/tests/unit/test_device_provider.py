@@ -10,7 +10,6 @@ import asyncio
 import json
 import os
 import re
-import shlex
 import subprocess
 import time
 import uuid
@@ -448,9 +447,9 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
     )
     screen = await room.ensure(token="first")
     home = Path(
-        device_home_dir(room.arguments["project_id"], room.arguments["topic_id"])
-        .replace("${CHEESE_PROFILE_ROOT:-.cheese}", ".cheese")
-        .replace("$HOME", str(tmp_path))
+        device_home_dir(
+            room.arguments["project_id"], room.arguments["topic_id"]
+        ).replace("$HOME", str(tmp_path))
     )
     # The token lives in THIS seat's directory, the room's other teammates
     # having one of their own (`place.seat_dir`).
@@ -508,9 +507,9 @@ async def test_a_turn_rewrites_only_its_own_seat_s_execution_token(tmp_path):
 
     mine_screen = await room.ensure(agent_handle="cheese-a", token="a1")
     home = Path(
-        device_home_dir(room.arguments["project_id"], room.arguments["topic_id"])
-        .replace("${CHEESE_PROFILE_ROOT:-.cheese}", ".cheese")
-        .replace("$HOME", str(tmp_path))
+        device_home_dir(
+            room.arguments["project_id"], room.arguments["topic_id"]
+        ).replace("$HOME", str(tmp_path))
     )
     mine = Path(seat_dir(str(home), "cheese-a")) / "remote-session/execution.token"
     theirs = Path(seat_dir(str(home), "cheese-b")) / "remote-session/execution.token"
@@ -546,19 +545,11 @@ async def test_a_task_s_session_leaves_its_room_s_session_its_own_files(tmp_path
             "CHEESE_RESOURCE_ID": str(room_id),
         },
     )
-    home = Path(
-        device_home_dir(project, room_id)
-        .replace("${CHEESE_PROFILE_ROOT:-.cheese}", ".cheese")
-        .replace("$HOME", str(tmp_path))
-    )
+    home = Path(device_home_dir(project, room_id).replace("$HOME", str(tmp_path)))
 
     def launcher(screen: HubScreen) -> Path:
         written = re.search(r'exec bash "([^"]+)"', screen.command[-1]).group(1)
-        return Path(
-            written.replace("${CHEESE_PROFILE_ROOT:-.cheese}", ".cheese").replace(
-                "$HOME", str(tmp_path)
-            )
-        )
+        return Path(written.replace("$HOME", str(tmp_path)))
 
     room_screen = await room.ensure(topic_id=room_id, token="room")
     room_token = Path(seat_dir(str(home), "cheese")) / "remote-session/execution.token"
@@ -1075,10 +1066,10 @@ async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     await room.ensure()
 
     (argv, stdin) = next((a, s) for a, s in hub.execs if s and "x" * 1000 in s)
-    assert f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/launch/{topic_id}" in argv[-1]
+    assert f"$HOME/.cheese/launch/{topic_id}" in argv[-1]
     command = hub.opened[0].command
     assert sum(len(part) for part in command) < 1024
-    assert f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/launch/{topic_id}" in command[-1]
+    assert f"$HOME/.cheese/launch/{topic_id}" in command[-1]
 
 
 async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
@@ -1179,10 +1170,7 @@ def test_every_device_work_dir_is_a_topic_scratch_dir():
     pid = uuid.uuid4()
     tid = uuid.uuid4()
     prov = DeviceChannel(hub=FakeHub())
-    assert (
-        prov._work_dir(pid, tid)
-        == f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/home/{pid}/{tid}/room"
-    )
+    assert prov._work_dir(pid, tid) == f"$HOME/.cheese/home/{pid}/{tid}/room"
 
 
 async def test_concurrent_topics_never_share_a_device_home():
@@ -1998,7 +1986,7 @@ def _launched_file(command: list[str]) -> str:
 def _launcher_state(script: str) -> str:
     """Where the runner a launcher starts keeps its state."""
     found = re.search(r"^CLAUDE_STATE=(.*)$", script, re.MULTILINE)
-    return shlex.split(found.group(1))[0] if found else ""
+    return found.group(1).strip().strip("'") if found else ""
 
 
 def _seat_state(room, seat: str) -> str:

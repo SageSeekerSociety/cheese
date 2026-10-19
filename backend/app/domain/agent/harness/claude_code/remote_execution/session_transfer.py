@@ -20,8 +20,7 @@ CHECKOUT_DIR = "room"
 def transfer(payload):
     home = (
         Path.home()
-        / os.environ.get("CHEESE_PROFILE_ROOT", ".cheese")
-        / "home"
+        / ".cheese/home"
         / str(uuid.UUID(payload["project"]))
         / str(uuid.UUID(payload["resource"]))
     )
@@ -33,8 +32,7 @@ def transfer(payload):
             socket, session, *_ = json.loads(marker.read_text())
             work = (
                 Path.home()
-                / os.environ.get("CHEESE_PROFILE_ROOT", ".cheese")
-                / "work"
+                / ".cheese/work"
                 / str(uuid.UUID(payload["project"]))
                 / str(uuid.UUID(payload["resource"]))
             )

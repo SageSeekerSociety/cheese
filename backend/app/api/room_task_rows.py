@@ -48,6 +48,7 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import hand_of
+from app.domain.room_task.adapters import task_row_json
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.thread.models import Thread
@@ -144,7 +145,7 @@ async def task_rows(
         accepted = landed.get(task.id, [])
         items.append(
             {
-                **TaskOut.model_validate(task).model_dump(mode="json"),
+                **task_row_json(task),
                 # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
                 "model": presentation.card_model(
                     task, spent=spent.get(task.id), choices=choices
@@ -337,7 +338,7 @@ async def project_task_rows(
         ).reason_for(me)
         items.append(
             {
-                **TaskOut.model_validate(task).model_dump(mode="json"),
+                **task_row_json(task),
                 "presentation": shown.as_dict(),
                 "awaits_me": awaits is not None,
                 # 这条活此刻在不在往前走（侧栏那盏呼吸绿）。判据在

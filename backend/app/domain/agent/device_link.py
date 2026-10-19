@@ -46,8 +46,6 @@ class LinkMsg:
     build: str = ""
     target: str = ""
     executor: bool = False
-    # `hello` only: the connector expands `place.ROOT_PLACEHOLDER` itself.
-    profiles: bool = False
     name: str = ""
     value: Any = None
     id: str = ""
@@ -69,7 +67,6 @@ class LinkMsg:
             build=str(m.get("build", "")),
             target=str(m.get("target", "")),
             executor=m.get("executor") is True,
-            profiles=m.get("profiles") is True,
             name=str(m.get("name", "")),
             value=m.get("value"),
             id=str(m.get("id", "")),

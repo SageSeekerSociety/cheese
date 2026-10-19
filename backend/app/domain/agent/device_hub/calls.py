@@ -63,8 +63,8 @@ async def exec(
                 exec_id=eid,
                 command=argv,
                 timeout=int(timeout),
-                cwd=device.spelled(cwd) if cwd else cwd,
-                env={k: device.spelled(v) for k, v in env.items()} if env else env,
+                cwd=cwd,
+                env=env,
                 stdin=stdin,
             )
         )
@@ -115,7 +115,7 @@ async def call_executor(
         await device.send(
             device_link.execution_call(
                 call_id=identifier,
-                state=device.spelled(state),
+                state=state,
                 method=method,
                 params=params,
                 timeout=int(timeout),

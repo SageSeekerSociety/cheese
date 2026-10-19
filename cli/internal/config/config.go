@@ -1,4 +1,5 @@
-// Package config stores one enrollment's server and device credential.
+// Package config is the single on-disk identity of this installation: where the
+// server is and the long-lived credential that represents this machine to it.
 // Both the long-running host (`cheese run`) and the ad-hoc API caller (`cheese
 // api`) read the same file, so a machine is configured once and both halves
 // agree. The file carries no notion of what the server is for.
