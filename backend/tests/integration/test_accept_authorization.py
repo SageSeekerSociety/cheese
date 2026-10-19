@@ -195,7 +195,7 @@ def test_reassign_without_auth_401(client):
 
     r = client.post(
         f"/accept-cards/{cid}/reassign",
-        json={"reviewer_handle": "mallory", "focus": "x"},
+        json={"reviewer_handle": "mallory"},
     )
     assert r.status_code == 401
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
@@ -273,7 +273,7 @@ def test_reassign_to_self_then_accept_is_refused_for_a_non_member(client):
 
     r = client.post(
         f"/accept-cards/{cid}/reassign",
-        json={"reviewer_handle": "mallory", "focus": "我最懂"},
+        json={"reviewer_handle": "mallory"},
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403
@@ -301,7 +301,7 @@ def test_reassign_to_self_then_accept_is_refused_for_a_non_member(client):
 _CARD_DECISION_ROUTES = [
     ("accept", {"decided_by": "mallory"}),
     ("reject", {"decided_by": "mallory", "note": "不行"}),
-    ("reassign", {"reviewer_handle": "mallory", "focus": "我最懂"}),
+    ("reassign", {"reviewer_handle": "mallory"}),
     ("void", {"decided_by": "mallory", "note": "作废"}),
     ("approve", {"approver_handle": "mallory"}),
     ("revoke", {"decided_by": "mallory"}),
@@ -353,6 +353,7 @@ def test_every_card_decision_route_refuses_a_non_member(client, route, body):
 _TASK_SIDE_ROUTES = [
     ("accept-card", {"change_subject": "chore: 导师递的", "reviewer_handle": "alice"}),
     ("accept-card/describe", {"change_subject": "chore: 导师改的标题"}),
+    ("accept-card/redeliver", {"deliver_url": "https://site.example/r"}),
     ("ready", None),
     ("push-fix", None),
 ]

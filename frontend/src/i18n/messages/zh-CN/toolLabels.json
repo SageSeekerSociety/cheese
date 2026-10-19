@@ -67,6 +67,7 @@
   "cheeseAsk": "向用户提问",
   "cheeseAcceptRequest": "提交审阅",
   "cheeseDescribe": "修改审阅说明",
+  "cheeseRedeliver": "更换审阅中的交付物",
   "cheeseReady": "标记可审阅",
   "cheeseMilestone": "添加里程碑",
   "cheeseMembers": "列出频道成员",

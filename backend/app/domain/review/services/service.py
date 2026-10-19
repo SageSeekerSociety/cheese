@@ -162,6 +162,18 @@ class AcceptService:
             admits_reviewer=admits_reviewer,
         )
 
+    async def redeliver(
+        self,
+        task_id: uuid.UUID,
+        *,
+        actor: str,
+        deliver: str | None = None,
+        deliver_url: str | None = None,
+    ) -> AcceptCard:
+        return await cards.redeliver(
+            self, task_id, actor=actor, deliver=deliver, deliver_url=deliver_url
+        )
+
     async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
         return await notices._announce_filed(self, topic=topic, card=card, task=task)
 

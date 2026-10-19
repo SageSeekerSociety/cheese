@@ -90,6 +90,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_ask: 'toolLabels.cheeseAsk',
   cheese_accept_request: 'toolLabels.cheeseAcceptRequest',
   cheese_describe: 'toolLabels.cheeseDescribe',
+  cheese_redeliver: 'toolLabels.cheeseRedeliver',
   cheese_ready: 'toolLabels.cheeseReady',
   cheese_milestone: 'toolLabels.cheeseMilestone',
   cheese_members: 'toolLabels.cheeseMembers',

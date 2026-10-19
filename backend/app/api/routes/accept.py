@@ -51,6 +51,8 @@ from app.domain.review.models import DeliverableKind
 from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptCardDescribe,
+    AcceptCardReassign,
+    AcceptCardRedeliver,
     AcceptDecision,
     ApprovalCreate,
     AutoMergeDecision,
@@ -268,6 +270,27 @@ async def describe_card(
     return ok(await _accept_service(db).describe(card))
 
 
+@router.post("/topics/{topic_id}/accept-card/redeliver", dependencies=[ROUTE_DECIDES])
+async def redeliver_card(
+    topic_id: uuid.UUID,
+    body: AcceptCardRedeliver,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """换掉这条任务待处理那张卡交出去的文件或地址；``topic_id`` 是任务的。
+
+    走任务这一侧，和递卡、改描述同一道门：卡挂在房间上，按卡 id 决定的那几条路
+    （`_card_actor`）问的是房间，任务自己的凭据进不去房间 —— 所以交付的人换自己
+    交出去的那一份，只能从这里进。"""
+    actor, _room, task_id = await _task_actor(topic_id, db, resolver, writes=True)
+    svc = _accept_service(db)
+    card = await svc.redeliver(
+        task_id, actor=actor.handle, deliver=body.deliver, deliver_url=body.deliver_url
+    )
+    await db.commit()
+    return ok(await svc.describe(card))
+
+
 @router.get("/accept-cards/{card_id}/deliverable")
 async def download_card_deliverable(
     card_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -456,7 +479,7 @@ async def accept_card(
 @router.post("/accept-cards/{card_id}/reassign", dependencies=[ROUTE_DECIDES])
 async def reassign_card(
     card_id: uuid.UUID,
-    body: AcceptCardCreate,
+    body: AcceptCardReassign,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:

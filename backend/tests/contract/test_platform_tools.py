@@ -95,6 +95,11 @@ CALLS = {
         "POST",
         f"/topics/{TOPIC}/accept-card/describe",
     ),
+    "cheese_redeliver": (
+        {"deliver_url": "https://site.example/r"},
+        "POST",
+        f"/topics/{TOPIC}/accept-card/redeliver",
+    ),
     "cheese_ready": ({}, "POST", f"/topics/{TOPIC}/ready"),
     "cheese_title": ({"text": "推荐原型"}, "POST", f"/topics/{TOPIC}/title"),
     "cheese_notify": (

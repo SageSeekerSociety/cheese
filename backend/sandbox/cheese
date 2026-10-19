@@ -710,6 +710,17 @@ PLATFORM_TOOLS = ToolTable(
             [],
         ),
         _tool(
+            "cheese_redeliver",
+            "换掉当前任务待审阅那张验收卡交出去的文件或地址，卡和 PR 不变；之前的批准会"
+            "清掉，验收人会收到通知。只换交付物：标题和正文用 cheese_describe，代码的新"
+            "提交用 cheese push-fix。卡已经有了结果的，重新递卡。",
+            {
+                "deliver": _text("换成的文件，任务工作目录里的相对路径，当场留快照"),
+                "deliver_url": _text("换成的地址"),
+            },
+            [],
+        ),
+        _tool(
             "cheese_ready",
             "把当前任务已有的 draft PR 标记为可评审；"
             "请人验收用 cheese_accept_request。",
@@ -1522,6 +1533,17 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         if not body:
             raise ValueError("describe 至少要给 subject 或 body")
         return {"method": "POST", "path": here + "/accept-card/describe", "body": body}
+    if tool == "cheese_redeliver":
+        body = _given(args, "deliver", "deliver_url")
+        if not body:
+            raise ValueError("redeliver 要给 deliver 或 deliver_url")
+        if "deliver" in body:
+            body["deliver"] = _task_relative(body["deliver"], topic)
+        return {
+            "method": "POST",
+            "path": here + "/accept-card/redeliver",
+            "body": body,
+        }
     if tool == "cheese_ready":
         return {"method": "POST", "path": here + "/ready"}
     if tool == "cheese_doc_list":
@@ -3441,6 +3463,15 @@ _SAY = {
     "cheese_describe": lambda a, d, e: (
         "验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
         f"{(d or {}).get('change_subject') or '（空）'}"
+    ),
+    "cheese_redeliver": lambda a, d, e: (
+        "验收卡交出去的那一份已换成 "
+        + (
+            ((d or {}).get("deliverable") or {}).get("filename")
+            or ((d or {}).get("deliverable") or {}).get("url")
+            or "（空）"
+        )
+        + "，之前的批准已清掉，验收人收到了通知。"
     ),
     "cheese_ready": lambda a, d, e: (
         f"PR #{d.get('pr_number')} 已从 draft 翻成 ready：{d.get('pr_url') or ''}"

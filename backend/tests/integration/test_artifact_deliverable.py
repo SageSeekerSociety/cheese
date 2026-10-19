@@ -13,15 +13,18 @@ import uuid
 
 import pytest
 
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.review import services as review_services
 from app.domain.topic.models import Topic
+from tests.conftest import seed_user
 from tests.delivery import delivery_artifact, delivery_headers, delivery_task
 from tests.integration.conftest import (
     join_project_team,
+    mail,
     post_project,
     session_auth_headers,
 )
@@ -735,3 +738,136 @@ def test_file_and_link_deliveries_succeed_and_accept_without_branch_commits_or_p
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["data"]["status"] == "accepted"
+
+
+def _put(client, task, name: str, content: str) -> None:
+    path = client.test_machine_home / ".cheese/tasks" / str(task.id) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+def _redeliver(client, task, headers, **body):
+    return client.post(
+        f"/topics/{task.id}/accept-card/redeliver", headers=headers, json=body
+    )
+
+
+def test_a_task_replaces_what_its_waiting_card_hands_over(client):
+    """FB-104：卡还在等审阅，交付的人改了文件，要换的是卡上那一份 —— 不是再递一张，
+    也不是去够那条只有房间里的人才能走的改验收人。
+
+    换过之后验收人拿到的是新的那一份，旧的不再挂在这张卡上；审过旧那一份的批准
+    不算数，验收人被叫回来再看一眼。"""
+    reviewer = seed_user(client, "alice")
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/channel-row.html": "<p>第一稿</p>"},
+        deliver="out/channel-row.html",
+    )
+    assert filed.status_code == 200, filed.text
+    card = filed.json()["data"]
+    approved = client.post(
+        f"/accept-cards/{card['id']}/approve",
+        json={"approver_handle": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["data"]["approvals"] == ["alice"]
+    heard_before = len(mail(client, reviewer, "ROOM_NOTICE"))
+
+    task = delivery_task(client, room_id)
+    _put(client, task, "out/channel-row-prototype.html", "<p>第二稿</p>")
+    r = _redeliver(
+        client,
+        task,
+        delivery_headers(client, room_id),
+        deliver="out/channel-row-prototype.html",
+    )
+
+    assert r.status_code == 200, r.text
+    now = r.json()["data"]
+    assert now["id"] == card["id"]
+    assert now["status"] == "pending"
+    assert now["deliverable"]["filename"] == "channel-row-prototype.html"
+    assert now["approvals"] == []
+    got = client.get(f"/accept-cards/{card['id']}/deliverable")
+    assert got.status_code == 200, got.text
+    assert got.content == "<p>第二稿</p>".encode()
+    assert len(mail(client, reviewer, "ROOM_NOTICE")) == heard_before + 1
+
+
+def test_a_decided_card_is_not_redelivered(client):
+    """采纳了的那一版已经是清单上的一版：换它的字节就是改写历史。要交新的一版，
+    递一张新卡。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/报告.pdf": "采纳的那一份\n"},
+        deliver="out/报告.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    _accept(client, card_id)
+
+    task = delivery_task(client, room_id)
+    _put(client, task, "out/报告2.pdf", "想偷换的一份\n")
+    r = _redeliver(
+        client, task, delivery_headers(client, room_id), deliver="out/报告2.pdf"
+    )
+
+    assert r.status_code == 409, r.text
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert got.content == "采纳的那一份\n".encode()
+
+
+def test_a_card_that_hands_over_the_merge_has_nothing_to_redeliver(client):
+    """交合并的卡交的是分支：换它走 push-fix，挂一个文件上去只会让卡说两件事。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(client, room_id)
+    assert filed.status_code == 200, filed.text
+
+    task = delivery_task(client, room_id)
+    r = _redeliver(
+        client,
+        task,
+        delivery_headers(client, room_id),
+        deliver_url="https://site.example/r",
+    )
+
+    assert r.status_code == 409, r.text
+    card = client.get(f"/topics/{room_id}/accept-card").json()["data"]["data"][0]
+    assert card["deliverable"]["kind"] == "merge"
+
+
+def test_another_tasks_session_cannot_redeliver_this_tasks_card(client):
+    """同一个房间里另一条任务的会话，碰不到这条任务的卡。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/报告.pdf": "这条任务交的\n"},
+        deliver="out/报告.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    mine = delivery_task(client, room_id)
+    other = delivery_task(client, room_id, new=True)
+    _put(client, mine, "out/别人的.pdf", "另一条任务塞进来的\n")
+    other_session = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=str(other.project_id), topic_id=str(other.id)
+        )
+    }
+
+    r = _redeliver(client, mine, other_session, deliver="out/别人的.pdf")
+
+    assert r.status_code == 403, r.text
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert got.content == "这条任务交的\n".encode()
