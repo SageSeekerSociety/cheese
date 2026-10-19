@@ -328,3 +328,55 @@ async def _forget(
             for prefix in (service.PREFIX, ARCHIVE_PREFIX):
                 await storage.delete_prefix(f"{prefix}/{conversation_id}/")
         await db.commit()
+
+
+#: How often the bucket is checked for objects nothing names.
+ORPHANS_EVERY_S = 24 * 3600
+#: How old an unnamed object is before it goes: past the retention, so the
+#: object of any run still kept is named by its row, and an upload the sealer
+#: has not yet committed is far younger.
+ORPHAN_AFTER = RETENTION + timedelta(days=1)
+
+
+async def forget_orphans(
+    sessions: SessionFactory,
+    storage: StorageBackend | None = None,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Delete raw-record objects older than `ORPHAN_AFTER` that no row names;
+    how many.
+
+    What leaves one: an expiry whose delete failed after its commit, a commit
+    that landed and raised, a sealer that died between its upload and its
+    commit. Archives are left alone: the inputs are kept by design, and one a
+    failed commit left behind goes with its conversation (`forget_gone`).
+    """
+    storage = storage or service.bucket()
+    if storage is None:
+        return 0
+    cutoff = (now or datetime.now(UTC)) - ORPHAN_AFTER
+    gone = 0
+    async for page in storage.listed(f"{service.PREFIX}/"):
+        old = [key for key, modified in page if modified < cutoff]
+        if not old:
+            continue
+        async with sessions() as db:
+            named = set(
+                (
+                    await db.execute(
+                        select(SessionRecord.object_key).where(
+                            SessionRecord.object_key.in_(old)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        for key in old:
+            if key not in named:
+                await storage.delete(key)
+                gone += 1
+    if gone:
+        logger.warning("deleted %d session record objects no row named", gone)
+    return gone

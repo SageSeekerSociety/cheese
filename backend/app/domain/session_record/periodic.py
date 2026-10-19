@@ -1,4 +1,4 @@
-"""The sealer's and the retention sweep's clocks."""
+"""The sealer's and the retention sweeps' clocks."""
 
 from app.core.background import PeriodicJobs
 from app.core.db import SessionFactory
@@ -15,4 +15,9 @@ def register_periodic_jobs(jobs: PeriodicJobs, *, sessions: SessionFactory) -> N
         "session record retention",
         retention.EVERY_S,
         lambda: retention.sweep(sessions),
+    )
+    jobs.register(
+        "session record orphans",
+        retention.ORPHANS_EVERY_S,
+        lambda: retention.forget_orphans(sessions),
     )

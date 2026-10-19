@@ -243,6 +243,35 @@ def test_an_object_expiry_could_not_delete_goes_with_its_conversation(
     assert not [key for key in bucket.objects if str(room) in key]
 
 
+def test_an_object_expiry_could_not_delete_does_not_outlive_the_retention(
+    client, tmp_path, monkeypatch, bucket
+):
+    """The conversation goes on; the transcript past thirty days must still go."""
+    session, work = _start(client, tmp_path, bucket)
+    sealed = set(bucket.objects)
+    delete = bucket.delete
+
+    async def refuse(key: str) -> bool:
+        raise ConnectionError("the bucket is away")
+
+    monkeypatch.setattr(bucket, "delete", refuse)
+    _expire(client, bucket, days=31)
+    monkeypatch.setattr(bucket, "delete", delete)
+    assert sealed & set(bucket.objects)
+
+    later = datetime.now(UTC) + timedelta(days=62)
+    _call(
+        client,
+        lambda: retention.forget_orphans(
+            client.test_request_factory, bucket, now=later
+        ),
+    )
+
+    assert not sealed & set(bucket.objects)
+    kept = session.read(turn_id=work)
+    assert [item["record"]["message"]["content"] for item in kept] == [ASKED]
+
+
 def test_a_channel_deleted_while_its_last_records_are_sealed_leaves_no_object(
     client, tmp_path, monkeypatch
 ):
