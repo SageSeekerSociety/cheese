@@ -185,28 +185,33 @@ CHECKOUT_DIR = "room"
 #: cleanup script, held to this one by `tests/unit/test_footprint_root.py`.
 SANDBOXES_DIR = "sandboxes"
 
-#: Under the footprint root: the first Claude Code login its owner gives the
+#: Under the enrollment root: the first Claude Code login its team gives the
 #: platform on a machine (`cheesehost claude login`), kept apart from the
 #: owner's own `~/.claude`, which the machine calls `login_kind.FIRST_LOGIN`.
 #: A session of the owner's own Claude Code keeps its own `CLAUDE_CONFIG_DIR`
 #: and reads its login's directory as its credential store
 #: (`CLAUDE_SECURESTORAGE_CONFIG_DIR`), so every session on the machine with
 #: that login shares it and Claude Code's own refresh renews it for all of
-#: them. It stays where it is once a machine holds more: on macOS the login is
-#: a Keychain item named after this path. The connector writes it
+#: them. On macOS the login is a Keychain item named after this path; the
+#: connector retains that item's namespace when moving the old shared directory.
+#: The connector writes it
 #: (`cli/internal/claudecode`) and the backend's probe reads it; both copies
 #: are held to this one by `tests/unit/test_footprint_root.py`.
-CLAUDE_LOGIN_DIR = "claude-login"
+CLAUDE_LOGIN_DIR = "logins/claude-login"
 
-#: Under the footprint root: every further login, one directory each, named by
+#: Under the enrollment root: every further login, one directory each, named by
 #: what the machine calls it. Held to the connector's copy by the same test.
-CLAUDE_LOGINS_DIR = "claude-logins"
+CLAUDE_LOGINS_DIR = "logins/claude-logins"
 
 #: In the login directory: another model service its owner set instead of the
 #: login (`cheesehost claude login --base-url`), as `{base_url, token, model}`.
 #: The launch exports it and the probe reports its model; the connector writes
 #: it (`claudecode.serviceFile`), held to this name by the same test.
 MODEL_SERVICE_FILE = "model-service.json"
+
+#: In a migrated login: a security command retaining its original Keychain
+#: items while credential files are read from the enrollment's new directory.
+CLAUDE_KEYCHAIN_DIR = "keychain"
 
 #: A member's own Claude Code on a connection their account holds (#2991): its
 #: session host is the deployment's, and the connection reaches the launch as

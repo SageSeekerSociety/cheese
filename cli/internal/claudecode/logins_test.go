@@ -14,13 +14,12 @@ func ownerHome(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv(place.ProfileRootEnv, "")
 	return home
 }
 
-// A machine that has logged in once keeps that login where it always was: on
-// macOS its Keychain item is named after the path, so moving it would log the
-// owner out.
-func TestAMachinesFirstLoginStaysInItsDirectory(t *testing.T) {
+// The first login stays distinct from further logins within the enrollment.
+func TestAnEnrollmentsFirstLoginHasItsOwnDirectory(t *testing.T) {
 	home := ownerHome(t)
 	first := filepath.Join(home, place.Root, place.ClaudeLogin)
 	if err := os.MkdirAll(first, 0o700); err != nil {

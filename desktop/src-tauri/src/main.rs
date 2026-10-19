@@ -134,10 +134,11 @@ async fn claude_login(
     running: State<'_, ClaudeLogin>,
     console: bool,
     login_id: Option<String>,
+    profile: Option<String>,
     progress: Channel<Progress>,
 ) -> Result<(), connect::Failure> {
     let step = |id: &'static str| drop(progress.send(Progress::Step { id }));
-    connect::claude_login(&running.0, console, login_id.as_deref(), &step).await
+    connect::claude_login(&running.0, console, login_id.as_deref(), profile.as_deref(), &step).await
 }
 
 #[tauri::command]
@@ -155,6 +156,7 @@ async fn claude_model_service(
     token: String,
     model: String,
     login_id: Option<String>,
+    profile: Option<String>,
     progress: Channel<Progress>,
 ) -> Result<(), connect::Failure> {
     let step = |id: &'static str| drop(progress.send(Progress::Step { id }));
@@ -164,14 +166,15 @@ async fn claude_model_service(
         &token,
         &model,
         login_id.as_deref(),
+        profile.as_deref(),
         &step,
     )
     .await
 }
 
 #[tauri::command]
-async fn claude_logout(login_id: String) -> Result<(), String> {
-    connect::claude_logout(login_id).await
+async fn claude_logout(login_id: String, profile: Option<String>) -> Result<(), String> {
+    connect::claude_logout(login_id, profile.as_deref()).await
 }
 
 /// Stops this computer's connector after the page has unbound the device.
