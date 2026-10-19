@@ -2496,10 +2496,12 @@ class PytestPluginTest(unittest.TestCase):
         data = self.drive(
             selected=[("tests/unit/test_x.py::test_a", "pure")],
             reports=[("tests/unit/test_x.py::test_a", "setup", "skipped",
-                      ("tests/unit/test_x.py", 1, "Skipped: needs tmux"))])
+                      ("tests/unit/test_x.py", 1,
+                       "Skipped: needs a real tmux >= 3.0"))])
         self.assertEqual(data["executed"],
                          [{"node": "tests/unit/test_x.py::test_a", "when": "setup",
-                           "outcome": "skipped", "reason": "Skipped: needs tmux"}])
+                           "outcome": "skipped",
+                           "reason": "Skipped: needs a real tmux >= 3.0"}])
         verdict = validate_evidence(self.evidence(data, ["tests/unit/test_x.py"]))
         self.assertEqual(verdict["result"], "pass")
         self.assertEqual(verdict["evidence"]["unrun"], [])

@@ -571,9 +571,11 @@ def _runs(cases, required):
     return [r for r in required if not any(_covers(name, r) for name in names)]
 
 
-#: Skip reasons that name a capability the hosted runner deliberately lacks.
-#: Only these count as reached; any other skip may hide a real failure.
-_CAPABILITY_SKIPS = ("bubblewrap", "sandbox-exec", "this machine has no ripgrep", "needs tmux")
+#: Capabilities the hosted runner deliberately lacks, as the skip reasons name
+#: them. Match the capability, not one phrasing of it: the tmux tests skip with
+#: "needs a real tmux >= 3.0", and the ripgrep ones with "this machine has no
+#: ripgrep". Any other skip may hide a real failure.
+_CAPABILITY_SKIPS = ("bubblewrap", "sandbox-exec", "ripgrep", "tmux")
 
 
 def _declares_missing_capability(entry):
