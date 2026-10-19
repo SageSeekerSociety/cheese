@@ -8,10 +8,13 @@ Each method's docstring is the spec its callers rely on; read the one you are
 about to change.
 """
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from app.domain.review.github_pr._shared import (
     CheckState,
+    GitHubPrError,
     MergeResult,
     PullRequest,
 )
@@ -19,7 +22,47 @@ from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.pr_signals import ReviewSignal
 
 
+@dataclass(frozen=True)
+class BranchComparison:
+    """One task head and its independent commits, from the same comparison."""
+
+    head_sha: str
+    ahead_by: int
+
+
+@dataclass(frozen=True)
+class BranchComparisonFailure:
+    """One pair could not be compared; it is not an empty or missing branch."""
+
+    reason: str
+
+
+type BranchPair = tuple[str, str]
+type BranchComparisonResult = BranchComparison | BranchComparisonFailure | None
+
+
+class BranchComparisonsDeferred(GitHubPrError):
+    """The project's remaining preflight queries must wait for quota."""
+
+
 class GitHubPrClient(Protocol):
+    async def branch_comparisons(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        pairs: Sequence[BranchPair],
+        token: str,
+    ) -> dict[BranchPair, BranchComparisonResult]:
+        """Compare task branches to their bases in bounded GitHub queries.
+
+        None is an explicitly missing task head. A per-pair failure must not
+        prevent valid siblings from being used; a request-wide failure raises.
+        The returned head and ahead count are one snapshot, not permission to
+        skip the publisher's final locked recheck.
+        """
+        ...
+
     async def open_pull_request(
         self,
         *,
