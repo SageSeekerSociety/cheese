@@ -105,7 +105,7 @@ def place(channel: SeatChannel, session: SessionRef, agent: str = "teammate") ->
     """A seat the previous backend placed: what a restarted one finds."""
     channel.seats[(session.topic_id, agent)] = (
         session,
-        f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/harness/{session.topic_id}/{agent}",
+        f"$HOME/.cheese/harness/{session.topic_id}/{agent}",
     )
 
 

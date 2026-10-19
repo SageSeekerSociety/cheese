@@ -51,10 +51,7 @@ async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
             ),
             False,
         )
-        for state in (
-            "$HOME/${CHEESE_PROFILE_ROOT:-.cheese}/harness/dead",
-            "$HOME/${CHEESE_PROFILE_ROOT:-.cheese}/harness/alive",
-        )
+        for state in ("$HOME/.cheese/harness/dead", "$HOME/.cheese/harness/alive")
     ]
     database_open = False
 
@@ -123,7 +120,7 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
     for session in (dead, alive):
         channel.seats[(session.topic_id, "a")] = (
             session,
-            f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/harness/{session.topic_id}/a",
+            f"$HOME/.cheese/harness/{session.topic_id}/a",
         )
     runtime = channel.runtime
     assert await runtime.recover("center") == [alive]

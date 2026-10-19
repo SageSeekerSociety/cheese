@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from app.domain.agent.device_contract import HubScreen, LinkInterrupted
-from app.domain.agent.place import ROOT_PLACEHOLDER, footprint_root
 
 
 class DeviceTransport(Protocol):
@@ -45,9 +44,6 @@ class HubDevice:
     build: str = ""
     target: str = ""
     executor: bool = False
-    # Whether the connector said in `hello` that it expands the enrollment's
-    # root in the paths it resolves itself (`spelled`).
-    profiles: bool = False
     # The published build this CONNECTION has been told to update to ("" when
     # it has not been told). Reset on every attach, so a machine whose
     # self-update failed is told again the next time it dials in rather than
@@ -78,19 +74,6 @@ class HubDevice:
     writing: asyncio.Timeout | None = None
     screens: dict[str, HubScreen] = field(default_factory=dict)
     exec_seq: int = 0
-
-    def spelled(self, value: str) -> str:
-        """``value``, a path the connector resolves itself (a screen's or a
-        command's environment, a working directory, an executor's state), as
-        this connector reads it. One built before enrollments had roots of their
-        own expands only ``$HOME``, and is a default-profile machine, whose root
-        is the footprint root: it is told that root until its update lands.
-        Before ``hello`` nothing is known, and the path is left as it is: told
-        `.cheese`, a named profile would work in the default profile's files."""
-        if self.profiles or not self.announced.is_set():
-            return value
-        return value.replace(ROOT_PLACEHOLDER, footprint_root())
-
     # 本机目录授权: one counter for both directions of the localfs channel (a grant
     # push and a read/write/list op), since they share one result future map.
     local_fs_seq: int = 0

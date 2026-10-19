@@ -71,7 +71,7 @@ class SessionRef:
     @property
     def state(self) -> str:
         """Its state directory, as the connector expands it."""
-        return f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/{self.home}"
+        return f"$HOME/.cheese/{self.home}"
 
 
 @dataclass(frozen=True)

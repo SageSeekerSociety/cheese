@@ -308,10 +308,6 @@ def plant_native_skills(home, skills):
         write_beneath(home, Path(CONFIG_DIR) / relative, content)
 
 
-def execution_root(owner):
-    return owner / os.environ.get("CHEESE_PROFILE_ROOT", ".cheese")
-
-
 def release_store(owner):
     """Where every room's executor releases are kept on this machine, by digest.
 
@@ -320,7 +316,7 @@ def release_store(owner):
     install below, the teardown, the environment reset (`record_sandbox`). A
     sandbox is shown this directory read-only (`sandbox_argv`), so what is here
     is what the platform put here."""
-    return execution_root(owner) / "executor-releases"
+    return owner / ".cheese/executor-releases"
 
 
 def stage_release(store, platform_dir, payload):
@@ -701,7 +697,7 @@ def seatbelt():
 
 def placed_bubblewrap():
     """The bwrap cheesehost places when it starts (`cli/internal/devenv`)."""
-    found = execution_root(Path.home()) / "runtime/bubblewrap/bwrap"
+    found = Path.home() / PLATFORM_DIR / "runtime/bubblewrap/bwrap"
     if not os.access(found, os.X_OK):
         raise SandboxUnavailable("sandboxNotPlaced")
     return str(found)
@@ -750,7 +746,7 @@ def record_sandbox(owner, home, release):
     `release`. The teardown and the environment reset run outside the sandbox;
     this is how they know to run only what is in the release store, and to
     run git in the room's checkouts sandboxed too."""
-    marker = execution_root(owner) / SANDBOXES / home.parent.name / home.name
+    marker = owner / ".cheese" / SANDBOXES / home.parent.name / home.name
     marker.parent.mkdir(parents=True, exist_ok=True)
     temporary = marker.with_name(marker.name + "." + uuid.uuid4().hex)
     temporary.write_text(str(release))
@@ -774,9 +770,7 @@ def record_sandbox_process(owner, home, pid):
         boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     except OSError:
         return
-    record = (
-        execution_root(owner) / SANDBOXES / home.parent.name / (home.name + ".process")
-    )
+    record = owner / ".cheese" / SANDBOXES / home.parent.name / (home.name + ".process")
     temporary = record.with_name(record.name + "." + uuid.uuid4().hex)
     temporary.write_text(
         json.dumps({"pid": pid, "identity": f"linux:{boot_id}:{fields[19]}"})
@@ -786,7 +780,7 @@ def record_sandbox_process(owner, home, pid):
 
 def forget_sandbox(owner, home):
     """Remove `record_sandbox`'s and `record_sandbox_process`'s records."""
-    marker = execution_root(owner) / SANDBOXES / home.parent.name / home.name
+    marker = owner / ".cheese" / SANDBOXES / home.parent.name / home.name
     marker.unlink(missing_ok=True)
     marker.with_name(home.name + ".process").unlink(missing_ok=True)
 
@@ -827,8 +821,8 @@ def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds, network=True
     installed there too (nvm, `~/.cargo/bin`, `~/.local/bin`), which a
     session does not see; mounted disks are hidden as well (`HIDDEN_MOUNTS`).
     """
-    store = execution_root(owner) / "store" / home.parent.name
-    toolchain = execution_root(owner) / "toolchain"
+    store = owner / ".cheese/store" / home.parent.name
+    toolchain = owner / ".cheese/toolchain"
     tmp = home / PLATFORM_DIR / "tmp"
     for directory in (store, toolchain, tmp):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -988,13 +982,9 @@ def start_sandbox(
             sandbox_exec=bwrap,
             owner=owner,
             home=home,
-            store=execution_root(owner) / "store" / home.parent.name,
+            store=owner / ".cheese/store" / home.parent.name,
             tmp=home / PLATFORM_DIR / "tmp",
-            readable=[
-                execution_root(owner) / "toolchain",
-                release_store(owner),
-                claude.parent,
-            ],
+            readable=[owner / ".cheese/toolchain", release_store(owner), claude.parent],
             sockets=sockets,
             env=env,
             **options,
@@ -1064,9 +1054,9 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
     )
-    home = execution_root(owner) / "home" / project / resource
-    store = execution_root(owner) / "store" / project
-    toolchain = execution_root(owner) / "toolchain"
+    home = owner / ".cheese/home" / project / resource
+    store = owner / ".cheese/store" / project
+    toolchain = owner / ".cheese/toolchain"
     package_env = {
         "UV_CACHE_DIR": str(store / "uv-cache"),
         "UV_PYTHON_INSTALL_DIR": str(store / "uv-python"),

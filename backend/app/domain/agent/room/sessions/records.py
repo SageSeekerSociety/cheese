@@ -71,10 +71,5 @@ class Live:
 
 
 def _home(state: str) -> str:
-    """A state directory as the core names it: under the enrollment's root."""
-    # A screen launched before state named the enrollment's root still says
-    # `.cheese` on its machine, and its runner keeps answering after a deploy;
-    # under the default root both spellings are the same directory.
-    return state.removeprefix("$HOME/${CHEESE_PROFILE_ROOT:-.cheese}/").removeprefix(
-        "$HOME/.cheese/"
-    )
+    """A state directory as the core names it: under the host's ``~/.cheese``."""
+    return state.removeprefix("$HOME/.cheese/")
