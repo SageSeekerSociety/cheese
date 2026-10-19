@@ -10,7 +10,8 @@ The rules, as stated before the code was written:
   when it succeeded, nothing in the teammate's name when it did not, and it
   sits at the bottom of the main line, at the moment the run was settled;
 - a result that @s a teammate by handle calls them, as the same words sent
-  with chat_send would: the message carries the mention and they are told.
+  with chat_send would: the message carries the mention and they are told;
+  in a private chat it tells nobody outside the chat, as chat_send there does.
 """
 
 import uuid
@@ -74,9 +75,9 @@ def _run_message(client, room, run_id):
     )
 
 
-def _fired(client, project=None):
+def _fired(client, project=None, room=None):
     project = project or _project(client)
-    room = _room(client, project)
+    room = room or _room(client, project)
     routine = _weekly(client, room, headers=PERSON).json()["data"]
     _make_due(client, routine["id"])
     _, runner = _sweep(client)
@@ -216,3 +217,28 @@ def test_a_result_that_ats_a_teammate_tells_them(client):
     assert inbox(client, "mentor-1", "MENTION"), (
         "结果 @ 了 mentor-1，可是 mentor-1 没收到通知"
     )
+
+
+def test_a_result_in_a_private_chat_tells_nobody_outside_it(client):
+    project = _project(client)
+    join_project_team(client, project, "mentor-1")
+    inbox(client, "mentor-1")
+    chat = client.get(
+        f"/projects/{project}/private-chat",
+        params={"user_handle": OWNER},
+        headers=PERSON,
+    )
+    assert chat.status_code == 200, chat.text
+    room, _routine, run, _conversation, _submitted = _fired(
+        client, project, chat.json()["data"]["id"]
+    )
+
+    done = client.post(
+        f"/routine-runs/{run['id']}/report",
+        json={"status": "succeeded", "summary": "私聊里的结论，@mentor-1 需要重跑"},
+    )
+    assert done.status_code == 200, done.text
+    _sweep(client)
+
+    assert _run_message(client, room, run["id"])["content"]
+    assert inbox(client, "mentor-1", "MENTION") == [], "私聊里的结果通知到了私聊外的人"
