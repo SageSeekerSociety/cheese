@@ -42,6 +42,39 @@ floored at 180s; an explicit `--budget` stays exact, including a shorter bound.
 per-check timeout (`--timeout`, default 900s). The report records `budget_seconds`
 and `budget_source`; exhausting either bound still reports unknown, never pass.
 
+## How the plan's checks are scheduled
+
+The plan's checks are separate processes with separate evidence, so two that
+work on different trees run at the same time. `--jobs` sets how many; the
+default is 2 when the tier may back it (`--memory-mib` at least 6144, where a
+16 GiB runner sits) and 1 below that — the work machine's 3072 MiB session cap
+keeps it serial. Checks that share a working directory never overlap: they
+write the same tree (Vitest's cache, the generated OpenAPI types, the narrow
+tsconfig), so they queue one after another.
+
+The numbers behind that bound, from 12 CI runs of the `fast` job: two checks
+dominated every run, `frontend-unit` (850–880s, 4.4–5.2 GiB) and `backend-pure`
+(520s p50, ~1.1 GiB). Serially the first consumed the whole 1200s budget and
+the second was cut off with what was left; together they fit a 16 GiB runner.
+Each check still keeps its own sampled RSS ceiling, timeout and evidence check,
+so a killed check is reported killed, never folded into a green or into another
+check's result.
+
+`--jobs 1` restores the strictly serial tier. The `ran` rows keep the plan's
+order either way, so that part of the report does not depend on which check
+finished first; `not_run` and `reasons` are still appended as checks finish.
+
+The ceiling is per check, so `jobs` is also what the machine has to back: at
+`--jobs 2` a runner may see up to twice the sampled ceiling. The observed peaks
+(5.2 GiB and 1.1 GiB) leave room on a 16 GiB runner; that is why the default
+stays at 2 and does not grow with the machine. An interrupt (Ctrl-C, or a
+cancelled job) stops every running check before the pool is joined — a check
+runs in its own session, so the signal would otherwise not reach it and the
+tier would wait out its own timeout. A signal that lands while a check is
+being forked, before its pid is known, is held until the check is registered
+and then raised where the same cleanup can kill it; the alternative leaves a
+process running in its own session after ci-fast has exited.
+
 For example, `CI_FAST_BUDGET_SECONDS=600 task ci:fast` gives a quota-constrained
 machine ten minutes without changing repository config. Required CI's draft job
 already passes `--budget 1200`, so its bound is unchanged. `--memory-mib` remains
@@ -136,10 +169,10 @@ pin with it; both workflows set that variable to `uvx pre-commit`, so this
 default is what a caller that sets nothing — the entry point, `task ci:fast`, a
 plain `python3 .github/scripts/ci-fast.py` — runs.
 
-## In Required CI (the draft tier)
+## In Required CI (the PR quick tier)
 
-`.github/workflows/required-ci.yml` reuses this tool for **draft** pull
-requests: one inline job runs
+`.github/workflows/required-ci.yml` reuses this tool for pull requests: one
+inline job runs
 
 ```
 gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
@@ -148,14 +181,12 @@ ci-fast.py --tier quick --budget 1200 --memory-mib 9216 \
 ```
 
 and every product suite is skipped. The aggregating job for a draft is named
-`CI required (draft quick)` — never the `CI required` branch protection requires
-— so a draft's quick green can never satisfy the real gate, even if a selected
-suite is skipped. Promoting the draft (`ready_for_review`) starts a fresh
-**full** run; the draft-quick green is not reused. `merge_group` entries are
-always the full tier. This tier says a draft is buildable; it is not, and cannot
-be, the merge gate (see `docs/workflows.md` §6).
+`CI required (draft quick)`, while a ready PR gets `CI required`. Promoting a
+draft (`ready_for_review`) starts a fresh quick run under the ready PR's check
+name. A push to main runs the full tier before dev deployment (see
+`docs/workflows.md` §5).
 
-### What the draft tier does not judge
+### What the PR quick tier does not judge
 
 A draft is a work in progress, and the tier is red only for what its author can
 act on. Three things it does not own, and therefore does not turn red (each is
@@ -192,7 +223,7 @@ in the run's `not_run`):
   warning annotation instead. GitHub has
   no third conclusion, so the summary is where "not judged" is readable; the
   green of `CI required (draft quick)` is not a statement that everything ran.
-  The merge queue's full run on the same commit is.
+  The push-to-main full run after the merge is.
 
 The three together were the bulk of the red: over the two days to 2026-10-12,
 of 188 merged PRs 83 failed their first Required CI run; the draft tier went
@@ -320,8 +351,8 @@ everything is still allowed to answer unknown.
   It is not a full consumer-type check.
 - **Not covered here**: contract / integration / build / e2e tests, remote
   checks, and full frontend consumer types. The summary lists every skipped
-  item. Full Required CI + merge queue remains the only merge gate — **ci:fast
-  green does not mean full CI passes.**
+  item. Full Required CI runs after a push to main and gates dev deployment;
+  **ci:fast green does not mean full CI passes.**
 
 ## Exit codes
 

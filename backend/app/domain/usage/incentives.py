@@ -69,6 +69,38 @@ class CreditIncentives:
             "feedback_credits": FEEDBACK_CREDITS,
         }
 
+    async def rewards(self, user_id: int) -> dict:
+        team = next(
+            (
+                team
+                for team in await team_service(self._session).get_teams_of_user(user_id)
+                if team.personal_owner_user_id == user_id
+            ),
+            None,
+        )
+        if team is None:
+            return {"feedback_count": 0, "feedback_credits": 0, "items": []}
+        rows = list(
+            await self._session.scalars(
+                select(CreditReward)
+                .where(CreditReward.team_id == team.id)
+                .order_by(CreditReward.created_at.desc(), CreditReward.key)
+            )
+        )
+        feedback = [row for row in rows if row.key.startswith("feedback:")]
+        return {
+            "feedback_count": len(feedback),
+            "feedback_credits": sum(row.credits for row in feedback),
+            "items": [
+                {
+                    "kind": "feedback" if row.key.startswith("feedback:") else "beta",
+                    "credits": row.credits,
+                    "created_at": row.created_at.isoformat(),
+                }
+                for row in rows[:10]
+            ],
+        }
+
     async def claim_beta(self, user_id: int) -> dict:
         return await self.issue(
             key=f"beta:{user_id}",

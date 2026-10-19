@@ -68,7 +68,36 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
 
 **macOS 没有 linger 的对应物，也不打算造一个。** LaunchAgent 活在机主的登录会话里（实测：job 落在 `gui/501` 域，`type = login`、`creator = loginwindow`；非 root `launchctl bootstrap user/501` 直接 `Bootstrap failed: 5`）。他登录时起、登出时停、下次登录再起。**一台没人登录的 Mac 不托管**——这是「不问别人要管理员密码」的诚实代价，不是漏了一个 case。真要 headless Mac，那是 LaunchDaemon、是一个新决定，不是在这里留一个开关等着被捡起来。
 
-**机器上已经有 root 装的 cheese service 时，`link connect` 拒绝安装**，并打印删掉它的命令。桌面端在 Mac 上接入前先找这个服务，有就用系统的管理员密码框把它移除，不让人去终端。同一个账户下跑两个 connector 比一个都没有更糟：共用一份 device 凭据、共用同一个 tmux server，互相收养又互相拆掉对方的屏幕。
+If a machine-wide cheese service is already installed, `link connect` refuses installation and prints its removal commands. The Mac desktop app removes that service through the administrator dialog before connecting. Separate enrollments run as separate user services; two processes using the same profile would still share a device credential and tmux server.
+
+### Enrollment profiles
+
+An enrollment is an execution resource. Each profile keeps its own device credential, service, workspace, tmux socket and runtime state. The existing installation is the `default` profile and keeps its config, service name and socket without re-enrollment.
+
+To add another enrollment, run `cheesehost auth login <origin>/connector` again. It keeps the existing enrollment and prints the new name (`profile-2`, then `profile-3`, and so on). To choose a name, use:
+
+```sh
+cheesehost --profile research auth login <origin>/connector
+cheesehost --profile research link connect
+cheesehost --profile research status
+cheesehost --profile research uninstall
+```
+
+Commands without `--profile` address `default`. An explicit login to an already enrolled profile refuses to replace its credential. `--config` remains available for a specific config file and cannot be combined with `--profile`.
+
+| Resource | Default profile | Named profile `research` |
+| --- | --- | --- |
+| Config | `<user-config>/cheese/config.json` | `<user-config>/cheese/profiles/research/config.json` |
+| Workspace | `~/.cheese/` | `~/.cheese/profiles/research/` |
+| Service | `cheese` | `cheese-research` |
+| State | Beside the config | Beside the profile config |
+| tmux | Original per-user socket | Separate stable socket for this profile |
+
+`<user-config>` is `~/.config` on Linux unless `XDG_CONFIG_HOME` is set, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows. The desktop app keeps using the default profile at its existing path.
+
+The connector supplies `CHEESE_PROFILE_ROOT` to execution commands and screens. Backend paths, harness state, executor releases, sandbox records and cleanup resolve that root on the machine. The connector announces `profiles` in `hello`; a connector that does not (one built before profiles) is a default-profile machine, and the hub writes `.cheese` into the paths it resolves itself until its update lands. Uninstall removes the selected profile's service, config and workspace. Uninstalling `default` preserves the other profiles under `profiles/`.
+
+Claude subscription login is independent of execution enrollment. `~/.cheese/claude-login`, every further login under `~/.cheese/claude-logins/<id>`, their `model-service.json`, and the shared model binaries stay at the computer's `~/.cheese`, outside any profile root: logins are the computer's, shared by its enrollments. While another enrollment remains, uninstall preserves them, the model runtime's shared skill cache, and the connector binary with its PATH entry. Uninstalling the last enrollment removes the whole installation, as on a machine with one enrollment: the config directory, `~/.cheese`, and the binary.
 
 ---
 
@@ -86,7 +115,7 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
    ```powershell
    irm <origin>/connector/install.ps1 | iex
    ```
-   它把 `cheesehost.exe` 放到 `%LOCALAPPDATA%\cheese\bin` 并加进用户 PATH，不需要管理员；`cheesehost uninstall` 会把这条 PATH 一并去掉。校验与 `install.sh` 相同。
+   It puts `cheesehost.exe` in `%LOCALAPPDATA%\cheese\bin` and adds it to the user's PATH without administrator rights. Uninstalling the last enrollment removes the binary and that PATH entry; uninstalling one of several leaves them. Checksum verification follows `install.sh`.
 
 2. **`cheesehost link connect <origin>/connector`**。这台机器还没登录，它先走登录：CLI 打 `POST /connector/auth/device/start`，拿回 `device_code`，打印一个 `approve_url`（指向前端 `/connect?code=<code>`），然后**阻塞轮询** `POST /connector/auth/device/poll`，等人批准。
 
@@ -130,9 +159,9 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 ### 机主自己的 Claude Code 登录
 
-机主可以把自己的 Claude 账号或 API key 交给这台机器上平台运行的 Claude Code（#2991）：在机器上运行 `cheesehost claude login`。它先向服务器问平台钉的版本（`GET <origin>/connector/claude/pin`），机器上没有就从上面那条路由下载到 `~/.cheese/claude/versions/<version>`，再以 `CLAUDE_CONFIG_DIR=~/.cheese/claude-login` 运行 `claude auth login`。登录只在这个目录里，机主自己的 `~/.claude` 不读也不写，两边各有一对 token、各自续期。`cheesehost claude status` 和 `cheesehost claude logout` 查看和注销这份登录。机主也可以不用 Claude 账号，改用兼容 Anthropic 接口的其他模型服务：`cheesehost claude login --base-url <地址> --model <模型>`，密钥从环境变量 `CHEESE_MODEL_TOKEN` 读，没有就在终端里问。三项存在 `~/.cheese/claude-login/model-service.json`（只有机主可读），有这个文件时启动会话导出 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`，并把 `ANTHROPIC_MODEL`、三档默认模型和分身模型都设成这个模型；平台探测登录时只带回模型名，不带密钥。不带 `--base-url` 再登录一次，或者 `logout`，都会删掉这个文件。
+机主可以把自己的 Claude 账号或 API key 交给这台机器上平台运行的 Claude Code（#2991）：在机器上运行 `cheesehost claude login`。它先向服务器问平台钉的版本（`GET <origin>/connector/claude/pin`），机器上没有就从上面那条路由下载到 `~/.cheese/claude/versions/<version>`，再以这份登录自己的目录为 `CLAUDE_CONFIG_DIR` 运行 `claude auth login`。每运行一次添一份登录：机器的第一份在 `~/.cheese/claude-login`（macOS 上它的钥匙串条目按这个路径命名，所以一直留在这里），之后的每份在 `~/.cheese/claude-logins/<编号>`；`--login <编号>` 重新登录已有的一份。登录只在这些目录里，机主自己的 `~/.claude` 不读也不写，各有一对 token、各自续期。`cheesehost claude status` 列出每份登录，`cheesehost claude logout <编号>` 注销其中一份（机器只有一份时可以不写编号）。平台为每份登录记一行（`claude_logins`），成员的 Claude Code 加入项目时选其中一份，会话只用那一份的目录。机主也可以不用 Claude 账号，改用兼容 Anthropic 接口的其他模型服务：`cheesehost claude login --base-url <地址> --model <模型>`，密钥从环境变量 `CHEESE_MODEL_TOKEN` 读，没有就在终端里问。三项存在那份登录目录下的 `model-service.json`（只有机主可读），有这个文件时启动会话导出 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`，并把 `ANTHROPIC_MODEL`、三档默认模型和分身模型都设成这个模型；平台探测登录时只带回模型名，不带密钥。不带 `--base-url` 用 `--login <编号>` 重新登录那一份，或者 `logout` 它，都会删掉这个文件。
 
-机器每次连上，后端经 `hub.exec(["python3", "-"])` 在机器上跑 `claude auth status`（不调用模型），把答案记进 `device_claude_login`（`harness/claude_code/owner_login.py`）。只问人接入的机器，云机器不问。
+机器每次连上，后端经 `hub.exec(["python3", "-"])` 在机器上跑 `claude auth status`（不调用模型），对每份登录各跑一次，把答案记进 `claude_logins`，每份一行（`harness/claude_code/owner_login.py`）。只问人接入的机器，云机器不问。
 
 **入册时缺任何一样都是 fatal**，理由同 §0：留到后面发现的失败，全都出现在没人看的地方。
 
@@ -154,7 +183,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 每台 Device 都有自己的文件系统边界，物理上是否碰巧与后端同机不改变协议：
 
-- Each device stores room state under `$HOME/.cheese/home/{project_id}/{resource_id}`. The room directory is `room/` under that home, and task checkouts live under `.cheese/tasks/{task_id}`. A closed task's checkout is removed once its work is on the forge: when the task closes, or when the device next connects if it was offline then. One holding uncommitted files, unpushed commits or a running process is kept. A reclaimed room receives a new resource UUID when reopened.
+- Each device stores room state under `home/{project_id}/{resource_id}` within its profile's workspace root. The room directory is `room/` under that home, and task checkouts live under the room's `.cheese/tasks/{task_id}`. A closed task's checkout is removed once its work is on the forge: when the task closes, or when the device next connects if it was offline then. One holding uncommitted files, unpushed commits or a running process is kept. A reclaimed room receives a new resource UUID when reopened.
 - `cheese worktree` fetches each task branch through authenticated Git HTTP. The central Stop hook runs a checkpoint that invokes `cheese-sync` on that execution device to publish task work.
 - Image attachments travel inside the message written to the session; no file is staged on either machine.
 - 后端从不把自己的 topic workspace 路径翻译成设备路径，也不跳过复制。仓库中没有“后端与设备共享 workspace”的配置或分支。

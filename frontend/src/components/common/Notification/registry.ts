@@ -51,7 +51,6 @@ const NOTICE_ICONS: Record<string, string> = {
   timed_delivery: 'mdi-alarm',
   deploy_failed: 'mdi-alert-circle-outline',
   main_checks_failed: 'mdi-alert-circle-outline',
-  wake_missed: 'mdi-alert-circle-outline',
   policy_proposal: 'mdi-shield-check-outline',
   routine_run: 'mdi-repeat',
 }

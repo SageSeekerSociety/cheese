@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 
+from app.domain.agent.harness import CODEX
 from app.domain.agent.harness.driven.runner import socket_path
 
 VERSION = "0.154.0"
@@ -41,7 +42,16 @@ def ping(state: Path) -> dict | None:
 
 def configure(payload: dict) -> dict:
     state = (
-        Path(payload["state"].replace("$HOME", str(Path.home()))).expanduser().resolve()
+        Path(
+            payload["state"]
+            .replace(
+                "${CHEESE_PROFILE_ROOT:-.cheese}",
+                os.environ.get("CHEESE_PROFILE_ROOT", ".cheese"),
+            )
+            .replace("$HOME", str(Path.home()))
+        )
+        .expanduser()
+        .resolve()
     )
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (state / "bootstrap.lock").open("a") as lock:
@@ -86,7 +96,7 @@ def configure(payload: dict) -> dict:
         config["cwd"] = str(workspace)
         home = state / "home"
         home.mkdir(exist_ok=True, mode=0o700)
-        codex_home = state / "codex"
+        codex_home = state / CODEX
         codex_home.mkdir(exist_ok=True, mode=0o700)
         (codex_home / "config.toml").write_text(payload["codex_config"])
         config_path = state / "runner.json"

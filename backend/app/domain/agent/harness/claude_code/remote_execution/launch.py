@@ -221,12 +221,12 @@ def sandbox_check_script() -> str:
 def private_script(target: dict, env: dict) -> str:
     source = Path(private.__file__).read_text()
     return (
-        "import json\n"
+        "import json, os\n"
         f"scope = {{'__name__': 'cheese_private_executor'}}\nexec({source!r}, scope)\n"
         f"target = json.loads({json.dumps(target)!r})\n"
         f"env = json.loads({json.dumps(env)!r})\n"
         "from pathlib import Path\n"
-        "directory = Path(target['home'].replace('$HOME', str(Path.home())))\n"
+        "directory = Path(target['home'].replace('${CHEESE_PROFILE_ROOT:-.cheese}', os.environ.get('CHEESE_PROFILE_ROOT', '.cheese')).replace('$HOME', str(Path.home())))\n"
         "print(json.dumps(scope['ensure'](target, directory, env)))\n"
     )
 

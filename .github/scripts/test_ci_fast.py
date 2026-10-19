@@ -5,6 +5,9 @@ tmp dirs, and assert on observable outcomes: exit codes, stdout, the JSON
 report, and which stub hooks actually executed (recorded by the stubs
 themselves). They never import ci-fast or re-assert its internals — a test
 that mirrors the implementation cannot catch the implementation being wrong.
+The one exception is `PlanConcurrencyTest`: whether two checks overlap cannot
+be observed from outside without measuring the machine, so that scheduler is
+driven with a stub in place of the runner.
 
 Stub hooks are `language: system` entries in the fixture's own
 .pre-commit-config.yaml: the command table still comes from a config file,
@@ -14,15 +17,18 @@ machine can actually run (see `precommit_command`), rather than naming a
 binary that may not be installed and reporting every hook as blocked.
 """
 
+import ast
 import json
 import os
 from pathlib import Path
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -77,6 +83,47 @@ def _cores():
     """
     from ci_fast_checks import _cores as cores
     return cores()
+
+
+def _imports_app(tree):
+    """Whether a test module imports app code, at any depth.
+
+    The reverse import graph is built over the whole AST, so an import inside a
+    function is an edge like any other; the same reading is what decides that a
+    test which does import app is reachable without being a tree guard.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(a.name == "app" or a.name.startswith("app.") for a in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module and (
+                    node.module == "app" or node.module.startswith("app.")):
+                return True
+    return False
+
+
+def _repository_roots(tree):
+    """Names bound to a directory derived from this file's path (``parents[N]``).
+
+    A test that recursively scans one of these reads a repository tree rather
+    than only the module it lives in, and the import graph has no edge for a
+    read. ``parents[0]`` is the test's own directory and is left out.
+    """
+    roots = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            for inner in ast.walk(node.value):
+                if (isinstance(inner, ast.Subscript)
+                        and isinstance(inner.value, ast.Attribute)
+                        and inner.value.attr == "parents"
+                        and isinstance(inner.slice, ast.Constant)
+                        and isinstance(inner.slice.value, int)
+                        and inner.slice.value >= 1):
+                    roots.add(node.targets[0].id)
+                    break
+    return roots
 
 
 class CiFastTest(unittest.TestCase):
@@ -508,6 +555,44 @@ class CiFastTest(unittest.TestCase):
         self.assertIn("test_domain_import_guard.py", argv)
         self.assertIn("tree-guards", {r["id"] for r in self.report()["ran"]})
 
+    # --- the tuple above is written by hand, and a test that reads the tree has
+    # --- no import edge from the file it guards, so nothing else notices it
+    # --- being left out. Judge the shape rather than a marker comment: a unit
+    # --- test that imports nothing from app and does one of these is a
+    # --- whole-tree guard, and the import graph will never select it:
+    # --- names a script root, derives REPO_ROOT, or recursively scans a
+    # --- directory it derived from ``__file__`` (``parents[N]``).
+    # --- Readers of `.github/workflows/` are outside this criterion on purpose:
+    # --- a workflow-only change does not put the tier in backend scope, so an
+    # --- entry here would not run them there either — that needs a lane of its
+    # --- own.
+    def test_every_tree_reading_unit_test_is_in_the_tree_guard_tuple(self):
+        from ci_fast_backend import TREE_GUARDS
+        unit = SCRIPT.parents[2] / "backend" / "tests" / "unit"
+        readers = set()
+        for path in sorted(unit.glob("test_*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            if _imports_app(tree):
+                continue
+            text = "\n".join(
+                node.value for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str))
+            names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+            scanned = {
+                node.func.value.id for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"rglob", "glob", "iterdir"}
+                and isinstance(node.func.value, ast.Name)
+            }
+            if (".claude/scripts" in text or ".github/scripts" in text
+                    or "REPO_ROOT" in names
+                    or scanned & _repository_roots(tree)):
+                readers.add(path.name)
+        missing = readers - set(TREE_GUARDS)
+        self.assertFalse(missing,
+                         f"reads the tree but is not in TREE_GUARDS: {sorted(missing)}")
+
     def test_a_failing_tree_guard_fails_the_static_tier(self):
         self.write_hooks()
         self.make_base_and_head("backend/app/x.py")
@@ -774,15 +859,30 @@ class CiFastTest(unittest.TestCase):
             time.monotonic() - started, 15, "the wall clock did not fire"
         )
 
-    # --- an unknown path widens the scope; it must not shrink to guards-only
-    def test_unknown_path_widens_scope(self):
+    # --- an unknown path is recorded and judged by the guards/static tier; it
+    # must not pull in the product suites (that made the whole run unknown)
+    def test_unknown_path_runs_guards_only(self):
         self.write_hooks()
         self.make_base_and_head("strange-dir/thing.xyz")
         proc = self.run_ci_fast()
         self.assertEqual(proc.returncode, 0, proc.stdout)
-        self.assertTrue(FRONTEND_HOOKS & self.ran_hooks())
-        self.assertTrue(BACKEND_HOOKS & self.ran_hooks())
+        self.assertEqual(self.report()["status"], "pass")
+        self.assertTrue(GUARD_HOOKS <= self.ran_hooks())
+        self.assertFalse(FRONTEND_HOOKS & self.ran_hooks())
+        self.assertFalse(BACKEND_HOOKS & self.ran_hooks())
         self.assertIn("strange-dir/thing.xyz", self.report()["unknown_paths"])
+
+    # --- static hooks answer before the pure test tier, so a slow suite cannot
+    # turn their verdict into unknown
+    def test_quick_static_hooks_run_before_the_test_plan(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: order checks", env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        ids = [r["id"] for r in self.report()["ran"]]
+        static = [ids.index(h) for h in ("repo-rules", "action-pins", "scene-ratchet") if h in ids]
+        self.assertEqual(len(static), 3, ids)
+        self.assertLess(max(static), ids.index("frontend-unit"), ids)
 
     # --- prose is not an unknown path: a docs-only diff must not pull in the
     # product suites. The map leaves README.md/AGENTS.md/SKILL.md unnamed, so
@@ -800,15 +900,14 @@ class CiFastTest(unittest.TestCase):
         self.assertTrue(GUARD_HOOKS <= self.ran_hooks())
         self.assertEqual(self.report()["unknown_paths"], [])
 
-    # --- ...but prose alongside a path the map cannot place does not excuse it
-    def test_docs_next_to_an_unknown_path_still_widens(self):
+    # --- ...and prose alongside an unknown path leaves only the path unknown
+    def test_docs_next_to_an_unknown_path_reports_only_the_path(self):
         self.write_hooks()
         self.make_base_and_head("README.md")
         self.commit_file("strange-dir/thing.xyz")
         proc = self.run_ci_fast()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertTrue(FRONTEND_HOOKS & self.ran_hooks())
-        self.assertTrue(BACKEND_HOOKS & self.ran_hooks())
+        self.assertFalse(FRONTEND_HOOKS & self.ran_hooks())
         self.assertEqual(self.report()["unknown_paths"], ["strange-dir/thing.xyz"])
 
     # --- staged + unstaged + untracked all count, and the report proves it
@@ -2241,6 +2340,204 @@ class PytestPluginTest(unittest.TestCase):
             reports=[("tests/unit/test_x.py::test_a", "call", "passed"),
                      ("tests/unit/test_x.py::test_a", "teardown", "failed")])
         self.assertEqual(validate_evidence(self.evidence(data))["result"], "fail")
+
+
+class PlanConcurrencyTest(unittest.TestCase):
+    """The plan scheduler, exercised directly.
+
+    Overlap is the one thing a subprocess run cannot show: a fixture that made
+    two checks sleep would be measuring the machine, not the scheduler. The
+    function below is pure except for the ``invoke`` it is handed, so it is
+    driven with a stub that records what ran at the same time.
+    """
+
+    @staticmethod
+    def _module():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ci_fast_plan", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _drive(self, plan, jobs):
+        module = self._module()
+        report = {"ran": [], "not_run": [], "reasons": []}
+        active = {}
+        overlaps = []
+        peak = [0]
+        lock = threading.Lock()
+
+        def invoke(identifier, command, cwd, evidence=None, env=None):
+            with lock:
+                active[str(cwd)] = active.get(str(cwd), 0) + 1
+                if active[str(cwd)] > 1:
+                    overlaps.append(identifier)
+                peak[0] = max(peak[0], sum(active.values()))
+            # The first check of the plan finishes LAST on purpose: the report
+            # has to be put back in plan order, and a fixture where completion
+            # order happens to equal it would pass with that step deleted.
+            time.sleep(0.4 if identifier == "backend-pure" else 0.1)
+            with lock:
+                active[str(cwd)] -= 1
+                report["ran"].append({"id": identifier})
+            return {}
+
+        module.run_plan_checks(plan, invoke, jobs, report)
+        return report, overlaps, peak[0]
+
+    @staticmethod
+    def _plan(*pairs):
+        return [{"id": check_id, "command": [], "cwd": cwd} for check_id, cwd in pairs]
+
+    @staticmethod
+    def _processes_with(token):
+        """Pids still running a command line holding ``token``."""
+        found = subprocess.run(["pgrep", "-f", token], capture_output=True, text=True)
+        return [int(line) for line in found.stdout.split()]
+
+    def test_two_trees_overlap_and_one_tree_never_does(self):
+        report, overlaps, peak = self._drive(
+            self._plan(("backend-pure", "backend"),
+                       ("frontend-unit", "frontend"),
+                       ("frontend-i18n", "frontend")), jobs=2)
+        self.assertEqual(peak, 2, "a second tree has to be able to start")
+        self.assertEqual(overlaps, [], "checks sharing a tree must not overlap")
+        # The report is a record of the plan, not a race log.
+        self.assertEqual([row["id"] for row in report["ran"]],
+                         ["backend-pure", "frontend-unit", "frontend-i18n"])
+
+    def test_the_real_plan_order_does_not_put_two_checks_on_one_tree(self):
+        """The frontend checks are adjacent in the plan the tool builds.
+
+        A fixture that starts with the backend would let two free slots do the
+        whole job: the frontend checks would never compete for one. This order
+        is the one `test_plan` emits, where the same-cwd guard is what keeps
+        them apart.
+        """
+        _report, overlaps, peak = self._drive(
+            self._plan(("frontend-unit", "frontend"),
+                       ("frontend-i18n", "frontend"),
+                       ("backend-pure", "backend")), jobs=2)
+        self.assertEqual(overlaps, [], "checks sharing a tree must not overlap")
+        self.assertEqual(peak, 2, "the other tree still has to start")
+
+    def test_one_job_keeps_the_tier_serial(self):
+        _report, overlaps, peak = self._drive(
+            self._plan(("backend-pure", "backend"), ("frontend-unit", "frontend")),
+            jobs=1)
+        self.assertEqual(peak, 1)
+        self.assertEqual(overlaps, [])
+
+    def test_jobs_default_follows_the_memory_the_tier_can_back(self):
+        module = self._module()
+        self.assertEqual(module.jobs_for(3072), 1)   # the work machine's cap
+        self.assertEqual(module.jobs_for(9216), 2)   # the CI runner's ceiling
+        # The boundary itself, spelled out: a threshold that moved inside
+        # (3072, 9216] would change what a 4-6 GiB machine does and these
+        # endpoints would not notice.
+        self.assertEqual(module.jobs_for(6143), 1)
+        self.assertEqual(module.jobs_for(6144), 2)
+        self.assertEqual(module.jobs_for(9216, 1), 1)
+
+    def test_a_check_that_starts_after_the_interrupt_does_not_run(self):
+        """The window between spawn and registration has to close too.
+
+        `stop_all` kills the groups it can see; a check submitted but not yet
+        registered would otherwise run to its own timeout while the scheduler
+        waited for it — and it has to be reaped, not just skipped.
+        """
+        from ci_fast_process import clear_stop, execute, stop_all
+        token = f"19.{os.getpid()}"
+        stop_all()
+        try:
+            started = time.monotonic()
+            result = execute(["sh", "-c", f"exec sleep {token}"],
+                             tempfile.gettempdir(), 60)
+        finally:
+            clear_stop()
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(result["result"], "unknown")
+        self.assertEqual(self._processes_with(token), [])
+
+    def test_a_signal_inside_the_spawn_does_not_leave_the_check_running(self):
+        """A SIGINT inside `Popen` itself has no pid to kill yet.
+
+        The child is forked before `Popen` returns, so a KeyboardInterrupt
+        raised there leaves it running in its own session, where the terminal's
+        Ctrl-C cannot reach it. The interrupt is held until the pid is
+        registered, then raised where the cleanup can kill the group.
+        """
+        import ci_fast_process
+        from ci_fast_process import clear_stop, execute
+        # A previous test may have left the process in the stopped state.
+        clear_stop()
+        token = f"19.{os.getpid()}"
+        real_popen = subprocess.Popen
+        spawned = []
+
+        def popen_then_interrupt(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            # Only the check's own spawn. `group_rss` runs `ps` through the same
+            # module, and a second SIGINT from there would satisfy the
+            # assertion below after the real handler is back — the test would
+            # pass with the deferred interrupt never released.
+            if not spawned:
+                spawned.append(proc.pid)
+                os.kill(os.getpid(), signal.SIGINT)
+            return proc
+
+        with mock.patch.object(ci_fast_process.subprocess, "Popen",
+                               popen_then_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                # A short ceiling: with the release deleted, the check runs to
+                # it and the test fails in seconds rather than a minute.
+                execute(["sh", "-c", f"exec sleep {token}"],
+                        tempfile.gettempdir(), 2)
+        self.assertEqual(self._processes_with(token), [])
+
+    def test_a_previous_interrupt_does_not_poison_the_next_run(self):
+        from ci_fast_process import execute, stop_all
+        module = self._module()
+        stop_all()  # a stop raised before this tier started
+        report = {"ran": [], "not_run": [], "reasons": []}
+        results = []
+
+        def invoke(identifier, command, cwd, evidence=None, env=None):
+            # A real spawn: a stub that never calls `execute` cannot see the
+            # stop flag this test is about.
+            results.append(execute(["sh", "-c", "exit 0"], tempfile.gettempdir(), 60))
+            report["ran"].append({"id": identifier})
+            return results[-1]
+
+        module.run_plan_checks(self._plan(("backend-pure", "backend")), invoke, 1, report)
+        self.assertEqual([row["result"] for row in results], ["pass"])
+
+    def test_an_interrupt_stops_the_checks_the_scheduler_started(self):
+        """Ctrl-C has to stop a concurrent check, not wait it out.
+
+        A check runs in its own session, so the signal that reaches this thread
+        does not reach it. Raise a real SIGINT while two checks are running and
+        the scheduler has to return at once with both dead — the serial path
+        already does this through `execute`'s own cleanup.
+        """
+        from ci_fast_process import execute
+        module = self._module()
+        report = {"ran": [], "not_run": [], "reasons": []}
+
+        def invoke(identifier, command, cwd, evidence=None, env=None):
+            return execute(["sleep", "20"], tempfile.gettempdir(), 60)
+
+        plan = self._plan(("backend-pure", "backend"), ("frontend-unit", "frontend"))
+        timer = threading.Timer(0.5, os.kill, args=(os.getpid(), signal.SIGINT))
+        timer.start()
+        started = time.monotonic()
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                module.run_plan_checks(plan, invoke, 2, report)
+        finally:
+            timer.cancel()
+        self.assertLess(time.monotonic() - started, 5,
+                        "the interrupt must not wait for the checks to finish")
 
 
 if __name__ == "__main__":

@@ -59,8 +59,8 @@ const emit = defineEmits<{
   (e: 'void'): void
   (e: 'force-merge'): void
   (e: 'toggle-auto-merge', enabled: boolean): void
-  /** 去关联（或重新授权）自己的 GitHub 账号。 */
-  (e: 'link-github'): void
+  /** 连接 GitHub，或续期已有的授权。 */
+  (e: 'sign-in-github'): void
 }>()
 
 const showVoidInput = defineModel<boolean>('showVoidInput', { required: true })
@@ -68,9 +68,8 @@ const voidNote = defineModel<string>('voidNote', { required: true })
 const showForceMergeInput = defineModel<boolean>('showForceMergeInput', { required: true })
 const forceMergeReason = defineModel<string>('forceMergeReason', { required: true })
 
-// 只给任务负责人看：本该用他的账号创建的 PR，这次由 AI 队友创建了。没关联、授权失效
-// 时给入口；已关联时只说结果——账号当时为什么没能创建（没写权限，或 PR 在关联之前就已
-// 开出）这里分不清，不猜。
+// 只给任务负责人看：本该用他的账号创建的 PR，这次由 AI 队友创建了。未用 GitHub
+// 登录或授权失效时给入口；已有登录连接时只说结果，不猜 PR 当时为什么没用它创建。
 const ownerCredit = computed(() => props.prChecks?.owner_credit ?? null)
 
 // 标题按被审阅的东西实际是什么说：交一次合并时是这次改动自己的标题（合并后的提交
@@ -306,13 +305,13 @@ const moreActions = computed<MenuAction[]>(() => {
     <div v-if="ownerCredit" class="review-head__credit" data-testid="owner-credit">
       <span class="review-head__credit-text">{{
         ownerCredit === 'none'
-          ? t('work.room.review.creditUnlinked', { agent: agentName })
+          ? t('work.room.review.creditNotSignedIn', { agent: agentName })
           : ownerCredit === 'expired'
             ? t('work.room.review.creditExpired', { agent: agentName })
             : t('work.room.review.creditByAgent', { agent: agentName })
       }}</span>
-      <BaseButton v-if="ownerCredit !== 'ok'" kind="secondary" size="sm" @click="emit('link-github')">
-        {{ ownerCredit === 'none' ? t('work.room.review.linkGithub') : t('work.room.review.relinkGithub') }}
+      <BaseButton v-if="ownerCredit !== 'ok'" kind="secondary" size="sm" @click="emit('sign-in-github')">
+        {{ ownerCredit === 'none' ? t('work.room.review.signInGithub') : t('work.room.review.signInGithubAgain') }}
       </BaseButton>
     </div>
 

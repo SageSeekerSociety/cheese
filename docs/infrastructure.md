@@ -414,17 +414,25 @@ auto-delete on merge). Every PR lands as one squashed commit.
 `main` requires the GitHub Actions check `CI required` and the
 [Main CI and merge queue ruleset](https://github.com/SageSeekerSociety/cheese/rules/23778889).
 The ruleset has no bypass actors and carries only the required status check: it
-has no merge-queue rule, so a green PR merges directly (squash) and repository
-auto-merge is enabled so `gh pr merge` can land it.
+has no merge-queue rule, so a green PR merges directly with `gh pr merge --squash`.
+Without a merge strategy, noninteractive `gh pr merge` fails; `--auto` would
+allow a later merge without another local review check.
 
-`.github/workflows/required-ci.yml` runs on `pull_request`, on a `push` to main,
-and on `merge_group`. It calls the existing suites selected by
-`.github/scripts/required-ci-paths.json`. Documentation-only changes run
-repository guards. Failed scope detection, failed or cancelled selected suites,
-and unexpected skips fail `CI required`. A draft PR runs the fast tier instead,
-aggregated by a separate job named `CI required (draft quick)`; both aggregating
-job names are literals in the workflow, so a cancelled run still shows its name
-and not its expression.
+Run `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>` in the background
+under the owning session's monitor. `--enqueue` checks `ready` for the current
+head, re-reads that head, and squash-merges with `--match-head-commit`, without
+arming auto-merge. The watcher follows the merged commit's push-to-main
+Required CI run, reports a failure on main, then follows a dev deployment whose
+released commit and live version contain the merge. A superseding main batch
+can cover a cancelled run; a cancelled deployment waits for a later release.
+
+`.github/workflows/required-ci.yml` runs the quick tier on every pull request.
+Ready PRs aggregate as `CI required`; drafts aggregate as
+`CI required (draft quick)`. The full suites selected by
+`.github/scripts/required-ci-paths.json` run after a push to main. The workflow
+also accepts `merge_group` events, but the ruleset does not create queue entries.
+Failed scope detection, failed or cancelled selected suites, and unexpected
+skips fail the full gate.
 
 A main push is the post-submit gate. Its scope base is `refs/heads/main-green`,
 the last commit the gate passed (`main-green` in the workflow moves it after a
@@ -434,12 +442,9 @@ judge a fast-forward), so one run covers every commit that
 landed since — including a commit whose own run a newer push superseded while it
 was queued. The push runs join one fixed concurrency group with
 `cancel-in-progress: false`, which is what keeps one run executing and one
-waiting. The deploy gate (`deploy/check-auto-deploy.py`) accepts that push run,
-and still accepts a `merge_group` run for the same commit. The full-tier job
-checks this repo's commit titles with `.github/scripts/check-commit-title.py`:
-the PR title on a pull request, the commits in the batch on a main push (reported
-as warnings with `--warn-only` — they are already on main and nobody can retitle
-them), and every squash commit about to land in a merge queue. Remote execution acceptance
+waiting. The deploy gate (`deploy/check-auto-deploy.py`) accepts that push run.
+PR titles are checked before merge; main push titles are reported as warnings
+with `--warn-only`, because those commits have already landed. Remote execution acceptance
 remains advisory pending the stability target in #1279; the MCP latest-version
 canary runs on schedule or manual dispatch.
 
@@ -491,7 +496,7 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
 
 - **Serial aggregation jobs run here too** (2026-10-17): `scope`, `CI required`,
   `CI required (draft quick)` and main pushes' `Mark main green` take
-  `[self-hosted, cheese-ci]` for main pushes, same-repo PRs and the merge queue,
+  `[self-hosted, cheese-ci]` for main pushes and same-repo PRs,
   and stay on `ubuntu-latest` for fork PRs. Required
   CI's backend suite runs no `Backend coverage complete` job: `CI required`
   runs that shard-coverage check itself, one hop fewer. They run seconds of work and used to wait 3-20
@@ -781,9 +786,15 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
-- **Transcripts** are not backed up. Claude Code sessions run on the central
-  session host, and their transcripts stay there: the platform does not upload
-  them. Archived-room cleanup keeps a room's transcripts compressed on that host
+- **Session records** (what each session's runner journaled,
+  `session_records`): the last few minutes sit in the table and go out with the
+  DB dump; older runs are gzip objects under `session-records/` in the private
+  `TRANSCRIPT_S3_BUCKET`, which nothing else backs up. They are kept 30 days;
+  the inputs each session was sent are then kept under
+  `archive/user-messages/` for as long as the conversation exists.
+- **Transcripts** (the CLI's own `.jsonl` files) are not backed up. Claude Code
+  sessions run on the central session host, and their transcripts stay there:
+  the platform does not upload them. Archived-room cleanup keeps a room's transcripts compressed on that host
   for 30 days, then deletes them — see
   [archived-room cleanup deployment](../deploy/README-room-cleanup.md).
   Transcript objects uploaded to the private `TRANSCRIPT_S3_BUCKET` before

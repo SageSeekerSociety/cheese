@@ -42,8 +42,29 @@ import (
 func Commands() []*cobra.Command {
 	var cfgPath string
 	withConfig := func(c *cobra.Command) *cobra.Command {
-		c.Flags().StringVar(&cfgPath, "config", config.DefaultPath(),
+		c.Flags().StringVar(&cfgPath, "config", config.CommandPath(),
 			"path to this machine's cheese config")
+		c.Flags().String("profile", config.CLIProfile, "enrollment profile to use")
+		c.MarkFlagsMutuallyExclusive("profile", "config")
+		c.PreRunE = func(cmd *cobra.Command, _ []string) error {
+			if config.CLIProfileSet && cmd.Flags().Changed("config") {
+				return fmt.Errorf("--profile and --config cannot be used together")
+			}
+			if cmd.Flags().Changed("profile") {
+				name, _ := cmd.Flags().GetString("profile")
+				path, err := config.ProfilePath(name)
+				if err != nil {
+					return err
+				}
+				cfgPath = path
+			}
+			absolute, err := filepath.Abs(cfgPath)
+			if err != nil {
+				return err
+			}
+			cfgPath = absolute
+			return config.Activate(cfgPath)
+		}
 		return c
 	}
 	return []*cobra.Command{
@@ -51,7 +72,7 @@ func Commands() []*cobra.Command {
 		linkCmd(&cfgPath, withConfig),
 		statusCmd(&cfgPath, withConfig),
 		claudeCmd(&cfgPath, withConfig),
-		sandboxCmd(),
+		sandboxCmd(&cfgPath, withConfig),
 		runCmd(&cfgPath, withConfig),
 		updateCmd(&cfgPath, withConfig),
 		uninstallCmd(&cfgPath, withConfig),
@@ -71,16 +92,60 @@ func authCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			"The server URL is remembered (installers may pre-set it), so it only has to\n" +
 			"be given once.",
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := os.MkdirAll(filepath.Dir(*cfgPath), 0700); err != nil {
+				return err
+			}
+			unlock, err := lockEnrollment(filepath.Join(filepath.Dir(*cfgPath), ".enrollment.lock"))
+			if err != nil {
+				return fmt.Errorf("cannot lock this profile for enrollment: %w", err)
+			}
+			defer unlock()
 			serverArg := ""
 			if len(args) == 1 {
 				serverArg = args[0]
 			}
-			if _, err := doLogin(*cfgPath, serverArg); err != nil {
+			previous, err := config.Load(*cfgPath)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if previous != nil && previous.Token != "" {
+				if cmd.Flags().Changed("profile") || cmd.Flags().Changed("config") || config.CLIProfileSet {
+					return fmt.Errorf("profile %s is already enrolled; choose a new --profile", config.Profile(*cfgPath))
+				}
+				if serverArg == "" {
+					serverArg = previous.Base
+				}
+				*cfgPath, err = config.ReserveEnrollment()
+				if err != nil {
+					return err
+				}
+				if err := config.Activate(*cfgPath); err != nil {
+					return err
+				}
+				profileUnlock, err := lockEnrollment(filepath.Join(filepath.Dir(*cfgPath), ".enrollment.lock"))
+				if err != nil {
+					return err
+				}
+				defer profileUnlock()
+				seed := &config.Config{Base: serverArg}
+				if serverArg == previous.Base {
+					seed.WS = previous.WS
+				}
+				if err := config.Save(*cfgPath, seed); err != nil {
+					return err
+				}
+			}
+			if _, err := completeLogin(*cfgPath, serverArg); err != nil {
 				return err
 			}
 			ui.OK("Logged in.")
-			ui.Hint("`cheesehost link connect` to connect · `cheesehost link auto-connect` to also reconnect on boot")
+			fmt.Printf("Profile: %s (use --profile %s for this enrollment).\n", config.Profile(*cfgPath), config.Profile(*cfgPath))
+			prefix := "cheesehost"
+			if name := config.Profile(*cfgPath); name != "default" {
+				prefix += " --profile " + name
+			}
+			ui.Hint("`%s link connect` to connect · `%s link auto-connect` to also reconnect on boot", prefix, prefix)
 			return nil
 		},
 	})
@@ -115,6 +180,30 @@ func authCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 // doLogin runs the device flow and persists the result. serverArg overrides the
 // stored base; an empty serverArg requires a stored base (e.g. from install.sh).
 func doLogin(cfgPath, serverArg string) (*config.Config, error) {
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0700); err != nil {
+		return nil, err
+	}
+	unlock, err := lockEnrollment(filepath.Join(filepath.Dir(cfgPath), ".enrollment.lock"))
+	if err != nil {
+		return nil, fmt.Errorf("cannot lock this profile for enrollment: %w", err)
+	}
+	defer unlock()
+	// Another connect may have completed its browser approval before this call.
+	if cfg, err := config.Load(cfgPath); err == nil && cfg.Token != "" && (serverArg == "" || cfg.Base == serverArg) && !auth.Forgotten(context.Background(), cfg.Base, cfg.Token) {
+		return cfg, nil
+	}
+	return completeLogin(cfgPath, serverArg)
+}
+
+func completeLogin(cfgPath, serverArg string) (*config.Config, error) {
+	// A config outside the profiles is the default profile's: its workspace,
+	// service and screens are the default's. A second credential there would
+	// run as the same machine on the same files.
+	if config.Profile(cfgPath) == "default" && !samePath(cfgPath, config.DefaultPath()) {
+		if enrolled, err := config.Load(config.DefaultPath()); err == nil && enrolled.Token != "" {
+			return nil, fmt.Errorf("the default profile is already enrolled (%s); enroll this one with --profile <name> instead of --config", config.DefaultPath())
+		}
+	}
 	cfg, _ := config.Load(cfgPath)
 	if cfg == nil {
 		cfg = &config.Config{}
@@ -189,6 +278,9 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 					"Install tmux (on a Mac: brew install tmux), or connect a Mac with the desktop app, which brings its own", err)
 			}
 			cfg, _ := config.Load(*cfgPath)
+			if cfg != nil && cfg.Token != "" && serverArg != "" && cfg.Base != serverArg {
+				return fmt.Errorf("this profile is enrolled with %s; use auth login or a new --profile to enroll with another server", cfg.Base)
+			}
 			// A machine unbound since it was approved still holds its token,
 			// and a connector installed with it would be turned away on every
 			// dial while this command reported it connected.
@@ -306,6 +398,7 @@ func statusCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 		Short: "Show login, connection, and running sessions",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			ui.Heading("cheese")
+			ui.Field("profile", config.Profile(*cfgPath))
 			cfg, err := config.Load(*cfgPath)
 			if err != nil || cfg.Token == "" {
 				ui.Field("login", ui.Red("not logged in"))
@@ -428,7 +521,7 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 	var force bool
 	uninstall := withConfig(&cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove cheese from this machine (service, config, everything it wrote, binary)",
+		Short: "Remove this execution profile's service, config, and workspace",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			// Resolved before anything is stopped: a home we cannot name is a
 			// footprint we cannot remove, and finding that out after the service
@@ -437,18 +530,29 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			if err != nil {
 				return fmt.Errorf("locate home directory: %w", err)
 			}
-			footprint := filepath.Join(home, place.Root)
+			footprint := filepath.Join(home, place.CurrentRoot())
+			// The last enrollment takes the whole installation with it, as a
+			// single-enrollment machine always did; any other leaves what the
+			// remaining enrollments share.
+			last := !otherEnrollments(*cfgPath)
 			warnScreens(*cfgPath)
 			// Said before it happens, because it is the part nobody expects. The
 			// service and the binary are ours and nobody misses them; the
 			// footprint root is where every room's session home and worktree
 			// live, so on a machine that is mid-task this line is the only
 			// warning that unpushed work is about to go.
-			fmt.Printf(
-				"This also deletes %s and everything in it: the session home and "+
-					"worktree of every room that ran here, and the package caches "+
-					"they share.\n",
-				footprint)
+			if last {
+				fmt.Printf(
+					"This also deletes %s and everything in it: the session home and "+
+						"worktree of every room that ran here, and the package caches "+
+						"they share.\n",
+					footprint)
+			} else {
+				fmt.Printf(
+					"This deletes this profile's session homes, worktrees, and package caches under %s.\n"+
+						"Other profiles and the shared model login remain.\n",
+					footprint)
+			}
 			// And then waited on, for as long as there is something to lose:
 			// rooms' files on disk, or sessions running right now. A stat that
 			// fails for any other reason counts as something — the answer to
@@ -486,9 +590,13 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 					"the cheese connector is still running (pid %d) and could not be stopped; "+
 						"nothing was removed — stop it and run this again", pid)
 			}
-			stopFootprintProcesses(footprint)
-			if err := removeFootprint(config.Dir(), home); err != nil {
+			stopFootprintProcesses(footprint, !last)
+			if err := removeFootprint(*cfgPath, home, last); err != nil {
 				return err
+			}
+			if !last {
+				fmt.Println("Execution profile removed. The shared connector binary and model login remain.")
+				return nil
 			}
 			exe, err := os.Executable()
 			if err != nil {
@@ -505,21 +613,104 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 	return uninstall
 }
 
-// removeFootprint deletes everything `cheese` leaves on a machine: this
-// installation's own config, and the root every room was written under.
+// removeFootprint deletes what one enrollment leaves on a machine: its config
+// and the root its rooms were written under. With last set it is the machine's
+// only enrollment, and the whole installation goes: the config directory and
+// the footprint root, shared model files included.
 //
 // The footprint is the part that used to survive an uninstall. Nothing in the
 // connector ever created it — the backend's launcher does, over the link — so
 // removing the connector left gigabytes of session homes and package stores on
 // a machine whose owner had just been told cheese was gone, with nothing left
 // installed that knew how to find them.
-func removeFootprint(configDir, home string) error {
-	for _, directory := range []string{configDir, filepath.Join(home, place.Root)} {
+func removeFootprint(cfgPath, home string, last bool) error {
+	configDir := filepath.Dir(cfgPath)
+	root := filepath.Join(home, config.Root(cfgPath))
+	switch {
+	case config.Profile(cfgPath) != "default":
+		// A named profile owns both of its directories outright.
+		for _, directory := range []string{configDir, root} {
+			if err := removeTree(directory); err != nil {
+				return fmt.Errorf("remove %s: %w", directory, err)
+			}
+		}
+	case filepath.Clean(configDir) != filepath.Clean(config.Dir()):
+		// --config can live beside files that belong to the machine's owner.
+		for _, path := range []string{cfgPath, state.Path(cfgPath), filepath.Join(configDir, ".enrollment.lock"), filepath.Join(configDir, "localfs-grants.json"), filepath.Join(configDir, "cheese.log"), filepath.Join(configDir, "cheese.log.1")} {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		if err := removeEntries(root, sharedRootEntries); err != nil {
+			return err
+		}
+	default:
+		if err := removeEntries(configDir, sharedConfigEntries); err != nil {
+			return err
+		}
+		if err := removeEntries(root, sharedRootEntries); err != nil {
+			return err
+		}
+	}
+	if !last {
+		return nil
+	}
+	for _, directory := range []string{config.Dir(), filepath.Join(home, place.Root)} {
 		if err := removeTree(directory); err != nil {
 			return fmt.Errorf("remove %s: %w", directory, err)
 		}
 	}
 	return nil
+}
+
+// What the default profile's directories hold on behalf of every enrollment:
+// the other profiles, the connector binary, and the model login, installations
+// and skill cache that no single enrollment owns.
+var (
+	sharedConfigEntries = map[string]bool{"profiles": true, "bin": true}
+	sharedRootEntries   = map[string]bool{"profiles": true, place.ClaudeLogin: true, place.ClaudeLogins: true, "claude": true, "tools": true, "skill-bundles": true}
+)
+
+func removeEntries(directory string, keep map[string]bool) error {
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if keep[entry.Name()] {
+			continue
+		}
+		if err := removeTree(filepath.Join(directory, entry.Name())); err != nil {
+			return fmt.Errorf("remove %s: %w", filepath.Join(directory, entry.Name()), err)
+		}
+	}
+	return nil
+}
+
+func samePath(a, b string) bool {
+	a, _ = filepath.Abs(a)
+	b, _ = filepath.Abs(b)
+	return a == b
+}
+
+// otherEnrollments reports whether an enrollment other than cfgPath's holds a
+// credential on this machine.
+func otherEnrollments(cfgPath string) bool {
+	candidates, _ := filepath.Glob(filepath.Join(config.Dir(), "profiles", "*", "config.json"))
+	candidates = append(candidates, config.DefaultPath())
+	self, _ := filepath.Abs(cfgPath)
+	for _, path := range candidates {
+		if absolute, _ := filepath.Abs(path); absolute == self {
+			continue
+		}
+		if cfg, err := config.Load(path); err == nil && cfg.Token != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------

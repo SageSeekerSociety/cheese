@@ -18,6 +18,7 @@ session**，提交也归调用方——所以「答一个问题」和「把这�
 
 import logging
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -53,10 +54,13 @@ from app.domain.notice_meta import (
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
+from app.domain.reads import get_by_ids
 from app.domain.room_task import binding
+from app.domain.room_task.models import Task
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.run_record.service import record as keep_record
+from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -196,8 +200,87 @@ async def conversation_seat(
     message in a task is addressed, so the one it @-ed takes the turn there too
     — and otherwise the task's own agent, seated in the room when the task was
     given to it. None for a conversation that no longer exists, and for an
-    agent that may not act there (`_seat_of`)."""
+    agent that may not act there (`_seat_of`).
+
+    The single-pair read: it resolves the one place the way it always did, and
+    :func:`_seat_in_place` is the judgement :func:`seats_in_conversations`
+    shares. Asking the batch for one pair would read all three place tables for
+    a room that one ``get`` used to answer."""
     place = await PlaceResolver(session).conversation(conversation_id)
+    return await _seat_in_place(session, place, handle)
+
+
+async def seats_in_conversations(
+    session: AsyncSession,
+    pairs: Iterable[tuple[uuid.UUID, str | None]],
+) -> dict[tuple[uuid.UUID, str | None], tuple[ResolvedAgent, str] | None]:
+    """`conversation_seat` for many conversations and handles at once.
+
+    A scan asks the same question of every message it is about to answer, and
+    those messages come from a handful of conversations: each conversation's
+    place (a room, a task or a 支线) is read once for the whole batch, with one
+    ``IN`` query per table instead of one lookup per message. The judgement is
+    the single-pair one, pair by pair — the same ``_agent_at`` / ``_seat_of``
+    rules — only the place reads are shared.
+
+    Every requested pair is in the answer, including those that resolve to no
+    seat. Duplicate pairs are asked once; a missing conversation answers None.
+    """
+    wanted = list(dict.fromkeys(pairs))
+    if not wanted:
+        return {}
+    places = await _places_in_many(
+        session, {conversation_id for conversation_id, _ in wanted}
+    )
+    return {
+        pair: await _seat_in_place(session, places.get(pair[0]), pair[1])
+        for pair in wanted
+    }
+
+
+async def _places_in_many(
+    session: AsyncSession, conversation_ids: Iterable[uuid.UUID]
+) -> dict[uuid.UUID, Place]:
+    """`PlaceResolver.conversation` for many ids, reading each table once.
+
+    Same precedence as the single read: a room's id is a room, a task's is the
+    task (a 支线 that became a task shares its id), a 支线's is the thread; each
+    inner place carries its room. An id naming no row, or whose room is gone,
+    is absent from the answer."""
+    ids = list(dict.fromkeys(conversation_ids))
+    if not ids:
+        return {}
+    rooms = await get_by_ids(session, Topic, ids)
+    tasks = await get_by_ids(session, Task, ids)
+    threads = await get_by_ids(session, Thread, ids)
+    inner = {**threads, **tasks}
+    rooms.update(
+        await get_by_ids(session, Topic, {row.room_id for row in inner.values()})
+    )
+    places: dict[uuid.UUID, Place] = {}
+    for conversation_id in ids:
+        room = rooms.get(conversation_id)
+        if room is not None:
+            places[conversation_id] = Place(room=room)
+            continue
+        task = tasks.get(conversation_id)
+        if task is not None:
+            room = rooms.get(task.room_id)
+            if room is not None:
+                places[conversation_id] = Place(room=room, task=task)
+            continue
+        thread = threads.get(conversation_id)
+        if thread is not None:
+            room = rooms.get(thread.room_id)
+            if room is not None:
+                places[conversation_id] = Place(room=room, thread=thread)
+    return places
+
+
+async def _seat_in_place(
+    session: AsyncSession, place: Place | None, handle: str | None
+) -> tuple[ResolvedAgent, str] | None:
+    """`conversation_seat`'s judgement, with the place already read."""
     if place is None:
         return None
     if place.task is not None:

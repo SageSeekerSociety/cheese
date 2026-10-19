@@ -1,6 +1,6 @@
 import re
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -37,6 +37,11 @@ _NICKNAME_MEANINGFUL_RE = re.compile(r"[0-9A-Za-z㐀-䶿一-鿿]")
 
 async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
+
+
+async def user_by_id(session: AsyncSession, user_id: int) -> User | None:
+    """The live account with this id; None when there is none or it is closed."""
+    return await UserRepository(session).get_by_id(user_id)
 
 
 async def users_by_handle(
@@ -155,6 +160,21 @@ async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> bo
         return False
     user.timezone = timezone
     return True
+
+
+async def set_training_opt_out(
+    session: AsyncSession, user_id: int, opted_out: bool
+) -> User | None:
+    """记下这个人是否拒绝把自己的内容用于模型训练、提供给合作方；账号不在了返回
+    None。已经拒绝过的人再拒绝一次，保留第一次的时间：那是他提出的时间。"""
+    user = await UserRepository(session).get_by_id(user_id)
+    if user is None:
+        return None
+    if not opted_out:
+        user.training_opted_out_at = None
+    elif user.training_opted_out_at is None:
+        user.training_opted_out_at = datetime.now(UTC)
+    return user
 
 
 async def lookup_account(session: AsyncSession, q: str) -> dict | None:

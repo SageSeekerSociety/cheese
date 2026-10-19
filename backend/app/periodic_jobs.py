@@ -33,15 +33,14 @@ from app.domain.docs_site import periodic as docs_periodic
 from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
-from app.domain.ratchet import periodic as ratchet_periodic
 from app.domain.review import periodic as review_periodic
 from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
+from app.domain.session_record import periodic as session_record_periodic
 from app.domain.task import periodic as task_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
 from app.domain.topic_membership.services import addressable_seat
 from app.domain.usage import periodic as usage_periodic
-from app.domain.wake_watch import periodic as wake_watch_periodic
 
 PERIODIC_JOB_NAMES = (
     "forge event subscriptions",
@@ -66,20 +65,22 @@ PERIODIC_JOB_NAMES = (
     "subscription usage ingest",
     "backend error flush",
     "run record expiry",
+    "session record seal",
+    "session record retention",
+    "session record orphans",
     "notification email drain",
     "notification push drain",
     "notification digest",
     "delivery resend",
     "docs question retention",
     "turn resumes",
+    "failed turn resume deliveries",
     "timed deliveries",
     "overdue deliveries",
     "routines",
     "task deadline sweep",
     "memory dream",
-    "ratchet ingest",  # forge_bound: GitHub Actions artifact reads
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
-    "wake watch",
 )
 
 
@@ -180,6 +181,7 @@ def periodic_jobs(
     )
     backend_log.register_periodic_jobs(jobs)
     run_record_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    session_record_periodic.register_periodic_jobs(jobs, sessions=sessions)
     notification_periodic.register_periodic_jobs(jobs, sessions=sessions)
     delivery_periodic.register_periodic_jobs(
         jobs,
@@ -193,9 +195,7 @@ def periodic_jobs(
         jobs, sessions=sessions, chat=chat, get_runner=get_runner
     )
     task_periodic.register_periodic_jobs(jobs, sessions=sessions)
-    ratchet_periodic.register_periodic_jobs(jobs, sessions=sessions)
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
-    wake_watch_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)
 
 

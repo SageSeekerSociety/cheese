@@ -37,6 +37,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.place import (
     CHECKOUT_DIR,
     CLAUDE_LOGIN_DIR,
+    CLAUDE_LOGINS_DIR,
     MODEL_SERVICE_FILE,
     SANDBOXES_DIR,
     STAGED_DIR,
@@ -44,6 +45,7 @@ from app.domain.agent.place import (
     launcher_path,
     session_platform_dirs,
 )
+from app.domain.device.login_kind import FIRST_LOGIN, LOGIN_ID
 from app.domain.machine import sandbox_home
 
 REPOSITORY = Path(__file__).resolve().parents[3]
@@ -151,6 +153,21 @@ def test_the_connector_logs_claude_code_in_where_the_backend_asks_about_it():
     service = re.search(r'ModelService\s*=\s*"([^"]+)"', source)
     assert service, "the connector stopped declaring the model service file"
     assert service.group(1) == MODEL_SERVICE_FILE
+    more = re.search(r'ClaudeLogins\s*=\s*"([^"]+)"', source)
+    assert more, "the connector stopped declaring where further logins go"
+    assert more.group(1) == CLAUDE_LOGINS_DIR
+    first = re.search(r'FirstClaudeLogin\s*=\s*"([^"]+)"', source)
+    assert first, "the connector stopped naming its first login"
+    assert first.group(1) == FIRST_LOGIN
+
+
+def test_the_connector_and_the_backend_agree_on_what_a_login_may_be_called():
+    """The backend reports and launches only the logins whose names it accepts;
+    one the connector makes and the backend refuses is a login nobody can use."""
+    source = (REPOSITORY / "cli/internal/claudecode/claudecode.go").read_text()
+    declared = re.search(r"loginID = regexp\.MustCompile\(`\^(.+)\$`\)", source)
+    assert declared, "the connector stopped declaring what a login may be called"
+    assert declared.group(1) == LOGIN_ID.pattern
 
 
 # What the sandbox CLI hangs off its own home: `Path.home() / "x"` and
@@ -217,6 +234,7 @@ def inside_the_footprint(text: str) -> None:
     somewhere a new one may be *written*.
     """
     root = f"$HOME/{footprint_root()}"
+    text = text.replace("${CHEESE_PROFILE_ROOT:-.cheese}", footprint_root())
     for reference in re.findall(r"\$HOME/[A-Za-z0-9._/-]+", text):
         assert reference == root or reference.startswith(f"{root}/"), (
             f"{reference} is outside the footprint root, so `cheese uninstall` "
@@ -305,7 +323,9 @@ def test_the_launcher_installs_only_inside_the_footprint():
     fails when that happens: the room launches, works, and leaves its files on
     a machine whose owner has been told the platform is gone.
     """
-    script = machine_launcher.launch_script(command="$AGENT")
+    script = machine_launcher.launch_script(command="$AGENT").replace(
+        "${CHEESE_PROFILE_ROOT:-.cheese}", footprint_root()
+    )
     written = launcher_write_points(script)
     assert written, "the launcher stopped writing anything under the home"
     for directory in written:

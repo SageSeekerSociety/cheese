@@ -204,6 +204,7 @@ const ACTIONS: Record<SudoRequest['purpose'], string> = {
   'realname:view': 'account.sudo.action.viewRealName',
   'realname:update': 'account.sudo.action.updateRealName',
   'realname:delete': 'account.sudo.action.deleteRealName',
+  'account:delete': 'account.sudo.action.closeAccount',
 }
 
 const titleId = useId()

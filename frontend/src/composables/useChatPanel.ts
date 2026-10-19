@@ -36,6 +36,7 @@ import { useRowBatch } from '../components/room/composables/useRowBatch'
 import { useRunRecords } from '../components/room/composables/useRunRecords'
 import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
+import { isPersonBlock } from '../lib/authorship'
 import { rendersInRoom } from '../lib/platformNotice'
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
@@ -107,6 +108,12 @@ export function useChatPanel(opts: ChatPanelOptions) {
     reading: () => history.reading(),
     catchUp: (roomId, after) => void timelinePaging.resync.catchUp(roomId, after),
   })
+  // 名册里没有的作者，问一次是不是注销了：注销了的署「已注销用户」—— 见 useClosedAuthors。
+  people.closedAuthors.follow(() =>
+    timeline.messages.value
+      .filter((b) => isPersonBlock(b) && !people.roster.memberByHandle.value.has(b.author))
+      .map((b) => b.author)
+  )
 
   // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
   // 往上报（working / site-turns）是这里的事。

@@ -21,7 +21,7 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.room.system_prompt import session_system_prompt
 from app.domain.agent.turn.intake.context import Launch, living_doc_text
 from app.domain.agent.turn.intake.rooms import _is_dm
-from app.domain.agent_instance.own import owned_instance
+from app.domain.agent_instance.own import current_role, owned_instance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.reads import load_project
@@ -81,7 +81,9 @@ async def launch_inputs(
         agent = await _session_agent(agents, topic, project, agent_handle)
         needs_place = not _is_dm(topic)
         doc_text = await living_doc_text(session, place, needs_place=needs_place)
-        role = await agents.system_prompt(agent)
+        role = await current_role(session, agent.instance_id) or (
+            await agents.system_prompt(agent)
+        )
         harness, provider = await prep._backend_for(session, agent, project)
         if provider is None:
             return None
