@@ -18,6 +18,7 @@ import { listMyDevices } from '@/api'
 import {
   addAccountConnection,
   checkAccountConnection,
+  checkModelConnection,
   listModelConnections,
   removeAccountConnection,
   renameAccountConnection,
@@ -25,7 +26,6 @@ import {
   revokeModelConnection,
   setModelService,
 } from '@/api/modelConnections'
-import { checkClaudeCode } from '@/api/ownAgents'
 import { t } from '@/i18n'
 import ModelConnectionsView from '@/views/user/settings/ModelConnectionsView.vue'
 
@@ -72,14 +72,14 @@ async function act(key: string, fn: () => Promise<unknown>, done?: string): Prom
   }
 }
 
-function recheck(deviceId: string) {
-  void act(`${deviceId}:check`, () => checkClaudeCode(deviceId))
+function recheck(loginId: string) {
+  void act(`${loginId}:check`, () => checkModelConnection(loginId))
 }
 
-function revoke(deviceId: string) {
+function revoke(loginId: string) {
   // 设备不在线或这一次没能退出登录，服务器把它记为「解除中」，设备连上后自动退出。
-  void act(`${deviceId}:revoke`, async () => {
-    const after = await revokeModelConnection(deviceId)
+  void act(`${loginId}:revoke`, async () => {
+    const after = await revokeModelConnection(loginId)
     toast.success(
       after?.revoking ? t('account.modelConnections.removedPending') : t('account.modelConnections.removed')
     )
@@ -113,9 +113,9 @@ async function renameHeld(id: string, name: string) {
   }
 }
 
-async function renameDevice(deviceId: string, name: string) {
+async function renameDevice(loginId: string, name: string) {
   if (
-    await act(`${deviceId}:rename`, () => renameModelConnection(deviceId, name), t('account.modelConnections.renamed'))
+    await act(`${loginId}:rename`, () => renameModelConnection(loginId, name), t('account.modelConnections.renamed'))
   ) {
     saved.value += 1
   }

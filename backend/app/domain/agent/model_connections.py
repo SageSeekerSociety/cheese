@@ -1,14 +1,16 @@
 """A person's model connections (#2991): every login their own Claude Code has
 for the platform, across the machines they enrolled, for 「设置 → 模型连接」.
 
-A connection is what a machine last said about its login (`owner_login`): a
-Claude subscription and its plan, an Anthropic API key, or another model
-service with its model and host — never a key, which stays on the machine.
-Each comes with the machine it is kept on, whether that machine is online, and
-when a session of the owner's Claude Code last ran there.
+A connection is what a machine last said about one of its logins
+(`owner_login`), each on its own, however many one machine holds: a Claude
+subscription and its plan, an Anthropic API key, or another model service with
+its model and host — never a key, which stays on the machine. Each comes with
+the machine it is kept on, whether that machine is online, and when a session
+of the owner's Claude Code last ran there.
 
-Only its owner reads this. A machine that is not logged in has no connection,
-unless its owner removed one while it was away and it has not logged out yet.
+Only its owner reads this. A login that is not logged in is no connection,
+unless its owner removed it while its machine was away and it has not logged
+out yet.
 """
 
 from sqlalchemy import or_, select
@@ -17,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent.owner_provider import OWNER_CHANNEL
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device import claude_login
+from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow, HostedDeviceRow
 from app.domain.device.supply import Supply
 
@@ -39,7 +42,13 @@ async def of_owner(db: AsyncSession, owner_user_id: int, hub) -> list[dict]:
                     DeviceClaudeLoginRow.revoked_at.is_not(None),
                 ),
             )
-            .order_by(DeviceClaudeLoginRow.checked_at.desc())
+            # One machine's logins are confirmed in one answer: the first
+            # login first, then the same order on every read.
+            .order_by(
+                DeviceClaudeLoginRow.checked_at.desc(),
+                DeviceClaudeLoginRow.local_id != FIRST_LOGIN,
+                DeviceClaudeLoginRow.local_id,
+            )
         )
     ).all()
     used = await AgentSessionService(db).last_used_on(

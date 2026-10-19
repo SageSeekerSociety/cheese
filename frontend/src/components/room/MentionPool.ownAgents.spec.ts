@@ -1,7 +1,4 @@
-/** 成员自己的 Claude Code 只有它答应的人叫得动（#2991）：主人，以及主人放开给项目时
- * 项目里的人。叫不动的不出现——就算它坐在这个频道里。叫得动的还没坐进来也列出，第一次
- * @ 它就入座。
- */
+/** Project members can mention any personal agent, including one outside the room. */
 import type { ProjectMemberRow, Topic } from '@/cx_types'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -49,13 +46,12 @@ async function poolFor(author: string, members: ProjectMemberRow[] = MEMBERS): P
 }
 
 describe('@ 候选里成员自己的 Claude Code', () => {
-  it('别人的不出现，哪怕它坐在这个频道里', async () => {
-    expect(await poolFor('alice')).not.toContain('cheese-bobs')
+  it('项目成员可以提及别人的智能体', async () => {
+    expect(await poolFor('alice')).toContain('cheese-bobs')
   })
 
-  it('主人放开给项目的，项目里的人都看得到', async () => {
-    const opened = MEMBERS.map((m) => (m.user_handle === 'cheese-bobs' ? { ...m, callers: 'project' as const } : m))
-    expect(await poolFor('alice', opened)).toContain('cheese-bobs')
+  it('别人的智能体还没加入频道时也可以提及', async () => {
+    expect(await poolFor('bob')).toContain('cheese-alices')
   })
 
   it('自己的出现，哪怕还没坐进这个频道', async () => {

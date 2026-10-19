@@ -33,6 +33,34 @@ class CreditRewardOut(BaseModel):
     issued: bool
 
 
+class CreditRewardItemOut(BaseModel):
+    kind: Literal["beta", "feedback"]
+    credits: int
+    created_at: datetime
+
+
+class CreditRewardsOut(BaseModel):
+    feedback_count: int
+    feedback_credits: int
+    items: list[CreditRewardItemOut]
+
+
+class PublishedCreditPlanOut(BaseModel):
+    key: str
+    name: str
+    audience: Literal["personal", "team", "both"]
+    credits_per_period: float | None
+    period: str
+    windows: list[dict]
+    model_tiers: list[str] | None
+    unlimited: bool
+    models: list[str]
+
+
+class PublishedCreditPlansOut(BaseModel):
+    plans: list[PublishedCreditPlanOut]
+
+
 class CreditRequestOut(BaseModel):
     id: str
     team_id: int

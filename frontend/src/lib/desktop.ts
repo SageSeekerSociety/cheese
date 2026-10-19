@@ -78,14 +78,17 @@ export interface DesktopBridge {
   connectThisMachine: (options: ConnectOptions) => Promise<void>
   cancelConnect: () => Promise<void>
   thisDevice: () => Promise<string | null>
-  claudeLogin: (console: boolean, onStep: (step: ClaudeLoginStep) => void) => Promise<void>
+  /** Logs in the login this computer calls `loginId` again, or adds one when it is null. */
+  claudeLogin: (console: boolean, loginId: string | null, onStep: (step: ClaudeLoginStep) => void) => Promise<void>
   cancelClaudeLogin: () => Promise<void>
-  claudeLogout: () => Promise<void>
-  /** Points this computer's Claude Code at another model service; null in an app
-   *  that predates it. */
+  /** Logs out the login this computer calls `loginId`; its other logins stay. */
+  claudeLogout: (loginId: string) => Promise<void>
+  /** Points the login this computer calls `loginId` (a new one when null) at another
+   *  model service; null in an app that predates it. */
   claudeModelService:
     | ((
         service: { baseUrl: string; token: string; model: string },
+        loginId: string | null,
         onStep: (step: ClaudeLoginStep) => void
       ) => Promise<void>)
     | null
@@ -128,13 +131,13 @@ export function desktopBridge(): DesktopBridge | null {
     async thisDevice() {
       return (await invoke('this_device')) as string | null
     },
-    async claudeLogin(console, onStep) {
+    async claudeLogin(console, loginId, onStep) {
       const progress = new Channel<Progress>()
       progress.onmessage = (message) => {
         if (message.kind === 'step' && (message.id === 'preparing' || message.id === 'browser')) onStep(message.id)
       }
       try {
-        await invoke('claude_login', { console, progress })
+        await invoke('claude_login', { console, loginId, progress })
       } catch (err) {
         throw failure(err)
       }
@@ -142,17 +145,17 @@ export function desktopBridge(): DesktopBridge | null {
     async cancelClaudeLogin() {
       await invoke('cancel_claude_login')
     },
-    async claudeLogout() {
-      await invoke('claude_logout')
+    async claudeLogout(loginId) {
+      await invoke('claude_logout', { loginId })
     },
     claudeModelService: desktopCan('modelService')
-      ? async ({ baseUrl, token, model }, onStep) => {
+      ? async ({ baseUrl, token, model }, loginId, onStep) => {
           const progress = new Channel<Progress>()
           progress.onmessage = (message) => {
             if (message.kind === 'step' && message.id === 'preparing') onStep(message.id)
           }
           try {
-            await invoke('claude_model_service', { baseUrl, token, model, progress })
+            await invoke('claude_model_service', { baseUrl, token, model, loginId, progress })
           } catch (err) {
             throw failure(err)
           }

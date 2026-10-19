@@ -127,14 +127,6 @@ def test_create_questions_yields_between_block_chunks(
         async def holds_an_agent_seat(self, _room, _handle):
             return True
 
-    class FakeBroker:
-        def __init__(self):
-            self.published: list[tuple[str, dict]] = []
-
-        async def publish(self, channel: str, payload: dict):
-            self.published.append((channel, payload))
-
-    broker = FakeBroker()
     concurrent_ticks = 0
     serializing = False
 
@@ -151,7 +143,6 @@ def test_create_questions_yields_between_block_chunks(
     monkeypatch.setattr(topics_asks, "place_or_404", fake_place_or_404)
     monkeypatch.setattr(topics_asks, "TopicMemberService", FakeMemberService)
     monkeypatch.setattr(topics_asks, "ask", fake_ask)
-    monkeypatch.setattr(topics_asks, "get_broker", lambda: broker)
 
     async def run():
         nonlocal concurrent_ticks
@@ -180,4 +171,3 @@ def test_create_questions_yields_between_block_chunks(
     # 1,200 blocks / 500 per chunk = 3 chunks -> 2 yields during serialization.
     assert concurrent_ticks >= 2
     assert response["data"]["blocks"] == expected
-    assert len(broker.published) == 1_200

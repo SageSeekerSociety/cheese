@@ -1,18 +1,26 @@
-import type { BetaCredits, CreditRequest } from '@/types/creditOffers'
+import type { BetaCredits, CreditRequest, CreditRewards } from '@/types/creditOffers'
 
 import { ref } from 'vue'
 
-import { claimBetaCredits, createCreditRequest, getBetaCredits, getCreditRequests } from '@/api/creditOffers'
+import {
+  claimBetaCredits,
+  createCreditRequest,
+  getBetaCredits,
+  getCreditRequests,
+  getMyCreditRewards,
+} from '@/api/creditOffers'
 
 export function useCreditOffers(teamId?: () => number) {
   const beta = ref<BetaCredits | null>(null)
   const requests = ref<CreditRequest[]>([])
+  const rewards = ref<CreditRewards | null>(null)
   const busy = ref(false)
   const error = ref<string | null>(null)
   let version = 0
   async function load() {
     const current = ++version
     beta.value = null
+    rewards.value = null
     requests.value = []
     error.value = null
     try {
@@ -20,8 +28,11 @@ export function useCreditOffers(teamId?: () => number) {
         const data = await getCreditRequests(teamId())
         if (current === version) requests.value = data.items
       } else {
-        const data = await getBetaCredits()
-        if (current === version) beta.value = data
+        const [data, history] = await Promise.all([getBetaCredits(), getMyCreditRewards()])
+        if (current === version) {
+          beta.value = data
+          rewards.value = history
+        }
       }
     } catch (e) {
       if (current === version) error.value = e instanceof Error ? e.message : String(e)
@@ -54,5 +65,5 @@ export function useCreditOffers(teamId?: () => number) {
       busy.value = false
     }
   }
-  return { beta, requests, busy, error, load, claim, request }
+  return { beta, rewards, requests, busy, error, load, claim, request }
 }

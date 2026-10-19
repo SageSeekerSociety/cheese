@@ -38,6 +38,7 @@ watch(
     :loading="loading"
     :error="error"
     :can-manage="canManage"
+    :team-handle="teamData?.handle"
     :requests="offers.requests.value"
     :offers-busy="offers.busy.value"
     :offers-error="offers.error.value"

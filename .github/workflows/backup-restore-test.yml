@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - 'docker-compose.yml'
+      - 'deploy/db-backup.sh'
       - 'deploy/db-restore-test.sh'
       - 'deploy/r2-*'
       - 'deploy/tests/test-db-restore-test.sh'

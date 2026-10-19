@@ -77,6 +77,12 @@ jobs:
       # whole workflow. ci-fast's black-box tests have their own job below.
       - name: Test scope and result handling
         run: python3 -m unittest discover -s .github/scripts -p 'test_required_ci.py'
+      # The shadow registry declares every check once. This keeps that
+      # declaration equal to the tables that still select work, and it is here
+      # rather than in the black-box suite because that suite only runs on the
+      # full tier: a drift has to be visible on the pull request that causes it.
+      - name: Test the check registry against the tables it shadows
+        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_registry.py'
       - name: Select suites for the complete merge diff
         id: scope
         env:

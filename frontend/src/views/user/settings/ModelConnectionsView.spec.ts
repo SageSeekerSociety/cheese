@@ -24,6 +24,8 @@ afterEach(() => {
 
 function connection(deviceId: string, extra: Partial<ModelConnection> = {}): ModelConnection {
   return {
+    id: deviceId,
+    local_id: 'default',
     device_id: deviceId,
     device_name: deviceId,
     online: true,
@@ -71,6 +73,14 @@ function row(deviceId: string): HTMLElement {
 }
 
 describe('ModelConnectionsView', () => {
+  it('removes only the selected login when two logins share a computer', async () => {
+    const view = mount([connection('login-a', { device_id: 'desk' }), connection('login-b', { device_id: 'desk' })])
+    await fireEvent.click(within(row('login-a')).getByRole('button', { name: t('account.modelConnections.remove') }))
+    const dialog = await screen.findByRole('alertdialog')
+    await fireEvent.click(within(dialog).getByRole('button', { name: t('account.modelConnections.remove') }))
+    expect(view.emitted('revoke')).toEqual([['login-a']])
+    expect(within(row('login-b')).getByRole('button', { name: t('account.modelConnections.remove') })).toBeTruthy()
+  })
   it('removes only after confirming, and only the connection asked for', async () => {
     const view = mount([connection('desk'), connection('laptop')])
 
