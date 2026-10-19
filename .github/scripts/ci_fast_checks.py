@@ -717,9 +717,13 @@ def validate_evidence(evidence):
                     "reason": f"vitest workers crashed before reporting ({len(crashed)} files)",
                     "evidence": details}
         reason = f"{failed_suites} test suite(s) failed before running a test"
-        first = next((row.get("message") for row in failed if row.get("message")), "")
-        if first:
-            reason += f": {str(first)[:200]}"
+        failures = [
+            f"{row.get('name', '')}: "
+            + str(row.get("message") or "").split("\n", 1)[0][:200]
+            for row in failed
+        ]
+        if failures:
+            reason += ": " + "; ".join(failures[:3])
         return {"result": "fail", "reason": reason, "evidence": details}
     if kind == "vitest" and evidence.get("mode") == "related" and not _picked_for_the_change(evidence, files):
         return {"result": "unknown",

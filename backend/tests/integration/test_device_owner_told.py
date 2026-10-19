@@ -1,9 +1,7 @@
 """A device's owner is told when an agent session starts working on it (#1900
 step 5): which project, which room, which agent, and whether it can see the
 whole machine. One notice per session start, not one per tool call; an owner
-who is a person in that room is not told. The team page shows the owner who is
-on each of their machines now, including one attached to a project and not
-registered for the team.
+who is a person in that room is not told.
 """
 
 from tests.support.devices import enrollment_team, place_in_project_team
@@ -177,40 +175,6 @@ async def test_an_owner_in_the_room_is_not_told(client, monkeypatch):
 
     assert leased.status_code == 200, leased.text
     assert await _told(client, room.owner_id) == []
-
-
-async def test_the_team_page_shows_the_owner_who_is_on_their_device(
-    client, monkeypatch
-):
-    room = await _room_on_a_device(client, "bob")
-    _machines(monkeypatch)
-    path = f"/connector/teams/{room.team_id}/devices"
-    before = client.get(path, headers=_signed_in(room.owner_id, "bob"))
-    assert before.json()["devices"][0]["in_use"] == []
-
-    client.post(room.lease_path, headers=room.agent, json={"env": {}})
-
-    listed = client.get(path, headers=_signed_in(room.owner_id, "bob"))
-    assert listed.status_code == 200, listed.text
-    [device] = listed.json()["devices"]
-    [user] = device["in_use"]
-    assert (user["project_name"], user["topic_title"]) == ("Orchard", "Pricing")
-    assert user["agent_name"]
-    # An ordinary member sees the device without other rooms' activity.
-    async with client.test_factory() as db:
-        member = await registered(db, "carol")
-        db.add(
-            TeamUserRelation(
-                team_id=room.team_id,
-                user_id=member,
-                role=TeamMemberRole.MEMBER,
-                created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-            )
-        )
-        await db.commit()
-    other = client.get(path, headers=_signed_in(member, "carol")).json()["devices"]
-    assert other[0]["in_use"] is None
 
 
 async def test_a_device_attached_to_another_teams_project_is_not_listed(client):

@@ -204,8 +204,8 @@ async def _read_roster(
         for row in rows
     ]
     at = {row.handle: index for index, row in enumerate(rows)}
-    # 已有的席位和还没坐下的那几位是同一张表的两半，后一半由 `team` 读：一个关了
-    # 「成员自带 agent」的项目已经把成员那几位收回了，谁该在列由它筛（`ports.py`）。
+    # Existing seats and project teammates not yet seated share this roster;
+    # the ProjectTeam port supplies teammate state and member provenance.
     # 行类型在这里认下来：口子上写的是「一列东西」（`ports.py` 里说了为什么），
     # 递回来的每一行都是本包声明的 ``TeammateSeat``，唯一的实现也是照它填的。
     seats = cast("Sequence[TeammateSeat]", await team(session, project_id))
@@ -263,6 +263,4 @@ async def roster_rows(
 
 def rows_of(members: Sequence[Member]) -> list[dict]:
     """:func:`roster_rows` for a caller already holding the :func:`roster` read."""
-    # No agent calls a member's own agent (#2991): one reading this roster in
-    # its prompt would only learn a name it cannot call.
-    return [member.as_dict() for member in members if member.owner_handle is None]
+    return [member.as_dict() for member in members]

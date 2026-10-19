@@ -1844,6 +1844,8 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(verdict["result"], "fail")
         self.assertIn("failed before running a test", verdict["reason"])
         self.assertIn("Failed to load url", verdict["reason"])
+        self.assertIn("/repo/frontend/src/i18n/catalog.spec.ts", verdict["reason"])
+        self.assertIn("/repo/frontend/src/views/x.spec.ts", verdict["reason"])
         self.assertEqual(verdict["evidence"]["failed_suites"], 2)
         # Some suites ran: without this the report is green even though the
         # changed component never loaded.
