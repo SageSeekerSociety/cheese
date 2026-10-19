@@ -21,6 +21,7 @@ Docker volume. Everything else (R2 upload, verify, off-site) is shared.
 |---|---|---|
 | `db-backup.sh` (pg_dump -Fc + verify + prune + off-site) | on the box, `~/ops/db-backup.sh` (`cheese-db-backup.timer`) | hourly, :00 |
 | `r2-upload.py` (off-site DB dump copy to R2) | on the box, `~/ops/r2-upload.py` | each DB backup, right after local verify |
+| `r2-prune-dumps.py` (tiered local retention, R2-verified deletes) | on the box, `~/ops/r2-prune-dumps.py`, only where `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` | each DB backup, at the end |
 | `r2-sync-uploads.py` (incremental mirror of `uploads/` to R2) | on the box, `~/ops/r2-sync-uploads.py` (`cheese-uploads-mirror.timer`) | hourly, :30 |
 | `r2-sync-uploads.py` again, over the transcript archives (already `.tar.gz`, so mirrored as they are) | on the box, same script (`cheese-transcripts-mirror.timer`, `UPLOADS_PREFIX=transcripts`) | hourly, :45 |
 | Backup freshness alert | `.github/workflows/backup-freshness.yml`, dev runner | daily; local DB > 26h, R2/ uploads markers and DB/tar objects > 6h fail |
@@ -28,6 +29,13 @@ Docker volume. Everything else (R2 upload, verify, off-site) is shared.
 | Box-down alert | `.github/workflows/box-uptime.yml`, GitHub-hosted | hourly; fails if the box's runner is offline |
 
 Backups: `~/backups/cheese-<ts>.dump` (compressed custom format), 30-day retention.
+A box whose `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` (dev: `7`) thins
+instead with `r2-prune-dumps.py`: every dump for that many days, then the last
+dump of each day up to the 30 days. Any other dump is deleted only once R2 holds
+an object of the same size; a missing or mismatched copy is re-uploaded and read
+back first, and stays local if that fails. Size is the check because the
+uploader records no checksum. A box without the file (prod) keeps the plain
+30-day prune. The pruner needs `r2-common.py` next to it in `~/ops`.
 Each DB is on a **separate host** from its app box, so the DB dumps already
 survive a DB-host loss; the off-site R2 copy survives loss of the app box too.
 

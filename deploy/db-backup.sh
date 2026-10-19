@@ -8,9 +8,18 @@
 # follow-up once an S3 bucket / remote host is provisioned.
 set -euo pipefail
 
+# Box-local settings. dev sets CHEESE_BACKUP_HOURLY_DAYS here; a box without
+# the file (prod) keeps the plain RETENTION_DAYS prune below.
+BACKUP_ENV="${CHEESE_BACKUP_ENV:-/home/nictheboy/ops/backup.env}"
+if [ -f "$BACKUP_ENV" ]; then
+  # shellcheck disable=SC1090
+  set -a; . "$BACKUP_ENV"; set +a
+fi
+
 BACKUP_DIR="${CHEESE_BACKUP_DIR:-/home/nictheboy/backups}"
 ENV_FILE="${CHEESE_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}"
 RETENTION_DAYS="${CHEESE_BACKUP_RETENTION_DAYS:-30}"
+HOURLY_DAYS="${CHEESE_BACKUP_HOURLY_DAYS:-}"
 LOG="$BACKUP_DIR/backup.log"
 
 mkdir -p "$BACKUP_DIR"
@@ -58,8 +67,20 @@ else
   log "note: R2 off-site not configured ($R2_ENV / $R2_UPLOAD missing) — skipping"
 fi
 
-# Retention: drop dumps older than RETENTION_DAYS (19MB DB -> pennies of disk).
-find "$BACKUP_DIR" -maxdepth 1 -name 'cheese-*.dump' -type f -mtime "+$RETENTION_DAYS" \
-  -print -delete | while read -r f; do log "pruned old backup $f"; done
+# Retention. With HOURLY_DAYS set: every dump for HOURLY_DAYS, then one per day
+# to RETENTION_DAYS, and a dump is deleted only once its R2 copy is verified
+# (r2-prune-dumps.py). Without it: drop dumps older than RETENTION_DAYS.
+R2_PRUNE="${CHEESE_R2_PRUNE:-/home/nictheboy/ops/r2-prune-dumps.py}"
+if [ -n "$HOURLY_DAYS" ]; then
+  if "$VENV_PY" "$R2_PRUNE" "$BACKUP_DIR" --hourly-days "$HOURLY_DAYS" \
+      --retention-days "$RETENTION_DAYS" >>"$LOG" 2>&1; then
+    log "OK: tiered prune done"
+  else
+    log "WARN: tiered prune kept unverified dumps or failed (see lines above)"
+  fi
+else
+  find "$BACKUP_DIR" -maxdepth 1 -name 'cheese-*.dump' -type f -mtime "+$RETENTION_DAYS" \
+    -print -delete | while read -r f; do log "pruned old backup $f"; done
+fi
 
 log "done"

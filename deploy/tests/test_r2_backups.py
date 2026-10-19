@@ -303,5 +303,136 @@ class Backups(unittest.TestCase):
         self.assertEqual(marker.read_text(), "old-success")
 
 
+class TieredDumpRetention(unittest.TestCase):
+    """dev retention: hourly for 7 days, then one per day to 30; never delete unverified."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="dump-retention-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.dir = self.root / "backups"
+        self.dir.mkdir()
+        self.log = self.root / "prune.log"
+        self.store = Store()
+        self.addCleanup(patch.stopall)
+        patch.dict(os.environ, {
+            "CHEESE_R2_ENV": str(self.root / "absent.env"),
+            "R2_ENDPOINT": "https://example.invalid", "R2_BUCKET": "backups",
+            "R2_ACCESS_KEY_ID": "test", "R2_SECRET_ACCESS_KEY": "test",
+        }, clear=True).start()
+        patch.object(common, "client", return_value=self.store).start()
+        self.prune = importlib.import_module("r2-prune-dumps")
+        midnight = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+        self.day = lambda days_ago, hour: midnight - days_ago * 86400 + hour * 3600
+
+    def dump(self, at, content=b"dump", remote=True):
+        name = time.strftime("cheese-%Y%m%d-%H%M%S.dump", time.localtime(at))
+        (self.dir / name).write_bytes(content)
+        if remote is True:
+            self.store.add(f"db/{name}", content)
+        elif remote:
+            self.store.add(f"db/{name}", remote)
+        return name
+
+    def run_prune(self, *extra):
+        argv = ["r2-prune-dumps.py", str(self.dir), "--hourly-days", "7",
+                "--retention-days", "30", "--log", str(self.log), *extra]
+        with patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            return self.prune.main()
+
+    def local(self):
+        return sorted(path.name for path in self.dir.iterdir())
+
+    def test_every_dump_inside_seven_days_stays_even_without_r2_copy(self):
+        names = [self.dump(time.time() - hours * 3600, remote=False) for hours in (1, 2, 30, 31, 6 * 24 + 20)]
+        self.assertEqual(self.run_prune(), 0)
+        self.assertEqual(self.local(), sorted(names))
+        self.assertEqual(self.store.data, {})
+
+    def test_older_extra_dump_is_deleted_only_once_its_r2_copy_matches(self):
+        verified = self.dump(self.day(10, 10))
+        mismatched = self.dump(self.day(10, 11), remote=b"truncated")
+        daily = self.dump(self.day(10, 12), remote=False)
+        self.store.failed = True  # the re-upload of the mismatched copy does not land
+        self.assertEqual(self.run_prune(), 1)
+        self.assertEqual(self.local(), sorted([mismatched, daily]))
+        self.assertNotIn(verified, self.local())
+
+    def test_missing_r2_copy_is_uploaded_and_kept_until_verified(self):
+        missing = self.dump(self.day(12, 3), b"only on the box", remote=False)
+        daily = self.dump(self.day(12, 23))
+        self.store.failed = True
+        self.assertEqual(self.run_prune(), 1)
+        self.assertEqual(self.local(), sorted([missing, daily]))
+        self.store.failed = False
+        self.assertEqual(self.run_prune(), 0)
+        self.assertEqual(self.store.data[f"db/{missing}"], b"only on the box")
+        self.assertEqual(self.local(), [daily])
+        lines = self.log.read_text().splitlines()
+        self.assertTrue(any(f"uploaded {missing}" in line and f"key=db/{missing}" in line for line in lines))
+
+    def test_exactly_one_dump_per_day_survives_beyond_seven_days(self):
+        kept = []
+        for days_ago in (8, 15, 29):
+            for hour in (0, 9, 23):
+                name = self.dump(self.day(days_ago, hour))
+            kept.append(name)  # the last dump of that day
+        expired = self.dump(self.day(35, 23))
+        self.assertEqual(self.run_prune(), 0)
+        self.assertEqual(self.local(), sorted(kept))
+        self.assertNotIn(expired, self.local())
+
+    def test_dry_run_deletes_and_uploads_nothing(self):
+        names = [self.dump(self.day(9, 1)), self.dump(self.day(9, 2), remote=False),
+                 self.dump(self.day(9, 3)), self.dump(self.day(40, 1))]
+        before = dict(self.store.data)
+        self.assertEqual(self.run_prune("--dry-run"), 0)
+        self.assertEqual(self.local(), sorted(names))
+        self.assertEqual(self.store.data, before)
+
+    def test_unreadable_r2_listing_deletes_no_unverified_dump(self):
+        names = [self.dump(self.day(9, 1)), self.dump(self.day(9, 2))]
+        with patch.object(self.store, "paginate", side_effect=RuntimeError("endpoint down")):
+            self.assertEqual(self.run_prune(), 1)
+        self.assertEqual(self.local(), sorted(names))
+
+    def test_backup_script_without_dev_setting_keeps_the_plain_thirty_day_prune(self):
+        # prod has no ~/ops/backup.env; its retention must not change.
+        for dev_setting in (False, True):
+            with self.subTest(dev_setting=dev_setting):
+                for path in self.dir.iterdir():
+                    path.unlink()
+                old_hourly = self.dump(self.day(10, 1), remote=False)
+                self.dump(self.day(10, 2), remote=False)
+                expired = self.dump(self.day(40, 1), remote=False)
+                stamp = self.day(40, 1)
+                os.utime(self.dir / expired, (stamp, stamp))
+                env = self.backup_script_env()
+                if dev_setting:
+                    (self.root / "backup.env").write_text("CHEESE_BACKUP_HOURLY_DAYS=7\n")
+                result = subprocess.run(["bash", str(DEPLOY / "db-backup.sh")], env=env,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                names = self.local()
+                self.assertIn(old_hourly, names)  # never deleted without a verified R2 copy
+                self.assertNotIn(expired, names)
+
+    def backup_script_env(self):
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        (bin_dir / "pg_dump").write_text('#!/bin/sh\nwhile [ "$1" != -f ]; do shift; done\necho dump > "$2"\n')
+        (bin_dir / "pg_restore").write_text("#!/bin/sh\necho 'TABLE DATA public x'\n")
+        for tool in ("pg_dump", "pg_restore"):
+            (bin_dir / tool).chmod(0o755)
+        (self.root / "backend.env").write_text("DATABASE_URL=postgresql://fake/db\n")
+        return {
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "CHEESE_BACKUP_DIR": str(self.dir), "CHEESE_ENV_FILE": str(self.root / "backend.env"),
+            "CHEESE_BACKUP_ENV": str(self.root / "backup.env"),
+            "CHEESE_R2_ENV": str(self.root / "absent.env"), "CHEESE_VENV_PY": sys.executable,
+            "CHEESE_R2_PRUNE": str(DEPLOY / "r2-prune-dumps.py"),
+        }
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
