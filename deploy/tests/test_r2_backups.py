@@ -450,6 +450,17 @@ class TieredDumpRetention(unittest.TestCase):
         self.assertIn(hourly, self.local())
         self.assertNotIn(expired, self.local())
 
+    def test_backup_script_unit_stays_green_when_pruner_succeeds_or_only_kept_unverified_dumps(self):
+        # An R2 timeout that leaves a dump on the box is safe, not a failed backup.
+        for code in (0, 3):
+            with self.subTest(pruner_exit=code):
+                pruner = self.root / f"exit{code}.py"
+                pruner.write_text(f"raise SystemExit({code})\n")
+                result, hourly, expired = self.backup_script(
+                    backup_env="CHEESE_BACKUP_HOURLY_DAYS=7\n", pruner=pruner)
+                self.assertNotIn(expired, self.local())
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_backup_script_with_dev_setting_and_failing_pruner_still_expires_and_fails(self):
         crash = self.root / "crash.py"
         crash.write_text("raise SystemExit('pruner crashed')\n")
