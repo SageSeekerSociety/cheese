@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 
+	"github.com/SageSeekerSociety/cheese/cli/internal/claudecode"
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 )
 
@@ -55,6 +56,26 @@ func ServiceName(path string) string {
 // Activate supplies the enrollment root to helpers and remote commands. Each
 // service is a separate process; changing profiles never changes the OS HOME.
 func Activate(path string) error {
+	// Old connectors shared logins across enrollments. A single enrollment
+	// inherits them; with several, the original default enrollment owns them.
+	paths, err := filepath.Glob(filepath.Join(Dir(), "profiles", "*", "config.json"))
+	if err != nil {
+		return err
+	}
+	paths = append(paths, DefaultPath())
+	var enrolled []string
+	for _, candidate := range paths {
+		if cfg, err := Load(candidate); err == nil && cfg.Token != "" {
+			enrolled = append(enrolled, candidate)
+		}
+	}
+	ownerRoot := place.Root
+	if len(enrolled) == 1 {
+		ownerRoot = Root(enrolled[0])
+	}
+	if err := claudecode.MigrateLogins(ownerRoot); err != nil {
+		return err
+	}
 	return os.Setenv(place.ProfileRootEnv, Root(path))
 }
 

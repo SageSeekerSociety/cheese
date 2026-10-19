@@ -78,6 +78,14 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 - 机器主人自己的 `~/.claude` 与平台无关：那是他的凭据、设置和全部会话记录，这里不写、不搬、不删。卸载只走足迹根目录。
 - 有六个程序 import 不到这个模块，各自带着一份抄本（环境运行器、清理脚本、执行器引导、会话转移、`backend/sandbox/cheese`、Go 写的连接器）；`backend/tests/unit/test_footprint_root.py` 把它们钉在这一份上。
 
+### Claude login directories {#claude-logins}
+
+Each device enrollment owns its Claude logins. Its root is `~/.cheese` for the default profile and `~/.cheese/profiles/<profile>` for a named profile. The first login lives at `<root>/logins/claude-login`; further logins live at `<root>/logins/claude-logins/<local_id>`. `cheesehost --profile <profile> claude login`, `status`, and `logout` operate only on that enrollment. The desktop bridge passes the same profile to the connector. Pinned binaries remain shared at `~/.cheese/claude/versions/`.
+
+On first start, the connector moves the old shared login directories into the single enrolled profile's store. If several profiles already exist, the original default profile inherits the old store. The move preserves local ids and macOS Keychain credentials, removes the old paths, and refuses to overwrite an existing destination. Subsequent starts read only the enrollment's store.
+
+The backend probe resolves `CHEESE_PROFILE_ROOT` on the device, and session launches use that same root for `CLAUDE_SECURESTORAGE_CONFIG_DIR`. `claude_logins` already identifies a login by `(device_id, local_id)`, so identical local ids in different enrollments remain separate without a database migration. Uninstall removes that enrollment's login files while retaining other profiles and shared binaries.
+
 ## 环境与工具的发放 {#toolchain}
 
 - `environment_runner.py` 是一个标准库程序，在被选中的执行边界里跑：装依赖前先拿锁（`flock`，Windows 上走 `remote-execution/portable.py` 的原语），防止两个安装器同时开工；`exec` 的那一刻把锁放掉，之后 agent 的复用由 tmux 管。

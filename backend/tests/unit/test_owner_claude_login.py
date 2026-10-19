@@ -43,7 +43,7 @@ pytestmark = pytest.mark.skipif(
 FAKE_BUILD = """#!/bin/sh
 if [ "$1 $2" != "auth status" ]; then exit 2; fi
 case "$CLAUDE_CONFIG_DIR" in
-  "$PLATFORM_ROOT"/claude-login|"$PLATFORM_ROOT"/claude-logins/*) ;;
+  "$PLATFORM_ROOT"/logins/claude-login|"$PLATFORM_ROOT"/logins/claude-logins/*) ;;
   *) echo '{"loggedIn": false, "authMethod": "none"}'; exit 0 ;;
 esac
 if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || [ ! -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
@@ -199,6 +199,22 @@ def test_a_directory_whose_name_cannot_be_a_login_is_not_reported(tmp_path):
     _another_login(env, "has space", "pro")
 
     assert set(_answer(env)) == {FIRST_LOGIN}
+
+
+def test_probe_reads_only_the_connected_enrollment(tmp_path):
+    env = _machine(tmp_path, installed=True, logged_in=True)
+    _another_login(env, "private", "max")
+    root = Path(env["HOME"]) / ".cheese/profiles/research"
+    login = root / "logins/claude-login"
+    login.mkdir(parents=True)
+    (login / ".credentials.json").write_text("pro")
+    env.update(CHEESE_PROFILE_ROOT=".cheese/profiles/research", PLATFORM_ROOT=str(root))
+
+    logins = _answer(env)
+
+    assert set(logins) == {FIRST_LOGIN}
+    assert logins[FIRST_LOGIN].logged_in
+    assert logins[FIRST_LOGIN].subscription_type == "pro"
 
 
 @pytest.mark.parametrize(

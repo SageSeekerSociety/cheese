@@ -136,18 +136,18 @@ func TestUninstallDefaultLeavesAnotherEnrollmentUsable(t *testing.T) {
 	}
 }
 
-func TestUninstallWithAnotherEnrollmentPreservesSharedModelLogin(t *testing.T) {
+func TestUninstallRemovesItsLoginAndPreservesSharedRuntime(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	login := filepath.Join(home, ".cheese", "claude-login", "model-service.json")
+	login := filepath.Join(home, ".cheese", "logins", "claude-login", "model-service.json")
 	if err := os.MkdirAll(filepath.Dir(login), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(login, []byte("shared-model"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	shared := []string{"tools/pi/bin", "skill-bundles/one/skill.md", "claude-logins/second/model-service.json"}
+	shared := []string{"tools/pi/bin", "skill-bundles/one/skill.md", "profiles/research/logins/claude-logins/second/model-service.json"}
 	for _, relative := range shared {
 		path := filepath.Join(home, ".cheese", relative)
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -163,8 +163,8 @@ func TestUninstallWithAnotherEnrollmentPreservesSharedModelLogin(t *testing.T) {
 	if err := removeFootprint(config.DefaultPath(), home, !otherEnrollments(config.DefaultPath())); err != nil {
 		t.Fatal(err)
 	}
-	if data, err := os.ReadFile(login); err != nil || string(data) != "shared-model" {
-		t.Fatalf("execution uninstall changed the shared model login: %q, %v", data, err)
+	if _, err := os.Stat(login); !os.IsNotExist(err) {
+		t.Fatalf("uninstall left its enrollment's model login: %v", err)
 	}
 	for _, relative := range shared {
 		if data, err := os.ReadFile(filepath.Join(home, ".cheese", relative)); err != nil || string(data) != "model-runtime" {
