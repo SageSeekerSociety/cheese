@@ -261,6 +261,32 @@ def test_worker_preserves_actual_cli_help(worker):
     )
 
 
+def test_worker_keeps_a_warning_before_the_last_stdout_line(worker, tmp_path):
+    """A caller that merges the two streams reads them in the order written.
+
+    A launch takes the CLI's last line as its answer: with stderr block
+    buffered here and flushed after stdout, a warning written during the
+    command came out last and was answered as the checkout it was not.
+    """
+    worker[0].write_text(
+        "import sys\n"
+        "if __name__ == '__main__':\n"
+        "    print('[cheese] a warning', file=sys.stderr)\n"
+        "    print('/the/task/checkout')\n"
+    )
+    merged = tmp_path / "merged"
+    args, env = command(worker[1], "probe")
+
+    with merged.open("w", encoding="utf-8") as stream:
+        result = subprocess.run(args, env=env, stdout=stream, stderr=stream, timeout=10)
+
+    assert result.returncode == 0
+    assert merged.read_text(encoding="utf-8").splitlines() == [
+        "[cheese] a warning",
+        "/the/task/checkout",
+    ]
+
+
 def test_worker_calls_the_platform_with_current_credentials(worker, tmp_path):
     """Each invocation runs with the environment it was sent, so a rotated token
     is the one the next call carries."""
