@@ -36,7 +36,7 @@ _SKIPPED_DIRS = {"node_modules", "dist"}
 _SUFFIXES = {".ts", ".tsx", ".mts", ".vue"}
 
 _DECLARATION = re.compile(
-    r"^[ \t]*export\s+(?:default\s+|declare\s+)?(?:type|interface)\s+([A-Za-z_$][\w$]*)",
+    r"^[ \t]*export\s+(?:default\s+|declare\s+)?(?:type|interface|enum)\s+([A-Za-z_$][\w$]*)",
     re.MULTILINE,
 )
 _WORD = re.compile(r"[A-Za-z_$][\w$]*")
@@ -97,12 +97,14 @@ def test_scanner_flags_unread_types_and_clears_them_once_read(tmp_path: Path) ->
     (src / "shapes.ts").write_text(
         "export interface OrphanShape {\n  id: number\n}\n"
         "export type OrphanId = number\n"
+        "export enum OrphanEnum {\n  A = 1,\n}\n"
         "export default interface OrphanDefault {\n  id: number\n}\n",
         encoding="utf-8",
     )
     assert unused_exported_types(src) == {
         ("shapes.ts", "OrphanShape"),
         ("shapes.ts", "OrphanId"),
+        ("shapes.ts", "OrphanEnum"),
         ("shapes.ts", "OrphanDefault"),
     }
 
@@ -115,13 +117,14 @@ def test_scanner_flags_unread_types_and_clears_them_once_read(tmp_path: Path) ->
     )
     assert unused_exported_types(src) == {
         ("shapes.ts", "OrphanId"),
+        ("shapes.ts", "OrphanEnum"),
         ("shapes.ts", "OrphanDefault"),
     }
 
     # A reader outside src counts once its root is passed, as collab/ and e2e/ are.
     (tmp_path / "e2e").mkdir()
     (tmp_path / "e2e" / "spec.ts").write_text(
-        "import type { OrphanId } from '../src/shapes'\n", encoding="utf-8"
+        "import type { OrphanId } from '../src/shapes'\nconst e = OrphanEnum.A\n", encoding="utf-8"
     )
     (src / "node_modules").mkdir()
     (src / "node_modules" / "dep.ts").write_text(

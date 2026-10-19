@@ -165,7 +165,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
     passes over and why; the sweep logs every message it starts, since one it
     finds is one the nudges missed."""
     # deferred-import: breaks the cycle agent.queries -> agent.pending_messages
-    from app.domain.agent.queries import conversation_seat
+    from app.domain.agent.queries import seats_in_conversations
 
     if not runner.owns_sessions or not runner.accepting_turns:
         return 0
@@ -229,6 +229,20 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
                 for block in waiting
             ],
         )
+        # The seat each waiting message acts under is asked once for the batch:
+        # the messages of one scan come from a handful of conversations, so a
+        # batch read answers them all instead of one `conversation_seat` per
+        # message. The loop still checks the same things in the same order.
+        seats_by_key = await seats_in_conversations(
+            session,
+            [
+                (
+                    answered_in_by_block[block.id],
+                    ((block.meta or {}).get("agent_recipient") or {}).get("handle"),
+                )
+                for block in waiting
+            ],
+        )
         seats = {}
         for block in mentioned:
             if block.id not in answered_in_by_block:
@@ -246,7 +260,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             if await chat.has_running_turn(*key):
                 skipped.append((block, "turn_running_in_process"))
                 continue
-            seated = await conversation_seat(session, conversation, handle)
+            seated = seats_by_key[key]
             if seated is None:
                 skipped.append((block, "no_seat"))
                 continue

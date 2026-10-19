@@ -261,10 +261,10 @@ class MaterialBundleService:
         material_ids: list[int] | None = None,
     ) -> dict:
         if material_ids:
-            for mid in material_ids:
-                material = await self._material_repo.get_by_id(mid)
-                if material is None:
-                    raise NotFoundError("Material not found", data={"id": mid})
+            found = await self._material_repo.get_by_ids(material_ids)
+            missing = [mid for mid in material_ids if mid not in found]
+            if missing:
+                raise NotFoundError("Material not found", data={"id": missing[0]})
 
         bundle = await self._repo.create(
             title=title,

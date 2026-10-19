@@ -1,0 +1,132 @@
+# Culprit probe: rerun the named failing tests on one commit and report whether
+# they pass there. Dispatched by the platform (landing_forge.dispatch_bisect),
+# never by a push or a PR.
+#
+# The run's head_sha is the default branch's head, not the probed commit, so
+# the platform finds its run by `run-name` (the nonce) and reads the verdict
+# from the steps: only the step named `run the named tests` failing means the
+# tests fail on that commit. A checkout, install or classification failure
+# says nothing about the commit and must be read as unknown. This job has no
+# database or service containers, so a test that needs one fails here on every
+# commit: the planner (culprit_bisect.bisect) only names the oldest commit of a
+# batch after the commit before it passed.
+name: culprit-bisect
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: The commit to probe
+        required: true
+      tests:
+        description: Space-separated test files that failed
+        required: true
+      nonce:
+        description: Correlates this run with the dispatch
+        required: true
+
+run-name: culprit ${{ inputs.nonce }}
+
+permissions:
+  contents: read
+
+jobs:
+  culprit:
+    name: culprit
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+
+      # Inputs reach the shell through env, never through ${{ }} in the script.
+      # Test names come as the CI logs print them: relative to backend/ or
+      # frontend/ (`tests/unit/test_x.py::test_y`, `src/x.test.ts`), or from the
+      # repository root. Either way they are reduced to a file under its
+      # package, and `files` is what the test steps run.
+      - name: classify the tests
+        id: classify
+        env:
+          TESTS: ${{ inputs.tests }}
+        run: |
+          set -euo pipefail
+          kind=""
+          files=""
+          for raw in $TESTS; do
+            f="${raw%%::*}"
+            f="${f#backend/}"
+            f="${f#frontend/}"
+            if ! [[ "$f" =~ ^[A-Za-z0-9_./@-]+$ ]] || [[ "$f" == *..* || "$f" == /* ]]; then
+              echo "::error::cannot judge $raw"; exit 1
+            fi
+            case "$f" in
+              tests/*.py) this=backend ;;
+              src/*.spec.ts|src/*.test.ts|src/*.spec.js|src/*.test.js) this=frontend ;;
+              *) echo "::error::cannot judge $raw"; exit 1 ;;
+            esac
+            if [ -n "$kind" ] && [ "$kind" != "$this" ]; then
+              echo "::error::cannot judge a mix of backend and frontend tests"; exit 1
+            fi
+            kind=$this
+            files="$files $f"
+          done
+          [ -n "$kind" ] || { echo "::error::cannot judge: no tests named"; exit 1; }
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "files=${files# }" >> "$GITHUB_OUTPUT"
+
+      # A test file that does not exist at this commit (added later in the
+      # batch) is not a failing test: pytest would exit 4 in the step whose
+      # failure means "fails here". Stop before it, so the verdict is unknown.
+      - name: check the named tests exist
+        env:
+          KIND: ${{ steps.classify.outputs.kind }}
+          FILES: ${{ steps.classify.outputs.files }}
+        run: |
+          set -euo pipefail
+          for f in $FILES; do
+            [ -f "$KIND/$f" ] || { echo "::error::$KIND/$f does not exist at this commit"; exit 1; }
+          done
+
+      - name: Install uv
+        if: steps.classify.outputs.kind == 'backend'
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+
+      - name: install backend dependencies
+        if: steps.classify.outputs.kind == 'backend'
+        working-directory: backend
+        run: uv sync --frozen --all-extras
+
+      - name: run the named tests
+        if: steps.classify.outputs.kind == 'backend'
+        working-directory: backend
+        env:
+          FILES: ${{ steps.classify.outputs.files }}
+        run: |
+          # shellcheck disable=SC2086
+          uv run pytest $FILES
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.classify.outputs.kind == 'frontend'
+        with:
+          node-version: 22
+
+      - name: install frontend dependencies
+        if: steps.classify.outputs.kind == 'frontend'
+        working-directory: frontend
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: run the named tests
+        if: steps.classify.outputs.kind == 'frontend'
+        working-directory: frontend
+        env:
+          FILES: ${{ steps.classify.outputs.files }}
+        run: |
+          # shellcheck disable=SC2086
+          pnpm exec vitest run $FILES

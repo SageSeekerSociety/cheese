@@ -309,7 +309,6 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/users/auth.py": 29,
     "app/api/routes/users/connections.py": 3,
     "app/api/routes/users/directory.py": 5,
-    "app/api/routes/users/github_account.py": 1,
     "app/api/routes/users/oauth.py": 4,
     "app/api/routes/users/preferences.py": 2,
     "app/api/routes/users/registration.py": 8,

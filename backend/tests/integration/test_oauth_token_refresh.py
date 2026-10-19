@@ -7,8 +7,8 @@ used to run its update inside whatever transaction the caller (typically
 `AcceptService.accept()`) happened to be mid-way through. Two problems
 followed: a later, unrelated failure in that SAME transaction rolled the
 refreshed token back too (leaving the DB holding a refresh_token GitHub had
-already invalidated — the account link then stays broken until the user
-manually reconnects), and two concurrent refreshers of the same connection
+already invalidated — the GitHub connection then stays broken until the user
+signs in with GitHub again), and two concurrent refreshers of the same connection
 could race and clobber each other.
 
 The fix (`OAuthService._refresh_and_persist_token`, `app/domain/oauth/
@@ -29,6 +29,7 @@ TestGetGithubUserToken note).
 """
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -87,6 +88,7 @@ async def _seed_connection(
     access_token: str = "stale-access-token",
     refresh_token: str | None = "stale-refresh-token",
     expires_in: timedelta = timedelta(hours=-1),
+    refresh_token_expires: datetime | None = None,
 ) -> int:
     async with session_factory() as session:
         conn = UserOAuthConnection(
@@ -98,6 +100,7 @@ async def _seed_connection(
             if refresh_token
             else None,
             token_expires=datetime.now(UTC) + expires_in,
+            refresh_token_expires=refresh_token_expires,
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
@@ -390,6 +393,112 @@ async def _renewable(factory: async_sessionmaker, user_id: int) -> bool:
         svc, _ = _service_with_stub_provider(session)
         [conn] = await svc.list_user_connections(user_id)
         return conn["hasRefreshToken"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("seconds_left", [-1, 0])
+async def test_expired_refresh_token_is_not_reported_or_tried(
+    business_db_factory, seconds_left
+):
+    factory = business_db_factory
+    user_id = _next_user_id()
+    await _seed_connection(
+        factory,
+        user_id=user_id,
+        refresh_token_expires=datetime.now(UTC) + timedelta(seconds=seconds_left),
+    )
+    assert not await _renewable(factory, user_id)
+
+    async with factory() as session:
+        svc, provider = _service_with_stub_provider(session)
+        provider.refresh_access_token = AsyncMock(
+            return_value={
+                "access_token": "expired-refresh-was-tried",
+                "expires_in": 28800,
+            }
+        )
+        assert await svc.get_github_user_token(user_id) is None
+        provider.refresh_access_token.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("known_expiry", [False, True])
+async def test_usable_refresh_token_is_reported_and_rotates_with_its_expiry(
+    business_db_factory, known_expiry
+):
+    factory = business_db_factory
+    user_id = _next_user_id()
+    connection_id = await _seed_connection(
+        factory,
+        user_id=user_id,
+        refresh_token_expires=datetime.now(UTC) + timedelta(days=1)
+        if known_expiry
+        else None,
+    )
+    assert await _renewable(factory, user_id)
+
+    before = datetime.now(UTC)
+    async with factory() as session:
+        svc, provider = _service_with_stub_provider(session)
+        provider.refresh_access_token = AsyncMock(
+            return_value={
+                "access_token": "fresh-access-token",
+                "refresh_token": "fresh-refresh-token",
+                "expires_in": 28800,
+                "refresh_token_expires_in": 15897600,
+            }
+        )
+        assert await svc.get_github_user_token(user_id) == "fresh-access-token"
+        provider.refresh_access_token.assert_awaited_once_with("stale-refresh-token")
+
+    conn = await _read_connection(factory, connection_id)
+    assert conn.refresh_token_expires is not None
+    assert before + timedelta(seconds=15897600) <= conn.refresh_token_expires
+    assert conn.refresh_token_expires <= datetime.now(UTC) + timedelta(seconds=15897600)
+    assert _decrypted(conn, "refresh_token") == "fresh-refresh-token"
+
+
+@pytest.mark.anyio
+async def test_unreadable_refresh_token_warns_once_without_a_traceback(
+    business_db_factory, caplog
+):
+    factory = business_db_factory
+    user_id = _next_user_id()
+    connection_id = await _seed_connection(factory, user_id=user_id)
+    async with factory() as session:
+        conn = await OAuthConnectionRepository(session).get(connection_id)
+        conn.refresh_token = "unreadable-refresh-token"
+        await session.commit()
+
+    with caplog.at_level(logging.WARNING):
+        assert not await _renewable(factory, user_id)
+        assert not await _renewable(factory, user_id)
+        async with factory() as session:
+            svc, provider = _service_with_stub_provider(session)
+            provider.refresh_access_token = AsyncMock()
+            assert await svc.get_github_user_token(user_id) is None
+            provider.refresh_access_token.assert_not_awaited()
+
+    records = [r for r in caplog.records if str(user_id) in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is None
+    assert "unreadable-refresh-token" not in records[0].getMessage()
+
+    # A different broken token must still leave a diagnostic for this account.
+    caplog.clear()
+    async with factory() as session:
+        conn = await OAuthConnectionRepository(session).get(connection_id)
+        conn.refresh_token = "different-unreadable-refresh-token"
+        await session.commit()
+    with caplog.at_level(logging.WARNING):
+        assert not await _renewable(factory, user_id)
+        assert not await _renewable(factory, user_id)
+    records = [r for r in caplog.records if str(user_id) in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is None
+    assert "different-unreadable-refresh-token" not in records[0].getMessage()
 
 
 @pytest.mark.anyio

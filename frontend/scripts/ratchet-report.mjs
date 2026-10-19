@@ -1,10 +1,10 @@
-// The JSON form the ratchet snapshot collector reads, shared by the checks
+// The JSON form ci:fast reads, shared by the checks
 // under frontend/scripts — the ratchets and the plain checks alike.
 //
 //   node scripts/import-boundary-ratchet.mjs --json
 //
 // prints ONE JSON object on stdout and nothing else. The human report is not
-// printed in this mode on purpose: the collector parses stdout, and a report
+// printed in this mode on purpose: ci:fast parses stdout, and a report
 // interleaved with it is not a report. Errors keep going to stderr, where they
 // were already going.
 //
@@ -30,8 +30,7 @@ export function emit(record) {
 }
 
 /**
- * "Could not judge" in the same JSON form, and exit 2 — the code the snapshot
- * records as `cannot_judge`. Never exit 0 from here: a checker that could not
+ * "Could not judge" in the same JSON form, and exit 2. Never exit 0 from here: a checker that could not
  * run has not judged a clean tree, and saying otherwise is how a gate goes
  * green over files it never read.
  *
@@ -50,15 +49,11 @@ export function cannotJudge({ id, better = BETTER }, reason) {
  * The record for a run that judged its tree. `result` is what `compare()`
  * returns.
  *
- * The fields here are the ones the checker is the only witness to. `area` and
- * `rule_fingerprint` are not among them: the collector that knows which rule
- * files belong to which check adds those, so that a rule file list lives in one
- * place instead of seven. See docs/topics/棘轮页方案, section 3.1.
+ * The fields here are the ones the checker is the only witness to.
  *
  * `stale` is every baseline entry the run no longer matches — the frozen
  * allowance is still on the books and no longer needed. `details` is the
- * per-file breakdown, capped: the page expands it, and an unbounded list would
- * make one committed snapshot the size of the tree.
+ * per-file breakdown, capped so one record does not grow with the entire tree.
  *
  * @param {{id: string, better?: string, result: any, details?: unknown[]}} input
  */
