@@ -339,6 +339,12 @@ async def _publish_as_agent(
             )
         if turn_id is not None:
             runner.note_session_output(turn_id, tool=False)
+        # A retry may follow a process that committed the block and died before
+        # recording its mention deliveries. The ledger is idempotent by
+        # event × seat (`delivery/mention.py`), so running it again here is the
+        # same at-least-once recovery the retry got before this early return.
+        if block is not None and place.task is None:
+            await _summon_the_named(chat, runner, place, block, author)
         return block
     attachments = await _write_agent_attachments(place, prepared)
     payload, attachment_payloads = (
