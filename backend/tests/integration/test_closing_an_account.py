@@ -442,12 +442,20 @@ def _user_id(client, handle: str) -> int:
     return client.portal.call(read)
 
 
-def test_nobody_joins_a_team_left_without_an_owner(client):
-    """An owner alone in a shared team may close (above), but nobody may then
-    come in: a member there could never get an owner."""
-    owner = sign_in(client, _handle("leaver"))
+def _close_with_ticket(client, person):
+    return _close(
+        client,
+        person.token,
+        username=person.handle,
+        ticket=_ticket(client, person.token),
+    )
+
+
+def test_a_pending_invitation_holds_closing_until_it_is_cancelled(client):
+    """Alone in the team, but someone could still accept their way in: closing
+    first would leave them in a team nobody can ever manage."""
+    owner = sign_in(client, _handle("inviter"))
     invited = sign_in(client, _handle("invited"))
-    passerby = sign_in(client, _handle("passerby"))
     team_id, _ = _shared_team(client, owner.handle)
     invitation = client.post(
         f"/teams/{team_id}/invitations",
@@ -455,41 +463,39 @@ def test_nobody_joins_a_team_left_without_an_owner(client):
         headers=_auth(owner.token),
     )
     assert invitation.status_code == 201, invitation.text
+
+    refused = _close_with_ticket(client, owner)
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "accountCloseOwnsTeams"
+    assert _can_sign_in(client, owner.handle)
+
     invitation_id = invitation.json()["data"]["invitation"]["id"]
-    opened = client.patch(
-        f"/teams/{team_id}/join-link",
-        json={"approval": False},
-        headers=_auth(owner.token),
+    cancelled = client.delete(
+        f"/teams/{team_id}/invitations/{invitation_id}", headers=_auth(owner.token)
     )
-    assert opened.status_code == 200, opened.text
-    assert (
-        _close(
-            client,
-            owner.token,
-            username=owner.handle,
-            ticket=_ticket(client, owner.token),
-        ).status_code
-        == 200
-    )
+    assert cancelled.status_code in (200, 204), cancelled.text
+    assert _close_with_ticket(client, owner).status_code == 200
 
-    accepted = client.post(
-        f"/users/me/team-invitations/{invitation_id}/accept",
-        headers=_auth(invited.token),
-    )
-    joined = client.post(f"/teams/{team_id}/join", headers=_auth(passerby.token))
 
-    assert accepted.status_code == 409, accepted.text
-    assert joined.status_code == 409, joined.text
-    from app.domain.team.models import TeamUserRelation
+def test_joining_without_approval_holds_closing_until_approval_is_back(client):
+    owner = sign_in(client, _handle("opener"))
+    team_id, _ = _shared_team(client, owner.handle)
 
-    async def live_members() -> list[int]:
-        async with client.test_factory() as session:
-            rows = await session.scalars(
-                select(TeamUserRelation.user_id).where(
-                    TeamUserRelation.team_id == team_id,
-                    TeamUserRelation.deleted_at.is_(None),
-                )
-            )
-            return list(rows)
+    def approval(on: bool) -> None:
+        r = client.patch(
+            f"/teams/{team_id}/join-link",
+            json={"approval": on},
+            headers=_auth(owner.token),
+        )
+        assert r.status_code == 200, r.text
 
-    assert client.portal.call(live_members) == []
+    approval(False)
+    refused = _close_with_ticket(client, owner)
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "accountCloseOwnsTeams"
+    assert _can_sign_in(client, owner.handle)
+
+    approval(True)
+    assert _close_with_ticket(client, owner).status_code == 200

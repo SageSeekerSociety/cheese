@@ -9,11 +9,11 @@ they connected, their own agents' access,
 their saved integration secrets, their private assistant conversations, the
 notifications addressed to them, and their places in teams, projects and rooms.
 
-An account that is the only owner of a shared team other people are in is not
-closed until it hands that team on: nothing else can ever give the team an
-owner again, as GitHub also requires before deleting an account. A personal
-team, or a shared team nobody else is in, does not hold it; nobody can join
-the ownerless team that leaves (``app.domain.team.membership_services``).
+An account that is the only owner of a team someone else is in, or could
+still enter by a pending invitation or by joining that needs no approval, is
+not closed until it hands that team on or shuts that way in: nothing else
+can ever give the team an owner again, as GitHub also requires before
+deleting an account. A team nobody else is in or can enter does not hold it.
 
 What stays is what other people still need: messages, documents and tasks
 they wrote in shared rooms (shown as 「已注销用户」), records of who read
@@ -50,8 +50,17 @@ from app.domain.notification.push_models import PushSubscription
 from app.domain.oauth.models import UserOAuthConnection
 from app.domain.passkey.models import PasskeyCredential, PasskeyPrompt
 from app.domain.project.models import ProjectMember
-from app.domain.team.models import Team, TeamUserRelation
-from app.domain.team.protocol import TeamMemberRole
+from app.domain.team.models import (
+    ApplicationType,
+    Team,
+    TeamMembershipApplication,
+    TeamUserRelation,
+)
+from app.domain.team.protocol import (
+    ApplicationStatus,
+    TeamMemberRole,
+    TeamVisibility,
+)
 from app.domain.topic.models import TopicMembership, TopicReadState
 from app.domain.user.models import (
     User,
@@ -81,8 +90,9 @@ class Closed:
 
 
 async def teams_only_they_own(session: AsyncSession, user_id: int) -> list[str]:
-    """Names of the shared teams ``user_id`` is the only owner of while someone
-    else is still in them."""
+    """Names of the teams ``user_id`` is the only owner of while someone else
+    is in them or could still come in: a pending invitation, or joining with
+    no approval by a public team's page or by its join link."""
     mine = aliased(TeamUserRelation)
     other = aliased(TeamUserRelation)
     someone_else = exists().where(
@@ -91,6 +101,22 @@ async def teams_only_they_own(session: AsyncSession, user_id: int) -> list[str]:
         other.deleted_at.is_(None),
     )
     another_owner = someone_else.where(other.role == TeamMemberRole.OWNER)
+    invited = exists().where(
+        TeamMembershipApplication.team_id == Team.id,
+        TeamMembershipApplication.type == ApplicationType.INVITATION.value,
+        TeamMembershipApplication.status == ApplicationStatus.PENDING.value,
+        TeamMembershipApplication.deleted_at.is_(None),
+    )
+    # With approval on, a join only files a request, and nobody is left to
+    # grant it. Off, whoever can reach the team is in: a public shared team by
+    # its page, any team by its link.
+    open_to_join = Team.join_approval.is_(False) & (
+        Team.join_token.is_not(None)
+        | (
+            Team.personal_owner_user_id.is_(None)
+            & (Team.visibility == TeamVisibility.PUBLIC.value)
+        )
+    )
     rows = await session.scalars(
         select(Team.name)
         .join(mine, mine.team_id == Team.id)
@@ -99,8 +125,7 @@ async def teams_only_they_own(session: AsyncSession, user_id: int) -> list[str]:
             mine.role == TeamMemberRole.OWNER,
             mine.deleted_at.is_(None),
             Team.deleted_at.is_(None),
-            Team.personal_owner_user_id.is_(None),
-            someone_else,
+            someone_else | invited | open_to_join,
             ~another_owner,
         )
         .order_by(Team.name)
@@ -111,7 +136,7 @@ async def teams_only_they_own(session: AsyncSession, user_id: int) -> list[str]:
 async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
     """Close the account in the caller's transaction; None when there is no
     live account by that id. Refused (409) while it is the only owner of a
-    shared team others are in. The caller commits, then calls
+    team someone else is in or could still enter (``teams_only_they_own``). The caller commits, then calls
     ``app.core.deleted_accounts.mark_deleted`` so access tokens already issued
     stop working before they expire."""
     user = await session.scalar(

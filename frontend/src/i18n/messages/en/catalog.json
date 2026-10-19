@@ -1130,7 +1130,7 @@
     },
     "s10": {
       "name": "Closing refused: still a team's only owner",
-      "note": "The server refuses the close: this person is still the only owner of a team others are in. The reason stays in the dialog, names the team, and says to transfer ownership first."
+      "note": "The server refuses the close: this person is still the only owner of a team that others are in, or that someone can still enter through a pending invitation or joining without approval. The reason stays in the dialog, names the team, and says to transfer ownership, or cancel the invitations and turn on join approval, first."
     }
   },
   "modelConnectionsView": {

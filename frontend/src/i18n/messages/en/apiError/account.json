@@ -31,6 +31,6 @@
   "accountCloseUsernameMismatch": "The username you typed doesn't match your account",
   "accountCloseNotOwnViaAdmin": "You can't close your own account from the admin console; close it from your settings",
   "accountCloseAgent": "{handle} is an agent's account, and only a person's account can be closed",
-  "accountCloseOwnsTeams": "This account is the only owner of {teams}. Transfer ownership to another member before closing it",
+  "accountCloseOwnsTeams": "This account is the only owner of {teams}, which other people are in or can still join (a pending invitation, or joining without approval). Transfer ownership to another member, or cancel the invitations and turn on “Require approval to join”, before closing it",
   "accountAlreadyClosed": "This account has already been closed"
 }

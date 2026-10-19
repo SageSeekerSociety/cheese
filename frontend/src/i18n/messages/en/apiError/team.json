@@ -5,6 +5,5 @@
   "teamAlreadyMember": "This person is already a member of this team",
   "teamApplicationPending": "This person already has an invitation or join request for this team waiting to be answered",
   "teamHasProjects": "This team still has projects that aren't archived. Archive them all before disbanding it",
-  "teamTransferToSelf": "You already own this team",
-  "teamHasNoOwner": "This team no longer has an owner, so nobody can join it"
+  "teamTransferToSelf": "You already own this team"
 }

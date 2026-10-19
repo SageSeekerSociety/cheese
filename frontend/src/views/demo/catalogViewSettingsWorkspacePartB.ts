@@ -149,7 +149,8 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         },
         props: {
           showCloseAccount: true,
-          closeError: '这个账号是团队「数据结构课题组」唯一的所有者，先把所有权转让给其他成员，才能注销',
+          closeError:
+            '这个账号是团队「数据结构课题组」唯一的所有者，这些团队里还有其他成员，或者别人还能进来（有待接受的邀请，或加入不需要审批）。先把所有权转让给其他成员，或取消邀请并开启「加入需要审批」，才能注销',
         },
         expect: '先把所有权转让给其他成员',
         expectSelector: '#security-close-username',
