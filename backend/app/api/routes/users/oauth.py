@@ -535,6 +535,8 @@ async def get_oauth_login_url(
             request.cookies.get(REFRESH_COOKIE) or ""
         )
         if holder != connecting.user_id:
+            # Shown in this browser even when the app started it: signing in
+            # here is the way forward, so the app is not where to say so.
             logger.info(
                 "GitHub connect: opened without the account's sign-in uid=%s",
                 connecting.user_id,

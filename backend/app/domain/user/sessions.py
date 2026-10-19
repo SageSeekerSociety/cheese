@@ -192,12 +192,20 @@ class SessionService:
 
     async def holder(self, token: str) -> int | None:
         """Whose live sign-in this refresh token is, without spending it:
-        unlike `refresh`, nothing rotates. None when it is no live sign-in's."""
+        unlike `refresh`, nothing rotates. None when it is no live sign-in's.
+
+        The tokens `refresh` would honour: the current one, and the one just
+        rotated away, which a browser keeps when it never heard the answer to
+        its last refresh (the module docstring), within the grace window or
+        after it. An abandoned token is not one: `refresh` ends the session
+        on it."""
         if not token:
             return None
+        presented = digest_token(token)
         return await self._db.scalar(
             select(UserSession.user_id).where(
-                UserSession.current_hash == digest_token(token),
+                (UserSession.current_hash == presented)
+                | (UserSession.previous_hash == presented),
                 *_live_clauses(_now()),
             )
         )

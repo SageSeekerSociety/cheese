@@ -516,3 +516,52 @@ def test_an_account_with_github_connected_cannot_add_a_second_identity(
     assert _q(back.headers["location"])["error_code"] == "ACCOUNT_MISMATCH"
     found, token = _github_of(db_session, _portal, user)
     assert found[0] == "4242" and token == "ghu_first"
+
+
+def _rotate(db_session, portal, token: str) -> str:
+    """One refresh the browser never heard the answer to: the server moved on
+    to a successor, the browser still holds ``token``."""
+
+    async def rotate():
+        refreshed = await SessionService(db_session).refresh(token)
+        await db_session.flush()
+        return refreshed.refresh_token
+
+    return portal.call(rotate)
+
+
+def test_a_browser_that_missed_its_last_refresh_answer_still_connects(
+    api_client: TestClient, user_client, db_session, _portal, github
+):
+    user = user_client.create_user()
+    _browser_signed_in_as(api_client, db_session, _portal, user)
+    _rotate(db_session, _portal, api_client.cookies["cheese_refresh"])
+
+    back = _sign_in_with_github(api_client, intent=_intent_for(api_client, user))
+
+    assert urlparse(back.headers["location"]).path == _RETURN_TO, back.headers
+    assert _github_of(db_session, _portal, user)[1] == "ghu_first"
+
+
+def test_an_abandoned_refresh_token_does_not_count_as_signed_in(
+    api_client: TestClient, user_client, db_session, _portal, github, monkeypatch
+):
+    user = user_client.create_user()
+    _browser_signed_in_as(api_client, db_session, _portal, user)
+    first = api_client.cookies["cheese_refresh"]
+    second = _rotate(db_session, _portal, first)
+    # Past the grace window the first token gets a successor of its own, and
+    # the second, never received by this browser, is kept as abandoned.
+    monkeypatch.setattr(settings, "refresh_reuse_grace_seconds", 0)
+    _rotate(db_session, _portal, first)
+    api_client.cookies.clear()
+    api_client.cookies.set("cheese_refresh", second)
+
+    start = api_client.get(
+        "/users/auth/oauth/login/github_app",
+        params={"intent": _intent_for(api_client, user)},
+        follow_redirects=False,
+    )
+
+    assert _q(start.headers["location"])["error_code"] == "GITHUB_CONNECT_SIGNED_OUT"
+    assert _github_of(db_session, _portal, user)[0] is None
