@@ -41,6 +41,7 @@ Exit 3: blocked (missing dependency/tool). Report binds head, base and dirty
 content, is worktree-aware, and must be written before returning green.
 """
 
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import fnmatch
 import hashlib
 import importlib.util
@@ -53,10 +54,11 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 from ci_fast_checks import _cores, resolve, test_plan, tree_guard_check
-from ci_fast_process import dependencies, execute
+from ci_fast_process import clear_stop, dependencies, execute, stop_all
 
 REPO_ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
 GIT_DIR = subprocess.check_output(["git", "rev-parse", "--git-dir"], text=True, cwd=REPO_ROOT).strip()
@@ -125,6 +127,16 @@ MAX_MEMORY_MIB = 9216
 # of seconds each (eslint ~67s in full CI), so below it the start is not worth
 # the kill it would earn a second or two later.
 JS_HOOK_MIN_SECONDS = 15
+# Memory below which the plan stays serial. Two of its checks dominate the tier:
+# measured on 12 CI runs, `frontend-unit` peaked at 4.4-5.2 GiB and
+# `backend-pure` at ~1.1 GiB. Running both at once therefore needs room for
+# their sum; below this the second one would only race the first for the machine
+# and for the sampled ceiling, so one at a time is the honest bound.
+PARALLEL_MIN_MIB = 6144
+# Checks that may run at once, by default. Above PARALLEL_MIN_MIB the two
+# product suites are on separate trees and can overlap; a third would need a
+# memory measurement this tier does not carry per check.
+DEFAULT_JOBS = 2
 
 
 def sh(args):
@@ -216,6 +228,75 @@ def reproduce(row, precommit, hook_ids):
     return row.get("reason") or "未记录命令"
 
 
+def run_plan_checks(plan, invoke, jobs, report):
+    """Run the plan's checks, at most ``jobs`` of them at once.
+
+    Two checks that share a working directory write the same tree (Vitest's
+    cache, the generated OpenAPI types, the narrow tsconfig), so only one of
+    them runs at a time; the product suites live in separate trees and can
+    overlap. Each check keeps its own process group, ceiling, timeout and
+    evidence — nothing is merged into one shared run. The rows go back into the
+    report in plan order, so the file does not depend on which check finished
+    first.
+    """
+    clear_stop()  # a stop from an earlier run in this process is not this run's
+    if jobs <= 1 or len(plan) <= 1:
+        for check in plan:
+            invoke(check["id"], check["command"], check["cwd"],
+                   check.get("evidence"), check.get("env"))
+        return
+    order = {check["id"]: index for index, check in enumerate(plan)}
+    pending = list(plan)
+    busy: set[str] = set()
+    running = {}
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        try:
+            while pending or running:
+                for check in list(pending):
+                    if len(running) >= jobs:
+                        break
+                    cwd = str(check["cwd"])
+                    if cwd in busy:  # one writer per tree at a time
+                        continue
+                    pending.remove(check)
+                    busy.add(cwd)
+                    running[pool.submit(
+                        invoke, check["id"], check["command"], check["cwd"],
+                        check.get("evidence"), check.get("env"))] = check
+                if not running:
+                    break
+                done, _ = wait(running, return_when=FIRST_COMPLETED)
+                for future in done:
+                    busy.discard(str(running.pop(future)["cwd"]))
+                    future.result()
+        except KeyboardInterrupt:
+            # Each check runs in its own session, so the interrupt that reached
+            # this thread does not reach them. Without this the pool's exit
+            # waits for a check that is still running — up to its own timeout —
+            # where the serial path stops it at once.
+            stop_all()
+            raise
+    rows = [row for row in report["ran"] if row["id"] in order]
+    rows.sort(key=lambda row: order[row["id"]])
+    remaining = iter(rows)
+    report["ran"][:] = [next(remaining) if row["id"] in order else row
+                        for row in report["ran"]]
+
+
+def jobs_for(memory_mib, explicit=None):
+    """How many plan checks may run at once.
+
+    The ceiling is per check, not per tier. Two checks that peak at ~5 GiB and
+    ~1 GiB therefore need a machine that can back their sum; below that the
+    tier stays serial rather than halving each check's ceiling — a Vitest pool
+    sized by half the memory runs fewer forks and is slower than the serial
+    tier it replaced.
+    """
+    if explicit is not None:
+        return explicit
+    return DEFAULT_JOBS if memory_mib >= PARALLEL_MIN_MIB else 1
+
+
 def collect_changes(base_ref):
     head = sh(["git", "rev-parse", "HEAD"])
     if head.returncode:
@@ -291,6 +372,9 @@ def main(argv):
                         help="whole tier seconds; overrides CI_FAST_BUDGET_SECONDS and CPU defaults")
     parser.add_argument("--memory-mib", type=int, default=3072,
                         help=f"sampled process-group RSS ceiling, 1..{MAX_MEMORY_MIB}")
+    parser.add_argument("--jobs", type=int,
+                        help="plan checks to run at once (1 keeps the tier serial); "
+                             f"default {DEFAULT_JOBS} when the tier may back it, else 1")
     args = parser.parse_args(argv)
     try:
         args.budget, budget_source = budget_for(args.tier, args.budget)
@@ -299,12 +383,16 @@ def main(argv):
     if (not math.isfinite(args.timeout) or not math.isfinite(args.budget)
             or args.timeout <= 0 or args.budget <= 0 or not 0 < args.memory_mib <= MAX_MEMORY_MIB):
         parser.error(f"finite positive time limits and 1..{MAX_MEMORY_MIB} MiB are required")
+    if args.jobs is None:
+        args.jobs = jobs_for(args.memory_mib)
+    if args.jobs < 1:
+        parser.error("--jobs must be at least 1")
     started = time.monotonic()
     report_path = Path(args.report)
     report = {"version": 2, "status": "unknown", "exit": UNKNOWN, "tier": args.tier,
               "pre_push": args.pre_push,
               "budget_seconds": args.budget, "budget_source": budget_source,
-              "memory_limit_mib": args.memory_mib,
+              "memory_limit_mib": args.memory_mib, "jobs": args.jobs,
               "memory_measurement": "sampled process-group RSS, not address-space enforcement",
               "reasons": [], "fallback": False, "unknown_paths": [], "ran": [], "not_run": []}
 
@@ -374,6 +462,11 @@ def main(argv):
 
 def run(args, report, finish, started):
     deadline = started + args.budget
+    # Two plan checks can be running at once, and each appends its own row and
+    # prints its own tail. The lock is only around those writes: the checks
+    # themselves stay outside it, which is the whole point of running them
+    # together.
+    record_lock = threading.Lock()
 
     def invoke(identifier, command, cwd=REPO_ROOT, evidence=None, env=None):
         result = execute(command, cwd, min(args.timeout, max(0, deadline - time.monotonic())), args.memory_mib, env)
@@ -392,17 +485,21 @@ def run(args, report, finish, started):
                 row["cwd"] = str(cwd)
             if env:
                 row["env"] = {key: str(value) for key, value in env.items()}
-        if row["result"] in ("budget", "not_applicable"):
-            report["not_run"].append({"id": row["id"], "reason": "无相关文件" if row["result"] == "not_applicable" else "超时/预算耗尽"})
-        if row["result"] != "not_applicable":
-            report["ran"].append(row)
-        rss_note = "sampled RSS未采到" if row.get("unmeasured") else f"sampled RSS {row['peak_rss_mib']} MiB"
-        print(f"  {row['id']}: {row['result']} ({row['seconds']}s; {rss_note})", flush=True)
-        if row["result"] not in ("pass", "not_applicable"):
-            print("\n".join(out.strip().splitlines()[-15:]))
-            label = {"timeout": "超时", "skipped": "被跳过"}.get(row["result"], row["result"])
-            report["reasons"].append(f"{row['id']}: {label} {row.get('reason', '')}".strip())
+        with record_lock:
+            if row["result"] in ("budget", "not_applicable"):
+                report["not_run"].append({"id": row["id"], "reason": "无相关文件" if row["result"] == "not_applicable" else "超时/预算耗尽"})
+            if row["result"] != "not_applicable":
+                report["ran"].append(row)
+            rss_note = "sampled RSS未采到" if row.get("unmeasured") else f"sampled RSS {row['peak_rss_mib']} MiB"
+            print(f"  {row['id']}: {row['result']} ({row['seconds']}s; {rss_note})", flush=True)
+            if row["result"] not in ("pass", "not_applicable"):
+                print("\n".join(out.strip().splitlines()[-15:]))
+                label = {"timeout": "超时", "skipped": "被跳过"}.get(row["result"], row["result"])
+                report["reasons"].append(f"{row['id']}: {label} {row.get('reason', '')}".strip())
         return result
+
+    def run_plan(plan):
+        run_plan_checks(plan, invoke, args.jobs, report)
 
     changed, base_sha, head, staged, unstaged, untracked = collect_changes(args.base)
     report.update(base={"ref": args.base, "merge_base": base_sha}, head=head,
@@ -601,8 +698,7 @@ def run(args, report, finish, started):
             plan, omissions = test_plan(Path(REPO_ROOT), changed, scope, Path(tmp),
                                         bool(unknown) or not base_sha, args.memory_mib, frontend_scope)
             report["not_run"].extend(omissions)
-            for check in plan:
-                invoke(check["id"], check["command"], check["cwd"], check.get("evidence"), check.get("env"))
+            run_plan(plan)
     for identifier in hooks:
         if identifier == "repo-rules":
             continue
