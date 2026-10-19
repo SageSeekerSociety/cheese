@@ -50,8 +50,15 @@ def _hook_ids_in_config() -> list[str]:
 
 
 def _plan_ids() -> list[str]:
-    source = (HERE / "ci_fast_checks.py").read_text(encoding="utf-8")
-    return re.findall(r'"id": "([^"]+)"', source)
+    """Every check id ci-fast writes as a row of its own.
+
+    The plan items are literal ``"id":`` entries in ci_fast_checks.py; a check
+    ci-fast spawns directly names its id in an ``invoke(...)`` call instead
+    (commit-title). Both are rows in the report, so both are registered here.
+    """
+    plan = (HERE / "ci_fast_checks.py").read_text(encoding="utf-8")
+    driver = (HERE / "ci-fast.py").read_text(encoding="utf-8")
+    return re.findall(r'"id": "([^"]+)"', plan) + re.findall(r'invoke\("([^"]+)"', driver)
 
 
 FAST_HOOKS = _literal_assignment(HERE / "ci-fast.py", "FAST_HOOKS")
@@ -118,23 +125,39 @@ class RegistryTest(unittest.TestCase):
     def test_every_hook_the_config_defines_is_registered(self):
         self.assertEqual(_unregistered(_hook_ids_in_config(), HOOKS), [])
 
+    def test_the_registry_declares_no_hook_the_config_does_not(self):
+        config = set(_hook_ids_in_config())
+        self.assertEqual(sorted(spec.id for spec in HOOKS if spec.id not in config), [])
+
     def test_every_hook_sits_in_the_lane_of_the_table_that_selects_it(self):
         self.assertEqual(_lane_conflicts(HOOKS, LANES), [])
 
     def test_every_plan_item_ci_fast_emits_is_registered(self):
         self.assertEqual(_unregistered(_plan_ids(), PLAN_CHECKS), [])
 
-    def test_every_tree_guard_the_backend_selects_is_registered(self):
-        registered = [spec.id for spec in TREE_GUARDS]
-        self.assertEqual(_unregistered(BACKEND_TREE_GUARDS, TREE_GUARDS), [])
-        self.assertEqual(sorted(registered), sorted(TREE_GUARD_READS))
+    def test_the_registry_declares_no_plan_item_ci_fast_never_emits(self):
+        emitted = set(_plan_ids())
+        self.assertEqual(sorted(spec.id for spec in PLAN_CHECKS if spec.id not in emitted), [])
 
-    def test_every_ci_step_is_named_in_a_workflow(self):
+    def test_every_tree_guard_the_backend_selects_is_registered(self):
+        self.assertEqual(_unregistered(BACKEND_TREE_GUARDS, TREE_GUARDS), [])
+        self.assertEqual(sorted(spec.id for spec in TREE_GUARDS
+                                if spec.id not in set(BACKEND_TREE_GUARDS)), [])
+
+    def test_every_ci_step_names_a_script_a_workflow_runs(self):
+        """Each entry's command has to name a script that appears in a workflow.
+
+        The script is the first token of any argument that ends in ``.py`` or
+        ``.sh`` — a command in this table carries its flags in the same
+        argument (``bash .claude/scripts/x.sh --self-test``), so looking at the
+        whole argument would skip every entry that has one.
+        """
         text = "\n".join(p.read_text(encoding="utf-8") for p in WORKFLOWS.glob("*.yml"))
         for spec in CI_STEPS:
-            script = next((part for part in spec.run if part.endswith(".py") or part.endswith(".sh")), None)
-            if script:
-                self.assertIn(script, text, f"{spec.id}: {script} is in no workflow")
+            scripts = [token for part in spec.run for token in part.split()
+                       if token.endswith((".py", ".sh"))]
+            self.assertTrue(scripts, f"{spec.id}: names no script")
+            self.assertIn(scripts[0], text, f"{spec.id}: {scripts[0]} is in no workflow")
 
     def test_a_trigger_names_something_this_repository_has(self):
         self.assertEqual(_missing_paths(REGISTRY, REPO), [])
