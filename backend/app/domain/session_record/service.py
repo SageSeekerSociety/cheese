@@ -13,9 +13,9 @@ Three operations, all on `SessionRecord`:
 
 What is kept is the journal row as the runner wrote it, the platform's
 `cheese` stamp included. The only change is the scrub (`scrubbed`):
-credentials go the way `core.obs.scrub_secrets` takes them out of logs, and
-the two things PostgreSQL's JSONB cannot hold (NUL, an unpaired surrogate)
-become U+FFFD.
+credentials go the way `core.obs.scrub_secrets` takes them out of logs (a
+field named like a credential included), and NUL, the one character JSONB
+cannot hold, becomes U+FFFD.
 """
 
 from __future__ import annotations
@@ -76,9 +76,9 @@ class Stream(Protocol):
 # --- scrubbing ---------------------------------------------------------------
 
 
-#: What JSONB cannot hold: NUL, and a surrogate code unit, which in a Python
-#: string is always unpaired (a pair decodes to one code point).
-_UNSTORABLE = re.compile("[\x00\ud800-\udfff]")
+#: What JSONB cannot hold. Binary tool output carries it; the journal writes a
+#: lone surrogate nowhere (sqlite refuses to encode one), so only NUL arrives.
+_UNSTORABLE = re.compile("\x00")
 
 
 def _clean(text: str) -> str:
@@ -86,17 +86,52 @@ def _clean(text: str) -> str:
 
 
 def scrubbed(value: Any) -> Any:
-    """`value` with every string scrubbed, the shape untouched."""
-    if isinstance(value, str):
-        return _clean(value)
-    if isinstance(value, dict):
-        return {
-            (_clean(k) if isinstance(k, str) else k): scrubbed(v)
-            for k, v in value.items()
-        }
-    if isinstance(value, list):
-        return [scrubbed(v) for v in value]
-    return value
+    """`value` with every string scrubbed, the shape untouched.
+
+    Walked with a stack of its own rather than by recursion: a record nested
+    deeper than Python's recursion limit (an MCP result can be) parses, and
+    must not then fail here on every drain.
+    """
+    root = [value]
+    pending: list[tuple[list | dict, Any]] = [(root, 0)]
+    while pending:
+        holder, at = pending.pop()
+        item = holder[at]
+        if isinstance(item, str):
+            holder[at] = _clean(item)
+        elif isinstance(item, list):
+            copy = list(item)
+            holder[at] = copy
+            pending.extend((copy, n) for n in range(len(copy)))
+        elif isinstance(item, dict):
+            copy = {}
+            for key, field in item.items():
+                name = _clean(key) if isinstance(key, str) else key
+                masked = _masked(key, field)
+                if masked is not None:
+                    copy[name] = masked
+                else:
+                    copy[name] = field
+                    pending.append((copy, name))
+            holder[at] = copy
+    return root[0]
+
+
+def _masked(key: object, value: Any) -> str | None:
+    """The field's value masked as `scrub_secrets` masks ``key=value``, or
+    None when that rule leaves it alone.
+
+    A credential in a record is often a field of its own (a tool's
+    ``{"password": ...}``, an env map's ``{"GITHUB_TOKEN": ...}``); the key
+    rule only sees it when the name and the value are in one string.
+    """
+    if not (isinstance(key, str) and isinstance(value, str)):
+        return None
+    pair = _UNSTORABLE.sub("�", f"{key}={value}")
+    masked = scrub_secrets(pair)
+    if masked != pair and masked.startswith(f"{key}="):
+        return masked[len(key) + 1 :]
+    return None
 
 
 def _entries(rows: list[dict]) -> list[dict]:

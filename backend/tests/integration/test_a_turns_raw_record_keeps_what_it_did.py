@@ -29,15 +29,20 @@ from app.domain.agent.harness.claude_code import subscription as claude
 from app.domain.agent.harness.codex import journal as codex_journal
 from app.domain.agent.harness.codex import subscription as codex
 from app.domain.session_record import service
+from tests.integration.conftest import session_auth_headers
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
 
 SECRET = "ghp_" + "Zx81kQ3mN5pR7tV9wY2aB4cD6eF8gH0jK1lM"
 THINKING = "The failing test reads the config twice; check the loader before the cache."
+#: A credential a tool was handed as a field of its own, not inside a string.
+FIELD_SECRET = "hunter2-" + "plain-text"
 #: A tool's output far past the 8 KiB the timeline keeps: its head, a
-#: credential, then 60 KB of lines, then its last line.
+#: credential, a NUL (binary output carries them), 60 KB of lines, then its
+#: last line.
 OUTPUT = (
     "HEAD OF THE OUTPUT\n"
     f"export GITHUB_TOKEN={SECRET}\n"
+    "binary \x00 byte\n"
     + "".join(f"line {n:05d} of the build log\n" for n in range(2500))
     + "LAST LINE OF THE OUTPUT\n"
 )
@@ -72,7 +77,11 @@ def _claude_records(work: str) -> list[dict]:
                         "type": "tool_use",
                         "id": "toolu_bash",
                         "name": "Bash",
-                        "input": {"command": "make test", "description": "Run tests"},
+                        "input": {
+                            "command": "make test",
+                            "description": "Run tests",
+                            "env": {"DB_PASSWORD": FIELD_SECRET},
+                        },
                     }
                 ],
             },
@@ -139,7 +148,7 @@ def _codex_records(work: str) -> list[dict]:
                     "type": "dynamicToolCall",
                     "id": "call-1",
                     "tool": "bash",
-                    "arguments": {"command": "make test"},
+                    "arguments": {"command": "make test", "api_key": FIELD_SECRET},
                     "success": True,
                     "contentItems": [{"type": "inputText", "text": OUTPUT}],
                 },
@@ -319,10 +328,11 @@ def test_a_turn_keeps_its_thinking_whole_output_and_subagent_scrubbed(
     assert "line 00000 of the build log" in as_text
     assert "LAST LINE OF THE OUTPUT" in as_text
     assert SECRET not in as_text
-    # Apart from the credential, the records are the ones the harness wrote.
-    scrubbed_output = OUTPUT.replace(SECRET, "***")
+    assert FIELD_SECRET not in as_text
+    # Apart from the credentials, and the NUL PostgreSQL cannot store, the
+    # records are the ones the harness wrote.
     assert [item["record"] for item in kept] == [
-        _replace_text(record, OUTPUT, scrubbed_output) for record in written
+        _as_stored(record) for record in written
     ]
 
     # Moved to the bucket, the record reads back the same.
@@ -400,11 +410,29 @@ def test_what_the_room_steps_over_is_still_kept(client, tmp_path):
     assert THINKING in repr(kept)
 
 
-def _replace_text(value, old: str, new: str):
+def test_who_may_not_read_the_room_may_not_read_its_record(client, tmp_path):
+    """The raw record holds whole tool outputs: someone outside the room is
+    refused it exactly as they are refused the room's 现场."""
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    session.write(_claude_records(str(uuid.uuid4())))
+    session.drain()
+    assert session.read()
+    room = session.ref.topic_id
+    stranger = {"X-Cheese-Token": "", **session_auth_headers("a-stranger")}
+    site = client.get(f"/topics/{room}/transcript", headers=stranger)
+    record = client.get(f"/topics/{room}/session-records", headers=stranger)
+    assert site.status_code in (401, 403, 404), site.text
+    assert record.status_code == site.status_code, record.text
+
+
+def _as_stored(value):
+    """What a record should read back as: both credentials masked, NUL replaced."""
     if isinstance(value, str):
-        return value.replace(old, new)
+        if value == FIELD_SECRET:
+            return "***"
+        return value.replace(SECRET, "***").replace("\x00", "�")
     if isinstance(value, dict):
-        return {k: _replace_text(v, old, new) for k, v in value.items()}
+        return {k: _as_stored(v) for k, v in value.items()}
     if isinstance(value, list):
-        return [_replace_text(v, old, new) for v in value]
+        return [_as_stored(v) for v in value]
     return value

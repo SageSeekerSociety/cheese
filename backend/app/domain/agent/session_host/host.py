@@ -52,7 +52,7 @@ from app.domain.agent.device_hub import (
 )
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
 from app.domain.agent.harness import SessionRef as Seat
-from app.domain.agent.harness.driven.subscription import Subscription
+from app.domain.agent.harness.driven.subscription import Records, Subscription
 from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.reads import (
     CaughtUp,
@@ -105,7 +105,6 @@ from app.domain.agent.session_host.sessions import (
 from app.domain.agent.session_host.sessions import (
     with_pictures as with_pictures,
 )
-from app.domain.session_record import service as session_records
 from app.domain.agent.session_host.starting import (
     RunnerUnsupported as RunnerUnsupported,
 )
@@ -149,8 +148,12 @@ class SessionHost:
         session_factory=None,
         mirrors: Path | None = None,
         on_alive: Callable[[uuid.UUID], None] | None = None,
+        records: Records | None = None,
     ):
         self._hub = hub
+        #: Where every row a session's journal holds is kept as its raw
+        #: record (`session_record.service.append`). None keeps no record.
+        self._records = records
         self._memory = memory
         #: Told the conversation of a session whose runner answered a read, on
         #: every pass that heard one: proof that its turn is still there, which
@@ -382,14 +385,6 @@ class SessionHost:
         async def call(method: str, params: dict) -> dict:
             return await self._wire().call(running.host, ref, method, params)
 
-        async def records(session: Seat, rows: list[dict]) -> None:
-            # deferred-import: tests replace this name on app.core.db
-            from app.core.db import async_session_factory
-
-            await session_records.append(
-                self._session_factory or async_session_factory, session, rows
-            )
-
         running.mirror.parent.mkdir(parents=True, exist_ok=True)
         subscription = driver.subscription(
             running.seat,
@@ -407,7 +402,7 @@ class SessionHost:
                 announce,
                 # A session no place owns (a person's 芝士, a document's) has
                 # no conversation to keep a record in (`sessions._seat`).
-                records if _owned(running.seat) else None,
+                self._records if _owned(running.seat) else None,
             ),
         )
         running.subscription = subscription
