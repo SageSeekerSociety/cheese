@@ -17,6 +17,11 @@ from app.domain.identity.handles import agent_instance_handle
 pytestmark = pytest.mark.anyio
 
 
+class _Rows(list):
+    def all(self):
+        return list(self)
+
+
 class _Session:
     """只回答实例表那一问，并数它被问了几次。"""
 
@@ -29,7 +34,7 @@ class _Session:
         if entity is Delivery:
             # The retry guard asks which seats this block already reached;
             # none, in these tests.
-            return iter(())
+            return _Rows()
         assert entity is AgentInstance
         self.instance_reads += 1
         return iter(self.rows)
