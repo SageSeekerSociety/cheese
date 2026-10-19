@@ -1,6 +1,12 @@
 import { connectorRequest } from './connector'
 import { request } from './http'
 
+export function listDeviceRunningSessions(
+  deviceId: string
+): Promise<{ sessions: import('../types/deviceSessions').RunningDeviceSession[] }> {
+  return connectorRequest(`/devices/${encodeURIComponent(deviceId)}/running-sessions`)
+}
+
 // The name the cli proposed for a pending code (this machine's hostname), so the
 // approval page can prefill an editable default instead of leaving it blank.
 export function deviceProposedName(code: string): Promise<{ device_name: string | null }> {

@@ -17,6 +17,7 @@ package daemoncmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -68,6 +69,7 @@ func Commands() []*cobra.Command {
 		return c
 	}
 	return []*cobra.Command{
+		machineCmd(),
 		authCmd(&cfgPath, withConfig),
 		linkCmd(&cfgPath, withConfig),
 		statusCmd(&cfgPath, withConfig),
@@ -76,6 +78,34 @@ func Commands() []*cobra.Command {
 		runCmd(&cfgPath, withConfig),
 		updateCmd(&cfgPath, withConfig),
 		uninstallCmd(&cfgPath, withConfig),
+	}
+}
+
+func machineCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "prevent-sleep [on|off]",
+		Short: "Keep this computer awake while AI sessions run (shared by all profiles)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			m, err := config.LoadMachine(config.MachinePath())
+			if err != nil {
+				return err
+			}
+			if len(args) == 1 {
+				switch args[0] {
+				case "on":
+					m.PreventSleep = true
+				case "off":
+					m.PreventSleep = false
+				default:
+					return fmt.Errorf("use on or off")
+				}
+				if err := config.SaveMachine(config.MachinePath(), m); err != nil {
+					return err
+				}
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(m)
+		},
 	}
 }
 

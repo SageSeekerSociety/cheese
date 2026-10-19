@@ -1594,5 +1594,11 @@
       "name": "Could not load",
       "note": "No board was ever fetched: the page shows only that line and a retry."
     }
+  },
+  "thisDeviceView": {
+    "sleepOff": {
+      "name": "No sessions, sleep prevention off",
+      "note": "The session list is empty and the switch is off. The computer can sleep when idle."
+    }
   }
 }
