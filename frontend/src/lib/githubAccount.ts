@@ -102,6 +102,6 @@ export function ownGithub(conn: OAuthConnectionInfo | null, loaded: boolean, now
   if (!loaded) return { state: 'unknown' }
   if (!conn) return { state: 'none' }
   const login = conn.login ?? conn.providerUserId
-  if (isGithubAccountTokenExpired(conn, now) && !conn.hasRefreshToken) return { state: 'expired', login }
+  if (githubAccountNeedsReconnect(conn, now)) return { state: 'expired', login }
   return { state: 'linked', login }
 }
