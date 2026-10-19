@@ -366,15 +366,15 @@ def test_a_screen_writes_nothing_into_another_projects_inbox(client):
         _unregister(screen)
 
 
-# --- 「我的设备」management CRUD ------------------------------------------------
+# --- Personal-team enrollment management -------------------------------------
 
 
-def _enroll_device(client, owner_token: str, project_id: str | None = None) -> dict:
+def _enroll_device(client, owner_token: str, team_id: int | None = None) -> dict:
     start = client.post("/connector/auth/device/start", json={"device_name": "macbook"})
     code = start.json()["device_code"]
     body: dict = {"device_code": code}
-    if project_id:
-        body["project_id"] = project_id
+    if team_id is not None:
+        body["team_id"] = team_id
     connect = client.post("/connector/connect", json=body, headers=_bearer(owner_token))
     assert connect.status_code == 200, connect.text
     return connect.json()
@@ -383,7 +383,7 @@ def _enroll_device(client, owner_token: str, project_id: str | None = None) -> d
 def test_my_devices_list_rename_and_unbind(client):
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     alice = _login_real(client, "alice")
-    enrolled = _enroll_device(client, alice, project_id=project["id"])
+    enrolled = _enroll_device(client, alice, team_id=project["team_id"])
     device_id = enrolled["device_id"]
 
     # List — the owner sees their compute device. It is pure compute, so the view
@@ -394,7 +394,7 @@ def test_my_devices_list_rename_and_unbind(client):
     assert any(d["device_id"] == device_id for d in devices)
     mine = next(d for d in devices if d["device_id"] == device_id)
     assert "agent_handle" not in mine
-    assert project["id"] in mine["project_ids"]
+    assert mine["team_id"] == project["team_id"]
 
     # Rename.
     renamed = client.patch(

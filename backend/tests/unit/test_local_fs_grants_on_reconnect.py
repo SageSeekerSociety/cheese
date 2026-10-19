@@ -140,7 +140,10 @@ async def _revoke(db_factory, link, owner: int, grant_id: uuid.UUID) -> PushOutc
     """What revoking does: record it, commit, push the set."""
     async with db_factory() as session:
         service = sql_local_directory_service(session)
-        assert await service.revoke(grant_id, owner_user_id=owner) is not None
+        assert (
+            await service.revoke(grant_id, actor_user_id=owner, device_id=MACHINE)
+            is not None
+        )
         await session.commit()
         return await push_grants(service, link, MACHINE)
 

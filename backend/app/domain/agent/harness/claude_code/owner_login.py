@@ -1,11 +1,12 @@
-"""Which logins a machine's owner has given the platform for their own Claude Code.
+"""Claude Code logins belonging to one device enrollment and its team.
 
 The owner logs it in on the machine with `cheesehost claude login`, with the
 build the platform pins. Each run adds a login of its own, in a directory of
 the platform's: the first one a machine had in `place.CLAUDE_LOGIN_DIR`, the
 rest under `place.CLAUDE_LOGINS_DIR`, one directory each, named by the login's
-id on the machine. Each is a model connection of its own (`DeviceClaudeLoginRow`
-keeps one record per login), so one machine can hold several subscriptions.
+id within the enrollment. Each is a model connection of its own
+(`DeviceClaudeLoginRow` keys it by device and local id). Two enrollments of
+one computer can both name a login `default` without sharing credentials.
 
 The machine is the only one that knows whether a login is still good, so the
 backend asks it — `claude auth status` for each, which answers without calling
@@ -37,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
 from app.domain.agent.place import (
+    CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
     MODEL_SERVICE_FILE,
@@ -63,6 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 root = Path.home() / ROOT
+login_root = Path.home() / os.environ.get("CHEESE_PROFILE_ROOT", ROOT)
 suffix = ".exe" if sys.platform == "win32" else ""
 binary = root / "claude" / "versions" / (VERSION + suffix)
 if not binary.is_file():
@@ -99,7 +102,9 @@ def report(login):
         return {"id": local_id, "service": {"model": service.get("model"), "host": host}}
     result = subprocess.run(
         [str(binary), "auth", "status"],
-        env={**env, "CLAUDE_CONFIG_DIR": str(directory)},
+        env={**env, "CLAUDE_CONFIG_DIR": str(directory),
+             "CLAUDE_SECURESTORAGE_CONFIG_DIR": str(directory),
+             "PATH": str(directory / KEYCHAIN) + os.pathsep + env.get("PATH", "")},
         capture_output=True, text=True, timeout=60,
     )
     try:
@@ -109,8 +114,8 @@ def report(login):
     return {"id": local_id, "status": status}
 
 
-logins = [(FIRST, root / LOGIN)]
-more = root / LOGINS
+logins = [(FIRST, login_root / LOGIN)]
+more = login_root / LOGINS
 if more.is_dir():
     logins += [
         (d.name, d) for d in sorted(more.iterdir())
@@ -130,6 +135,7 @@ def program() -> str:
         f"FIRST = {FIRST_LOGIN!r}\n"
         f"LOGIN_ID = {LOGIN_ID.pattern!r}\n"
         f"SERVICE = {MODEL_SERVICE_FILE!r}\n"
+        f"KEYCHAIN = {CLAUDE_KEYCHAIN_DIR!r}\n"
         f"VERSION = {CLAUDE_PINNED_VERSION!r}\n" + _PROGRAM
     )
 

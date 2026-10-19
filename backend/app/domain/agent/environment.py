@@ -87,7 +87,11 @@ def stored(raw: object) -> Sandbox | SelfHosted | None:
     """An environment read back from storage; None when nothing is stored."""
     if not raw:
         return None
-    return _ENVIRONMENT.validate_python(raw)
+    environment = _ENVIRONMENT.validate_python(raw)
+    # Stop propagating the previous stored spec before its cleanup migration.
+    if isinstance(environment, Sandbox) and environment.spec.startswith(DEVICES_OF):
+        return Sandbox(spec=TEAM_DEVICES)
+    return environment
 
 
 def dump(environment: Sandbox | SelfHosted | None) -> dict | None:

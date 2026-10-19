@@ -13,17 +13,20 @@ The rules, as stated before the code was written:
 import asyncio
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
+from app.core.config import settings as platform
 from app.domain.review.landing_forge import (
     Check,
     ForgeUnavailable,
     GitHubLandingReads,
+    _failed_paths,
     gate_run,
 )
-from app.core.config import settings as platform
+from app.domain.review.landing_watch import Batch, BatchCommit, _search_for_culprit
 from app.domain.review.main_gate import PLATFORM_GATE_NAMES, MainGate, gate_for
 
 #: The name the platform's own repository gives its batch gate.
@@ -279,7 +282,7 @@ def test_a_commit_the_forge_refuses_to_describe_makes_the_batch_incomplete():
     assert not batch.complete
 
 
-def test_the_failed_tests_are_read_out_of_the_red_jobs_logs():
+def _reads_failed_log(log, *, redirect=False):
     def handle(request):
         path = request.url.path.removeprefix("/repos/o/r")
         if path.endswith("/check-runs"):
@@ -298,20 +301,221 @@ def test_the_failed_tests_are_read_out_of_the_red_jobs_logs():
                 },
             )
         if path == "/actions/jobs/2/logs":
-            return httpx.Response(
-                200,
-                text=(
-                    "2026-10-18T09:00:00.1Z FAILED backend/tests/test_a.py::test_x - boom\n"
-                    "2026-10-18T09:00:00.2Z FAILED backend/tests/test_b.py::test_y - boom\n"
-                    "2026-10-18T09:00:00.3Z ##[error]Process completed with exit code 1.\n"
-                ),
-            )
+            if redirect:
+                return httpx.Response(
+                    302, headers={"location": "https://logs.test/log"}
+                )
+            return httpx.Response(200, text=log)
+        if request.url.host == "logs.test":
+            assert "authorization" not in request.headers
+            return httpx.Response(200, text=log)
         return httpx.Response(404)
 
-    assert asyncio.run(_reads_with(handle).failed_tests("d")) == [
+    return _reads_with(handle)
+
+
+def test_the_failed_tests_are_read_out_of_the_red_jobs_logs():
+    reads = _reads_failed_log(
+        "2026-10-18T09:00:00.1Z FAILED backend/tests/test_a.py::test_x - boom\n"
+        "2026-10-18T09:00:00.2Z FAILED backend/tests/test_b.py::test_y - boom\n"
+        "2026-10-18T09:00:00.3Z ##[error]Process completed with exit code 1.\n"
+    )
+    assert asyncio.run(reads.failed_paths("d")) == [
         "backend/tests/test_a.py",
         "backend/tests/test_b.py",
     ]
+    assert asyncio.run(reads.failed_paths("d", tests_only=True)) == [
+        "backend/tests/test_a.py",
+        "backend/tests/test_b.py",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("log", "expected"),
+    [
+        pytest.param(
+            "2026-10-19T02:53:15.7493805Z F401 [*] `uuid` imported but unused\n"
+            "2026-10-19T02:53:15.7494155Z   --> tests/integration/test_app_sign_in.py:15:8\n"
+            "2026-10-19T02:53:15.7497248Z F401 [*] `app.core.config.settings` imported but unused\n"
+            "2026-10-19T02:53:15.7497696Z   --> tests/integration/test_app_sign_in.py:22:29\n"
+            "2026-10-19T02:53:15.7500075Z F401 [*] `tests.conftest.seed_user` imported but unused\n"
+            "2026-10-19T02:53:15.7500352Z   --> tests/integration/test_app_sign_in.py:23:28\n",
+            ["tests/integration/test_app_sign_in.py"],
+            id="ruff-full",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z tests/integration/test_app_sign_in.py:15:24: "
+            "F401 [*] `sqlalchemy.select` imported but unused\n",
+            ["tests/integration/test_app_sign_in.py"],
+            id="ruff-concise",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z /home/runner/work/cheese/cheese/backend/app/main.py\n"
+            "2026-10-19T02:53:25.2Z   /home/runner/work/cheese/cheese/backend/app/main.py:15:24"
+            ' - \x1b[31merror\x1b[0m: "missing" is not defined (reportUndefinedVariable)\n',
+            ["/home/runner/work/cheese/cheese/backend/app/main.py"],
+            id="pyright",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z src/views/SignIn.vue(28,12): error TS2339: "
+            "Property 'missing' does not exist on type '{}'.\n",
+            ["src/views/SignIn.vue"],
+            id="vue-tsc",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z collab/server.ts(10,5): error TS2322: "
+            "Type 'string' is not assignable to type 'number'.\n",
+            ["collab/server.ts"],
+            id="tsc",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z # command-line-arguments\n"
+            "2026-10-19T02:53:25.2Z ./go-diagnostic.go:5:28: fmt.Printf format %d "
+            'has arg "not a number" of wrong type string\n',
+            ["./go-diagnostic.go"],
+            id="go-vet",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z   internal/device/device.go\n"
+            "2026-10-19T02:53:25.2Z ##[error]gofmt -w the files above\n",
+            ["internal/device/device.go"],
+            id="gofmt",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z /home/runner/work/cheese/cheese/frontend/src/SignIn.vue\n"
+            "2026-10-19T02:53:25.2Z   10:5  error  'unused' is assigned a value but never used"
+            "  @typescript-eslint/no-unused-vars\n"
+            "2026-10-19T02:53:25.3Z   11:5  error  Unexpected any  @typescript-eslint/no-explicit-any\n"
+            "2026-10-19T02:53:25.4Z \n"
+            "2026-10-19T02:53:25.5Z /home/runner/work/cheese/cheese/frontend/src/Warning.vue\n"
+            "2026-10-19T02:53:25.6Z   12:3  warning  Missing prop  vue/require-default-prop\n",
+            ["/home/runner/work/cheese/cheese/frontend/src/SignIn.vue"],
+            id="eslint-stylish",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z Component boundary violations:\n"
+            "2026-10-19T02:53:25.2Z   src/components/SignIn.vue:10:5  cheese/no-api-imports  Import forbidden\n",
+            ["src/components/SignIn.vue"],
+            id="eslint-boundary-report",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z Design-token violations:\n"
+            "2026-10-19T02:53:25.2Z   src/style.css:10:5  Unexpected hex-color (color-no-hex)\n",
+            ["src/style.css"],
+            id="stylelint-design-tokens",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z   src/style.css:10 Unclosed block\n",
+            ["src/style.css"],
+            id="stylelint-syntax-error",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z src/views/SignIn.vue\n"
+            "2026-10-19T02:53:25.2Z   2: [Chinese outside the catalog] <span>确定</span>\n"
+            "2026-10-19T02:53:25.3Z \n"
+            "2026-10-19T02:53:25.4Z Chinese a user can read goes through the catalog:\n",
+            ["src/views/SignIn.vue"],
+            id="i18n-grouped-diagnostic",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z New scenes that are not standalone-ready (this is what the ratchet blocks):\n"
+            "2026-10-19T02:53:25.2Z   src/views/SignIn.vue: C\n"
+            "2026-10-19T02:53:25.3Z     - reads API\n"
+            "2026-10-19T02:53:25.4Z Scenes that stopped being standalone-ready (also what the ratchet blocks):\n"
+            "2026-10-19T02:53:25.5Z   src/views/Settings.vue: A -> B\n"
+            "2026-10-19T02:53:25.6Z Better than that tree says, nothing to do:\n"
+            "2026-10-19T02:53:25.7Z   src/views/Improved.vue: was debt, is standalone-ready now\n",
+            ["src/views/Settings.vue", "src/views/SignIn.vue"],
+            id="graded-static-diagnostics",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z FAIL: new debt cannot be frozen.\n"
+            "2026-10-19T02:53:25.2Z     NEW: src/views/SignIn.vue\n"
+            "2026-10-19T02:53:25.3Z     BASELINE GREW: src/views/SignIn.vue -> src/views/Form.vue (baseline line 3)\n",
+            ["src/views/Form.vue", "src/views/SignIn.vue"],
+            id="tagged-static-diagnostics",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z Better than that tree says, nothing to do:\n"
+            "2026-10-19T02:53:25.2Z   src/views/Improved.vue: is a container now; its view src/views/Form.vue is what is frozen\n"
+            "2026-10-19T02:53:25.3Z NEW: src/views/Added.vue\n",
+            [],
+            id="passing-reports-are-not-failures",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z   /repo/backend/app/main.py:15:24 - warning: unused\n"
+            "2026-10-19T02:53:25.2Z Run ruff check backend/app/main.py\n"
+            "2026-10-19T02:53:25.3Z ##[error]Process completed with exit code 1.\n",
+            [],
+            id="warnings-and-commands-are-not-failures",
+        ),
+    ],
+)
+def test_static_failures_name_their_files(log, expected):
+    assert sorted(set(_failed_paths(log))) == expected
+    assert _failed_paths(log, tests_only=True) == []
+
+
+@pytest.mark.parametrize("redirect", [False, True])
+def test_static_diagnostics_before_long_test_collection_are_kept(redirect):
+    log = (
+        "2026-10-19T02:53:15.7493805Z F401 [*] `uuid` imported but unused\n"
+        "2026-10-19T02:53:15.7494155Z   --> tests/integration/test_app_sign_in.py:15:8\n"
+        + "2026-10-19T02:54:00.0Z tests/unit/test_a.py::test_ok\n"
+        * 12000
+    )
+    reads = _reads_failed_log(log, redirect=redirect)
+    assert asyncio.run(reads.failed_paths("d")) == [
+        "tests/integration/test_app_sign_in.py"
+    ]
+
+
+def test_only_test_failure_lines_are_used_for_test_probes():
+    log = (
+        "2026-10-19T02:53:15.7Z   --> tests/integration/test_app_sign_in.py:15:8\n"
+        "2026-10-19T02:53:16.0Z FAILED tests/unit/test_a.py::test_x - boom\n"
+        "2026-10-19T02:53:17.0Z FAIL src/b.spec.ts > b > fails\n"
+    )
+    assert _failed_paths(log, tests_only=True) == [
+        "tests/unit/test_a.py",
+        "src/b.spec.ts",
+    ]
+
+
+@pytest.mark.parametrize(
+    "test_failure",
+    ["", "tests/integration/test_app_sign_in.py", "tests/unit/test_a.py"],
+)
+async def test_a_static_failure_in_a_test_file_is_not_bisected_by_running_tests(
+    test_failure,
+):
+    reads = _reads_failed_log(
+        "2026-10-19T02:53:15.7Z   --> tests/integration/test_app_sign_in.py:15:8\n"
+        + (
+            f"2026-10-19T02:53:16.0Z FAILED {test_failure}::test_x - boom\n"
+            if test_failure
+            else ""
+        )
+    )
+    batch = Batch(
+        head="d",
+        total=6,
+        complete=True,
+        commits=tuple(BatchCommit(str(i), "feat: x") for i in range(6)),
+        failed_paths=tuple(await reads.failed_paths("d")),
+        blamed="0",
+    )
+    searches = []
+
+    def sessions():
+        searches.append("started")
+        raise AssertionError("a test rerun cannot judge Ruff")
+
+    result = await _search_for_culprit(
+        SimpleNamespace(session_factory=sessions), reads, "project", batch, memo={}
+    )
+    assert result.blamed == "0"
+    assert searches == []
 
 
 def test_ancestry_is_what_the_compare_says():

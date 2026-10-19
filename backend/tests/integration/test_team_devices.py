@@ -126,6 +126,37 @@ def test_enroller_loses_management_when_leaving_and_leaves_resource_with_team(cl
     assert poll.json() == {"status": "pending"}
 
 
+def test_remaining_admin_can_revoke_the_departed_enrollers_directory_grant(client):
+    headers, (team, _, _, _) = setup_team(client)
+    device, _ = enroll(client, headers["enroller"], team)
+    path = f"/connector/my/devices/{device['device_id']}/directories"
+    granted = client.post(
+        path,
+        headers=headers["enroller"],
+        json={"path": "/home/team/work", "platform": "linux", "scope": "user"},
+    )
+    assert granted.status_code == 200, granted.text
+    grant_id = granted.json()["id"]
+
+    async def leave():
+        async with client.test_factory() as db:
+            user = await db.scalar(select(User.id).where(User.username == "enroller"))
+            relation = await TeamRepository(db).get_member_relation(team, user)
+            relation.deleted_at = datetime.now(UTC)
+            await db.commit()
+
+    asyncio.run(leave())
+    listed = client.get(path, headers=headers["admin"])
+    assert [g["id"] for g in listed.json()["directories"]] == [grant_id]
+    assert (
+        client.delete(f"{path}/{grant_id}", headers=headers["enroller"]).status_code
+        == 404
+    )
+    removed = client.delete(f"{path}/{grant_id}", headers=headers["admin"])
+    assert removed.status_code == 200, removed.text
+    assert client.get(path, headers=headers["admin"]).json()["directories"] == []
+
+
 def test_personal_default_and_independent_second_team_enrollment(client):
     headers, (team, other, _, _) = setup_team(client)
     personal, _ = enroll(client, headers["enroller"])

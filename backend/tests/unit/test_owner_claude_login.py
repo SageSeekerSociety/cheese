@@ -47,7 +47,7 @@ pytestmark = pytest.mark.skipif(
 FAKE_BUILD = """#!/bin/sh
 if [ "$1 $2" != "auth status" ]; then exit 2; fi
 case "$CLAUDE_CONFIG_DIR" in
-  "$PLATFORM_ROOT"/claude-login|"$PLATFORM_ROOT"/claude-logins/*) ;;
+  "$PLATFORM_ROOT"/logins/claude-login|"$PLATFORM_ROOT"/logins/claude-logins/*) ;;
   *) echo '{"loggedIn": false, "authMethod": "none"}'; exit 0 ;;
 esac
 if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || [ ! -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
@@ -203,6 +203,41 @@ def test_a_directory_whose_name_cannot_be_a_login_is_not_reported(tmp_path):
     _another_login(env, "has space", "pro")
 
     assert set(_answer(env)) == {FIRST_LOGIN}
+
+
+def test_probe_reads_only_the_connected_enrollment(tmp_path):
+    env = _machine(tmp_path, installed=True, logged_in=True)
+    _another_login(env, "private", "max")
+    root = Path(env["HOME"]) / ".cheese/profiles/research"
+    login = root / "logins/claude-login"
+    login.mkdir(parents=True)
+    (login / ".credentials.json").write_text("pro")
+    env.update(CHEESE_PROFILE_ROOT=".cheese/profiles/research", PLATFORM_ROOT=str(root))
+
+    logins = _answer(env)
+
+    assert set(logins) == {FIRST_LOGIN}
+    assert logins[FIRST_LOGIN].logged_in
+    assert logins[FIRST_LOGIN].subscription_type == "pro"
+
+
+def test_probe_uses_the_moved_logins_keychain_command(tmp_path):
+    env = _machine(tmp_path, installed=True, logged_in=True)
+    login = Path(env["FIRST_LOGIN_DIR"])
+    command = login / "keychain/security"
+    command.parent.mkdir()
+    command.write_text("#!/bin/sh\necho '{\"loggedIn\":true}'\n")
+    command.chmod(0o700)
+    other = tmp_path / "other-bin"
+    other.mkdir()
+    (other / "security").write_text("#!/bin/sh\necho '{\"loggedIn\":false}'\n")
+    (other / "security").chmod(0o700)
+    env["PATH"] = f"{other}:{env['PATH']}"
+    binary = Path(env["PLATFORM_ROOT"]) / "claude/versions" / CLAUDE_PINNED_VERSION
+    binary.write_text(
+        "#!/bin/sh\nexec security find-generic-password -w -s synthetic-service\n"
+    )
+    assert _ask(env).logged_in
 
 
 @pytest.mark.parametrize(

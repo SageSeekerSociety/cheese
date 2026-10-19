@@ -140,7 +140,7 @@ def test_failures_that_name_one_lines_files_wake_only_that_line(
     watch(client)
 
     told_first = _told(client, first)
-    assert "失败用例所在的文件只有这条线的提交改过" in told_first
+    assert "失败文件只有这条线的提交改过" in told_first
     assert "本批共 3 个提交" in told_first
     assert "backend/tests/test_a.py" in told_first
     assert _told(client, second) == told_second, (

@@ -34,6 +34,7 @@ from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.launch import ExecutorLaunch, MachineLaunch, MachinePlace
 from app.domain.agent.place import (
+    CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
     MODEL_SERVICE_FILE,
@@ -42,8 +43,8 @@ from app.domain.agent.place import (
     OWN_MODEL_AUTH,
     OWN_MODEL_BASE_URL,
     OWN_MODEL_KEY,
+    ROOT_PLACEHOLDER,
     SEATS_DIR,
-    footprint_root,
     seat_name,
 )
 from app.domain.device.login_kind import FIRST_LOGIN
@@ -709,12 +710,15 @@ for name, value in env.items():
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
 case "${{{OWN_LOGIN_ID}:?which login this session signs in with}}" in
-  {FIRST_LOGIN}) OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}" ;;
-  *) OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGINS_DIR}/${OWN_LOGIN_ID}" ;;
+  {FIRST_LOGIN}) OWN_LOGIN="$REAL_HOME/{ROOT_PLACEHOLDER}/{CLAUDE_LOGIN_DIR}" ;;
+  *) OWN_LOGIN="$REAL_HOME/{ROOT_PLACEHOLDER}/{CLAUDE_LOGINS_DIR}/${OWN_LOGIN_ID}" ;;
 esac
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
 if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
+  if [ -x "$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security" ]; then
+    _security="$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security"
+  fi
   mkdir -p "$HOME/.cheese/keychain"
   cat > "$HOME/.cheese/keychain/security" <<KEYCHAIN
 #!/bin/sh

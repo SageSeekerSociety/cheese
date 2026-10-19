@@ -304,12 +304,13 @@ pub async fn claude_login(
     running: &Running,
     console: bool,
     login_id: Option<&str>,
+    profile: Option<&str>,
     on_step: &(dyn Fn(&'static str) + Send + Sync),
 ) -> Result<(), Failure> {
     if !running.begin() {
         return Err(Failure::at("busy", ""));
     }
-    let mut cmd = platform::cheesehost();
+    let mut cmd = claude_command(profile);
     cmd.args(["claude", "login"]);
     if console {
         cmd.arg("--console");
@@ -340,12 +341,13 @@ pub async fn claude_model_service(
     token: &str,
     model: &str,
     login_id: Option<&str>,
+    profile: Option<&str>,
     on_step: &(dyn Fn(&'static str) + Send + Sync),
 ) -> Result<(), Failure> {
     if !running.begin() {
         return Err(Failure::at("busy", ""));
     }
-    let mut cmd = platform::cheesehost();
+    let mut cmd = claude_command(profile);
     cmd.args(["claude", "login", "--base-url", base_url, "--model", model]);
     if let Some(id) = login_id {
         cmd.args(["--login", id]);
@@ -363,8 +365,8 @@ pub async fn claude_model_service(
 }
 
 /// Logs one of the platform's Claude Code logins out on this computer.
-pub async fn claude_logout(login_id: String) -> Result<(), String> {
-    let out = platform::cheesehost()
+pub async fn claude_logout(login_id: String, profile: Option<&str>) -> Result<(), String> {
+    let out = claude_command(profile)
         .args(["claude", "logout", &login_id])
         .stdin(Stdio::null())
         .output()
@@ -375,6 +377,13 @@ pub async fn claude_logout(login_id: String) -> Result<(), String> {
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
+}
+
+/// All Claude operations select the same enrollment as the device being managed.
+fn claude_command(profile: Option<&str>) -> Command {
+    let mut cmd = platform::cheesehost();
+    cmd.args(["--profile", profile.unwrap_or("default")]);
+    cmd
 }
 
 /// Stops this computer's connector, keeps it from coming back at the next
@@ -401,7 +410,7 @@ pub async fn disconnect() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{approval_code, percent, profile_for_team};
+    use super::{approval_code, claude_command, percent, profile_for_team};
 
     #[tokio::test]
     async fn reconnecting_after_removal_keeps_other_enrollments() {
@@ -417,6 +426,15 @@ mod tests {
         let fresh = profile_for_team(&configs, &[], 7).await;
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(fresh.as_deref(), Some("team-7-2"));
+    }
+
+    #[test]
+    fn claude_operations_select_the_enrollment_profile() {
+        for profile in [None, Some("research")] {
+            let command = claude_command(profile);
+            let args: Vec<_> = command.as_std().get_args().collect();
+            assert_eq!(args, vec!["--profile", profile.unwrap_or("default")]);
+        }
     }
 
     #[test]

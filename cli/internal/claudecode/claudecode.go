@@ -1,8 +1,6 @@
-// Package claudecode is the machine owner's own Claude Code, as the platform
-// runs it: the build the platform pins, logged in under directories of the
-// platform's own, apart from the owner's `~/.claude`. A machine holds any
-// number of logins: the first in `~/.cheese/claude-login`, every other in
-// `~/.cheese/claude-logins/<id>`, each a model connection of its own.
+// Package claudecode runs the platform's pinned Claude Code. Each enrollment
+// keeps its own logins under its root's logins/ directory, apart from the
+// machine owner's ~/.claude and every other enrollment.
 //
 // The owner adds one with `cheesehost claude login`. Every session of the
 // owner's Claude Code on this machine keeps its own config directory and reads
@@ -44,14 +42,12 @@ func LoginDir(id string) (string, error) {
 		return "", fmt.Errorf("claude: locate home: %w", err)
 	}
 	if id == place.FirstClaudeLogin {
-		// It stays where a machine with one login kept it: on macOS the login
-		// is a Keychain item named after this path.
-		return filepath.Join(home, place.Root, place.ClaudeLogin), nil
+		return filepath.Join(home, place.CurrentRoot(), place.ClaudeLogin), nil
 	}
 	if !loginID.MatchString(id) {
 		return "", fmt.Errorf("claude: %q is not a login on this machine", id)
 	}
-	return filepath.Join(home, place.Root, place.ClaudeLogins, id), nil
+	return filepath.Join(home, place.CurrentRoot(), place.ClaudeLogins, id), nil
 }
 
 // NewLogin makes the directory of a login this machine does not have yet: the
@@ -83,7 +79,11 @@ func Logins() ([]string, error) {
 	if info, err := os.Stat(first); err == nil && info.IsDir() {
 		ids = append(ids, place.FirstClaudeLogin)
 	}
-	entries, err := os.ReadDir(filepath.Join(filepath.Dir(first), place.ClaudeLogins))
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(home, place.CurrentRoot(), place.ClaudeLogins))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("claude: %w", err)
 	}
@@ -391,6 +391,8 @@ func Environment(base []string, loginDir string) []string {
 func Command(ctx context.Context, binary, loginDir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Env = Environment(os.Environ(), loginDir)
+	cmd.Env = append(cmd.Env, "CLAUDE_SECURESTORAGE_CONFIG_DIR="+loginDir,
+		"PATH="+filepath.Join(loginDir, place.ClaudeKeychain)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return cmd
 }
 
