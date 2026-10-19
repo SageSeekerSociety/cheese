@@ -2404,6 +2404,38 @@ class PlanConcurrencyTest(unittest.TestCase):
         self.assertEqual(module.jobs_for(6144), 2)
         self.assertEqual(module.jobs_for(9216, 1), 1)
 
+    def test_a_check_that_starts_after_the_interrupt_does_not_run(self):
+        """The window between spawn and registration has to close too.
+
+        `stop_all` kills the groups it can see; a check submitted but not yet
+        registered would otherwise run to its own timeout while the scheduler
+        waited for it.
+        """
+        from ci_fast_process import clear_stop, execute, stop_all
+        stop_all()
+        try:
+            started = time.monotonic()
+            result = execute(["sleep", "20"], tempfile.gettempdir(), 60)
+        finally:
+            clear_stop()
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(result["result"], "unknown")
+
+    def test_a_previous_interrupt_does_not_poison_the_next_run(self):
+        from ci_fast_process import stop_all
+        module = self._module()
+        stop_all()  # a stop raised before this tier started
+        report = {"ran": [], "not_run": [], "reasons": []}
+        ran = []
+
+        def invoke(identifier, command, cwd, evidence=None, env=None):
+            ran.append(identifier)
+            report["ran"].append({"id": identifier})
+            return {}
+
+        module.run_plan_checks(self._plan(("backend-pure", "backend")), invoke, 1, report)
+        self.assertEqual(ran, ["backend-pure"])
+
     def test_an_interrupt_stops_the_checks_the_scheduler_started(self):
         """Ctrl-C has to stop a concurrent check, not wait it out.
 

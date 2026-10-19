@@ -58,7 +58,7 @@ import threading
 import time
 
 from ci_fast_checks import _cores, resolve, test_plan, tree_guard_check
-from ci_fast_process import dependencies, execute, stop_all
+from ci_fast_process import clear_stop, dependencies, execute, stop_all
 
 REPO_ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
 GIT_DIR = subprocess.check_output(["git", "rev-parse", "--git-dir"], text=True, cwd=REPO_ROOT).strip()
@@ -239,6 +239,7 @@ def run_plan_checks(plan, invoke, jobs, report):
     report in plan order, so the file does not depend on which check finished
     first.
     """
+    clear_stop()  # a stop from an earlier run in this process is not this run's
     if jobs <= 1 or len(plan) <= 1:
         for check in plan:
             invoke(check["id"], check["command"], check["cwd"],

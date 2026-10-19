@@ -33,6 +33,11 @@ SCRUB = (
 # for a check that is still running (up to its own timeout).
 _RUNNING: set[int] = set()
 _RUNNING_LOCK = threading.Lock()
+# Set by `stop_all`. A check that has been submitted but has not reached the
+# registration above yet (thread start, TemporaryFile, fork/exec) is not in the
+# set the kill snapshot was taken from; it reads this flag at registration and
+# stops itself instead of running for its whole timeout.
+_STOPPED = False
 
 
 def stop_all():
@@ -41,13 +46,22 @@ def stop_all():
     Safe to call from any thread and when nothing is running. Only groups
     created by `execute` are listed, so nothing outside this tool is touched.
     """
+    global _STOPPED
     with _RUNNING_LOCK:
+        _STOPPED = True
         pgids = list(_RUNNING)
     for pgid in pgids:
         try:
             os.killpg(pgid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+def clear_stop():
+    """Forget a past stop, for the next run in this process."""
+    global _STOPPED
+    with _RUNNING_LOCK:
+        _STOPPED = False
 
 
 def environment(extra=None):
@@ -118,9 +132,15 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
             )
         except OSError as exc:
             return {**result, "result": "blocked", "output": str(exc)}
-        with _RUNNING_LOCK:
-            _RUNNING.add(proc.pid)
         try:
+            with _RUNNING_LOCK:
+                stopped = _STOPPED
+                if not stopped:
+                    _RUNNING.add(proc.pid)
+            if stopped:
+                # The interrupt landed between the spawn and this point; the
+                # snapshot `stop_all` took could not see this group yet.
+                return {**result, "result": "unknown", "reason": "interrupted"}
             misses = 0
             while True:
                 remaining = timeout - (time.monotonic() - start)
