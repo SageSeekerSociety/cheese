@@ -156,9 +156,9 @@ async def _awaiting_an_answer(
     room_ids: list[uuid.UUID],
     *,
     threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
+    tasks_by_room: Mapping[uuid.UUID, uuid.UUID] | None = None,
 ) -> dict[uuid.UUID, Awaited]:
-    """Which channels wait on an answer, and from whom: their own line's
-    question, or one 芝士 asked in one of their tasks or 支线.
+    """Which channels wait on an answer, and from whom: their own line's question, or one 芝士 asked in one of their tasks or 支线.
 
     一个频道那一格认的是它全部的对话 —— 它自己那条线、它的任务、它的支线（决策请求
     走的是同一条规矩，`notification/repositories.decision_topic_ids`）：芝士在一条活
@@ -166,12 +166,13 @@ async def _awaiting_an_answer(
     头，人就看得见「有一条待办」而侧栏一处都不亮。
 
     ``threads``：调用方已经问过的那一份（`topics_signals.working_in_threads` 要的是
-    同一个答案）。这里会往上面叠任务，所以先拷一份，不动调用方那份。
+    同一个答案）。这里会往上面叠任务，所以先拷一份，不动调用方那份。``tasks_by_room`` 是调用方已经查过的同一批房间的 `tasks_of_rooms`；不传就自己问。
     """
-    inner_rooms = dict(
-        await threads_of_rooms(db, room_ids) if threads is None else threads
-    )
-    inner_rooms.update(await TaskService(db).tasks_of_rooms(room_ids))
+    thread_rooms = await threads_of_rooms(db, room_ids) if threads is None else threads
+    inner_rooms = dict(thread_rooms)
+    if tasks_by_room is None:
+        tasks_by_room = await TaskService(db).tasks_of_rooms(room_ids)
+    inner_rooms.update(tasks_by_room)
     found = await BlockRepository(db).awaiting_an_answer([*room_ids, *inner_rooms])
     return {
         place: who
@@ -379,10 +380,13 @@ async def list_topics(
         order=order,
         active_since=active_since,
     )
-    # 这一页的房间支线，下面四处都要（见 `get_topic` 同一行），问一次。
-    room_threads = await threads_of_rooms(db, [t.id for t in topics])
-    # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
-    asked = await _awaiting_an_answer(db, [t.id for t in topics], threads=room_threads)
+    # 这一页的房间支线、名下的活，下面几处都要（见 `get_topic` 同一行）：各问一次。
+    room_ids = [t.id for t in topics]
+    room_threads = await threads_of_rooms(db, room_ids)
+    tasks_by_room = await TaskService(db).tasks_of_rooms(room_ids)
+    asked = await _awaiting_an_answer(
+        db, room_ids, threads=room_threads, tasks_by_room=tasks_by_room
+    )
     asks_me = _asks_me(asked, _viewer(actor))
     # 这一页里哪几个话题**自己那条线**上有一轮在跑 —— `presentation` 那一格读的
     # 是它：看板一格是房间自己的格子，它名下的活有它们自己的格子
@@ -442,12 +446,9 @@ async def list_topics(
     # 侧栏呼吸绿要看的那一份：这一行自己、它名下的活、它名下的支线，哪一处有活在
     # 往前走。
     moving = moving_ids | delivering
-    # 这间房名下的活（开着、还没进收尾窗口）—— 侧栏红灯要汇总它们各自的未恢复失败
-    # （`_unresolved_failures`）。判据和「我的活」那一栏同一份（`tasks_of_rooms`），
-    # 但不是同一次查询：那边要的是这个人的活（带整行），这边要的是每一件活的 id。
-    underway = await TaskService(db).tasks_of_rooms([t.id for t in topics])
+    # 这间房名下的活（开着、还没进收尾窗口）—— 侧栏红灯要汇总它们各自的未恢复失败（`_unresolved_failures`）；用的是上面已经取到的那一份。
     tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
-    for task_id, room_id in underway.items():
+    for task_id, room_id in tasks_by_room.items():
         tasks_of_room.setdefault(room_id, []).append(task_id)
     incomplete, incomplete_tasks = await _unresolved_failures(
         db, [t.id for t in topics], tasks_of_room

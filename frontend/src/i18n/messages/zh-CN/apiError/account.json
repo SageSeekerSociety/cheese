@@ -27,5 +27,10 @@
   "tokenOtherTopic": "这个 token 属于别的频道，不能在这里操作",
   "topicMemberOnly": "你不是这个频道的成员，无权在此操作",
   "twoFactorUnavailable": "暂时无法完成两步验证，请稍后重试",
-  "usernameReserved": "该用户名是平台保留字，请换一个"
+  "usernameReserved": "该用户名是平台保留字，请换一个",
+  "accountCloseUsernameMismatch": "输入的用户名和你的账号不一致",
+  "accountCloseNotOwnViaAdmin": "不能在管理后台注销你自己的账号，请在个人设置中注销",
+  "accountCloseAgent": "{handle} 是 agent 的账号，只有人的账号可以注销",
+  "accountCloseOwnsTeams": "这个账号是团队 {teams} 唯一的所有者，这些团队里还有其他成员，或者别人还能进来（有待接受的邀请，或加入不需要审批）。先把所有权转让给其他成员，或取消邀请并开启「加入需要审批」，才能注销",
+  "accountAlreadyClosed": "这个账号已经注销"
 }

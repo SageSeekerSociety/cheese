@@ -10,6 +10,10 @@
     v-model:show-totp="showTotp"
     v-model:setup-step="setupStep"
     v-model:verification-code="verificationCode"
+    v-model:show-close-account="showCloseAccount"
+    :username="currentUserName ?? ''"
+    :closing-account="closingAccount"
+    :close-error="closeError"
     :web-authn-supported="webAuthnSupported"
     :passkeys="passkeys"
     :adding-passkey="addingPasskey"
@@ -39,10 +43,11 @@
     @close-totp="closeTotp"
     @change-password="handleChangePassword"
     @unbind="handleUnbind"
-    @relink-github="linkGithubAccount(SECURITY_PATH)"
+    @sign-in-github="signInWithGithub"
     @sign-out-device="signOutDevice"
     @sign-out-others="handleSignOutOthers"
     @copy="copy"
+    @close-account="handleCloseAccount"
   />
 </template>
 
@@ -51,13 +56,14 @@ import type { OAuthConnectionInfo } from '@/cx_types'
 import type { PasskeyInfo, SessionInfo } from '@/types/apiUsers'
 import type { SetupStep } from './SecurityView.vue'
 
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser'
 
 import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
-import { linkGithubAccount } from '@/composables/useGithubAccountLink'
+import { signInWithGithub } from '@/composables/useGithubSignIn'
 
 import SecurityView from './SecurityView.vue'
 
@@ -67,14 +73,13 @@ import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
 import { GITHUB_APP_PROVIDER_ID } from '@/lib/githubAccount'
 import { useDialog } from '@/plugins/dialog'
-import { currentUserId } from '@/services/account'
+import AccountService, { currentUserId, currentUserName } from '@/services/account'
 import { oauthProviderName } from '@/views/account/oauthProvider'
 
-/** Where 关联 GitHub comes back to when it starts here. */
-const SECURITY_PATH = '/users/settings/security'
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 
 const dialogs = useDialog()
+const router = useRouter()
 const webAuthnSupported = browserSupportsWebAuthn()
 
 const fail = (error: unknown, fallback: string) => toast.error(axiosErrorMessage(error, fallback))
@@ -408,6 +413,33 @@ const handleSignOutOthers = async () => {
   } finally {
     signingOutOthers.value = false
   }
+}
+
+// ---- Closing the account ----
+
+const showCloseAccount = ref(false)
+const closingAccount = ref(false)
+const closeError = ref('')
+watch(showCloseAccount, () => (closeError.value = ''))
+
+const handleCloseAccount = async (username: string) => {
+  closingAccount.value = true
+  closeError.value = ''
+  try {
+    await withSudo('account:delete', (sudoTicket) => UserApi.closeAccount(username, sudoTicket))
+  } catch (error) {
+    closingAccount.value = false
+    if (error instanceof SudoCancelledError) return
+    // In the dialog, not a toast: a refusal such as a team still to hand on
+    // says what to do first, and has to stay readable while they go do it.
+    closeError.value = axiosErrorMessage(error, t('account.security.closeFailed'))
+    return
+  }
+  // The account is gone: nothing this tab holds signs in as it any more.
+  showCloseAccount.value = false
+  toast.success(t('account.security.closed'))
+  await AccountService.logout()
+  await router.push('/')
 }
 
 onMounted(async () => {

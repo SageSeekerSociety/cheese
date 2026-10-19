@@ -6,7 +6,7 @@ import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
 
 import { useBranchProtection } from '@/composables/useBranchProtection'
-import { linkGithubAccount } from '@/composables/useGithubAccountLink'
+import { signInWithGithub } from '@/composables/useGithubSignIn'
 import { useProjectAddress } from '@/composables/useProjectAddress'
 import { useProjectArchive } from '@/composables/useProjectArchive'
 import { useProjectComputeSettings } from '@/composables/useProjectComputeSettings'
@@ -470,7 +470,7 @@ function close() {
             :github="ownGithub(githubAccountConn, githubAccountLoadState === 'loaded')"
             manage-to="/users/settings/security"
             @save="saveAttribution"
-            @link="linkGithubAccount(router.currentRoute.value.path)"
+            @sign-in-github="signInWithGithub"
           />
         </template>
 

@@ -31,6 +31,7 @@ from app.domain.review.landing_forge import (
     ForgeUnavailable,
 )
 from app.domain.review.landing_models import TaskLanding
+from app.domain.review.main_gate import PLATFORM_GATE_NAMES, MainGate
 from tests.integration.test_a_task_delivers_in_steps import (
     _accepted_step,
     _told,
@@ -72,8 +73,21 @@ class _Forge:
         #: sha -> its first parent, for tests that walk a batch back.
         self.parents: dict[str, str | None] = {}
 
+    @property
+    def main_gate(self) -> MainGate:
+        """This repository batches its main checks, as the platform's own does."""
+        return PLATFORM_GATE_NAMES
+
     async def merge_sha(self, pr_number):
         return self.merges.get(pr_number, MERGED)
+
+    async def dispatch_bisect(self, sha, tests, nonce):
+        """This double's repository runs no probe: the batch stays attributed
+        by the files its failed tests name."""
+        return None
+
+    async def bisect_verdict(self, run_id):
+        return "unknown"
 
     async def checks(self, sha):
         return self.ran.get(sha, [])

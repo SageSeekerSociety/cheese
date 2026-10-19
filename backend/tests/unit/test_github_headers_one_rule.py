@@ -1,11 +1,7 @@
-"""GitHub REST 请求头在全仓只有一处拼装规则。
+"""GitHub REST callers share one header construction rule.
 
-``github_app``、``oauth/services/providers`` 和 ``ratchet/artifacts`` 三个模块都向
-``api.github.com`` 发请求：前两者只带 ``Authorization`` 与
-``Accept: application/vnd.github+json``，``ratchet/artifacts`` 额外带
-``X-GitHub-Api-Version: 2022-11-28``。三处統一从 ``app.core.github_headers``
-取 ``github_headers``，由 ``api_version`` 显式控制版本头，既防止日後改请求头漏改一处，
-也保证各调用点实际发出的请求头与改前逐字节一致。
+``github_app`` and ``oauth/services/providers`` use
+``app.core.github_headers`` so their requests carry consistent headers.
 """
 
 import ast
@@ -26,8 +22,6 @@ from app.domain.oauth.services import providers
 from app.domain.oauth.services.providers import GitHubProvider, OAuthProviderConfig
 from app.domain.project import github_app
 from app.domain.project.github_app import GitHubAppTokens
-from app.domain.ratchet import artifacts
-from app.domain.ratchet.artifacts import GitHubArtifacts
 
 
 def _call_count_to_github_headers(module: object) -> int:
@@ -50,17 +44,15 @@ def _string_literals(module: object) -> set[str]:
     }
 
 
-def test_all_three_modules_point_to_the_one_github_headers_function():
+def test_github_callers_share_the_header_function():
     assert github_app.github_headers is github_headers
     assert providers.github_headers is github_headers
-    assert artifacts.github_headers is github_headers
     assert github_headers_module.github_headers is github_headers
 
     assert _call_count_to_github_headers(github_app) == 5
     assert _call_count_to_github_headers(providers) == 2
-    assert _call_count_to_github_headers(artifacts) == 1
 
-    for module in (github_app, providers, artifacts):
+    for module in (github_app, providers):
         literals = _string_literals(module)
         assert GITHUB_ACCEPT not in literals
         assert GITHUB_API_VERSION not in literals
@@ -91,7 +83,7 @@ def _github_header_wire_bytes(request: httpx.Request) -> list[tuple[bytes, bytes
 
 
 @pytest.mark.anyio
-async def test_emitted_headers_match_pre_change_bytes_across_all_three_modules(
+async def test_emitted_headers_match_expected_bytes_across_github_callers(
     tmp_path, monkeypatch
 ):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -136,10 +128,6 @@ async def test_emitted_headers_match_pre_change_bytes_across_all_three_modules(
                 200,
                 json=[{"email": "octo@example.com", "primary": True, "verified": True}],
             )
-        if path == "/repos/acme/demo/actions/artifacts":
-            return httpx.Response(200, json={"artifacts": []})
-        if path == "/repos/acme/demo/actions/artifacts/11/zip":
-            return httpx.Response(200, content=b"zip-bytes")
         raise AssertionError(f"Unexpected path: {path}")
 
     transport = httpx.MockTransport(handler)
@@ -174,12 +162,6 @@ async def test_emitted_headers_match_pre_change_bytes_across_all_three_modules(
     )
     await oauth_provider.get_user_info("oauth-tok")
 
-    reader = GitHubArtifacts(transport=transport)
-    await reader.list(owner="acme", repo="demo", token="ratchet-tok", limit=1)
-    await reader.download(
-        owner="acme", repo="demo", artifact_id=11, token="ratchet-tok"
-    )
-
     expected_jwt = [
         (b"Authorization", b"Bearer jwt-fixed"),
         (b"Accept", b"application/vnd.github+json"),
@@ -196,11 +178,6 @@ async def test_emitted_headers_match_pre_change_bytes_across_all_three_modules(
         (b"Authorization", b"Bearer oauth-tok"),
         (b"Accept", b"application/vnd.github+json"),
     ]
-    expected_ratchet = [
-        (b"Authorization", b"Bearer ratchet-tok"),
-        (b"Accept", b"application/vnd.github+json"),
-        (b"X-GitHub-Api-Version", b"2022-11-28"),
-    ]
 
     assert seen == [
         ("GET /app/installations/7", expected_jwt),
@@ -210,6 +187,4 @@ async def test_emitted_headers_match_pre_change_bytes_across_all_three_modules(
         ("GET /user/installations", expected_user),
         ("GET /user", expected_oauth),
         ("GET /user/emails", expected_oauth),
-        ("GET /repos/acme/demo/actions/artifacts", expected_ratchet),
-        ("GET /repos/acme/demo/actions/artifacts/11/zip", expected_ratchet),
     ]

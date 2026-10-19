@@ -84,7 +84,6 @@
   "moveOnlyPersonal": "只有个人名下的项目能移到团队",
   "notARoomFile": "这不是频道里的一份文件",
   "overTierInvalid": "over_tier 只能是 {values} 之一",
-  "ownAgentOwnerOnlyChat": "只有主人能和自己的 Claude Code 私聊",
   "ownerCannotLeave": "项目所有者无法退出项目，先转让项目",
   "pathEmpty": "path 不能为空",
   "pathMustBeRelative": "path 必须是工作区相对路径",

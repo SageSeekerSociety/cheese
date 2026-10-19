@@ -147,7 +147,8 @@ class UsageReport:
                 "project_id": str(p.project_id) if p.project_id else None,
                 "task_id": p.source_task_id,
                 "credits_total": p.credits_total,
-                "credits_remaining": max(0.0, p.credits_total - p.credits_used),
+                # An admitted call may overdraw; keep its debt against later grants.
+                "credits_remaining": p.credits_total - p.credits_used,
                 "remaining_ratio": 1.0 - _ratio(p.credits_used, p.credits_total),
                 "expires_at": p.expires_at.isoformat() if p.expires_at else None,
             }

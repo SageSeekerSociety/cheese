@@ -112,9 +112,9 @@
           v-if="conn.providerId === GITHUB_APP_PROVIDER_ID && githubExpired(conn)"
           kind="primary"
           size="sm"
-          @click="emit('relink-github')"
+          @click="emit('sign-in-github')"
         >
-          {{ t('account.security.githubRelink') }}
+          {{ t('account.security.githubSignInAgain') }}
         </BaseButton>
         <BaseButton kind="ghost" size="sm" :loading="unbinding === conn.id" @click="emit('unbind', conn)">
           {{ t('account.security.unlink') }}
@@ -171,6 +171,17 @@
       </div>
     </section>
 
+    <!-- Closing the account: last, and apart, because nothing below it comes back. -->
+    <section class="settings-card">
+      <h2 class="settings-card__title">{{ t('account.security.closeTitle') }}</h2>
+      <div class="srow">
+        <span class="srow__v">{{ t('account.security.closeNote') }}</span>
+        <BaseButton kind="danger" size="sm" @click="showCloseAccount = true">
+          {{ t('account.security.closeButton') }}
+        </BaseButton>
+      </div>
+    </section>
+
     <!-- Changing the password -->
     <v-dialog v-model="showChangePassword" :max-width="DIALOG_WIDTH.sm" @after-leave="resetPasswordForm">
       <v-card :title="t('account.security.changePasswordTitle')">
@@ -199,6 +210,31 @@
             <BaseButton kind="ghost" @click="showChangePassword = false">{{ t('account.cancel') }}</BaseButton>
             <BaseButton kind="primary" type="submit" :loading="changingPassword">
               {{ t('account.security.changePasswordSubmit') }}
+            </BaseButton>
+          </v-card-actions>
+        </v-form>
+      </v-card>
+    </v-dialog>
+
+    <!-- Closing the account: the username typed out, so a stray click does nothing -->
+    <v-dialog v-model="showCloseAccount" :max-width="DIALOG_WIDTH.sm" @after-leave="typedUsername = ''">
+      <v-card :title="t('account.security.closeDialogTitle')">
+        <v-form @submit.prevent="submitClose">
+          <v-card-text class="pt-2">
+            <p class="t-body mb-4">{{ t('account.security.closeDialogBody', { username }) }}</p>
+            <v-text-field
+              id="security-close-username"
+              v-model="typedUsername"
+              autocomplete="off"
+              :label="t('account.security.closeUsernameLabel')"
+            />
+            <p v-if="closeError" class="setup__error" role="alert">{{ closeError }}</p>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <BaseButton kind="ghost" @click="showCloseAccount = false">{{ t('account.cancel') }}</BaseButton>
+            <BaseButton kind="danger" type="submit" :disabled="!usernameMatches" :loading="closingAccount">
+              {{ t('account.security.closeConfirm') }}
             </BaseButton>
           </v-card-actions>
         </v-form>
@@ -316,7 +352,10 @@ const githubExpired = (conn: OAuthConnectionInfo) => ownGithub(conn, true).state
 /** Which half of turning two-step verification on is shown. */
 export type SetupStep = 'qr' | 'verify' | 'backup'
 
-defineProps<{
+const props = defineProps<{
+  /** The signed-in account's username: what closing it asks to be typed. */
+  username: string
+  closingAccount: boolean
   /** The browser can make passkeys at all; without it the row is inert. */
   webAuthnSupported: boolean
   passkeys: PasskeyInfo[]
@@ -344,6 +383,8 @@ defineProps<{
   qrCodeData: string
   verifyError: string
   backupCodes: string[]
+  /** Why the server refused to close the account, kept in the dialog until it closes. */
+  closeError: string
 }>()
 
 const emit = defineEmits<{
@@ -357,10 +398,11 @@ const emit = defineEmits<{
   'change-password': [password: string]
   unbind: [conn: OAuthConnectionInfo]
   /** GitHub's authorization ran out: authorize cheesex-app again. */
-  'relink-github': []
+  'sign-in-github': []
   'sign-out-device': [sessionId: string]
   'sign-out-others': []
   copy: [text: string]
+  'close-account': [username: string]
 }>()
 
 // Which dialog is open, and how far the two-step setup has got, are the
@@ -369,6 +411,16 @@ const showChangePassword = defineModel<boolean>('showChangePassword', { required
 const showTotp = defineModel<boolean>('showTotp', { required: true })
 const setupStep = defineModel<SetupStep>('setupStep', { required: true })
 const verificationCode = defineModel<string>('verificationCode', { required: true })
+const showCloseAccount = defineModel<boolean>('showCloseAccount', { required: true })
+
+const typedUsername = ref('')
+const usernameMatches = computed(
+  () => !!props.username && typedUsername.value.trim().toLowerCase() === props.username.toLowerCase()
+)
+
+function submitClose() {
+  if (usernameMatches.value) emit('close-account', typedUsername.value.trim())
+}
 
 // The change-password fields, their form, and the code being typed are this
 // side's; only what is sent up leaves them.

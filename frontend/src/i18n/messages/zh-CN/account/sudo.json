@@ -2,6 +2,7 @@
   "action": {
     "addPasskey": "添加通行密钥",
     "changePassword": "修改密码",
+    "closeAccount": "注销账号",
     "deletePasskey": "删除通行密钥",
     "deleteRealName": "删除实名信息",
     "disableTOTP": "关闭两步验证",

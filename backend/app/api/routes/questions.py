@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
+from app.api.deps import get_discussion_service
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user, require_permission
@@ -9,13 +10,6 @@ from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
-from app.domain.delivery.ledger import deliver
-from app.domain.discussion.reaction_services import DiscussionReactionService
-from app.domain.discussion.repositories import (
-    DiscussionReactionRepository,
-    DiscussionRepository,
-    ReactionTypeRepository,
-)
 from app.domain.discussion.services import DiscussableModelType, DiscussionService
 from app.domain.questions.repositories import (
     QuestionInvitationRepository,
@@ -38,21 +32,6 @@ async def get_questions_service(db=Depends(get_db)) -> QuestionsService:
         topic_repo=topic_repo,
         answer_repo=answer_repo,
         profile_repo=profile_repo,
-    )
-
-
-async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
-    discussion_repo = DiscussionRepository(session=db)
-    reaction_repo = DiscussionReactionRepository(session=db)
-    reaction_type_repo = ReactionTypeRepository(session=db)
-    reaction_service = DiscussionReactionService(
-        reaction_repo=reaction_repo, reaction_type_repo=reaction_type_repo
-    )
-    return DiscussionService(
-        repo=discussion_repo,
-        reaction_service=reaction_service,
-        session=db,
-        deliver=deliver,
     )
 
 
@@ -397,7 +376,8 @@ async def delete_question_comment(
         or discussion["modelId"] != question_id
     ):
         raise NotFoundError("Comment not found for this question")
-    if discussion["sender"]["id"] != auth_user.user_id:
+    # A closed account's comment has no sender left to compare with.
+    if (discussion["sender"] or {}).get("id") != auth_user.user_id:
         raise ForbiddenError("Only the author can delete this comment")
     await discussion_service.delete_discussion(comment_id)
     return ok({"deleted": True})

@@ -1,7 +1,7 @@
 """`HttpxGitHubPrClient` — the real client, and the one the process hands out.
 
-Plain REST calls against api.github.com with a token the caller passes per call,
-plus the two GraphQL calls the merge queue needs. Behind `default_client()` —
+REST and bounded GraphQL operations against api.github.com with a token the
+caller passes per call. Behind `default_client()` —
 one process-wide instance, which is why the zero-check-runs grace period is
 bookkeeping on `self` that outlives a poll.
 """
@@ -9,7 +9,7 @@ bookkeeping on `self` that outlives a poll.
 import asyncio
 import hashlib
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 
 import httpx
@@ -41,7 +41,12 @@ from app.domain.review.github_pr.failure_logs import (
     _error_excerpt,
     _failure_headline,
 )
-from app.domain.review.github_pr.protocol import GitHubPrClient
+from app.domain.review.github_pr.branch_comparisons import read_branch_comparisons
+from app.domain.review.github_pr.protocol import (
+    BranchComparisonResult,
+    BranchPair,
+    GitHubPrClient,
+)
 from app.domain.review.github_pr_status import (
     PullRequestStatus,
     parse_pull_request_status,
@@ -610,6 +615,23 @@ class HttpxGitHubPrClient:
     ) -> list[dict]:
         return await self._check_runs(owner, repo, ref, token)
 
+    async def branch_comparisons(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        pairs: Sequence[BranchPair],
+        token: str,
+    ) -> dict[BranchPair, BranchComparisonResult]:
+        return await read_branch_comparisons(
+            api_base=self._api_base,
+            transport=self._transport,
+            headers=self._headers(token),
+            owner=owner,
+            repo=repo,
+            pairs=pairs,
+        )
+
     async def compare_status(
         self, *, owner: str, repo: str, base: str, head: str, token: str
     ) -> str | None:
@@ -625,12 +647,6 @@ class HttpxGitHubPrClient:
             raise _refused("githubRefusedCommitOrder", resp)
         status = resp.json().get("status")
         return status if isinstance(status, str) else None
-
-    async def check_run_names(
-        self, *, owner: str, repo: str, ref: str, token: str
-    ) -> set[str]:
-        runs = await self._check_runs(owner, repo, ref, token)
-        return {str(run.get("name")) for run in runs if run.get("name")}
 
     async def review_signals(
         self,

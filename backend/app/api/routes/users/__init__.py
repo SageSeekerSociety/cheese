@@ -16,7 +16,6 @@ from . import (
     auth,
     connections,
     directory,
-    github_account,
     invite_codes,
     oauth,
     preferences,
@@ -32,10 +31,9 @@ router.include_router(registration.router)
 # Before account: its `GET /users/{userId}` would otherwise take
 # `/users/invite-codes` and answer 400 on the int parse.
 router.include_router(invite_codes.router)
-# `/users/me/github-account/...` before account's `/users/{userId}/...`.
-router.include_router(github_account.router)
+# The GitHub App callback must precede account's `/users/{userId}/...`.
+router.include_router(oauth.router)
 router.include_router(account.router)
 router.include_router(auth.router)
 router.include_router(preferences.router)
-router.include_router(oauth.router)
 router.include_router(connections.router)

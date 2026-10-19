@@ -31,7 +31,6 @@ from app.domain.agent_instance.own import (
     HOSTS_SETTING,
     KINDS_SETTING,
     SETTING,
-    OwnCallers,
     add,
     allowed_hosts,
     allowed_kinds,
@@ -41,7 +40,6 @@ from app.domain.agent_instance.own import (
     owned_by_seat,
     owned_in_project,
     remove,
-    set_callers,
 )
 from app.domain.device.login_kind import ConnectionKind
 from app.domain.identity.handles import agent_instance_handle
@@ -78,10 +76,6 @@ class OwnAgentsUpdate(BaseModel):
     service_hosts: list[ServiceHost] | None = Field(default=None, max_length=50)
 
 
-class OwnAgentCallersUpdate(BaseModel):
-    callers: OwnCallers
-
-
 class OwnAgentAdd(BaseModel):
     # One of the caller's model connections (`my_connections[].id`): named by
     # the machine holding it, or by the connection their account holds.
@@ -109,7 +103,6 @@ class OwnAgentConnectionOut(BaseModel):
 class OwnAgentOut(BaseModel):
     handle: str
     name: str | None
-    callers: OwnCallers
     owner_handle: str | None
     owner_name: str | None
     # The connection it runs on; None once its owner removed or logged it out.
@@ -208,8 +201,7 @@ async def set_own_agents(
     which kinds of model connection it may use, and which model services.
     Turned off, members' own agents leave the project: off its roster and out
     of its channels. Turned on again, the ones their owners had added are back
-    on the roster, and sit in a channel again once someone they answer to names
-    them there."""
+    on the roster, and sit in a channel again once anyone names them there."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require(project_id, actor, Permission.edit_settings)
@@ -224,7 +216,7 @@ async def set_own_agents(
         patch[HOSTS_SETTING] = list(dict.fromkeys(body.service_hosts))
     await service.merge_settings(project, patch)
     if body.allowed is False:
-        for instance, _owner, _callers in await owned_in_project(db, project_id):
+        for instance, _owner in await owned_in_project(db, project_id):
             await _withdraw_seats(db, project_id, instance.id)
     return await get_own_agents(project_id, db, resolver)
 
@@ -282,31 +274,5 @@ async def remove_own_agent(
         raise ForbiddenError(say("ownAgentRemoveOwnerOnly"))
     await remove(db, owned.instance_id)
     await _withdraw_seats(db, project_id, owned.instance_id)
-    await db.commit()
-    return await get_own_agents(project_id, db, resolver)
-
-
-@router.put(
-    "/{project_id}/own-agents/{handle}/callers",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(OwnAgentsOut),
-)
-async def set_own_agent_callers(
-    project_id: uuid.UUID,
-    handle: str,
-    body: OwnAgentCallersUpdate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Who may call a member's own agent: its owner alone, or any person in the
-    project. Only its owner decides, since it is their account that pays."""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    owned = await owned_by_seat(db, project_id, handle)
-    if owned is None:
-        raise NotFoundError(say("ownAgentNotFound"))
-    if actor.user_id is None or actor.user_id != owned.owner_user_id:
-        raise ForbiddenError(say("ownAgentCallersOwnerOnly"))
-    await set_callers(db, owned.instance_id, body.callers)
     await db.commit()
     return await get_own_agents(project_id, db, resolver)
