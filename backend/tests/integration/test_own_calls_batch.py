@@ -8,7 +8,6 @@ from sqlalchemy import select
 
 from app.domain.agent import own_calls
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
-from app.domain.agent_instance.own.settings import SETTING
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
@@ -59,6 +58,6 @@ async def test_a_message_seats_personal_agents_of_different_owners(
             f"<@{agent_instance_handle(i)}>" for i in (mine, theirs, uuid.uuid4())
         )
         await own_calls.seat_if_named(
-            session, SimpleNamespace(settings={SETTING: True}), topic, content, "u"
+            session, SimpleNamespace(settings={}), topic, content, "u"
         )
     assert set(seated) == {agent_instance_handle(mine), agent_instance_handle(theirs)}

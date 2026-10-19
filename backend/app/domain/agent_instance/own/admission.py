@@ -1,4 +1,4 @@
-"""Whether a personal agent's model connection is usable in a project."""
+"""Admission of a team connection and its selected model."""
 
 import uuid
 from typing import Any
@@ -13,21 +13,12 @@ from app.domain.agent_instance.own.ownership import (
     owned_instance,
     owner_of,
 )
-from app.domain.agent_instance.own.settings import (
-    allowed_kinds,
-    allows_own_agents,
-    host_refused,
-    kinds_refused_sentence,
-)
 
 
 async def unusable(
     db: AsyncSession, owned: Owned, project_settings: dict[str, Any] | None
 ) -> str | None:
-    """Why a member's own agent cannot work here, as the sentence the room is told: its connection is gone, or is of a
-    kind the project does not allow, or calls a model service at a host the
-    project does not list. None when it can (it may still have to wait for its
-    machine to come online)."""
+    """Refuse a missing connection or a model outside its team-defined list."""
     login = await connection_of(db, owned)
     if login is None:
         instance = await db.get(AgentInstance, owned.instance_id)
@@ -37,16 +28,16 @@ async def unusable(
             agent=(instance.display_name if instance else None) or "",
             owner=owner[1] if owner else "",
         )
-    if login.kind not in allowed_kinds(project_settings):
-        owner = await owner_of(db, owned.instance_id)
-        return kinds_refused_sentence(owner[1] if owner else "", [login.kind])
-    if host_refused(login, project_settings):
-        owner = await owner_of(db, owned.instance_id)
-        return say(
-            "ownAgentHostNotAllowed",
-            owner=owner[1] if owner else "",
-            host=login.service_host or say("ownAgentKindModelService"),
-        )
+    instance = await db.get(AgentInstance, owned.instance_id)
+    model = (
+        ((instance.configuration or {}).get("model") if instance else None)
+        or login.model
+        or "sonnet"
+    )
+    if not login.allowed_models or (
+        model is not None and model not in login.allowed_models
+    ):
+        return say("teamConnectionModelRefused")
     return None
 
 
@@ -57,6 +48,4 @@ async def why_not(
     owned = await owned_instance(db, instance_id)
     if owned is None:
         return None
-    if not allows_own_agents(project_settings):
-        return say("ownAgentsClosed")
     return await unusable(db, owned, project_settings)

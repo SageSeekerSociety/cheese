@@ -128,6 +128,7 @@ const TEAM_PAGES = [
   { name: 'TeamsDetailMembers', label: 'home.nav.teamMembers', exact: false },
   { name: 'TeamsDetailDocs', label: 'home.nav.teamDocs', exact: false },
   { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute', exact: false },
+  { name: 'TeamsDetailModels', label: 'home.nav.teamModels', exact: false },
   { name: 'TeamsDetailCredits', label: 'home.nav.teamCredits', exact: false },
 ] as const
 // 自己名下谁也加不进来（后端拒），「成员」一页就不列；自己的额度在个人设置里，「额度」

@@ -10,7 +10,7 @@
  * 哪个组件、每一格看什么，在 `catalogScenesMisc.ts`。
  */
 import type { LookedUpUser } from '@/api'
-import type { DeviceUser, MyDevice } from '@/cx_types'
+import type { MyDevice } from '@/cx_types'
 import type { SpaceApplication, Team, TeamMember, TeamMembershipApplication } from '@/types'
 import type { User } from '@/types/users'
 
@@ -127,50 +127,22 @@ export function device(over: Partial<MyDevice> = {}): MyDevice {
     online: true,
     team_id: 1,
     screens: [],
-    in_use: null,
     ...over,
   }
 }
 
-/** 屏幕后面那位队友正在做的事：`cx_types.ts` 的 `DeviceUser`。 */
-export const IN_USE: DeviceUser = {
-  project_id: 'p-clean',
-  project_name: '数据清洗',
-  topic_id: 't-2',
-  topic_title: '把缺失值补上',
-  agent_handle: 'cheese',
-  agent_name: '芝士',
-  agent_name_source: 'default',
-}
-
-/** 一台在线的、两台被别的项目用着的机器：分别是「在线」「有活干」两种行。 */
+/** Online and offline team devices. */
 export const DEVICES: MyDevice[] = [
   device({
     device_id: 'dev-3f9a21',
     name: '书房的 Mac mini',
     online: true,
     screens: [],
-    logins: [
-      {
-        id: 'login-preview',
-        local_id: 'preview',
-        name: '工作账号',
-        installed: true,
-        logged_in: true,
-        auth_method: 'claude.ai',
-        subscription_type: 'max',
-        model: null,
-        service_host: null,
-        checked_at: '2026-10-19T12:00:00Z',
-        revoking: false,
-      },
-    ],
   }),
   device({
     device_id: 'dev-8b1c04',
     name: '客厅的 NUC',
     online: false,
-    in_use: [IN_USE],
   }),
 ]
 

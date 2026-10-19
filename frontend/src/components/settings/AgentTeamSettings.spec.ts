@@ -33,6 +33,10 @@ vi.mock('@/api', async (importOriginal) => {
   }
 })
 
+vi.mock('@/api/ownAgents', () => ({
+  getOwnAgents: vi.fn().mockResolvedValue({ can_manage: true, agents: [], my_connections: [], devices: [] }),
+}))
+
 import AgentTeamSettings from './AgentTeamSettings.vue'
 
 import { ApiError } from '@/api'
@@ -165,12 +169,12 @@ describe('队友名册', () => {
 })
 
 describe('还没有队友的时候', () => {
-  it('空状态说没有队友，并给出新建的入口', async () => {
+  it('offers the connection model and device picker when there are no teammates', async () => {
     listProjectAgents.mockResolvedValue({ data: [], total: 0 })
     mountPage()
 
-    expect(await screen.findByText('暂无 AI 队友')).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: /新建队友/ }).length).toBeGreaterThan(0)
+    expect(await screen.findByLabelText('模型连接', { selector: 'input' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '添加 AI 队友' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })
 

@@ -30,7 +30,7 @@ class NamingDB:
         return Rows([(instance, "device-1", None)])
 
     async def get(self, _model, _user_id):
-        return SimpleNamespace(username="owner")
+        return SimpleNamespace(username="owner", team_id=3)
 
     async def flush(self):
         pass

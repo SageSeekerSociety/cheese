@@ -695,7 +695,18 @@ def validate_evidence(evidence):
     details.update(passed=passed, skipped=skipped, errors=errors,
                    failed_suites=failed_suites, missing=missing)
     if errors:
-        return {"result": "fail", "reason": "test report contains errors/failures", "evidence": details}
+        reason = "test report contains errors/failures"
+        if kind == "vitest":
+            failures = [
+                f"{row.get('name', '')}::{case.get('fullName', '')}: "
+                + str((case.get("failureMessages") or [""])[0]).split("\n", 1)[0][:200]
+                for row in rows
+                for case in row.get("assertionResults", [])
+                if case.get("status") == "failed"
+            ]
+            if failures:
+                reason += ": " + "; ".join(failures[:3])
+        return {"result": "fail", "reason": reason, "evidence": details}
     if failed_suites:
         crashed = [row for row in failed
                    if WORKER_CRASH.search(str(row.get("message") or ""))]

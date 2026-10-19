@@ -27,7 +27,6 @@ login is out of use from the moment it is asked for.
 
 import json
 import logging
-import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -238,7 +237,12 @@ async def remember(
             "checked_at": now,
         }
         statement = insert(DeviceClaudeLoginRow).values(
-            device_id=device_id, local_id=login.local_id, **values
+            device_id=device_id,
+            local_id=login.local_id,
+            allowed_models=[login.model]
+            if login.model
+            else ["opus", "sonnet", "haiku"],
+            **values,
         )
         login_id = await session.scalar(
             statement.on_conflict_do_update(
@@ -301,50 +305,6 @@ async def machine_of(session: AsyncSession, login_id: str) -> str | None:
             DeviceClaudeLoginRow.id == login_id
         )
     )
-
-
-async def status_on(
-    session: AsyncSession, device_id: str, local_id: str
-) -> dict | None:
-    """``status`` of the login a machine calls ``local_id``."""
-    row = await session.scalar(
-        select(DeviceClaudeLoginRow)
-        .where(
-            DeviceClaudeLoginRow.device_id == device_id,
-            DeviceClaudeLoginRow.local_id == local_id,
-        )
-        .execution_options(populate_existing=True)
-    )
-    return None if row is None else claude_login.view(row)
-
-
-def _shown_first(row: DeviceClaudeLoginRow) -> tuple:
-    usable = row.logged_in and row.revoked_at is None
-    return (not usable, row.local_id != FIRST_LOGIN, -row.checked_at.timestamp())
-
-
-async def statuses(session: AsyncSession, device_ids: Sequence[str]) -> dict[str, dict]:
-    """The login each of these machines shows on 「我的设备」 and 「这台设备」, in
-    one query for the whole list: one in use before one that is not, the first
-    login before the others, the most recently confirmed first. Each login on
-    its own is 「模型连接」's (`model_connections`). Same shape as ``status``;
-    a machine it has not asked yet is absent."""
-    ids = list(dict.fromkeys(device_ids))
-    if not ids:
-        return {}
-    rows = (
-        await session.execute(
-            select(DeviceClaudeLoginRow)
-            .where(DeviceClaudeLoginRow.device_id.in_(ids))
-            # Same freshness as ``status``: a row already in the session is
-            # re-read, not answered from the identity map.
-            .execution_options(populate_existing=True)
-        )
-    ).scalars()
-    shown: dict[str, DeviceClaudeLoginRow] = {}
-    for row in sorted(rows, key=_shown_first):
-        shown.setdefault(row.device_id, row)
-    return {device_id: claude_login.view(row) for device_id, row in shown.items()}
 
 
 class MachineRefused(Exception):
@@ -420,39 +380,6 @@ async def revoke(session: AsyncSession, hub, login_id: str) -> None:
         )
 
 
-async def use_model_service(
-    session: AsyncSession, hub, device_id: str, *, base_url: str, token: str, model: str
-) -> str:
-    """Add a login to the machine that calls another model service, as
-    `cheesehost claude login --base-url` does there, and answer what the
-    machine calls it. The key travels to the machine in that command's environment and is
-    kept only there; nothing on this side stores or logs it. Raises
-    ``MachineRefused`` with the connector's reason."""
-    await settle(session, hub, device_id)
-    # Named here, so the record this answers is the one the machine made.
-    local_id = uuid.uuid4().hex
-    await _run(
-        hub,
-        device_id,
-        [
-            "claude",
-            "login",
-            "--base-url",
-            base_url,
-            "--model",
-            model,
-            "--login",
-            local_id,
-        ],
-        env={"CHEESE_MODEL_TOKEN": token},
-        # The first use on a machine downloads the pinned Claude Code build.
-        timeout=600,
-    )
-    await remember(session, device_id, await ask(hub, device_id))
-    await session.commit()
-    return local_id
-
-
 async def refresh(session_factory, hub, device_id: str) -> None:
     """Carry out pending removals, then ask the machine and keep its answer."""
     async with session_factory() as session:
@@ -482,18 +409,8 @@ async def refresh_on_connect(session_factory, hub, device_id: str) -> None:
         logger.warning("claude login not checked on %s", device_id, exc_info=True)
 
 
-async def connections(
-    session: AsyncSession, device_ids: Sequence[str]
-) -> dict[str, list[dict]]:
-    """All login summaries on the team's devices, without credentials."""
-    if not device_ids:
-        return {}
-    rows = await session.scalars(
-        select(DeviceClaudeLoginRow).where(
-            DeviceClaudeLoginRow.device_id.in_(device_ids)
-        )
-    )
-    found: dict[str, list[dict]] = {}
-    for row in sorted(rows, key=_shown_first):
-        found.setdefault(row.device_id, []).append(claude_login.view(row))
-    return found
+async def set_models(session: AsyncSession, login_id: str, models: list[str]) -> None:
+    """Set a device connection's team-approved models without changing credentials."""
+    row = await session.get(DeviceClaudeLoginRow, login_id)
+    if row is not None:
+        row.allowed_models = list(dict.fromkeys(models))

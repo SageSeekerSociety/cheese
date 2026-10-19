@@ -80,7 +80,6 @@ from app.domain.agent_instance.adapters import (
     seat_project,
     task_teammate,
 )
-from app.domain.agent_instance.own import owned_by_seat, owner_of
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.delivery.ledger import settle_card
 from app.domain.idempotency import store as idem
@@ -557,22 +556,13 @@ async def create_teammate_task(
     )
     if actor.via != "cheese":
         raise ForbiddenError(say("teammateTaskByTeammate"))
-    owned = await owned_by_seat(db, place.project_id, actor.handle)
-    source = None
-    if owned is not None:
-        owner_identity = await owner_of(db, owned.instance_id)
-        source = (
-            await BlockRepository(db).get(body.source_message_id)
-            if body.source_message_id
-            else None
-        )
-        if (
-            source is None
-            or source.project_id != place.project_id
-            or owner_identity is None
-            or source.author != owner_identity[0]
-        ):
-            raise ForbiddenError(say("ownAgentTaskOwnerMessageRequired"))
+    source = (
+        await BlockRepository(db).get(body.source_message_id)
+        if body.source_message_id
+        else None
+    )
+    if source is not None and source.project_id != place.project_id:
+        raise ForbiddenError(say("resourceNotFound"))
     task_dispatch.refuse_tasks_in_private(place.room)
     if body.here and place.thread is None:
         raise UnprocessableEntityError(say("teammateTaskHereOnlyInThread"))

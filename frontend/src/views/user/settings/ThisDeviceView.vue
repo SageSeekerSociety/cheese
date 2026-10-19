@@ -55,9 +55,6 @@ function sessionLink(session: RunningDeviceSession): NavTarget {
             >{{ teams.find((team) => team.id === device.team_id)!.name }}</NavLink
           >
           <span class="t-caption c-muted">{{ device.name }}</span>
-          <p v-for="login in device.logins ?? []" :key="login.id" class="t-caption c-muted">
-            {{ login.name || login.service_host || 'Claude' }} · {{ login.model || login.subscription_type || '—' }}
-          </p>
         </div>
         <span class="t-caption" :class="device.online ? 'enrollment-online' : 'c-muted'">{{
           device.online ? t('teams.compute.online') : t('teams.compute.offline')

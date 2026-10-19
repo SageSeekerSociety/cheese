@@ -81,6 +81,7 @@ export interface DesktopBridge {
   thisDevice: () => Promise<string | null>
   preventSleep: (enabled?: boolean) => Promise<boolean>
   thisDevices: () => Promise<string[]>
+  enrollmentProfiles: () => Promise<Record<string, string>>
   /** Logs in the login this computer calls `loginId` again, or adds one when it is null. */
   claudeLogin: (
     console: boolean,
@@ -145,6 +146,9 @@ export function desktopBridge(): DesktopBridge | null {
     },
     async thisDevices() {
       return (await invoke('this_devices')) as string[]
+    },
+    async enrollmentProfiles() {
+      return (await invoke('enrollment_profiles')) as Record<string, string>
     },
     async claudeLogin(console, loginId, onStep, profile = 'default') {
       const progress = new Channel<Progress>()
