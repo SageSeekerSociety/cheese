@@ -131,6 +131,15 @@ def test_a_persons_page_splits_their_spend_by_product_line(client, plan):
     [project] = data["projects"]
     assert project["name"] == "Mine" and project["credits"] == pytest.approx(10)
 
+    personal_id = _team_of(client, own_project["id"])
+    personal = client.get(f"/teams/{personal_id}/credits/usage", headers=me)
+    assert personal.status_code == 200, personal.text
+    assert personal.json()["data"] == data
+    outsider = _auth(seed_user(client, "cu-personal-outsider"))
+    assert client.get(
+        f"/teams/{personal_id}/credits/usage", headers=outsider
+    ).status_code == 403
+
 
 def test_usage_keeps_overdrawn_reward_debt_in_the_remaining_credits(client, plan):
     token = seed_user(client, "cu-reward-debt")

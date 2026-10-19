@@ -12,7 +12,7 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import UsageView from './UsageView.vue'
+import UsageView from './CreditsView.vue'
 
 import i18n, { setLocale } from '@/i18n'
 
@@ -90,7 +90,7 @@ function show(data: CreditUsage) {
     ],
   })
   return render(UsageView as unknown as Component, {
-    props: { usage: data, loading: false, error: null },
+    props: { personal: true, teamHandle: 'alice', usage: data, loading: false, error: null },
     global: { plugins: [createVuetify({ components, directives }), router, i18n] },
   })
 }
@@ -186,9 +186,7 @@ describe('芝士额度', () => {
       available: '50 点',
     },
   ])('deducts $name from available credits', async ({ spent, packs, available }) => {
-    const view = show(
-      usage({ period: { ...PERIOD, credits_used: spent, used_ratio: 1, remaining_ratio: 0 }, packs })
-    )
+    const view = show(usage({ period: { ...PERIOD, credits_used: spent, used_ratio: 1, remaining_ratio: 0 }, packs }))
     const month = await view.findByRole('region', { name: '本月' })
     expect(within(month).getByText(available)).toBeTruthy()
   })
@@ -245,6 +243,6 @@ describe('芝士额度', () => {
 
   it('opens the shared plans page from personal credits', async () => {
     const view = show(usage())
-    expect(view.getByRole('link', { name: '查看套餐' }).getAttribute('href')).toBe('/plans')
+    expect(view.getByRole('link', { name: '查看套餐' }).getAttribute('href')).toBe('/plans?team=alice')
   })
 })

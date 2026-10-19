@@ -13,7 +13,7 @@ vi.mock('@/api/creditOffers', () => ({
   createCreditRequest: api.request,
 }))
 vi.mock('@/api/teams', () => ({ TeamsApi: { getMyTeams: api.teams } }))
-vi.mock('@/api/creditUsage', () => ({ getMyCreditUsage: api.usage, getTeamCreditUsage: api.usage }))
+vi.mock('@/api/creditUsage', () => ({ getTeamCreditUsage: api.usage }))
 
 import CreditPlans from './CreditPlans.vue'
 
@@ -38,6 +38,7 @@ beforeEach(() => {
   api.request.mockReset().mockResolvedValue({})
   api.teams.mockResolvedValue({
     teams: [
+      { id: 2, handle: 'alice', name: 'Alice', role: 'OWNER', personal: true },
       { id: 3, handle: 'citylab', name: 'City Lab', role: 'OWNER', personal: false },
       { id: 4, handle: 'robots', name: 'Robotics', role: 'MEMBER', personal: false },
     ],
@@ -52,7 +53,7 @@ async function plans(query = { team: 'citylab' }) {
     routes: [
       { path: '/plans', name: 'CreditPlans', component: CreditPlans },
       { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: { template: '<div />' } },
-      { path: '/users/settings/usage', name: 'UserSettingsUsage', component: { template: '<div />' } },
+      { path: '/', name: 'HomeHub', component: { template: '<div />' } },
     ],
   })
   await router.push({ name: 'CreditPlans', query })
@@ -66,6 +67,14 @@ async function plans(query = { team: 'citylab' }) {
 }
 
 describe('Plans and top-ups', () => {
+  it('keeps personal plans and the return link scoped to the personal team', async () => {
+    const view = await plans({ team: 'alice' })
+    await waitFor(() => expect(api.usage).toHaveBeenCalledExactlyOnceWith(2))
+    expect(view.getByRole('link', { name: '返回额度' }).getAttribute('href')).toBe('/teams/alice/credits')
+    expect(view.queryByRole('button', { name: '申请 Team 方案' })).toBeNull()
+    expect(view.getByLabelText('查看对象').textContent).toContain('Alice')
+  })
+
   it('links from team credits to plans with the team preserved', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
@@ -84,13 +93,14 @@ describe('Plans and top-ups', () => {
       routes: [
         { path: '/feedback', component: { template: '<div />' } },
         { path: '/feedback/new', name: 'FeedbackSubmit', component: { template: '<div />' } },
-        { path: '/users/settings/usage', component: { template: '<div />' } },
+        { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: { template: '<div />' } },
       ],
     })
     await router.push('/feedback#rewards')
     const view = render(FeedbackCenterPageView, {
       props: {
         isAdmin: false,
+        personalTeamHandle: 'alice',
         tab: 'all',
         tabs: [],
         meta: null,
@@ -117,7 +127,7 @@ describe('Plans and top-ups', () => {
     expect(view.getByRole('button', { name: '活动规则' }).getAttribute('aria-expanded')).toBe('true')
     expect(view.getByText('2 条')).toBeTruthy()
     expect(view.getByText('200 点')).toBeTruthy()
-    expect(view.getByRole('link', { name: '前往个人额度领取' }).getAttribute('href')).toBe('/users/settings/usage')
+    expect(view.getByRole('link', { name: '前往个人额度领取' }).getAttribute('href')).toBe('/teams/alice/credits')
   })
 
   it('keeps the selected team when returning and sends a request only for that team', async () => {

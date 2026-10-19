@@ -132,7 +132,7 @@ const TEAM_PAGES = [
 ] as const
 // 自己名下谁也加不进来（后端拒），「成员」一页就不列；自己的额度在个人设置里，「额度」
 // 一页也不列。
-const PERSONAL_HIDDEN: readonly string[] = ['TeamsDetailMembers', 'TeamsDetailCredits']
+const PERSONAL_HIDDEN: readonly string[] = ['TeamsDetailMembers']
 const pagesOf = (team: Team) =>
   team.personal ? TEAM_PAGES.filter((page) => !PERSONAL_HIDDEN.includes(page.name)) : TEAM_PAGES
 

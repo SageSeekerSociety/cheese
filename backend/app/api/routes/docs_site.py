@@ -11,7 +11,7 @@ import re
 import time
 import uuid
 from typing import Annotated, Literal
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, quote, urlencode
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse, StreamingResponse
@@ -254,7 +254,9 @@ async def ask(
     await db.commit()
     if refused is not None:
         await limits.release(auth.user_id)
-        return refuse(429, refused.message, refused.retry_after_s())
+        response = refuse(429, refused.message, refused.retry_after_s())
+        response.headers["X-Credits-Path"] = f"/teams/{quote(auth.handle, safe='')}/credits"
+        return response
 
     if settings.docs_assistant_agentic:
         result = assistant.Outcome()

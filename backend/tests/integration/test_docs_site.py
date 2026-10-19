@@ -764,6 +764,7 @@ def test_with_no_credits_left_the_question_is_refused_until_the_month_turns(
     )
     assert r.status_code == 429
     assert "额度已用完" in r.json()["message"]
+    assert r.headers["x-credits-path"] == "/teams/docs-asker/credits"
     assert int(r.headers["retry-after"]) >= 60
     assert len(gateway["completions"]) == calls
     # Refusing released the person's slot: the answer is the same, not "busy".

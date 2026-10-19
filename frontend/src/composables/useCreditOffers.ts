@@ -10,7 +10,7 @@ import {
   getMyCreditRewards,
 } from '@/api/creditOffers'
 
-export function useCreditOffers(teamId?: () => number) {
+export function useCreditOffers(teamId?: () => number, personal = () => !teamId) {
   const beta = ref<BetaCredits | null>(null)
   const requests = ref<CreditRequest[]>([])
   const rewards = ref<CreditRewards | null>(null)
@@ -24,21 +24,22 @@ export function useCreditOffers(teamId?: () => number) {
     requests.value = []
     error.value = null
     try {
-      if (teamId) {
-        const data = await getCreditRequests(teamId())
-        if (current === version) requests.value = data.items
-      } else {
-        const [data, history] = await Promise.all([getBetaCredits(), getMyCreditRewards()])
-        if (current === version) {
-          beta.value = data
-          rewards.value = history
-        }
+      const [pending, data, history] = await Promise.all([
+        teamId ? getCreditRequests(teamId()) : Promise.resolve(null),
+        personal() ? getBetaCredits() : Promise.resolve(null),
+        personal() ? getMyCreditRewards() : Promise.resolve(null),
+      ])
+      if (current === version) {
+        requests.value = pending?.items ?? []
+        beta.value = data
+        rewards.value = history
       }
     } catch (e) {
       if (current === version) error.value = e instanceof Error ? e.message : String(e)
     }
   }
   async function claim() {
+    if (!personal() || busy.value) return false
     busy.value = true
     error.value = null
     try {
