@@ -6,18 +6,24 @@
 //                 （等闸门、等 CI、修检查、解冲突、换基）。
 //   长绿（不动）  这里做过事、都做完交付完了，你还没点开看过。点开过就灭；之后
 //                 再有新活，回到呼吸绿。
-//   红（不动）    显示在跑，但五分钟没动静。
+//   红（不动）    这里现在不对：显示在跑、但五分钟没动静，或者一轮停在报错上、
+//                 五分钟没人接手，或者房间在等一位队友、等太久了，或者一条活被退回
+//                 还没有人来改（四件事长的是同一盏，`RowLight.why` 说清是哪一件）。
 //   黄（不动）    有事等你：一道只有你能答的问题、一张等你采纳的卡，或者有人回复了
 //                 我、我还没处理。
 //   蓝（不动）    这条活归我，状态上没别的话可说。只有任务行用得着。
 //   不亮          没开过、也没活在跑的，不亮灯。
 //
-// 五条判据全是**事实**，这一份不推状态、只排先后：在不在往前走看 `moving`
+// 六条判据全是**事实**，这一份不推状态、只排先后：在不在往前走看 `moving`
 // （后端按「活的事实压过纸面」算，房间那一行还含它名下的活），等不等人看
-// `awaits_me`（后端按看的人算），多久没输出看 `last_output_at`（后端取整到分钟），
+// `awaits_me`（后端按看的人算），多久没动静看 `last_output_at`（后端取整到分钟：
+// 落了帧、或者会话自己应了一声，取较新的那个），
 // 交付完没看过看 `unseen_delivery`（后端比的是这个人的已读位和采纳时刻），有人回了
 // 我没处理看 `repliedToMe`（后端比的是这个人上次打开这间房的时刻和那条回复落地的
-// 时刻）。
+// 时刻），还有没有一轮停在报错上没恢复、从什么时候起看 `incompleteSince`（后端
+// `block/waits.py` 的 `unresolved_failures`：那一轮的队友又说话了，或者这里又开了
+// 一轮，就算恢复了 —— 和「等了多久」无关，所以一条没人理的旧失败会一直红着，一条
+// 已经被人接手的不会）。
 //
 // 蓝灯**不是判据**：谁负责写在数据里（`owner_handle`），`lightOf` 不看它，
 // 也永远不会返回蓝灯——它是调用方盖的一枚印（`useTopicRail.taskLight`），而且只在
@@ -36,10 +42,20 @@ import { t } from '@/i18n'
 /** 一行上的灯画哪一盏。`green` 那一盏闪不闪由 `RowLight.breathe` 说。 */
 export type LightKind = 'blue' | 'red' | 'yellow' | 'green'
 
+/** 红灯为什么亮：四种都画同一盏，但嘴上说的是四件事（`lightTitle`）。 */
+export type RedReason = 'quiet' | 'unfinished' | 'waiting' | 'bounced'
+
 export interface RowLight {
   kind: LightKind
   /** 绿色动不动：呼吸绿闪，长绿不闪。蓝红黄一律不动。 */
   breathe: boolean
+  /** 只对红灯有意义：`quiet` = 在跑、但五分钟没输出；`unfinished` = 一轮停在报错
+   *  上、五分钟没人接手；`waiting` = 房间在等一位队友、等太久了；`bounced` = 验收
+   *  被退回，还没有人来改。说不出是哪一件时省略（悬停说明退回那句笼统的）。 */
+  why?: RedReason
+  /** 悬停时说的那一句。调用方知道得更具体时给（「在等谁、为什么」），`lightTitle`
+   *  照用；没给就按 `kind` / `why` 说那句通用的。 */
+  title?: string
 }
 
 /** 我负责的活那一盏灯：`lightOf` 不产它，调用方在前面四盏都不亮时盖上（见文件头）。 */
@@ -48,11 +64,12 @@ export const MINE_LIGHT: RowLight = { kind: 'blue', breathe: false }
 /** 亮到暗。`brightest` 用它排序。蓝垫底：它说的是这条归谁，不是这条怎么了。 */
 const BRIGHTNESS: Record<LightKind, number> = { red: 3, yellow: 2, green: 1, blue: 0 }
 
-/** 「显示在跑、但五分钟没动静」的那五分钟，和 `lib/replyWait.ts` 里等一位成员
- * 回话的阈值是同一个数：两条判据说的是同一件事——五分钟没有新东西出来。 */
+/** 红灯那五分钟：显示在跑却没动静，和一轮停在报错上没人接手，共用一个数。
+ * 它和 `lib/replyWait.ts` 里等一位成员回话的阈值也是同一个数：三条判据说的是同一件
+ * 事——五分钟没有新东西出来。 */
 export const LIGHT_STALL_MS = 5 * 60_000
 
-/** 上一次有输出，距今多久（毫秒）。说不出（没在跑、或那个戳没记着）就是 null。 */
+/** 上一次有动静，距今多久（毫秒）。说不出（没在跑、或那个戳没记着）就是 null。 */
 function quietForMs(lastOutputAt: string | null | undefined, now: number): number | null {
   if (!lastOutputAt) return null
   const at = Date.parse(lastOutputAt)
@@ -64,8 +81,23 @@ function quietForMs(lastOutputAt: string | null | undefined, now: number): numbe
  * 这一行画哪盏灯；不该亮灯的行是 null。
  *
  * `moving` 是「这里在不在往前走」，**它管两盏**：往前走的画呼吸绿，往前
- * 走、又已经五分钟没有新输出的画红。后者要 `lastOutputAt` 说得出话说得准 —— 说不
- * 出来（没在跑、或那个进程说不了）就不画红：不知道不等于卡住。
+ * 走、又已经五分钟没动静的画红。后者要 `lastOutputAt` 说得出话说得准 —— 说不
+ * 出来（没在跑、或那个进程说不了）就不画红：不知道不等于卡住。`lastOutputAt` 数
+ * 的是任何一样动静（输出，或者会话应的一声），所以长思考、跑长命令期间它是新的。
+ *
+ * `incompleteSince` 是红灯的另一半，**不看它跑不跑**：一轮停在报错上、过了五分钟
+ * 还没人接手，也是「出问题了」。（后端只在失败没被恢复时才给这个时刻 —— 队友又说
+ * 话、或者这里又开了一轮，它就不再给了，所以一条已经被人接手的失败不会一直红着。）
+ * 它比 `moving` 更重：真有东西坏着的时候，读数要从坏的这一刻起，而不是从最后一次
+ * 输出起。两个都够五分钟时说的是同一盏红，`why` 记着是哪一件。
+ *
+ * `waitStalled` 是红灯的第三种：房间在等一位队友，等过了阈值他还没回来接
+ * （`lib/replyWait.ts` 判的，和这里同一个五分钟）。它不画头像——一行上的点说的是
+ * 「这一行现在怎么了」，和任务行同一个规矩；谁卡住了不在这颗点上说。
+ *
+ * `bounced` 是第四种：一条活交付上去、被人退回了，还没有人来改。它不是「有事等
+ * 你」——退回那一刻平台已经把球交回给队友，所以行上会先绿（它在改），而没人在改的
+ * 时候是红的。
  *
  * `awaitsMe` 和 `repliedToMe` 画同一盏黄灯 —— 都是「有事等你」：一道只有你能答的问
  * 题、一张等你采纳的卡，或者一条别人回给你的消息。两样各自都有别的记法（待办、未
@@ -84,15 +116,27 @@ export function lightOf(
     moving: boolean
     /** 做完了、交付完了，而我还没点开看过。 */
     unseenDelivery: boolean
-    /** 在跑的那一轮上一次有输出是什么时候。 */
+    /** 尚未恢复的失败从什么时候开始；不依赖这一行是否还在跑。 */
+    incompleteSince?: string | null
+    /** 房间在等一位队友，而且等过了阈值（`lib/replyWait.ts` 的 `waitStalled`）。 */
+    waitStalled: boolean
+    /** 这条活交付上去被退回了，还没有人来改（`presentation.phrase` 是 `bounced`）。 */
+    bounced: boolean
+    /** 在跑的那一轮上一次有动静是什么时候（落了帧，或者会话应了一声）。 */
     lastOutputAt: string | null | undefined
   },
   now: number
 ): RowLight | null {
+  const incomplete = quietForMs(facts.incompleteSince, now)
   const quiet = quietForMs(facts.lastOutputAt, now)
-  if (facts.moving && quiet !== null && quiet >= LIGHT_STALL_MS) {
-    return { kind: 'red', breathe: false }
+  if (incomplete !== null && incomplete > LIGHT_STALL_MS) {
+    return { kind: 'red', breathe: false, why: 'unfinished' }
   }
+  if (facts.moving && quiet !== null && quiet >= LIGHT_STALL_MS) {
+    return { kind: 'red', breathe: false, why: 'quiet' }
+  }
+  if (facts.waitStalled) return { kind: 'red', breathe: false, why: 'waiting' }
+  if (facts.bounced) return { kind: 'red', breathe: false, why: 'bounced' }
   if (facts.awaitsMe || facts.repliedToMe) return { kind: 'yellow', breathe: false }
   if (facts.moving) return { kind: 'green', breathe: true }
   if (facts.unseenDelivery) return { kind: 'green', breathe: false }
@@ -117,8 +161,17 @@ export function brightest(lights: Iterable<RowLight | null | undefined>): RowLig
 
 /** 灯上悬停（和读屏）说的那一个词：这一行现在怎么了。 */
 export function lightTitle(light: RowLight): string {
+  if (light.title) return light.title
   if (light.kind === 'blue') return t('work.sidebar.light.mine')
-  if (light.kind === 'red') return t('work.sidebar.light.red')
+  if (light.kind === 'red') {
+    // 四种红说的是四件事：在跑却没动静、停下报错没人接手、等一位队友等太久了、
+    // 被退回没人来改。说得出是哪一件就说哪一件；说不出（`why` 缺省，比如折叠开关
+    // 那一盏）退回那句笼统的。
+    if (light.why === 'unfinished') return t('work.sidebar.light.redUnfinished')
+    if (light.why === 'waiting') return t('work.sidebar.light.redWaiting')
+    if (light.why === 'bounced') return t('work.sidebar.light.redBounced')
+    return t('work.sidebar.light.red')
+  }
   if (light.kind === 'yellow') return t('work.sidebar.light.yellow')
   return t(light.breathe ? 'work.sidebar.light.moving' : 'work.sidebar.light.delivered')
 }

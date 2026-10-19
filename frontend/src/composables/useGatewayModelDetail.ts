@@ -7,6 +7,8 @@
 // 就得同时管两份加载态，而这一层本来就需要自己的「正在加载」。这里只是把那趟请求
 // 从组件里搬出来，形状没变。什么时候拉（打开时、窗口变了）由调用方决定，所以这里
 // 不自己 watch。
+import type { SourceRow } from '@/lib/adminModels'
+
 import { ref } from 'vue'
 
 import { getGatewayModel } from '@/api'
@@ -45,6 +47,8 @@ export interface GatewayModelDetail {
   capabilities: Record<string, boolean | undefined>
   config_yaml?: string | null
   usage?: { spend_usd: number; requests: number; failed_requests: number; total_tokens: number }
+  /** 全部线路，按网关试它们的先后排好。 */
+  sources?: SourceRow[]
 }
 
 export interface GatewayModelDetailPayload {

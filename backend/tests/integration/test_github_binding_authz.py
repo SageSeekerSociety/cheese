@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from tests.integration.conftest import (
+    hand_over,
     join_project_team,
     post_project,
     session_auth_headers,
@@ -76,7 +77,7 @@ def test_callback_selects_matching_upstream_not_first_repo(client, monkeypatch):
     assert connection["repo"] == "acme/widgets"
 
 
-def test_new_connection_requires_existing_github_account_link(client, monkeypatch):
+def test_new_connection_requires_github_sign_in(client, monkeypatch):
     from app.domain.oauth.services import OAuthService
 
     async def no_token(self, user_id):
@@ -88,7 +89,23 @@ def test_new_connection_requires_existing_github_account_link(client, monkeypatc
         f"/projects/{pid}/github/connect", headers=session_auth_headers("alice")
     )
     assert response.status_code == 403
-    assert "GitHub 账号" in response.json()["message"]
+    assert "连接 GitHub" in response.json()["message"]
+
+
+def test_separate_github_account_authorization_is_gone(client, monkeypatch):
+    from app.core.config import settings
+    from tests.conftest import seed_user
+
+    monkeypatch.setattr(settings, "oauth_enabled_providers", "github_app")
+    monkeypatch.setattr(settings, "oauth_github_app_client_id", "test-client-id")
+    monkeypatch.setattr(settings, "oauth_github_app_client_secret", "test-secret")
+    monkeypatch.setattr(settings, "oauth_github_app_redirect_url", "https://example.test/callback")
+    token = seed_user(client, "routecheck")
+    response = client.get(
+        "/users/me/github-account/authorize-url",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
 
 
 def _state(client, pid):
@@ -152,7 +169,7 @@ def test_callback_refuses_ambiguous_wrong_or_read_only_repo(
 
 def test_callback_rejects_foreign_installation_and_spent_state(client, monkeypatch):
     from app.api.routes import github_install
-    from app.domain.agent.github_app import GitHubAppError
+    from app.domain.project.github_app import GitHubAppError
 
     pid = _project(client)
     calls = []
@@ -170,7 +187,7 @@ def test_callback_rejects_foreign_installation_and_spent_state(client, monkeypat
 
 def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatch):
     # A shared team carol owns, alice an ordinary member: alice manages the
-    # project only while she owns it.
+    # project only while she owns it or is its admin.
     import asyncio
     from datetime import UTC, datetime
 
@@ -211,13 +228,16 @@ def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatc
     join_project_team(client, pid, "alice")
     join_project_team(client, pid, "bob")
     state = _state(client, pid)
-    # Transfer through the real management route: alice stops managing it.
-    response = client.put(
-        f"/projects/{pid}/owner",
-        json={"owner_handle": "bob"},
-        headers=session_auth_headers("alice"),
+    # Through the real routes: alice hands the project to bob, who makes her a
+    # plain member — she stops managing it.
+    handed = hand_over(client, pid, "bob", by="alice")
+    assert handed.status_code == 200, handed.text
+    demoted = client.put(
+        f"/projects/{pid}/members/alice/role",
+        json={"role": "member"},
+        headers=session_auth_headers("bob"),
     )
-    assert response.status_code == 200
+    assert demoted.status_code == 200, demoted.text
 
     async def should_not_call(*args):
         pytest.fail("GitHub accessed after initiator lost project management")
@@ -230,7 +250,7 @@ def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatc
 
 def test_failed_reconnect_preserves_existing_binding(client, monkeypatch):
     from app.api.routes import github_install
-    from app.domain.agent.github_app import GitHubAppError
+    from app.domain.project.github_app import GitHubAppError
 
     pid = _project(client)
 
@@ -296,6 +316,10 @@ def test_github_management_follows_participant_role_and_own_account(
     assert client.get(connection, headers=auth).status_code == 200
     assert client.get(install, headers=auth).status_code == 403
     _set_team_admin(client, pid, handle, admin=True)
+    if is_agent:
+        # An AI teammate never manages the project, wherever it sits.
+        assert client.get(install, headers=auth).status_code == 403
+        return
     assert client.get(install, headers=auth).status_code == 200
 
     async def no_own_account(self, requested_user_id):
@@ -305,7 +329,7 @@ def test_github_management_follows_participant_role_and_own_account(
     monkeypatch.setattr(OAuthService, "get_github_user_token", no_own_account)
     denied = client.get(install, headers=auth)
     assert denied.status_code == 403
-    assert "GitHub 账号" in denied.json()["message"]
+    assert "连接 GitHub" in denied.json()["message"]
     _set_team_admin(client, pid, handle, admin=False)
     denied = client.get(install, headers=auth)
     assert denied.status_code == 403

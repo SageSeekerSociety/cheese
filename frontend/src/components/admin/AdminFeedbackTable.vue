@@ -166,6 +166,7 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
         ref="tableEl"
         class="aft__table"
         role="grid"
+        tabindex="-1"
         :aria-label="t('feedback.table.label')"
         :aria-busy="loading"
         :aria-activedescendant="activeRowId"
@@ -177,14 +178,8 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
         </colgroup>
 
         <thead class="aft__head">
-          <tr role="row">
-            <th
-              v-for="col in COLUMNS"
-              :key="col"
-              scope="col"
-              role="columnheader"
-              :class="{ aft__num: RIGHT_ALIGNED.has(col) }"
-            >
+          <tr>
+            <th v-for="col in COLUMNS" :key="col" scope="col" :class="{ aft__num: RIGHT_ALIGNED.has(col) }">
               {{ t(COL_LABEL[col]) }}
             </th>
           </tr>
@@ -194,7 +189,7 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
           <template v-if="loading">
             <!-- 骨架走同一张表、同一份 colgroup、同一个 39px：数据到货那一刻整张表不重排，
                  而骨架存在的全部意义就是这个。 -->
-            <tr v-for="i in SKELETON_ROWS" :key="`skel-${i}`" class="aft__row" role="row" aria-hidden="true">
+            <tr v-for="i in SKELETON_ROWS" :key="`skel-${i}`" class="aft__row" aria-hidden="true">
               <!-- 骨条宽度就是列的循环变量：两个数组一一对应，少写一个下标。 -->
               <td v-for="(bone, c) in BONE_WIDTHS" :key="c" role="gridcell">
                 <span class="aft__bone" :style="{ width: `${bone}%` }" />
@@ -202,7 +197,7 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
             </tr>
           </template>
 
-          <tr v-else-if="!items.length" class="aft__row" role="row">
+          <tr v-else-if="!items.length" class="aft__row">
             <td class="aft__none-cell" role="gridcell" :colspan="COLUMNS.length">
               <div class="aft__none">
                 <!-- 空态留在卡里：表头不画掉，否则「这是哪张表的空」就只剩一个孤零零的框。
@@ -222,7 +217,6 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
               :key="item.id"
               class="fb-row aft__row"
               :class="{ 'aft__row--active': item.id === activeId }"
-              role="row"
               :aria-selected="item.id === activeId"
             >
               <td class="aft__cell aft__mono t-meta-read t-num">{{ item.display_id }}</td>

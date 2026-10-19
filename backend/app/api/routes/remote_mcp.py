@@ -1,4 +1,5 @@
-"""Remote MCP servers: project settings, the OAuth callback, and the session proxy.
+"""Project MCP servers: settings (remote ones and commands), the OAuth callback,
+and the session proxy.
 
 Any project member may connect, disconnect or set a value — the connection is
 the project's, and the same standing applies to everyone. No route here returns
@@ -17,9 +18,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
-from app.api.auth import ActorResolver, ActorResolverDep, require_seated_agent
+from app.api.auth import ActorResolver, ActorResolverDep, session_in
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES
+from app.auth.project_roles import require
 from app.core.config import settings
 from app.core.errors import (
     AppError,
@@ -27,16 +30,21 @@ from app.core.errors import (
     BaseError,
     ForbiddenError,
     NotFoundError,
+    UnprocessableEntityError,
     ValidationError,
     message_key,
 )
-from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import exception_text, say
-from app.domain.conversation import services as conversations
+from app.domain.agent_instance.adapters import project_team
+from app.domain.agent_instance.services import project_types, type_of_seat
+from app.domain.authz import policy
+from app.domain.device import mcp_machines
+from app.domain.identity.services import IdentityService
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
+from app.domain.project_permissions import Permission
 from app.domain.remote_mcp import oauth, service, upstream
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(tags=["remote-mcp"])
 
@@ -51,11 +59,31 @@ async def member(
     resolver.reject_failed_credential(actor)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required")
-    if not any(m.handle == actor.handle for m in await roster(db, project_id)):
+    if not any(
+        m.handle == actor.handle
+        for m in await roster(db, project_id, team=project_team)
+    ):
         raise ForbiddenError(say("mcpManageMembersOnly"))
     # The project roster lists every teammate the project has, seated or not.
     await resolver.refuse_unseated_agent(actor, project_id=project_id)
     return actor.handle
+
+
+async def manager(
+    db: AsyncSession, project_id: uuid.UUID, resolver: ActorResolver
+) -> str:
+    """:func:`member`, and a person in their own session: connecting a server,
+    dropping it or setting its secret changes what every room of the project
+    can reach, which no agent decides, prompted by whatever it last read."""
+    handle = await member(db, project_id, resolver)
+    await require(db, project_id, handle, Permission.configure_agents)
+    refusal = await policy.refuse_management_action(
+        await resolver.resolve(project_id=project_id),
+        carries_agent_binding=IdentityService(db).is_agent,
+    )
+    if refusal is not None:
+        raise ForbiddenError(refusal)
+    return handle
 
 
 @router.get("/projects/{project_id}/mcp/servers")
@@ -63,10 +91,19 @@ async def list_servers(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     await member(db, project_id, resolver)
-    return ok(await service.settings_view(db, project_id))
+    return ok(
+        await service.settings_view(
+            db,
+            project_id,
+            project_types=project_types,
+            device_owners=mcp_machines.owners,
+        )
+    )
 
 
-@router.post("/projects/{project_id}/mcp/servers/{name}/connect")
+@router.post(
+    "/projects/{project_id}/mcp/servers/{name}/connect", dependencies=[ROUTE_DECIDES]
+)
 async def connect(
     project_id: uuid.UUID,
     name: str,
@@ -74,27 +111,141 @@ async def connect(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    handle = await member(db, project_id, resolver)
+    handle = await manager(db, project_id, resolver)
     url = await service.begin_connect(
-        db, project_id, name, handle, in_app=started_in_app(request)
+        db,
+        project_id,
+        name,
+        handle,
+        in_app=started_in_app(request),
+        project_types=project_types,
     )
     return ok({"authorization_url": url})
 
 
-@router.delete("/projects/{project_id}/mcp/servers/{name}/connection")
+@router.delete(
+    "/projects/{project_id}/mcp/servers/{name}/connection", dependencies=[ROUTE_DECIDES]
+)
 async def disconnect(
     project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    await member(db, project_id, resolver)
+    await manager(db, project_id, resolver)
     await service.disconnect(db, project_id, name)
     return ok(None)
+
+
+class ServerIn(BaseModel):
+    """A server added in settings: remote (``url``, and how it signs in) or a
+    command, run on the room's machine (``command``, and its environment)."""
+
+    name: str = Field(min_length=1, max_length=64)
+    kind: str = Field(default="remote", pattern="^(remote|command)$")
+    url: str | None = Field(default=None, min_length=1, max_length=2048)
+    auth: str = Field(default="oauth", pattern="^(oauth|headers)$")
+    header: str | None = Field(default=None, max_length=128)
+    value: str | None = Field(default=None, max_length=8192)
+    command: str | None = Field(default=None, min_length=1, max_length=4000)
+    env: dict[str, str] = Field(default_factory=dict, max_length=64)
+
+    def remote_url(self) -> str:
+        if self.url is None:
+            raise UnprocessableEntityError(say("mcpServerUrlRequired"))
+        return self.url
+
+    def command_line(self) -> str:
+        if self.command is None:
+            raise UnprocessableEntityError(say("mcpCommandInvalid"))
+        return self.command
+
+
+class ServerChanged(BaseModel):
+    """The server an add, change or removal was about."""
+
+    name: str
+
+
+@router.post(
+    "/projects/{project_id}/mcp/servers",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ServerChanged),
+)
+async def add_server(
+    project_id: uuid.UUID, body: ServerIn, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Add a server in project settings, beside the repository's."""
+    handle = await manager(db, project_id, resolver)
+    if body.kind == "command":
+        await service.add_command(
+            db,
+            project_id,
+            name=body.name,
+            line=body.command_line(),
+            env=body.env,
+            handle=handle,
+            project_types=project_types,
+        )
+        return ok({"name": body.name})
+    await service.add_server(
+        db,
+        project_id,
+        name=body.name,
+        url=body.remote_url(),
+        header_name=body.header if body.auth == "headers" else None,
+        header_value=body.value if body.auth == "headers" else None,
+        handle=handle,
+        project_types=project_types,
+    )
+    return ok({"name": body.name})
+
+
+@router.put(
+    "/projects/{project_id}/mcp/servers/{name}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ServerChanged),
+)
+async def update_server(
+    project_id: uuid.UUID,
+    name: str,
+    body: ServerIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    handle = await manager(db, project_id, resolver)
+    if body.kind == "command":
+        await service.update_command(
+            db, project_id, name=name, line=body.command_line(), env=body.env
+        )
+        return ok({"name": name})
+    await service.update_server(
+        db,
+        project_id,
+        name=name,
+        url=body.remote_url(),
+        header_name=body.header if body.auth == "headers" else None,
+        header_value=body.value if body.auth == "headers" else None,
+        handle=handle,
+    )
+    return ok({"name": name})
+
+
+@router.delete(
+    "/projects/{project_id}/mcp/servers/{name}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ServerChanged),
+)
+async def remove_server(
+    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await manager(db, project_id, resolver)
+    await service.remove_server(db, project_id, name)
+    return ok({"name": name})
 
 
 class SecretIn(BaseModel):
     value: str = Field(min_length=1, max_length=8192)
 
 
-@router.put("/projects/{project_id}/mcp/secrets/{name}")
+@router.put("/projects/{project_id}/mcp/secrets/{name}", dependencies=[ROUTE_DECIDES])
 async def set_secret(
     project_id: uuid.UUID,
     name: str,
@@ -102,16 +253,20 @@ async def set_secret(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    handle = await member(db, project_id, resolver)
-    await service.set_secret(db, project_id, name, body.value, handle)
+    handle = await manager(db, project_id, resolver)
+    await service.set_secret(
+        db, project_id, name, body.value, handle, project_types=project_types
+    )
     return ok(None)
 
 
-@router.delete("/projects/{project_id}/mcp/secrets/{name}")
+@router.delete(
+    "/projects/{project_id}/mcp/secrets/{name}", dependencies=[ROUTE_DECIDES]
+)
 async def clear_secret(
     project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    await member(db, project_id, resolver)
+    await manager(db, project_id, resolver)
     await service.clear_secret(db, project_id, name)
     return ok(None)
 
@@ -151,7 +306,7 @@ async def callback(
     base = settings.frontend_url.rstrip("/")
     try:
         flow = service.read_state(state)
-    except ValidationError as exc:
+    except UnprocessableEntityError as exc:
         return RedirectResponse(f"{base}/?{urlencode(_failure(exc))}", 302)
     back = f"{base}/projects/{flow['project']}/settings"
     query = {"mcp": flow["server"]}
@@ -174,26 +329,18 @@ class ProxyIn(BaseModel):
     params: dict[str, Any] = {}
 
 
-@router.post("/topics/{topic_id}/mcp/{name}", include_in_schema=False)
+@router.post(
+    "/topics/{topic_id}/mcp/{name}",
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
+)
 async def proxy(
     topic_id: uuid.UUID, name: str, body: ProxyIn, request: Request, db: DbSession
 ) -> dict:
     """A session's request to one of its project's remote servers. Authenticated
     by the room's credential; the credential for the server is attached here."""
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
-    if not claims or claims.get("t") != str(topic_id):
-        raise AuthenticationRequiredError("A credential for this room is required")
-    # The conversation the credential works: a room, or one of its tasks.
-    project_id = await conversations.project_of(db, topic_id)
-    if project_id is None:
-        raise NotFoundError("Topic not found")
-    if claims.get("p") != str(project_id):
-        raise ForbiddenError("This room belongs to another project")
-    await require_seated_agent(
-        db,
-        request.headers.get("x-cheese-token", ""),
-        project_id=project_id,
-        topic_id=topic_id,
+    project_id, claims = await session_in(
+        db, request.headers.get("x-cheese-token", ""), topic_id
     )
     try:
         result = await service.call(
@@ -204,6 +351,7 @@ async def proxy(
             name=name,
             method=body.method,
             params=body.params,
+            type_of_seat=type_of_seat,
         )
     except (AppError, BaseError) as exc:
         # Said to the agent as the tool's answer: what it can do next is the
@@ -219,7 +367,7 @@ async def room_servers(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """The room's read-only view: whose authorization its sessions act with."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         project_id=place.project_id, topic_id=place.conversation_id
     )
@@ -228,4 +376,10 @@ async def room_servers(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
-    return ok({"servers": await service.room_view(db, place.project_id)})
+    return ok(
+        {
+            "servers": await service.room_view(
+                db, place.project_id, project_types=project_types
+            )
+        }
+    )

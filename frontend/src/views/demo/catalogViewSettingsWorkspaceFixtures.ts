@@ -138,7 +138,7 @@ export const SECURITY_PASSKEYS: PasskeyInfo[] = [
   { id: 'pk-1', createdAt: new Date(NOW - 30 * DAY), deviceType: 'multiDevice', backedUp: true },
 ]
 
-/** 一个已关联的第三方账号。 */
+/** 已关联的第三方账号：学校账号和 GitHub。 */
 const SECURITY_CONNECTIONS: InstanceType<typeof SecurityView>['$props']['connections'] = [
   {
     id: 1,
@@ -147,6 +147,16 @@ const SECURITY_CONNECTIONS: InstanceType<typeof SecurityView>['$props']['connect
     providerUserId: '2023010101',
     connectedAt: ago(90 * DAY),
     login: 'wangxiaoming@school.edu',
+    tokenExpires: ago(-DAY),
+    hasRefreshToken: true,
+  },
+  {
+    id: 2,
+    providerId: 'github_app',
+    providerName: 'GitHub',
+    providerUserId: '583231',
+    connectedAt: ago(60 * DAY),
+    login: 'wangxiaoming',
     tokenExpires: ago(-DAY),
     hasRefreshToken: true,
   },
@@ -415,8 +425,8 @@ export const PROJECT_TASKS: RoomTask[] = [
   task({
     id: 'task-idea',
     title: '换一门课的题目板',
-    column: 'not_started',
-    phrase: 'discussing',
+    column: 'building',
+    phrase: 'started',
     owner_handle: 'linxia',
   }),
 ]

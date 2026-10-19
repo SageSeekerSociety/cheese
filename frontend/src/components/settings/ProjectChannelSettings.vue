@@ -199,23 +199,23 @@ function actions(c: ChannelEntry): MenuAction[] {
             onSelect: () => (converting.value = { channel: c, membersOnly: true }),
           }
     )
-  if (c.can_administer)
-    list.push(
-      c.archived
-        ? {
-            key: 'unarchive',
-            label: t('work.projectSettings.channels.unarchive'),
-            icon: 'mdi-archive-arrow-up-outline',
-            onSelect: () => void act(() => store.unarchive(c.id)),
-          }
-        : {
-            key: 'archive',
-            label: t('work.projectSettings.channels.archive'),
-            icon: 'mdi-archive-outline',
-            danger: true,
-            onSelect: () => void act(() => store.archive(c.id)),
-          }
-    )
+  if (c.can_administer) {
+    if (c.archived)
+      list.push({
+        key: 'unarchive',
+        label: t('work.projectSettings.channels.unarchive'),
+        icon: 'mdi-archive-arrow-up-outline',
+        onSelect: () => void act(() => store.unarchive(c.id)),
+      })
+    else if ((c.open_tasks ?? 0) === 0)
+      list.push({
+        key: 'archive',
+        label: t('work.projectSettings.channels.archive'),
+        icon: 'mdi-archive-outline',
+        danger: true,
+        onSelect: () => void act(() => store.archive(c.id)),
+      })
+  }
   return list
 }
 </script>
@@ -298,6 +298,7 @@ function actions(c: ChannelEntry): MenuAction[] {
       :close-disabled="saving"
       @primary="saveEdit"
     >
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to rename or describe the channel; focus moves into its field -->
       <v-text-field
         v-if="editing?.kind === 'rename'"
         v-model="draft"
@@ -332,6 +333,7 @@ function actions(c: ChannelEntry): MenuAction[] {
         hide-details
         autocomplete="off"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
     </AdaptiveDialog>
 
     <AdaptiveDialog

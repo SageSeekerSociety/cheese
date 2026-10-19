@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -16,16 +17,21 @@ spec = importlib.util.spec_from_file_location(
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
-WORKFLOW = Path(__file__).resolve().parent.parent / "workflows" / "required-ci.yml"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "required-ci.yml"
 
 
 class RequiredCITest(unittest.TestCase):
     def test_main_parent_preserves_standalone_push_selections(self):
         # Representative files from every former standalone main-push pattern.
+        # Every path here must exist in the tree: the assertion below selects by
+        # pattern, so a deleted path still selects its suite and reads as true —
+        # `.claude/scripts/check.sh` and `.github/scripts/check.py` sat here long
+        # after they were removed, and nothing noticed.
         previous = {
             "backend": [
                 "backend/app/main.py",
-                "deploy/metering-proxy/proxy.py",
+                "deploy/metering-proxy/cheese_billing_core.py",
                 ".pre-commit-config.yaml",
                 ".github/scripts/ensure-apt.sh",
                 ".github/workflows/test.yml",
@@ -34,26 +40,26 @@ class RequiredCITest(unittest.TestCase):
             "e2e": [
                 "backend/app/main.py",
                 "frontend/src/main.ts",
-                "e2e/tests/login.ts",
+                "e2e/tests/auth.spec.ts",
                 ".github/scripts/ci-test-evidence.py",
                 ".github/workflows/e2e.yml",
             ],
             "cli": [
                 "cli/main.go",
-                "backend/tests/fixtures/wire/frame.json",
+                "backend/tests/fixtures/wire/heartbeat.json",
                 ".github/workflows/cli.yml",
             ],
             "guards": [
                 "backend/app/main.py",
                 "frontend/src/main.ts",
-                "deploy/run.sh",
-                ".claude/scripts/check.sh",
+                "deploy/deploy.sh",
+                "scripts/check.sh",
                 ".pre-commit-config.yaml",
                 ".github/workflows/test.yml",
-                ".github/scripts/check.py",
+                ".github/scripts/required-ci.py",
             ],
             "deploy": [
-                "deploy/run.sh",
+                "deploy/deploy.sh",
                 ".github/workflows/deploy-scripts-test.yml",
                 ".github/workflows/deploy-dev.yml",
                 ".github/workflows/deploy-drift.yml",
@@ -82,6 +88,12 @@ class RequiredCITest(unittest.TestCase):
             for path in paths:
                 with self.subTest(suite=suite, path=path):
                     self.assertTrue(gate.select([path])[suite])
+                    self.assertTrue(
+                        (REPO_ROOT / path).exists(),
+                        f"{path} is named here but is not in the tree: the "
+                        "selection above matches by pattern, so a deleted path "
+                        "still passes it",
+                    )
 
     def test_remote_execution_plugin_runs_the_build_contracts(self):
         # headless_contract.py launches -p through the plugin and the executor,
@@ -104,6 +116,10 @@ class RequiredCITest(unittest.TestCase):
             "scripts/remote_execution/equivalence.py",
             "scripts/remote_execution/custom_mcp.py",
             "backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/runtime_core.py",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/runtime_commands.py",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/runtime_context.py",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/runtime_calls.py",
             "backend/app/domain/agent/project_hooks.py",
             "backend/sandbox/cheese",
             ".github/workflows/mcp-equivalence.yml",
@@ -189,7 +205,7 @@ class RequiredCITest(unittest.TestCase):
                 self.assertTrue(gate.select([path])["backend"])
         for path in (
             "frontend/src/i18n/messages/zh-CN/work/room/doc/index.json",
-            "frontend/src/i18n/messages/zh-CN/account.json",
+            "frontend/src/i18n/messages/zh-CN/account/index.json",
         ):
             with self.subTest(path=path):
                 selected = gate.select([path])
@@ -197,11 +213,10 @@ class RequiredCITest(unittest.TestCase):
                 self.assertFalse(selected["backend"])
 
     def test_frontend_ratchet_scripts_run_the_frontend_suite(self):
-        # lint:catalog and lint:scenes run these scripts against the real tree
+        # lint:scenes and lint:scene-debt run these scripts against the real tree
         # only in the frontend suite; guards alone never runs them there.
         for path in (
             ".claude/scripts/frontend_grade.py",
-            ".claude/scripts/catalog-ratchet.py",
             ".claude/scripts/scene-ratchet.py",
             ".claude/scripts/scene-debt-ratchet.py",
             ".claude/scripts/test_scene_debt_ratchet.py",
@@ -209,7 +224,7 @@ class RequiredCITest(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertTrue(gate.select([path])["frontend"])
-        self.assertFalse(gate.select([".claude/scripts/check.sh"])["frontend"])
+        self.assertFalse(gate.select(["scripts/check.sh"])["frontend"])
 
     def test_combined_merge_group_checks_every_changed_area(self):
         selected = gate.select(["frontend/src/main.ts", "cli/main.go"])
@@ -273,7 +288,7 @@ class RequiredCITest(unittest.TestCase):
                 self.assertTrue(gate.select([path])["deploy"])
 
     def test_shared_wire_fixture_checks_both_languages(self):
-        selected = gate.select(["backend/tests/fixtures/wire/frame.json"])
+        selected = gate.select(["backend/tests/fixtures/wire/heartbeat.json"])
         self.assertTrue(selected["backend"] and selected["cli"])
 
     def test_backend_hook_edits_run_the_hooks_that_consume_them(self):
@@ -286,6 +301,90 @@ class RequiredCITest(unittest.TestCase):
     def test_clean_evidence_helper_runs_its_e2e_consumer(self):
         selected = gate.select([".github/scripts/ci-test-evidence.py"])
         self.assertTrue(selected["e2e"])
+
+    def test_e2e_runs_only_what_its_own_job_executes(self):
+        # e2e.yml starts the app from backend/app, migrates with alembic, seeds
+        # the fusion demo, and drives the app through the browser. Two places
+        # outside app/ and alembic/ are executed by that job and by nobody else:
+        # `backend/tests/forgejo/**` — the backend suite passes
+        # `--ignore=tests/forgejo` (test.yml), so e2e is where those run — and
+        # the seed script the job names. A rule that dropped them would skip the
+        # Playwright shards on a change to the forge fixture they exercise.
+        for path in (
+            "backend/app/api/rooms.py",
+            "backend/alembic/versions/abc123_add_column.py",
+            "backend/alembic.ini",
+            "backend/tests/forgejo/test_pull_ci.py",
+            "backend/tests/forgejo/pull-ci.sh",
+            "backend/scripts/seed_fusion_demo.py",
+            "backend/sandbox/cheese",
+            "backend/pyproject.toml",
+            "backend/uv.lock",
+            "backend/.python-version",
+            "frontend/src/main.ts",
+            "e2e/tests/login.spec.ts",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["e2e"])
+
+    def test_a_change_that_only_its_other_suites_read_skips_the_browser(self):
+        # These are files e2e never executes: unit and integration tests, the
+        # repository's check scripts, and the import-linter contract. Running
+        # five Playwright shards for a change none of them can see is what this
+        # rule stops doing — and the linters that DO read them stay selected.
+        for path in (
+            "backend/tests/unit/test_runtime.py",
+            "backend/tests/integration/test_archive_retires_storage.py",
+            "backend/tests/conftest.py",
+            "backend/scripts/check_boundaries.py",
+            "backend/scripts/test_gateway_conformance.py",
+            "backend/.importlinter",
+            "backend/deferred-import-baseline.json",
+        ):
+            with self.subTest(path=path):
+                selected = gate.select([path])
+                self.assertFalse(selected["e2e"])
+                self.assertTrue(selected["backend"] and selected["guards"])
+
+    def test_a_remote_change_selects_what_its_jobs_execute(self):
+        # remote-execution.yml builds backend/sandbox/Dockerfile.private, runs a
+        # pytest selection whose files load tests/conftest.py (and, through it,
+        # tests/isolation.py and tests/support/*), and names two scripts on the
+        # command line. Anything under one of those roots has to select it —
+        # including alembic.ini, which conftest's `python -m alembic upgrade`
+        # reads from backend/ when a DB-backed test builds its schema.
+        for path in (
+            "backend/app/domain/agent/executor_transport.py",
+            "backend/alembic/env.py",
+            "backend/alembic.ini",
+            "backend/sandbox/Dockerfile.private",
+            "backend/tests/conftest.py",
+            "backend/tests/support/processes.py",
+            "backend/tests/unit/test_private_chat.py",
+            "backend/tests/integration/test_llm_proxy.py",
+            "backend/scripts/assert_suite_ran.py",
+            "backend/scripts/device_connection_lifecycle_acceptance.py",
+            "backend/pyproject.toml",
+            "backend/uv.lock",
+            "backend/.python-version",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["remote"])
+
+    def test_a_change_no_remote_job_executes_skips_the_acceptance(self):
+        # The two jobs do not run the repository's check scripts: a change to
+        # one of them alters no file the acceptance launches.
+        for path in (
+            "backend/scripts/check_boundaries.py",
+            "backend/scripts/gateway_conformance.py",
+            "backend/scripts/seat_throughput.py",
+            "backend/.importlinter",
+            "backend/deferred-import-baseline.json",
+        ):
+            with self.subTest(path=path):
+                selected = gate.select([path])
+                self.assertFalse(selected["remote"])
+                self.assertTrue(selected["backend"] and selected["guards"])
 
     def needs(self):
         """A happy-path ``toJSON(needs)`` for a non-draft (FULL) run.
@@ -301,6 +400,9 @@ class RequiredCITest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "skipped"},
+            # A backend change the paths do not send to the frontend: the api
+            # job answers whether the surface moved, and here it did not.
+            "api": {"result": "success", "outputs": {"moved": "false"}},
             **{
                 k: {"result": "success" if v else "skipped"}
                 for k, v in selected.items()
@@ -320,6 +422,7 @@ class RequiredCITest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "success"},
+            "api": {"result": "skipped"},
             **{k: {"result": "skipped"} for k in selected},
         }
 
@@ -341,13 +444,51 @@ class RequiredCITest(unittest.TestCase):
         del needs["scope"]["outputs"]["backend"]
         self.assertTrue(gate.failures(needs, "full"))
 
+    def test_pull_request_skips_e2e_and_remote_even_when_paths_match(self):
+        for path in (
+            "backend/app/api/rooms.py",
+            "e2e/tests/login.spec.ts",
+            "scripts/remote_execution/room_fixture.py",
+            ".github/scripts/required-ci.py",
+        ):
+            with self.subTest(path=path):
+                pr_selected = gate.select([path], "pull_request")
+                self.assertFalse(pr_selected["e2e"])
+                self.assertFalse(pr_selected["remote"])
+                self.assertTrue(pr_selected["guards"])
+        mg_selected = gate.select(
+            ["e2e/tests/login.spec.ts", "scripts/remote_execution/room_fixture.py"],
+            "merge_group",
+        )
+        self.assertTrue(mg_selected["e2e"])
+        self.assertTrue(mg_selected["remote"])
+
+    def test_check_accepts_skipped_e2e_and_remote_on_pull_request_only(self):
+        pr_needs = self.needs()
+        pr_needs["scope"]["outputs"]["branch_heavy"] = "false"
+        for suite in ("e2e", "remote"):
+            pr_needs["scope"]["outputs"][suite] = "false"
+            pr_needs[suite]["result"] = "skipped"
+        self.assertEqual(gate.failures(pr_needs, "full", "pull_request"), [])
+        raw_skipped = self.needs()
+        for suite in ("e2e", "remote"):
+            raw_skipped[suite]["result"] = "skipped"
+        self.assertEqual(gate.failures(raw_skipped, "full", "pull_request"), [])
+        mismatch = self.needs()
+        mismatch["scope"]["outputs"]["branch_heavy"] = "true"
+        for suite in ("e2e", "remote"):
+            mismatch[suite]["result"] = "skipped"
+        self.assertTrue(gate.failures(mismatch, "full", "pull_request"))
+        for suite in ("e2e", "remote"):
+            with self.subTest(suite=suite):
+                mg_needs = self.needs()
+                mg_needs["scope"]["outputs"]["branch_heavy"] = "true"
+                mg_needs[suite]["result"] = "skipped"
+                self.assertTrue(gate.failures(mg_needs, "full", "merge_group"))
+
 
 class TierForTest(unittest.TestCase):
-    """The event → tier table, the single source of the whole scheme's safety.
-
-    Only a DRAFT pull_request is quick. Everything else — merge queue, a
-    non-draft PR, and any event this cannot read — is the full gate.
-    """
+    """Draft and ready PRs are quick; landed code retains the full gate."""
 
     def test_merge_group_is_always_full(self):
         # The queue entry is the run the production deploy chain reads
@@ -357,37 +498,33 @@ class TierForTest(unittest.TestCase):
             gate.tier_for("merge_group", {"pull_request": {"draft": True}}), "full"
         )
 
-    def test_a_non_draft_pull_request_is_full(self):
-        # Includes ready_for_review: promoting a draft starts a full run.
+    def test_a_non_draft_pull_request_is_quick(self):
+        # Readiness changes the check name, not the branch's quick tier.
         for action in ("opened", "synchronize", "reopened", "ready_for_review"):
             with self.subTest(action=action):
                 event = {"action": action, "pull_request": {"draft": False}}
-                self.assertEqual(gate.tier_for("pull_request", event), "full")
+                self.assertEqual(gate.tier_for("pull_request", event), "quick")
 
-    def test_only_a_draft_pull_request_is_quick(self):
+    def test_non_pull_request_events_cannot_select_quick(self):
+        for event_name in ("push", "merge_group", "workflow_dispatch", "schedule", ""):
+            for draft in (True, False):
+                with self.subTest(event_name=event_name, draft=draft):
+                    self.assertEqual(gate.tier_for(
+                        event_name, {"pull_request": {"draft": draft}}), "full")
+
+    def test_a_draft_pull_request_is_quick(self):
         for action in ("opened", "synchronize", "converted_to_draft"):
             with self.subTest(action=action):
                 event = {"action": action, "pull_request": {"draft": True}}
                 self.assertEqual(gate.tier_for("pull_request", event), "quick")
 
-    def test_the_draft_flag_not_the_action_is_authoritative(self):
-        # Same action, opposite flag: the flag wins, so a stale/renamed action
-        # can never promote a draft to the full gate (or vice versa).
-        for action in ("opened", "ready_for_review", "synchronize", "reopened"):
-            with self.subTest(action=action, draft=False):
-                self.assertEqual(
-                    gate.tier_for(
-                        "pull_request", {"action": action, "pull_request": {"draft": False}}
-                    ),
-                    "full",
-                )
-            with self.subTest(action=action, draft=True):
-                self.assertEqual(
-                    gate.tier_for(
-                        "pull_request", {"action": action, "pull_request": {"draft": True}}
-                    ),
-                    "quick",
-                )
+    def test_readiness_does_not_change_the_branch_tier(self):
+        for action in ("opened", "ready_for_review", "converted_to_draft", "synchronize"):
+            for draft in (False, True):
+                with self.subTest(action=action, draft=draft):
+                    self.assertEqual(gate.tier_for(
+                        "pull_request", {"action": action, "pull_request": {"draft": draft}}
+                    ), "quick")
 
     def test_an_unreadable_event_fails_closed_to_full(self):
         for event_name, event in (
@@ -415,6 +552,9 @@ class AggregationTierTest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "skipped"},
+            # A backend change the paths do not send to the frontend: the api
+            # job answers whether the surface moved, and here it did not.
+            "api": {"result": "success", "outputs": {"moved": "false"}},
             **{
                 k: {"result": "success" if v else "skipped"}
                 for k, v in selected.items()
@@ -428,6 +568,7 @@ class AggregationTierTest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "success"},
+            "api": {"result": "skipped"},
             **{k: {"result": "skipped"} for k in selected},
         }
 
@@ -483,6 +624,209 @@ class AggregationTierTest(unittest.TestCase):
         needs = self.needs()
         del needs["scope"]["outputs"]["tier"]
         self.assertTrue(gate.failures(needs, "full"))
+
+
+class ApiSurfaceTest(unittest.TestCase):
+    """A backend change that moves the OpenAPI document runs the frontend suite.
+
+    The frontend compiles against types generated from that document, so a
+    change that moves it and lands without the frontend suite has shipped an
+    API surface nobody compiled the frontend against. No path says when the
+    document moved; the ``api`` job says it, and the required check must hold
+    the frontend suite to that answer.
+    """
+
+    def needs(self, paths=("backend/app/api/rooms.py",), api=None, frontend=None):
+        selected = gate.select(list(paths))
+        outputs = {k: str(v).lower() for k, v in selected.items()}
+        outputs["tier"] = "full"
+        needs = {
+            "scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": "skipped"},
+            **{k: {"result": "success" if v else "skipped"} for k, v in selected.items()},
+        }
+        if api is not None:
+            needs["api"] = api
+        if frontend is not None:
+            needs["frontend"] = {"result": frontend}
+        return needs
+
+    def test_a_moved_surface_without_the_frontend_suite_is_red(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="skipped")
+        self.assertTrue(gate.failures(needs, "full"))
+
+    def test_a_moved_surface_with_the_frontend_suite_green_passes(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="success")
+        self.assertEqual(gate.failures(needs, "full"), [])
+
+    def test_a_moved_surface_with_a_red_frontend_suite_is_red(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="failure")
+        self.assertTrue(gate.failures(needs, "full"))
+
+    def test_an_unmoved_surface_leaves_the_frontend_suite_out(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "false"}},
+                           frontend="skipped")
+        self.assertEqual(gate.failures(needs, "full"), [])
+
+    def test_a_backend_change_with_no_answer_from_api_is_red(self):
+        # A job that did not report whether the surface moved has not excused
+        # the frontend suite it would have started.
+        for api in ({"result": "failure"}, {"result": "cancelled"}, {"result": "skipped"},
+                    None, {"result": "success"},
+                    {"result": "success", "outputs": {"moved": ""}},
+                    {"result": "success", "outputs": {"moved": "maybe"}}):
+            with self.subTest(api=api):
+                self.assertTrue(gate.failures(self.needs(api=api, frontend="skipped"), "full"))
+
+    def test_api_runs_only_where_the_paths_left_the_question_open(self):
+        # A frontend change already runs the suite, and a change outside the
+        # backend cannot move the document: neither asks api.
+        for paths in (("frontend/src/main.ts",),
+                      ("backend/app/api/rooms.py", "frontend/src/main.ts"),
+                      ("docs/workflows.md",)):
+            with self.subTest(paths=paths):
+                ran = self.needs(paths, api={"result": "success", "outputs": {"moved": "false"}})
+                self.assertTrue(gate.failures(ran, "full"))
+                skipped = self.needs(paths, api={"result": "skipped"})
+                self.assertEqual(gate.failures(skipped, "full"), [])
+
+    def test_a_draft_never_asks_api(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}})
+        needs["scope"]["outputs"]["tier"] = "quick"
+        needs["fast"]["result"] = "success"
+        for suite in gate.PATHS:
+            needs[suite] = {"result": "skipped"}
+        self.assertTrue(gate.failures(needs, "quick"))
+        needs["api"] = {"result": "skipped"}
+        self.assertEqual(gate.failures(needs, "quick"), [])
+
+    @staticmethod
+    def _holds(expression, outputs, moved, needs_succeeded):
+        """Whether an ``if:`` over scope outputs and ``needs.api.outputs.moved``
+        holds, given whether every job it needs succeeded.
+
+        A condition with no status function gets GitHub's implicit
+        ``success()``: a skipped or failed need skips the job whatever the rest
+        says. Only the operators these two conditions use are read; anything
+        else raises, so a rewritten condition fails here instead of passing."""
+        expr = expression.strip()
+        match = re.fullmatch(r"\$\{\{(.*)\}\}", expr, re.S)
+        expr = (match.group(1) if match else expr).strip()
+        if not re.search(r"\b(?:success|failure|always|cancelled)\(\)", expr):
+            expr = f"{needs_succeeded!r} && ({expr})"
+        expr = re.sub(r"needs\.scope\.outputs\.(\w+)",
+                      lambda m: repr(outputs.get(m.group(1), "")), expr)
+        expr = expr.replace("needs.api.outputs.moved", repr(moved))
+        expr = expr.replace("!cancelled()", "True")
+        expr = expr.replace("&&", " and ").replace("||", " or ")
+        if re.search(r"[&|]|![^=]|needs\.", expr):
+            raise AssertionError(f"unsupported condition: {expression!r} -> {expr}")
+        return bool(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307
+
+    def test_the_workflow_conditions_produce_what_the_judge_requires(self):
+        # Run every combination through the two `if:`s exactly as written in
+        # required-ci.yml, give each job the result GitHub would, and ask the
+        # judge. A condition that drifted from the judge — api asked when the
+        # paths already chose the frontend, or the frontend left out when api
+        # saw the surface move — leaves a combination the judge refuses.
+        jobs = jobs_of(WORKFLOW.read_text())
+        api_if, frontend_if = jobs["api"]["if"], jobs["frontend"]["if"]
+        for tier in ("full", "quick"):
+            for backend in ("true", "false"):
+                for frontend in ("true", "false"):
+                    for moved in ("true", "false"):
+                        with self.subTest(tier=tier, backend=backend,
+                                          frontend=frontend, moved=moved):
+                            outputs = {suite: "false" for suite in gate.PATHS}
+                            outputs.update(tier=tier, backend=backend, frontend=frontend)
+                            api_runs = self._holds(api_if, outputs, "", True)
+                            self.assertEqual(api_runs, gate.api_selected(outputs, tier))
+                            # A skipped job's outputs are empty strings.
+                            api_moved = moved if api_runs else ""
+                            # frontend needs scope (succeeded) and api, which
+                            # succeeded only if it ran.
+                            frontend_runs = self._holds(frontend_if, outputs, api_moved,
+                                                        api_runs)
+                            needs = {
+                                "scope": {"result": "success", "outputs": outputs},
+                                "fast": {"result": "success" if tier == "quick" else "skipped"},
+                                "api": ({"result": "success", "outputs": {"moved": moved}}
+                                        if api_runs else {"result": "skipped"}),
+                            }
+                            for suite in gate.PATHS:
+                                runs = (frontend_runs if suite == "frontend"
+                                        else tier == "full" and outputs[suite] == "true")
+                                needs[suite] = {"result": "success" if runs else "skipped"}
+                            self.assertEqual(gate.failures(needs, tier), [])
+
+    def test_the_api_output_is_the_one_the_compare_step_writes(self):
+        # The frontend's `if:` reads `needs.api.outputs.moved`; the job maps it
+        # from a step's output. A renamed step id or output key leaves it empty,
+        # and an empty `moved` is a judge-red run on every backend change.
+        text = jobs_of(WORKFLOW.read_text())["api"]["text"]
+        mapped = re.search(r"^      moved: \$\{\{ steps\.([\w-]+)\.outputs\.(\w+) \}\}$",
+                           text, re.M)
+        self.assertIsNotNone(mapped, "the api job does not map `moved` from a step output")
+        step_id, key = mapped.groups()
+        self.assertEqual(key, "moved")
+        self.assertRegex(text, rf"(?m)^        id: {re.escape(step_id)}$")
+        step = text[text.index(f"id: {step_id}"):]
+        self.assertIn("export_openapi --stdout", step.split("\n      - ")[0])
+
+    def run_compare(self, head_doc, base_doc, base_exit=0):
+        """Run the api job's real comparison shell against stub git and uv.
+
+        The stub uv prints ``head_doc`` from the change's backend/ and
+        ``base_doc`` from the base worktree's, and exits ``base_exit`` there.
+        Returns the process and what the step wrote to $GITHUB_OUTPUT.
+        """
+        body = run_body_containing(WORKFLOW.read_text(), "export_openapi --stdout")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "repo" / "backend").mkdir(parents=True)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "git",
+                  'if [ "$1" = worktree ]; then mkdir -p "${@: -2:1}/backend"; fi\n')
+            # Prints only from the two backend/ directories the step must run
+            # it in; anywhere else is a step that changed directory wrongly.
+            _stub(bindir, "uv",
+                  'case "$PWD" in\n'
+                  '  "$RUNNER_TEMP/base/backend") printf "%s" "$BASE_DOC"; exit "$BASE_EXIT";;\n'
+                  '  */repo/backend) printf "%s" "$HEAD_DOC";;\n'
+                  '  *) echo "uv run from $PWD" >&2; exit 3;;\n'
+                  'esac\n')
+            output = tmp / "github_output"
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp / "runner"), "GITHUB_OUTPUT": str(output),
+                   "BASE_SHA": "0" * 40, "HEAD_DOC": head_doc, "BASE_DOC": base_doc,
+                   "BASE_EXIT": str(base_exit)}
+            (tmp / "runner").mkdir()
+            # `bash -e`: the shell GitHub gives a Linux `run:` step.
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp / "repo",
+                                  capture_output=True, text=True)
+            written = output.read_text() if output.exists() else ""
+        return proc, written
+
+    def test_the_compare_step_reports_a_moved_document(self):
+        proc, written = self.run_compare('{"paths": {"/a": {}}}\n', '{"paths": {}}\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(written.splitlines(), ["moved=true"])
+
+    def test_the_compare_step_reports_an_unmoved_document(self):
+        proc, written = self.run_compare('{"paths": {}}\n', '{"paths": {}}\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(written.splitlines(), ["moved=false"])
+
+    def test_a_base_that_cannot_print_its_document_fails_the_step(self):
+        # No document at the base is no answer: the step must fail (which the
+        # judge reads as red) rather than call an empty file "moved" or not.
+        proc, written = self.run_compare('{"paths": {}}\n', "", base_exit=1)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("moved=", written)
 
 
 def run_bodies(text):
@@ -545,6 +889,26 @@ def jobs_of(text):
     for job in jobs.values():
         job["text"] = "\n".join(job["text"])
     return jobs
+
+
+def steps_of(job_text):
+    """The top-level steps and scalar keys of a workflow job."""
+    lines = job_text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.rstrip() == "    steps:"), None)
+    if start is None:
+        raise AssertionError("job has no steps: mapping")
+    steps = []
+    for line in lines[start + 1:]:
+        if line.strip() and len(line) - len(line.lstrip()) < 6:
+            break
+        item = re.match(r"^      - ([\w-]+):[ \t]*(.*)$", line)
+        if item:
+            steps.append({item.group(1): item.group(2)})
+        elif steps:
+            key = re.match(r"^        ([\w-]+):[ \t]*(.*)$", line)
+            if key:
+                steps[-1][key.group(1)] = key.group(2)
+    return steps
 
 
 def condition_holds(expression, event_name, draft, cancelled=False):
@@ -904,6 +1268,735 @@ class WorkflowTextTest(unittest.TestCase):
         self.assertFalse(condition_holds(draft["if"], "pull_request", True, True))
         self.assertFalse(condition_holds(full["if"], "merge_group", None, True))
 
+    @staticmethod
+    def _concurrency_group(text, event_name, ref, sha):
+        """The run's concurrency group, evaluated for one event."""
+        group = re.search(r"(?m)^  group: (.*)$", text).group(1).strip()
+
+        def evaluate(match):
+            expression = (match.group(1).strip()
+                          .replace("github.event_name", repr(event_name))
+                          .replace("github.ref", repr(ref)).replace("github.sha", repr(sha))
+                          .replace("&&", " and ").replace("||", " or "))
+            return str(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307
+
+        return re.sub(r"\$\{\{(.*?)\}\}", evaluate, group)
+
+    def test_main_pushes_queue_in_one_group_while_pull_requests_cancel(self):
+        # The batching is GitHub's: one run executing, at most one pending, and a
+        # newer pending run replaces the older one — which only happens inside
+        # one group. One group per sha (the old shape) would run every commit and
+        # never queue; cancelling a push would drop a commit's coverage.
+        self.assertRegex(self.text, r"(?m)^  push:\n    branches: \[main\]$")
+        first = self._concurrency_group(self.text, "push", "refs/heads/main", "a" * 40)
+        second = self._concurrency_group(self.text, "push", "refs/heads/main", "b" * 40)
+        self.assertEqual(first, second,
+                         "each main push got its own concurrency group, so nothing queues")
+        self.assertNotEqual(
+            self._concurrency_group(self.text, "pull_request", "refs/pull/1/merge", "a" * 40),
+            self._concurrency_group(self.text, "pull_request", "refs/pull/2/merge", "b" * 40),
+            "pull requests share one group, so a new one cancels the wrong run")
+        self.assertIn(
+            "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", self.text,
+            "a push must not cancel an in-flight batch (cancel-in-progress must be pull-request only)")
+
+    def test_the_anchor_moves_only_after_a_green_main_push(self):
+        job = jobs_of(self.text)["mark-green"]
+        self.assertIn("needs: required", job["text"])
+        self.assertIn("github.event_name == 'push'", job["if"])
+        # cancelled() in an if: drops GitHub's implicit success(): a failed
+        # aggregator would otherwise still move the anchor forward.
+        self.assertIn("needs.required.result == 'success'", job["if"])
+        self.assertIn("contents: write", job["text"])
+        self.assertIn("refs/heads/main-green", job["text"])
+
+    def test_the_anchor_moves_through_the_server_so_a_shallow_clone_can_move_it(self):
+        # `git push` from the depth-1 checkout refuses a fast-forward as
+        # non-fast-forward because the client cannot see that the anchor is an
+        # ancestor (2026-10-18: two green batches left it behind). The REST call
+        # lets the server make that judgement; force=false keeps it honest.
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        self.assertNotIn("git push", body,
+                         "a client-side push cannot judge ancestry in a shallow clone")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl", 'printf "%s\\n" "$@" > "$CURL_ARGS"\necho 200\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "GITHUB_SHA": "a" * 40, "CURL_ARGS": str(tmp / "args"),
+                   "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            args = (tmp / "args").read_text().splitlines()
+            self.assertIn("PATCH", args, "the anchor must move through the server")
+            self.assertIn("https://api.github.com/repos/owner/repo/git/refs/heads/main-green",
+                          args)
+            # Without the token the API answers 401 and the step stays green
+            # while the anchor never moves — the failure this change is about.
+            self.assertIn("Authorization: Bearer x", args)
+            # The token has to sit on this step, not on a neighbour: an env
+            # entry elsewhere in the job leaves $GH_TOKEN empty here, the API
+            # answers 401, and the step only warns — green, anchor frozen.
+            anchor_step = job["text"].split("- name: Point main-green", 1)[1].split("\n      - ", 1)[0]
+            self.assertIn("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}", anchor_step)
+            # The server decides whether this is a fast-forward; a force here
+            # would let a rewritten main hide commits from the next batch.
+            payload = "\n".join(args)
+            self.assertIn('"force":false', payload)
+            self.assertIn(f'"sha":"{"a" * 40}"', payload)
+            # --max-time bounds one attempt and --retry multiplies it: 3x30+4
+            # per call keeps update+create+read-back inside this job's five
+            # minutes, which a timed-out run would otherwise blow.
+            # Retry-After is served by the server and is not transport, so
+            # --max-time does not bound a retry wait; only --retry-max-time
+            # does. Without it a 429 that says "wait a minute" sleeps twice.
+            self.assertIn("--retry-max-time", args)
+            # Exact values, not substrings: "300" contains "30" and "600"
+            # contains "60", so an assertIn here would pass a budget that
+            # outlasts this job.
+            self.assertEqual(args[args.index("--retry-max-time") + 1], "60")
+            self.assertEqual(args[args.index("--max-time") + 1], "30")
+            self.assertEqual(args[args.index("--retry") + 1], "2")
+            self.assertNotIn("--max-time\n60", payload)
+
+    def test_a_missing_anchor_is_created_rather_than_left_missing(self):
+        # PATCH only updates an existing ref: with the anchor deleted, 422 is
+        # all it can answer, and an anchor that never comes back sends every
+        # later batch to the full scope — and a candidate covered by no batch
+        # can never be released. The POST creates it.
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl", (
+                'printf "%s\\n" "$@" >> "$CURL_ARGS"; echo "---" >> "$CURL_ARGS"\n'
+                'case "$*" in *"-X PATCH"*) echo 422;; *) echo 201;; esac\n'
+            ))
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "GITHUB_SHA": "a" * 40, "CURL_ARGS": str(tmp / "args"),
+                   "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("::warning::", proc.stdout)
+            self.assertIn("a" * 40, (tmp / "summary").read_text())
+
+    def test_a_create_whose_response_was_lost_is_read_back_before_warning(self):
+        # If the create reached GitHub and only its response was lost, curl's
+        # retry meets 409 ("already exists"). Calling that a failure would put
+        # "the anchor did not move" in the summary while it now points here.
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl", (
+                'printf "%s\\n" "$@" >> "$CURL_ARGS"; echo "---" >> "$CURL_ARGS"\n'
+                'case "$*" in\n'
+                '  *"-X PATCH"*) echo 422;;\n'
+                '  *"-X POST"*) echo 409;;\n'
+                '  *) printf \'{"object":{"sha":"%s"}}\\n\' "$GITHUB_SHA";;\n'
+                'esac\n'
+            ))
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "GITHUB_SHA": "a" * 40, "CURL_ARGS": str(tmp / "args"),
+                   "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("::warning::", proc.stdout)
+            self.assertIn("a" * 40, (tmp / "summary").read_text())
+            # And the read-back really happened: a GET at the documented
+            # single-ref endpoint, not a third write.
+            self.assertIn("https://api.github.com/repos/owner/repo/git/ref/heads/main-green",
+                          (tmp / "args").read_text())
+            self.assertNotIn("-X\nPUT", (tmp / "args").read_text())
+            calls = (tmp / "args").read_text()
+            call_args = calls.splitlines()
+            self.assertIn("-X\nPATCH", calls)
+            self.assertIn("-X\nPOST", calls)
+            # Create has its own endpoint: POSTing to the update URL answers 404
+            # and the anchor stays missing.
+            self.assertIn("https://api.github.com/repos/owner/repo/git/refs", call_args)
+            self.assertIn('"ref":"refs/heads/main-green"', calls)
+            self.assertIn(f'"sha":"{"a" * 40}"', calls)
+
+    def test_a_failed_anchor_move_does_not_fail_the_run(self):
+        # The deploy gate reads this run's conclusion, so one network error on
+        # this call would hold a commit off dev. A stale anchor is safe by
+        # construction — the next run diffs from the older commit — so the step
+        # is loud and green instead.
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        # (stub, a create attempt is expected): only a definite answer about a
+        # missing ref earns the second call. A timeout keeps one retry budget,
+        # because two would outlast this job's five minutes — and a timed-out
+        # run fails the deploy gate, the one thing this job must not do.
+        for stub, creates in (('echo 422\n', True), ('exit 7\n', False), ('echo 503\n', False)):
+            with self.subTest(stub=stub), tempfile.TemporaryDirectory() as tmp:
+                tmp = Path(tmp)
+                bindir = tmp / "bin"
+                bindir.mkdir()
+                _stub(bindir, "curl", 'printf "%s\\n" "$@" >> "$CURL_ARGS"\n' + stub)
+                env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                       "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                       "GITHUB_SHA": "a" * 40, "CURL_ARGS": str(tmp / "args"),
+                       "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+                proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                      capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 0,
+                                 "a refused anchor move failed the run it must never hold up")
+                self.assertIn("::warning::", proc.stdout)
+                self.assertIn("anchor", (tmp / "summary").read_text())
+                calls = (tmp / "args").read_text()
+                self.assertEqual("-X\nPOST" in calls, creates,
+                                 f"create attempt policy wrong for {stub!r}")
+
+    def _title_step(self, tmp, event_name, env_extra):
+        """Run the commit-title step's real shell against a stubbed curl.
+
+        The stub records the URL it was asked for, so a test can tell which base
+        the step compared against — a stub answering every URL with the same
+        body would stay green through a step pointed at the wrong variable.
+        """
+        body = run_body_containing(self.text, "api()")
+        bindir = Path(tmp) / "bin"
+        bindir.mkdir()
+        _stub(bindir, "curl", (
+            'out=""\nprev=""\nfor a in "$@"; do\n'
+            '  case "$a" in https://*) printf "%s\\n" "$a" >> "$CURL_URLS";; esac\n'
+            '  [ "$prev" = "-o" ] && out="$a"; prev="$a"\n'
+            'done\n'
+            'printf "%s" \'{"commits":[{"commit":{"message":"update stuff\\nfiller"}}]}\' > "$out"\n'
+            'printf 200\n'
+        ))
+        urls = Path(tmp) / "curl_urls"
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+               "RUNNER_TEMP": str(tmp), "GITHUB_EVENT_NAME": event_name,
+               "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+               "GITHUB_SHA": "h" * 40, "CURL_URLS": str(urls), **env_extra}
+        proc = subprocess.run(["bash", "-e", "-c", body],
+                              cwd=WORKFLOW.parent.parent.parent,
+                              env=env, capture_output=True, text=True)
+        return proc, (urls.read_text() if urls.exists() else "")
+
+    def test_a_landed_title_is_reported_and_does_not_fail_the_gate(self):
+        # The title is already on main and nobody can retitle it, so a red here
+        # would hold back a validated commit (and dev) over formatting.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc, urls = self._title_step(tmp, "push", {"PUSH_BASE_SHA": "b" * 40})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("::warning::", proc.stdout)
+        self.assertNotIn("::error::", proc.stdout)
+        # The batch base is the anchor this run resolved, not the merge_group
+        # variable (empty on a push) and not an empty string.
+        self.assertIn(f"compare/{'b' * 40}...{'h' * 40}", urls, urls)
+
+    def test_a_landed_title_without_an_anchor_is_reported_the_same_way(self):
+        # The first push after the gate moved to main has no anchor; it checks
+        # the push payload's own commits, still without failing the run.
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = Path(tmp) / "event.json"
+            payload.write_text('{"commits": [{"message": "update stuff\\nfiller"}]}')
+            proc, urls = self._title_step(tmp, "push", {"PUSH_BASE_SHA": "", "GITHUB_EVENT_PATH": str(payload)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("::warning::", proc.stdout)
+        # No anchor: it must not try to compare against an empty base.
+        self.assertEqual(urls, "")
+
+    def test_a_title_about_to_land_is_still_fatal(self):
+        # In the merge queue the author can still fix it: that one is refused.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc, urls = self._title_step(tmp, "merge_group", {"BASE_SHA": "b" * 40, "HEAD_SHA": "h" * 40})
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("::error::", proc.stdout)
+        self.assertIn(f"compare/{'b' * 40}...{'h' * 40}", urls, urls)
+
+    def test_a_moved_anchor_is_silent_and_names_the_sha(self):
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl", 'echo 200\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "GITHUB_SHA": "a" * 40, "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("::warning::", proc.stdout)
+            # The summary is where a stuck anchor gets read from: a green run
+            # must say which commit the anchor now points at.
+            self.assertIn("a" * 40, (tmp / "summary").read_text())
+
+    def test_fail_fast_watches_a_main_push_batch_as_well_as_a_queue_entry(self):
+        # A main push batch has the same problem the queue entry had: its
+        # `CI required` cannot start before the slowest suite, so without this
+        # watcher main reads pending for the whole run after a job already
+        # failed. A pull request keeps the aggregator's own report.
+        job = jobs_of(self.text)["fail-fast"]
+        for event, runs in (("push", True), ("merge_group", True),
+                            ("pull_request", False)):
+            self.assertEqual(condition_holds(job["if"], event, None), runs, event)
+        self.assertIn("checks: write", job["text"])
+        # The watcher posts its check on the commit under test: on a push there
+        # is no merge_group payload, so the env must fall back to github.sha.
+        self.assertIn("github.event.merge_group.head_sha || github.sha", job["text"])
+        self.assertIn("merge-group-fail-fast.py", job["text"])
+
+    def test_backend_integration_is_deferred_to_merge_group(self):
+        jobs = jobs_of(self.text)
+        self.assertIn("branch_heavy", jobs["scope"]["text"])
+        self.assertIn(
+            "integration: ${{ needs.scope.outputs.branch_heavy == 'true' }}",
+            jobs["backend"]["text"],
+        )
+        test_yml = (WORKFLOW.parent / "test.yml").read_text()
+        test_jobs = jobs_of(test_yml)
+        self.assertIn("integration", test_jobs)
+        self.assertEqual(
+            test_jobs["integration"]["if"],
+            "${{ inputs.integration && github.event_name != 'pull_request' }}",
+        )
+        collect_body = run_body_containing(test_yml, "backend-expected")
+        compare_body = run_body_containing(test_yml, "assert_shards_complete")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            uv_log = tmp / "uv_args"
+            _stub(bindir, "uv", 'printf "%s\\n" "$*" >> "$UV_LOG"\n')
+            _stub(bindir, "python3", "exit 0\n")
+            env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "RUNNER_TEMP": str(tmp),
+                "UV_LOG": str(uv_log),
+                "PLAN_ARTIFACT": "backend-expected",
+                "TEST_RESULT": "success",
+            }
+            subprocess.run(
+                ["bash", "-e", "-c", collect_body],
+                env={**env, "EXPECT_INTEGRATION": "false"},
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertIn("-m not integration", uv_log.read_text())
+            uv_log.write_text("")
+            subprocess.run(
+                ["bash", "-e", "-c", collect_body],
+                env={**env, "EXPECT_INTEGRATION": "true"},
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertNotIn("not integration", uv_log.read_text())
+
+            pr_ok = subprocess.run(
+                ["bash", "-e", "-c", compare_body],
+                env={**env, "EXPECT_INTEGRATION": "false", "INTEGRATION_RESULT": "skipped"},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertEqual(pr_ok.returncode, 0, pr_ok.stderr)
+            mg_fail = subprocess.run(
+                ["bash", "-e", "-c", compare_body],
+                env={**env, "EXPECT_INTEGRATION": "true", "INTEGRATION_RESULT": "skipped"},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertNotEqual(mg_fail.returncode, 0)
+
+    def test_the_title_step_asks_curl_for_a_retry_and_keeps_the_body(self):
+        # #4144: one TLS reset on the API GET reddened a merge-queue entry. The
+        # shell cannot retry the request itself, so it asks curl for a retry
+        # budget; run the step's real shell against a curl stub that records its
+        # arguments and succeeds, and the request must arrive with that budget
+        # and the body must still reach the checker verbatim.
+        body = run_body_containing(self.text, "api()")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            curl_args = tmp / "curl_args"
+            _stub(bindir, "curl", (
+                'out=""\n'
+                'prev=""\n'
+                'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+                'printf "%s\\n" "$*" >> "$CURL_ARGS"\n'
+                'printf "%s" \'{"number":7}\' > "$out"\n'
+                'printf 200\n'
+            ))
+            _stub(bindir, "python3", 'printf "%s\\n" "$*" >> "$PY_ARGS"\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp), "CURL_ARGS": str(curl_args),
+                   "PY_ARGS": str(tmp / "py_args"), "GITHUB_REPOSITORY": "owner/repo",
+                   "PR_NUMBER": "7", "GH_TOKEN": "x",
+                   "GITHUB_EVENT_NAME": "pull_request"}
+            subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp, check=True,
+                           capture_output=True, text=True)
+            args = curl_args.read_text()
+            # --retry-all-errors alone retries nothing: curl's default retry
+            # count is zero, so the count is what makes a TLS reset retry.
+            self.assertRegex(args, r"--retry(?:=|\s+)[1-9]\d*",
+                             f"no retry count, so nothing is retried: {args}")
+            self.assertIn("--retry-all-errors", args, f"no all-errors switch: {args}")
+            self.assertIn("--max-time", args, f"no bound on a hung read: {args}")
+            self.assertEqual((tmp / "pull.json").read_text(), '{"number":7}',
+                             "the response did not reach the checker verbatim")
+
+    def test_the_title_step_does_not_hand_python_an_empty_body(self):
+        # A read that really fails is reported where it happened and exits
+        # there. The merge_group branch used to pipe curl straight into python,
+        # which turned the network error into a JSONDecodeError on "".
+        body = run_body_containing(self.text, "api()")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl",
+                  'printf "curl: (35) TLS connect error\\n" >&2\nexit 35\n')
+            _stub(bindir, "python3", 'printf "%s\\n" "$*" >> "$PY_ARGS"\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp), "PY_ARGS": str(tmp / "py_args"),
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "BASE_SHA": "b" * 40, "HEAD_SHA": "h" * 40,
+                   "GITHUB_EVENT_NAME": "merge_group"}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertNotEqual(proc.returncode, 0, "a failed read did not fail the step")
+            self.assertFalse((tmp / "py_args").exists(),
+                             "python was reached after a failed read")
+            self.assertIn("curl exit 35", proc.stderr)
+            self.assertIn("HTTP", proc.stderr)
+
+    def test_the_scope_step_retries_a_failed_base_fetch(self):
+        # The base fetch is the same single shot on the same pool, and every
+        # selected suite waits on it: a transient network error there reddens
+        # the whole run.
+        body = run_body_containing(self.text, "required-ci.py scope")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            git_calls = tmp / "git_calls"
+            _stub(bindir, "git", (
+                'n=$(cat "$GIT_CALLS" 2>/dev/null || echo 0)\n'
+                'n=$((n + 1))\n'
+                'printf "%s" "$n" > "$GIT_CALLS"\n'
+                '[ "$n" -ge 2 ] || { echo "fatal: unable to access" >&2; exit 128; }\n'
+            ))
+            _stub(bindir, "python3", "exit 0\n")
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GIT_CALLS": str(git_calls), "EVENT_BASE": "b" * 40}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(git_calls.read_text(), "2",
+                             "the base fetch was not retried")
+
+    def test_a_main_push_does_not_fetch_a_base_the_event_does_not_name(self):
+        # A push has no base worth fetching: github.event.before is only the
+        # previous tip, and the script resolves `main-green` itself. A step that
+        # still fetched the event base would pay a network call, and on an
+        # anchor-less first push it would fail on an empty ref.
+        body = run_body_containing(self.text, "required-ci.py scope")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            git_calls = tmp / "git_calls"
+            _stub(bindir, "git", 'printf "%s\\n" "$*" >> "$GIT_CALLS"\n')
+            _stub(bindir, "python3", 'printf "%s\\n" "$*" >> "$PY_CALLS"\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GIT_CALLS": str(git_calls), "PY_CALLS": str(tmp / "py_calls"),
+                   "GITHUB_EVENT_NAME": "push", "EVENT_BASE": ""}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertFalse(git_calls.exists(), "a push fetched a base it cannot use")
+            self.assertIn("scope", (tmp / "py_calls").read_text())
+
+
+    def test_required_backend_download_retries_once_after_cleaning_a_failure(self):
+        required = jobs_of(self.text)["required"]
+        steps = steps_of(required["text"])
+        downloads = [step for step in steps
+                     if step.get("uses", "").startswith("actions/download-artifact@")]
+        self.assertEqual(len(downloads), 2, "the failed download must get exactly one retry")
+        first, retry = downloads
+        self.assertEqual(first["id"], "download_backend_artifacts")
+        self.assertEqual(first["if"], "needs.backend.result == 'success'")
+        self.assertEqual(first["continue-on-error"], "true")
+        self.assertNotIn("continue-on-error", retry,
+                         "a failed retry must fail CI required")
+        self.assertEqual(first["uses"], retry["uses"],
+                         "the retry must keep the pinned download action")
+        self.assertEqual(required["text"].count("pattern: backend-*"), 2)
+        self.assertEqual(required["text"].count("path: ${{ runner.temp }}/backend-artifacts"), 2)
+
+        clear = next(step for step in steps
+                     if step.get("id") == "clear_backend_artifacts")
+        self.assertEqual(clear["if"],
+                         "steps.download_backend_artifacts.outcome == 'failure'")
+        self.assertEqual(clear["run"], 'rm -rf "$RUNNER_TEMP/backend-artifacts"')
+        self.assertNotIn("continue-on-error", clear,
+                         "a failed cleanup must fail CI required")
+        self.assertEqual(
+            retry["if"],
+            "steps.download_backend_artifacts.outcome == 'failure' && "
+            "steps.clear_backend_artifacts.outcome == 'success'",
+        )
+
+        coverage = next(step for step in steps
+                        if step.get("name") == "Backend coverage complete")
+        self.assertLess(steps.index(first), steps.index(clear))
+        self.assertLess(steps.index(clear), steps.index(retry))
+        self.assertLess(steps.index(retry), steps.index(coverage))
+        self.assertEqual(coverage["if"], "needs.backend.result == 'success'")
+        self.assertNotIn("continue-on-error", coverage,
+                         "incomplete shard coverage must fail CI required")
+
+    def test_required_backend_artifact_cleanup_failure_is_a_hard_failure(self):
+        steps = steps_of(jobs_of(self.text)["required"]["text"])
+        clear = next(step for step in steps
+                     if step.get("id") == "clear_backend_artifacts")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "rm", "exit 1\n")
+            proc = subprocess.run(
+                ["bash", "-e", "-c", clear["run"]],
+                env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                     "RUNNER_TEMP": str(tmp)},
+                cwd=tmp, capture_output=True, text=True,
+            )
+        self.assertNotEqual(proc.returncode, 0, "cleanup failure was swallowed")
+        self.assertNotIn("continue-on-error", clear)
+
+    def test_required_ci_checks_backend_shard_coverage_exactly_once(self):
+        """Every collected backend case ran on exactly one shard — checked by
+        test.yml's own `test-complete` job, or, when Required CI turns that job
+        off, by `CI required` itself. Never by neither."""
+        jobs = jobs_of(self.text)
+        delegated = "coverage-job: false" in jobs["backend"]["text"]
+        test_jobs = jobs_of((WORKFLOW.parent / "test.yml").read_text())
+        self.assertIn("inputs.coverage-job", test_jobs["test-complete"]["if"])
+        self.assertEqual(
+            "assert_shards_complete" in jobs["required"]["text"], delegated,
+            "CI required must run the shard-coverage check exactly when it "
+            "turns test.yml's test-complete off",
+        )
+        if not delegated:
+            return
+        body = run_body_containing(self.text, "assert_shards_complete")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            args_log = tmp / "args"
+            env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "RUNNER_TEMP": str(tmp),
+                "ARGS_LOG": str(args_log),
+            }
+            for verdict, expect_ok in ((0, True), (1, False)):
+                _stub(bindir, "python3", f'printf "%s\\n" "$*" > "$ARGS_LOG"\nexit {verdict}\n')
+                done = subprocess.run(
+                    ["bash", "-e", "-c", body], env=env, cwd=tmp,
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(done.returncode == 0, expect_ok, done.stderr)
+                self.assertEqual(
+                    args_log.read_text().split(),
+                    ["-m", "scripts.assert_shards_complete",
+                     f"{tmp}/backend-artifacts", "--plan", "backend-expected"],
+                )
+
+
+class TitleRecheckTest(unittest.TestCase):
+    """Run the real recheck shell; only GitHub responses are substituted."""
+
+    def recheck(self, *, completed=False, fast="failure", required="failure",
+                status="completed", attempt=1, same_title=False, newer=False,
+                pull_changes=None, source_changes=None, renames=None,
+                job_started="2026-10-18T10:00:00Z", latest_attempt=None):
+        head = "a" * 40
+        pull = {"number": 7, "state": "open", "draft": False,
+                "title": 'fix: corrected title $(touch pwned)',
+                "head": {"sha": head, "repo": {"full_name": "owner/repo"}},
+                "base": {"ref": "main"}}
+        event_pull = json.loads(json.dumps(pull))
+        pull.update(pull_changes or {})
+        source = {"id": 99, "head_sha": head, "event": "pull_request",
+                  "conclusion": "failure", "run_attempt": attempt,
+                  "head_repository": {"full_name": "owner/repo"},
+                  "display_title": pull["title"] if same_title else "bad title"}
+        source.update(source_changes or {})
+        event = {"pull_request": event_pull, "workflow_run": source}
+        if renames is None:
+            renames = [{"event": "renamed", "created_at": "2026-10-18T10:01:00Z",
+                        "rename": {"from": "bad title", "to": pull["title"]}}]
+        data = {"pull": pull, "events": renames,
+                "runs": [{"databaseId": 100 if newer else 99, "status": status,
+                          "attempt": attempt if latest_attempt is None else latest_attempt}],
+                "jobs": [{"name": "fast", "databaseId": 101, "id": 101, "conclusion": fast,
+                          "started_at": job_started},
+                         {"name": "CI required", "databaseId": 202, "id": 202, "conclusion": required,
+                          "started_at": job_started}]}
+        text = WORKFLOW.with_name("pr-title.yml").read_text()
+        body = textwrap.dedent(run_body_containing(text, "gh"))
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            stub = bindir / "gh"
+            stub.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
+                import json, os, subprocess, sys
+                from pathlib import Path
+                args = sys.argv[1:]
+                data = json.loads(Path(os.environ["STUB_DATA"]).read_text())
+                with open(os.environ["STUB_CALLS"], "a") as log:
+                    print(json.dumps(args), file=log)
+                if args[:2] == ["run", "list"]:
+                    answer = data["runs"]
+                elif args[:2] == ["run", "view"]:
+                    answer = {"jobs": data["jobs"]}
+                elif args[0] == "api":
+                    if "/jobs" in args[1]:
+                        assert "--paginate" in args and "--slurp" in args, args
+                        attempt = data["runs"][0]["attempt"]
+                        assert f"/attempts/{attempt}/jobs" in args[1], args
+                        answer = [{"jobs": data["jobs"][:1]}, {"jobs": data["jobs"][1:]}]
+                    elif "/events" in args[1]:
+                        assert "--paginate" in args and "--slurp" in args, args
+                        answer = [data["events"][:1], data["events"][1:]]
+                    else:
+                        answer = [data["pull"]] if "/commits/" in args[1] else data["pull"]
+                elif args[:2] == ["run", "rerun"]:
+                    raise SystemExit(0)
+                else:
+                    raise AssertionError(args)
+                if "--jq" in args:
+                    # The pre-fix workflow uses gh's jq projection. This path
+                    # lets the same fixture exercise that old shell in a red run.
+                    subprocess.run(["jq", "-r", args[args.index("--jq") + 1]],
+                                   input=json.dumps(answer), text=True, check=True)
+                else:
+                    print(json.dumps(answer))
+                '''))
+            stub.chmod(0o755)
+            (tmp / "event.json").write_text(json.dumps(event))
+            (tmp / "data.json").write_text(json.dumps(data))
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "HEAD_SHA": head,
+                   "GITHUB_EVENT_NAME": "workflow_run" if completed else "pull_request",
+                   "GITHUB_EVENT_PATH": str(tmp / "event.json"),
+                   "STUB_DATA": str(tmp / "data.json"), "STUB_CALLS": str(tmp / "calls")}
+            result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", body],
+                                    cwd=tmp, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse((tmp / "pwned").exists())
+            calls = [json.loads(line) for line in (tmp / "calls").read_text().splitlines()] if (tmp / "calls").exists() else []
+            return [call[call.index("--job") + 1] for call in calls if call[:2] == ["run", "rerun"]]
+
+    def test_recheck_job_accepts_title_edits_and_failed_pr_completions(self):
+        condition = jobs_of(WORKFLOW.with_name("pr-title.yml").read_text())["recheck"]["if"]
+        for event_name, draft, fork, action, title_changed, conclusion, attempt, expected in (
+            ("pull_request", False, False, "edited", True, "", 1, True),
+            ("pull_request", False, False, "edited", False, "", 1, False),
+            ("pull_request", True, False, "edited", True, "", 1, False),
+            ("pull_request", False, True, "edited", True, "", 1, False),
+            ("pull_request", False, False, "ready_for_review", False, "", 1, True),
+            ("workflow_run", False, False, "completed", False, "failure", 1, True),
+            ("workflow_run", False, False, "completed", False, "failure", 2, True),
+            ("workflow_run", False, False, "completed", False, "success", 1, False),
+            ("workflow_run", False, True, "completed", False, "failure", 1, False),
+        ):
+            repo = "fork/repo" if fork else "owner/repo"
+            context = {"event_name": event_name, "repository": "owner/repo", "event": {
+                "action": action, "changes": {"title": title_changed},
+                "pull_request": {"draft": draft, "head": {"repo": {"full_name": repo}}},
+                "workflow_run": {"event": "pull_request", "conclusion": conclusion,
+                                 "run_attempt": attempt, "head_repository": {"full_name": repo}}}}
+
+            def value(match):
+                found = context
+                for key in match.group().split(".")[1:]:
+                    found = found[key]
+                return repr(found)
+
+            expression = re.sub(r"github(?:\.\w+)+", value, condition)
+            expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", "not ")
+            with self.subTest(context=context):
+                self.assertEqual(bool(eval(expression, {"__builtins__": {}}, {})), expected)  # noqa: S307
+
+    def test_title_edit_restarts_failed_fast_and_its_downstream_gate(self):
+        self.assertEqual(self.recheck(), ["101"])
+
+    def test_title_edit_keeps_successful_quick_or_legacy_full_evidence(self):
+        for fast in ("success", "skipped"):
+            with self.subTest(fast=fast):
+                self.assertEqual(self.recheck(fast=fast), ["202"])
+
+    def test_title_edit_during_any_attempt_is_recovered_once_per_new_edit(self):
+        self.assertEqual(self.recheck(status="in_progress"), [])
+        for attempt in (1, 2, 7):
+            with self.subTest(attempt=attempt):
+                self.assertEqual(self.recheck(completed=True, attempt=attempt), ["101"])
+                self.assertEqual(self.recheck(completed=True, attempt=attempt + 1,
+                                             job_started="2026-10-18T10:02:00Z"), [])
+        self.assertEqual(self.recheck(completed=True, newer=True), [])
+        self.assertEqual(self.recheck(completed=True, latest_attempt=2), [])
+
+    def test_restoring_the_original_title_after_fast_started_is_a_new_edit(self):
+        title = 'fix: corrected title $(touch pwned)'
+        events = [{"event": "renamed", "created_at": "2026-10-18T10:00:01Z",
+                   "rename": {"from": title, "to": "invalid intermediate title"}},
+                  {"event": "renamed", "created_at": "2026-10-18T10:01:00Z",
+                   "rename": {"from": "invalid intermediate title", "to": title}}]
+        self.assertEqual(self.recheck(completed=True, same_title=True, renames=events), ["101"])
+        self.assertEqual(self.recheck(completed=True, same_title=True, renames=events,
+                                     attempt=2, job_started="2026-10-18T10:02:00Z"), [])
+
+    def test_completion_requires_a_real_rename_to_the_current_title(self):
+        self.assertEqual(self.recheck(completed=True, renames=[]), [])
+        for change in ({"event": "commented"}, {"rename": {"to": "another title"}},
+                       {"created_at": "2026-10-18T09:59:59Z"}):
+            event = {"event": "renamed", "created_at": "2026-10-18T10:01:00Z",
+                     "rename": {"to": 'fix: corrected title $(touch pwned)'}}
+            event.update(change)
+            with self.subTest(change=change):
+                self.assertEqual(self.recheck(completed=True, renames=[event]), [])
+        # GitHub timestamps have second resolution; preserve an edit in the
+        # job's start second rather than silently treating it as older.
+        self.assertEqual(self.recheck(completed=True, job_started="2026-10-18T10:01:00Z"), ["101"])
+
+    def test_completion_cannot_restart_main_or_other_repositories(self):
+        for changes in ({"event": "push"}, {"conclusion": "success"},
+                        {"head_repository": {"full_name": "fork/repo"}}):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.recheck(completed=True, source_changes=changes), [])
+
+    def test_only_the_current_ready_same_repository_pr_can_be_rechecked(self):
+        for completed in (False, True):
+            for changes in ({"state": "closed"}, {"draft": True}, {"base": {"ref": "release"}},
+                            {"head": {"sha": "b" * 40, "repo": {"full_name": "owner/repo"}}},
+                            {"head": {"sha": "a" * 40, "repo": {"full_name": "fork/repo"}}}):
+                with self.subTest(completed=completed, changes=changes):
+                    self.assertEqual(self.recheck(completed=completed, pull_changes=changes), [])
+        for required in ("skipped", "cancelled"):
+            with self.subTest(required=required):
+                self.assertEqual(self.recheck(required=required), [])
+
 
 class MainCliTest(unittest.TestCase):
     """The ``scope``/``check`` wiring that the runner actually invokes."""
@@ -948,15 +2041,361 @@ class MainCliTest(unittest.TestCase):
                 "GITHUB_EVENT_PATH": self._event_file(tmp, {"pull_request": {"draft": True}}),
                 "GITHUB_OUTPUT": str(out),
             }
-            subprocess.run([sys.executable, str(tmp / "required-ci.py"), "scope", base],
-                           env=env, cwd=tmp, check=True, capture_output=True, text=True)
+            proc = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                env=env, cwd=tmp, check=True, capture_output=True, text=True,
+            )
             written = dict(line.split("=", 1) for line in out.read_text().splitlines())
-            # The changed backend file selects backend (and e2e/remote/guards);
+            # The changed backend file selects backend and guards on pull_request,
+            # while backend integration, e2e and remote are left to merge_group;
             # a draft event makes it the quick tier.
             self.assertEqual(written["tier"], "quick")
+            self.assertEqual(written["branch_heavy"], "false")
             self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["e2e"], "false")
+            self.assertEqual(written["remote"], "false")
             self.assertEqual(written["cifast"], "false")
-            self.assertTrue(all(v in ("true", "false") for k, v in written.items() if k != "tier"))
+            self.assertIn("e2e/remote 留给落码后的 run", proc.stdout)
+            # The api job compares the document against the commit this diff
+            # was taken from, so the two cannot be answering different questions.
+            self.assertEqual(written["base"], base)
+            self.assertTrue(all(v in ("true", "false") for k, v in written.items()
+                                if k not in ("tier", "base")))
+
+    def _push_repo(self, tmp):
+        """A throwaway repo with ``origin`` pointing at itself, so the push
+        pipeline can fetch its own refs the way the workflow does."""
+
+        def git(*args):
+            subprocess.run(
+                ["git", "-c", "user.email=test@example.com", "-c", "user.name=test",
+                 "-c", "commit.gpgsign=false", *args],
+                cwd=tmp, check=True, capture_output=True, text=True)
+
+        git("init", "-q", "-b", "main")
+        git("remote", "add", "origin", str(tmp))
+        (tmp / "base.txt").write_text("base\n")
+        git("add", "base.txt")
+        git("commit", "-qm", "base")
+        return git
+
+    def _push_scope(self, tmp, event_path):
+        scripts = WORKFLOW.parent.parent / "scripts"
+        out = tmp / "github_output"
+        proc = subprocess.run(
+            [sys.executable, str(scripts / "required-ci.py"), "scope", ""],
+            env={**os.environ, "GITHUB_EVENT_NAME": "push",
+                 "GITHUB_EVENT_PATH": event_path, "GITHUB_OUTPUT": str(out)},
+            cwd=tmp, check=True, capture_output=True, text=True,
+        )
+        return proc, dict(line.split("=", 1) for line in out.read_text().splitlines())
+
+    def test_a_main_push_diffs_from_the_green_anchor(self):
+        # The batch base is the commit the gate last passed on: the previous tip
+        # would drop the commits of a run that a newer push superseded.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            git("update-ref", "refs/heads/main-green", "HEAD")
+            anchor = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            changed = tmp / "backend/app/api/rooms.py"
+            changed.parent.mkdir(parents=True)
+            changed.write_text("x = 1\n")
+            git("add", "backend/app/api/rooms.py")
+            git("commit", "-qm", "change a backend file")
+            # A second commit, so the anchor is not the previous tip: with one
+            # commit between them, an implementation that diffs from HEAD~1 (or
+            # from github.event.before) returns the anchor's sha by accident and
+            # drops exactly the commits a superseded run left behind.
+            (tmp / "frontend/src/main.ts").parent.mkdir(parents=True)
+            (tmp / "frontend/src/main.ts").write_text("y\n")
+            git("add", "frontend/src/main.ts")
+            git("commit", "-qm", "change a frontend file")
+
+            proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            previous_tip = subprocess.check_output(
+                ["git", "rev-parse", "HEAD~1"], cwd=tmp, text=True).strip()
+            self.assertEqual(written["base"], anchor)
+            self.assertNotEqual(written["base"], previous_tip,
+                                "the push used the previous tip, not the green anchor")
+            self.assertEqual(written["tier"], "full")
+            self.assertEqual(written["branch_heavy"], "true")
+            self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["frontend"], "true")
+            self.assertIn("last green gate result", proc.stdout)
+
+    def test_an_anchor_off_the_pushed_history_widens_the_scope(self):
+        # The ref is only ever written from a main push run, so this takes a
+        # rewritten ref. A diff against a commit that is not on this history is
+        # not a diff of what landed, and can miss a change whose content happens
+        # to match — so the run must widen instead of trusting it.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            git("checkout", "-qb", "side")
+            (tmp / "side.txt").write_text("x\n")
+            git("add", "side.txt")
+            git("commit", "-qm", "a commit that never landed on main")
+            side = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            git("checkout", "-q", "main")
+            git("update-ref", "refs/heads/main-green", side)
+            changed = tmp / "backend/app/api/rooms.py"
+            changed.parent.mkdir(parents=True)
+            changed.write_text("x = 1\n")
+            git("add", "backend/app/api/rooms.py")
+            git("commit", "-qm", "change a backend file")
+
+            proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            self.assertEqual(written["base"], "")
+            self.assertIn("is not an ancestor", proc.stdout)
+            self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["e2e"], "true")
+
+    def test_a_shallow_checkout_skips_the_ancestry_question(self):
+        # The workflow's checkout is depth one, and so is the anchor it fetches:
+        # git there sees two commits on one line as unrelated, so asking the
+        # real question would widen every batch. The answer for a shallow clone
+        # is therefore "cannot tell, keep going" — read where it is produced,
+        # because the full-clone test above takes the other branch.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            git("update-ref", "refs/heads/main-green", "HEAD")
+            anchor = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            (tmp / "more.txt").write_text("x\n")
+            git("add", "more.txt")
+            git("commit", "-qm", "one more")
+
+            shallow = tmp / "shallow"
+            subprocess.run(["git", "clone", "-q", "--depth=1", f"file://{tmp}", str(shallow)],
+                           check=True, capture_output=True)
+            subprocess.run(
+                ["git", "fetch", "--no-tags", "--depth=1", "origin",
+                 "+refs/heads/main-green:refs/remotes/origin/main-green"],
+                cwd=shallow, check=True, capture_output=True)
+            # The clone really cannot answer: git itself says "unrelated".
+            plain = subprocess.run(
+                ["git", "merge-base", "--is-ancestor",
+                 "refs/remotes/origin/main-green", "HEAD"],
+                cwd=shallow, capture_output=True)
+            self.assertNotEqual(plain.returncode, 0,
+                                "the fixture is not shallow enough to test the skip")
+
+            script = (
+                "import importlib.util, sys\n"
+                "spec = importlib.util.spec_from_file_location('rc', sys.argv[2])\n"
+                "rc = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(rc)\n"
+                "print(rc._is_ancestor(sys.argv[1], 'HEAD'))\n"
+            )
+            proc = subprocess.run(
+                [sys.executable, "-c", script, anchor, str(tmp / "required-ci.py")],
+                cwd=shallow, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip().splitlines()[-1], "True")
+            self.assertIn("Shallow checkout", proc.stdout)
+
+    def test_a_main_push_without_an_anchor_scopes_every_tracked_path(self):
+        # The first push after the gate moved to main has no anchor to diff
+        # from; a narrower guess would let a commit no run covered go untested.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            changed = tmp / "e2e/tests/login.spec.ts"
+            changed.parent.mkdir(parents=True)
+            changed.write_text("x\n")
+            git("add", "e2e/tests/login.spec.ts")
+            git("commit", "-qm", "touch e2e")
+
+            proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            self.assertEqual(written["base"], "")
+            # Read off the tree, not off a diff: the e2e path is in scope even
+            # though nothing says it changed, and paths outside the tree are not.
+            self.assertEqual(written["e2e"], "true")
+            self.assertEqual(written["frontend"], "false")
+            self.assertIn("no usable refs/heads/main-green anchor", proc.stdout)
+
+    def test_an_anchorless_main_push_never_runs_the_api_job_without_a_base(self):
+        # Without an anchor every tracked path counts as changed, which selects
+        # backend and frontend together; `api` is gated on the frontend suite NOT
+        # being selected, so it is skipped and the empty base is never read. If
+        # that stops holding, api runs with BASE_SHA="" and its fetch of
+        # `origin ""` fails the whole full-tier run on every main push until the
+        # first anchor exists.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            for rel in ("backend/app/main.py", "frontend/src/main.ts"):
+                target = tmp / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("x\n")
+            git("add", "-A")
+            git("commit", "-qm", "touch both sides")
+
+            _proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            self.assertEqual(written["base"], "")
+            self.assertEqual((written["backend"], written["frontend"]), ("true", "true"),
+                             "api would run with no base to compare the document against")
+            self.assertFalse(gate.api_selected(written, written["tier"]))
+
+    def test_pull_request_defers_e2e_and_remote_while_merge_group_requires_them(self):
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+
+            def git(*args):
+                subprocess.run(
+                    ["git", "-c", "user.email=test@example.com", "-c", "user.name=test",
+                     "-c", "commit.gpgsign=false", *args],
+                    cwd=tmp, check=True, capture_output=True, text=True)
+
+            git("init", "-q", "-b", "main")
+            git("remote", "add", "origin", str(tmp))
+            (tmp / "base.txt").write_text("base\n")
+            git("add", "base.txt")
+            git("commit", "-qm", "base")
+            base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            git("checkout", "-qb", "entry")
+            for rel in ("backend/app/api/rooms.py", "e2e/tests/login.spec.ts"):
+                target = tmp / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("x = 1\n")
+                git("add", rel)
+            git("commit", "-qm", "touch backend and e2e")
+
+            pr_out = tmp / "pr_output"
+            pr_env = {
+                **os.environ,
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_EVENT_PATH": self._event_file(tmp, {"pull_request": {"draft": False}}),
+                "GITHUB_OUTPUT": str(pr_out),
+            }
+            pr_scope = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                env=pr_env, cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            pr_written = dict(line.split("=", 1) for line in pr_out.read_text().splitlines())
+            self.assertEqual(pr_written["tier"], "quick")
+            self.assertEqual(pr_written["branch_heavy"], "false")
+            self.assertEqual(pr_written["backend"], "true")
+            self.assertEqual(pr_written["e2e"], "false")
+            self.assertEqual(pr_written["remote"], "false")
+            self.assertIn("e2e/remote 留给落码后的 run", pr_scope.stdout)
+
+            pr_needs = {
+                "scope": {"result": "success", "outputs": pr_written},
+                "fast": {"result": "success"},
+                "api": {"result": "skipped"},
+                **{k: {"result": "skipped"} for k in gate.PATHS},
+            }
+            pr_check = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "check"],
+                env={**pr_env, "CI_NEEDS": json.dumps(pr_needs)},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertEqual(pr_check.returncode, 0, pr_check.stderr)
+
+            mg_out = tmp / "mg_output"
+            mg_env = {
+                **os.environ,
+                "GITHUB_EVENT_NAME": "merge_group",
+                "GITHUB_EVENT_PATH": self._event_file(tmp, {}),
+                "GITHUB_OUTPUT": str(mg_out),
+            }
+            mg_scope = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                env=mg_env, cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            mg_written = dict(line.split("=", 1) for line in mg_out.read_text().splitlines())
+            self.assertEqual(mg_written["branch_heavy"], "true")
+            self.assertEqual(mg_written["e2e"], "true")
+            self.assertEqual(mg_written["remote"], "true")
+            self.assertNotIn("e2e/remote 留给落码后的 run", mg_scope.stdout)
+
+            mg_needs_skipped = {
+                "scope": {"result": "success", "outputs": mg_written},
+                "fast": {"result": "skipped"},
+                "api": {"result": "success", "outputs": {"moved": "false"}},
+                **{
+                    k: {"result": "success" if mg_written[k] == "true" else "skipped"}
+                    for k in gate.PATHS
+                },
+            }
+            mg_needs_skipped["e2e"]["result"] = "skipped"
+            mg_check_fail = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "check"],
+                env={**mg_env, "CI_NEEDS": json.dumps(mg_needs_skipped)},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertNotEqual(mg_check_fail.returncode, 0)
+
+    def test_branch_workflow_and_cli_require_only_fast_but_landed_code_requires_suites(self):
+        jobs = jobs_of(WORKFLOW.read_text())
+        script = WORKFLOW.parent.parent / "scripts" / "required-ci.py"
+        for event_name, draft in (("pull_request", True), ("pull_request", False),
+                                  ("push", None), ("merge_group", None)):
+            with self.subTest(event_name=event_name, draft=draft), tempfile.TemporaryDirectory() as tmp:
+                payload = {"pull_request": {"draft": draft}} if draft is not None else {}
+                tier = gate.tier_for(event_name, payload)
+                expected_tier = "quick" if event_name == "pull_request" else "full"
+                self.assertEqual(tier, expected_tier)
+                # A gate change selects every suite; the workflow's actual ifs
+                # must still suppress them all for BOTH kinds of pull request.
+                outputs = {k: str(v).lower() for k, v in gate.select(
+                    [".github/workflows/required-ci.yml"], event_name).items()}
+                outputs.update(tier=tier, branch_heavy=str(event_name != "pull_request").lower())
+                needs = {"scope": {"result": "success", "outputs": outputs}}
+                for job in (*gate.PATHS, "api", "fast"):
+                    runs = ApiSurfaceTest._holds(jobs[job]["if"], outputs, "", True)
+                    expected_run = job == "fast" if tier == "quick" else job in gate.PATHS
+                    self.assertEqual(runs, expected_run, job)
+                    needs[job] = {"result": "success" if runs else "skipped"}
+                active = [jobs[job]["name"] for job in ("required", "required-draft")
+                          if condition_holds(jobs[job]["if"], event_name, draft)]
+                self.assertEqual(active, ["CI required (draft quick)" if draft else "CI required"])
+                env = {**os.environ, "GITHUB_EVENT_NAME": event_name,
+                       "GITHUB_EVENT_PATH": self._event_file(tmp, payload)}
+
+                def check():
+                    return subprocess.run([sys.executable, str(script), "check"],
+                                          env={**env, "CI_NEEDS": json.dumps(needs)},
+                                          capture_output=True, text=True)
+
+                result = check()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                required_jobs = ("fast",) if tier == "quick" else tuple(gate.PATHS)
+                for job in required_jobs:
+                    for bad in ("failure", "cancelled", "skipped"):
+                        needs[job]["result"] = bad
+                        result = check()
+                        self.assertNotEqual(result.returncode, 0, f"{event_name}: {job}={bad}")
+                        self.assertIn(f"{job}: expected success", result.stderr)
+                    needs[job]["result"] = "success"
+                if tier == "quick":
+                    for job in (*gate.PATHS, "api"):
+                        needs[job]["result"] = "success"
+                        self.assertNotEqual(check().returncode, 0, f"PR ran full suite {job}")
+                        needs[job]["result"] = "skipped"
 
     def test_check_mode_fails_closed_when_the_event_is_unreadable(self):
         env = {**os.environ, "GITHUB_EVENT_NAME": "pull_request",

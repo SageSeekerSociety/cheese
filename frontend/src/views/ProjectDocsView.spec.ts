@@ -7,6 +7,10 @@ import { setLocale } from '@/i18n'
 
 // 确认框回什么由这一格决定：`wait` 解出真就是人点了确定。
 const dialogMock = vi.hoisted(() => ({ confirm: vi.fn() }))
+
+// 文档的链接那一侧（#3827）：打开文档时问一次被引用、打 # 时问一次能引用的文档。这里不关心。
+vi.mock('@/api/docLinks', () => ({ getDocumentBacklinks: async () => ({ links_to: [], linked_from: [] }) }))
+vi.mock('@/lib/linkableDocuments', () => ({ linkableDocuments: async () => [] }))
 vi.mock('@/plugins/dialog', async () => ({
   ...(await vi.importActual<typeof import('@/plugins/dialog')>('@/plugins/dialog')),
   useDialog: () => ({ confirm: dialogMock.confirm }),
@@ -244,6 +248,19 @@ describe('记忆', () => {
     await waitFor(() => expect(deleteMemory).toHaveBeenCalledWith('m1'))
     await waitFor(() => expect(view.queryByText('喜欢用 pnpm')).toBeNull())
     view.unmount()
+  })
+
+  it('不能配置 AI 队友的人删得了自己的记忆，删不了项目记忆', async () => {
+    const view = show('memory', { memoryEntries: [one, shared], changesSharedMemory: false })
+    await waitFor(() => expect(view.getByText('喜欢用 pnpm')).toBeTruthy())
+
+    expect(view.container.querySelectorAll('.memory-card__del')).toHaveLength(1)
+    view.unmount()
+
+    const manager = show('memory', { memoryEntries: [one, shared], changesSharedMemory: true })
+    await waitFor(() => expect(manager.getByText('喜欢用 pnpm')).toBeTruthy())
+    expect(manager.container.querySelectorAll('.memory-card__del')).toHaveLength(2)
+    manager.unmount()
   })
 
   it('说取消就不删，那条记忆还在', async () => {

@@ -123,7 +123,7 @@ class UserProfile(Base):
 
 
 class UserRealNameIdentity(Base):
-    """Minimal mapping for user_real_name_identities to support Task.requireRealName checks."""  # noqa: E501
+    """Minimal mapping for user_real_name_identities to support Task.requireRealName checks."""
 
     __tablename__ = "user_real_name_identities"
 

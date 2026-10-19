@@ -12,12 +12,22 @@ from app.core.errors import BadRequestError
 
 PDF_DRAFT_CONTENT_FIELDS = {"name", "intro", "description"}
 
+# ``SubmitterType`` 那两个序号：报名是人报的还是小队报的。领域代码判这一点时读这里，
+# 不再各自写一遍字面量。
+SUBMITTER_USER = 0
+SUBMITTER_TEAM = 1
+
+# ``ApproveType`` 的三个序号。``APPROVE_APPROVED`` 是**唯一**算过审的那个。
+APPROVE_APPROVED = 0
+APPROVE_DISAPPROVED = 1
+APPROVE_NONE = 2
+
 
 def map_submitter_type(value: str) -> int:
     """Map TaskSubmitterTypeDTO string to smallint ordinal."""
     mapping = {
-        "USER": 0,
-        "TEAM": 1,
+        "USER": SUBMITTER_USER,
+        "TEAM": SUBMITTER_TEAM,
     }
     if value not in mapping:
         raise BadRequestError(f"Invalid submitterType: {value}")
@@ -27,9 +37,9 @@ def map_submitter_type(value: str) -> int:
 def map_approve_type(value: str) -> int:
     """Map ApproveTypeDTO string to smallint ordinal."""
     mapping = {
-        "APPROVED": 0,
-        "DISAPPROVED": 1,
-        "NONE": 2,
+        "APPROVED": APPROVE_APPROVED,
+        "DISAPPROVED": APPROVE_DISAPPROVED,
+        "NONE": APPROVE_NONE,
     }
     upper = value.upper()
     if upper not in mapping:
@@ -60,7 +70,7 @@ def apply_pdf_task_options(
     ]
     if missing_content_fields:
         raise BadRequestError(
-            f"Draft missing required content fields: {', '.join(sorted(missing_content_fields))}"  # noqa: E501
+            f"Draft missing required content fields: {', '.join(sorted(missing_content_fields))}"
         )
 
     merged = dict(task_options)

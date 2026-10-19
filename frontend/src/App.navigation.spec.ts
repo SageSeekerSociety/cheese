@@ -1,8 +1,8 @@
 import type { Topic } from '@/cx_types'
 
-import { createApp, h, nextTick } from 'vue'
+import { createApp, defineComponent, h, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { createVuetify } from 'vuetify'
+import { createVuetify, useDisplay } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { createPinia } from 'pinia'
@@ -10,6 +10,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 
 import TopicHeader from './components/TopicHeader.vue'
 import TopicSidebar from './components/TopicSidebar.vue'
+import { useScreenHeader } from './composables/useScreenHeader'
 import Home from './layouts/home/Home.vue'
 import { createDialogPlugin } from './plugins/dialog'
 import App from './App.vue'
@@ -49,10 +50,16 @@ const topic: Topic = {
   created_at: '2026-09-01T00:00:00Z',
   updated_at: '2026-09-01T00:00:00Z',
 }
-// Keep the actual shell and Teleports; unrelated page content is synthetic.
-const Room = {
-  render: () => h(TopicHeader, { topic, members: [], me: 'tester', connected: true, focus: false }),
-}
+// Keep the actual shell and the room header; unrelated page content is synthetic. Like
+// TopicView, the header sits in the page on desktop and is the phone's top bar row.
+const Room = defineComponent({
+  setup() {
+    const { mdAndUp } = useDisplay()
+    const header = { topic, members: [], me: 'tester', connected: true }
+    useScreenHeader(() => (mdAndUp.value ? null : { content: { component: TopicHeader, props: header } }))
+    return () => (mdAndUp.value ? h(TopicHeader, header) : null)
+  },
+})
 const List = {
   render: () =>
     h(TopicSidebar, {
@@ -83,12 +90,12 @@ async function mountApp(path: string, width: number) {
       { path: '/', component: blank },
       { path: '/spaces', component: blank },
       { path: '/inbox', component: blank },
-      { path: '/projects/p1', name: 'workspace-project', component: List, meta: { barSlot: true } },
+      { path: '/projects/p1', name: 'workspace-project', component: List },
       {
         path: '/projects/p1/topics/t1',
         name: 'workspace-topic',
         component: Room,
-        meta: { barSlot: true, backTo: 'workspace-project' },
+        meta: { backTo: 'workspace-project' },
       },
       { path: '/projects/p1/dm/agent:cheese', name: 'workspace-dm', component: blank },
       {
@@ -137,13 +144,13 @@ it('keeps the room header usable when the app changes between desktop and mobile
     expect(app.failures).toEqual([])
     await app.resize(390)
     expect(app.failures).toEqual([])
-    expect(document.querySelector('#app-bar-slot')?.textContent).toContain('Synthetic room')
+    expect(document.querySelector('.v-app-bar')?.textContent).toContain('Synthetic room')
     await app.resize(1280)
     expect(app.failures).toEqual([])
     expect(app.container.querySelector('.topic-header')?.textContent).toContain('Synthetic room')
     await app.resize(390)
     expect(app.failures).toEqual([])
-    expect(document.querySelector('#app-bar-slot')?.textContent).toContain('Synthetic room')
+    expect(document.querySelector('.v-app-bar')?.textContent).toContain('Synthetic room')
   } finally {
     app.dispose()
   }
@@ -161,7 +168,7 @@ it('desktop rail opens 待办 from 首页, the first tile, with no separate 待�
     expect(labels).not.toContain('待办')
     expect(rail!.querySelectorAll('a[href="/inbox"]')).toHaveLength(1)
     // 点这一格走的是和项目格同一套 Vuetify 链接，所以这里只证明它到得了：
-    // 这套测试的假路由只要从 /projects/:id 这种 barSlot 页出栈就崩（与本改动
+    // 这套测试的假路由只要从 /projects/:id 出栈就崩（与本改动
     // 无关——换成去 /spaces 同样崩），点进去的路由跳转留给真环境验证。
   } finally {
     app.dispose()

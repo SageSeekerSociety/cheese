@@ -120,6 +120,26 @@ async def a_team(session, owner_handle: str | None = None) -> int:
     return team.id
 
 
+def project_service(session):
+    """A ``ProjectService`` with its ports wired, for tests that build a project
+    in their own session.
+
+    Every project is born with its 芝士 (invariant I9b) and, when the caller said
+    what it is for, with a goals document — the seeding lives in
+    ``agent_instance`` and ``living_doc``, both out of ``project``'s reach, so
+    whoever builds one hands the ports in (``app/domain/project/ports.py``). The
+    routes that create projects do the same; tests that go through HTTP need
+    nothing here.
+    """
+    from app.domain.agent_instance.adapters import default_teammate
+    from app.domain.living_doc.overview import seed_overview
+    from app.domain.project.services import ProjectService
+
+    return ProjectService(
+        session, default_teammate=default_teammate, overview=seed_overview
+    )
+
+
 async def registered(session, handle: str) -> int:
     """Make ``handle`` a registered person on ``session`` (get-or-create), the
     way :func:`tests.conftest.seed_user` does; return the user id.
@@ -270,6 +290,27 @@ def add_external_member(client, project_id: str, handle: str, *, by: str = "owne
     assert ok.status_code == 200, ok.text
 
 
+def offer_project(client, project_id: str, to: str, *, by: str):
+    """``by`` offers the project to ``to``; the response, as the browser gets it."""
+    return client.post(
+        f"/projects/{project_id}/transfer",
+        json={"to_handle": to},
+        headers=session_auth_headers(by),
+    )
+
+
+def hand_over(client, project_id: str, to: str, *, by: str):
+    """``by`` offers the project to ``to`` and ``to`` accepts — the whole handing
+    over. Returns the acceptance's response."""
+    offered = offer_project(client, project_id, to, by=by)
+    assert offered.status_code == 200, offered.text
+    return client.post(
+        f"/transfers/{offered.json()['data']['id']}/respond",
+        json={"accept": True},
+        headers=session_auth_headers(to),
+    )
+
+
 def ask_to_join(
     api_client: "TestClient", team_id: int, token: str, message: str
 ) -> int:
@@ -322,11 +363,9 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     claims are the minter's own, re-signed with only ``exp`` moved, so an
     expired token differs from a live one in nothing else.
 
-    Nothing else under ``backend/tests/`` may mint a handle-only token —
-    ``tests/unit/test_no_adhoc_auth_helpers.py`` enforces it. Fourteen
-    hand-rolled copies of this had accumulated — 9 named ``_auth``, 3 named
-    ``_login``, 2 inlined into headers — which is why the rule is now a test
-    rather than a sentence in a rules file.
+    Use this rather than minting a handle-only token by hand: fourteen
+    hand-rolled copies of it had accumulated — 9 named ``_auth``, 3 named
+    ``_login``, 2 inlined into headers.
     """
     token = create_access_token(None, handle=handle)
     if ttl_s is None:
@@ -382,12 +421,10 @@ def open_task(
     owner: str = "alice",
     contributors: list[str] | None = None,
 ) -> dict:
-    """A task in ``room_id``, made by ``owner``: whoever makes one owns it, and
-    making it starts it — its agent may work the project from now on, and
-    ``owner`` reviews what it delivers. The one kind of task nobody has started
-    yet is an idea an AI teammate raised on its own: :func:`teammate_task`.
-    ``contributors`` are brought in to work it beside the owner (they write its
-    document too)."""
+    """A task in ``room_id``, made by ``owner``: whoever makes one owns it, its
+    agent may work the project from the start, and ``owner`` reviews what it
+    delivers. ``contributors`` are brought in to work it beside the owner (what
+    they say is the agent's to act on too, and they write its document)."""
     r = client.post(
         f"/topics/{room_id}/tasks",
         json={"title": title},
@@ -420,15 +457,10 @@ def teammate_task(
     *,
     owner: str = "alice",
     summary: str = "把它记下来，回头做",
-    start: bool = False,
     said_by: str = "alice",
 ) -> dict:
-    """A task the room's AI teammate opened from a 支线 (``cheese_task``).
-
-    With ``start=False`` this is the one task that waits for its owner: made on
-    the teammate's own idea, nobody asked for it, so it stays in 讨论中 until
-    ``owner`` starts it. ``start=True`` is someone having asked for it — that
-    one starts where it stands, like a task a person makes."""
+    """A task the room's AI teammate made from a 支线 on someone's word
+    (``cheese_task``): a new task under the message the 支线 hangs under."""
     project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     thread = in_thread(client, room_id, said_by)
     token = mint_scoped_token(
@@ -446,7 +478,6 @@ def teammate_task(
                 "title": title,
                 "summary": summary,
                 "owner_handle": owner,
-                "start": start,
             },
             headers={"X-Cheese-Token": token},
         )
@@ -552,16 +583,57 @@ def inbox(client, handle: str, kind: str | None = None) -> list[dict]:
     expects to hear something an account first (``seed_user``, which this
     calls too, so here it only finds that account).
     """
-    params: dict = {"pageSize": 100}
-    if kind is not None:
-        params["type"] = kind
     r = client.get(
         "/notifications",
-        params=params,
+        params={"pageSize": 100},
         headers={"Authorization": f"Bearer {seed_user(client, handle)}"},
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]["notifications"]
+    rows = r.json()["data"]["notifications"]
+    return rows if kind is None else [row for row in rows if row["type"] == kind]
+
+
+def mail(client, token: str, kind: str) -> list[dict]:
+    """Every notification of ``kind`` that reached the holder of ``token``, newest
+    first, each read the way their browser reads one (``GET /notifications/{id}``).
+
+    Not the feed (``inbox``): a notification calling the person to act — a
+    question, a card waiting on them, an invitation — only calls them back; the
+    thing itself waits in 等你处理, so the feed leaves it out
+    (``NotificationRepository._in_feed``). That it reached them, and what it says
+    now, is still read here.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.common.auth import verify_access_token
+    from app.domain.notification.models import Notification
+
+    claims = verify_access_token(token)
+    assert claims is not None and claims.user_id is not None
+
+    async def ids() -> list[int]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(Notification.id)
+                .where(
+                    Notification.receiver_id == claims.user_id,
+                    Notification.recipient_handle.is_(None),
+                    Notification.type == kind,
+                    Notification.deleted_at.is_(None),
+                )
+                .order_by(Notification.created_at.desc(), Notification.id.desc())
+            )
+            return list(rows.all())
+
+    headers = {"Authorization": f"Bearer {token}"}
+    found = []
+    for notification_id in asyncio.run(ids()):
+        r = client.get(f"/notifications/{notification_id}", headers=headers)
+        assert r.status_code == 200, r.text
+        found.append(r.json()["data"]["notification"])
+    return found
 
 
 def post_message(client, topic_id: str, handle: str, body: dict) -> dict:
@@ -1107,3 +1179,12 @@ async def put_on_plan(session, team_id: int, key: str) -> None:
     from app.domain.team.models import Team
 
     await session.execute(update(Team).where(Team.id == team_id).values(plan_key=key))
+
+
+async def approve_overseas(session, team_id: int) -> None:
+    """Approve a team for overseas models: a test running the Claude
+    subscription models needs it whatever the team's plan."""
+    from app.domain.usage.models import OverseasModelApproval
+
+    session.add(OverseasModelApproval(team_id=team_id, approved_by="test-admin"))
+    await session.flush()

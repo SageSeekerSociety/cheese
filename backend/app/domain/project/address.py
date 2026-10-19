@@ -17,9 +17,10 @@ nothing outside an address ever stores them.
 import enum
 import re
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sqlalchemy import Integer, Uuid, column, delete, null, select, table
+from sqlalchemy import Integer, Uuid, column, delete, null, or_, select, table
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -148,6 +149,9 @@ def _bare(name: str, *extra: str):
 
 _tasks = _bare("tasks", "room_id")
 _topics = _bare("topics")
+#: The largest number any of these tables can hold: their `number` columns are
+#: `Integer`. A bigger one names nothing, and binding it would raise.
+_NUMBER_MAX = 2**31 - 1
 _documents = _bare("documents")
 #: Each kind's table, and the channel a row of it is in.
 _TABLES = {
@@ -200,3 +204,67 @@ async def thing_by_id(
     """The task, document or channel with this id, and its number."""
     things, _ = _TABLES[kind]
     return await _find(session, kind, things.c.id == thing_id)
+
+
+async def things_by_ref(
+    session: AsyncSession, project_id: uuid.UUID, kind: Numbered, refs: Iterable[str]
+) -> dict[str, Addressed]:
+    """What each of these refs names, by the ref as it was written.
+
+    A ref is a number in this project (``318``, ``#318``) or a thing's id, and
+    one read answers all of them: a canvas change naming thirty tasks reads
+    this table once, not thirty times. A ref that names nothing — no such
+    number here, no such id, or text that is neither — is left out.
+
+    An id is answered only among this project's rows, unlike `thing_by_id`,
+    which answers one wherever it is: a caller resolving many refs at once is
+    resolving what somebody may point at, and another project's thing is one
+    they may not.
+    """
+    by_number_ref: dict[str, int] = {}
+    by_id_ref: dict[str, uuid.UUID] = {}
+    for ref in dict.fromkeys(refs):
+        flat = ref.strip().lstrip("#")
+        if flat.isdecimal():
+            # A number is an `Integer` column; one this big cannot name a row,
+            # and binding it would fail instead of answering nothing. `①` and
+            # `²` pass `isdigit` but are no number either.
+            if (number := int(flat)) <= _NUMBER_MAX:
+                by_number_ref[ref] = number
+            continue
+        spelled = looks_like_uuid(flat)
+        if spelled is not None:
+            by_id_ref[ref] = spelled
+    numbers = set(by_number_ref.values())
+    ids = set(by_id_ref.values())
+    if not numbers and not ids:
+        return {}
+    things, room = _TABLES[kind]
+    room_id = room if room is not None else null()
+    clauses = []
+    if numbers:
+        clauses.append(things.c.number.in_(numbers))
+    if ids:
+        clauses.append(things.c.id.in_(ids))
+    rows = await session.execute(
+        select(
+            things.c.id, things.c.project_id, things.c.number, room_id.label("room")
+        ).where(things.c.project_id == project_id, or_(*clauses))
+    )
+    found = {
+        row.id: Addressed(kind, row.id, row.project_id, row.room, row.number)
+        for row in rows
+    }
+    by_number = {
+        thing.number: thing for thing in found.values() if thing.number is not None
+    }
+    answer: dict[str, Addressed] = {}
+    for ref, number in by_number_ref.items():
+        thing = by_number.get(number)
+        if thing is not None:
+            answer[ref] = thing
+    for ref, thing_id in by_id_ref.items():
+        thing = found.get(thing_id)
+        if thing is not None:
+            answer[ref] = thing
+    return answer

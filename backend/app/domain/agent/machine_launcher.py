@@ -35,14 +35,16 @@ import hashlib
 import json
 from pathlib import Path
 
+from app.core.config import settings
 from app.domain.agent import (
     environment_runner,
     forge_cli,
     machine_tunnel,
+    package_mirrors,
     preview_tunnel,
     toolchain,
 )
-from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
+from app.domain.agent.launch import MachineLaunch, MachinePlace
 from app.domain.agent.place import seat_name
 from app.domain.agent.resource_cleanup import SESSION_TMP
 
@@ -271,6 +273,8 @@ def toolchain_fetcher() -> str:
     if [ "$3" = font ]; then
       _dest="$CHEESE_TOOLCHAIN/fonts/{fonts_pin}"
       [ -s "$_dest/$4" ] && return 0
+    elif [ "$3" = tree ]; then
+      {{ [ -x "$_dest/bin/$4" ] || [ -x "$_dest/$4$_exe" ]; }} && return 0
     else
       if [ -x "$_dest/$4$_exe" ]; then
         $_ln "$_dest/$4$_exe" "$CHEESE_TOOLCHAIN/bin/$4$_exe"
@@ -289,6 +293,26 @@ def toolchain_fetcher() -> str:
     mkdir -p "$_dest" || {{ rm -rf "$_work"; return 0; }}
     if [ "$3" = font ]; then
       mv "$_work/a" "$_dest/$4"
+      rm -rf "$_work"
+      return 0
+    fi
+    # A tree is kept whole, minus the archive's one top directory, and found
+    # through PATH (`toolchain_block`) rather than linked: node's npm and npx
+    # reach their modules by a path relative to themselves. The rename is one
+    # step, so a half-unpacked tree is never what a room sees.
+    if [ "$3" = tree ]; then
+      mkdir "$_work/x" || {{ rm -rf "$_work"; return 0; }}
+      ( cd "$_work/x" \\
+        && {{ tar -xf ../a 2>/dev/null || unzip -q ../a 2>/dev/null; }} ) \\
+        || {{ rm -rf "$_work"; return 0; }}
+      _top="$(find "$_work/x" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \\
+        | head -n 1)"
+      if [ -z "$_top" ]; then
+        rm -rf "$_work"
+        return 0
+      fi
+      rm -rf "$_dest"
+      mv "$_top" "$_dest" || {{ rm -rf "$_work"; return 0; }}
       rm -rf "$_work"
       return 0
     fi
@@ -329,6 +353,9 @@ def toolchain_block() -> str:
     return f"""CHEESE_TOOLCHAIN="$REAL_HOME/.cheese/toolchain"
 export CHEESE_TOOLCHAIN
 export PATH="$CHEESE_TOOLCHAIN/bin:$PATH"
+# Node goes AFTER the machine's own PATH: a member's computer that has a node
+# keeps using it, and ours is only there for a machine that has none.
+export PATH="$PATH:{toolchain.node_path()}"
 export TYPST_FONT_PATHS="$CHEESE_TOOLCHAIN/fonts/{fonts_pin}"
 if [ -n "${{CHEESE_API:-}}" ]; then
   cat > "$HOME/.cheese/cheese-toolchain" <<'TOOLCHAIN'
@@ -446,13 +473,10 @@ def screen_env(
     if place.execution_target is not None:
         env["CHEESE_EXECUTION_TARGET"] = json.dumps(place.execution_target)
     if place.project_id:
-        # Who the turn's commits belong to (workspace/identity.py). Absent, the
-        # launcher falls back to 芝士 — the same default the in-repo snapshot
-        # path uses, so both surfaces agree.
-        env["CHEESE_GIT_AUTHOR_NAME"] = place.agent_handle
-        env["CHEESE_GIT_AUTHOR_EMAIL"] = f"{place.agent_handle}@agent.cheese.local"
-        env["GIT_AUTHOR_NAME"] = place.agent_handle
-        env["GIT_AUTHOR_EMAIL"] = env["CHEESE_GIT_AUTHOR_EMAIL"]
+        # The platform commits; who a commit is BY is not fixed here. A task's
+        # checkout sets its own author (`cheese worktree`, from the git route's
+        # `author`), and an author in the environment would override it; the
+        # launch script gives the seat the teammate as the default beneath it.
         env["GIT_COMMITTER_NAME"] = "芝士"
         env["GIT_COMMITTER_EMAIL"] = "cheese@zhishi.local"
     return env
@@ -485,6 +509,12 @@ def launch_script(
     tunnel_up = CHEESE_TUNNEL_UP
     preview_up = CHEESE_PREVIEW_UP
     toolchain = toolchain_block()
+    # What this script itself downloads — the toolchain, and the project's own
+    # dependencies when `prepare` runs them — goes to a domestic mirror where one
+    # answers. The room's agent inherits a different environment, built on the
+    # machine by the executor (`bootstrap.prepared`), which applies the same
+    # policy there; this one is the launch's own share of it.
+    mirror_env = package_mirrors.shell(package_mirrors.configuration(settings))
     return f"""set -e
 # A session the platform capped runs in a systemd scope of its own, under that
 # cap (#1544). tmux puts each pane in a scope under the user manager, outside
@@ -567,6 +597,7 @@ if [ -n "$CS" ] && mkdir -p "$CS" 2>/dev/null; then
   export CHEESE_STORE="$CS"
   CSLIVE=1
 fi
+{mirror_env}
 export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
 # Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
@@ -649,6 +680,15 @@ mkdir -p "$HOME/.cheese"
 # old shape could serve: one agent.
 SEATD="$HOME/.cheese/seats/${{CHEESE_SEAT:-shared}}"
 mkdir -p "$SEATD"
+# Who this seat's commits are by when nothing closer says: the teammate. A
+# task's checkout names its own author in its own config, which this file sits
+# under; an author in the environment would sit over it. Per seat, because the
+# seats of a room share one HOME. The session's own ~/.gitconfig still applies.
+if [ -n "${{CHEESE_PROJECT:-}}" ] && [ -n "${{CHEESE_AUTHOR:-}}" ]; then
+  printf '[include]\\n\\tpath = %s/.gitconfig\\n[user]\\n\\tname = %s\\n\\temail = %s@agent.cheese.local\\n' \\
+    "$HOME" "$CHEESE_AUTHOR" "$CHEESE_AUTHOR" > "$SEATD/gitconfig"
+  export GIT_CONFIG_GLOBAL="$SEATD/gitconfig"
+fi
 cat > "$HOME/.cheese/cheese-environment.py" <<'CHEESE_ENV_PY'
 {environment_helper}CHEESE_ENV_PY
 {configure}# Ship the platform CLI with the launcher over the existing device

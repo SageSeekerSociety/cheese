@@ -216,7 +216,7 @@ async def _ask(
                 content=raw,
                 headers={"Content-Type": "application/octet-stream"},
             )
-    except Exception as exc:  # noqa: BLE001 — see docstring
+    except Exception as exc:  # see docstring
         raise OfficeRenderUnavailable(say("previewServiceUnreachable")) from exc
 
 
@@ -234,7 +234,7 @@ def _refusal(response: httpx.Response) -> None:
     detail = ""
     try:
         detail = str(response.json().get("error") or "")
-    except Exception:  # noqa: BLE001 — a non-JSON body is just no detail
+    except Exception:  # a non-JSON body is just no detail
         detail = ""
     if response.status_code >= 500:
         raise OfficeRenderUnavailable(detail or say("previewServiceError"))
@@ -310,11 +310,15 @@ async def render_to_html(
 _warming: set[asyncio.Task] = set()
 
 
-def prewarm(raw: bytes, path: str) -> None:
+def prewarm(data: bytes, path: str) -> None:
     """Convert a just-saved Word or PowerPoint file now, so opening it is a hit.
 
     Fire and forget: a save must not wait for LibreOffice, and a conversion that
     fails here fails again, with its sentence, when someone opens the preview.
+
+    The first parameter is named ``data`` — not ``raw`` — because the caller states
+    the shape it hands in (``app.domain.project.ports.WarmPreview``), and a protocol
+    matches on the name of a positional-or-keyword parameter.
     """
     endpoint = settings.office_render_endpoint
     if not endpoint or not is_renderable(path):
@@ -322,8 +326,8 @@ def prewarm(raw: bytes, path: str) -> None:
 
     async def run() -> None:
         try:
-            await render_to_pdf(raw, path, endpoint)
-        except Exception:  # noqa: BLE001 — see docstring
+            await render_to_pdf(data, path, endpoint)
+        except Exception:  # see docstring
             logger.info("preview prewarm skipped for %s", path, exc_info=True)
 
     try:

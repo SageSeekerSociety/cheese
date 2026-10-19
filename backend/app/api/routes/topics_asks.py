@@ -13,17 +13,18 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.topics_deps import BlockOut
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
 from app.domain.agent.ask import ask
-from app.domain.topic.services import TopicService
+from app.domain.block.adapters import dump_blocks_json
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/asks")
+@router.post("/{topic_id}/asks", dependencies=[ROUTE_DECIDES])
 async def create_questions(
     topic_id: uuid.UUID,
     body: dict,
@@ -35,7 +36,7 @@ async def create_questions(
     Returns at once; nothing waits for the answer. The caller ends its turn, and
     the reply someone sends starts the next one.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         project_id=place.project_id, topic_id=place.conversation_id
     )
@@ -47,7 +48,7 @@ async def create_questions(
     ):
         raise ForbiddenError(say("askAgentSeatOnly"))
     rows = await ask(db, place=place, seat=actor.handle, body=body)
-    blocks = [BlockOut.model_validate(row).model_dump(mode="json") for row in rows]
+    blocks = await dump_blocks_json(rows)
     await db.commit()
     for block in blocks:
         await get_broker().publish(

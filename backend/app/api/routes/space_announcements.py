@@ -12,11 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.response import ok
 from app.api.space_deps import _ensure_space_visible, require_reviewed_space
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
 from app.core.errors import ForbiddenError
 from app.db.session import get_db
+from app.domain.delivery.ledger import amend, deliver, retract
 from app.domain.space.announcement_service import (
     TITLE_MAX_LENGTH,
     AnnouncementView,
@@ -30,6 +32,17 @@ router = APIRouter(
 
 SpaceId = Annotated[int, Path(ge=1, alias="spaceId")]
 AnnouncementId = Annotated[int, Path(ge=1, alias="announcementId")]
+
+
+def _service(db) -> SpaceAnnouncementService:
+    """The service, with the three ledger writes wired in.
+
+    Publishing, amending and retracting an announcement all go through the
+    delivery ledger, one layer above `space`, so the door that assembles the
+    dependencies hands them in — the shape ``integration/ports.py`` uses for
+    its room-file reader.
+    """
+    return SpaceAnnouncementService(db, deliver=deliver, amend=amend, retract=retract)
 
 
 class PublishAnnouncementRequest(BaseModel):
@@ -114,7 +127,7 @@ async def list_announcements(
     server's clock. ``notifyCount`` is how many people a new announcement from
     the caller would notify — given to managers only, null for everyone else."""
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    service = SpaceAnnouncementService(db)
+    service = _service(db)
     listed = await service.list_for_space(space_id)
     manager = await is_space_admin(
         session=db, space_id=space_id, user_id=auth_user.user_id
@@ -138,6 +151,7 @@ async def list_announcements(
     "/{spaceId}/announcements",
     summary="Publish an announcement",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def publish_announcement(
     space_id: SpaceId,
@@ -146,7 +160,7 @@ async def publish_announcement(
     db=Depends(get_db),
 ) -> dict:
     await _ensure_space_manager(db=db, space_id=space_id, user_id=auth_user.user_id)
-    view = await SpaceAnnouncementService(db).publish(
+    view = await _service(db).publish(
         space_id=space_id,
         author_id=auth_user.user_id,
         title=payload.title,
@@ -159,7 +173,9 @@ async def publish_announcement(
 
 
 @router.patch(
-    "/{spaceId}/announcements/{announcementId}", summary="Update an announcement"
+    "/{spaceId}/announcements/{announcementId}",
+    summary="Update an announcement",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_announcement(
     space_id: SpaceId,
@@ -169,7 +185,7 @@ async def patch_announcement(
     db=Depends(get_db),
 ) -> dict:
     await _ensure_space_manager(db=db, space_id=space_id, user_id=auth_user.user_id)
-    view = await SpaceAnnouncementService(db).update(
+    view = await _service(db).update(
         space_id=space_id,
         announcement_id=announcement_id,
         title=payload.title,
@@ -186,6 +202,7 @@ async def patch_announcement(
     "/{spaceId}/announcements/{announcementId}",
     summary="Delete an announcement",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_announcement(
     space_id: SpaceId,
@@ -194,7 +211,5 @@ async def delete_announcement(
     db=Depends(get_db),
 ) -> None:
     await _ensure_space_manager(db=db, space_id=space_id, user_id=auth_user.user_id)
-    await SpaceAnnouncementService(db).delete(
-        space_id=space_id, announcement_id=announcement_id
-    )
+    await _service(db).delete(space_id=space_id, announcement_id=announcement_id)
     return None

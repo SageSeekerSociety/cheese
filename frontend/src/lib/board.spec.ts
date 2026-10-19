@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { columnDotStyle, columnLabel, liveTasks } from './board'
+import { columnDotStyle, columnLabel, liveTasks, taskDotStyle } from './board'
 
 import { setLocale } from '@/i18n'
 
@@ -9,7 +9,6 @@ beforeEach(() => setLocale('zh-CN'))
 describe('columnLabel', () => {
   it('每一列各有名字，包括板面上不出现的那两列', () => {
     // done 在折叠行上、archived 在房间上，两者都要有名字可写。
-    expect(columnLabel('not_started')).toBe('未开始')
     expect(columnLabel('building')).toBe('进行中')
     expect(columnLabel('delivering')).toBe('检查中')
     expect(columnLabel('needs_you')).toBe('待处理')
@@ -34,6 +33,15 @@ describe('columnDotStyle', () => {
     for (const column of ['building', 'delivering', 'archived'] as const) {
       expect(JSON.stringify(columnDotStyle(column))).not.toContain('--warn')
     }
+  })
+
+  it('一件任务的点：已退回画成红的（不是「等你」的暖色）', () => {
+    const task = (phrase: 'bounced' | 'awaiting_review') => ({ presentation: { column: 'needs_you', phrase } }) as never
+    expect(taskDotStyle(task('bounced'))).toEqual({
+      borderColor: 'var(--danger)',
+      background: 'var(--danger)',
+    })
+    expect(taskDotStyle(task('awaiting_review'))).toEqual(columnDotStyle('needs_you'))
   })
 
   it('把颜色关掉也读得出来 —— 三列的形状互不相同', () => {

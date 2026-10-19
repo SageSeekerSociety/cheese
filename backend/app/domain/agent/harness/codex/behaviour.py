@@ -3,7 +3,7 @@
 结论 48 的声明侧，写法见 ``claude_code/behaviour.py``。
 """
 
-from app.domain.agent.capability import BuiltIn, Declaration, Difference, Missing
+from app.domain.agent.declaration import BuiltIn, Declaration, Difference, Missing
 from app.domain.agent.harness.codex.host import VERSION
 
 #: 见 ``claude_code/behaviour.py`` 同名常量：升级 pin 就要重新读一遍再改这里。

@@ -18,11 +18,28 @@ if opening the PR still fails (AcceptService._publish_pr_for_accept): a merge
 commit direct-pushed to main with no PR is exactly what #296 exists to end.
 
 Same task-reference pattern as review/gate.py.
+
+**This module is now the facade of a sibling too.** On 2026-10-16 the forge-
+facing text half moved to `pr_publish_payload.py`: what a card's PR says
+(`draft_title`, `is_draft_title`, the two prefixes, `_open_pr_of_task`,
+`_pr_text`, `sync_pr_text`) and the two writes that record the outcome
+(`record_pr`, `_record_failure`). Every name that moved is re-exported here,
+so an import that named this module for one of them still resolves.
+
+What stayed is the deciding half — whether a PR should exist at all (`enabled`,
+`dispatch`, `_run`, `open_pr_for_card`), the sweep that finds branches with
+commits and none (`sweep_draft_prs`, `_draft_pr_for_one_task`, `_branch_ahead`,
+`_open_draft_for_task`) — and that is not only about what the two halves are
+about. Tests replace `enabled`, `dispatch`, `branch_head`, `proposal_client`,
+`sweep_draft_prs` and `_branch_ahead` on THIS module object, so every body that
+reads one of them has to live here; in the sibling it would read the sibling's
+own copy and the replacement would quietly stop taking effect.
 """
 
 import asyncio
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -33,8 +50,7 @@ from app.core.db import release_read_session
 from app.core.sentences import say
 from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
 from app.domain.conversation.services import of_room
-from app.domain.delivery.agent import record_task_instruction
-from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.notice_meta import (
@@ -50,27 +66,57 @@ from app.domain.project.forge import (
     background_quota,
     branch_head,
     installation_known_closed,
-    proposal_client,
     quota_serves_background,
-    status_client,
 )
 from app.domain.repository import identity
-from app.domain.review import notes, pr_text
-from app.domain.review.forgejo_pr import ForgejoPRClient
-from app.domain.review.github_pr import GitHubPRClient
-from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review import archive, pr_text
+from app.domain.review.forge_clients import proposal_client, status_client
+from app.domain.review.github_pr_status import pr_opener
+from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
+from app.domain.review.ports import Announce, RecordInstruction
+from app.domain.review.pr_publish_payload import (
+    DRAFT_TITLE_PREFIX as DRAFT_TITLE_PREFIX,
+)
+from app.domain.review.pr_publish_payload import (
+    PR_OPEN_FAILED_PREFIX as PR_OPEN_FAILED_PREFIX,
+)
+from app.domain.review.pr_publish_payload import (
+    _open_pr_of_task as _open_pr_of_task,
+)
+from app.domain.review.pr_publish_payload import (
+    _pr_text as _pr_text,
+)
+from app.domain.review.pr_publish_payload import (
+    _record_failure as _record_failure,
+)
+from app.domain.review.pr_publish_payload import (
+    draft_title as draft_title,
+)
+from app.domain.review.pr_publish_payload import (
+    is_draft_title as is_draft_title,
+)
+from app.domain.review.pr_publish_payload import (
+    owner_token as owner_token,
+)
+from app.domain.review.pr_publish_payload import (
+    pr_body_for as pr_body_for,
+)
+from app.domain.review.pr_publish_payload import (
+    record_pr as record_pr,
+)
+from app.domain.review.pr_publish_payload import (
+    sync_pr_text as sync_pr_text,
+)
+from app.domain.review.ready_rebase import (
+    project_credentials,
+    rebase_behind_before_ready,
+)
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.models import Topic
 
 logger = logging.getLogger("cheesex.pr_publish")
-
-#: 开 PR 失败落卡 (#362 修法 1)。一张开 PR 失败的卡必须和「PR 还在路上」的卡长得
-#: 明显不同——这条前缀就是那个不同：失败原因直接写在 note 上，而不是只进 logger。
-#: 采纳现场的补开（AcceptService._publish_pr_for_accept）就是它的重试路径；重试
-#: 开出 PR 后 `record_pr` 会把这条 note 清掉。
-PR_OPEN_FAILED_PREFIX = "开 PR 失败"
 
 _TASKS: set[asyncio.Task] = set()
 
@@ -118,7 +164,7 @@ async def _run(
             topic_id=topic_id,
             project_id=project_id,
         )
-    except Exception as exc:  # noqa: BLE001 — card stays PR-less, but never silently (#362)
+    except Exception as exc:  # card stays PR-less, but never silently (#362)
         logger.exception("PR publication failed for card %s", card_id)
         await _record_failure(session_factory, card_id=card_id, exc=exc)
         return
@@ -168,6 +214,16 @@ async def open_pr_for_card(
     card = await AcceptCardRepository(session).get(card_id)
     if card is None or card.task_id is None:
         return None
+    if (
+        card.pr_number is None
+        and not card.delivered_task_ids
+        and card.deliverable_kind
+        in (
+            DeliverableKind.file,
+            DeliverableKind.link,
+        )
+    ):
+        return None
     task = await TaskService(session).require_in_room(topic_id, card.task_id)
     if not task.branch_name or not await branch_head(
         project_id, session, task.branch_name
@@ -179,7 +235,7 @@ async def open_pr_for_card(
     if base is None:
         raise ValueError("Task has no target branch")
 
-    title, body = await _pr_text(
+    title, token, body = await _pr_text(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
     pr = await _open_pr_of_task(client, task)
@@ -189,8 +245,14 @@ async def open_pr_for_card(
             base=base,
             title=title,
             body=body,
+            as_user_token=token,
         )
         pr = opened.pr
+    place = await PlaceResolver(session).resolve(topic_id)
+    if place is not None:
+        body = await pr_body_for(
+            session, place.room, card=card, opened_by=pr_opener(pr)
+        )
     # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
     # failing on GitHub's "already exists". An adopted PR still carries the
@@ -202,6 +264,18 @@ async def open_pr_for_card(
     # Not best-effort: a card that says 等验收 while GitHub still says 草稿 is a
     # delivery nobody can review, and nothing else would ever say so.
     if pr.get("draft") and pr.get("node_id"):
+        # The same step `POST /ready` takes: a behind branch is brought onto
+        # its base first, so the full CI the flag starts reads today's
+        # workflows. A conflict does not stop a card — the poller names it.
+        await rebase_behind_before_ready(
+            session=session,
+            client=client,
+            project_id=project_id,
+            base_branch=base,
+            number=int(pr["number"]),
+            credentials=lambda: project_credentials(project_id, session),
+            status_client=lambda: status_client(project_id, session),
+        )
         await client.mark_ready_for_review(str(pr["node_id"]))
         pr["draft"] = False
     logger.info(
@@ -210,64 +284,54 @@ async def open_pr_for_card(
     return pr
 
 
-async def _open_pr_of_task(
-    client: GitHubPRClient | ForgejoPRClient, task: Task
-) -> dict | None:
-    """The PR the task already has, while it is still open on the task's branch.
-
-    The card rides this PR rather than whatever `open_pr` returns: `open_pr`
-    adopts only a PR with the same head AND base, and a person may have moved
-    the task's PR onto another base on the forge. Asked with the task's old
-    base, it opened a second PR for the same branch, and the card and the task
-    then named different PRs (FB-96)."""
-    if task.pr_number is None:
-        return None
-    pr = await client.pr_view(task.pr_number)
-    head = pr.get("head") or {}
-    if pr.get("state") != "open" or head.get("ref") != task.branch_name:
-        return None
-    return pr
-
-
-async def sync_pr_text(
-    client: GitHubPRClient | ForgejoPRClient, pr: dict, *, title: str, body: str
-) -> None:
-    """Make the PR on GitHub say what `title`/`body` say — and only then.
-
-    Skipping the write when it would change nothing is not an optimisation: a
-    PATCH to a PR is an edit event on GitHub, and re-issuing it on every accept
-    poll would fill the timeline with edits that changed no character.
-    """
-    if pr.get("title") == title and (pr.get("body") or "") == body:
-        return
-    number = pr.get("number")
-    if number is None:
-        return
-    updated = await client.update_pr(int(number), title=title, body=body)
-    pr.update(updated)
-
-
 async def sweep_draft_prs(
-    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+    session_factory: async_sessionmaker,
+    project_id: uuid.UUID | None = None,
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction,
+    quiet_window_s: int | None = None,
 ) -> dict[str, int]:
     """Open draft PRs for task branches with commits and no existing PR.
 
     Commits arrive from different executors through Git; the shared PR poller
-    observes them after synchronization. Delay is one poll interval plus the
+    observes them after synchronization. Delay is one sweep interval plus the
     time spent on earlier tasks in this pass. Each task uses its own session
     so a failed write cannot poison the remaining deliveries.
+
+    ``quiet_window_s`` limits a pass to tasks whose last activity (newest
+    block in their own conversation, or their creation) is inside that many
+    seconds: each candidate costs two GitHub requests (`branch_head` +
+    `compare_status`), and a branch with nothing said for hours is not being
+    pushed to. Only the periodic clock passes it — that is where the cost is.
+    An event-driven or catch-up pass leaves it ``None`` and sweeps every open
+    task, because those passes are exactly how a push missed while the relay
+    was down, or a pass lost to a spent quota, gets made good. Zero or less
+    also keeps every open task.
     """
     # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
     counts = {"opened": 0, "skipped": 0, "failed": 0}
-    await retarget_completed_dependencies(session_factory, project_id)
+    await retarget_completed_dependencies(
+        session_factory,
+        project_id,
+        announce=announce,
+        record_instruction=record_instruction,
+    )
     if not enabled():
         return counts
+    active_since = (
+        datetime.now(UTC) - timedelta(seconds=quiet_window_s)
+        if quiet_window_s is not None and quiet_window_s > 0
+        else None
+    )
     async with session_factory() as session:
         wanted = [
             (t.id, t.project_id)
-            for t in await TaskService(session).open_without_pr()
+            for t in await TaskService(session).open_without_pr(
+                active_since=active_since
+            )
             if project_id is None or t.project_id == project_id
         ]
     # A project whose forge refused for quota in this pass: every later task of
@@ -297,7 +361,7 @@ async def sweep_draft_prs(
                 "draft PRs of project %s wait for the next pass: %s", task_project, exc
             )
             continue
-        except Exception:  # noqa: BLE001 — one bad task must not end the sweep
+        except Exception:  # one bad task must not end the sweep
             counts["failed"] += 1
             logger.warning("draft PR not opened for task %s", task_id, exc_info=True)
             continue
@@ -306,12 +370,13 @@ async def sweep_draft_prs(
 
 
 async def retarget_completed_dependencies(
-    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+    session_factory: async_sessionmaker,
+    project_id: uuid.UUID | None = None,
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction,
 ) -> None:
     """Retarget delivered dependencies and persist instructions for the executor."""
-
-    # deferred-import: tests replace this name on app.domain.agent.announce
-    from app.domain.agent.announce import announce
 
     # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
@@ -406,13 +471,14 @@ async def retarget_completed_dependencies(
                 retarget = delivered and task.base_branch != base
                 client = None
                 if retarget and task.pr_number is not None:
-                    # deferred-import: tests patch app.domain.review.services
-                    from app.domain.review.services import AcceptService
-
                     room = await session.get(Topic, task.room_id)
                     if room is None:
                         raise ValueError("Task room is missing")
-                    client = await AcceptService(session)._app_pr_client(room)
+                    # Ask the forge layer for the client directly. Going
+                    # through the accept service only wrapped this call, and
+                    # importing that service from here made the two modules a
+                    # cycle.
+                    client = await proposal_client(room.project_id, session)
                     if client is None:
                         raise RuntimeError(
                             "Cannot retarget the task PR without its forge connection"
@@ -571,7 +637,7 @@ async def retarget_completed_dependencies(
                 if block is None:
                     raise ValueError("Task room is missing")
 
-                await record_task_instruction(
+                await record_instruction(
                     session,
                     DeliveryEvent(
                         id=block.id,
@@ -579,7 +645,7 @@ async def retarget_completed_dependencies(
                         payload={"content": instruction},
                         occurred_at=block.created_at,
                     ),
-                    task=task,
+                    task_id=task.id,
                     content=instruction,
                 )
                 await idem.record_result(session, key, {"block_id": str(block.id)})
@@ -595,23 +661,32 @@ async def retarget_completed_dependencies(
 async def _draft_pr_for_one_task(session: AsyncSession, task_id: uuid.UUID) -> bool:
     """Open and record this task's draft PR. False = there was nothing to do.
 
-    **A task anybody has filed a card on is not this sweep's business**, and
-    that — not the row lock — is what keeps it off a merged branch. The task's
-    `status` cannot answer "has this been merged on GitHub", because the merge
-    happens FIRST and the row is updated after
+    **A task with a card still waiting to be settled is not this sweep's
+    business**, and that — not the row lock — is what keeps it off a merged
+    branch. The task's `status` cannot answer "has this been merged on GitHub",
+    because the merge happens FIRST and the row is updated after
     (`AcceptService._merge_pr_for_accept`: merge API, then
     `_mark_task_merged`). A sweep holding the row lock in between sees
     `open` while the branch is, on GitHub, already squashed into main — and
     opens a PR nobody can ever close by merging it. Locking the row makes that
-    window deterministic instead of removing it. The card does remove it: a
-    filed card is the delivery, from that moment the PR belongs to it
-    (`open_pr_for_card`), and no task is ever merged without one. So the
-    question this asks is the question that has a stable answer.
+    window deterministic instead of removing it. The open card does remove it:
+    a filed card is the delivery, from that moment the PR belongs to it
+    (`open_pr_for_card`), and no task is ever merged in that window without
+    one. So the question this asks is the question that has a stable answer.
 
-    Every merging path goes through a card — the ordinary accept, an
-    auto-merged armed card, a manual override, and the PR somebody merged on
-    GitHub that the platform then settles — so all of them are excluded by the
-    same one check.
+    Settled cards are a different matter, and asking about them was wrong: a
+    task that delivers in steps starts its second step with step one's card
+    already `accepted`, its `pr_number` back to None and a branch of its own
+    (`TaskService.next_step`) — nothing but this check stood between it and the
+    draft PR it needs, so the sweep never brought it one and the step sat
+    waiting for a review that could not start. A settled card holds no PR
+    anybody is still going to merge, which is why `archive.OPEN_CARD_STATUSES`
+    — the same "not settled yet" the rest of review uses — is the filter.
+
+    Every merging path goes through a card, and the card is open while the
+    merge is in flight — the ordinary accept, an auto-merged armed card, a
+    manual override, and the PR somebody merged on GitHub that the platform
+    then settles — so all of them are excluded by the same one check.
 
     The row is still locked and re-read, for the narrower job it can actually
     do: two overlapping passes over one task must not both open a PR. The second
@@ -627,7 +702,10 @@ async def _draft_pr_for_one_task(session: AsyncSession, task_id: uuid.UUID) -> b
     if task is None:
         return False
     cards = AcceptCardRepository(session)
-    if await cards.list_for_task(task.id):
+    if any(
+        card.status in archive.OPEN_CARD_STATUSES
+        for card in await cards.list_for_task(task.id)
+    ):
         return False
     # The row is held here, so GitHub is not asked: `_branch_ahead` asked it
     # live a moment ago, and what it answered is in the process's quota record.
@@ -665,7 +743,10 @@ async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
         or task.pr_number is not None
     ):
         return False
-    if await AcceptCardRepository(session).list_for_task(task.id):
+    if any(
+        card.status in archive.OPEN_CARD_STATUSES
+        for card in await AcceptCardRepository(session).list_for_task(task.id)
+    ):
         return False
     project_id, branch, base = task.project_id, task.branch_name, task.base_branch
     quota = await background_quota(project_id, session)
@@ -696,7 +777,7 @@ async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
     return difference in ("ahead", "diverged")
 
 
-async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # noqa: ANN001
+async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:
     """The draft PR for one task, or None when this task cannot have one yet.
 
     None (not an error) for: a project with no App installation, a non-GitHub
@@ -741,14 +822,18 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     opened = await client.open_pr(
         head=branch,
         base=base,
-        # No `Reviewed-by` and no card: nobody has accepted, and the subject
-        # this change will land under is not written until somebody files a
-        # card. `WIP:` says both — and 递卡 replaces it (`sync_pr_text`).
-        title=f"WIP: {task.title or branch}"[:255],
+        title=draft_title(task.title or branch),
         body=pr_text.pr_body(room, "", None, who),
         draft=True,
+        as_user_token=await owner_token(session, room, task.id),
     )
     pr = opened.pr
+    await sync_pr_text(
+        client,
+        pr,
+        title=str(pr.get("title") or ""),
+        body=await pr_body_for(session, room, task_id=task.id, opened_by=pr_opener(pr)),
+    )
     logger.info(
         "draft PR #%s opened for task %s (%s)",
         pr.get("number"),
@@ -756,104 +841,3 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
         pr.get("html_url"),
     )
     return pr
-
-
-async def _pr_text(
-    session: AsyncSession,
-    *,
-    card_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    branch: str,
-) -> tuple[str, str]:
-    """PR title/body from the card's change summary (`cheese_accept_request
-    --subject/--body`), falling back to the topic title when the card was filed
-    without one.
-
-    Same builders the merge path uses (`review/pr_text.py`), on purpose: the
-    PR a reviewer reads and the squash commit that lands on main must not be
-    able to say two different things about the same change.
-
-    The routing bookkeeping the old body carried — 验收人, 路由理由, "采纳这张
-    验收卡即合并本 PR" — is gone. It described the platform's workflow to people
-    who were already inside it, while the reviewer opening the PR on GitHub
-    wanted to know what changed and why."""
-
-    place = await PlaceResolver(session).resolve(topic_id)
-    card = await AcceptCardRepository(session).get(card_id)
-    if place is None:
-        return branch, f"Cheese-Topic: {topic_id}"
-    topic = place.room
-    who = await identity.attribution(session, topic, card=card)
-    # deferred-import: tests replace this name on app.domain.project.forge
-    from app.domain.project.forge import ensure_author_email
-
-    if who.author:
-        await ensure_author_email(topic.project_id, session, who.author.email)
-    # No approver yet — the PR opens when the card is FILED, and 采纳 is what
-    # merges it. `Reviewed-by` is written onto the squash commit at merge time,
-    # by whoever actually clicks.
-    return pr_text.change_subject(card, topic), pr_text.pr_body(topic, "", card, who)
-
-
-async def record_pr(
-    session_factory: async_sessionmaker, *, card_id: uuid.UUID, pr: dict
-) -> None:
-    """Write the opened PR onto the card AND onto the task it delivers.
-
-    Both, because both answer questions somebody asks: the card is what a
-    reviewer opens, and the task is what the draft-PR sweep consults to know
-    this task already has one. Writing only the card left a delivered task
-    looking, to the sweep, like a task that had never had a PR.
-
-    Clears a `PR_OPEN_FAILED_PREFIX` note from an earlier failed publish — the
-    card rides a PR now, and a stale「开 PR 失败」would contradict the pr_number
-    sitting next to it.
-    """
-    # deferred-import: tests replace this name on app.domain.room_task.services
-    from app.domain.room_task.services import TaskService
-
-    async with session_factory() as session:
-        card = await AcceptCardRepository(session).get(card_id)
-        if card is None:
-            logger.error("PR recorded nowhere: card %s vanished", card_id)
-            return
-        number = int(pr["number"])
-        url = str(pr.get("html_url") or "")[:255] or None
-        card.pr_number = number
-        card.pr_url = url
-        if card.note_code is notes.NoteCode.pr_open_failed:
-            notes.clear(card)
-        if card.task_id is not None:
-            tasks = TaskService(session)
-            task = await tasks.get(card.task_id)
-            # The task follows the card: it names the PR the card rides.
-            if task is not None and task.pr_number != number:
-                await tasks.record_pr(task, number=number, url=url)
-        await session.commit()
-
-
-async def _record_failure(
-    session_factory: async_sessionmaker, *, card_id: uuid.UUID, exc: BaseException
-) -> None:
-    """#362 修法 1: a failed publish lands ON THE CARD, not only in a log no
-    one reads. A PR-less card used to be indistinguishable from one whose PR
-    simply hadn't landed yet, and the accept path then slid into the local
-    merge without anyone knowing the PR step had failed at all. Accepting the
-    card retries the publish (AcceptService._publish_pr_for_accept), which
-    closes the loop: fail visibly here, retry at accept, and the retry's own
-    outcome replaces this note. Best-effort: a DB hiccup here must not raise
-    out of the background task."""
-
-    note = (
-        f"{PR_OPEN_FAILED_PREFIX}（{str(exc)[:300]}）。目前没有 PR，"
-        "采纳时会重新开 PR；如果仍然开不了，采纳会停止，不会直接推送改动。"
-    )[:2000]
-    try:
-        async with session_factory() as session:
-            card = await AcceptCardRepository(session).get(card_id)
-            if card is None:
-                return
-            notes.record(card, notes.NoteCode.pr_open_failed, note)
-            await session.commit()
-    except Exception:  # noqa: BLE001
-        logger.exception("PR publish failure not recorded on card %s", card_id)

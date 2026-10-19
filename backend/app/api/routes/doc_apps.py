@@ -46,8 +46,6 @@ class AppVersionOut(BaseModel):
     note: str
     #: Who wrote it: always an AI teammate.
     author: str
-    #: The person whose request it answered, when there was one.
-    requested_by: str | None
     #: Whether the platform's browser ran it before it was kept.
     checked: bool
     created_at: str
@@ -102,14 +100,14 @@ async def _snippet(
     return await reach(db, resolver, snippet.document_id, enforce=enforce), snippet
 
 
-def _writer(reached: Reached, resolver: ActorResolver) -> tuple[str, str | None]:
-    """Who the new version is by, and who asked for it: 芝士, and only 芝士 —
-    a person changes an app by asking it."""
+def _writer(reached: Reached, resolver: ActorResolver) -> str:
+    """Who the new version is by: 芝士, and only 芝士 — a person changes an app
+    by asking it. The version is the teammate's own, whoever asked."""
     delegation = resolver.delegation()
     if delegation is not None and delegation.agent is not None:
-        return delegation.agent, reached.actor.handle
+        return delegation.agent
     if reached.actor.via == "cheese":
-        return reached.actor.handle, None
+        return reached.actor.handle
     raise ForbiddenError(say("appAgentOnly"))
 
 
@@ -125,6 +123,14 @@ async def _ran(db: DbSession, body: AppCodeIn) -> check.Ran | None:
         raise UnprocessableEntityError(
             say("appRunFailed", why=refused.args[0])
         ) from None
+
+
+def _project_of(reached) -> uuid.UUID:
+    """The project a mini app's versions are kept in; a team's own document has
+    none to keep them in yet (#3774)."""
+    if reached.doc.project_id is None:
+        raise UnprocessableEntityError(say("docTeamNoApps"))
+    return reached.doc.project_id
 
 
 @router.get(
@@ -217,17 +223,17 @@ async def create_app(
     until a block names it: where it goes is the writer's to decide."""
     reached = await reach(db, resolver, document_id, enforce=True)
     await require_writable(db, reached)
-    author, requested_by = _writer(reached, resolver)
+    author = _writer(reached, resolver)
+    project_id = _project_of(reached)
     ran = await _ran(db, body)
     snippets = Snippets(db)
     snippet = await snippets.create(reached.doc.id, author)
     version = await snippets.add_version(
         snippet,
-        project_id=reached.doc.project_id,
+        project_id=project_id,
         code=body.code,
         note=body.note,
         author=author,
-        requested_by=requested_by,
         ran=ran,
     )
     await db.commit()
@@ -253,8 +259,8 @@ async def add_app_version(
     they name until their `@<version>` is changed."""
     reached, snippet = await _snippet(db, resolver, key, enforce=True)
     await require_writable(db, reached)
-    author, requested_by = _writer(reached, resolver)
-    project_id = reached.doc.project_id
+    author = _writer(reached, resolver)
+    project_id = _project_of(reached)
     ran = await _ran(db, body)
     version = await Snippets(db).add_version(
         snippet,
@@ -262,7 +268,6 @@ async def add_app_version(
         code=body.code,
         note=body.note,
         author=author,
-        requested_by=requested_by,
         ran=ran,
     )
     await db.commit()

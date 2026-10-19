@@ -24,10 +24,12 @@ from fastapi import APIRouter, Depends, Query
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError
 from app.domain.authz import policy
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import Feedback
+from app.domain.feedback.rewards import reward_feedback
 from app.domain.feedback.schemas import (
     FeedbackCard,
     FeedbackCounts,
@@ -37,8 +39,11 @@ from app.domain.feedback.schemas import (
     NoteCreate,
 )
 from app.domain.identity.services import IdentityService
+from app.domain.usage.schemas import CreditRewardOut
 
-router = APIRouter(prefix="/admin/feedback", tags=["feedback"])
+router = APIRouter(
+    prefix="/admin/feedback", tags=["feedback"], dependencies=[ROUTE_DECIDES]
+)
 
 
 class FeedbackAdminCounts(FeedbackCounts):
@@ -80,6 +85,18 @@ async def require_feedback_admin(
 
 
 FeedbackAdminDep = Annotated[str, Depends(require_feedback_admin)]
+
+
+@router.post("/{feedback_id}/reward", **typed_response(CreditRewardOut))
+async def accept_and_reward_feedback(
+    feedback_id: uuid.UUID,
+    service: FeedbackServiceDep,
+    handle: FeedbackAdminDep,
+    db: DbSession,
+) -> dict:
+    result = await reward_feedback(service, feedback_id, actor=handle)
+    await db.commit()
+    return ok(result)
 
 
 async def _cards(

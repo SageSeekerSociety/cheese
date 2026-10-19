@@ -1,12 +1,13 @@
 name: Backend Test
 
-# Every job here runs on a GitHub-hosted runner: the repository is public, so
+# Every job here but the last (`test-complete`, a seconds-long aggregation that
+# takes the cheese-ci pool for same-repo PRs and the merge queue) runs on a
+# GitHub-hosted runner: the repository is public, so
 # hosted minutes are free and unlimited. Postgres and Valkey come as service
 # containers on the same images and host ports the cheese-ci pool's resident
 # pair use (deploy/ci-runner/resident-services.sh), so the test settings do not
-# depend on which kind of runner they land on. Only jobs that need the dev
-# box's own images or a real device stay on the self-hosted pool (e2e,
-# remote-execution).
+# depend on which kind of runner they land on. Jobs that need the dev box's
+# own images or a real device live in their own workflows, not here.
 on:
   workflow_call:
     inputs:
@@ -22,6 +23,20 @@ on:
       ref:
         type: string
         default: ""
+      # Whether to run the 5-shard integration layer. Pull requests pass false
+      # from required-ci.yml and leave integration to merge_group; merge_group
+      # and deploy-prod keep the true default.
+      integration:
+        type: boolean
+        default: true
+      # Whether `test-complete` runs here. required-ci.yml passes false and runs
+      # the same shard-coverage check inside its own `CI required` job, which
+      # takes the merge queue's critical path one runner hop shorter (each hop
+      # waited ~14 min at p90 on 2026-10-17); deploy-prod's x86 run has no
+      # aggregator of its own and keeps the default.
+      coverage-job:
+        type: boolean
+        default: true
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to.
 permissions:
@@ -88,13 +103,14 @@ jobs:
       # .pre-commit-config.yaml. Before this, CI and the local gate were two
       # hand-maintained lists that agreed only as long as someone remembered to
       # update both. Each hook cds into backend/ on its own, so these run from
-      # the workspace root rather than under this job's `defaults`.
+      # the workspace root rather than under this job's `defaults`. ruff-format
+      # is deliberately not here: it is a fixer on a developer's commit, and
+      # layout is not something CI fails a change for.
       - name: Lint and type-check (pre-commit hooks)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         run: |
           uvx pre-commit run --all-files --show-diff-on-failure ruff
-          uvx pre-commit run --all-files --show-diff-on-failure ruff-format
           uvx pre-commit run --all-files pyright
 
       # A check that reports "clean" because it never ran is the failure this
@@ -131,36 +147,32 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: uvx pre-commit run --all-files boundary-check
 
-      # Same shape for the deferred-import ratchet: first prove it still goes
-      # red on a planted tree, then run the developer's hook over the tree.
-      - name: Deferred-import check proves it still fires
-        run: uv run python scripts/check_deferred_imports.py --self-test
-
-      - name: Deferred imports only go down (annotated or frozen)
-        working-directory: ${{ github.workspace }}
-        run: uvx pre-commit run --all-files deferred-imports
-
       # Building the document is also the smoke test that the app can produce
       # one at all: the frontend no longer finds a committed copy, it asks for
       # the document just before type-checking (frontend/scripts/typecheck.mjs).
-      # Two one-line files beside it stay committed and this run holds both —
-      # the digest, because it is the path the frontend suite is selected by and
-      # a commit that moved the API surface without moving it would ship
-      # unjudged; and the ratchet, backend/openapi-untyped.json, which only
-      # shrinks, so a new route declares what it returns. A step, not a test:
+      # It also holds the ratchet beside it, backend/openapi-untyped.json, which
+      # only shrinks, so a new route declares what it returns. Whether the
+      # document moved, which decides whether the frontend suite runs, is the
+      # `api` job's question in required-ci.yml, not this one's. A step, not a test:
       # building takes about 25 s, longer than the pure layer's per-test
       # ceiling. See scripts/export_openapi.py.
-      - name: OpenAPI document builds, digest and untyped ratchet hold
+      - name: OpenAPI document builds and untyped ratchet holds
         run: uv run python -m scripts.export_openapi --check
 
       - name: Independently collect every required backend case
         id: collect
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: >-
-          uv run python -m pytest tests/ --collect-only -q
-          --ignore=tests/forgejo -k 'not kotlin'
-          -p scripts.ci_shard
-          --ci-selection-output="$RUNNER_TEMP/backend-expected"
+        env:
+          EXPECT_INTEGRATION: ${{ inputs.integration && github.event_name != 'pull_request' }}
+        run: |
+          mark_args=()
+          if [ "$EXPECT_INTEGRATION" != true ]; then
+            mark_args=(-m "not integration")
+          fi
+          uv run python -m pytest tests/ --collect-only -q \
+            --ignore=tests/forgejo -k 'not kotlin' "${mark_args[@]}" \
+            -p scripts.ci_shard \
+            --ci-selection-output="$RUNNER_TEMP/backend-expected"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() && steps.collect.outcome == 'success' }}
@@ -223,14 +235,6 @@ jobs:
           - {layer: pure, shard: '0/2', floor: 4000, timeout: 10}
           - {layer: pure, shard: '1/2', floor: 4000, timeout: 10}
           - {layer: contract, shard: '0/1', floor: 200, timeout: 5}
-          # Five integration shards: at four, an integration shard was usually the
-          # merge queue's slowest job. Go back to four if the queue's wait for a
-          # runner grows by more than the fifth shard saves.
-          - {layer: integration, shard: '0/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '1/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '2/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '3/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '4/5', floor: 2400, timeout: 15}
     # Floors apply to the complete layer before sharding, not each runner.
     env:
       REDIS_URL: redis://localhost:6389/0
@@ -335,12 +339,11 @@ jobs:
       - name: Give this run an empty database
         if: matrix.layer != 'pure'
         env:
-          PGPASSWORD: postgres
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh postgresql-client
-          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
-          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
 
       # DATABASE_URL comes from the slot step above.
@@ -370,9 +373,41 @@ jobs:
         with:
           path: ~/.npm
           key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
-      - name: Install pinned harness binaries
+      # The unpacked tools, not the package cache. The key above never matched
+      # on its own: warm-caches.yml's `backend` job saves one with x64 in it,
+      # these shards are arm64, so every run of all seven unpacked both
+      # packages from the registry again — 9–13s each, measured across runs
+      # 38925235400 / 38925326757 / 38926053508 — and fetched pi from GitHub
+      # Releases again, which is where run 38251886139 died on an HTTP 500.
+      #
+      # Restore only, like the key above: warm-caches.yml's `harness-bins` job
+      # saves this one on main, on arm64 for the same reason these shards are.
+      # The path is absolute under $HOME because the run that saves it and the
+      # run that restores it are different machines.
+      #
+      # Launcher code changes do not change the verified vendor builds.
+      # Key by versions so a refactor does not force every shard back upstream.
+      - name: Resolve pinned harness versions
+        id: harness-pins
         if: matrix.layer != 'contract'
         run: |
+          uv run python - <<'PY' >> "$GITHUB_OUTPUT"
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          pins = written()
+          print("key=" + "-".join(pins[name].pinned_version for name in (CLAUDE_CODE, CODEX, PI)))
+          PY
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: harness-bins
+        if: matrix.layer != 'contract'
+        with:
+          path: ~/.cache/cheese-harness-bins
+          key: harness-bins-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.harness-pins.outputs.key }}
+      - name: Install pinned harness binaries
+        if: matrix.layer != 'contract' && steps.harness-bins.outputs.cache-hit != 'true'
+        run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          mkdir -p "$bins"
           packages="$(uv run python - <<'PY'
           from app.domain.agent.capability.matrix import written
           from app.domain.agent.harness import CLAUDE_CODE, CODEX
@@ -382,13 +417,7 @@ jobs:
           )"
           # Package names and versions come only from checked-in declarations.
           read -r -a pinned_packages <<< "$packages"
-          npm install --prefix "$RUNNER_TEMP/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
-          tools="$RUNNER_TEMP/harness-tools/node_modules/.bin"
-          echo "$tools" >> "$GITHUB_PATH"
-          echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
-          echo "CHEESE_TEST_CODEX=$tools/codex" >> "$GITHUB_ENV"
-          "$tools/claude" --version
-          "$tools/codex" --version
+          npm install --prefix "$bins/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
           # pi is not an npm package here: the build a room runs is the
           # vendor's compiled release, fetched and checked by the same code the
           # platform serves it with (`app.domain.machine.pi_dist`).
@@ -406,10 +435,43 @@ jobs:
           print(asyncio.run(pi_dist.ensure_cached(Path(sys.argv[1]), version, sys.argv[2])))
           PY
           )"
-          mkdir -p "$RUNNER_TEMP/pi"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/pi"
-          echo "CHEESE_TEST_PI=$RUNNER_TEMP/pi/pi/pi" >> "$GITHUB_ENV"
-          "$RUNNER_TEMP/pi/pi/pi" --version
+          mkdir -p "$bins/pi"
+          tar -xzf "$archive" -C "$bins/pi"
+      # Runs on a hit and on a miss alike, so a restored directory that is not
+      # a working set of binaries fails the shard here rather than inside a
+      # test. What it compares is each build's own version against the
+      # declaration the key hashes; the plain `--version` calls alone would
+      # pass on any build at all.
+      - name: Point the tests at the pinned harness binaries
+        if: matrix.layer != 'contract'
+        run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          tools="$bins/harness-tools/node_modules/.bin"
+          echo "$tools" >> "$GITHUB_PATH"
+          echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_CODEX=$tools/codex" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_PI=$bins/pi/pi/pi" >> "$GITHUB_ENV"
+          # The pins, from the same declarations the install step reads.
+          pins="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          every = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(every[CLAUDE_CODE], every[CODEX], every[PI])
+          PY
+          )"
+          read -r claude_pin codex_pin pi_pin <<< "$pins"
+          for want in "claude $claude_pin" "codex $codex_pin" "pi $pi_pin"; do
+            read -r which expected <<< "$want"
+            case "$which" in
+              claude) built="$("$tools/claude" --version)" ;;
+              codex) built="$("$tools/codex" --version)" ;;
+              pi) built="$("$bins/pi/pi/pi" --version)" ;;
+            esac
+            case "$built" in
+              *"$expected"*) ;;
+              *) echo "$which is $built, not the pinned $expected" >&2; exit 1 ;;
+            esac
+          done
 
       - name: Verify integration PostgreSQL storage
         if: matrix.layer == 'integration'
@@ -523,11 +585,267 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Heavy DB-backed integration shards: deferred to merge_group (and deploy-prod)
+  # when inputs.integration is false or the event is pull_request.
+  integration:
+    if: ${{ inputs.integration && github.event_name != 'pull_request' }}
+    runs-on: ${{ inputs.runner }}
+    name: ${{ matrix.layer }} (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {layer: integration, shard: '0/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '1/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '2/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '3/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '4/5', floor: 2400, timeout: 15}
+    env:
+      REDIS_URL: redis://localhost:6389/0
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      OPENAI_API_KEY: test-key
+      ANTHROPIC_AUTH_TOKEN: test-token
+    services:
+      postgres:
+        image: mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cheese_test
+        ports:
+          - 5442:5432
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=4g
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 1s
+          --health-timeout 5s --health-retries 60
+      valkey:
+        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+        ports:
+          - 6389:6379
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 1s
+          --health-timeout 5s --health-retries 60
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Scope this run to its runner slot
+        run: |
+          slot="${CHEESE_CI_SLOT:-0}"
+          echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
+          echo "CHEESE_CI_REDIS_BASE_DB=$((slot * 16))" >> "$GITHUB_ENV"
+          echo "CHEESE_CI_TEST_WORKERS=${CHEESE_CI_TEST_WORKERS:-auto}" >> "$GITHUB_ENV"
+          root="postgresql+asyncpg://postgres:postgres@localhost:5442"
+          echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
+
+      - name: Ensure required test tools
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
+          echo "CHEESE_TEST_SANDBOX_HOST=1" >> "$GITHUB_ENV"
+          "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
+
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          save-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Give this run an empty database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh postgresql-client
+          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+            "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
+          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
+      - name: Resolve pinned harness versions
+        id: harness-pins
+        run: |
+          uv run python - <<'PY' >> "$GITHUB_OUTPUT"
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          pins = written()
+          print("key=" + "-".join(pins[name].pinned_version for name in (CLAUDE_CODE, CODEX, PI)))
+          PY
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: harness-bins
+        with:
+          path: ~/.cache/cheese-harness-bins
+          key: harness-bins-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.harness-pins.outputs.key }}
+      - name: Install pinned harness binaries
+        if: steps.harness-bins.outputs.cache-hit != 'true'
+        run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          mkdir -p "$bins"
+          packages="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX
+          pins = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(f"@anthropic-ai/claude-code@{pins[CLAUDE_CODE]} @openai/codex@{pins[CODEX]}")
+          PY
+          )"
+          read -r -a pinned_packages <<< "$packages"
+          npm install --prefix "$bins/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
+          case "$(uname -m)" in
+            x86_64) pi_platform=linux-x64 ;;
+            aarch64 | arm64) pi_platform=linux-arm64 ;;
+          esac
+          archive="$(uv run python - "$RUNNER_TEMP/pi-dist" "$pi_platform" <<'PY'
+          import asyncio, sys
+          from pathlib import Path
+          from app.domain.agent.harness import PI
+          from app.domain.agent.capability.matrix import written
+          from app.domain.machine import pi_dist
+          version = written()[PI].pinned_version
+          print(asyncio.run(pi_dist.ensure_cached(Path(sys.argv[1]), version, sys.argv[2])))
+          PY
+          )"
+          mkdir -p "$bins/pi"
+          tar -xzf "$archive" -C "$bins/pi"
+      - name: Point the tests at the pinned harness binaries
+        run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          tools="$bins/harness-tools/node_modules/.bin"
+          echo "$tools" >> "$GITHUB_PATH"
+          echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_CODEX=$tools/codex" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_PI=$bins/pi/pi/pi" >> "$GITHUB_ENV"
+          pins="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          every = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(every[CLAUDE_CODE], every[CODEX], every[PI])
+          PY
+          )"
+          read -r claude_pin codex_pin pi_pin <<< "$pins"
+          for want in "claude $claude_pin" "codex $codex_pin" "pi $pi_pin"; do
+            read -r which expected <<< "$want"
+            case "$which" in
+              claude) built="$("$tools/claude" --version)" ;;
+              codex) built="$("$tools/codex" --version)" ;;
+              pi) built="$("$bins/pi/pi/pi" --version)" ;;
+            esac
+            case "$built" in
+              *"$expected"*) ;;
+              *) echo "$which is $built, not the pinned $expected" >&2; exit 1 ;;
+            esac
+          done
+
+      - name: Verify integration PostgreSQL storage
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker inspect --format '{{json .HostConfig.Tmpfs}}' "$POSTGRES_CONTAINER"
+          pid=$(docker inspect --format '{{.State.Pid}}' "$POSTGRES_CONTAINER")
+          data="/proc/$pid/root/var/lib/postgresql/data"
+          test "$(sudo -n stat -f -c %T "$data")" = tmpfs
+          read -r block_size blocks < <(sudo -n stat -f -c '%S %b' "$data")
+          test "$((block_size * blocks))" = 4294967296
+          echo "CHEESE_CI_POSTGRES_PID=$pid" >> "$GITHUB_ENV"
+
+      - name: Run the selected layer partition
+        timeout-minutes: ${{ matrix.timeout }}
+        env:
+          TEST_LAYER: ${{ matrix.layer }}
+          TEST_SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/backend-results"
+          set -o pipefail
+          uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" \
+            -- uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+            --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
+            -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
+            --ci-selection-output="$RUNNER_TEMP/backend-results" \
+            -p scripts.ci_evidence --ci-evidence-dir="$RUNNER_TEMP/backend-results" \
+            --reruns 1 --reruns-delay 1 \
+            --dist loadfile --no-loadscope-reorder --tb=short --durations=30 \
+            --junitxml="$RUNNER_TEMP/backend-results/results.xml" 2>&1 \
+            | tee "$RUNNER_TEMP/backend-results/pytest.log"
+
+      - name: Annotate the shard's failing cases
+        if: ${{ failure() }}
+        run: >-
+          uv run python -m scripts.report_failed_cases
+          "$RUNNER_TEMP/backend-results/results.xml"
+          --log "$RUNNER_TEMP/backend-results/pytest.log"
+
+      - name: Name what a lost worker was running
+        if: ${{ !cancelled() }}
+        run: |
+          shopt -s nullglob
+          for log in "$RUNNER_TEMP"/backend-results/hang-*.log; do
+            last="$(grep -E '^[0-9:]+ (start|end) ' "$log" | tail -1)"
+            if grep -q 'Timeout (' "$log" || [[ "$last" == *" start "* ]]; then
+              echo "::group::$(basename "$log"): $last"
+              tail -c 20000 "$log"
+              echo "::endgroup::"
+            fi
+          done
+
+      - name: Show disk use
+        if: ${{ failure() }}
+        run: |
+          df -h / "$RUNNER_TEMP" /tmp || true
+          sudo -n du -sh "$RUNNER_TEMP"/* /tmp/pytest-of-* 2>/dev/null | sort -h | tail -15 || true
+
+      - name: Verify the partition ran without skips
+        if: ${{ !cancelled() }}
+        env:
+          LAYER_FLOOR: ${{ matrix.floor }}
+        run: >-
+          uv run python -m scripts.assert_suite_ran
+          "$RUNNER_TEMP/backend-results/results.xml"
+          --at-least "$LAYER_FLOOR"
+          --selection-dir "$RUNNER_TEMP/backend-results"
+          --reruns "$RUNNER_TEMP/backend-results/reruns.jsonl"
+
+      - name: Preserve test results and selection
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-${{ matrix.layer }}-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-results/
+          if-no-files-found: error
+          retention-days: 14
+
   test-complete:
     name: Backend coverage complete
-    needs: [static, test]
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    needs: [static, test, integration]
+    if: ${{ !cancelled() && inputs.coverage-job }}
+    # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
+    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # cheese-ci pool (docs/infrastructure.md); fork PRs, a deleted fork and every
+    # other caller (deploy-prod's x86 run) stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -540,7 +858,14 @@ jobs:
       - name: Compare executed partitions with independent collection
         env:
           TEST_RESULT: ${{ needs.test.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          EXPECT_INTEGRATION: ${{ inputs.integration && github.event_name != 'pull_request' }}
           PLAN_ARTIFACT: backend-expected
         run: |
           python3 -m scripts.assert_shards_complete "$RUNNER_TEMP/backend-artifacts" --plan "$PLAN_ARTIFACT"
           test "$TEST_RESULT" = success
+          if [ "$EXPECT_INTEGRATION" = true ]; then
+            test "$INTEGRATION_RESULT" = success
+          else
+            test "$INTEGRATION_RESULT" = skipped
+          fi

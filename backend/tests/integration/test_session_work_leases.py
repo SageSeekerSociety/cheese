@@ -38,6 +38,10 @@ pytestmark = pytest.mark.anyio
 async def test_each_session_in_a_room_acquires_its_own_environments_device(
     client, monkeypatch, old_online, background_state
 ):
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     project = post_project(
         client, json={"name": "Session hands"}, owner="alice"
     ).json()["data"]
@@ -442,6 +446,10 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
 async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     client, monkeypatch, scenario, tmp_path
 ):
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     project = post_project(
         client, json={"name": "Session hands"}, owner="alice"
     ).json()["data"]
@@ -613,8 +621,10 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     # machine is a person's: nothing is installed on it for the sandbox.
     assert launch_options == {"sandbox": True, "platform_machine": False}
     assert launch_env["CHEESE_AUTHOR"] == actor_handle
-    assert launch_env["GIT_AUTHOR_NAME"] == actor_handle
-    assert launch_env["GIT_AUTHOR_EMAIL"] == f"{actor_handle}@agent.cheese.local"
+    # Who a commit is by belongs to the task's checkout, not the launch: an
+    # author fixed here would override the one a task's checkout sets.
+    assert "GIT_AUTHOR_NAME" not in launch_env
+    assert "GIT_AUTHOR_EMAIL" not in launch_env
     resource_id = first.json()["data"]["target"]["resource_id"]
     assert hub.exec.await_count == 1
     async with client.test_factory() as db:
@@ -928,6 +938,10 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
     tool, while its other calls — parallel tools, subagents, a running command
     being read — are in flight on them. Those calls reach the machine; they are
     not refused as belonging to a generation that is no longer current."""
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     import asyncio
     import hashlib
     import threading
@@ -1047,6 +1061,10 @@ async def test_a_recheck_that_outlasts_its_request_leaves_the_session_startable(
     time, and once it is over a session starting with no wait at all — how a
     session takes its leased machine at start — gets the hands, instead of
     being refused as "being prepared" until the claim runs out by the clock."""
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     import asyncio
     import hashlib
     import threading
@@ -1488,3 +1506,98 @@ async def test_a_wait_that_runs_out_on_the_rooms_lock_still_answers_preparing(
 
     assert response.status_code == 200, response.text
     assert response.json()["data"].get("preparing") is True
+
+
+async def test_a_machine_whose_environment_state_cannot_be_read_is_answered_in_words(
+    client, monkeypatch
+):
+    """The machine took the executor, but the project environment's state could
+    not be read there (its status check failed on the machine). The session is
+    told so as an answer it can hand to the agent, not with a server error, and
+    the next attempt takes the machine once the state reads."""
+    project = post_project(client, json={"name": "Own machine"}, owner="alice").json()[
+        "data"
+    ]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        topic = await db.get(Topic, topic_id)
+        resource = str(topic.resource_id or topic_id)
+        device = await devices.approve(
+            await devices.start("laptop"),
+            owner_user_id=owner.id,
+            supply=Supply.self_hosted,
+        )
+        await devices.assign_to_project(
+            device.device_id, project_id, actor_user_id=owner.id
+        )
+        topic.default_environment = {
+            "kind": "sandbox",
+            "spec": f"devices_of:{owner.id}",
+        }
+        session = await AgentSessionService(db).ensure(
+            topic_id, "cheese", harness="claude-code"
+        )
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        session_id, device_id = session.id, device.device_id
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=agent.username,
+            ),
+            resource,
+            session_id=str(session_id),
+        )
+        await db.commit()
+
+    readable = {"state": False}
+
+    async def machine(device, argv, **kwargs):
+        if "CHEESE_STATUS_WAIT" in " ".join(argv):
+            if not readable["state"]:
+                return {"exit": 1, "stdout": "", "stderr": "python3: not found"}
+            return {"exit": 0, "stdout": json.dumps({"state": "ready"})}
+        return {
+            "exit": 0,
+            "stdout": json.dumps(
+                {"state": f"/{device}/state", "workspace": "/w", "mcp_servers": []}
+            ),
+        }
+
+    hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
+        is_online=lambda _device: True,
+        reconnecting=lambda _device: False,
+        exec=AsyncMock(side_effect=machine),
+    )
+    monkeypatch.setattr(work_lease, "device_hub", hub)
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    def lease():
+        return client.post(
+            f"/topics/{topic_id}/sessions/{session_id}/work-lease",
+            headers={"X-Cheese-Token": token},
+            json={"env": {"CHEESE_ENVIRONMENT": '{"revision":"one"}'}},
+        )
+
+    unreadable = lease()
+    assert unreadable.status_code == 200, unreadable.text
+    assert unreadable.json()["data"]["unavailable"]
+    assert "target" not in unreadable.json()["data"]
+
+    readable["state"] = True
+    taken = lease()
+    assert taken.status_code == 200, taken.text
+    assert taken.json()["data"]["target"]["device_id"] == device_id

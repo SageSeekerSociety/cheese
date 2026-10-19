@@ -19,8 +19,8 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from app.domain.agent import github_app as github_app_module
-from app.domain.agent.github_app import GitHubAppError, GitHubAppTokens
+from app.domain.project import github_app as github_app_module
+from app.domain.project.github_app import GitHubAppError, GitHubAppTokens
 
 # What `cheesex-app` was actually granted on SageSeekerSociety, read off
 # `GET /orgs/{org}/installations` on 2026-08-12. Note what is NOT here:

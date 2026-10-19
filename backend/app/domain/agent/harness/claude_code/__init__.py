@@ -7,10 +7,8 @@ its config, and the remote-execution plugin that sends its tools to the room's
 executor. None of it is a fact about running an agent.
 
 So the boundary is the point. ``tests/unit/test_harness_boundary.py`` holds it:
-outside this package you import from HERE, never from a submodule, and this
-file's export list is the ledger of everything that still crosses. The list is
-a ratchet — adding to it goes red, and so does forgetting to delete a line you
-paid off.
+outside this package you import from HERE, never from a submodule, and only a
+name this file's ``__all__`` lists. That list is everything that crosses.
 """
 
 from app.domain.agent.harness.claude_code import owner_login

@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     NotFoundError,
     UnauthorizedError,
@@ -155,7 +156,7 @@ async def list_directories(
     return {"directories": [_grant_view(g) for g in grants]}
 
 
-@router.post("/my/devices/{device_id}/directories")
+@router.post("/my/devices/{device_id}/directories", dependencies=[ROUTE_DECIDES])
 async def grant_directory(
     device_id: str,
     body: GrantDirectoryRequest,
@@ -188,7 +189,9 @@ async def grant_directory(
     return {**_grant_view(grant), "delivery": _delivery_view(outcome)}
 
 
-@router.delete("/my/devices/{device_id}/directories/{grant_id}")
+@router.delete(
+    "/my/devices/{device_id}/directories/{grant_id}", dependencies=[ROUTE_DECIDES]
+)
 async def revoke_directory(
     device_id: str,
     grant_id: uuid.UUID,

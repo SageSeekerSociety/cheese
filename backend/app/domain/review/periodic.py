@@ -6,8 +6,16 @@ from collections.abc import Awaitable, Callable
 from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.agent.chat import ChatService
+from app.domain.delivery_events import SettleCard
 from app.domain.review import gate_sweep, pr_poll
+from app.domain.review.ports import (
+    Announce,
+    Chat,
+    DispatchPending,
+    RecordInstruction,
+    SweepCheckouts,
+    TaskTeammate,
+)
 
 GateNudge = Callable[[uuid.UUID, str, str, dict], Awaitable[None]]
 GateNudgeFactory = Callable[[], GateNudge]
@@ -28,30 +36,68 @@ async def sweep_abandoned_gates(
 def register_periodic_jobs(
     jobs: PeriodicJobs,
     *,
-    chat: ChatService,
+    chat: Chat,
+    announce: Announce,
     gate_sessions: SessionFactory,
     gate_nudge_factory: GateNudgeFactory,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    dispatch_pending: DispatchPending,
+    task_teammate: TaskTeammate,
+    machines: SweepCheckouts | None = None,
 ) -> None:
     jobs.register(
         "pr poll",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.poll_open_prs(chat),
+        lambda: pr_poll.poll_open_prs(
+            chat,
+            announce,
+            settle_card=settle_card,
+            record_instruction=record_instruction,
+            task_teammate=task_teammate,
+        ),
+        forge_bound=True,
     )
     jobs.register(
         "task pr poll",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.poll_uncarded_task_prs(chat),
+        lambda: pr_poll.poll_uncarded_task_prs(
+            chat,
+            announce,
+            record_instruction=record_instruction,
+            task_teammate=task_teammate,
+        ),
+        forge_bound=True,
     )
     jobs.register(
         "landing watch",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.watch_landings(chat),
+        lambda: pr_poll.watch_landings(
+            chat,
+            announce,
+            record_instruction=record_instruction,
+            task_teammate=task_teammate,
+            machines=machines,
+        ),
+        forge_bound=True,
     )
-    # Drafts and cards watch the same repository state on the same clock.
+    # Drafts and cards watch the same repository state, but not on the same
+    # clock: a draft PR nobody is waiting for can appear a few minutes later,
+    # and this sweep is the largest single consumer of the installation's
+    # GitHub quota (two requests per candidate branch, every pass). This is
+    # also the only caller that passes `quiet_window_s`: an event or a
+    # reconnect sweeping every open task is how a missed pass is made good.
     jobs.register(
         "draft pr sweep",
-        settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.open_draft_prs(chat),
+        settings.draft_pr_sweep_interval_s,
+        lambda: pr_poll.open_draft_prs(
+            chat,
+            announce,
+            dispatch_pending=dispatch_pending,
+            record_instruction=record_instruction,
+            quiet_window_s=settings.draft_pr_sweep_activity_window_s,
+        ),
+        forge_bound=True,
     )
     jobs.register(
         "gate sweep",

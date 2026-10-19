@@ -1,61 +1,125 @@
 name: PR title recheck
 
-# Required CI checks a PR's title in its `CI required` job, and passes a draft:
-# the platform opens a task's draft PR under a placeholder title and writes the
-# real subject when it hands the work over, marking the PR ready in the same
-# step. Neither the retitle nor the ready flag is an event Required CI runs on,
-# and running every suite again for a title would cost a full CI round. So this
-# re-runs that one job of the head commit's finished Required CI run: the suites
-# keep their results and the title is read again.
+# Ready PRs check the title in fast as well as CI required. Re-run a failed
+# fast job and its downstream aggregator; otherwise only the aggregator needs
+# the fresh title. No full suite is restarted for a title edit.
 #
-# A run still in progress needs nothing: its title step has not run yet and
-# reads the PR as it is when it does. Fork PRs get a read-only token and are
-# left alone.
+# An edit while Required CI is running cannot re-run that run yet. Completion
+# recovers any attempt with a real title edit since the affected job started.
+# The next job starts after that edit, so an unchanged product failure does not
+# loop. Run display_title is not the title fast read; an A -> B -> A edit counts.
+# Forks and superseded heads/attempts stay untouched.
 on:
   pull_request:
     types: [ready_for_review, edited]
     branches: [main]
+  workflow_run:
+    workflows: [Required CI]
+    types: [completed]
 
 permissions:
   actions: write
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: pr-title-${{ github.event.pull_request.number }}
+  group: pr-title-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
   cancel-in-progress: true
 
 jobs:
   recheck:
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
-      && !github.event.pull_request.draft
-      && (github.event.action == 'ready_for_review' || github.event.changes.title)
+      (github.event_name == 'pull_request'
+       && github.event.pull_request.head.repo.full_name == github.repository
+       && !github.event.pull_request.draft
+       && (github.event.action == 'ready_for_review' || github.event.changes.title))
+      || (github.event_name == 'workflow_run'
+          && github.event.workflow_run.event == 'pull_request'
+          && github.event.workflow_run.conclusion == 'failure'
+          && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Re-run the title check of the head commit's Required CI run
+      # No checkout: workflow_run has a write token, so neither code nor artifacts
+      # from the pull request may be executed. Titles are JSON data, never shell.
+      - name: Re-run the title checks of the head commit's Required CI run
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow required-ci.yml \
-            --event pull_request --commit "$HEAD_SHA" --limit 1 \
-            --json databaseId,status --jq '.[0] | select(.status == "completed") | .databaseId')
-          if [ -z "$run" ]; then
-            echo "No finished Required CI run on $HEAD_SHA; its title step will read the PR when it runs."
-            exit 0
-          fi
-          # Only a job that actually ran is worth re-running: `CI required` is a
-          # literal name in required-ci.yml, so it also matches the job of a
-          # draft-quick or superseded run, where it is skipped or cancelled and
-          # re-running it would report nothing about the title.
-          job=$(gh run view "$run" --repo "$GITHUB_REPOSITORY" --json jobs \
-            --jq '.jobs[] | select(.name == "CI required")
-                  | select(.conclusion != "skipped" and .conclusion != "cancelled")
-                  | .databaseId')
-          if [ -z "$job" ]; then
-            echo "Run $run has no 'CI required' that ran (draft quick or superseded); the run in flight reads the title when it does."
-            exit 0
-          fi
-          echo "Re-running 'CI required' (job $job) of Required CI run $run."
-          gh run rerun --job "$job" --repo "$GITHUB_REPOSITORY"
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from datetime import datetime
+          from pathlib import Path
+
+          def timestamp(value):
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          def gh_json(*args):
+              return json.loads(subprocess.check_output(["gh", *args], text=True))
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          completed = os.environ["GITHUB_EVENT_NAME"] == "workflow_run"
+          source = event.get("workflow_run", {})
+          if completed:
+              if (source.get("event") != "pull_request"
+                      or source.get("conclusion") != "failure"
+                      or source.get("head_repository", {}).get("full_name") != repo):
+                  raise SystemExit(0)
+              head = source["head_sha"]
+              pulls = gh_json("api", f"repos/{repo}/commits/{head}/pulls")
+          else:
+              pull = event["pull_request"]
+              head = pull["head"]["sha"]
+              pulls = [gh_json("api", f"repos/{repo}/pulls/{pull['number']}")]
+
+          pulls = [p for p in pulls
+                   if p.get("state") == "open" and not p.get("draft")
+                   and p.get("base", {}).get("ref") == "main"
+                   and p.get("head", {}).get("sha") == head
+                   and (p.get("head", {}).get("repo") or {}).get("full_name") == repo]
+          if not pulls:
+              print("No current ready same-repository PR on this head.")
+              raise SystemExit(0)
+          runs = gh_json("run", "list", "--repo", repo, "--workflow", "required-ci.yml",
+                         "--event", "pull_request", "--commit", head, "--limit", "1",
+                         "--json", "databaseId,status,attempt")
+          if not runs or runs[0]["status"] != "completed":
+              print("Required CI is still running; completion will check for a title edit.")
+              raise SystemExit(0)
+          run = runs[0]["databaseId"]
+          attempt = runs[0]["attempt"]
+          if completed and (run != source["id"] or attempt != source["run_attempt"]):
+              print("A newer Required CI run or attempt supersedes this completion.")
+              raise SystemExit(0)
+          pages = gh_json("api", f"repos/{repo}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100",
+                          "--paginate", "--slurp")
+          jobs = [job for page in pages for job in page["jobs"]]
+          required = next((j for j in jobs if j["name"] == "CI required"
+                           and j.get("conclusion") not in ("skipped", "cancelled")), None)
+          if required is None:
+              print("No CI required job that ran; leave draft or cancelled runs alone.")
+              raise SystemExit(0)
+          fast = next((j for j in jobs if j["name"] == "fast"
+                       and j.get("conclusion") == "failure"), None)
+          job = fast or required
+          if completed:
+              started = timestamp(job["started_at"])
+              changed = False
+              for pull in pulls:
+                  pages = gh_json("api", f"repos/{repo}/issues/{pull['number']}/events?per_page=100",
+                                  "--paginate", "--slurp")
+                  changed = changed or any(
+                      edit.get("event") == "renamed"
+                      and edit.get("rename", {}).get("to") == pull["title"]
+                      and timestamp(edit["created_at"]) >= started
+                      for page in pages for edit in page)
+              if not changed:
+                  print("No new title edit since the affected job started; no automatic retry.")
+                  raise SystemExit(0)
+          print(f"Re-running {job['name']} (job {job['id']}) of Required CI run {run}.")
+          subprocess.run(["gh", "run", "rerun", "--job", str(job["id"]),
+                          "--repo", repo], check=True)
+          PY

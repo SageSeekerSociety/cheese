@@ -18,6 +18,26 @@ class MaterialRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_ids(self, material_ids: list[int]) -> dict[int, Material]:
+        """These ids' rows, keyed by id; an id naming nothing is simply absent.
+
+        One query, not one per id. The predicate is the one `get_by_id` uses —
+        `Material` has no deleted_at, deleting a material deletes its row — so
+        batching here cannot hand back a row the single read would not. The
+        order a caller wants is its own: it walks the ids it asked for and
+        skips what is not in the mapping, rather than taking the order the
+        database happened to return.
+        """
+        if not material_ids:
+            return {}
+        stmt: Select[tuple[Material]] = select(Material).where(
+            Material.id.in_(material_ids)
+        )
+        return {
+            material.id: material
+            for material in (await self._session.execute(stmt)).scalars()
+        }
+
     async def list_by_ids(self, material_ids: list[int]) -> list[Material]:
         """Whatever of these ids exists, in the order asked for.
 
@@ -25,15 +45,7 @@ class MaterialRepository:
         order it asked in is the order a teacher arranged them in — a set would
         hand them back shuffled.
         """
-        if not material_ids:
-            return []
-        stmt: Select[tuple[Material]] = select(Material).where(
-            Material.id.in_(material_ids)
-        )
-        found = {
-            material.id: material
-            for material in (await self._session.execute(stmt)).scalars()
-        }
+        found = await self.get_by_ids(material_ids)
         return [found[i] for i in material_ids if i in found]
 
     async def create(

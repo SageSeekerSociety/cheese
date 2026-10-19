@@ -344,7 +344,7 @@ async def test_a_repositorys_skills_work_in_a_codex_room(tmp_path, machine):
     finally:
         try:
             pid = (await rpc("ping"))["pid"]
-        except Exception:  # noqa: BLE001 — nothing left to stop
+        except Exception:  # nothing left to stop
             pid = None
         if pid:
             os.kill(pid, signal.SIGTERM)

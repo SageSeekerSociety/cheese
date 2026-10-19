@@ -32,6 +32,9 @@ class TaskService:
     async def get_task(self, task_id: int) -> Task | None:
         return await self._repo.get_by_id(task_id)
 
+    async def get_tasks_by_ids(self, task_ids: Sequence[int]) -> dict[int, Task]:
+        return await self._repo.get_by_ids(task_ids)
+
     @classmethod
     def of(cls, session: AsyncSession) -> "TaskService":
         return cls(TaskRepository(session=session), session=session)

@@ -22,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.topics_deps import BlockRepository
 from app.domain.block.documents import DOC_CARD_KEY
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import recipient_seat
 from app.domain.identity.services import IdentityService
 from app.domain.room_task.models import Task
@@ -91,20 +92,30 @@ async def asked_in(
     conversation is answering: the latest one handed to it. In a channel's
     main line only one that named it counts: everything said there is handed
     to the room's teammate, most of it people talking to each other. None when
-    no person asked."""
+    no person asked.
+
+    Who wrote a candidate is one question for the whole window, not one per
+    message: ``is_agent`` is two round trips, so a window of twenty handed-to-
+    the-teammate messages cost forty — and at most one of them ever decided the
+    answer."""
     recent = await BlockRepository(db).messages_before(
         conversation_id, datetime.now(UTC), limit=ASKED_WITHIN
     )
+    candidates = []
     for block in reversed(recent):
         recipient = (block.meta or {}).get("agent_recipient") or {}
         if (
             block.author_type == AuthorType.participant
             and recipient_seat(recipient) == agent_handle
             and (recipient.get("mentioned") or not main_line)
-            and not await IdentityService(db).is_agent(block.author)
         ):
-            return block
-    return None
+            candidates.append(block)
+    if not candidates:
+        return None
+    agents = await IdentityService(db).agents_among(
+        [block.author for block in candidates]
+    )
+    return next((block for block in candidates if block.author not in agents), None)
 
 
 async def source(db, task) -> dict | None:

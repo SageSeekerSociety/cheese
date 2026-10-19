@@ -15,11 +15,14 @@ from pydantic import BaseModel
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.staleness import announce_stale
+from app.domain.agent_instance.adapters import project_team
+from app.domain.room_task.place import place_or_404
 from app.domain.topic.schemas import TopicOut
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -28,9 +31,9 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 async def _person(db, resolver, topic_id: uuid.UUID):
     """The channel and the signed-in person acting on it. A task or a 支线 is
     not a channel."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     if place.conversation_id != place.room_id:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     actor = await resolver.resolve(topic_id=topic_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=topic_id
@@ -40,19 +43,19 @@ async def _person(db, resolver, topic_id: uuid.UUID):
     return place.room, actor
 
 
-@router.post("/{topic_id}/join")
+@router.post("/{topic_id}/join", dependencies=[ROUTE_DECIDES])
 async def join_channel(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Join a public channel of a project I am in."""
     _, actor = await _person(db, resolver, topic_id)
-    await TopicMemberService(db).join(topic_id, actor.handle)
+    await TopicMemberService(db).join(topic_id, actor.handle, team=project_team)
     await db.commit()
     await announce_stale(topic_id, "topics", id=topic_id)
     return ok({"topic_id": str(topic_id), "joined": True})
 
 
-@router.post("/{topic_id}/leave")
+@router.post("/{topic_id}/leave", dependencies=[ROUTE_DECIDES])
 async def leave_channel(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -65,7 +68,7 @@ async def leave_channel(
     return ok({"topic_id": str(topic_id), "joined": False})
 
 
-@router.put("/{topic_id}/description")
+@router.put("/{topic_id}/description", dependencies=[ROUTE_DECIDES])
 async def set_description(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -84,7 +87,7 @@ class MembersOnlyIn(BaseModel):
     members_only: bool
 
 
-@router.put("/{topic_id}/members-only")
+@router.put("/{topic_id}/members-only", dependencies=[ROUTE_DECIDES])
 async def set_members_only(
     topic_id: uuid.UUID, body: MembersOnlyIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

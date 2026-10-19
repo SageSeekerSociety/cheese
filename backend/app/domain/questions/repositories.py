@@ -1,11 +1,30 @@
-import re
-from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+"""questions 领域的数据访问。三个仓储都在这里，读的那一半在 `queries.py`。
 
-from sqlalchemy import Select, func, or_, select, text
+`QuestionRepository` 是唯一跨两个文件的类：只 SELECT 的方法住在 `queries.py` 的
+`QuestionQueries` 基类里（拆的理由和那条界限写在那份文件的 docstring），这里留下的是
+会改数据的那一半 —— add / flush / delete / 改字段。继承让调用点一行都不用改：
+services、路由和单测一直是拿一个 `QuestionRepository(session)` 调上面所有方法，分不清
+也不用分清某个方法住在哪个文件。
+
+`QuestionTopicRepository`（提问与标签的关系）和 `QuestionInvitationRepository`
+（邀请）各自只碰自己的两张表，读和写都在一起，所以整个类留在这里。
+
+两处和拆分前**不一样**，都不是 bug，但说出来比让人自己撞上强：
+
+- 顺带 import 进来、只被搬走的那一半用到的名字（`re`、`or_`、`text`、`timedelta`、
+  `VoteType`、`Discussion`、`DiscussableModelType`）跟着它们搬去了 `queries.py`；
+  这份模块不再顺带回答它们。仓库里没有调用点从这条路径取这些名字。
+  （`app/domain/feedback/repositories.py` 的 docstring 记着同一条取舍的另一面：
+  那边 `_IN_BATCH` 有测试打补丁，所以连读它的 `batched` 一起留在了原地。）
+- `_use_fts` 在这里只是再导出：补丁要打在读它的那份模块上。见下面的注释。
+"""
+
+from collections.abc import Sequence
+from datetime import UTC, datetime
+
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.discussion.models import DiscussableModelType, Discussion
 from app.domain.questions.models import (
     Attitude,
     Question,
@@ -14,24 +33,23 @@ from app.domain.questions.models import (
     QuestionQueryLog,
     QuestionSearchLog,
     QuestionTagRelation,
-    VoteType,
+)
+
+# 这两个名字原来**定义在本模块**，拆分后定义在 `queries.py`（跟它们唯一的调用方
+# `_keyword_filter` 住在一起）。这条 import 不是「顺手拿来用」，是把公开路径留在
+# 原地：`tests/unit/test_questions_repository.py` 一直从
+# `app.domain.questions.repositories` 取 `_use_fts`。所以 F401 在这里是故意的。
+from app.domain.questions.queries import (  # noqa: F401
+    _HAS_WORD_CHAR_RE,
+    QuestionQueries,
+    _use_fts,
 )
 from app.domain.tag.models import Tag
 
-_HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
 
+class QuestionRepository(QuestionQueries):
+    """会改数据的那一半；只读的方法继承自 `QuestionQueries`。"""
 
-def _use_fts(token: str) -> bool:
-    """Return True when *token* is suitable for PostgreSQL FTS.
-
-    Short tokens (<= 2 chars) and tokens composed entirely of emoji /
-    symbols produce empty tsqueries with the ``simple`` dictionary and
-    must fall back to ILIKE.
-    """
-    return len(token) > 2 and _HAS_WORD_CHAR_RE.search(token) is not None
-
-
-class QuestionRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -61,68 +79,6 @@ class QuestionRepository:
         await self._session.flush()
         return question
 
-    async def get_by_id(self, question_id: int) -> Question | None:
-        stmt: Select[tuple[Question]] = select(Question).where(
-            Question.id == question_id,
-            Question.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    def _keyword_filter(keyword: str):
-        """Return a WHERE clause for keyword search.
-
-        Short keywords or emoji-only strings fall back to ILIKE. Longer,
-        word-bearing keywords use PostgreSQL FTS with
-        ``to_tsvector / plainto_tsquery`` which leverages the GIN index.
-        """
-        stripped = keyword.strip()
-        if not _use_fts(stripped):
-            like = f"%{stripped}%"
-            return or_(Question.title.ilike(like), Question.content.ilike(like))
-        tsvector = func.to_tsvector(
-            text("'simple'"),
-            func.coalesce(Question.title, "")
-            + " "
-            + func.coalesce(Question.content, ""),
-        )
-        tsquery = func.plainto_tsquery(text("'simple'"), stripped)
-        return tsvector.op("@@")(tsquery)
-
-    async def search(
-        self,
-        *,
-        keyword: str | None,
-        limit: int,
-        offset: int,
-        sort_by: str,
-        sort_order: str,
-    ) -> tuple[list[Question], int]:
-        stmt: Select[tuple[Question]] = select(Question).where(
-            Question.deleted_at.is_(None)
-        )
-        if keyword:
-            stmt = stmt.where(self._keyword_filter(keyword))
-        order_col = (
-            Question.created_at if sort_by == "createdAt" else Question.updated_at
-        )
-        stmt = stmt.order_by(
-            order_col.desc() if sort_order == "desc" else order_col.asc()
-        )
-        stmt = stmt.limit(limit).offset(offset)
-        result = await self._session.execute(stmt)
-        rows = list(result.scalars().all())
-
-        count_stmt = select(func.count(Question.id)).where(
-            Question.deleted_at.is_(None)
-        )
-        if keyword:
-            count_stmt = count_stmt.where(self._keyword_filter(keyword))
-        count_result = await self._session.execute(count_stmt)
-        total = int(count_result.scalar_one() or 0)
-        return rows, total
-
     async def follow_question(self, *, question_id: int, user_id: int) -> bool:
         existing = await self._get_follow_relation(question_id, user_id)
         if existing is not None and existing.deleted_at is None:
@@ -149,74 +105,6 @@ class QuestionRepository:
         relation.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return True
-
-    async def _get_follow_relation(
-        self, question_id: int, user_id: int
-    ) -> QuestionFollowerRelation | None:
-        stmt: Select[tuple[QuestionFollowerRelation]] = select(
-            QuestionFollowerRelation
-        ).where(
-            QuestionFollowerRelation.question_id == question_id,
-            QuestionFollowerRelation.follower_id == user_id,
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def list_followed(
-        self, *, user_id: int, limit: int, offset: int
-    ) -> tuple[list[Question], int]:
-        stmt = (
-            select(Question)
-            .join(
-                QuestionFollowerRelation,
-                QuestionFollowerRelation.question_id == Question.id,
-            )
-            .where(
-                QuestionFollowerRelation.follower_id == user_id,
-                QuestionFollowerRelation.deleted_at.is_(None),
-                Question.deleted_at.is_(None),
-            )
-            .order_by(QuestionFollowerRelation.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-        result = await self._session.execute(stmt)
-        rows = list(result.scalars().all())
-
-        count_stmt = select(func.count(QuestionFollowerRelation.id)).where(
-            QuestionFollowerRelation.follower_id == user_id,
-            QuestionFollowerRelation.deleted_at.is_(None),
-        )
-        count_result = await self._session.execute(count_stmt)
-        total = int(count_result.scalar_one() or 0)
-        return rows, total
-
-    async def count_followers(self, question_id: int) -> int:
-        stmt = select(func.count(QuestionFollowerRelation.id)).where(
-            QuestionFollowerRelation.question_id == question_id,
-            QuestionFollowerRelation.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one() or 0)
-
-    async def is_following(self, question_id: int, user_id: int) -> bool:
-        stmt = select(QuestionFollowerRelation.id).where(
-            QuestionFollowerRelation.question_id == question_id,
-            QuestionFollowerRelation.follower_id == user_id,
-            QuestionFollowerRelation.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none() is not None
-
-    async def count_comments(self, question_id: int) -> int:
-
-        stmt = select(func.count(Discussion.id)).where(
-            Discussion.model_type == DiscussableModelType.QUESTION.value,
-            Discussion.model_id == question_id,
-            Discussion.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one() or 0)
 
     async def accept_answer(
         self, *, question_id: int, answer_id: int
@@ -258,13 +146,6 @@ class QuestionRepository:
         self._session.add(log)
         await self._session.flush()
 
-    async def count_views(self, question_id: int) -> int:
-        stmt = select(func.count(QuestionQueryLog.id)).where(
-            QuestionQueryLog.question_id == question_id,
-        )
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one() or 0)
-
     async def vote(self, *, question_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(question_id, user_id)
         now = datetime.now(UTC)
@@ -293,34 +174,6 @@ class QuestionRepository:
         await self._session.flush()
         return True
 
-    async def _get_vote(self, question_id: int, user_id: int) -> Attitude | None:
-        stmt: Select[tuple[Attitude]] = select(Attitude).where(
-            Attitude.attitudable_id == question_id,
-            Attitude.attitudable_type == "QUESTION",
-            Attitude.user_id == user_id,
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def get_user_vote(self, question_id: int, user_id: int) -> str | None:
-        vote = await self._get_vote(question_id, user_id)
-        return vote.attitude if vote else None
-
-    async def count_votes(self, question_id: int) -> dict[str, int]:
-        stmt = (
-            select(Attitude.attitude, func.count(Attitude.id))
-            .where(
-                Attitude.attitudable_id == question_id,
-                Attitude.attitudable_type == "QUESTION",
-            )
-            .group_by(Attitude.attitude)
-        )
-        result = await self._session.execute(stmt)
-        counts = {VoteType.POSITIVE.value: 0, VoteType.NEGATIVE.value: 0}
-        for attitude, count in result.all():
-            counts[attitude] = count
-        return counts
-
     async def log_search(
         self,
         *,
@@ -346,74 +199,6 @@ class QuestionRepository:
         )
         self._session.add(log)
         await self._session.flush()
-
-    async def get_trending_questions(
-        self, *, limit: int = 10, days: int = 7
-    ) -> list[Question]:
-        cutoff = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-
-        cutoff = cutoff - timedelta(days=days)
-        subq = (
-            select(
-                QuestionQueryLog.question_id,
-                func.count(QuestionQueryLog.id).label("view_count"),
-            )
-            .where(QuestionQueryLog.created_at >= cutoff)
-            .group_by(QuestionQueryLog.question_id)
-            .subquery()
-        )
-        stmt = (
-            select(Question)
-            .join(subq, Question.id == subq.c.question_id)
-            .where(Question.deleted_at.is_(None))
-            .order_by(subq.c.view_count.desc())
-            .limit(limit)
-        )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def get_stats(self) -> dict:
-        total_questions_stmt = select(func.count(Question.id)).where(
-            Question.deleted_at.is_(None)
-        )
-        total_result = await self._session.execute(total_questions_stmt)
-        total_questions = int(total_result.scalar_one() or 0)
-
-        answered_stmt = select(func.count(Question.id)).where(
-            Question.deleted_at.is_(None),
-            Question.accepted_answer_id.isnot(None),
-        )
-        answered_result = await self._session.execute(answered_stmt)
-        answered_questions = int(answered_result.scalar_one() or 0)
-
-        total_views_stmt = select(func.count(QuestionQueryLog.id))
-        views_result = await self._session.execute(total_views_stmt)
-        total_views = int(views_result.scalar_one() or 0)
-
-        return {
-            "totalQuestions": total_questions,
-            "answeredQuestions": answered_questions,
-            "unansweredQuestions": total_questions - answered_questions,
-            "totalViews": total_views,
-        }
-
-    async def get_popular_search_terms(
-        self, *, limit: int = 10, days: int = 7
-    ) -> list[dict]:
-
-        cutoff = datetime.now(UTC) - timedelta(days=days)
-        stmt = (
-            select(
-                QuestionSearchLog.keywords,
-                func.count(QuestionSearchLog.id).label("count"),
-            )
-            .where(QuestionSearchLog.created_at >= cutoff)
-            .group_by(QuestionSearchLog.keywords)
-            .order_by(func.count(QuestionSearchLog.id).desc())
-            .limit(limit)
-        )
-        result = await self._session.execute(stmt)
-        return [{"keyword": row[0], "count": row[1]} for row in result.all()]
 
     async def update_question(
         self,
@@ -442,54 +227,6 @@ class QuestionRepository:
         question.updated_at = datetime.now(UTC)
         await self._session.flush()
         return question
-
-    async def list_followers(
-        self, *, question_id: int, limit: int, offset: int
-    ) -> tuple[list[int], int]:
-        stmt = (
-            select(QuestionFollowerRelation.follower_id)
-            .where(
-                QuestionFollowerRelation.question_id == question_id,
-                QuestionFollowerRelation.deleted_at.is_(None),
-            )
-            .order_by(QuestionFollowerRelation.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-        result = await self._session.execute(stmt)
-        follower_ids = [row[0] for row in result.all()]
-
-        count_stmt = select(func.count(QuestionFollowerRelation.id)).where(
-            QuestionFollowerRelation.question_id == question_id,
-            QuestionFollowerRelation.deleted_at.is_(None),
-        )
-        count_result = await self._session.execute(count_stmt)
-        total = int(count_result.scalar_one() or 0)
-        return follower_ids, total
-
-    async def list_by_user(
-        self, *, user_id: int, limit: int, offset: int
-    ) -> tuple[list[Question], int]:
-        stmt = (
-            select(Question)
-            .where(
-                Question.created_by_id == user_id,
-                Question.deleted_at.is_(None),
-            )
-            .order_by(Question.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-        result = await self._session.execute(stmt)
-        rows = list(result.scalars().all())
-
-        count_stmt = select(func.count(Question.id)).where(
-            Question.created_by_id == user_id,
-            Question.deleted_at.is_(None),
-        )
-        count_result = await self._session.execute(count_stmt)
-        total = int(count_result.scalar_one() or 0)
-        return rows, total
 
 
 class QuestionTopicRepository:
@@ -568,7 +305,7 @@ class QuestionTopicRepository:
     async def get_topics_for_questions(
         self, question_ids: Sequence[int]
     ) -> dict[int, list[dict]]:
-        """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""  # noqa: E501
+        """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""
 
         if not question_ids:
             return {}

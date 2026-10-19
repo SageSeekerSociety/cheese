@@ -23,6 +23,7 @@
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
+import type { ConversationFile } from '../composables/useConversationFiles'
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest, OpenedDocument } from '../lib/docReview'
@@ -35,8 +36,9 @@ import type PanelDocHostComponent from './work/PanelDocHost.vue'
 import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
-import { getTopicWorkSummary, readPreviewFile } from '../api'
+import { useRoomFileProbe } from '../composables/useRoomFileProbe'
 import { useTopicMemory } from '../composables/useTopicMemory'
+import { useTopicWorkSummary } from '../composables/useTopicWorkSummary'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
 import { withViewTransition } from '../lib/viewTransition'
@@ -48,6 +50,7 @@ import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import { usePreviewPointer } from './panels/preview/usePreviewPointer'
+import RoomFilesPanelHost from './room/RoomFilesPanelHost.vue'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
@@ -143,7 +146,8 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
+  /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
+  (e: 'open-topic', topicId: string, blockId?: string): void
   (e: 'open-card', taskId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
@@ -347,41 +351,25 @@ const {
 // 四格永远都在、位置不变：人记得住「改动在第三格」，一格时有时无的 tab 栏两次打开
 // 可能不一样长。没东西的那一格字变浅，点进去是它自己的「暂无」。这里只回答有没有，
 // 给字的深浅用，也给「开在哪一格」用——那一刻不该挑一格空的。
-const summary = ref<{ changedFiles: string[]; hasRun: boolean }>({ changedFiles: [], hasRun: false })
-// 这个房间的 summary 回来过没有。没回来之前「没有改动」还不是事实。
-const summaryLoaded = ref(false)
+//
+// 这份摘要（取数、「有没有新改动」、换话题清不清空）在
+// `composables/useTopicWorkSummary.ts` 那一层：组件不直接碰 API 层。
+const {
+  summary,
+  loaded: summaryLoaded,
+  hasNew: changesHasNew,
+  markSeen: markChangesSeen,
+  poll: readWorkSummary,
+} = useTopicWorkSummary({ topicId: conversationId, projectId })
 
 async function pollWorkSummary(opts: { seen?: boolean } = {}) {
-  const tid = conversationId.value
-  const pid = props.topic?.project_id
-  if (!tid || !pid) return
-  let next: { changed_files: string[]; has_run: boolean }
-  try {
-    next = await getTopicWorkSummary(pid, tid)
-  } catch {
-    // A failed poll is not a state: what the tabs show stays as it was. It still
-    // counts as an answer for 「开在哪一格」, which then stays on the default tab
-    // rather than waiting on a summary that may never come.
-    summaryLoaded.value = true
-    return
-  }
-  summary.value = { changedFiles: next.changed_files, hasRun: next.has_run }
-  summaryLoaded.value = true
+  // A failed poll is not a state: what the tabs show stays as it was. It still
+  // counts as an answer for 「开在哪一格」, which then stays on the default tab
+  // rather than waiting on a summary that may never come.
+  if (!(await readWorkSummary())) return
   // Arriving at a topic that already had changes is not news, exactly as it is
   // not news for the preview — the hint means 「这一轮干出来的」.
   if (opts.seen || active.value === 'changes') markChangesSeen()
-}
-
-// ---- 「改动变了」 on the 改动 tab, same shape as the preview's dot ----
-// The count is the size of the review surface and is always worth showing; what
-// needs a colour is 「这些改动是你上次看过之后才有的」. 芝士 works for minutes at a
-// time and the reader is usually on 文档 while it does, so without this the only
-// way to learn a turn produced anything was to click and compare.
-const changesKey = computed(() => summary.value.changedFiles.join('\n'))
-const changesSeen = ref<string>('')
-const changesHasNew = computed(() => !!changesKey.value && changesKey.value !== changesSeen.value)
-function markChangesSeen() {
-  changesSeen.value = changesKey.value
 }
 
 // ---- 这个房间派出去了几件活 ----
@@ -406,7 +394,7 @@ function pollThreads() {
 }
 
 function hasContent(key: TabKey): boolean {
-  if (key === 'chat' || key === 'overview' || key === 'threads') return true
+  if (key === 'chat' || key === 'overview' || key === 'threads' || key === 'files') return true
   // 「定时与触发」也是永远有得看的一格：没有规则时它写的是「还没有规则，点新建」——
   // 那一格自己是让人动手建一条的地方，不是一个「暂无」。数有几条要现问后端，而这一格
   // 关着的时候不该为此多打一个请求。
@@ -420,12 +408,13 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-// 频道是人说话的地方，没有电脑在它名下干活：只有概览、支线、定时与触发。任务没有
-// 支线和定时，其余几格都有。
-const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'routines'])
+// 频道是人说话的地方，没有电脑在它名下干活：只有概览、支线、文件、定时与触发。任务没有
+// 支线、文件和定时，其余几格都有。
+const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'files', 'routines'])
+const TASK_HIDDEN_TABS: ReadonlySet<string> = new Set(['routines', 'threads', 'files'])
 const tabs = computed(() =>
   workPanelTabs(props.withChat).filter((tab) =>
-    props.taskId ? tab.key !== 'routines' && tab.key !== 'threads' : CHANNEL_TABS.has(tab.key)
+    props.taskId ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
   )
 )
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
@@ -595,17 +584,8 @@ async function openFile(path: string) {
   await openFileTab(want, { lines: at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null })
 }
 
-/** 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。 */
-async function inRoomFiles(path: string): Promise<boolean> {
-  const tid = props.topic?.id
-  if (!tid) return false
-  try {
-    await readPreviewFile(tid, path)
-    return true
-  } catch {
-    return false
-  }
-}
+// 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。
+const { exists: inRoomFiles } = useRoomFileProbe(topicId)
 
 // 放进自由区，不切过去：开着的就不动，否则占临时位——有一格临时的就在原位换掉它，
 // 没有就排到最后。
@@ -625,6 +605,12 @@ const docRefs = new Map<string, InstanceType<typeof PanelDocHostComponent>>()
 // 改动」，面板已经切过去了，那一块还在网络上，ref 也就还没接上。这时候递过去会被 `?.`
 // 静默吞掉——高亮不发生，也不报错。所以递不出去的先记在这儿，`keepDocRef` 接上再补一次。
 const waitingReviews = new Map<string, DocReviewRequest>()
+/** 「文件」那一格里点开一份：文档开成文档，附件按路径开。 */
+function openConversationFile(row: ConversationFile) {
+  if (row.kind === 'document') void openDocument({ id: row.id, title: row.name })
+  else void openFile(row.id)
+}
+
 async function openDocument(document: OpenedDocument, review?: DocReviewRequest) {
   const path = DOC_TAB + document.id
   noteFileOrigin()
@@ -785,7 +771,7 @@ defineExpose({
             :activity="activity"
             :agent-control="agentControl"
             @open-file="openFile"
-            @open-topic="emit('open-topic', $event)"
+            @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
             @mention-click="emit('mention-click', $event)"
           />
           <PanelChangesHost
@@ -817,6 +803,14 @@ defineExpose({
           <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
              （`refreshTick`）—— 芝士可能刚在房间里起草了一条。规则交回的结果文件点开
              在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
+          <RoomFilesPanelHost
+            v-if="mounted.has('files')"
+            v-show="active === 'files'"
+            :class="enterClass('files')"
+            :topic-id="taskId ?? topicId"
+            :seats-only="!!topic?.members_only"
+            @open="openConversationFile"
+          />
           <RoutinePanelHost
             v-if="mounted.has('routines')"
             v-show="active === 'routines'"
@@ -840,7 +834,7 @@ defineExpose({
               :members="members"
               :topic-list="topicList"
               @titled="retitle(f.document!.id, $event)"
-              @open-topic="emit('open-topic', $event)"
+              @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
               @mention-click="emit('mention-click', $event)"
             />
             <ProjectFileTab

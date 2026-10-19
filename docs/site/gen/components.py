@@ -5,23 +5,25 @@ and this page must agree with all three, so it loads them and asks:
 
   - the grade (A is standalone-ready): `.claude/scripts/frontend_grade.py`, the
     repo's only grader — the board and both ratchets call the same function;
-  - whether `/demo/catalog` shows a component, and which components are the
-    frozen `pending` backlog: `.claude/scripts/catalog-ratchet.py`;
+  - whether `/demo/catalog` shows a component: `gen/catalog_reach.py`, which
+    reads the preview site's own entry files;
   - which components are *scenes* (a page, a page's view, or a panel):
     `.claude/scripts/scene-ratchet.py`, whose definition is written down in
     `docs/manual/dev/scenes.md`.
 
-Read, never re-decided: a second answer to any of the three would drift from
-the check that gates on it. Same reason `gen/env.py` parses the settings module
-instead of importing it.
+Read, never re-decided: a second answer to the grade or the scene set would
+drift from the check that gates on it. Same reason `gen/env.py` parses the
+settings module instead of importing it.
 
 `components` is every `.vue` under `frontend/src` except the preview site's own
-(`views/demo/`) — the catalog ratchet's subject set, so the page can say which
-of exactly those components are not on the site yet.
+(`views/demo/`), so the page can say which of those components are not on the
+site.
 
 Output on stdout: `{totals, components}`. Each component is
 `{path, grade, catalogued, state, scene}` — `path` is frontend-relative (the
-baseline key), `state` is `catalogued | pending | new | uncatalogued`, and
+same form the preview site's imports resolve to), `state` is
+`catalogued | standalone | uncatalogued` (standalone: grade A, so it could be
+shown alone, but the site does not show it), and
 `scene` is `page | view | panel | null`.
 """
 
@@ -40,9 +42,9 @@ SCRIPTS = ROOT / ".claude" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 
-def load(name: str, filename: str):
-    """A script under `.claude/scripts` as a module — both have __main__ guards."""
-    path = SCRIPTS / filename
+def load(name: str, filename: str, directory: Path = SCRIPTS):
+    """A script as a module — those under `.claude/scripts` have __main__ guards."""
+    path = directory / filename
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise SystemExit(f"cannot load {path}")
@@ -53,8 +55,8 @@ def load(name: str, filename: str):
 
 
 grade = load("_docs_frontend_grade", "frontend_grade.py")
-catalog = load("_docs_catalog_ratchet", "catalog-ratchet.py")
 scene = load("_docs_scene_ratchet", "scene-ratchet.py")
+catalog = load("_docs_catalog_reach", "catalog_reach.py", Path(__file__).resolve().parent)
 
 reach = grade.api_reach(ROOT)
 grades = {
@@ -62,7 +64,6 @@ grades = {
     for rel in catalog.subject_paths(ROOT)
 }
 shown = set(catalog.catalogued(ROOT, grade))
-pending = catalog.read_baseline(ROOT / catalog.DEFAULT_BASELINE)
 
 scenes = set(scene.scene_paths(ROOT, reach))
 S_PANELS = "frontend/src/components/panels/"
@@ -86,13 +87,10 @@ def scene_kind(rel: str) -> str | None:
 
 
 def state_of(rel: str) -> str:
-    """The same four buckets `catalog-ratchet.py --list` prints."""
+    """On the site, could be (grade A), or neither."""
     if rel in shown:
         return "catalogued"
-    if not grades[rel].standalone:
-        # Not a subject of the ratchet: only grade A is worth showing alone.
-        return "uncatalogued"
-    return "pending" if catalog.key_of(rel) in pending else "new"
+    return "standalone" if grades[rel].standalone else "uncatalogued"
 
 
 components = [
@@ -114,7 +112,7 @@ json.dump(
             "components": len(components),
             "scenes": len(scenes),
             "grades": {g: sum(1 for c in components if c["grade"] == g) for g in "ABCD"},
-            "states": {s: states[s] for s in ("catalogued", "pending", "new", "uncatalogued")},
+            "states": {s: states[s] for s in ("catalogued", "standalone", "uncatalogued")},
             "scene_kinds": {k: kinds[k] for k in ("page", "view", "panel")},
         },
         "components": components,

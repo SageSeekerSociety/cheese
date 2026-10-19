@@ -10,8 +10,9 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 
 
 async def append_output(
@@ -29,12 +30,13 @@ async def append_output(
     meta: dict | None = None,
     created_at: datetime | None = None,
     own_output: bool = False,
+    block_id: uuid.UUID | None = None,
 ) -> Block:
     """Append an attributable timeline row with the canonical pending-input rules.
 
-    Flush and refresh are part of the block write; committing is not. Returning
-    this same-session row lets the caller attach question/mention effects in the
-    very transaction that makes the output durable.
+    The flush is part of the block write; committing is not. Returning this
+    same-session row lets the caller attach question/mention effects in the very
+    transaction that makes the output durable.
     """
     return await BlockRepository(session).add(
         project_id=project_id,
@@ -49,6 +51,7 @@ async def append_output(
         meta=meta,
         created_at=created_at,
         own_output=own_output,
+        block_id=block_id,
     )
 
 
@@ -85,3 +88,10 @@ async def retain_step_output(
 ) -> Block | None:
     """Attach the already bounded output tail and its original length."""
     return await BlockRepository(session).record_step_output(block_id, tail, total)
+
+
+async def retain_step_calls(
+    session: AsyncSession, block_id: uuid.UUID, calls: list[dict]
+) -> Block | None:
+    """Attach the tools the step called on its own."""
+    return await BlockRepository(session).record_step_calls(block_id, calls)

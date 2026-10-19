@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from app.domain.docs_site import library, site
+from app.domain.docs_site.excerpt import excerpt
 from app.domain.docs_site.retrieval import DocsIndex, Hit
 
 logger = logging.getLogger(__name__)
@@ -92,11 +93,6 @@ LIST_DOCS = {
 SCHEMAS = [SEARCH_DOCS, FETCH_DOC, LIST_DOCS]
 
 
-def _excerpt(text: str, limit: int = SUMMARY_CHARS) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[:limit].rstrip() + "…"
-
-
 def _arguments(raw: str | dict | None) -> dict:
     """The tool call's arguments. Models send a JSON string; a malformed one is
     the model's mistake, not the reader's, so it comes back as ``{}`` and the
@@ -143,7 +139,7 @@ class Docs:
                         "title": h.section.title,
                         "heading": h.section.heading,
                         "url": h.section.url,
-                        "excerpt": _excerpt(h.section.text, 300),
+                        "excerpt": excerpt(h.section.text, 300),
                     }
                     for h in hits
                 ]
@@ -159,7 +155,7 @@ class Docs:
                 pages[page] = {
                     "title": section.title,
                     "url": page,
-                    "summary": _excerpt(section.text),
+                    "summary": excerpt(section.text, SUMMARY_CHARS),
                 }
         return json.dumps({"pages": list(pages.values())}, ensure_ascii=False)
 
@@ -174,7 +170,7 @@ class Docs:
             return "开发文档不对外，只有公开的使用文档可以读。"
         try:
             text = await library.read_page(slug, dev=False, transport=self.transport)
-        except Exception:  # noqa: BLE001 — a failed read is the model's to see, not the reader's
+        except Exception:  # a failed read is the model's to see, not the reader's
             logger.warning("docs assistant: reading %s failed", slug, exc_info=True)
             return f"读 {slug} 的时候出错了，换一页或再试一次。"
         if text is None:

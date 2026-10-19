@@ -15,6 +15,8 @@ ENV LITELLM_WORKER_STARTUP_HOOKS=litellm.llms:load_guardrail_translation_mapping
 
 COPY patch_stream_timing.py test_keepalive.py test_stream_timing.py test_provider_http_timing.py test_router_logging.py test_startup_registry.py test_startup_beta_headers.py test_startup_telemetry.py /opt/cheese-gateway/
 COPY provider_http_timing.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/provider_http_timing.py
+COPY opencode_free.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/opencode_free.py
+COPY test_opencode_free.py /opt/cheese-gateway/
 COPY chatgpt_session.py /app/.venv/lib/python3.13/site-packages/cheese_chatgpt_session.py
 COPY test_chatgpt_session.py /opt/cheese-gateway/
 COPY system_billing_line.py /app/.venv/lib/python3.13/site-packages/cheese_billing_line.py
@@ -29,30 +31,40 @@ COPY image_guard.py /app/.venv/lib/python3.13/site-packages/cheese_image_guard.p
 COPY test_image_guard.py /opt/cheese-gateway/
 COPY upstream_headers.py /app/.venv/lib/python3.13/site-packages/cheese_upstream_headers.py
 COPY test_upstream_headers.py test_chat_route.py /opt/cheese-gateway/
+COPY no_explicit_cache.py /app/.venv/lib/python3.13/site-packages/cheese_no_explicit_cache.py
+COPY test_no_explicit_cache.py /opt/cheese-gateway/
+COPY spend_cap.py /app/.venv/lib/python3.13/site-packages/cheese_spend_cap.py
+COPY test_spend_cap.py /opt/cheese-gateway/
 COPY retry_stream.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/retry_stream.py
 COPY test_retry_stream.py /opt/cheese-gateway/
-COPY patch_deepseek_images.py test_deepseek_images.py test_deepseek_route_order.py test_deepseek_session_affinity.py patch_empty_anthropic_text.py test_empty_anthropic_text.py patch_responses_stream_errors.py test_responses_stream_errors.py patch_anthropic_stream_errors.py test_anthropic_stream_errors.py check_config.py config.yaml /opt/cheese-gateway/
+COPY patch_deepseek_images.py test_deepseek_images.py test_deepseek_route_order.py patch_empty_anthropic_text.py test_empty_anthropic_text.py patch_responses_stream_errors.py test_responses_stream_errors.py patch_responses_done_args.py test_responses_done_args.py patch_anthropic_stream_errors.py test_anthropic_stream_errors.py patch_gemini_generation.py test_gemini_generation.py check_config.py config.yaml /opt/cheese-gateway/
 RUN /app/.venv/bin/python /opt/cheese-gateway/patch_stream_timing.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_deepseek_images.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_empty_anthropic_text.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_responses_stream_errors.py \
+    && /app/.venv/bin/python /opt/cheese-gateway/patch_responses_done_args.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_anthropic_stream_errors.py \
+    && /app/.venv/bin/python /opt/cheese-gateway/patch_gemini_generation.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/check_config.py /opt/cheese-gateway/config.yaml \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_deepseek_images.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_deepseek_route_order.py \
-    && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_deepseek_session_affinity.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_empty_anthropic_text.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_responses_stream_errors.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_responses_done_args.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_anthropic_stream_errors.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_stream_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_keepalive.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_provider_http_timing.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_opencode_free.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_retry_stream.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_chatgpt_session.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_system_billing_line.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_image_guard.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_upstream_headers.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_chat_route.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_gemini_generation.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_no_explicit_cache.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_spend_cap.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_router_logging.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_startup_registry.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_startup_beta_headers.py \

@@ -1,0 +1,8 @@
+{
+  "body": "在 \"{discussionTitle}\" 中提到了你",
+  "inChannel": "{who} 在「{topicTitle}」提到了你",
+  "inDocument": "{who} 在文档「{document}」提到了你",
+  "inDocumentComment": "{who} 在文档「{document}」的评论里提到了你",
+  "title": "{mentioner} 在讨论中提到了你",
+  "title_anonymous": "有人在讨论中提到了你"
+}

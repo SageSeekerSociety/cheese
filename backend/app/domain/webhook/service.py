@@ -114,7 +114,7 @@ async def post_with_retries(
                         return False
                     await session.commit()
                 return True
-    except Exception as exc:  # noqa: BLE001 — retried, now give up loudly
+    except Exception as exc:  # retried, now give up loudly
         logger.error(
             "failed to land webhook post for topic %s after %d attempts: %s",
             topic_id,

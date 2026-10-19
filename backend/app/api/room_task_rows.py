@@ -26,27 +26,41 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Literal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.addressing import Event, address
 from app.domain.agent.chat import ChatService
 from app.domain.agent.liveness import last_output_at, running_tasks
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.opening import opening_state
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.delivery.addressing import Event, address, hand_of
+from app.domain.block.waits import MemberWaits
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
-from app.domain.room_task import binding, presentation
+from app.domain.room_task import presentation
 from app.domain.room_task.models import Task
+from app.domain.room_task.presentation import hand_of
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
+from app.domain.thread.models import Thread
 from app.domain.usage.repositories import UsageRepository
+
+
+async def from_threads(db: AsyncSession, task_ids: Sequence[uuid.UUID]) -> set:
+    """Which of these tasks are a 支线 turned into the task in place: their
+    conversation hangs under a message in the main line, and the page opens it
+    beside the channel, as it opens a 支线."""
+    if not task_ids:
+        return set()
+    return set(await db.scalars(select(Thread.id).where(Thread.id.in_(list(task_ids)))))
 
 
 async def task_out(db, chat: ChatService, task, card=None) -> dict:
@@ -68,14 +82,13 @@ async def task_out(db, chat: ChatService, task, card=None) -> dict:
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
-    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你开始」。
+    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你审阅」。
     out["waiting_on"] = presentation.waiting_on(
         shown,
-        running=task.id in running,
-        owner=task.owner_handle,
         reviewer=card.reviewer_handle if card is not None else None,
         asked=asked[task.id].only() if task.id in asked else None,
     )
+    out["from_thread"] = task.id in await from_threads(db, [task.id])
     return out
 
 
@@ -105,10 +118,11 @@ async def task_rows(
     # 能用哪些模型，按项目算一次，整屏卡共用 —— 每张卡各算一次就是同一个答案
     # 构造几百遍。
     project = await ProjectRepository(db).get(project_id)
-    choices = binding.catalog(project.settings if project else None)
+    choices = catalog(project.settings if project else None)
     running = await running_tasks(chat, db, [t.id for t, _ in threads])
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
+    in_place = await from_threads(db, thread_ids)
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
@@ -124,8 +138,6 @@ async def task_rows(
         )
         waiting = presentation.waiting_on(
             shown,
-            running=task.id in running,
-            owner=task.owner_handle,
             reviewer=card.reviewer_handle if card is not None else None,
             asked=asked[task.id].only() if task.id in asked else None,
         )
@@ -142,6 +154,7 @@ async def task_rows(
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
                 "waiting_on": waiting,
                 "awaits_me": waiting is not None and waiting == actor.handle,
+                "from_thread": task.id in in_place,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
                 "blocks": [
@@ -191,8 +204,10 @@ async def tasks_under_blocks(
     blocks: Sequence[Block],
 ) -> dict[uuid.UUID, list[dict]]:
     """The tasks each of ``blocks`` carries, as rows: the tasks made from a
-    message, under that message, and the task a room-line row says began, on
-    that row. Blocks that carry none are left out."""
+    message, under that message — in the main line the message a task hangs
+    under, in a 支线 the reply it was made from, except the task the 支线
+    itself became — and the task a room-line row says began, on that row.
+    Blocks that carry none are left out."""
     named = {block.id: task_id for block in blocks if (task_id := named_task(block))}
     if not blocks:
         return {}
@@ -209,14 +224,38 @@ async def tasks_under_blocks(
             strict=True,
         )
     )
+    said_in = {block.id: block.conversation_id for block in blocks}
     carried: dict[uuid.UUID, list[dict]] = {}
     for task, _ in threads:
-        if task.upgraded_from_block_id is not None:
-            carried.setdefault(task.upgraded_from_block_id, []).append(rows[task.id])
+        hung, said = task.upgraded_from_block_id, task.source_block_id
+        if hung is not None and hung in said_in:
+            carried.setdefault(hung, []).append(rows[task.id])
+        elif said is not None and said in said_in and said_in[said] != task.id:
+            carried.setdefault(said, []).append(rows[task.id])
     for block_id, task_id in named.items():
         if task_id in rows:
             carried.setdefault(block_id, []).append(rows[task_id])
     return carried
+
+
+def _iso(at: datetime | None) -> str | None:
+    """一个时刻的 ISO 写法，`None` 照旧 `None`（和 `last_output_at` 同一个形状）。"""
+    return None if at is None else at.isoformat()
+
+
+async def incomplete_tasks(
+    db: AsyncSession, task_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, datetime]:
+    """{活: 这条活上还没恢复的失败从什么时候开始} —— 一行一件活。
+
+    `project_task_rows` 收的是直接喂给它的活（`/projects/{id}/tasks` 那条路），一条
+    活就是一行，没有频道那一层要汇总，所以这里一件一件地问 `unresolved_failures`，
+    每件活一条行（`units` 里它自己就是那一段对话）。侧栏那条路（`routes/topics.py`）
+    要多算频道自己那条线和它名下的活怎么合，所以它自己拼 `units`。
+    """
+    if not task_ids:
+        return {}
+    return await MemberWaits(db).unresolved_failures({t: [t] for t in task_ids})
 
 
 async def project_task_rows(
@@ -227,13 +266,16 @@ async def project_task_rows(
     *,
     silent_of: Callable[[uuid.UUID], float | None] | None = None,
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
+    incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
 ) -> list[dict]:
     """The project rail's rows for ``tasks``: each with its board cell, its
     card, whether it waits on ``me``, whether it stalled, when it last moved,
     and — when the caller can say it — when its running turn last produced
-    output (`silent_of`; the sidebar's red light, `TopicRailTaskRow`) and
-    whether it holds a delivery ``me`` has not opened since (`delivered_of`;
-    the sidebar's 长绿, same row component)."""
+    output (`silent_of`; the sidebar's red light, `TopicRailTaskRow`), whether
+    it holds a delivery ``me`` has not opened since (`delivered_of`; the
+    sidebar's 长绿, same row component), and when the earliest failure it has
+    not recovered from began (`incomplete_of`; the same red light for a row that
+    is not running — see `block/waits.MemberWaits.unresolved_failures`)."""
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
@@ -262,10 +304,11 @@ async def project_task_rows(
         )
         last_activity = said_at or task.created_at
         is_running = task.id in running
-        # 在跑的那一轮上一次有输出是什么时候（取整到分钟）。和话题清单那一头同一个
-        # 来源、同一个形状（`agent.liveness.last_output_at`），侧栏两处的红灯同一条
-        # 判据。None = 此刻没有在跑的一轮，或者这个进程说不了（那种「不知道」不当成
-        # 「很新」用，读的人自己决定，这里也不编一个）。
+        # 在跑的那一轮上一次有动静是什么时候（取整到分钟）：落了帧，或者读它的那
+        # 一路收到 runner 的应答。和话题清单那一头同一个来源、同一个形状
+        # （`agent.liveness.last_output_at`），侧栏两处的红灯同一条判据。None = 此刻
+        # 没有在跑的一轮，或者这个进程说不了（那种「不知道」不当成「很新」用，读的
+        # 人自己决定，这里也不编一个）。
         quiet_at = (
             None if silent_of is None else last_output_at(silent_of(task.id), now)
         )
@@ -303,6 +346,13 @@ async def project_task_rows(
                 "moving": presentation.work_moving(shown),
                 # 在跑、但上一次有输出是什么时候（`quiet_at`，取整到分钟）。
                 "last_output_at": None if quiet_at is None else quiet_at.isoformat(),
+                # 这条活上还没恢复的失败从什么时候开始（`incomplete_of`；`None` = 没有
+                # 未恢复的失败，或调用方没算）。判据在
+                # `block/waits.MemberWaits.unresolved_failures`，和「在跑但没动静」
+                # 同画一盏红灯：一条活停下来报错、五分钟没人接手，也是在跑却没动静。
+                "incomplete_since": (
+                    None if incomplete_of is None else _iso(incomplete_of(task.id))
+                ),
                 # 这件活交付完了、而这个人从那以后没点开看过（侧栏的长绿）。和频道
                 # 那一头同一个来源（`room_task/repositories.unseen_deliveries`）。
                 # 说不了（调用方没算）就是 false——不亮，不是「亮着但说不清」。
@@ -340,6 +390,7 @@ async def rail_tasks(
     *,
     silent_of: Callable[[uuid.UUID], float | None] | None = None,
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
+    incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
 ) -> dict[uuid.UUID, dict]:
     """What the sidebar hangs under each channel, keyed by channel: how many
     tasks are underway there (`open`, the count after 「全部任务」), and the ones
@@ -362,9 +413,28 @@ async def rail_tasks(
     service = TaskService(db)
     counts = await service.underway_counts(room_ids)
     mine = await service.underway_with(room_ids, me) if actor.authenticated else []
-    rows = await project_task_rows(
-        db, chat, me, mine, silent_of=silent_of, delivered_of=delivered_of
+    candidates: list[Task] = []
+    if actor.authenticated:
+        # 一次把「我的」和每个房间最多补的 `RAIL_TASKS_FLOOR` 条候选一起送进
+        # `project_task_rows`：原先分两批调，同一张页上验收卡、在跑轮次、提问和最后
+        # 发言被各问了两遍。
+        per_room: dict[uuid.UUID, int] = {}
+        for task in await service.underway_others(room_ids, me):
+            taken = per_room.get(task.room_id, 0)
+            if taken < RAIL_TASKS_FLOOR:
+                per_room[task.room_id] = taken + 1
+                candidates.append(task)
+    all_rows = await project_task_rows(
+        db,
+        chat,
+        me,
+        [*mine, *candidates],
+        silent_of=silent_of,
+        delivered_of=delivered_of,
+        incomplete_of=incomplete_of,
     )
+    rows = all_rows[: len(mine)]
+    candidate_rows = all_rows[len(mine) :]
     shown: dict[str, list[dict]] = {}
     for row in sorted(rows, key=lambda row: row["last_activity_at"], reverse=True):
         if not row["stalled"]:
@@ -377,18 +447,9 @@ async def rail_tasks(
         helped = [row for row in here if row["owner_handle"] != me]
         out[room] = {"shown": owned + helped, "open": counts.get(room, 0)}
         short[room] = max(0, RAIL_TASKS_FLOOR - len(owned) - len(helped))
-    if actor.authenticated and any(short.values()):
-        # 一条一查不行：这里一次读全项目别人的、进行中的活（几百条的量级），
-        # 按最近有动静排好，每个房间顺着取够补的那几条就停手；只有取中的那几条
-        # 才做成行——行本身贵（卡、提问、在跑的一轮、最后一次说话都要读）。
-        picked: list = []
-        for task in await service.underway_others(room_ids, me):
-            if short.get(task.room_id, 0) > 0:
-                short[task.room_id] -= 1
-                picked.append(task)
-        for row in await project_task_rows(
-            db, chat, me, picked, silent_of=silent_of, delivered_of=delivered_of
-        ):
+    for task, row in zip(candidates, candidate_rows, strict=True):
+        if short.get(task.room_id, 0) > 0:
+            short[task.room_id] -= 1
             if not row["stalled"]:
                 out[uuid.UUID(row["room_id"])]["shown"].append(
                     {**row, "filling_in": True}
@@ -442,7 +503,7 @@ async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dic
     out["model"] = presentation.card_model(
         task,
         spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
-        choices=binding.catalog(project.settings if project else None),
+        choices=catalog(project.settings if project else None),
     )
     card = cards.get(task.id)
     out["card"] = (

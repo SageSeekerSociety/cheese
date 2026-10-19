@@ -1,9 +1,3 @@
-export enum AttitudeType {
-  None = 0,
-  Agree = 1,
-  Disagree = 2,
-}
-
 export enum CommentableType {
   Answer = 'ANSWER',
   Comment = 'COMMENT',

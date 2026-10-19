@@ -76,7 +76,8 @@ cheese/
 task                         # show all available commands
 task setup                   # first-time setup (install deps + infra + migrations)
 task dev                     # start backend + frontend in parallel
-task check                   # run all checks (backend + frontend)
+task check                   # run all checks (backend + frontend); needs go-task
+./scripts/check.sh           # quick scoped check without go-task (what a work machine runs)
 
 # Backend
 task be:check                # ruff + pyright + pytest
@@ -105,6 +106,19 @@ task e2e:test:headed         # with visible browser
 ### Linux / macOS / WSL (recommended)
 
 Everything runs natively — `uv run` for backend, `pnpm` for frontend, Docker for infrastructure only.
+
+### Without Docker
+
+```bash
+task dev:sandbox             # or: node e2e/dev-stack.mjs
+```
+
+The whole stack on loopback with no Docker and no external service: the
+servers e2e starts (stub model gateway, backend, collaboration service, Vite dev
+server on :3000), on Postgres and Redis from `.claude/scripts/dev-db.sh`. It is
+for looking at a change in a browser on a machine without Docker, an agent's
+sandbox included; what it leaves out and what it needs are in
+[`docs/testing-without-docker.md`](docs/testing-without-docker.md).
 
 ### Windows
 

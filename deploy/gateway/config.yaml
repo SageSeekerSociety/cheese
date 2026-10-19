@@ -20,6 +20,14 @@
 #                              / high / max), offered on a teammate's settings
 #                              and passed by Claude Code as output_config.effort.
 #                              None when absent: the model's own default.
+#   cheese_auto_compact_window: 786432
+#                              where Claude Code compacts on this model, when
+#                              its provider recommends earlier than the window.
+#                              Absent: at the window max_input_tokens declares
+#                              (Claude Code is told that window either way).
+#   cheese_overseas: true      only teams a platform administrator approved
+#                              may use it (Claude, GPT, Gemini); other teams
+#                              are not shown it at all.
 #   cheese_free: true          its upstream charges nothing, and both token
 #                              prices are written as 0 on purpose. The one way
 #                              a selectable model may be priced at zero; a
@@ -33,6 +41,18 @@
 #                              sent as written.
 #   cheese_session_header: x-opencode-session
 #                              carries the caller's Claude Code session.
+#
+# Two more belong to the upstream model a deployment calls. A source added
+# from the admin page on the same upstream model takes them from a row that
+# has them; one on another upstream does not:
+#
+#   cheese_no_explicit_cache: true
+#                              strips Claude Code's cache_control marks, for an
+#                              upstream that refuses explicit caching
+#                              (no_explicit_cache.py).
+#   cheese_spend_cap_usd: 1000 refuses the deployment's calls once its upstream
+#                              model has cost this much in all, by the gateway's
+#                              own ledger (spend_cap.py).
 #
 # A selectable model with no price is not offered — see the pricing note below
 # for why a missing price is worse than a missing model.
@@ -84,6 +104,11 @@ model_list:
       # K3 always reasons: keep native effort, but omit adaptive thinking.
       supports_output_config: true
       supports_max_reasoning_effort: true
+      # Measured 2026-10-14 with gateway_conformance.py on the OpenCode Go row
+      # (anthropic/, order 1, added from the admin side): a mid-conversation
+      # system message is dropped there. The flag tells Claude Code to fold it
+      # into the first user message, which every upstream of the group receives.
+      supports_mid_conversation_system: false
   # 芝士's own turns and the agents' Claude Code both speak the Anthropic
   # protocol, so both arrive on /v1/messages and are metered by the same rows.
   - model_name: glm-4.6
@@ -136,106 +161,14 @@ model_list:
       # first user message, which every upstream of the group then receives.
       supports_mid_conversation_system: false
 
-  # One model, tried in `order`: RUC's self-hosted copy first, DeepSeek's API
-  # when every RUC key fails or is cooling down. RUC admits 3 parallel
-  # requests per key and the limits are independent, so each of its keys is a
-  # deployment of its own; a 429 on one is retried on another before the
-  # request leaves RUC. RUC sends each key to one of its vLLM nodes, and each
-  # node has a prompt cache of its own, so a conversation keeps its key
-  # (router_settings below) and misses only when it moves: to another key while
-  # its own is busy, or to DeepSeek's API. Every
-  # row carries the same cheese keys because the catalogue reads whichever
-  # row /model/info lists first.
-  - model_name: deepseek-flash
-    litellm_params: &ruc_deepseek_flash_params
-      # anthropic/, not deepseek/: the pinned DeepSeek adapter sends Messages
-      # requests to {api_base}/anthropic/v1/messages, DeepSeek's own path. This
-      # upstream serves Messages at /v1/messages and answers that path with a
-      # 500 after about 130 s. Plain http because that is all it serves.
-      model: anthropic/deepseek-flash
-      # The endpoint admits campus addresses only; the dev box reaches it
-      # through 119pve (docs/infrastructure.md, "Campus model API"). Its
-      # address and key are box settings: it is a service of another team,
-      # not ours to publish.
-      api_base: os.environ/RUC_DEEPSEEK_API_BASE
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_1
-      order: 1
-      # Used internally without a price of its own. The official rates are the
-      # estimate, so the budget brake behaves the same on either backend; that
-      # holds only while RUC's cache hits as DeepSeek's does, which needs
-      # Claude Code's billing line kept out of the prompt
-      # (system_billing_line.py).
-      input_cost_per_token: 0.0000003
-      output_cost_per_token: 0.0000012
-      cache_read_input_token_cost: 0.000000006
-    # Each row merges its own copy: LiteLLM writes the deployment id into
-    # model_info, and one mapping shared by alias gives every key the same id,
-    # so a 429 on one key cools them all down.
-    model_info: &ruc_deepseek_flash_info
-      cheese_selectable: true
-      cheese_label: DeepSeek V4.1 Flash
-      # Accepted here without error; low and high gave the same reasoning
-      # length when measured on 2026-10-08, so on this backend they are moot.
-      cheese_efforts: [low, high]
-      supports_reasoning: true
-      supports_vision: true
-      # Accepted a 952,366-token prompt on 2026-10-08; same limit as the
-      # official route, for the same reason.
-      max_input_tokens: 920000
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_2
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_3
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_4
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_5
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_6
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_7
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_8
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_9
-    model_info:
-      <<: *ruc_deepseek_flash_info
-
+  # The official alias serves DeepSeek-V4.1-Flash-1017 as of 2026-10-17.
+  # Self-hosted copies without a verified checkpoint cannot serve this alias.
+  # https://api-docs.deepseek.com/updates/
   - model_name: deepseek-flash
     litellm_params:
       model: deepseek/deepseek-flash
       api_key: os.environ/DEEPSEEK_API_KEY
-      order: 2
+      order: 3
     model_info:
       cheese_selectable: true
       cheese_label: DeepSeek V4.1 Flash
@@ -251,13 +184,48 @@ model_list:
       supports_vision: true
       supports_adaptive_thinking: true
       supports_output_config: true
-      # Claude Code compacts by the max_input_tokens that /v1/models reports,
-      # and LiteLLM's own figure for this model is 1,000,000. DeepSeek counts
-      # the request's max_tokens against its 1,048,576 window, and Claude Code
-      # asks for 128,000 on every request, so a conversation past ~920k tokens
-      # was refused before Claude Code thought it was time to compact.
-      # 1,048,576 - 128,000, rounded down.
+      supports_mid_conversation_system: false
+      # The window Claude Code is told (CLAUDE_CODE_MAX_CONTEXT_TOKENS), and
+      # LiteLLM's own figure for this model is 1,000,000. DeepSeek counts the
+      # request's max_tokens against its 1,048,576 window, and Claude Code asks
+      # for 128,000 on every request, so a conversation past ~920k tokens is
+      # refused. 1,048,576 - 128,000, rounded down.
       max_input_tokens: 920000
+      cheese_auto_compact_window: 786432
+
+  # Gemini through Google AI Studio. LiteLLM translates Claude Code's Messages
+  # requests to Gemini; patch_gemini_generation.py makes it treat gemini-4 as
+  # the Gemini 3+ generation, without which tool results fail on a missing
+  # thought signature. Measured 2026-10-15 with gateway_conformance.py: text,
+  # tool calls, parallel calls, tool results, images in tool results, the
+  # mid-conversation system message and the implicit prompt cache (74% on the
+  # second request) pass; effort low lets it skip thinking on an easy prompt;
+  # a prompt asking to read /etc/hostname is refused by Google's own filter
+  # (promptFeedback.blockReason OTHER).
+  - model_name: gemini-4-argon
+    litellm_params:
+      model: gemini/gemini-4-argon
+      api_key: os.environ/GEMINI_API_KEY
+      # Per million tokens: $2 in, $10 out (thinking included), $0.10 cache
+      # read through 2026-11-30; $4 / $20 / $0.20 from 2026-12-01. The later
+      # rates, so the brake does not go soft on 12-01.
+      # https://ai.google.dev/gemini-api/docs/pricing read 2026-10-15.
+      input_cost_per_token: 0.000004
+      output_cost_per_token: 0.00002
+      cache_read_input_token_cost: 0.0000002
+    model_info:
+      cheese_selectable: true
+      cheese_label: Gemini 4 Argon
+      cheese_overseas: true
+      cheese_efforts: [low, high]
+      # 400 "Explicit caching is not supported" on every Claude Code request
+      # otherwise; Gemini's implicit cache still applies.
+      cheese_no_explicit_cache: true
+      # The Google key's lifetime cap, at the prices above (spend_cap.py).
+      cheese_spend_cap_usd: 1000
+      supports_reasoning: true
+      supports_vision: true
+      supports_output_config: true
 
   # Price-only entries: the Claude models served through the platform's
   # subscription (the metering proxy), never through this gateway. Their tokens
@@ -377,14 +345,6 @@ general_settings:
     host: litellm-redis
     port: 6379
 
-router_settings:
-  # A conversation, named by Claude Code's session header, stays on the
-  # deployment it first used, so it keeps hitting one RUC node's prompt cache.
-  # A busy or cooling key moves it to another, where it stays; a request that
-  # falls over to DeepSeek's API does not pin it there.
-  model_group_affinity_config:
-    deepseek-flash: [session_affinity]
-
 litellm_settings:
   # The whole point: a row per call. LiteLLM sums those rows into daily totals
   # per key and model, which the backend drains into resource_usage. Without
@@ -400,11 +360,16 @@ litellm_settings:
   # An image no model can decode is replaced by a line saying so, since one
   # such image fails every later request of its conversation (`image_guard.py`).
   # A deployment that declares cheese_upstream_headers or cheese_session_header
-  # is sent them (`upstream_headers.py`).
+  # is sent them (`upstream_headers.py`), and one that declares
+  # cheese_no_explicit_cache loses its cache_control marks
+  # (`no_explicit_cache.py`), and one that declares cheese_spend_cap_usd is
+  # refused past that total (`spend_cap.py`).
   callbacks:
     - cheese_chatgpt_session.handler
     - cheese_billing_line.handler
     - cheese_image_guard.handler
     - cheese_upstream_headers.handler
+    - cheese_no_explicit_cache.handler
+    - cheese_spend_cap.handler
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true

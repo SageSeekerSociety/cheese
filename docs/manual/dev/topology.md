@@ -28,7 +28,9 @@ covers:
 
 ## 镜像按提交号构建 {#images}
 
-`.github/workflows/build.yml` 每个提交构建一组镜像：`backend`、`frontend`、`sandbox`、`browser-render`、`office-render`、`gateway`、`metering-proxy`、`private-executor`、`collab`，都以提交号为标签；没有变化的镜像直接给旧镜像打上新的提交号标签。发版就是 `deploy-docker.sh <提交号>`：拉取这组镜像、跑数据库迁移、替换主 API、文档协同服务和前端，健康检查不过就回滚到上一组镜像引用。
+`.github/workflows/build.yml` 每个提交构建一组镜像：`backend`、`frontend`、`sandbox`、`browser-render`、`office-render`、`gateway`、`metering-proxy`、`private-executor`、`collab`，都以提交号为标签；没有变化的镜像直接给旧镜像打上新的提交号标签。发版就是 `deploy-docker.sh <提交号>`：拉取这组镜像、跑数据库迁移、替换主 API 和前端，健康检查不过就回滚到上一组镜像引用。
+
+文档协同服务、网页渲染和 Office 渲染只在镜像内容变了时才换。标签每个提交都变，按标签起容器就会每次发版都重建它们，于是部署按摘要（`仓库@sha256:…`）引用这三个镜像：新拉的镜像和正在跑的那个内容相同（层和运行配置一样，构建时间、提交号这些构建标签不算），就沿用正在跑的那个摘要，compose 看到的引用没变，容器也就不动。只比摘要不够：手动触发的构建会把没变的镜像重新构建一遍，内容一样，摘要却不同。
 
 ## 随发版替换的 vs 常驻的 {#planes}
 
@@ -36,8 +38,8 @@ covers:
 |---|---|
 | 主 API、前端 nginx | 机器连接服务（`release-device-connection.yml`） |
 | 会话沙盒镜像（新开的会话用新镜像） | 模型隧道与主机入口 nginx（`deploy/llm-tunnel/up.sh`） |
-| 网页渲染、Office 渲染 | 计量代理（`release-metering-proxy.yml`）、模型网关（`release-gateway.yml`） |
-| | 事件中继（`deploy/forge-events/compose.yml`，镜像单独钉住） |
+| 网页渲染、Office 渲染、文档协同（镜像内容变了才换） | 计量代理（`release-metering-proxy.yml`）、模型网关（`release-gateway.yml`） |
+| 事件中继（`deploy/forge-events/compose.yml`，它跑的代码变了才换） | |
 
 上传文件、工作区、会话记录都在主机目录里挂载进容器，发版不会动它们，见[数据存在哪](/dev/data)。
 
@@ -139,10 +141,9 @@ resident:
   - label: 机器连接服务（release-device-connection.yml）
   - label: 模型隧道与主机入口 nginx
   - label: 计量代理与模型网关
-  - label: 事件中继
 ```
 
-上面这一层跟着发版换，下面那条常驻带不动：机器连接服务、隧道入口、计量代理与网关、事件中继都单独发布，机器上的连接在发版期间一直连着。
+上面这一层跟着发版换，下面那条常驻带不动：机器连接服务、隧道入口、计量代理与网关都单独发布，机器上的连接在发版期间一直连着。事件中继跑的是主 API 的镜像，但只在它自己跑的代码（`app.forge_events_app` 和它导入的一切，`deploy/code-digest.py` 算的摘要）变了时才换，各部署连在它上面的事件 WebSocket 平时不断。
 
 ## 日志 {#logs}
 

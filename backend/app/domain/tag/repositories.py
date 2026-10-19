@@ -1,9 +1,11 @@
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.reads import get_by_ids
 from app.domain.tag.models import Tag
 
 # Matches strings that contain at least one letter or digit (ASCII or Unicode).
@@ -97,6 +99,9 @@ class TagRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_ids(self, tag_ids: Sequence[int]) -> dict[int, Tag]:
+        return await get_by_ids(self._session, Tag, tag_ids, Tag.deleted_at.is_(None))
 
     async def get_by_name(self, name: str) -> Tag | None:
         stmt: Select[tuple[Tag]] = select(Tag).where(

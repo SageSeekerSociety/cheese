@@ -244,13 +244,11 @@ class MaterialBundleService:
         if bundle is None:
             raise NotFoundError("Material bundle not found", data={"id": bundle_id})
         material_ids = await self._repo.get_materials_for_bundle(bundle_id)
-        materials = []
-        for mid in material_ids:
-            material = await self._material_repo.get_by_id(mid)
-            if material:
-                materials.append(_material_to_dto(material))
+        found = await self._material_repo.get_by_ids(material_ids)
         dto = _bundle_to_dto(bundle)
-        dto["materials"] = materials
+        dto["materials"] = [
+            _material_to_dto(found[mid]) for mid in material_ids if mid in found
+        ]
         dto["creator"] = {"id": bundle.creator_id}
         return dto
 
@@ -263,10 +261,10 @@ class MaterialBundleService:
         material_ids: list[int] | None = None,
     ) -> dict:
         if material_ids:
-            for mid in material_ids:
-                material = await self._material_repo.get_by_id(mid)
-                if material is None:
-                    raise NotFoundError("Material not found", data={"id": mid})
+            found = await self._material_repo.get_by_ids(material_ids)
+            missing = [mid for mid in material_ids if mid not in found]
+            if missing:
+                raise NotFoundError("Material not found", data={"id": missing[0]})
 
         bundle = await self._repo.create(
             title=title,

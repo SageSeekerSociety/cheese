@@ -13,8 +13,8 @@ import uuid
 
 import pytest
 
+from app.domain.addressing import Event
 from app.domain.agent.announce import announce
-from app.domain.delivery.addressing import Event
 from app.domain.notice_meta import (
     EVENT_TURN_QUEUED,
     SEVERITY_INFO,
@@ -28,6 +28,7 @@ from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
+    mail,
     post_project,
     session_auth_headers,
 )
@@ -92,13 +93,7 @@ def _filed_events(client, room: str) -> list[dict]:
 
 
 def _notices(client, token: str) -> list[dict]:
-    r = client.get(
-        "/notifications",
-        params={"type": "ROOM_NOTICE"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["notifications"]
+    return mail(client, token, "ROOM_NOTICE")
 
 
 def test_filing_a_card_leaves_a_room_line_marked_as_waiting_on_a_person(client):

@@ -109,8 +109,10 @@ class TaskPdfDraftService:
         timeout_seconds: float | None = None,
         max_pages: int | None = None,
         max_concurrency: int | None = None,
+        sees_pictures: bool = False,
     ) -> None:
         self._chat = chat
+        self._sees_pictures = sees_pictures
         self._rate_table = rate_table
         self.spent = Usage()
         self.model = chat.model
@@ -126,13 +128,14 @@ class TaskPdfDraftService:
 
     @classmethod
     async def on_gateway(
-        cls, db: Any, rate_table: RateTable | None
+        cls, db: Any, rate_table: RateTable | None, *, sees_pictures: bool
     ) -> "TaskPdfDraftService":
         key = await service_key(db, task_draft_key_spec())
         if key is None:
             raise SystemBusyError(_NOT_OPEN)
         return cls(
             rate_table=rate_table,
+            sees_pictures=sees_pictures,
             chat=GatewayChat(
                 key,
                 settings.task_draft_model,
@@ -186,32 +189,6 @@ class TaskPdfDraftService:
         if isinstance(selected, dict):
             return selected
         return {}
-
-    async def generate_task_payload_from_pdf(
-        self,
-        *,
-        pdf_bytes: bytes,
-        template: dict[str, Any],
-        space_id: int,
-        category_id: int | None,
-        forced_submitter_type: str | None,
-        user_id: int,
-        default_topic_ids: list[int] | None = None,
-    ) -> tuple[dict[str, Any], int]:
-        """Convenience wrapper: return a single task payload from a PDF."""
-        payloads, token_used, _ = await self.generate_task_payloads_from_pdf(
-            pdf_bytes=pdf_bytes,
-            template=template,
-            space_id=space_id,
-            category_id=category_id,
-            forced_submitter_type=forced_submitter_type,
-            user_id=user_id,
-            default_topic_ids=default_topic_ids,
-            max_tasks=1,
-        )
-        if not payloads:
-            raise BadRequestError("No task payload extracted from PDF")
-        return payloads[0], token_used
 
     def _validate_page_count(self, page_count: int) -> None:
         if page_count == 0:
@@ -298,10 +275,10 @@ class TaskPdfDraftService:
     def _model_reads_images(self) -> bool:
         """这一版的草稿模型读不读图。
 
-        默认草稿模型是文本模型 —— 一份 PNG 发给读不了图的模型只是白白花一次调用的
-        钱，所以只有部署在 ``vision_models`` 里点过名的模型才走兜底。
+        一份 PNG 发给读不了图的模型只是白白花一次调用的钱，所以只有网关标了
+        ``supports_vision`` 的模型才走兜底（调用方查好了传进来）。
         """
-        return self.model in settings.vision_models
+        return self._sees_pictures
 
     async def generate_task_payloads_from_pdf(
         self,
@@ -631,10 +608,10 @@ class TaskPdfDraftService:
             "3. 可以将图片中提取的文本（picture text部分）删除；\n"
             "4. 将修正后的 Markdown 放入 JSON 的 `description` 字段；\n"
             "5. 从内容中提炼出合适的 `name`（赛题名称）和 `intro`（简短介绍）。\n\n"
-            "**输出格式要求**：直接输出一个 JSON 对象，包含 name、intro、description 三个字段。"  # noqa: E501
+            "**输出格式要求**：直接输出一个 JSON 对象，包含 name、intro、description 三个字段。"
             "形如 "
             '{"name": "...", "intro": "...", "description": "..."}。\n\n'
-            "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"  # noqa: E501
+            "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"
         )
 
     def _build_user_prompt(self, *, text: str, template: dict[str, Any]) -> str:

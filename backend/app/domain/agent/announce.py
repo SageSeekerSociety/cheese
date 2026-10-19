@@ -14,7 +14,7 @@
 **调用点说的是这条事件点了谁的名，不是收件人名单，也不是要不要发（I11）。**「下一
 步在谁手上」由这一层从 `meta.who` 读出来 —— 那个码本来就是这句话：`platform`（平
 台自己在重试/自愈）、`cheese`（芝士接着处理）、`human`（等人）。三个码翻成
-`delivery/addressing.py` 的两档 `Hand`，`address()` 再答谁会收到、凭什么收到。
+`addressing.py` 的两档 `Hand`，`address()` 再答谁会收到、凭什么收到。
 
 所以一条平台正在处理的提示**发不出收件人**。它**写得出来**：`points_at` 和 `meta` 是
 两个独立参数，两个都填上不报错：`who` 说了下一步不在参与者手上，点的那些名就只是
@@ -39,22 +39,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ValidationError
 from app.core.live_frames import show_once_committed
 from app.core.sentences import notice_message, with_keys
-from app.domain.agent.mentions import _MENTION_RE
-from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.asked import asked_of, settled, skipped_by
-from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
-from app.domain.conversation.services import room_of
-from app.domain.delivery.addressing import (
+from app.domain.addressing import (
     NAMES_NOBODY,
     Event,
     Hand,
     address,
 )
-from app.domain.delivery.ledger import DeliveryEvent, deliver, settle
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.agent.mentions import _MENTION_RE
+from app.domain.agent.repositories import AgentTurnRepository
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.block.asked import asked_of, settled, skipped_by
+from app.domain.block.models import Block, BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
+from app.domain.conversation.services import room_of
+from app.domain.delivery.ledger import deliver, settle
+from app.domain.delivery_events import DeliveryEvent
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
+from app.domain.identity.handles import agent_instance_handle, names_a_person
 from app.domain.notice_meta import (
     SEVERITY_INFO,
     WHO_CHEESE,
@@ -67,7 +70,8 @@ from app.domain.topic_membership.services import TopicMemberService
 
 #: `who` 码 → 下一步在谁手上。`who` 回答的是「谁在管这件事」，那正是投递要问的那一
 #: 句，只是用的是通知契约的词，所以这里不做第二次判断，只把同一个答案翻成投递这一
-#: 侧的词 —— 和 `addressing.hand_of(column)` 对看板那一列做的是同一件事。
+#: 侧的词 —— 和 `room_task/presentation.py` 的 `hand_of(column)` 对看板那一列做的是
+#: 同一件事。
 #:
 #: `None` 是「这条提示没说谁在管」（`meta` 不是 `notice()` 拼的）：没人声明下一步到
 #: 了参与者手上，就谁都不通知 —— 和看板上一格没挪是同一个意思。
@@ -109,7 +113,7 @@ async def announce(
     `event_id` 是这条事件的身份，投递账本按它去重（结论 58「去重键跟事件」）。默认
     就是房间里刚落下的那一行 —— 一次性的提示说完即止，它的身份和它那一行同生。给
     得出一个更长命的身份的调用点才填它：同一件事被问第二遍仍然是同一条事件，那个
-    id 不能每次新建（`domain/policy/proposals.py`）。
+    id 不能每次新建（`domain/agent/proposals.py` 的 `identity` 就是这么算的）。
 
     `about_card` 是这句话说的那张验收卡：随投递一起记下（`payload.cardId`），卡的
     那次决定据此把这一批提示一起结掉（`delivery/ledger.py` 的 `settle_card`）。
@@ -448,6 +452,27 @@ async def instance_of_seat(session: AsyncSession, project_id, seat: str):
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         if agent_instance_handle(instance.id) == seat:
             return instance
+    return None
+
+
+async def who_started_the_open_turn(
+    session: AsyncSession, project_id, conversation_id: uuid.UUID, seat: str
+) -> str | None:
+    """The person whose message opened ``seat``'s running turn in this
+    conversation, if a person did: None when no turn is open there, or when
+    the platform or another agent opened it.
+
+    A turn row names the agent by its instance's handle (the conversation it
+    runs in), a seat by the instance's id; either may be on the row.
+    """
+    instance = await instance_of_seat(session, project_id, seat)
+    turns = AgentTurnRepository(session)
+    for handle in (seat, *((instance.handle,) if instance is not None else ())):
+        author = await turns.open_turn_author_for_topic(
+            conversation_id, agent_handle=handle
+        )
+        if author is not None:
+            return author if names_a_person(author) else None
     return None
 
 

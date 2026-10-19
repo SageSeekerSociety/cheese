@@ -16,6 +16,15 @@ const loggedIn = ref(true)
 
 vi.mock('@/api', () => ({ listAwaitingMe: () => listAwaitingMe() }))
 
+// 服务端那条连接换成一个能在测试里拨动的开关：拨一下就是「收件箱多了一行」。
+const inboxListeners = new Set<() => void>()
+vi.mock('@/lib/inboxLive', () => ({
+  onInboxChange: (listener: () => void) => {
+    inboxListeners.add(listener)
+    return () => inboxListeners.delete(listener)
+  },
+}))
+
 const Blank = { render: () => null }
 
 const settle = async () => {
@@ -28,18 +37,19 @@ const settle = async () => {
  *  重新 import 一次，不然上一个用例的数和「刚问过」的时刻会跟到下一个用例里。
  */
 async function mountProbe({ open = true } = {}) {
+  inboxListeners.clear()
   vi.resetModules()
   // 首帧这道门在测试里没人推：角标排在它后面，不推就一次都不读（`@/test/firstPaint`）。
   const fp = await import('@/test/firstPaint')
   if (open) await fp.openFirstPaint()
   else fp.holdFirstPaint()
-  const { useAwaitingCount } = await import('../useAwaitingCount')
+  const { awaitingCountByProject, useAwaitingCount } = await import('../useAwaitingCount')
   const Probe = {
     setup() {
       const count = useAwaitingCount(computed(() => loggedIn.value))
-      return { count }
+      return { count, byProject: awaitingCountByProject() }
     },
-    template: '<span data-count>{{ count }}</span>',
+    template: '<span data-count>{{ count }}</span><span data-projects>{{ JSON.stringify(byProject) }}</span>',
   }
   // 起始位置停在 `/`：`main.ts` 就是这样——挂载那一刻这一次打开还没落地，跳转是之后才
   // 确认的。深链那一条要的正是这个次序。
@@ -53,6 +63,7 @@ async function mountProbe({ open = true } = {}) {
     router,
     fp,
     countText: () => utils.container.querySelector('[data-count]')?.textContent ?? '',
+    projectsText: () => utils.container.querySelector('[data-projects]')?.textContent ?? '',
   }
 }
 
@@ -67,7 +78,7 @@ afterEach(() => {
 
 describe('待我处理那颗角标读的数', () => {
   it('冷开落在深链上：首帧之前一次都不读，门开了只读一次', async () => {
-    listAwaitingMe.mockResolvedValue({ data: [{ projectId: 'p-1' }] })
+    listAwaitingMe.mockResolvedValue({ data: [{ kind: 'work', projectId: 'p-1' }] })
     const { router, fp, countText } = await mountProbe({ open: false })
 
     // 这一次打开本身：挂载之后跳转才落地，看着像一次换页。
@@ -83,7 +94,7 @@ describe('待我处理那颗角标读的数', () => {
   it('冷开时窗口重新拿到焦点：首帧之前不读，门开了只读这一趟', async () => {
     // 开机那一两秒里切走再切回来、或者点进一个后台开着的标签页，都会来一次 `focus`。
     // 那一下如果不等门，就是首帧前读一遍、门开了再读一遍（`lastAt` 还是 0，节流挡不住）。
-    listAwaitingMe.mockResolvedValue({ data: [{ projectId: 'p-1' }] })
+    listAwaitingMe.mockResolvedValue({ data: [{ kind: 'work', projectId: 'p-1' }] })
     const { fp, countText } = await mountProbe({ open: false })
 
     window.dispatchEvent(new Event('focus'))
@@ -106,14 +117,14 @@ describe('待我处理那颗角标读的数', () => {
     expect(listAwaitingMe).toHaveBeenCalledTimes(1)
 
     // 从待办页离开那一下不受节流：人刚在那儿处理完事情，数要立刻跟上。
-    listAwaitingMe.mockResolvedValue({ data: [{ projectId: 'p-1' }] })
+    listAwaitingMe.mockResolvedValue({ data: [{ kind: 'work', projectId: 'p-1' }] })
     await router.push('/projects/p-1')
     await waitFor(() => expect(listAwaitingMe).toHaveBeenCalledTimes(2))
   })
 
   it('未登录不读，登出把数清掉', async () => {
     loggedIn.value = false
-    listAwaitingMe.mockResolvedValue({ data: [{ projectId: 'p-1' }] })
+    listAwaitingMe.mockResolvedValue({ data: [{ kind: 'work', projectId: 'p-1' }] })
     const { countText } = await mountProbe()
 
     await settle()
@@ -126,5 +137,29 @@ describe('待我处理那颗角标读的数', () => {
     loggedIn.value = false
     await waitFor(() => expect(countText()).toBe('0'))
     expect(listAwaitingMe).toHaveBeenCalledTimes(1)
+  })
+
+  it('收件箱来了新的一行（比如一条邀请）：当场重读，不等换页', async () => {
+    listAwaitingMe.mockResolvedValue({ data: [] })
+    const { countText } = await mountProbe()
+    await waitFor(() => expect(listAwaitingMe).toHaveBeenCalledTimes(1))
+
+    listAwaitingMe.mockResolvedValue({ data: [{ kind: 'team_invite', id: '42', placeId: '7' }] })
+    for (const listener of inboxListeners) listener()
+
+    await waitFor(() => expect(countText()).toBe('1'))
+  })
+
+  it('邀请和申请算进总数，不算到哪个项目的格子上', async () => {
+    listAwaitingMe.mockResolvedValue({
+      data: [
+        { kind: 'work', projectId: 'p-1' },
+        { kind: 'project_invite', id: 'inv', placeId: 'p-9' },
+      ],
+    })
+    const { countText, projectsText } = await mountProbe()
+
+    await waitFor(() => expect(countText()).toBe('2'))
+    expect(JSON.parse(projectsText())).toEqual({ 'p-1': 1 })
   })
 })

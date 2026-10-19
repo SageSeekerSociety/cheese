@@ -375,6 +375,8 @@ class FeedbackCard(BaseModel):
 class FeedbackDetail(FeedbackCard):
     """The card plus the report body and its children."""
 
+    reward: dict | None = None
+
     problem: str
     why: str | None
     expectation: str | None

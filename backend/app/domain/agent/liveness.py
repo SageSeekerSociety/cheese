@@ -15,13 +15,14 @@ the turn is over, or the page keeps 运行中 with nothing left to tell it again
 """
 
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall
 from app.domain.agent.models import AgentTurn
 from app.domain.room_task.models import Task
 
@@ -47,7 +48,11 @@ OUTPUT_CLOCK_S = 60
 
 
 def silent_of(runner: LiveWork, topic_id: uuid.UUID) -> float | None:
-    """这个话题里在跑的那一轮「多久没有新输出了」（秒）。
+    """这个话题里在跑的那一轮「多久没有动静了」（秒）。
+
+    动静有两样：房间里落下了一帧，或者读这一轮的那一路收到了 runner 的一声应答
+    （`WorkStatus.live_work_for_topic` 取两者较新的）。长思考、跑长命令的时候只有
+    后者 —— 只数前者，会把一轮好好跑着的活说成停了。
 
     None = 没有在跑的轮次，或者记录里没有这个戳 —— 「不知道」不当成「很新」用，
     读的人（侧栏的灯）自己决定那时画什么。
@@ -73,8 +78,11 @@ def silent_gaps(
 
 
 def last_output_at(gap_s: float | None, now: datetime) -> datetime | None:
-    """最后一次输出的时刻：从那句「多久没输出了」倒推，取整到分钟
-    （`OUTPUT_CLOCK_S`）。说不出来（None）就不给时刻 —— 前后端都不许自己编一个。"""
+    """最后一次有动静的时刻：从那句「多久没动静了」倒推，取整到分钟
+    （`OUTPUT_CLOCK_S`）。说不出来（None）就不给时刻 —— 前后端都不许自己编一个。
+
+    字段名还是 `last_output_at`（话题清单的契约），但它数的已经是任何一样动静：
+    输出，或者会话自己应的一声（`silent_of`）。"""
     if gap_s is None:
         return None
     at = now - timedelta(seconds=gap_s)
@@ -127,8 +135,9 @@ RUNNING_LOOKBACK = timedelta(minutes=15)
 async def moving_topics(
     db: AsyncSession,
     topic_ids: Collection[uuid.UUID],
-    *,
     running: Collection[uuid.UUID] = (),
+    threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
+    *,
     now: datetime | None = None,
     lookback: timedelta = RUNNING_LOOKBACK,
 ) -> set[uuid.UUID]:
@@ -146,37 +155,67 @@ async def moving_topics(
     一个进程正在跑的那一轮（多 worker 时侧栏由谁应答说不准），只有「那一行还开着」
     是哪个进程都看得见的事实。库里那一份只认刚起来过的（`RUNNING_LOOKBACK`），因为
     一行停在那儿不动的僵尸轮次（进程被杀，`finally` 没跑成）会永远读作在跑。
+
+    ``threads`` 是调用方已经问过的那一份（`conversation.services.threads_of_rooms`
+    的形状：支线 -> 它所在的房间）：读一个房间的头时它前面已经为别的问题读过一次，
+    同一批房间问两遍就是同一张表读两趟。给了就用给的（只取 `topic_ids` 里那些房间
+    的，多给的不会替没问的房间作答）；没给就自己读同一张表，免得这一层为了它拖着
+    那边的依赖。
+
+    这两个都可以按位置给：调用它的房间头那个文件正好卡在行数上限，多出来的
+    那一行会把一次去重变成一次拆文件（`check-file-sizes.py`）。
     """
     ids = list(topic_ids)
     if not ids:
         return set()
     now = now or datetime.now(UTC)
+    mine = set(ids)
     # 这些话题名下的对话 -> 它所在的房间。支线也算：一条支线里跑的轮次同样是在管
     # 这间房（`topics._working_in_threads` 认的是同一件事）。
-    inner: dict[uuid.UUID, uuid.UUID] = {}
-    for task_id, room_id in (
-        await db.execute(select(Task.id, Task.room_id).where(Task.room_id.in_(ids)))
-    ).all():
-        inner[task_id] = room_id
-    for thread_id, room_id in (
-        await db.execute(
-            select(_threads.c.id, _threads.c.room_id).where(_threads.c.room_id.in_(ids))
+    if threads is None:
+        found_threads, cached_threads = recall(db, ("threads_in_rooms", tuple(ids)))
+        threads = (
+            dict(cached_threads[0])
+            if found_threads
+            else {
+                thread_id: room_id
+                for thread_id, room_id in (
+                    await db.execute(
+                        select(_threads.c.id, _threads.c.room_id).where(
+                            _threads.c.room_id.in_(ids)
+                        )
+                    )
+                ).all()
+            }
         )
-    ).all():
-        inner[thread_id] = room_id
-
+    inner: dict[uuid.UUID, uuid.UUID] = {
+        thread_id: room_id for thread_id, room_id in threads.items() if room_id in mine
+    }
     # 刚起来、还开着、而且真送出去了的那些轮次。不是拿房间去 IN：这一份读的是很小
     # 的一张部分索引（`ix_agent_turns_open`），回来之后再在内存里挑出属于这些话题的。
-    arrived = await db.scalars(
-        select(AgentTurn.conversation_id).where(
+    # 落在活上的轮次顺手带回那件活的房间：库里这些开着的轮次是全站的，大多不在这
+    # 批房间里，另拿它们去 `tasks` 查一趟房间，次数就看别的项目此刻有没有在跑了。
+    turns = (
+        select(AgentTurn.conversation_id, Task.room_id)
+        .outerjoin(Task, Task.id == AgentTurn.conversation_id)
+        .where(
             AgentTurn.stopped_at.is_(None),
             AgentTurn.delivered_at.is_not(None),
             AgentTurn.started_at >= now - lookback,
         )
     )
-    mine = set(ids)
+    # 这个进程手里在跑、库里也许还没送出那一行的，同一趟里问它是哪间房的活：单独
+    # 再查一趟的话，次数就看这个进程此刻有没有在跑别处的轮次了。
+    here = [c for c in running if c not in mine and c not in inner]
+    if here:
+        turns = turns.union_all(select(Task.id, Task.room_id).where(Task.id.in_(here)))
+    arrived = (await db.execute(turns)).all()
+    for conversation, room_id in arrived:
+        if conversation is not None and room_id in mine:
+            inner[conversation] = room_id
+    active = set(running) | {c for c, _ in arrived if c is not None}
     moving: set[uuid.UUID] = set()
-    for conversation in set(running) | {c for c in arrived if c is not None}:
+    for conversation in active:
         if conversation in mine:
             moving.add(conversation)
         elif conversation in inner:

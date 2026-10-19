@@ -132,7 +132,6 @@ async def test_get_notifications_basic():
         limit=20,
         cursor_created_at=None,
         cursor_id=None,
-        type_=None,
         read=None,
     )
     assert len(result) == 2
@@ -150,7 +149,6 @@ async def test_get_notifications_with_all_filters():
         limit=5,
         cursor_created_at=cursor_time,
         cursor_id=100,
-        type_=NotificationType.REPLY,
         read=True,
     )
 
@@ -159,7 +157,6 @@ async def test_get_notifications_with_all_filters():
         limit=5,
         cursor_created_at=cursor_time,
         cursor_id=100,
-        type_=NotificationType.REPLY,
         read=True,
     )
     assert result == []
@@ -246,7 +243,7 @@ async def test_count_notifications_no_filters():
     svc = _make_service(repo=repo)
     result = await svc.count_notifications_for_current_user(user_id=10)
 
-    repo.count_for_user.assert_awaited_once_with(user_id=10, type_=None, read=None)
+    repo.count_for_user.assert_awaited_once_with(user_id=10, read=None)
     assert result == 42
 
 
@@ -256,13 +253,9 @@ async def test_count_notifications_with_filters():
     repo.count_for_user.return_value = 5
 
     svc = _make_service(repo=repo)
-    result = await svc.count_notifications_for_current_user(
-        user_id=10, type_=NotificationType.REACTION, read=False
-    )
+    result = await svc.count_notifications_for_current_user(user_id=10, read=False)
 
-    repo.count_for_user.assert_awaited_once_with(
-        user_id=10, type_=NotificationType.REACTION, read=False
-    )
+    repo.count_for_user.assert_awaited_once_with(user_id=10, read=False)
     assert result == 5
 
 
@@ -426,7 +419,7 @@ async def test_resolve_entities_with_pointers():
 
 @pytest.mark.anyio
 async def test_resolve_entities_missing_resolver():
-    """When no resolver exists for an entity type, the pointer key still appears with None."""  # noqa: E501
+    """When no resolver exists for an entity type, the pointer key still appears with None."""
     svc = _make_service(resolvers=[])
     result = await svc.resolve_entities_from_metadata(
         [
@@ -435,7 +428,7 @@ async def test_resolve_entities_missing_resolver():
     )
 
     # The pointer is collected but no resolver handles "unknown_type",
-    # so resolved_by_type won't have "unknown_type" and flattened[path] = entity_map.get(id) = None  # noqa: E501
+    # so resolved_by_type won't have "unknown_type" and flattened[path] = entity_map.get(id) = None
     assert "actor" in result
     assert result["actor"] is None
 

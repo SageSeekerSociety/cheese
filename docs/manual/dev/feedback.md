@@ -38,7 +38,7 @@ covers:
 
 ## 提案：芝士举手，人决定 {#proposals}
 
-`cheese_feedback_propose`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是话题里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
+`cheese_feedback_propose`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是频道里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
 
 **agent 不能自己发布**（`FeedbackService.create`）：命中 `IdentityService.is_agent` 就直接 `ForbiddenError`，报错文案点名 `cheese_feedback_propose`，给模型一个下一步而不是死胡同。同一个判断收掉了另一扇门 —— agent 去发送一张已有的卡，仍是 agent 在发布自己，只是分两步走。作者从卡上取（`Block.author`），提交者取验证过的调用者，客户端两样都说了不算。
 
@@ -51,14 +51,14 @@ covers:
 | 顺序 | 限流 | 判据 | 记忆存在哪 |
 | --- | --- | --- | --- |
 | 1 | 拒绝要有记忆 | 指纹在 `FeedbackProposalDismissal` 里 | 表 |
-| 2 | 指纹去重 | 24 小时内同一个指纹提过 | 话题里的消息块 |
-| 3 | 每日配额 | 24 小时内这个话题的卡达到 `settings.feedback_proposals_per_topic_per_day`（默认 2） | 同上 |
+| 2 | 指纹去重 | 24 小时内同一个指纹提过 | 频道里的消息块 |
+| 3 | 每日配额 | 24 小时内这个频道的卡达到 `settings.feedback_proposals_per_topic_per_day`（默认 2） | 同上 |
 
-指纹是 `what_happened` + `repro` **归一化**（折空白、去标点、折大小写）后的 sha256 前 32 位十六进制。这两段为空时才退回去哈希 `title` + `problem`：两个都空的提案会共用空串的哈希，于是同一个话题里的第二张会被「这个问题刚提过」拒掉。指纹**挡不住换一种说法的重提**，那需要嵌入模型；日报配额是它漏掉的那些的兜底 —— 这层限制就这么强，写在这里免得有人把它读得更强。
+指纹是 `what_happened` + `repro` **归一化**（折空白、去标点、折大小写）后的 sha256 前 32 位十六进制。这两段为空时才退回去哈希 `title` + `problem`：两个都空的提案会共用空串的哈希，于是同一个频道里的第二张会被「这个问题刚提过」拒掉。指纹**挡不住换一种说法的重提**，那需要嵌入模型；日报配额是它漏掉的那些的兜底 —— 这层限制就这么强，写在这里免得有人把它读得更强。
 
 「一天」是滚动的 24 小时，不是自然日：自然日午夜清零，紧挨午夜的两分钟里可以提两条一样的。
 
-三道全是「先读后写」，所以 `check` 第一件事是拿话题级事务锁（`pg_advisory_xact_lock`，键 `feedback-proposal:{topic_id}`），持到路由 commit。没有用 `(topic_id, fingerprint)` 唯一索引：指纹不是永久身份，24 小时窗口过了同一个问题可以正当地再提，唯一约束会把那一次变成 500。
+三道全是「先读后写」，所以 `check` 第一件事是拿频道级事务锁（`pg_advisory_xact_lock`，键 `feedback-proposal:{topic_id}`），持到路由 commit。没有用 `(topic_id, fingerprint)` 唯一索引：指纹不是永久身份，24 小时窗口过了同一个问题可以正当地再提，唯一约束会把那一次变成 500。
 
 ## 谁能看见 {#visibility}
 
@@ -164,11 +164,11 @@ docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
 
 ## 每日分诊：定时规则带一批没人处理的反馈 {#triage}
 
-一条定时规则的 `spec` 里加 `feedback_batch: N`（1–10），它每次响的时候，平台把最早的 N 条「没人处理」的反馈连同分诊步骤附在工作说明后面交给房间里的队友（`feedback/triage.py`，在 `routine/service.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套：人建、人确认，结果交回给规则的主人。
+一条定时规则的 `spec` 里加 `feedback_batch: N`（1–10），它每次响的时候，平台把最早的 N 条「没人处理」的反馈连同分诊步骤附在工作说明后面交给房间里的队友（`feedback/triage.py`，在 `routine/service/firing.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套：人建、人确认，结果交回给规则的主人。
 
 - **「没人处理」** 是 `received` 且没有指派人：指派和领取都会把它推到「处理中」，还停在「已收录」的就是没人碰过的。只发公开、没被标成安全问题的：队友读得到的只有这些。私密和安全的那几栏照旧由反馈管理员看，新来的时候飞书群里有那条只带编号的消息。
 - **选哪几条是平台定的**，不是队友自己去列表里挑：两天的执行不会各自理解一遍「没人处理」，一天里一条都没有的时候整次执行记成 `skipped`（「没有待分诊的反馈」），不派活，也不通知主人。
-- **队友不改状态。** 步骤里写的是：读全文、领取（领不到就跳过）、调查；能修的提议成任务，由规则的主人开始，任务里的提交写 `Fixes-feedback:`，上线后由部署推状态（执行那一轮本身不改代码，见[支线与未开始的任务](/dev/session#scratch)）；该不修复或要别人拍板的，把建议写进交回的结果，由规则的主人（反馈管理员）决定。
+- **队友不改状态。** 步骤里写的是：读全文、领取（领不到就跳过）、调查；能修的先问规则的主人要不要建任务，他选了「建任务」才另开一件，任务里的提交写 `Fixes-feedback:`，上线后由部署推状态（执行那一轮本身不改代码，见[支线的会话](/dev/session#scratch)）；该不修复或要别人拍板的，把建议写进交回的结果，由规则的主人（反馈管理员）决定。
 - **只有做平台本身的项目里的房间能用**（`claims.is_platform_project`，和领取同一个判据），别处建或改成这样的规则会被拒：那里的队友领不了反馈。
 - 前端的规则表单没有这一格，但改钟点时会原样带着它（`RoutineFormDialog.vue` 的 `keptFromRoutine`）；要建这种规则，用 `cheese_routine_draft` 起草或直接调 `POST /topics/{id}/routines`。
 
@@ -202,8 +202,8 @@ docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
 ## 边界与坑 {#traps}
 
 - **两处判据会各自漂开。** `may_delete_comment` / `may_delete_feedback` 既在删除前问、又用来填 `can_delete`，只有一处的写法（两处各写一遍就是「按钮画得出来、点下去 403」）。客户端**从不**自己重推这条规则，按钮照 `can_delete` 画。
-- **作者配额只算直接提交。** 每人每 24 小时 `settings.feedback_reports_per_author_per_day`（默认 30）条，且**删除的不减配额** —— 上限管的是「你在产出多少」，删掉一条不是买回额度的方法。提案卡路径不走这条：它已经被话题配额、指纹和「不用」的记忆挡过一遍，而它的作者是那个 agent，不是按发送的人。两处同样是先锁后数。
+- **作者配额只算直接提交。** 每人每 24 小时 `settings.feedback_reports_per_author_per_day`（默认 30）条，且**删除的不减配额** —— 上限管的是「你在产出多少」，删掉一条不是买回额度的方法。提案卡路径不走这条：它已经被频道配额、指纹和「不用」的记忆挡过一遍，而它的作者是那个 agent，不是按发送的人。两处同样是先锁后数。
 - **`Block.meta` 是普通 JSON 列。** `mark_accepted` 整块写一个新 dict，就地改会被 SQLAlchemy 静默丢掉；症状是「同一个请求里生效、下一个请求就失效」。
-- **接受用一把按卡命名的锁**（`feedback-proposal-accept:{block_id}`），和话题锁是两个命名空间。读 `meta` 必须在拿锁**之后**重新 SELECT，READ COMMITTED 下这条 SELECT 才看得见赢家提交的 `accepted_feedback_id`；反过来就是两条逐字相同、而人只按了一次发送的反馈。
+- **接受用一把按卡命名的锁**（`feedback-proposal-accept:{block_id}`），和频道锁是两个命名空间。读 `meta` 必须在拿锁**之后**重新 SELECT，READ COMMITTED 下这条 SELECT 才看得见赢家提交的 `accepted_feedback_id`；反过来就是两条逐字相同、而人只按了一次发送的反馈。
 - **`hot` 计数和 `hot` 列表曾是两条规则。** 有人把「办完了」写成一个字面量 `!= resolved`，`deployed` 加进来时那份拷贝悄悄慢了一个状态。`CLOSED_STATUSES` 就是为这个存在的。
 - **提案卡是快照，正文不是。** 发送时正文取请求体（抽屉是预填的，人可以改完再发），房子（`topic_id` / `project_id`）取 URL 和卡 —— 客户端能说错的东西一律不采信。

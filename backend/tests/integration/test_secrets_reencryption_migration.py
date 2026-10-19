@@ -26,8 +26,8 @@ import asyncpg
 import pytest
 
 from app.core.config import settings
-from app.domain.agent.forgejo_tokens import forge_password, open_forge_token
 from app.domain.oauth.services import open_oauth_token, seal_oauth_token
+from app.domain.project.forgejo_tokens import forge_password, open_forge_token
 from app.domain.user.realname_services import realname_dict
 from tests.conftest import (
     _PG_BASE,

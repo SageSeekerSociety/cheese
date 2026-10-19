@@ -1,17 +1,19 @@
 """Scoped, bounded local evidence before push; never a substitute for full CI.
 
-task ci:fast: quick tier, 180s, and a sampled 3072 MiB group RSS ceiling — both
-are this machine's own limits; --budget/--memory-mib override them for a bigger
-one, which is what Required CI's draft job does (see ci-fast.md).
+task ci:fast: quick tier, an affinity-aware 180–720s default budget, and a
+sampled 3072 MiB group RSS ceiling. --budget wins over CI_FAST_BUDGET_SECONDS,
+which wins over the CPU default; --memory-mib overrides RSS (see ci-fast.md).
 Direct Python invocation defaults to the legacy static tier (no tests/types).
 --tier extended gives the quick selection 900s without expanding its coverage.
 --types additionally runs the full Pyright/frontend-typecheck manual hooks.
 --pre-push is the entry point the platform's task-worktree pre-push hook calls
-(one report per push, for a reader who did not choose to run this): it leaves
-out the hooks that spawn the node toolchain — those get killed on a small box,
-and a report that calls a killed check red is worse than no report — reports
-what it left out as not run, and closes with the command that reproduces each
-item that did not pass. It never blocks the push: the hook that calls it
+(one report per push, for a reader who did not choose to run this): it adds the
+PRE_PUSH_HOOKS checks, which are Required CI steps whose failure a push can be
+the first to find and that a work machine can still run; leaves out the hooks
+that spawn the node toolchain — those get killed on a small box, and a report
+that calls a killed check red is worse than no report — reports what it left out
+as not run, and closes with the command that reproduces each item that did not
+pass. It never blocks the push: the hook that calls it
 swallows the exit code (a push refused here is a commit the platform has not
 delivered, and the checkout it lives in does not survive long).
 Use --title for a proposed PR title; otherwise read the actual PR title from
@@ -43,6 +45,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -52,7 +55,7 @@ import sys
 import tempfile
 import time
 
-from ci_fast_checks import resolve, test_plan
+from ci_fast_checks import _cores, resolve, test_plan, tree_guard_check
 from ci_fast_process import dependencies, execute
 
 REPO_ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
@@ -62,11 +65,22 @@ if not os.path.isabs(GIT_DIR):
 PASS, FAIL, UNKNOWN, BLOCKED = 0, 1, 2, 3
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 FAST_HOOKS = {
-    "guards": ["file-size", "repo-rules", "action-pins", "manual-anchors", "doc-references"],
-    "backend": ["ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"],
-    "frontend": ["eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"],
+    "guards": ["repo-rules", "action-pins", "manual-anchors", "doc-references"],
+    "backend": ["ruff", "boundary-check", "migration-fork"],
+    "frontend": ["eslint", "stylelint", "boundary-check-frontend", "scene-ratchet"],
 }
 TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
+# Checks the pre-push entry point adds to the ones above: steps of a Required CI
+# job that (a) a push can be the first to find — they red `CI required` when they
+# fail on a first head — and (b) a work machine can actually run, meaning no
+# service, no pinned harness, and no node toolchain. Measured from the 7 days to
+# 2026-10-15: of the backend suite's locally reachable steps, `openapi-document`
+# is the one left that no earlier check covers.
+#
+# Deliberately NOT in FAST_HOOKS: that table is the selection `task ci:fast` and
+# the CI draft tier both read, so an id added there would change what CI runs and
+# spend its 1200s budget on a check this tier is already short of time for.
+PRE_PUSH_HOOKS = {"backend": ["openapi-document"]}
 # pre-commit hooks that spawn the JS toolchain (node/eslint/stylelint) rather
 # than python, and are run after tests/types. On a small machine one started
 # with too little budget left can be killed by the kernel before the sampled
@@ -82,7 +96,7 @@ JS_RUNTIME_HOOKS = {"eslint", "stylelint", "boundary-check-frontend"}
 # about the wrong tree. `boundary-check` grades the tree at the merge base with
 # the same contracts it grades this one with, so a base this tool cannot reach
 # is a verdict it cannot give.
-MERGE_BASE_HOOKS = {"file-size", "migration-fork", "scene-ratchet", "boundary-check"}
+MERGE_BASE_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 # Every hook this tool can select that spawns the node toolchain: the three
 # above, and the frontend type check next to pyright, which runs
 # `pnpm run typecheck`. The preflight blocks a run whose selection needs
@@ -232,6 +246,30 @@ def dirty_fingerprint(staged, unstaged, untracked):
     return hashlib.sha256("\n".join(entries).encode()).hexdigest()[:12]
 
 
+def budget_for(tier, explicit):
+    """Keep caller bounds exact; give a smaller CPU allocation more wall time."""
+    if explicit is not None:
+        return explicit, "--budget"
+    override = os.environ.get("CI_FAST_BUDGET_SECONDS")
+    if override is not None:
+        try:
+            seconds = float(override)
+        except ValueError as exc:
+            raise ValueError("CI_FAST_BUDGET_SECONDS must be finite and positive") from exc
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("CI_FAST_BUDGET_SECONDS must be finite and positive")
+        return max(180, seconds), "CI_FAST_BUDGET_SECONDS"
+    if tier == "extended":
+        return 900, "extended default"
+    try:
+        cores = max(1, _cores())
+    except OSError:
+        cores = 1
+    # Four available CPUs retain the old bound; fewer get proportional time.
+    # This is a bounded heuristic, not a benchmark or a promise of completion.
+    return math.ceil(180 * max(1, 4 / cores)), f"cpu default ({cores} available)"
+
+
 def main(argv):
     import argparse
 
@@ -249,19 +287,24 @@ def main(argv):
                              " reproduce each item that did not pass")
     parser.add_argument("--report", default=str(Path(GIT_DIR, "ci-fast-report.json")))
     parser.add_argument("--timeout", type=float, default=900, help="per-check seconds")
-    parser.add_argument("--budget", type=float, help="whole tier seconds (quick/static 180; extended 900)")
+    parser.add_argument("--budget", type=float,
+                        help="whole tier seconds; overrides CI_FAST_BUDGET_SECONDS and CPU defaults")
     parser.add_argument("--memory-mib", type=int, default=3072,
                         help=f"sampled process-group RSS ceiling, 1..{MAX_MEMORY_MIB}")
     args = parser.parse_args(argv)
-    if args.budget is None:
-        args.budget = 900 if args.tier == "extended" else 180
-    if args.timeout <= 0 or args.budget <= 0 or not 0 < args.memory_mib <= MAX_MEMORY_MIB:
-        parser.error(f"positive time limits and 1..{MAX_MEMORY_MIB} MiB are required")
+    try:
+        args.budget, budget_source = budget_for(args.tier, args.budget)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if (not math.isfinite(args.timeout) or not math.isfinite(args.budget)
+            or args.timeout <= 0 or args.budget <= 0 or not 0 < args.memory_mib <= MAX_MEMORY_MIB):
+        parser.error(f"finite positive time limits and 1..{MAX_MEMORY_MIB} MiB are required")
     started = time.monotonic()
     report_path = Path(args.report)
     report = {"version": 2, "status": "unknown", "exit": UNKNOWN, "tier": args.tier,
               "pre_push": args.pre_push,
-              "budget_seconds": args.budget, "memory_limit_mib": args.memory_mib,
+              "budget_seconds": args.budget, "budget_source": budget_source,
+              "memory_limit_mib": args.memory_mib,
               "memory_measurement": "sampled process-group RSS, not address-space enforcement",
               "reasons": [], "fallback": False, "unknown_paths": [], "ran": [], "not_run": []}
 
@@ -497,6 +540,11 @@ def run(args, report, finish, started):
     hooks = [h for suite, ids in FAST_HOOKS.items() if scope.get(suite) for h in ids]
     if args.types:
         hooks += [h for suite, ids in TYPES_HOOKS.items() if scope.get(suite) for h in ids]
+    if args.pre_push:
+        # Added before the drift check below, not after it: an id this tool would
+        # spend the tier's time on has to be in the config, and the same rule the
+        # rest of the selection lives under applies to it.
+        hooks += [h for suite, ids in PRE_PUSH_HOOKS.items() if scope.get(suite) for h in ids]
     hook_ids = read_hook_ids()
     if hook_ids is None:
         reason = "cannot read .pre-commit-config.yaml"
@@ -547,7 +595,7 @@ def run(args, report, finish, started):
         invoke(f"hook:{identifier}", [*precommit, "run", identifier, "--all-files", "--hook-stage", "manual", "--color", "never"])
 
     # Cheap high-frequency metadata first; tests/types before full-tree lint.
-    hook("file-size")
+    hook("repo-rules")
     if args.tier != "static":
         with tempfile.TemporaryDirectory(prefix="ci-fast-") as tmp:
             plan, omissions = test_plan(Path(REPO_ROOT), changed, scope, Path(tmp),
@@ -556,7 +604,7 @@ def run(args, report, finish, started):
             for check in plan:
                 invoke(check["id"], check["command"], check["cwd"], check.get("evidence"), check.get("env"))
     for identifier in hooks:
-        if identifier == "file-size":
+        if identifier == "repo-rules":
             continue
         if identifier in JS_RUNTIME_HOOKS and deadline - time.monotonic() < JS_HOOK_MIN_SECONDS:
             # Tests/types already took what the tier had; a node hook started
@@ -569,8 +617,14 @@ def run(args, report, finish, started):
             continue
         hook(identifier)
     if args.tier == "static":
+        if scope.get("backend"):
+            # The whole-tree guards judge the tree, not the diff, and need no
+            # database; a push is the first place a cross-domain import can be
+            # caught before the quick tier on the PR finds it.
+            check = tree_guard_check(Path(REPO_ROOT))
+            invoke(check["id"], check["command"], check["cwd"], None, check["env"])
         report["not_run"].extend([
-            {"id": "pytest", "reason": "static tier only; run task ci:fast for selected pure tests"},
+            {"id": "pytest", "reason": "static tier runs only the whole-tree guards; run task ci:fast for the selected pure tests"},
             {"id": "typecheck", "reason": "static tier only; run task ci:fast for changed-file types"},
             {"id": "build", "reason": "outside this local tier; run full CI"},
             {"id": "e2e", "reason": "outside this local tier; run full CI"},

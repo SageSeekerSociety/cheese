@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_actor_resolver
 from app.api.routes import topics
@@ -20,7 +21,7 @@ from app.domain.topic.schemas import TopicOut
 async def test_creation_response_follows_commit(monkeypatch, commit_fails):
     committed = False
 
-    class Session:
+    class Session(AsyncSession):
         async def __aenter__(self):
             return self
 
@@ -61,9 +62,9 @@ async def test_creation_response_follows_commit(monkeypatch, commit_fails):
         "TopicMemberService",
         lambda session: SimpleNamespace(
             managed_topic_ids=AsyncMock(return_value={topic.id}),
-            may_open_channels=AsyncMock(return_value=True),
         ),
     )
+    monkeypatch.setattr(topics, "require_role", AsyncMock())
     resolver = SimpleNamespace(
         resolve=AsyncMock(
             return_value=SimpleNamespace(handle="owner", authenticated=True)

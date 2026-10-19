@@ -17,21 +17,50 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES
+from app.auth.project_roles import seats, standing
+from app.core.errors import NotFoundError
+from app.domain.agent_instance.adapters import project_team
+from app.domain.delivery.ledger import deliver, settle
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import (
+    GrantsIn,
     InvitationCreate,
     InvitationOut,
     InvitationRespond,
     MemberCreate,
     MemberOut,
+    MovedOut,
+    MoveIn,
+    RoleGrantsOut,
+    RoleOut,
+    RoleSet,
+    TransferCreate,
+    TransferOut,
 )
-from app.domain.membership.services import InvitationService, MemberService
+from app.domain.membership.services import (
+    InvitationService,
+    MemberService,
+    OwnershipService,
+    RoleService,
+)
+from app.domain.project_permissions import PERMISSION_ORDER, Role
 
 router = APIRouter(prefix="", tags=["members"])
 
 
-@router.post("/projects/{project_id}/members")
+def _invitations(db: DbSession) -> InvitationService:
+    """The invitation service, with the two ledger writes wired in.
+
+    An invitation is delivered, and settled once it is answered or withdrawn —
+    both land on the delivery ledger, one layer above ``membership``, so this
+    door hands them in (``integration/ports.py`` wires its reader the same way).
+    """
+    return InvitationService(db, deliver=deliver, settle=settle, team=project_team)
+
+
+@router.post("/projects/{project_id}/members", dependencies=[ROUTE_DECIDES])
 async def add_member(
     project_id: uuid.UUID,
     body: MemberCreate,
@@ -62,8 +91,10 @@ async def list_members(
     # The roster is the answer; a stored row adds only its id and when it was
     # written (an external member's acceptance, a teammate's seat).
     row_of = {m.user_handle: m for m in members}
+    people = await roster(db, project_id, team=project_team)
+    seated = await seats(db, project_id, [m.handle for m in people if not m.agent])
     items = []
-    for member in await roster(db, project_id):
+    for member in people:
         row = row_of.get(member.handle)
         d = {
             **member.as_dict(),
@@ -71,13 +102,21 @@ async def list_members(
             "project_id": str(project_id),
             "user_handle": member.handle,
         }
+        if not member.agent:
+            held = seated.get(member.handle)
+            if held is not None:
+                # Where they sit, and whether that rank is the team's to change.
+                d["role"] = held.seat.value
+                d["role_from_team"] = held.from_team
         if row is not None:
             d["created_at"] = row.created_at.isoformat()
         items.append(d)
     return ok(page(items, len(items)))
 
 
-@router.delete("/projects/{project_id}/members/{user_handle}")
+@router.delete(
+    "/projects/{project_id}/members/{user_handle}", dependencies=[ROUTE_DECIDES]
+)
 async def remove_member(
     project_id: uuid.UUID,
     user_handle: str,
@@ -91,7 +130,7 @@ async def remove_member(
     return ok({"deleted": True})
 
 
-@router.delete("/projects/{project_id}/membership")
+@router.delete("/projects/{project_id}/membership", dependencies=[ROUTE_DECIDES])
 async def leave_project(
     project_id: uuid.UUID,
     db: DbSession,
@@ -115,7 +154,7 @@ async def leave_project(
 # 人点头。
 
 
-@router.post("/projects/{project_id}/invitations")
+@router.post("/projects/{project_id}/invitations", dependencies=[ROUTE_DECIDES])
 async def invite_member(
     project_id: uuid.UUID,
     body: InvitationCreate,
@@ -123,10 +162,11 @@ async def invite_member(
     resolver: ActorResolverDep,
 ) -> dict:
     who = await resolver.resolve(project_id=project_id)
-    invitation = await InvitationService(db).invite(
+    invitation = await _invitations(db).invite(
         project_id=project_id,
         invitee_handle=body.user_handle,
         actor=who,
+        role=Role(body.role),
     )
     await db.commit()
     return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
@@ -145,7 +185,7 @@ async def list_project_invitations(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    svc = InvitationService(db)
+    svc = _invitations(db)
     items = await svc.list_for_project(project_id)
     rows = [await svc.describe(i) for i in items]
     return ok(page(rows, len(rows)))
@@ -161,13 +201,13 @@ async def list_my_invitations(db: DbSession, resolver: ActorResolverDep) -> dict
     # 必须是**验证过的**身份：这条接口回的是「谁在等你答复」，匿名请求下 resolve
     # 会给出一个 anonymous 演员，那就成了一条不认人的邮箱。
     who = await resolver.require_verified_caller()
-    svc = InvitationService(db)
+    svc = _invitations(db)
     items = await svc.list_for_person(who.handle or "")
     rows = [await svc.describe(i) for i in items]
     return ok(page(rows, len(rows)))
 
 
-@router.post("/invitations/{invitation_id}/respond")
+@router.post("/invitations/{invitation_id}/respond", dependencies=[ROUTE_DECIDES])
 async def respond_to_invitation(
     invitation_id: uuid.UUID,
     body: InvitationRespond,
@@ -175,14 +215,14 @@ async def respond_to_invitation(
     resolver: ActorResolverDep,
 ) -> dict:
     who = await resolver.require_verified_caller()
-    invitation = await InvitationService(db).respond(
+    invitation = await _invitations(db).respond(
         invitation_id=invitation_id, accept=body.accept, actor=who
     )
     await db.commit()
     return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
 
 
-@router.delete("/invitations/{invitation_id}")
+@router.delete("/invitations/{invitation_id}", dependencies=[ROUTE_DECIDES])
 async def revoke_invitation(
     invitation_id: uuid.UUID,
     db: DbSession,
@@ -190,8 +230,173 @@ async def revoke_invitation(
 ) -> dict:
     """邀请方反悔。撤回不删行——谁在什么时候邀过谁，是这一行唯一的记录。"""
     who = await resolver.require_verified_caller()
-    invitation = await InvitationService(db).revoke(
-        invitation_id=invitation_id, actor=who
-    )
+    invitation = await _invitations(db).revoke(invitation_id=invitation_id, actor=who)
     await db.commit()
     return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
+
+
+# ---- 角色与权限（#3830）-------------------------------------------------------
+
+
+@router.put(
+    "/projects/{project_id}/members/{user_handle}/role",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoleOut),
+)
+async def set_member_role(
+    project_id: uuid.UUID,
+    user_handle: str,
+    body: RoleSet,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Make someone below the caller an admin, a member or a mentor."""
+    who = await resolver.resolve(project_id=project_id)
+    await RoleService(db).set_role(
+        project_id=project_id, handle=user_handle, role=Role(body.role), actor=who
+    )
+    await db.commit()
+    held = await standing(db, project_id, user_handle)
+    return ok({"role": held.seat.value if held is not None else None})
+
+
+async def _grants_payload(db: DbSession, project_id: uuid.UUID) -> dict:
+    grants = await RoleService(db).grants(project_id)
+    return {
+        "grants": {
+            role.value: [p.value for p in PERMISSION_ORDER if p in grants[role]]
+            for role in Role
+        },
+        "changed": await RoleService(db).changed(project_id),
+    }
+
+
+@router.get("/projects/{project_id}/roles", **typed_response(RoleGrantsOut))
+async def get_role_grants(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """What each role may do in this project. Everyone in it may read it."""
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    return ok(await _grants_payload(db, project_id))
+
+
+@router.put(
+    "/projects/{project_id}/roles",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoleGrantsOut),
+)
+async def set_role_grants(
+    project_id: uuid.UUID,
+    body: GrantsIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    who = await resolver.resolve(project_id=project_id)
+    await RoleService(db).set_grants(
+        project_id=project_id,
+        changed={Role(role): names for role, names in body.grants.items()},
+        actor=who,
+    )
+    await db.commit()
+    return ok(await _grants_payload(db, project_id))
+
+
+@router.delete(
+    "/projects/{project_id}/roles",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoleGrantsOut),
+)
+async def reset_role_grants(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Every role back to its defaults."""
+    who = await resolver.resolve(project_id=project_id)
+    await RoleService(db).reset_grants(project_id=project_id, actor=who)
+    await db.commit()
+    return ok(await _grants_payload(db, project_id))
+
+
+# ---- 转让与移到团队：只有所有者 -----------------------------------------------
+
+
+def _ownership(db: DbSession) -> OwnershipService:
+    return OwnershipService(db, deliver=deliver, settle=settle)
+
+
+@router.post(
+    "/projects/{project_id}/transfer",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TransferOut),
+)
+async def offer_transfer(
+    project_id: uuid.UUID,
+    body: TransferCreate,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """The owner offers the project to someone in it; nothing changes until
+    they accept."""
+    who = await resolver.resolve(project_id=project_id)
+    offer = await _ownership(db).offer(
+        project_id=project_id, to_handle=body.to_handle, actor=who
+    )
+    await db.commit()
+    return ok(TransferOut.model_validate(offer).model_dump(mode="json"))
+
+
+@router.delete(
+    "/projects/{project_id}/transfer",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TransferOut),
+)
+async def cancel_transfer(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    who = await resolver.resolve(project_id=project_id)
+    service = _ownership(db)
+    pending = await service.pending_for(project_id)
+    if pending is None:
+        raise NotFoundError()
+    offer = await service.cancel(transfer_id=pending.id, actor=who)
+    await db.commit()
+    return ok(TransferOut.model_validate(offer).model_dump(mode="json"))
+
+
+@router.post(
+    "/transfers/{transfer_id}/respond",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TransferOut),
+)
+async def respond_to_transfer(
+    transfer_id: uuid.UUID,
+    body: InvitationRespond,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    who = await resolver.require_verified_caller()
+    offer = await _ownership(db).respond(
+        transfer_id=transfer_id, accept=body.accept, actor=who
+    )
+    await db.commit()
+    return ok(TransferOut.model_validate(offer).model_dump(mode="json"))
+
+
+@router.post(
+    "/projects/{project_id}/move",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(MovedOut),
+)
+async def move_to_team(
+    project_id: uuid.UUID,
+    body: MoveIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Move the owner's own project into a team they manage."""
+    who = await resolver.resolve(project_id=project_id)
+    project = await _ownership(db).move_to_team(
+        project_id=project_id, team_id=body.team_id, actor=who
+    )
+    await db.commit()
+    return ok({"project_id": str(project.id), "team_id": project.team_id})

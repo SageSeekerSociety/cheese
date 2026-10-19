@@ -9,7 +9,6 @@ from app.domain.questions.services import (
     QuestionInvitationService,
     QuestionsService,
     _invitation_to_dto,
-    _profile_to_user,
     _question_to_dto,
 )
 
@@ -187,27 +186,6 @@ class TestInvitationToDto:
 
 
 # ---------------------------------------------------------------------------
-# _profile_to_user (pure helper)
-# ---------------------------------------------------------------------------
-
-
-class TestProfileToUser:
-    def test_non_none_profile(self):
-        p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
-        # avatarId 走 chosen 判据，由调用方查过再传进来（契约 §3.14）。
-        result = _profile_to_user(p, chosen_avatar_id=7)
-        assert result == {"id": 3, "nickname": "bob", "avatarId": 7, "intro": "hey"}
-
-    def test_unchosen_avatar_is_null(self):
-        p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
-        # 没传 chosen（= 没挑过）时回 None，不把档案里那张全局默认照原样吐出来。
-        assert _profile_to_user(p)["avatarId"] is None
-
-    def test_none_profile(self):
-        assert _profile_to_user(None) is None
-
-
-# ---------------------------------------------------------------------------
 # create_question
 # ---------------------------------------------------------------------------
 
@@ -298,7 +276,7 @@ class TestCreateQuestion:
         svc, _repo, topic_repo, _a_repo, _p_repo = _make_service()
         topic_repo.validate_topic_ids.return_value = {1}  # topic 999 is not valid
 
-        with pytest.raises(NotFoundError, match="Topic not found"):
+        with pytest.raises(NotFoundError) as raised:
             await svc.create_question(
                 user_id=50,
                 title="Valid",
@@ -308,6 +286,9 @@ class TestCreateQuestion:
                 bounty=0,
                 topic_ids=[1, 999],
             )
+        error = raised.value.to_response_body()["error"]
+        assert error["i18n"]["key"] == "tagNotFound"
+        assert error["data"] == {"id": 999}
 
     @pytest.mark.anyio
     async def test_title_is_stripped(self):

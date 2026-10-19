@@ -31,6 +31,7 @@ vi.mock('../../api', async () => {
 import ChatPanel from '../ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic: Topic = {
   id: 'room-1',
@@ -113,6 +114,8 @@ async function mount() {
   await flush()
   return view
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('消息动作条的键盘可达性', () => {
   it('消息行可以聚焦，且不真的多出一条动作条', async () => {

@@ -11,7 +11,6 @@
     "general": "General",
     "routines": "Routines",
     "skills": "Skills",
-    "channelFiles": "Channel files",
     "pages": "Project pages",
     "overview": "Overview",
     "tasks": "All tasks"
@@ -40,7 +39,7 @@
     "members": "Members",
     "integrations": "Feishu app",
     "featureStats": "Feature data",
-    "ratchet": "Ratchet",
+    "ciActivity": "CI and merge queue",
     "credits": "Plans & credits",
     "runRecords": "Run records",
     "machines": "Machines",

@@ -9,7 +9,7 @@ import enum
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, NoReturn, Protocol
 from urllib.parse import urlsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,8 +20,57 @@ from app.domain.project.forge import background_quota, quota_serves_background
 
 if TYPE_CHECKING:
     from app.domain.review.models import AcceptCard
-    from app.domain.review.services import AcceptService
     from app.domain.topic.models import Topic
+
+
+class AcceptOperations(Protocol):
+    """这份托管方实现能向采纳流程要的，全部在这里。
+
+    以前这里写的是具体的 `AcceptService`：`services` 会 import 本模块来解析
+    托管方，本模块再 import 回去，两个模块就成了一个环。改写成本模块声明的
+    结构接口之后，`AcceptService` 照样满足它，调用点上类型检查照旧核对——
+    只是依赖只剩一个方向。
+    """
+
+    _session: AsyncSession
+    _commits_before_remote: bool
+
+    async def _accept_github(
+        self,
+        card: "AcceptCard",
+        topic: "Topic",
+        decided_by: str,
+        *,
+        seen_head: str | None,
+    ) -> "AcceptCard": ...
+
+    async def _refresh_github_unseen_head(
+        self, card: "AcceptCard", topic: "Topic", action: str
+    ) -> NoReturn: ...
+
+    async def _advance_github_card(
+        self,
+        card: "AcceptCard",
+        topic: "Topic",
+        *,
+        chat_service,
+        runner,
+    ) -> None: ...
+
+    async def _refresh_github_snapshot(
+        self, card: "AcceptCard", topic: "Topic"
+    ) -> None: ...
+
+    async def _override_github_checks(
+        self,
+        card: "AcceptCard",
+        topic: "Topic",
+        decided_by: str,
+        *,
+        seen_head: str,
+        reason: str,
+    ) -> "AcceptCard": ...
+
 
 BINDING_UNKNOWN_MESSAGE = say("acceptRepositoryUnreadable")
 FORGE_KIND_UNKNOWN = "unknown"
@@ -70,7 +119,7 @@ class Forge(ABC):
     @abstractmethod
     async def accept(
         self,
-        service: "AcceptService",
+        service: "AcceptOperations",
         card: "AcceptCard",
         topic: "Topic",
         decided_by: str,
@@ -82,7 +131,7 @@ class Forge(ABC):
     @abstractmethod
     async def refresh_unseen_head(
         self,
-        service: "AcceptService",
+        service: "AcceptOperations",
         card: "AcceptCard",
         topic: "Topic",
         action: str,
@@ -92,7 +141,7 @@ class Forge(ABC):
 
     async def refresh_snapshot(
         self,
-        service: "AcceptService",
+        service: "AcceptOperations",
         card: "AcceptCard",
         topic: "Topic",
     ) -> None:
@@ -109,7 +158,7 @@ class Forge(ABC):
     @abstractmethod
     async def poll(
         self,
-        service: "AcceptService",
+        service: "AcceptOperations",
         card: "AcceptCard",
         topic: "Topic",
         *,
@@ -121,7 +170,7 @@ class Forge(ABC):
     @abstractmethod
     async def merge_despite_checks(
         self,
-        service: "AcceptService",
+        service: "AcceptOperations",
         card: "AcceptCard",
         topic: "Topic",
         decided_by: str,
@@ -197,7 +246,7 @@ async def resolve(
 
     try:
         binding = await binding_for_project(project_id, session)
-    except Exception as exc:  # noqa: BLE001 — cannot pick a lane blind
+    except Exception as exc:  # cannot pick a lane blind
         raise ValidationError(BINDING_UNKNOWN_MESSAGE) from exc
     if binding is None:
         raise ValidationError(say("reviewNoRepositoryForAccept"))
@@ -209,7 +258,7 @@ async def resolve(
         raise ValidationError(say("forgeKindUnknown")) from exc
     try:
         writable = await tokens_for_project(project_id, session) is not None
-    except Exception as exc:  # noqa: BLE001 — cannot declare unreadable capabilities
+    except Exception as exc:  # cannot declare unreadable capabilities
         raise ValidationError(BINDING_UNKNOWN_MESSAGE) from exc
     return provider(
         ForgeCapabilities(

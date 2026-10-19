@@ -6,6 +6,7 @@ import vue from 'eslint-plugin-vue'
 import prettier from 'eslint-plugin-prettier/recommended'
 import vueParser from 'vue-eslint-parser'
 import simpleImportSort from 'eslint-plugin-simple-import-sort'
+import a11y from 'eslint-plugin-vuejs-accessibility'
 
 export default [
   {
@@ -103,6 +104,33 @@ export default [
     },
   },
   {
+    // A view that declares its events as overloads
+    // (`defineEmits<{ (e: 'retry'): void }>()`) loses the event names to Volar
+    // once it carries twenty-odd of them: the view's props type degrades to an
+    // `on*` index signature, and a forwarding shell that spreads
+    // `{ ...$props, ...$attrs }` onto it then reports
+    // `TS2345 … onVnodeBeforeMount is incompatible with index signature` on the
+    // SHELL — a file the author of the view never touched, so the error points
+    // nowhere near its cause.
+    //
+    // The name → parameters form (`retry: []`, `'update:open': [v: boolean]`)
+    // declares the same events without the degradation, and it is what every
+    // other view already uses. Scoped to views because the shell is what makes
+    // it fatal: components/ has short call-signature declarations that are never
+    // forwarded this way and does not need an exemption to stay put.
+    files: ['src/**/*View.vue'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'CallExpression[callee.name="defineEmits"] TSCallSignatureDeclaration',
+          message:
+            "Declare emits as name → parameters — `retry: []`, `'update:open': [v: boolean]`. The call-signature form drops the event names, and any forwarding shell around this view then fails to type-check.",
+        },
+      ],
+    },
+  },
+  {
     // `src/network/` was the second request stack: axios underneath, its own
     // envelope stripping and its own error type. Every caller moved to `@/api`
     // and the directory was deleted; this rule is what keeps it deleted. A
@@ -169,11 +197,14 @@ export default [
       ],
     },
   },
+  // Layout (prettier, import order) is fixed, never judged: these two report as
+  // warnings, which no gate fails on, and the pre-commit `frontend-format` hook
+  // applies them with `eslint --fix --fix-type layout`.
   prettier,
   {
     rules: {
       'prettier/prettier': [
-        'error',
+        'warn',
         {},
         {
           usePrettierrc: true,
@@ -187,7 +218,7 @@ export default [
     },
     rules: {
       'simple-import-sort/imports': [
-        'error',
+        'warn',
         {
           groups: [
             // Bare builtin names only. Node 23.5+ also lists prefix-only modules
@@ -211,7 +242,20 @@ export default [
           ],
         },
       ],
-      'simple-import-sort/exports': 'error',
+      'simple-import-sort/exports': 'warn',
+    },
+  },
+  // The accessibility rules (eslint-plugin-vuejs-accessibility), as plain
+  // errors. A line that departs from one carries an eslint-disable whose
+  // reason names the keyboard path or why the rule does not apply there.
+  ...a11y.configs['flat/recommended'],
+  {
+    rules: {
+      // HTML associates a label with its control either by wrapping it or by
+      // `for`; either one gives the control its name. The plugin's default
+      // demands both, which no label pointing `for` at a Vuetify field can meet,
+      // since the field's <input> is not a child of the label.
+      'vuejs-accessibility/label-has-for': ['error', { required: { some: ['nesting', 'id'] } }],
     },
   },
 ]

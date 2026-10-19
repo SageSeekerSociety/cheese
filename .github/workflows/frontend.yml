@@ -15,6 +15,39 @@ name: Frontend Test
 # type/lint one and neither covers the other.
 #
 # node/pnpm come from the setup actions below, exactly as e2e.yml gets them.
+#
+# These checks live in two jobs that run beside each other, not one job that
+# runs them in a row. The split is placed where the measured time is. Unless a
+# line says otherwise, a number here is a per-step P50 over the eight completed
+# Required CI runs that carried a frontend suite, measured 2026-10-16, and the
+# ~24 s of checkout, node, pnpm install and toolchain check that every job in
+# this file opens with is added to the sums below:
+#
+#   eslint  the three `eslint` runs over the tree — `eslint .` plus the two
+#           ratcheted configs (component boundaries, direct Web Storage).
+#           215 s of checks, ~239 s with the setup, measured while a fourth
+#           run (the accessibility ratchet, since folded into `eslint .`) was
+#           still here.
+#   check   everything else: the ratchets that are not eslint (scenes, scene
+#           debt, stylelint, i18n, global fallbacks), the ratchets' own
+#           unit tests, the collaboration service, and the two checks that need
+#           the backend's Python environment — the API type ratchet and the
+#           request paths. 211 s of checks, ~235 s with the setup, measured
+#           before the global-fallback step landed; that step adds ~34 s on one
+#           work-machine sandbox, and has no runner P50 yet.
+#
+# The single `check` job they replace measured 448 s end to end, and it was the
+# longest thing on any frontend change; split, the critical path is the longer
+# of the two, ~4 min. Which check goes where is not "needs Python or not" — the
+# eslint runs and the scene ratchets both need only node and a system python3 —
+# it is which placement leaves the two jobs the same length. Cutting the other
+# way, so that every check not needing the backend sits in `eslint`, puts
+# 5.7 min in one job and 2.2 min in the other: the saving spent on waiting for
+# the longer one.
+#
+# `request-paths` used to be a job of its own for the one checker at the bottom
+# of `check`. It was a second runner paying for the same node and Python
+# installs `check` already paid for, to run a check that takes a second.
 
 on:
   workflow_call:
@@ -38,16 +71,18 @@ defaults:
     working-directory: frontend
 
 jobs:
-  check:
+  # The three eslint runs. `eslint .` is the tree's own config, and carries the
+  # accessibility rules as plain errors; the other two are the same binary with
+  # a config of their own and a JSON report the ratchet reads. Nothing here
+  # reads git history, the backend, or anything outside the checkout and
+  # node_modules.
+  eslint:
+    name: eslint
     runs-on: ubuntu-24.04-arm
-    # The margin covers a cold pnpm store without letting a wedged run bill
-    # for an hour.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # The debt gate compares candidate baseline sets to the merge base.
-          fetch-depth: 0
           # Nothing below pushes, and the lockfile has zero git: specifiers, so
           # there is no reason to leave the token in .git/config while
           # dependencies' install scripts run.
@@ -85,13 +120,12 @@ jobs:
       # A missing binary must not read as a passing check. `pnpm exec <missing>`
       # has been observed to exit 0 with no output when node_modules is empty,
       # which is how "vue-tsc reports 0 errors" can mean "vue-tsc never ran".
+      # Every step in this job shells out to eslint; the tools the other job
+      # runs are named in its own copy of this step.
       - name: Verify the toolchain is actually installed
         run: |
           test -x node_modules/.bin/eslint || { echo "::error::eslint not installed"; exit 1; }
-          test -x node_modules/.bin/vue-tsc || { echo "::error::vue-tsc not installed"; exit 1; }
-          test -x node_modules/.bin/vitest || { echo "::error::vitest not installed"; exit 1; }
-          test -x node_modules/.bin/stylelint || { echo "::error::stylelint not installed"; exit 1; }
-          node_modules/.bin/vue-tsc --version
+          node_modules/.bin/eslint --version
 
       # Errors block; the 288 pre-existing warnings do not. `--max-warnings=0`
       # would have meant leaving the whole gate off, and errors are where the
@@ -105,19 +139,15 @@ jobs:
         run: pnpm run lint
 
       # Component boundaries: nothing under src/components/** may import the
-      # network layer (`@/api`, `@/services/*`, `@/network/*`) or vue-router.
-      # Ratcheted, for the same reason as the stylelint gate below — the tree
-      # starts at 127 violations across 82 components, and a rule that goes red
-      # everywhere on day one gets switched off. A component takes props and
-      # emits events; if it fetches, it cannot be tested or reused without a
-      # server, which is why this one is worth the baseline machinery.
+      # network layer (`@/api`, `@/services/*`, `@/network/*`) or vue-router,
+      # and any violation fails. A component takes props and emits events; if
+      # it fetches, it cannot be tested or reused without a server.
       #
-      # Read-only like every other step here (the writer is
-      # `pnpm run lint:boundary:update`). Its own tests are in
+      # Read-only like every other step here. Its own tests are in
       # scripts/import-boundary-ratchet.test.mjs, which the Ratchet unit tests
-      # step below runs — including the case that plants a violating component
-      # and requires this command to fail on it.
-      - name: Component boundaries (eslint ratchet)
+      # step in the other job runs — including the case that plants a violating
+      # component and requires this command to fail on it.
+      - name: Component boundaries (eslint)
         run: pnpm run lint:boundary
 
       # Web Storage: nothing under src/ may reference localStorage or
@@ -125,25 +155,64 @@ jobs:
       # quota is full, and they are absent outside a browser — one throw in a
       # setup() or a watcher takes the render or the interaction with it.
       # src/lib/browserStorage.ts is the one place that accepts those failure
-      # modes, and it never throws. Ratcheted like the steps above: the
-      # references already in the tree are frozen in
-      # browser-storage-baseline.json and only new ones fail, so the migration
-      # can be paid down file by file. Read-only; the writer is `pnpm run
-      # lint:storage:update`, which only lowers counts. Its own tests are
-      # scripts/browser-storage-ratchet.test.mjs (run by the Ratchet unit tests
-      # step below), including the plant that requires this command to fail.
-      - name: Direct Web Storage (eslint ratchet)
+      # modes, and it never throws. Any direct reference fails. Read-only. Its
+      # own tests are scripts/browser-storage-ratchet.test.mjs (run by the Ratchet unit tests
+      # step in the other job), including the plant that requires this command
+      # to fail.
+      - name: Direct Web Storage (eslint)
         run: pnpm run lint:storage
 
-      # Accessibility: eslint-plugin-vuejs-accessibility's recommended rules over
-      # src/**/*.vue (a clickable <div> with no keyboard path, a control with no
-      # label, an image with no alt). Ratcheted like the boundary step above:
-      # 159 violations in 79 files are frozen in a11y-baseline.json, and only new
-      # ones fail. Read-only; the writer is `pnpm run lint:a11y:update`, which
-      # only lowers counts. Its tests are scripts/a11y-ratchet.test.mjs, run by
-      # the Ratchet unit tests step below.
-      - name: Accessibility (eslint ratchet)
-        run: pnpm run lint:a11y
+  # The checks that are not one of the three eslint runs — plus the two that need
+  # the backend's Python environment. It is the direct successor of the old
+  # single `check` job, which is why it keeps the name.
+  check:
+    name: check
+    runs-on: ubuntu-24.04-arm
+    # The margin covers a cold pnpm store and a cold uv cache without letting a
+    # wedged run bill for an hour.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The scene ratchets freeze the tree at `git merge-base HEAD
+          # origin/main` and grade this one against it, so the history has to be
+          # here.
+          fetch-depth: 0
+          # Nothing below pushes, and the lockfile has zero git: specifiers, so
+          # there is no reason to leave the token in .git/config while
+          # dependencies' install scripts run.
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}/.pnpm-store
+          key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
+
+      # The same guard as the other job's, naming what THIS job runs. A missing
+      # binary must not read as a passing check: `pnpm exec <missing>` has been
+      # observed to exit 0 with no output when node_modules is empty.
+      - name: Verify the toolchain is actually installed
+        run: |
+          test -x node_modules/.bin/stylelint || { echo "::error::stylelint not installed"; exit 1; }
+          test -x node_modules/.bin/vue-tsc || { echo "::error::vue-tsc not installed"; exit 1; }
+          test -x node_modules/.bin/vitest || { echo "::error::vitest not installed"; exit 1; }
+          # The request-path checker below parses the api modules with the
+          # TypeScript compiler, and the collaboration service's type check runs
+          # its `tsc`: on a checkout where node_modules never installed, both
+          # collapse into a report that judges nothing.
+          test -d node_modules/typescript || { echo "::error::typescript not installed"; exit 1; }
+          node_modules/.bin/vue-tsc --version
 
       # The scene ratchet: a page or a workbench panel that renders standalone
       # in the tree this branch started from may not stop being able to, and
@@ -156,12 +225,12 @@ jobs:
       # Nothing is written down, so there is no writer and no baseline to edit:
       # the fix is always in the scene.
       #
-      # Not the same question as the boundary rule above: that one is about what
-      # a file under src/components/ imports, this one about whether a whole
-      # scene renders with no backend, no route and no business store — and it
-      # judges src/views/ too, which the ESLint rule leaves alone on purpose. It
-      # shells out to python3 (stdlib only, no venv, no node_modules) because it
-      # grades with the same module arch-metrics.py reports from, so the gate
+      # Not the same question as the boundary rule in the other job: that one is
+      # about what a file under src/components/ imports, this one about whether a
+      # whole scene renders with no backend, no route and no business store — and
+      # it judges src/views/ too, which the ESLint rule leaves alone on purpose.
+      # It shells out to python3 (stdlib only, no venv, no node_modules) because
+      # it grades with the same module arch-metrics.py reports from, so the gate
       # and the board cannot disagree about a scene.
       #
       # Read-only like every other step here. Its own tests are `python3
@@ -178,45 +247,17 @@ jobs:
       - name: Scene debt rule self-tests
         run: python3 ../.claude/scripts/scene-debt-ratchet.py --self-test
 
-      # The catalog ratchet: every component under src/ (src/views/demo/
-      # excluded) that renders from props alone — grade A, the same grade the
-      # Scenes step uses — is in the /demo/catalog preview site, where
-      # catalog.spec.ts mounts it and notices the day it stops rendering alone.
-      # The ones that are not yet are listed as pending in
-      # frontend/catalog-baseline.json, and that list may only shrink: a
-      # component that is new, or that just became A, has to get a catalog
-      # entry (frontend/AGENTS.md, "The component preview site").
+      # Design system: no hardcoded colours, because a literal cannot follow
+      # the dark theme. Any colour violation fails; there is no allowance.
+      # Spec: docs/design-system.md.
       #
-      # "In the catalog" is read from the code, not from a `file:` label:
-      # src/views/demo/catalog.ts, or a catalog*.ts volume it imports and
-      # spreads into CATALOG (transitively; *Fixtures.ts not read), imports the
-      # .vue and uses it as an entry's `component:`. Comments are stripped
-      # first; a `component:` in demoRouter.ts or an unimported volume counts
-      # for nothing.
-      # python3 stdlib only, like the Scenes step.
+      # Note this gates the three colour rules in DESIGN_RULES
+      # (scripts/stylelint-ratchet-core.mjs), not everything stylelint reports:
+      # layout and naming rules the shared configs carry are not judged.
       #
-      # Read-only like every other step here; the writer is
-      # `pnpm run lint:catalog:update`, which only ever REMOVES from the
-      # pending list. Its own tests are `python3 .claude/scripts/catalog-ratchet.py
-      # --self-test`, which repo-guards.yml runs in its Guards self-test step.
-      - name: Catalog (preview-ratchet)
-        run: pnpm run lint:catalog
-
-      # Design system: no hardcoded colours, radii on the 6/8/12/999 ladder.
-      # Enforced through a ratchet (stylelint-baseline.json) because the tree
-      # starts at 537 violations across 88 files — a rule that goes red
-      # everywhere on day one gets switched off, not fixed. Only NEW violations
-      # fail. Spec and paydown map: docs/design-system.md.
-      #
-      # Note this gates FOUR rules, not everything stylelint reports: the config
-      # also carries property-order and class-naming rules that have never run
-      # in CI (stylelint appeared in no workflow before this step) and sit at
-      # 2842 findings. Widening the gate to those is a separate decision — see
-      # DESIGN_RULES in scripts/stylelint-ratchet-core.mjs.
-      #
-      # Same read-only discipline as the ESLint step above: this script never
+      # Same read-only discipline as every other step here: this script never
       # passes --fix. Measured on this tree: ~22s.
-      - name: Design tokens (stylelint ratchet)
+      - name: Design tokens (stylelint)
         run: pnpm run lint:style
 
       # Bilingual UI: no Chinese typed straight into a template or a string
@@ -225,28 +266,38 @@ jobs:
       # and the English UI stays Chinese while every check passes. Zero
       # tolerance: the only Chinese allowed is data, marked on its own line with
       # `// i18n-data: <reason>` (`<!-- … -->` in a template). Spec: docs/i18n.md §5.
+      # Comments are prose and are not scanned.
       #
       # Pure node, no dependency, about a second. Read-only.
       - name: Hardcoded Chinese (i18n)
         run: pnpm run lint:i18n
 
-      # src/api/openapi.d.ts is generated, not committed — and neither is the
-      # document it is generated from, only that document's digest. The type
-      # check below asks the backend to build the document and then generates
-      # the types from it (scripts/typecheck.mjs, scripts/gen-api-types.mjs), so
-      # there is no separate "types match the document" step to run and no way
-      # for the two to disagree. The digest is what the path map watches to bring
-      # the suite here when the API surface moves, and the backend job is what
-      # holds it to the document. Both halves left the repository because a route
-      # change rewrote 1.4 MB of one and 1.8 MB of the other in every PR that
-      # touched a route, which is what two parallel route changes collided in.
+      # A component calls a bare name it binds nothing for, and a module in this
+      # tree declares that name and exports it to nobody: the call does not
+      # fail, it reaches the browser global of the same name and does nothing.
+      # That is what a function moved into a composable and left unexported
+      # looks like — 2026-10-16 (#1618), `blur()` moved into
+      # useDesignViewport.ts without an `export`, and DesignImage.vue's
+      # `if (!on) blur()` called `window.blur`, which drops nothing, silently.
       #
-      # Which is why this job now installs a second toolchain — the backend's
-      # Python environment, in the steps just above the type check: generating
-      # the types means building the document and that means importing the app.
-
-      # The *paths* this frontend calls are judged in the `request-paths` job
-      # below: it needs the backend installed to read the routes off the app.
+      # Nothing else in this workflow sees it. The eslint job's tree-wide run
+      # cannot (the config injects the browser globals and turns `no-undef` off
+      # for TS), the type check cannot (`lib.dom` declares the same names), and a
+      # template's calls are in no scope at all — which is why this rule reads
+      # both halves itself, through `vue-eslint-parser`.
+      #
+      # A plain rule, not a ratchet: measured at 0 findings over 751 components
+      # and 957 modules on 2026-10-16, so there is nothing to freeze, no
+      # baseline file and no `--update` — a baseline's one use is to let a
+      # finding stand, and this rule's whole subject is a call that fails in
+      # silence. Read-only. Its tests, including the plant that requires this
+      # command to fail on a composable that keeps a function to itself and a
+      # component that calls it by bare name, are in
+      # scripts/global-fallback-ratchet.test.mjs, run by the Ratchet unit tests
+      # step below. Roughly 40 s over the tree, and it moves with the machine:
+      # the same tree took 34 s on one sandbox and 47 s on another.
+      - name: Global fallbacks (a bare call to a module's own name)
+        run: pnpm run lint:global-fallback
 
       # Via the package script, not a bare `node --test scripts/`: passing a
       # DIRECTORY resolves as a module entry point on node 22 while node 20
@@ -255,18 +306,33 @@ jobs:
       # everywhere, and going through package.json keeps local and CI on one
       # command instead of two that can drift.
       #
-      # This covers the ratchet's OWN tests (frontend/scripts/*.test.mjs), not
-      # the application's — those are the `unit` job further down.
+      # This covers the ratchet's OWN tests (frontend/scripts/*.test.mjs),
+      # including the eslint ratchets in the other job, not the application's —
+      # those are the `unit` job further down.
       - name: Ratchet unit tests
         run: pnpm run test:ratchet
 
-      # The backend's Python environment, for the type check below alone: the
-      # types it judges are generated from a document the backend builds out of
-      # its own app, and building it needs uv, the interpreter and the app's
-      # dependencies. It costs about two minutes cold (~25 s to build the
-      # document once installed), against this job's 15-minute timeout. Copied
-      # from the `request-paths` job below, which has carried these four steps
-      # since it started reading routes off the app.
+      # src/api/openapi.d.ts is generated, not committed — and neither is the
+      # document it is generated from, nor any digest of it. The type check
+      # below asks the backend to build the document and then generates the
+      # types from it (scripts/typecheck.mjs, scripts/gen-api-types.mjs), so
+      # there is no separate "types match the document" step to run and no way
+      # for the two to disagree. What brings the suite here when a backend
+      # change moves the API surface is required-ci.yml's `api` job, which
+      # compares the document at the base and at the change. All of it left the
+      # repository because every route change rewrote it (1.4 MB of types,
+      # 1.8 MB of document, then one line of digest), and that is what two
+      # parallel route changes collided in.
+      #
+      # Which is why this job installs a second toolchain — the backend's Python
+      # environment, in the steps just above the type check: generating the
+      # types means building the document and that means importing the app.
+
+      # The *paths* this frontend calls are judged at the bottom of this job,
+      # against the same backend environment: reading the routes off the app is
+      # what `backend/scripts/route_index.py` does, and the checker that compares
+      # them with src/api/*.ts needs the TypeScript parser node_modules carries.
+
       - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
@@ -289,12 +355,11 @@ jobs:
         run: uv sync --frozen --no-dev
         working-directory: backend
 
-      # Not a plain `vue-tsc --noEmit`: the errors the tree already has are frozen
-      # in tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
-      # Runs through scripts/typecheck.mjs, which generates src/api/openapi.d.ts
+      # vue-tsc, failing on any type error. Runs through scripts/typecheck.mjs,
+      # which generates src/api/openapi.d.ts
       # first: the judging project imports it — src/cx_types.ts, and
       # src/types/{canvas,ownAgents,modelConnections}.ts directly.
-      - name: Type check (ratchet)
+      - name: Type check
         env:
           # Node's default heap lands around 2GB and vue-tsc on this tree peaks
           # near 1.7GB — too close to the edge to leave to chance. Raising it
@@ -313,6 +378,31 @@ jobs:
       - name: Collaboration service tests
         run: pnpm run test:collab
 
+      # The *paths* this frontend calls. They are string literals in
+      # src/api/*.ts and nothing connected them to the backend, so a renamed
+      # route type-checked and failed in the browser. Judged against the routes
+      # as the app mounts them, read off the app by
+      # `backend/scripts/route_index.py --emit` — the same inventory the
+      # addressing contract suite holds the app to. That index used to be a
+      # committed file; it changed with every route (84 commits from 83 PRs in
+      # its twelve days) and every PR that added one had to carry a regeneration
+      # of a 149 KB generated file through review. It is generated here instead,
+      # and git-ignored so nobody re-adds it by habit.
+      #
+      # This was its own job until the split above: what separated them was that
+      # reading the routes means installing the backend, which `check` now does
+      # anyway for the type check. A second job paid for that same install — uv,
+      # Python, ~250 MB of wheels, plus node and pnpm — to run a checker that
+      # takes a second.
+      - name: Read the routes off the app
+        run: |
+          uv run python -m scripts.route_index --emit > "$RUNNER_TEMP/route_index.jsonl"
+        working-directory: backend
+
+      - name: Request paths match the backend's routes
+        run: node scripts/check-request-paths.mjs --routes "$RUNNER_TEMP/route_index.jsonl"
+        working-directory: frontend
+
       # One check that belongs here is deliberately absent, so that nobody
       # reads a green tick as covering it:
       #
@@ -323,96 +413,6 @@ jobs:
       #     writing this file (the sandbox it was authored in caps memory at
       #     2GB and vite OOMs well below the finish line — a limitation of the
       #     sandbox, not evidence that the build is broken).
-
-    # The other half of the api-types drift: the *paths* this frontend calls. They
-  # are string literals in src/api/*.ts and nothing connected them to the
-  # backend, so a renamed route type-checked and failed in the browser. Judged
-  # against the routes as the app mounts them, read off the app by
-  # `backend/scripts/route_index.py --emit` — the same inventory the addressing
-  # contract suite holds the app to. That index used to be a committed file; it
-  # changed with every route (84 commits from 83 PRs in its twelve days) and every
-  # PR that added one
-  # had to carry a regeneration of a 149 KB generated file through review. It is
-  # generated here instead, and git-ignored so nobody re-adds it by habit.
-  #
-  # Its own job, not a step in `check`. It used to be the install that separated
-  # them — reading the routes means installing the backend (uv, Python 3.13,
-  # ~250 MB of wheels) and importing the app, which `check` had no other reason
-  # to do. `check` now carries the same toolchain for the type check, so what
-  # separates them is where a failure lands: its own line, instead of
-  # lengthening the job that runs on every frontend change. A cold install
-  # measured ~2m plus ~25s to emit, comfortably inside the timeout.
-  request-paths:
-    name: request-paths
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          # Nothing here pushes, so the token has no reason to sit in
-          # .git/config while dependency install scripts run.
-          persist-credentials: false
-
-      # Its own environment and its own uv, rather than the backend jobs': a job
-      # is its own process, and `UV_PROJECT_ENVIRONMENT` is how the backend
-      # workflows keep a fresh venv per run.
-      - name: Use a fresh virtual environment
-        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version: "0.12.1"
-          python-version: "3.13"
-          enable-cache: true
-          cache-python: true
-          cache-dependency-glob: backend/uv.lock
-          prune-cache: false
-          # Restore only: warm-caches.yml saves this key on main.
-          save-cache: false
-
-      - name: Set up Python
-        run: uv python install 3.13
-
-      - name: Install backend dependencies
-        run: uv sync --frozen --no-dev
-        working-directory: backend
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-
-      # The checker parses the api modules with the TypeScript compiler, which
-      # is a frontend dependency: on the runner `frontend/node_modules` does
-      # not exist until something installs it, so `import 'typescript'` there
-      # dies with ERR_MODULE_NOT_FOUND and the job judges no path at all. So
-      # this job carries the same install `check` does — the pnpm pinned in
-      # frontend/package.json's `packageManager`, the same restored store, the
-      # same `--frozen-lockfile`.
-      - name: Enable corepack
-        run: corepack enable
-
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ github.workspace }}/.pnpm-store
-          key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-          restore-keys: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
-
-      # A parser that never installed must not read as a passing check.
-      - name: Verify the parser is actually installed
-        run: test -d node_modules/typescript || { echo "::error::typescript not installed"; exit 1; }
-
-      - name: Read the routes off the app
-        run: |
-          uv run python -m scripts.route_index --emit > "$RUNNER_TEMP/route_index.jsonl"
-        working-directory: backend
-
-      - name: Request paths match the backend's routes
-        run: node scripts/check-request-paths.mjs --routes "$RUNNER_TEMP/route_index.jsonl"
-        working-directory: frontend
 
   # The application's own vitest suite, the gap the header describes. It is
   # its own job, split by file across runners, because the suite takes about

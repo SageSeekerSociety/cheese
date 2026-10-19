@@ -101,7 +101,9 @@ const solution = computed(() => solutions.value.find((item) => item.id === solut
 function moveTab(event: KeyboardEvent) {
   const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End']
   if (!keys.includes(event.key)) return
-  const tabs = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+  // The handler sits on each tab; its siblings are the tablist's tabs.
+  const list = (event.currentTarget as HTMLElement).parentElement
+  const tabs = Array.from(list?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
   const index = tabs.indexOf(event.target as HTMLButtonElement)
   if (index === -1) return
   event.preventDefault()
@@ -198,7 +200,7 @@ const trust = computed(() => [
         <h2 class="solutions-title">{{ t('publicSite.solutions.title') }}</h2>
         <p class="solutions-lead">{{ t('publicSite.solutions.lead') }}</p>
       </div>
-      <div class="solutions-tabs" role="tablist" :aria-label="t('publicSite.solutions.tabsLabel')" @keydown="moveTab">
+      <div class="solutions-tabs" role="tablist" :aria-label="t('publicSite.solutions.tabsLabel')">
         <button
           v-for="item in solutions"
           :id="`solution-${item.id}`"
@@ -210,6 +212,7 @@ const trust = computed(() => [
           :tabindex="solutionId === item.id ? 0 : -1"
           aria-controls="solution-panel"
           @click="solutionId = item.id"
+          @keydown="moveTab"
         >
           {{ item.label }}
         </button>

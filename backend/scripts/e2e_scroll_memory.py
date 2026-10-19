@@ -23,8 +23,9 @@ from playwright.async_api import async_playwright
 
 import app.models  # noqa: F401  (registers all tables so FK mappers resolve)
 from app.core.db import async_session_factory
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 
 API = "http://127.0.0.1:8099"
 BASE = "http://localhost:5173"

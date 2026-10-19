@@ -18,6 +18,7 @@ session**，提交也归调用方——所以「答一个问题」和「把这�
 
 import logging
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -26,15 +27,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.platform_notices import (
     memory_changed_notice,
 )
+from app.domain.agent.proposals import propose
+from app.domain.agent.repositories import AgentTurnRepository
+from app.domain.agent_instance.adapters import named_teammate
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AGENT_NOTICE_META_KEY, AuthorType, BlockKind
+from app.domain.block.models import AGENT_NOTICE_META_KEY, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.memory import dream
 from app.domain.memory.files import MemoryFileScope
@@ -46,27 +52,59 @@ from app.domain.notice_meta import (
     notice,
 )
 from app.domain.policy import gate
-from app.domain.policy.proposals import propose
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
+from app.domain.reads import get_by_ids
 from app.domain.room_task import binding
+from app.domain.room_task.models import Task
 from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.room_task.services import TaskService
 from app.domain.run_record.service import record as keep_record
+from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.services import UsageService
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TaskCreditContext:
+    task_id: uuid.UUID
+    owner_handle: str
+    work_id: uuid.UUID | None
+
+
+async def task_credit_context(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    agent_handles: list[str],
+) -> TaskCreditContext | None:
+    """The running execution's budget holder, or the next task execution's."""
+    place = await PlaceResolver(session).conversation(conversation_id)
+    if place is None or place.task is None or place.project_id != project_id:
+        return None
+    turn = await AgentTurnRepository(session).open_turn_of(
+        conversation_id, agent_handles
+    )
+    owner = await CreditBudgets(session).owner_of(
+        turn.id if turn is not None else None, project_id
+    )
+    if owner is not None:
+        return TaskCreditContext(conversation_id, owner, turn.id if turn else None)
+    owner = await TaskService(session).credit_owner(place.task)
+    return TaskCreditContext(conversation_id, owner, None) if owner else None
 
 
 @dataclass(frozen=True, slots=True)
 class _Proposed:
     """闸门把这次调用变成了一条提议：那条提议，和它在房间里刚落下的那条事件。
 
-    `landed` 是 `None` 表示这条提议之前就提过了（`policy/proposals.py` 按身份去
-    重）。两个调用点各取一半——轮次要那条事件来收场，平台自己发起的那几轮要那句话
-    来抛。
+    `landed` 是 `None` 表示这条提议之前就提过了（`proposals.py` 按身份去重）。两
+    个调用点各取一半——轮次要那条事件来收场，平台自己发起的那几轮要那句话来抛。
     """
 
     proposal: gate.Proposal
@@ -162,8 +200,87 @@ async def conversation_seat(
     message in a task is addressed, so the one it @-ed takes the turn there too
     — and otherwise the task's own agent, seated in the room when the task was
     given to it. None for a conversation that no longer exists, and for an
-    agent that may not act there (`_seat_of`)."""
+    agent that may not act there (`_seat_of`).
+
+    The single-pair read: it resolves the one place the way it always did, and
+    :func:`_seat_in_place` is the judgement :func:`seats_in_conversations`
+    shares. Asking the batch for one pair would read all three place tables for
+    a room that one ``get`` used to answer."""
     place = await PlaceResolver(session).conversation(conversation_id)
+    return await _seat_in_place(session, place, handle)
+
+
+async def seats_in_conversations(
+    session: AsyncSession,
+    pairs: Iterable[tuple[uuid.UUID, str | None]],
+) -> dict[tuple[uuid.UUID, str | None], tuple[ResolvedAgent, str] | None]:
+    """`conversation_seat` for many conversations and handles at once.
+
+    A scan asks the same question of every message it is about to answer, and
+    those messages come from a handful of conversations: each conversation's
+    place (a room, a task or a 支线) is read once for the whole batch, with one
+    ``IN`` query per table instead of one lookup per message. The judgement is
+    the single-pair one, pair by pair — the same ``_agent_at`` / ``_seat_of``
+    rules — only the place reads are shared.
+
+    Every requested pair is in the answer, including those that resolve to no
+    seat. Duplicate pairs are asked once; a missing conversation answers None.
+    """
+    wanted = list(dict.fromkeys(pairs))
+    if not wanted:
+        return {}
+    places = await _places_in_many(
+        session, {conversation_id for conversation_id, _ in wanted}
+    )
+    return {
+        pair: await _seat_in_place(session, places.get(pair[0]), pair[1])
+        for pair in wanted
+    }
+
+
+async def _places_in_many(
+    session: AsyncSession, conversation_ids: Iterable[uuid.UUID]
+) -> dict[uuid.UUID, Place]:
+    """`PlaceResolver.conversation` for many ids, reading each table once.
+
+    Same precedence as the single read: a room's id is a room, a task's is the
+    task (a 支线 that became a task shares its id), a 支线's is the thread; each
+    inner place carries its room. An id naming no row, or whose room is gone,
+    is absent from the answer."""
+    ids = list(dict.fromkeys(conversation_ids))
+    if not ids:
+        return {}
+    rooms = await get_by_ids(session, Topic, ids)
+    tasks = await get_by_ids(session, Task, ids)
+    threads = await get_by_ids(session, Thread, ids)
+    inner = {**threads, **tasks}
+    rooms.update(
+        await get_by_ids(session, Topic, {row.room_id for row in inner.values()})
+    )
+    places: dict[uuid.UUID, Place] = {}
+    for conversation_id in ids:
+        room = rooms.get(conversation_id)
+        if room is not None:
+            places[conversation_id] = Place(room=room)
+            continue
+        task = tasks.get(conversation_id)
+        if task is not None:
+            room = rooms.get(task.room_id)
+            if room is not None:
+                places[conversation_id] = Place(room=room, task=task)
+            continue
+        thread = threads.get(conversation_id)
+        if thread is not None:
+            room = rooms.get(thread.room_id)
+            if room is not None:
+                places[conversation_id] = Place(room=room, thread=thread)
+    return places
+
+
+async def _seat_in_place(
+    session: AsyncSession, place: Place | None, handle: str | None
+) -> tuple[ResolvedAgent, str] | None:
+    """`conversation_seat`'s judgement, with the place already read."""
     if place is None:
         return None
     if place.task is not None:
@@ -298,9 +415,10 @@ async def _pass_policy_gate(
 
     提议**不是报错**（结论 40：产物是一条给人的提议）。所以它不能顺着 `raise`
     走：轮次那条路上抛出去的东西最后是屏幕上一个红色的 error 帧，而同一个判决
-    在 `PUT /topics/{id}/compute-profile` 上是 200 加一个 `proposal` 字段——一
-    个判决两种形状，人看到的还是「出错了」。拒绝仍然抛：那一档要的就是一次说
-    得出口的拒绝（I27），和「解析不出模型」在调用点是同一种东西。
+    在网关代填那条路（`api/routes/llm_proxy.py`）上是一份 `allow=false` 加
+    `reason_kind=binding` 的应答体——一个判决两种形状，人看到的还是「出错了」。
+    拒绝仍然抛：那一档要的就是一次说得出口的拒绝（I27），和「解析不出模型」在调
+    用点是同一种东西。
 
     交回来的那条事件可能是 `None`：这条提议已经提过了（`propose` 按身份去重）。
     调用点照样收场，只是房间里不再多一句一样的话。
@@ -384,7 +502,7 @@ async def _private_room(
     from app.domain.topic.services import TopicService
 
     topic = await TopicService(session).get_or_create_private(
-        project_id=project_id, user_handle=owner
+        project_id=project_id, user_handle=owner, named_teammate=named_teammate
     )
     return topic.id
 
@@ -429,6 +547,7 @@ async def _say_memory_change(
             diff=part.diff,
             refused=part.refused,
             rejected=part.rejected,
+            unindexed=part.unindexed,
         )
         if for_writer := meta.pop(AGENT_NOTICE_META_KEY, None):
             told.append((content, for_writer))
@@ -468,7 +587,7 @@ def _model_policy_call(project, agent=None) -> gate.Call:
     在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
     给一个猜出来的人。
     """
-    choices = binding.catalog(project.settings)
+    choices = catalog(project.settings)
     bound = binding.resolve(
         None,
         choices,
@@ -481,6 +600,7 @@ def _model_policy_call(project, agent=None) -> gate.Call:
         label=choices[bound.model]["label"],
         tier=choices[bound.model]["tier"],
         approver=project.owner_handle or "",
+        overseas=choices[bound.model]["overseas"],
     )
 
 

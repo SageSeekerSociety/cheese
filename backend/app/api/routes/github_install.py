@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
@@ -33,23 +34,24 @@ from app.core.github_install_state import (
 )
 from app.core.sentences import say
 from app.core.single_use_state import SingleUseUnavailableError, claim, reserve
-from app.domain.agent.github_app import (
-    GitHubAppError,
-    fetch_user_installation_repos,
-    list_user_installations,
-)
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.project.forge import follow_github_rename
+from app.domain.project.github_app import (
+    GitHubAppError,
+    fetch_user_installation_repos,
+    list_user_installations,
+    parse_github_repo,
+)
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
     RepositoryTakenError,
 )
 from app.domain.project.services import ProjectService
-from app.domain.review.github_pr import parse_github_repo
+from app.domain.project_permissions import Permission
 from app.domain.user.repositories import UserRepository
 
 logger = logging.getLogger(__name__)
@@ -74,7 +76,7 @@ async def _manager(
         raise AuthenticationRequiredError(say("githubRepoSignIn"))
     await ProjectService(db).get_or_404(project_id)
     try:
-        await MemberService(db).require_manager(project_id, actor)
+        await MemberService(db).require(project_id, actor, Permission.edit_settings)
     except ForbiddenError:
         raise ForbiddenError(say("githubRepoManagerOnly")) from None
     return actor
@@ -88,7 +90,7 @@ async def _user_token(db: AsyncSession, actor: Actor) -> tuple[int, str]:
         else None
     )
     if user is None or token is None:
-        raise ForbiddenError(say("githubAccountLinkFirst"))
+        raise ForbiddenError(say("githubSignInFirst"))
     return user.id, token
 
 
@@ -181,7 +183,7 @@ async def get_github_connection(
     )
 
 
-@router.post("/projects/{project_id}/github/connect")
+@router.post("/projects/{project_id}/github/connect", dependencies=[ROUTE_DECIDES])
 async def connect_github_repo(
     project_id: uuid.UUID,
     request: Request,
@@ -276,7 +278,7 @@ async def _install(
         if user is None or user.username != claims.handle:
             return failure("access_denied")
         actor = Actor(handle=user.username, user_id=user.id, via="token")
-        await MemberService(db).require_manager(project_id, actor)
+        await MemberService(db).require(project_id, actor, Permission.edit_settings)
         if setup_action == "request":
             return _settings_redirect(project_id, github_install="pending")
         if not installation_id:

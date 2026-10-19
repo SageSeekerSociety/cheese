@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import GatewayModel
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project
+from tests.integration.conftest import approve_overseas, post_project
 
 
 @pytest.fixture
@@ -34,6 +34,14 @@ def test_plan_catalog_includes_subscription_models_and_matches_picker(client, ca
     project = post_project(client, json={"name": "Catalog"}, headers=owner).json()[
         "data"
     ]
+
+    # The picker of a team approved for overseas models shows every model.
+    async def approve() -> None:
+        async with client.test_request_factory() as session:
+            await approve_overseas(session, project["team_id"])
+            await session.commit()
+
+    client.portal.call(approve)
     response = client.get("/admin/plans/models", headers=owner)
     assert response.status_code == 200, response.text
     models = response.json()["data"]["models"]

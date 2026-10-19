@@ -45,11 +45,14 @@ repos:
         pass_filenames: false
         files: ^backend/.*\.py$
 
+      # Formatting and import order are fixed, never judged: this hook rewrites
+      # the staged files, and no CI step fails on layout. A commit it touched
+      # stops once so the rewritten files can be staged, which is how
+      # pre-commit reports any fixer.
       - id: ruff-format
-        name: ruff (format)
-        entry: bash -c 'cd backend && uv run ruff format --check .'
+        name: ruff (format and sort imports, autofix)
+        entry: bash -c 'cd backend && uv run ruff check --select I --fix --exit-zero -q "${@#backend/}" && uv run ruff format -q "${@#backend/}"' --
         language: system
-        pass_filenames: false
         files: ^backend/.*\.py$
 
       - id: pyright
@@ -78,16 +81,88 @@ repos:
         pass_filenames: false
         files: ^backend/(.*\.py|\.importlinter)$
 
-      # Imports inside a function body may only go down. Each file's count of
-      # unexplained ones is frozen in backend/deferred-import-baseline.json; an
-      # import that says why (`# deferred-import: <reason>`, same line or the
-      # line above) is not counted. Whole tree, like the graph check above.
-      - id: deferred-imports
-        name: deferred imports only go down (annotated or frozen)
-        entry: bash -c 'cd backend && uv run python scripts/check_deferred_imports.py'
+      # The two refactors that leave every other gate green: a module becomes a
+      # package and its facade stops offering a name, and a name leaves a module
+      # for a sibling while the callers still import it from where it left. The
+      # callers are often under scripts/ or backend/scripts/, which pyright
+      # never reads (`include app`), so nothing else notices. The guard compares
+      # each changed module with its base-ref self, reads every caller in the
+      # tree, and leaves a deleted module whose place a package took to
+      # --check-facade, so one break is not reported twice. Exit 2 (cannot
+      # judge) is a failure here, never a pass.
+      #
+      # `always_run`, not `files:`: pre-commit's default diff filter drops
+      # deleted files, and a commit that only deletes a module is one of the
+      # cases this answers. The script reads `git diff` itself, so a commit that
+      # touches no Python costs one git call.
+      #
+      # The base is HEAD, the commit's parent: the question is what this commit
+      # introduced, and a long-lived branch must not rescan everything it ever
+      # changed on every commit. A runner that names a range
+      # (`pre-commit run --from-ref ... --to-ref ...`) passes that range's start
+      # through PRE_COMMIT_FROM_REF instead.
+      #
+      # The interpreter is picked from PATH rather than taken from `python3`
+      # blindly: `uvx pre-commit` (what Taskfile.yml installs) puts its tool
+      # venv first, and on the work image that python is 3.9 — the guard needs
+      # 3.10 (`zip(strict=True)`). Because this hook runs on every commit, a
+      # 3.9 traceback would turn every commit red; with none found it is exit 2,
+      # which says it could not judge instead of pretending to.
+      - id: module-split
+        name: split packages and moved names keep every caller importing
+        entry: |
+          bash -c '
+          set -u
+          base=${PRE_COMMIT_FROM_REF:-HEAD}
+          tool=.claude/scripts/verify-module-split.py
+          if ! git rev-parse --verify -q "$base^{commit}" >/dev/null 2>&1; then
+            printf "cannot judge: %s is not a ref in this checkout (git fetch origin)\n" "$base" >&2
+            exit 2
+          fi
+          py=
+          for candidate in python3 python3.13 python3.12 python3.11 python3.10; do
+            if command -v "$candidate" >/dev/null 2>&1 \
+               && "$candidate" -c "import sys; raise SystemExit(sys.version_info < (3, 10))" >/dev/null 2>&1; then
+              py=$candidate
+              break
+            fi
+          done
+          if [ -z "$py" ]; then
+            printf "cannot judge: no Python 3.10+ on PATH for verify-module-split.py\n" >&2
+            exit 2
+          fi
+          status=0
+          changed=$(git diff --name-only --no-renames "$base" -- .)
+          untracked=$(git ls-files --others --exclude-standard -- .)
+          while IFS= read -r init; do
+            dir=${init%/__init__.py}
+            if git cat-file -e "$base:$dir.py" 2>/dev/null; then
+              "$py" "$tool" --check-facade "$dir" --base-ref "$base" || status=$?
+            fi
+          done < <(printf "%s\n" "$changed" | grep -E "(^|/)__init__\.py$" || true)
+          if printf "%s\n%s\n" "$changed" "$untracked" | grep -q "\.py$"; then
+            "$py" "$tool" --check-moves . --base-ref "$base" || status=$?
+          fi
+          exit "$status"
+          '
         language: system
         pass_filenames: false
-        files: ^backend/(app/.*\.py|deferred-import-baseline\.json|scripts/check_deferred_imports\.py)$
+        always_run: true
+
+      # The API surface the frontend's types are generated from. This builds
+      # the document and holds the untyped ratchet beside it, which only
+      # shrinks. CI runs it as a step of the
+      # `backend / static` job (test.yml) rather than through pre-commit, since
+      # that job has the venv already synced — the pre-push entry point is what
+      # reads this id. `stages: [manual]` for the reason the heavy hooks above
+      # carry it: 23s on a work machine is too much for a commit gate.
+      - id: openapi-document
+        name: OpenAPI document builds and untyped ratchet holds
+        entry: bash -c 'cd backend && uv run python -m scripts.export_openapi --check'
+        language: system
+        pass_filenames: false
+        files: ^backend/
+        stages: [manual]
 
       # Two checks in one script: backend/alembic/HEAD must name the chain's
       # tip, and merging into main must not leave two heads. The second is only
@@ -111,6 +186,19 @@ repos:
         pass_filenames: false
         files: ^backend/alembic/versions/
 
+      # Single-row lookups inside a loop are a latency bug the test suite does
+      # not see: every call succeeds, the loop is just serial. The guard is a
+      # semgrep rule measured against the merge base with origin/main, so it
+      # reports the reads this branch introduced and leaves the existing ones
+      # open, exactly like boundary-check above. It reaches semgrep through
+      # uvx, so the first run on a machine pays for that environment.
+      - id: row-read-in-loop
+        name: single-row reads inside a loop are batched
+        entry: bash .claude/scripts/check-row-read-in-loop.sh
+        language: system
+        pass_filenames: false
+        files: ^backend/app/
+
       # --- frontend -----------------------------------------------------
       # typecheck and build are deliberately absent: both OOM on a small box, and
       # a check that dies on memory reports as a code failure. CI's frontend.yml
@@ -128,6 +216,17 @@ repos:
         pass_filenames: false
         files: ^frontend/
 
+      # The frontend's layout rules (prettier, simple-import-sort) are fixed the
+      # same way as ruff-format above: `--fix-type layout` applies only those, on
+      # the staged files. `|| true` because this hook's job is the rewrite; the
+      # eslint hook above is the one that reports a rule's verdict, and would
+      # otherwise be reported twice.
+      - id: frontend-format
+        name: frontend layout (prettier, import order; autofix)
+        entry: bash -c 'cd frontend && pnpm exec eslint --fix --fix-type layout --no-warn-ignored "${@#frontend/}" >/dev/null || true' --
+        language: system
+        files: ^frontend/.*\.(vue|ts|tsx|js|mjs|cjs)$
+
       - id: stylelint
         name: stylelint
         entry: bash -c 'cd frontend && pnpm run lint:style'
@@ -144,30 +243,56 @@ repos:
 
       # Components must not reach the network layer: `@/api`, `@/services/*`,
       # `@/network/*` and vue-router are off limits under src/components/**.
-      # 127 violations in 82 components are frozen in
-      # frontend/import-boundary-baseline.json, which is why this is a separate
-      # ESLint config (eslint.boundary.config.mjs) rather than a rule in the
-      # one `pnpm run lint` reads: as a plain rule it would have turned the
-      # whole tree red on day one, and a gate that red everywhere gets deleted.
+      # Any violation fails. It is a separate ESLint config
+      # (eslint.boundary.config.mjs) with its own runner script rather than a
+      # rule in the one `pnpm run lint` reads.
       # Same go-red-without-node_modules answer as eslint/stylelint above.
       - id: boundary-check-frontend
-        name: component boundaries (eslint + ratchet)
+        name: component boundaries (eslint)
         entry: bash -c 'cd frontend && pnpm run lint:boundary'
         language: system
         pass_filenames: false
-        files: ^frontend/(src/components/|eslint\.boundary\.config\.mjs|import-boundary-baseline\.json|package\.json|scripts/import-boundary-ratchet)
+        files: ^frontend/(src/components/|eslint\.boundary\.config\.mjs|package\.json|scripts/import-boundary-ratchet)
 
-      # Accessibility rules (eslint-plugin-vuejs-accessibility, flat/recommended)
-      # over src/**/*.vue. The violations already in the tree are frozen per
-      # file in frontend/a11y-baseline.json, so this is a separate ESLint config
-      # (eslint.a11y.config.mjs) for the same reason as the boundary check above.
-      # `files:` includes the base config because the a11y one extends it.
-      - id: a11y-frontend
-        name: accessibility (eslint + ratchet)
-        entry: bash -c 'cd frontend && pnpm run lint:a11y'
+      # A component calls a bare name it binds nothing for, and a module in this
+      # tree declares that name and never hands it out: the call does not
+      # fail, it reaches a browser global of the same name and does nothing.
+      # That is what a function moved into a composable and left unexported
+      # looks like — 2026-10-16 (#1618), `blur()` moved into
+      # useDesignViewport.ts and DesignImage.vue's `if (!on) blur()` reached
+      # `window.blur`, which drops nothing. The base eslint config cannot see
+      # it (it injects the browser globals and turns `no-undef` off for TS),
+      # vue-tsc cannot (`lib.dom` declares the same names) and a template's
+      # calls are in no scope at all, which is why the rule is its own script
+      # over `vue-eslint-parser`.
+      #
+      # A plain rule, not a ratchet: 0 findings over 751 components and 957
+      # modules on 2026-10-16, so there is nothing to freeze and no baseline to
+      # edit — a baseline's one use is to let a finding stand, and this rule is
+      # about a call that fails in silence. Read-only; its tests are
+      # scripts/global-fallback-ratchet.test.mjs in `pnpm run test:ratchet`.
+      - id: global-fallback
+        name: bare calls to a name a module keeps to itself (headless parser)
+        entry: bash -c 'cd frontend && pnpm run lint:global-fallback'
         language: system
         pass_filenames: false
-        files: ^frontend/(src/.*\.vue|eslint\.(a11y\.)?config\.mjs|a11y-baseline\.json|package\.json|pnpm-lock\.yaml|scripts/(a11y-ratchet|tsc-ratchet-core|ratchet-report))
+        files: ^frontend/(src/.*\.(vue|ts)|package\.json|scripts/(check-global-fallback-ratchet|global-fallback-ratchet-core|global-fallback-ratchet\.test|tsc-ratchet-core|ratchet-report)\.mjs)$
+
+      # Check the index against the branch baseline, not unstaged repairs.
+      # CI's test:ratchet also checks the committed tree via the discovered test.
+      - id: sfc-attribute-diff
+        name: Vue splits preserve explicit attribute fallbacks (staged)
+        entry: node frontend/scripts/sfc-attribute-diff.mjs --staged
+        language: system
+        pass_filenames: false
+        files: ^(.*\.vue|frontend/scripts/sfc-attribute-diff(\.test)?\.mjs|\.pre-commit-config\.yaml)$
+
+      - id: sfc-attribute-diff-self-test
+        name: Vue split attribute guard self-test
+        entry: node frontend/scripts/sfc-attribute-diff.mjs --self-test
+        language: system
+        pass_filenames: false
+        files: ^(frontend/scripts/sfc-attribute-diff(\.test)?\.mjs|\.pre-commit-config\.yaml)$
 
       # Every page the router reaches and every SFC under
       # src/components/panels/ has to render with no backend, no route and no
@@ -195,16 +320,6 @@ repos:
         pass_filenames: false
         files: ^(frontend/.*|\.claude/scripts/(frontend_grade|scene-ratchet|scene-debt-ratchet|test_scene_debt_ratchet|ratchet_report)\.py)$
 
-      # Every grade-A SFC is registered in /demo/catalog or frozen as pending.
-      # The pending list can only shrink; imports determine the grade.
-      # `pnpm run lint:catalog:update` removes paid-down entries.
-      - id: catalog-ratchet
-        name: grade-A components are in the catalog (python ratchet)
-        entry: python3 .claude/scripts/catalog-ratchet.py
-        language: system
-        pass_filenames: false
-        files: ^(frontend/(src/.*\.(vue|ts)|catalog-baseline\.json|package\.json)|\.claude/scripts/(frontend_grade|catalog-ratchet|ratchet_report)\.py)$
-
       # --- heavy: never on commit, see the note at the top ---------------
       - id: pytest
         name: backend test suite (needs Postgres)
@@ -228,11 +343,11 @@ repos:
         stages: [manual]
 
       # --- repo-wide guards ---------------------------------------------
-      # always_run because it judges relationships across the tree — duplicate
-      # topic notes, a platform command leaking into AGENTS.md — which no single
-      # changed path predicts.
+      # always_run because it judges relationships across the tree — a platform
+      # command leaking into AGENTS.md, a script the image does not carry — which
+      # no single changed path predicts.
       - id: repo-rules
-        name: repo rules (datetime, HTTPException, palette, platform CLI, …)
+        name: repo rules (datetime, HTTPException, platform CLI, …)
         entry: bash .claude/scripts/check-repo-rules.sh
         language: system
         pass_filenames: false
@@ -272,20 +387,3 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-
-      # A file-size ratchet, not a cliff: 7 files are already past their cap
-      # (frontend/src 1000 lines, backend/app 1500) and each is frozen at the
-      # size it had where this branch left main — the merge base, which is why
-      # main moving on cannot fail a branch for a file it never touched. Only
-      # the files the branch actually changed are read, so an oversized file may
-      # shrink but not grow, and a new file must land under the cap. It needs a
-      # remote-tracking origin/main AND the history to find the merge base with
-      # it: CI fetches both (see .github/workflows/repo-guards.yml); locally
-      # `git fetch origin` is the fix, which is why each missing piece is a
-      # "cannot judge" (exit 2) naming the fetch rather than a pass.
-      - id: file-size
-        name: files have not grown past their size cap
-        entry: python3 .claude/scripts/check-file-sizes.py
-        language: system
-        pass_filenames: false
-        files: ^(backend/app/|frontend/src/|\.claude/scripts/check-file-sizes\.py)

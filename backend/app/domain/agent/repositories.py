@@ -1,18 +1,21 @@
 """Reading and writing the turn intervals in :mod:`app.domain.agent.models`."""
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import ColumnElement, select, update
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import InstrumentedAttribute
 
+from app.domain.agent.checkout_sweep import sweep
 from app.domain.agent.models import AgentTurn
 from app.domain.room_task.closing import turns_ended
 from app.domain.room_task.live import turns_moved
+from app.domain.room_task.ports import SweepCheckouts
+from app.domain.room_task.services import TaskService
+from app.domain.usage.budgets import CreditBudgets
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +56,15 @@ class TurnRecord:
 
 
 class AgentTurnRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self, session: AsyncSession, *, machines: SweepCheckouts | None = None
+    ) -> None:
         self._session = session
+        # Ending an interval can close the task it belonged to, and that close
+        # sweeps the room's closed checkouts (`room_task.closing.turns_ended`).
+        # The sweep is this package's, so a repository built without one still
+        # hands in the real thing; a caller passes its own only to replace it.
+        self._machines = machines if machines is not None else sweep
 
     async def open(
         self,
@@ -97,8 +107,11 @@ class AgentTurnRepository:
                 .on_conflict_do_nothing(index_elements=[AgentTurn.id])
                 .returning(AgentTurn.conversation_id)
             )
+            conversations = list(opened.scalars())
+            if conversations:
+                await self._snapshot_credit_owner(turn_id, conversation_id, started_at)
             if delivered_at is not None:
-                await turns_moved(self._session, opened.scalars())
+                await turns_moved(self._session, conversations)
             return
         self._session.add(
             AgentTurn(
@@ -115,8 +128,26 @@ class AgentTurnRepository:
                 agent_handle=agent_handle,
             )
         )
+        await self._snapshot_credit_owner(turn_id, conversation_id, started_at)
         if delivered_at is not None:
             await turns_moved(self._session, [conversation_id])
+
+    async def _snapshot_credit_owner(
+        self,
+        turn_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        started_at: datetime,
+    ) -> None:
+        task = await TaskService(self._session).get(conversation_id)
+        if task is None:
+            return
+        owner = await TaskService(self._session).credit_owner(task)
+        if owner is None:
+            return
+        budgets = CreditBudgets(self._session)
+        await budgets.snapshot_owner(
+            turn_id, task.id, owner, task.project_id, started_at
+        )
 
     async def mark_delivered(self, turn_id: uuid.UUID, at: datetime) -> None:
         """Stamp the moment the transport accepted this turn's write.
@@ -258,31 +289,6 @@ class AgentTurnRepository:
             stmt = stmt.where(AgentTurn.agent_handle == agent_handle)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
-    @staticmethod
-    def interval_is_over(
-        *,
-        turn_id: InstrumentedAttribute[uuid.UUID],
-        topic_id: InstrumentedAttribute[uuid.UUID],
-    ) -> ColumnElement[bool]:
-        """Whether the interval these columns name is one the platform ended.
-
-        A correlated EXISTS, for rows that name their work from the outside: a
-        delivery input carries the ``work_id``/``topic_id`` of the turn opened
-        to carry it, and the platform ends work by stamping ``stopped_at``. A
-        work the platform has no row for is NOT over — silence is not a
-        conclusion. As a clause rather than a second question so the caller's
-        query stays one query.
-        """
-        return (
-            select(AgentTurn.id)
-            .where(
-                AgentTurn.id == turn_id,
-                AgentTurn.conversation_id == topic_id,
-                AgentTurn.stopped_at.is_not(None),
-            )
-            .exists()
-        )
-
     async def open_of(self, turn_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these intervals are still open. One query for however many
         are asked about — the board asks it for every row of a project at once.
@@ -305,21 +311,25 @@ class AgentTurnRepository:
         )
         return set((await self._session.execute(stmt)).scalars())
 
-    async def close(self, turn_ids: Iterable[uuid.UUID], at: datetime) -> None:
+    async def close(
+        self, turn_ids: Iterable[uuid.UUID], at: datetime
+    ) -> set[uuid.UUID]:
         """End these intervals. Closing is not deleting — the ids stay readable
         next to the blocks that carry them."""
         ids = list(turn_ids)
         if not ids:
-            return
+            return set()
         closed = await self._session.execute(
             update(AgentTurn)
             .where(AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None))
             .values(stopped_at=at)
-            .returning(AgentTurn.conversation_id)
+            .returning(AgentTurn.id, AgentTurn.conversation_id)
         )
-        conversations = list(closed.scalars())
+        rows = closed.all()
+        conversations = [row.conversation_id for row in rows]
         await turns_moved(self._session, conversations)
-        await turns_ended(self._session, conversations)
+        await turns_ended(self._session, conversations, machines=self._machines)
+        return {row.id for row in rows}
 
     async def still_open(
         self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
@@ -346,8 +356,8 @@ class AgentTurnRepository:
         the database: a process's own memory of what it is relaying
         (``turn_adoption``). It answers the narrow question and no more — an id
         with no row here, or a row with no end yet, is NOT in the answer. A turn
-        the platform has no row for is not over (``interval_is_over`` says why),
-        and a turn still being born is what an id with an undelivered row is.
+        the platform has no row for is not over, and a turn still being born is
+        what an id with an undelivered row is.
 
         Scoped to one conversation like the rest of the bookkeeping: an id is
         only ever this room's, and a turn that ran somewhere else is not closed
@@ -404,7 +414,7 @@ class AgentTurnRepository:
         )
         conversations = list(closed.scalars())
         await turns_moved(self._session, conversations)
-        await turns_ended(self._session, conversations)
+        await turns_ended(self._session, conversations, machines=self._machines)
         return len(conversations)
 
     async def started_at_of(
@@ -439,6 +449,70 @@ class AgentTurnRepository:
             (str(turn_id), _aware(started).timestamp(), agent)
             for turn_id, started, agent in rows
         ]
+
+    async def open_turn_seats(
+        self, conversation_ids: Collection[uuid.UUID] | None = None
+    ) -> dict[uuid.UUID, set[str | None]]:
+        """The seats with an interval still open, per conversation.
+
+        The durable half of 「这个座位有没有人在做」: the open ``AgentTurn`` row
+        is the authority, and this is the one place every cross-process reader
+        asks it. ``None`` in a set means an open turn whose seat was never
+        recorded (an interval that reached here before it was assembled) — a
+        reader tolerant of an unknown seat counts it as anybody's, which is how
+        the old process-local cache read its own state.
+
+        A conversation with no open interval is absent from the mapping;
+        ``conversation_ids`` (when given) only narrows the read, never widens
+        it — a listed conversation with nothing open is still absent.
+        """
+        stmt = select(AgentTurn.conversation_id, AgentTurn.agent_handle).where(
+            AgentTurn.stopped_at.is_(None)
+        )
+        if conversation_ids is not None:
+            ids = list(conversation_ids)
+            if not ids:
+                return {}
+            stmt = stmt.where(AgentTurn.conversation_id.in_(ids))
+        busy: dict[uuid.UUID, set[str | None]] = {}
+        for conversation, handle in await self._session.execute(stmt):
+            busy.setdefault(conversation, set()).add(handle)
+        return busy
+
+    async def open_turn_records(
+        self, conversation_id: uuid.UUID
+    ) -> list[tuple[uuid.UUID, str | None]]:
+        """``(turn id, seat)`` of every interval still open in this conversation.
+
+        The identity half of the open-interval read, for a reader that has to
+        hand a message to the one live turn it names rather than ask whether one
+        exists: the id steers the input, the seat names whose session takes it.
+        """
+        rows = await self._session.execute(
+            select(AgentTurn.id, AgentTurn.agent_handle).where(
+                AgentTurn.conversation_id == conversation_id,
+                AgentTurn.stopped_at.is_(None),
+            )
+        )
+        return [(turn_id, handle) for turn_id, handle in rows]
+
+    async def turn_is_open(self, turn_id: uuid.UUID) -> bool:
+        """Whether the authority still holds this one turn open.
+
+        The cheap confirm both write-through directions need and may not do
+        themselves: a mark confirms the row the lifecycle opened, a release
+        confirms the lifecycle ended it. Neither writes — inventing or closing a
+        row here would be the cache speaking for the authority.
+        """
+        row = (
+            await self._session.execute(
+                select(AgentTurn.stopped_at).where(AgentTurn.id == turn_id)
+            )
+        ).first()
+        # No row at all is NOT open: the lifecycle never opened this turn yet
+        # (the prompt-lock window), which is the same answer to confirm_open
+        # (nothing to confirm) and to confirm_closed (nothing to end).
+        return row is not None and row[0] is None
 
     async def open_turns(self) -> list[TurnRecord]:
         """Every interval still open, oldest first."""

@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.forge_http import forge_client
 from app.core.sentences import say
-from app.domain.project.forge import proposal_client
 from app.domain.review.comment_models import ReviewComment
+from app.domain.review.forge_clients import proposal_client
 from app.domain.review.github_pr import GitHubPRClient, GitHubPRError
 from app.domain.review.models import AcceptCard
 from app.domain.review.pr_signals import PLATFORM_REVIEW_MARK
@@ -151,5 +151,5 @@ async def _run(
                     for row in rows
                 ],
             )
-    except Exception:  # noqa: BLE001 — a copy that failed changes nothing the platform holds
+    except Exception:  # a copy that failed changes nothing the platform holds
         logger.exception("copying the comments of card %s onto its PR failed", card_id)

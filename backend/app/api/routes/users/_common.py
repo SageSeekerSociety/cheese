@@ -4,7 +4,7 @@
 """
 
 import logging
-import re
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -25,6 +25,10 @@ from app.common.auth import (
 )
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+
+# The pattern's one home is app.core.email; this package imports it under the
+# name its routes have always used.
+from app.core.email import EMAIL_FORMAT as _EMAIL_FORMAT
 from app.core.email import is_placeholder_email
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -36,9 +40,6 @@ from app.core.sentences import say
 from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS
 from app.domain.user.login_security import ClientFailureBudget
-from app.domain.user.models import (
-    UserTrustedDevice,
-)
 from app.domain.user.trusted_devices import TrustedDeviceService
 from app.domain.user.verification_service import EmailVerificationService
 
@@ -72,6 +73,18 @@ class OAuthEmailCodeRequest(BaseModel):
 
 class OAuthEmailVerifyRequest(OAuthEmailCodeRequest):
     code: str = Field(..., min_length=1)
+
+
+class GithubAppIntentRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: The page to land back on once GitHub is connected.
+    return_path: str | None = Field(default=None, alias="returnPath")
+
+
+class GithubAppIntentOut(BaseModel):
+    #: Passed to the GitHub login URL as `intent`; spent once there.
+    intent: str
 
 
 class SignupConsent(BaseModel):
@@ -114,10 +127,6 @@ class SudoAuthRequest(BaseModel):
     purpose: SudoPurpose | None = None
 
 
-class TwoFactorCodeRequest(BaseModel):
-    code: str = Field(..., min_length=1)
-
-
 class EmailCodeSignInRequest(BaseModel):
     email: str = Field(..., min_length=1)
 
@@ -134,15 +143,20 @@ class CreateInviteCodeRequest(BaseModel):
     note: str | None = None
 
 
-async def _trusted_device(
+async def _trusted_device_id(
     request: Request, db: AsyncSession, user_id: int
-) -> UserTrustedDevice | None:
-    """The live trust this browser holds for ``user_id``, if any. Only the
-    server decides: a cookie for another account, or one revoked or expired,
-    finds nothing."""
-    return await TrustedDeviceService(db).find(
+) -> uuid.UUID | None:
+    """The id of the live trust this browser holds for ``user_id``, if any.
+    Only the server decides: a cookie for another account, or one revoked or
+    expired, finds nothing.
+
+    The id rather than the row: a route module may not name a domain's models
+    (C2), and the id is all a caller needs — ``issue_session`` records the
+    sign-in against it, and refuses when it names no device."""
+    trust = await TrustedDeviceService(db).find(
         request.cookies.get(TRUST_COOKIE), user_id
     )
+    return trust.id if trust else None
 
 
 logger = logging.getLogger(__name__)
@@ -298,6 +312,3 @@ def _too_many_from_client(wait_seconds: int) -> ForbiddenError:
         f"Try again in {wait_seconds} seconds",
         {"reason": "too_many_attempts", "retryAfterSeconds": wait_seconds},
     )
-
-
-_EMAIL_FORMAT = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")

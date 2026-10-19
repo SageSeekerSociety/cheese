@@ -2,6 +2,7 @@
 
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance, NameSource, OwnAgent
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.library import AgentTypeDef, preset_types
@@ -23,7 +24,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.memory.models import agent_project_scope_id
 from app.domain.memory.scopes import MemoryScope
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, is_private_chat
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.services import UsageService
 
@@ -121,10 +122,20 @@ def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScop
     return MemoryScope.agent_project, agent_project_scope_id(project_id, agent.handle)
 
 
+#: The models a project can be pointed at (`agent.model_choices`), as the
+#: caller hands it in. Deliberately a plain callable rather than an import of
+#: the agent package: what models exist needs the gateway, the harnesses and the
+#: supply policy, and reading any of them back from here is the cycle C3 counts.
+ModelChoices = Callable[[dict | None], list[dict]]
+
+
 class AgentInstanceService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, *, models: ModelChoices | None = None):
         self._session = session
         self._repo = AgentInstanceRepository(session)
+        #: Without one no model can be bound (`_validate_model` refuses every
+        #: id); every read path here works without it.
+        self._models = models
 
     # --- resolution ---------------------------------------------------------
 
@@ -172,7 +183,7 @@ class AgentInstanceService:
         and one whose roster is no longer two seats, return None and are
         answered by the project's default, as they always were.
         """
-        if not topic.is_private:
+        if not is_private_chat(topic):
             return None
         seats = await TopicMemberService(self._session).private_seats(topic.id)
         if seats is None:
@@ -207,6 +218,35 @@ class AgentInstanceService:
         given = await self.for_seat_handle(project, agent_handle)
         return given or await self.for_topic(room, project)
 
+    async def for_task_by_id(
+        self, project_id: uuid.UUID, room_id: uuid.UUID, agent_handle: str | None
+    ) -> ResolvedAgent | None:
+        """`for_task`，但按 id 找那两行 —— 给够不着第 5 层的包用。
+
+        比本包低的包（`review` 的交付落地那几条路）手里只有任务的
+        ``project_id`` 和 ``room_id``，读不出 ``Project``/``Topic`` 这两行；读表
+        的事留在本包做。两行缺一个就是 ``None``：那个任务无处落脚，也就没有队友
+        （`app.domain.review.ports.TaskTeammate`）。"""
+        project = await self._session.get(Project, project_id)
+        room = await self._session.get(Topic, room_id)
+        if project is None or room is None:
+            return None
+        return await self.for_task(project, room, agent_handle)
+
+    async def for_topic_by_id(self, topic_id: uuid.UUID) -> ResolvedAgent:
+        """`for_topic`，但按 id 找那两行 —— 给够不着第 5 层的包用。
+
+        「这个房间的队友是谁」原来问的是第 2 层 `topic` 自己的
+        `TopicService.resolve_agent`，那个方法靠 import 本包才答得出来。问法搬到
+        本包来，房间那边只留下口子（`app.domain.topic.ports.RoomTeammate`）。"""
+        topic = await self._session.get(Topic, topic_id)
+        if topic is None:
+            raise NotFoundError(say("topicNotFound"))
+        project = await self._session.get(Project, topic.project_id)
+        if project is None:
+            raise NotFoundError(say("projectNotFound"))
+        return await self.for_topic(topic, project)
+
     async def project_of_seat(self, handle: str) -> uuid.UUID | None:
         """Which project's teammate sits on rosters as ``handle``, or None when
         the handle is not a saved teammate's seat at all (a person, the shared
@@ -234,6 +274,19 @@ class AgentInstanceService:
             # 播种函数，不是第二条读路径。
             return await self.materialize_default(project)
         raise NotFoundError(say("teammateHandleNotFound", handle=repr(handle)))
+
+    async def for_handle_in(
+        self, project_id: uuid.UUID, handle: str | None
+    ) -> AgentInstance:
+        """`for_handle`，但按 id 找项目那一行 —— 给够不着第 5 层的包用。
+
+        `for_handle` 收的是 ``Project`` 行，那是本包在第 5 层读第 2 层的模型；反过来
+        那些包读不出自己手上的 id 是哪一行，所以这套问法留在本包（口子在
+        `app.domain.topic.ports.NamedTeammate`）。"""
+        project = await self._session.get(Project, project_id)
+        if project is None:
+            raise NotFoundError(say("projectNotFound"))
+        return await self.for_handle(project, handle)
 
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
         """The role instructions saved on this agent."""
@@ -346,16 +399,13 @@ class AgentInstanceService:
 
         project = await self._session.get(Project, project_id)
         if project is None:
-            raise NotFoundError("Project not found")
-        choice = next(
-            (c for c in model_choices(project.settings) if c["id"] == config.model),
-            None,
-        )
-        if choice is None:
-            raise ValidationError(say("modelUnavailable"))
-
+            raise NotFoundError(say("projectNotFound"))
+        choices = self._models(project.settings) if self._models else []
+        choice = next((c for c in choices if c["id"] == config.model), None)
         access = await UsageService(self._session).model_access(project.team_id)
-        if not access.allows(choice["tier"]):
+        if choice is None or not access.shows(choice):
+            raise ValidationError(say("modelUnavailable"))
+        if not access.allows(choice):
             raise ValidationError(say("modelNotInPlan", label=choice["label"]))
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:

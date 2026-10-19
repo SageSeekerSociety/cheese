@@ -143,7 +143,7 @@ async def handle_host_failure(
             )
             await session.commit()
             return verdict
-    except Exception:  # noqa: BLE001 — never mask the failure being handled
+    except Exception:  # never mask the failure being handled
         logger.exception("host failure handling failed for topic %s", topic_id)
         return NO_VERDICT
 
@@ -169,5 +169,5 @@ async def record_host_success(
             ):
                 await service.record_host_success(device_id)
             await session.commit()
-    except Exception:  # noqa: BLE001 — bookkeeping must never fail a good turn
+    except Exception:  # bookkeeping must never fail a good turn
         logger.exception("host success bookkeeping failed for topic %s", topic_id)

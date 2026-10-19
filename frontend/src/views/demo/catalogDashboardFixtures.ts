@@ -3,7 +3,7 @@
  *
  * 形状**不是编的**：`/admin/stats/*` 那七条响应按 `Stats*`（`@/lib/adminStats`）标
  * 了类型，少一个键、多一个键都在 `vue-tsc` 那里当场红；值也照抄预览站假后端
- * （`proto-feedback-fixtures.ts`）里那七台函数算出来的东西，只把长列表截短
+ * （`proto-feedback-fixtures/stats.ts`）里那七台函数算出来的东西，只把长列表截短
  * （三十天的 series 留七个点、路由表留三条）。
  *
  * 为什么单独一份文件：`catalogFixtures.ts` 已经六百多行，七份响应塞进去会顶到
@@ -15,7 +15,6 @@
  */
 import type {
   PendingRow,
-  StatsDays,
   StatsFeedback,
   StatsIntegrations,
   StatsKind,
@@ -55,9 +54,6 @@ export function dashHeaderProps(over: Record<string, unknown> = {}): Record<stri
     ...over,
   }
 }
-
-/** 页头上的窗口切换器：7 / 30 / 90。 */
-export const DASH_DAYS: StatsDays[] = [7, 30, 90]
 
 // --- 七份响应 --------------------------------------------------------------
 

@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
-from app.domain.repository import identity
 from app.domain.review import (
+    credit,
     merge_state,
     notes,
     pr_text,
@@ -166,7 +166,7 @@ async def _merge_pr_for_accept(
         status = await client.pull_request_status(
             owner=owner, repo=repo, number=number, token=creds.read
         )
-    except Exception as exc:  # noqa: BLE001 — stop visibly; never local-merge
+    except Exception as exc:  # stop visibly; never local-merge
         logger.warning(
             "cannot read PR #%s for card %s at accept time: %s",
             number,
@@ -222,7 +222,7 @@ async def _merge_pr_for_accept(
             status=status,
             ref=seen,
         )
-    except Exception as exc:  # noqa: BLE001 — stop visibly; never guess green
+    except Exception as exc:  # stop visibly; never guess green
         logger.warning(
             "cannot compute merge state for PR #%s at accept time: %s",
             number,
@@ -234,6 +234,13 @@ async def _merge_pr_for_accept(
             _capped("acceptStoppedMergeStateUnread", pr=number, error=str(exc)),
         )
     self._write_merge_mirror(card, verdict, who, seen)
+    # 冲突先停下，两种项目都一样。这里的 `dirty` 是 GitHub 的话：强制项目那份是
+    # 它的 `mergeStateStatus` 原样透传，非强制项目那份也抄自它的 `dirty` /
+    # `mergeable=False` —— 冲突不会自己消失，让下面的合并调用去撞它，强制项目
+    # 那条路上会被笼统的 `except Exception` 说成「合并结果暂时无法确认」
+    # （2026-10-16 采纳 PR #3927 时的样子），把「先解冲突」读成了「重试一次」。
+    if verdict.state == "dirty":
+        await self._stop_accept_conflict(card, topic)
     # GitHub enforcing → its merge API is the gate (405 = blocked, 如实转
     # 译). Platform enforcing → only clean, or unstable whose reds are not
     # on the required roster, may merge; everything else is refused with
@@ -245,8 +252,12 @@ async def _merge_pr_for_accept(
             say("acceptBlocked", state=verdict.state, detail=detail or "规则未满足")
         )
 
-    attribution = await identity.attribution(
-        self._session, topic, card=card, decided_by=decided_by
+    attribution = await credit.attribution(
+        self._session,
+        topic,
+        card=card,
+        decided_by=decided_by,
+        opened_by=status.opened_by,
     )
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
@@ -267,7 +278,13 @@ async def _merge_pr_for_accept(
             ),
             sha=seen,
         )
-    except Exception:  # noqa: BLE001 — the remote may have merged before disconnecting
+    except Exception:  # the remote may have merged before disconnecting
+        # 这个 `except` 故意不按异常类型分家（2026-10-16 试过把
+        # `GitHubPrError` 单独接出来，又撤回）：`client` 可能是 GitHub 也可能是
+        # Forgejo 的实现，而 `GitHubPrError` 在两边都不只表示「对面明确说这次没
+        # 合上」。Forgejo 的 `forgejoMergeUnconfirmed` 是 POST 之后回读没读到合并
+        # 结果，合并队列那两处「没确认入队」同理 —— 都是「可能已经合上了」，说成
+        # 「这次没合上」等于把不确定讲成确定，正是这次修复要消掉的那种错。
         logger.exception("merge request failed for card %s", card.id)
         await self._stop_accept_pr_unavailable(
             card,
@@ -281,7 +298,7 @@ async def _merge_pr_for_accept(
             live = await client.pull_request_head_sha(
                 owner=owner, repo=repo, number=number, token=creds.read
             )
-        except Exception:  # noqa: BLE001 — refresh with what we know
+        except Exception:  # refresh with what we know
             logger.warning("card %s: post-409 head read failed", card.id)
         await self._refresh_stale_card(card, topic, live_head=live)
         raise ValidationError(say("prNewCommitsDuringAccept", number=number))
@@ -373,6 +390,7 @@ async def _merge_armed_card(
     protection: BranchProtection,
     chat_service,
     runner,
+    opened_by: str | None = None,
 ) -> None:
     """绿了自动合 (#718)：the armed card's rules are satisfied — merge it
     with the armer's name on the decision, still guarded by the head sha
@@ -396,8 +414,12 @@ async def _merge_armed_card(
         )
         await self._session.flush()
         return
-    attribution = await identity.attribution(
-        self._session, topic, card=card, decided_by=armer
+    attribution = await credit.attribution(
+        self._session,
+        topic,
+        card=card,
+        decided_by=armer,
+        opened_by=opened_by,
     )
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email

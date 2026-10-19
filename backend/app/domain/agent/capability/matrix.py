@@ -18,7 +18,7 @@
 **这张表只覆盖骨架。** 地点与托管方的两张随 P22、P30 各自交付，形状照抄这里。
 """
 
-from app.domain.agent.capability import BuiltIn, Declaration, Difference, Missing
+from app.domain.agent.declaration import BuiltIn, Declaration, Difference, Missing
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, PI
 from app.domain.agent.harness.claude_code import declaration as claude_code_declaration
 from app.domain.agent.harness.codex import declaration as codex_declaration

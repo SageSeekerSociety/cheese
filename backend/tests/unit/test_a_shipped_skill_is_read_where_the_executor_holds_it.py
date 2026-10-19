@@ -11,7 +11,11 @@ and where a command that runs its script has to find it.
 import base64
 import subprocess
 
-from app.domain.agent.harness.claude_code.remote_execution import client, release
+from app.domain.agent.harness.claude_code.remote_execution import (
+    client,
+    release,
+    shell_prefix,
+)
 
 TARGET = {
     "central_config": "/config",
@@ -95,7 +99,7 @@ def test_a_command_runs_a_shipped_skills_script_from_the_executors_config_dir():
         "python3 /config/skills/documents/scripts/office.py text a.docx"
         " && sh '/config/skills/greet/scripts/hello.sh'"
     )
-    assert client.skill_paths(TARGET, command) == (
+    assert shell_prefix.skill_paths(TARGET, command) == (
         "python3 /home/room/.claude/skills/documents/scripts/office.py text a.docx"
         " && sh '/work/.claude/skills/greet/scripts/hello.sh'"
     )

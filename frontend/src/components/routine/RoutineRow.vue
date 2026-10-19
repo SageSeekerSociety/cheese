@@ -141,6 +141,7 @@ const rowMenu = useRowMenu<'row'>()
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls (the keyboard's Menu key fires it too) -->
   <li
     class="routine-row"
     :class="{ 'routine-row--draft': draft }"

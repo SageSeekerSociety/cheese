@@ -43,7 +43,7 @@ class AskLimits:
         try:
             if not await redis.set(f"docs-ask:busy:{user_id}", "1", nx=True, ex=120):
                 return Verdict(False, "上一个问题还在回答，等它答完再问。", 5)
-        except Exception:  # noqa: BLE001 — an unreachable limiter refuses
+        except Exception:  # an unreachable limiter refuses
             logger.warning("docs ask limiter unavailable", exc_info=True)
             return Verdict(False, "问芝士暂时不可用，稍后再试。", 60)
         return Verdict(True)
@@ -54,7 +54,7 @@ class AskLimits:
             return
         try:
             await redis.delete(f"docs-ask:busy:{user_id}")
-        except Exception:  # noqa: BLE001 — the lock expires by itself
+        except Exception:  # the lock expires by itself
             pass
 
     def try_slot(self) -> bool:

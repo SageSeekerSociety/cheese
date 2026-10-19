@@ -1,5 +1,6 @@
 {
   "close": "Close the overview",
+  "closeFiles": "Close the files",
   "detailPair": "{first}, {second}",
   "fileCount": "no files | 1 file | {count} files",
   "inProgress": "none in progress | 1 in progress | {count} in progress",
@@ -7,6 +8,7 @@
   "newChanges": "new changes",
   "newContent": "new content",
   "open": "Open the overview",
+  "openFiles": "Open the files",
   "pickTopic": "Select a channel to see its document",
   "tabDetail": "{label} ({detail})"
 }

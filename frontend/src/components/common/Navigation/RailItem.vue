@@ -29,6 +29,8 @@
     @click="!item.to && item.action ? item.action() : undefined"
     @mouseenter="warmDestination()"
     @mouseleave="cancelPrefetch()"
+    @focus="warmDestination()"
+    @blur="cancelPrefetch()"
     @dragstart="onDragStart"
     @dragover="onDragOver"
     @drop="onDrop"
@@ -272,20 +274,20 @@ button.app-rail-item {
         opacity var(--dur-quick) var(--ease-standard);
     }
 
-    // Brand paint. These two literals are deliberate and identical in both
-    // themes: the 知是 mark is the brand, not a surface, so it must not shift
-    // with the theme any more than a printed logo would. What DID have to
-    // change is the ink on top — it used to be `on-primary`, a value Vuetify
-    // derives from `primary`, which differs between the themes (#F57F17 vs the
-    // lightened #FFA733) and could flip the glyph to white on this bright
-    // amber. Pinning it to one dark ink keeps the logo at 7.7:1 against the
-    // brand colour, in BOTH themes.
+    // Brand paint: the tile under the 知是 mark goes flat brand paint on hover
+    // and while current, with the mark on it in brand ink. Both are theme-
+    // invariant on purpose — this tile is the logo, not a UI surface (docs/
+    // brand.md §5: flat #FFA20F with a #23242a mark, the same in both themes) —
+    // so it does NOT take --accent, which follows the theme. The glyph is brand
+    // ink rather than `on-primary` so the mark stays the same dark shape in both
+    // themes: opaque it is 7.7:1 on the fill, and about 6.6:1 once the emphasis
+    // opacity below is composited, which is what actually renders.
     &:hover,
     &[aria-current] {
-      background: #ffa20f;
+      background: var(--brand-fill);
 
       .cheese-icon {
-        fill: #23242a;
+        fill: var(--brand-ink);
         opacity: var(--v-high-emphasis-opacity);
       }
     }

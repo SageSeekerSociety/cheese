@@ -54,7 +54,7 @@ async def test_queue_required_never_directly_merges(already_queued, app_token):
     if app_token:
         from typing import cast
 
-        from app.domain.agent.github_app import GitHubAppTokens
+        from app.domain.project.github_app import GitHubAppTokens
         from tests.unit.test_github_pr import _FakeTokens
 
         bound = GitHubPRClient(

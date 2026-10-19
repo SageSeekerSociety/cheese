@@ -185,7 +185,7 @@ def test_wait_for_app_probes_a_real_server_and_a_dead_port():
     class _Handler(http.server.BaseHTTPRequestHandler):
         seen: list[str] = []
 
-        def do_GET(self):  # noqa: N802 — http.server's own spelling
+        def do_GET(self):  # http.server's own spelling
             type(self).seen.append(self.headers.get("Accept", ""))
             self.send_response(200)
             self.end_headers()
@@ -227,7 +227,7 @@ def test_wait_for_app_returns_at_once_when_the_app_answers_non_2xx():
     cli = _load()
 
     class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802 — http.server's own spelling
+        def do_GET(self):  # http.server's own spelling
             self.send_response(404)
             self.end_headers()
             self.wfile.write(b"not found")
@@ -511,15 +511,15 @@ def test_worktree_prepares_the_task_directory(monkeypatch, tmp_path, capsys):
     cli = _load()
     prepared = []
 
-    def worktree(task_id):
-        prepared.append(task_id)
+    def worktree(task_id, reinstall=False):
+        prepared.append((task_id, reinstall))
         return tmp_path / task_id
 
     monkeypatch.setattr(cli, "_task_worktree", worktree)
     task = "33333333-3333-4333-8333-333333333333"
     monkeypatch.setattr(cli.sys, "argv", ["cheese", "worktree", task])
     cli.main()
-    assert prepared == [task]
+    assert prepared == [(task, False)]
     assert capsys.readouterr().out.strip() == str(tmp_path / task)
 
 

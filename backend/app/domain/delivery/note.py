@@ -9,15 +9,35 @@ is created. Communication between different handles remains visible chat.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
+from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.chat import ChatService
 from app.domain.delivery.input_identity import InputReconciliationPending
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
+
+
+class NotifiesRunningTurn(Protocol):
+    """把一句话递给这个频道**正在跑**的那一轮。
+
+    形状就是 `agent.chat.ChatService.notify_running_turn`，递进来的就是那个服务实
+    例。本包在第 3 层、`agent` 也在第 3 层，可两边本来就互读（`agent.runtime` 读本
+    包的投递行），再 import 一次就是一个环（C3 的 `domains-acyclic`）。所以本包只
+    写下自己要的这一件事，谁在门口谁把服务递进来。"""
+
+    async def notify_running_turn(
+        self,
+        topic_id: uuid.UUID,
+        notice: str,
+        *,
+        blocks: Sequence[uuid.UUID] = (),
+        recipient_seat: str | None = None,
+    ) -> bool | InputReconciliationPending: ...
+
 
 #: 送给别的 handle 时说的那一句。说清楚还有哪条路可走 —— 收件人不对不是故障，是这
 #: 条通道本来就只通向自己。
@@ -26,7 +46,7 @@ NOT_YOUR_OWN_THREAD = say("noteOwnHandleOnly")
 
 async def send_note(
     session: AsyncSession,
-    chat: ChatService,
+    chat: NotifiesRunningTurn,
     *,
     sender: str,
     from_project_id: uuid.UUID,
@@ -41,7 +61,7 @@ async def send_note(
     if not content.strip():
         raise ValidationError(say("deliveryNoteEmpty"))
     try:
-        target = await TopicService(session).place_or_404(to_thread)
+        target = await place_or_404(session, to_thread)
     except NotFoundError:
         raise ValidationError(NOT_YOUR_OWN_THREAD) from None
     if target.project_id != from_project_id:

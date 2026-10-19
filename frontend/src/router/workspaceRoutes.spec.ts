@@ -213,14 +213,6 @@ describe('页面栈的末端', () => {
   it('话题列表那一层自己是一级目的地，底栏留着', () => {
     expect(leafOf(`/projects/${PROJECT}`).meta.hideTabs).toBeUndefined()
   })
-
-  // 顶栏只有一条，从不卸载；自带头的那两层是把自己的东西填进那一格，而不是
-  // 另画一条横条。声明错了不会编译失败，只会在手机上多出一条写着路由标题的横条。
-  it('自带头的层填的是顶栏那一格', () => {
-    expect(leafOf(`/projects/${PROJECT}`).meta.barSlot).toBe(true)
-    expect(leafOf(`/projects/${PROJECT}/channels/1`).meta.barSlot).toBe(true)
-    expect(leafOf(`/projects/${PROJECT}/dm/agent:cheese`).meta.barSlot).toBeUndefined()
-  })
 })
 
 // 顶栏那颗 ← 靠这个标记回答「这一跳是不是从项目外面走进来的」。它是 meta 上的一

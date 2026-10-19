@@ -322,7 +322,7 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
 
 @pytest.mark.anyio
 async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -> None:
-    from app.api.routes.connector import recover_business_state
+    from app.api.routes.connector.devices import recover_business_state
 
     monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
     device_hub._devices.clear()

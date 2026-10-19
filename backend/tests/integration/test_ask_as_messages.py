@@ -33,6 +33,7 @@ from tests.conftest import StubChannel, seed_user, stub_compute, wait_work_idle
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
+    mail,
     post_message,
     post_project,
     room_agent_headers,
@@ -415,12 +416,7 @@ def test_the_notice_stays_open_until_every_question_of_the_call_is_answered(
     first, second = response.json()["data"]["blocks"]
 
     def notice() -> dict:
-        r = client.get(
-            "/notifications",
-            params={"type": "CHEESE_QUESTION"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        (row,) = r.json()["data"]["notifications"]
+        (row,) = mail(client, token, "CHEESE_QUESTION")
         return row
 
     _say(client, room, "alice", {"content": "图", "reply_to": second["id"]})

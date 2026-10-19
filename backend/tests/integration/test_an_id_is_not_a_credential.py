@@ -29,7 +29,8 @@
 import asyncio
 import uuid
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from tests.conftest import (
     seed_claim,
     seed_space,

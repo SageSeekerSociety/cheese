@@ -22,5 +22,5 @@ async def apply_input_echo(session, *, consumed_ids, work_id, seen_ids, seen_by)
     blocks = BlockRepository(session)
     if work_id is not None:
         await blocks.mark_consumed(list(consumed_ids), work_id)
-    for block_id in seen_ids:
-        await blocks.add_reaction_if_absent(block_id, "👀", seen_by)
+    if seen_ids:
+        await blocks.add_reactions_if_absent(list(seen_ids), "👀", seen_by)

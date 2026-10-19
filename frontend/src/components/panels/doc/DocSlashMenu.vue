@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// Slash 菜单的浮层。锚点用 suggestion 给的 caret rect，和文档里其他浮层一样是
-// 相对 .doc-editor-wrap 定位的，所以它跟着内容滚。
+// Slash 菜单的浮层。位置由 caretMenuPos 按 suggestion 给的 caret rect 算好，和文档
+// 里其他浮层一样相对 .doc-editor-wrap 定位，所以它跟着内容滚。
 //
 // 键盘（↑↓ / Enter / Esc）归 suggestion 插件管，这里只画和转发鼠标：两条路最后
 // 都走同一个 command()，「/query」那段文本才会被一致地删掉。
+import type { CaretMenuPos } from '../../../composables/useDocRefMenu'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
 import { nextTick, ref, watch } from 'vue'
@@ -12,8 +13,8 @@ const props = defineProps<{
   items: SlashItem[]
   /** Which row the keyboard is on — the mouse moves it too, Notion-style. */
   index: number
-  top: number
-  left: number
+  /** 摆在哪：光标下面给 top，翻到上面给 bottom；高出 maxHeight 的部分在菜单里滚。 */
+  at: CaretMenuPos
 }>()
 
 const emit = defineEmits<{
@@ -35,7 +36,17 @@ watch(
 </script>
 
 <template>
-  <div ref="menuEl" class="doc-menu doc-slash__menu" role="menu" :style="{ top: `${top}px`, left: `${left}px` }">
+  <div
+    ref="menuEl"
+    class="doc-menu doc-slash__menu"
+    role="menu"
+    :style="{
+      top: at.top === undefined ? undefined : `${at.top}px`,
+      bottom: at.bottom === undefined ? undefined : `${at.bottom}px`,
+      left: `${at.left}px`,
+      '--menu-room': `${at.maxHeight}px`,
+    }"
+  >
     <button
       v-for="(it, i) in items"
       :key="it.key"
@@ -45,6 +56,7 @@ watch(
       :class="{ 'is-active': i === index }"
       @mousedown.prevent
       @mouseenter="emit('hover', i)"
+      @focus="emit('hover', i)"
       @click="emit('pick', it)"
     >
       <v-icon size="16">{{ it.icon }}</v-icon>
@@ -60,7 +72,7 @@ watch(
   position: absolute;
   z-index: var(--z-raised-7);
   min-width: 196px;
-  max-height: 300px;
+  max-height: min(300px, var(--menu-room, 300px));
   overflow-y: auto;
 }
 .doc-menu__hint {

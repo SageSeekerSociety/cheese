@@ -22,6 +22,8 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -33,6 +35,8 @@ logger = logging.getLogger(__name__)
 # the bytes of "cheese" so a reader of `pg_locks` can tell whose it is.
 OWNER_LOCK = 0x636865657365
 
+_T = TypeVar("_T")
+
 
 class Ownership:
     """The one lock, on the one connection that holds it."""
@@ -42,7 +46,38 @@ class Ownership:
         self._retry_s = retry_s
         self._engine: AsyncEngine | None = None
         self._connection: AsyncConnection | None = None
+        # Made on first use in each event loop, not here: the instance is
+        # cached for the process (`api.deps`), and an asyncio.Lock that once
+        # had to wait belongs to that loop and raises in any later one (a
+        # second lifespan, every test on a fresh loop).
+        self._statements: asyncio.Lock | None = None
+        self._statements_loop: asyncio.AbstractEventLoop | None = None
         self.held = False
+
+    async def _to_the_end(self, step: Callable[[], Awaitable[_T]]) -> _T:
+        """Run ``step`` on the lock's connection to its end, one at a time,
+        whoever stops waiting for it.
+
+        A statement cancelled midway makes SQLAlchemy invalidate its
+        connection, and that closes it — and lets the lock go there and then.
+        Handing over cancels the lock's watch first and lets the lock go
+        last, once the sessions are no longer read here (``main.hand_over``);
+        a watch cancelled mid-check gave the running work to the next backend
+        while this one still read it. Every step catches its own failures, so
+        one finished after its caller left leaves nothing unretrieved.
+        """
+
+        loop = asyncio.get_running_loop()
+        if self._statements is None or self._statements_loop is not loop:
+            self._statements = asyncio.Lock()
+            self._statements_loop = loop
+        statements = self._statements
+
+        async def in_turn() -> _T:
+            async with statements:
+                return await step()
+
+        return await asyncio.shield(asyncio.ensure_future(in_turn()))
 
     async def _connect(self) -> AsyncConnection:
         if self._connection is None:
@@ -64,12 +99,15 @@ class Ownership:
         if connection is not None:
             try:
                 await connection.close()
-            except Exception:  # noqa: BLE001 — it is already gone
+            except Exception:  # it is already gone
                 pass
         if engine is not None:
             await engine.dispose()
 
     async def try_acquire(self) -> bool:
+        return await self._to_the_end(self._try_acquire)
+
+    async def _try_acquire(self) -> bool:
         try:
             connection = await self._connect()
             self.held = bool(
@@ -77,7 +115,7 @@ class Ownership:
                     text("SELECT pg_try_advisory_lock(:key)"), {"key": OWNER_LOCK}
                 )
             )
-        except Exception:  # noqa: BLE001 — a database blip is a later retry
+        except Exception:  # a database blip is a later retry
             logger.exception("could not ask for the owner lock")
             await self._drop_connection()
             self.held = False
@@ -97,24 +135,30 @@ class Ownership:
 
     async def still_held(self) -> bool:
         """Is the lock still ours? Only a lost connection can take it away."""
+        return await self._to_the_end(self._still_held)
+
+    async def _still_held(self) -> bool:
         if not self.held or self._connection is None:
             return False
         try:
             await self._connection.execute(text("SELECT 1"))
             return True
-        except Exception:  # noqa: BLE001 — answered below
+        except Exception:  # answered below
             logger.exception("the owner lock's connection is gone")
             await self._drop_connection()
             self.held = False
             return False
 
     async def release(self) -> None:
+        await self._to_the_end(self._release)
+
+    async def _release(self) -> None:
         if self._connection is not None and self.held:
             try:
                 await self._connection.execute(
                     text("SELECT pg_advisory_unlock(:key)"), {"key": OWNER_LOCK}
                 )
-            except Exception:  # noqa: BLE001 — closing the connection frees it too
+            except Exception:  # closing the connection frees it too
                 logger.exception("could not unlock the owner lock; closing instead")
         self.held = False
         await self._drop_connection()

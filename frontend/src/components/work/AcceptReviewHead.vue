@@ -59,5 +59,6 @@ const round = computed(() => {
     @void="accept.onVoidCard"
     @force-merge="accept.onForceMerge"
     @toggle-auto-merge="accept.onToggleAutoMerge"
+    @sign-in-github="accept.onSignInGithub"
   />
 </template>

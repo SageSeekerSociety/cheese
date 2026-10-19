@@ -1,7 +1,7 @@
 """待我处理：跨项目的那一份清单。
 
 看板回答「这个项目现在有什么在等人」，这里回答「**我**现在要处理什么」—— 同一份规则
-（`room_task/presentation.py`）、同一份收件人判据（`delivery/addressing.py`，投递用的
+（`room_task/presentation.py`）、同一份收件人判据（`addressing.py`，投递用的
 也是它），范围换成我能看见的全部项目。为什么它不能由通知表拼出来，写在
 `room_task/awaiting.py` 的模块说明里。
 
@@ -17,7 +17,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
-from app.api.awaiting_deps import waiting_items
+from app.api.awaiting_deps import all_waiting
 from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -32,7 +32,8 @@ async def list_awaiting_me(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """我现在要处理的事项，最近动过的在前。
+    """我现在要处理的事项，最近动过的在前：项目里的事（`kind: "work"`），和等我回答
+    的邀请、申请（`project_invite` / `team_invite` / `join_request`）。
 
     访客拿到空列表，不是错误：这个清单的定义就是「点到了我的那些」，而没有身份的调
     用者没有被任何一件事点到。
@@ -40,6 +41,6 @@ async def list_awaiting_me(
     who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         return ok(page([], 0))
-    items = await waiting_items(db, chat, handle=who.handle, user_id=who.user_id)
+    items = await all_waiting(db, chat, handle=who.handle, user_id=who.user_id)
     rows = [item.as_dict() for item in items]
     return ok(page(rows, len(rows)))

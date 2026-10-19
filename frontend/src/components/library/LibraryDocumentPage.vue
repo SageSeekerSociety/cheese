@@ -2,17 +2,19 @@
 // 资料库里打开的一份文档：整页是它，页头写「资料库 / 标题」，文档自己的顶栏（在线的
 // 人、评论、芝士、⋯）摆在页头右边。和对话旁边的文档是同一个面板，只是直接给编号；
 // 面板只吃 props，取数在它的接线外壳（`components/work/PanelDocHost.vue`）里。
+import type { NavTarget } from '@/lib/navTarget'
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { ProjectMemberRow, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import PanelDocHost from '../work/PanelDocHost.vue'
 
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
+import { docAuthors } from '@/lib/docAuthors'
 
 const props = defineProps<{
   projectId: string
@@ -24,13 +26,22 @@ const props = defineProps<{
   agentHandle: string | null
   members: ProjectMemberRow[]
   topicList: Topic[]
+  /** 页头的上一级：不给是这个项目的资料库；团队和个人名下的文档给「文档」那一页。 */
+  parent?: { label: string; to: NavTarget }
 }>()
 
 const emit = defineEmits<{
   (e: 'titled', title: string): void
   (e: 'delete'): void
-  (e: 'open-topic', topicId: string): void
+  /** 「移动到…」：挪到自己名下、团队或团队的一个项目（#3774）。 */
+  (e: 'move'): void
+  /** 「分享…」：给这份文档一条只读链接（#3774）。 */
+  (e: 'share'): void
+  /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
+  (e: 'open-topic', topicId: string, blockId?: string): void
 }>()
+
+const authors = computed(() => (props.document ? docAuthors(props.document, props.members, props.agentName) : []))
 
 const { mdAndUp } = useDisplay()
 const docRef = ref<InstanceType<typeof PanelDocHost> | null>(null)
@@ -45,8 +56,10 @@ watch(
 
 <template>
   <AppPage
-    :title="document ? document.title || t('work.room.doc.untitled') : t('navigation.project.library')"
-    :parent="{ label: t('navigation.project.library'), to: { name: 'project-library', params: { projectId } } }"
+    :title="document ? document.title || t('work.room.doc.untitled') : parent?.label ?? t('navigation.project.library')"
+    :parent="
+      parent ?? { label: t('navigation.project.library'), to: { name: 'project-library', params: { projectId } } }
+    "
     width="full"
     fill
   >
@@ -66,10 +79,13 @@ watch(
       :agent-name="agentName"
       :agent-handle="agentHandle"
       :members="members"
+      :authors="authors"
       :topic-list="topicList"
       @titled="emit('titled', $event)"
       @delete="emit('delete')"
-      @open-topic="emit('open-topic', $event)"
+      @move="emit('move')"
+      @share="emit('share')"
+      @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
     />
     <div v-else-if="!error" class="d-flex justify-center py-10">
       <v-progress-circular indeterminate color="primary" />
@@ -82,6 +98,12 @@ watch(
   display: flex;
   justify-content: flex-end;
   min-width: 0;
+}
+/* 顶栏在页头这一格里由按钮撑开：这一格本身按内容定宽，顶栏若按自己的宽度量（它的
+   `container-type`），两边都等对方给宽度，量出来是 0，整排按钮看不见。这里只在宽屏上
+   放顶栏，按钮上的字不必收起。 */
+.library-doc__bar :deep(.doc-top-bar) {
+  container-type: normal;
 }
 .library-doc {
   flex: 1 1 auto;

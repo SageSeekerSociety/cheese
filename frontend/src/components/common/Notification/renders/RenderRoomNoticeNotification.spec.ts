@@ -3,8 +3,6 @@ import type { Notification } from '@/types/apiNotifications'
 import { render } from '@testing-library/vue'
 import { beforeAll, expect, it } from 'vitest'
 
-import { getNotificationMark } from '../registry'
-
 import RenderRoomNoticeNotification from './RenderRoomNoticeNotification.vue'
 
 import i18n, { setLocale } from '@/i18n'
@@ -54,13 +52,4 @@ it('an outcome this build does not know still reads as settled', () => {
   const view = open(notice('superseded'))
 
   expect(view.getByText('在「云端」，已办结')).toBeTruthy()
-})
-
-// 画成警示色、铃铛，等于说它还在等人：办完的那一条换成对勾，颜色退成 success。
-it('a settled notice stops being drawn as waiting on someone', () => {
-  expect(getNotificationMark(notice('rejected'))).toEqual({
-    icon: 'mdi-check-circle-outline',
-    color: 'success',
-  })
-  expect(getNotificationMark(notice()).color).toBe('warning')
 })

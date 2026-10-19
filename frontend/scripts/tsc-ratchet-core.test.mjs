@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
-import { compare, formatReport, parseTscDiagnostics, parseTscOutput, tightenedBaseline } from './tsc-ratchet-core.mjs'
+import { compare, formatReport, parseTscDiagnostics, tightenedBaseline } from './tsc-ratchet-core.mjs'
 
 const SAMPLE = `
 src/views/spaces/detail/PublishTask.vue(50,3): error TS2322: Type 'x' is not assignable.
@@ -11,72 +16,22 @@ src/views/spaces/detail/PublishTask.vue(61,9): error TS18048: 'a' is possibly 'u
 src/plugins/tiptap/index.ts(12,1): error TS2552: Cannot find name 'foo'.
 `
 
-test('counts one error per anchor line, not per continuation line', () => {
-  assert.deepEqual(parseTscOutput(SAMPLE), {
-    'src/views/spaces/detail/PublishTask.vue': 2,
-    'src/plugins/tiptap/index.ts': 1,
-  })
+test('clean output parses to no diagnostics', () => {
+  assert.deepEqual(parseTscDiagnostics(''), [])
+  assert.deepEqual(parseTscDiagnostics('all good\n'), [])
 })
 
-test('clean output parses to no errors', () => {
-  assert.deepEqual(parseTscOutput(''), {})
-  assert.deepEqual(parseTscOutput('all good\n'), {})
-})
-
-test('a new error in a previously clean file is a regression', () => {
-  const result = compare({ 'a.vue': 1 }, { 'a.vue': 1, 'b.vue': 1 })
-  assert.equal(result.ok, false)
-  assert.deepEqual(result.regressions, [{ file: 'b.vue', base: 0, now: 1 }])
-})
-
-test('more errors in an already-failing file is a regression', () => {
-  const result = compare({ 'a.vue': 1 }, { 'a.vue': 2 })
-  assert.equal(result.ok, false)
-  assert.deepEqual(result.regressions, [{ file: 'a.vue', base: 1, now: 2 }])
-})
-
-test('staying at the baseline passes', () => {
-  assert.equal(compare({ 'a.vue': 2 }, { 'a.vue': 2 }).ok, true)
-})
-
-test('fixing errors passes and is reported as an improvement', () => {
-  const result = compare({ 'a.vue': 2 }, { 'a.vue': 1 })
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.improvements, [{ file: 'a.vue', base: 2, now: 1 }])
-})
-
-test('a file fixed to zero drops out of the tightened baseline', () => {
-  assert.deepEqual(tightenedBaseline({ 'a.vue': 2, 'b.vue': 1 }, { 'b.vue': 1 }), {
-    'b.vue': 1,
-  })
-})
-
-// The failure mode this guards: `--update` right after adding errors would
-// otherwise rewrite the baseline upward and silently bless the regression.
-test('tightening never raises a count', () => {
-  assert.deepEqual(tightenedBaseline({ 'a.vue': 1 }, { 'a.vue': 5 }), { 'a.vue': 1 })
-})
-
-test('the report names the offending file and both counts', () => {
-  const text = formatReport(compare({ 'a.vue': 1 }, { 'a.vue': 3 }))
-  assert.match(text, /a\.vue: 1 -> 3/)
-  assert.match(text, /total: 3 error\(s\), baseline allows 1/)
-})
-
-// The counting regex is untouched by the diagnostics parser: an anchor line
-// with nothing after the code's colon still counts, and its message is empty.
-// (Making the message mandatory in ERROR_LINE would silently drop such a line
-// from the count — the judgement this keeps.)
-test('an anchor line with no message still counts', () => {
-  assert.deepEqual(parseTscOutput('src/a.ts(1,1): error TS1005:\n'), { 'src/a.ts': 1 })
+// An anchor line with nothing after the code's colon is still an error: a
+// parser that required a message would silently drop it and pass the tree.
+test('an anchor line with no message is still a diagnostic', () => {
   assert.deepEqual(parseTscDiagnostics('src/a.ts(1,1): error TS1005:\n'), [
     { file: 'src/a.ts', line: 1, column: 1, code: 'TS1005', message: '' },
   ])
 })
 
-// The diagnostics parser keeps the anchor line whole — the file, the line, the
-// column, the TS code and the message — so the failure report can be a list of
-// the actual errors rather than a count that sends people to grep.
+// The parser keeps the anchor line whole — the file, the line, the column, the
+// TS code and the message — so the failure report is a list of the actual
+// errors rather than a count that sends people to grep.
 test('parseTscDiagnostics keeps each anchor line whole', () => {
   assert.deepEqual(parseTscDiagnostics(SAMPLE), [
     {
@@ -84,7 +39,8 @@ test('parseTscDiagnostics keeps each anchor line whole', () => {
       line: 50,
       column: 3,
       code: 'TS2322',
-      message: "Type 'x' is not assignable.",
+      message:
+        "Type 'x' is not assignable.\n  Types of property 'categoryId' are incompatible.\n    Type 'undefined' is not assignable to type 'number'.",
     },
     {
       file: 'src/views/spaces/detail/PublishTask.vue',
@@ -103,33 +59,136 @@ test('parseTscDiagnostics keeps each anchor line whole', () => {
   ])
 })
 
-// The failure this guards: a bare `PublishTask.vue: 1 -> 2` sends the reader to
-// grep, which finds the pre-existing error on line 50 as well as the new one on
-// line 61. Printing the raw vue-tsc `file(line,col): error TSxxxx:` lines is
-// what lets them tell the two apart without a second run.
-test('the report prints the raw vue-tsc file(line,col) errors for a regressed file', () => {
-  // One error frozen already, two in the tree now: PublishTask.vue regressed.
-  const baseline = { 'src/views/spaces/detail/PublishTask.vue': 1 }
-  const current = parseTscOutput(SAMPLE)
-  const text = formatReport(compare(baseline, current), parseTscDiagnostics(SAMPLE))
-
-  assert.match(text, /src\/views\/spaces\/detail\/PublishTask\.vue\(50,3\): error TS2322: Type 'x' is not assignable\./)
-  assert.match(
-    text,
-    /src\/views\/spaces\/detail\/PublishTask\.vue\(61,9\): error TS18048: 'a' is possibly 'undefined'\./
-  )
-  // The new error in a previously clean file is listed too.
-  assert.match(text, /src\/plugins\/tiptap\/index\.ts\(12,1\): error TS2552: Cannot find name 'foo'\./)
-  // And the fix points at the doc chapter, not only at the counts.
-  assert.match(text, /docs\/manual\/dev\/frontend\.md/)
+test('diagnostic explanations end at a blank or an unindented line', () => {
+  const output = [
+    '  unrelated preamble',
+    'src\\a.ts(3,2): error TS2322: incompatible',
+    '  first explanation',
+    '    nested explanation',
+    '',
+    '  unrelated footer',
+    'src/b.ts(4,5): error TS2552: missing',
+    'compiler summary',
+    '  unrelated summary detail',
+  ].join('\r\n')
+  assert.deepEqual(parseTscDiagnostics(output), [
+    {
+      file: 'src/a.ts',
+      line: 3,
+      column: 2,
+      code: 'TS2322',
+      message: 'incompatible\n  first explanation\n    nested explanation',
+    },
+    { file: 'src/b.ts', line: 4, column: 5, code: 'TS2552', message: 'missing' },
+  ])
 })
 
-// A diagnostic in a file that did NOT regress is not this run's problem, so it
-// is not printed — the report lists the files the ratchet blocks, no wider.
-test('the report lists only the diagnostics in the files that regressed', () => {
-  // PublishTask.vue is at its frozen 2 (no regression); tiptap/index.ts is new.
-  const baseline = { 'src/views/spaces/detail/PublishTask.vue': 2 }
-  const text = formatReport(compare(baseline, parseTscOutput(SAMPLE)), parseTscDiagnostics(SAMPLE))
-  assert.match(text, /src\/plugins\/tiptap\/index\.ts\(12,1\): error TS2552/)
-  assert.doesNotMatch(text, /error TS2322/)
+test('the report prints every error at its file(line,col) with its explanation', () => {
+  const text = formatReport(parseTscDiagnostics(SAMPLE))
+  assert.match(text, /src\/views\/spaces\/detail\/PublishTask\.vue\(50,3\): error TS2322: Type 'x' is not assignable\./)
+  assert.ok(
+    text.includes(
+      "  Types of property 'categoryId' are incompatible.\n    Type 'undefined' is not assignable to type 'number'."
+    )
+  )
+  assert.match(text, /src\/plugins\/tiptap\/index\.ts\(12,1\): error TS2552: Cannot find name 'foo'\./)
+  assert.match(text, /total: 3 error\(s\)/)
+})
+
+test('a missing PropType names the type-only import that fixes it', () => {
+  const text = formatReport(parseTscDiagnostics("src/FooSub.ts(1,20): error TS2304: Cannot find name 'PropType'."))
+  assert.ok(text.includes("import type { PropType } from 'vue'"))
+})
+
+// `compare` and `tightenedBaseline` are the per-file arithmetic the stylelint,
+// i18n-comment and global-fallback ratchets import from here.
+test('compare: a new or a raised count is a regression, a lowered one an improvement', () => {
+  const result = compare({ 'a.vue': 2, 'c.vue': 2 }, { 'a.vue': 3, 'b.vue': 1, 'c.vue': 1 })
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.regressions, [
+    { file: 'a.vue', base: 2, now: 3 },
+    { file: 'b.vue', base: 0, now: 1 },
+  ])
+  assert.deepEqual(result.improvements, [{ file: 'c.vue', base: 2, now: 1 }])
+  assert.equal(compare({ 'a.vue': 2 }, { 'a.vue': 2 }).ok, true)
+})
+
+test('tightenedBaseline never raises a count and drops a file fixed to zero', () => {
+  assert.deepEqual(tightenedBaseline({ 'a.vue': 1, 'b.vue': 2 }, { 'a.vue': 5 }), { 'a.vue': 1 })
+})
+
+// Exercise the actual CLI on a one-file project, never the whole frontend.
+function withProject(source, check) {
+  const dir = mkdtempSync(join(tmpdir(), 'tsc-check-'))
+  try {
+    const project = join(dir, 'tsconfig.json')
+    writeFileSync(
+      project,
+      JSON.stringify({
+        compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, types: [], pretty: true },
+        files: ['planted.ts'],
+      })
+    )
+    writeFileSync(join(dir, 'planted.ts'), source)
+    const cli = fileURLToPath(new URL('./tsc-ratchet.mjs', import.meta.url))
+    check((...args) => {
+      const run = spawnSync(process.execPath, [cli, '--project', project, ...args], {
+        encoding: 'utf8',
+        timeout: 30_000,
+      })
+      assert.ifError(run.error)
+      return run
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test('CLI passes a project with no type error', () => {
+  withProject('export const n: number = 1\n', (run) => {
+    const plain = run()
+    assert.equal(plain.status, 0, `${plain.stdout}\n${plain.stderr}`)
+    const json = run('--json')
+    assert.equal(json.status, 0, `${json.stdout}\n${json.stderr}`)
+    assert.equal(JSON.parse(json.stdout).status, 'pass')
+  })
+})
+
+// One error is enough: there is no allowance to stay within. A missing compiler
+// (exit 2) must not pass as the expected rejection, which is why the status is
+// checked to be exactly 1.
+test('CLI fails on a single error and shows its code, location and full explanation', () => {
+  const source = ["const source = { count: 'not a number' }", 'export const target: { count: number } = source'].join(
+    '\n'
+  )
+  withProject(source, (run) => {
+    for (const json of [false, true]) {
+      const result = run(...(json ? ['--json'] : []))
+      assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`)
+      const report = json ? result.stderr : result.stdout
+      assert.match(report, /planted\.ts\(2,14\): error TS2322:/)
+      assert.ok(report.includes("Type '{ count: string; }' is not assignable to type '{ count: number; }'."))
+      assert.ok(
+        report.includes(
+          "\n  Types of property 'count' are incompatible.\n    Type 'string' is not assignable to type 'number'."
+        )
+      )
+      if (json) {
+        assert.equal(result.stdout.trim().split('\n').length, 1)
+        const record = JSON.parse(result.stdout)
+        assert.equal(record.status, 'fail')
+        assert.equal(record.actual, 1)
+        assert.equal(record.frozen, 0)
+        assert.doesNotMatch(result.stdout, /TS2322/)
+      }
+    }
+  })
+})
+
+test('CLI fails on a missing type import and names the fix', () => {
+  withProject('export type Value = PropType<string>\n', (run) => {
+    const result = run()
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`)
+    assert.ok(result.stdout.includes("import type { PropType } from 'vue'"))
+  })
 })

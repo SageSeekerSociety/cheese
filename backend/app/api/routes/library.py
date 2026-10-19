@@ -25,6 +25,7 @@ from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/projects", tags=["library"])
 
@@ -54,6 +55,18 @@ class LibraryFileOut(BaseModel):
     replaced: int
     references: int
     rank: str
+
+
+class LibraryTextOut(BaseModel):
+    """一份资料读成的文本（`library_records.read_text`）：读不成文本时
+    `content` 是 None，`binary` 或 `too_large` 说为什么。"""
+
+    path: str
+    bytes: int
+    binary: bool
+    too_large: bool
+    content: str | None
+    version: str
 
 
 class LibraryFoldersOut(BaseModel):
@@ -133,7 +146,7 @@ async def list_library_versions(
     return ok({"versions": versions})
 
 
-@router.post("/{project_id}/library/restore")
+@router.post("/{project_id}/library/restore", dependencies=[ROUTE_DECIDES])
 async def restore_library_version(
     project_id: uuid.UUID,
     path: str,
@@ -197,6 +210,19 @@ async def library_file(
     return ok(await library_listing.one(db, project_id, rooms, _library_path(path)))
 
 
+@router.get("/{project_id}/library/text", **typed_response(LibraryTextOut))
+async def library_file_text(
+    project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """一份资料读成文本，给芝士读（`cheese_attachment_read` 读 `library/` 开头的地址）：
+    文本文件照原样，PDF 取文字层，别的只回大小。和房间无关，所以没有房间的文档芝士
+    （项目总览、资料库里的文档）也读得到项目给它的材料。"""
+    await _reader(project_id, db, resolver)
+    name = _library_path(path.strip().removeprefix("library/"))
+    found = await library_records.read_text(db, project_id, name)
+    return ok(LibraryTextOut.model_validate(found).model_dump())
+
+
 @router.get("/{project_id}/library/folders", **typed_response(LibraryFoldersOut))
 async def library_folders(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -222,7 +248,9 @@ async def _library_keeper(
     `authorize_project`。"""
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.require_verified_caller(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.edit_content
+    )
     return actor
 
 
@@ -235,7 +263,7 @@ async def _upload_bytes(file: UploadFile) -> bytes:
     return data
 
 
-@router.post("/{project_id}/library")
+@router.post("/{project_id}/library", dependencies=[ROUTE_DECIDES])
 async def upload_library_file(
     project_id: uuid.UUID,
     db: DbSession,
@@ -262,7 +290,7 @@ async def upload_library_file(
     return ok({"path": name, "bytes": len(data)})
 
 
-@router.put("/{project_id}/library")
+@router.put("/{project_id}/library", dependencies=[ROUTE_DECIDES])
 async def replace_library_file(
     project_id: uuid.UUID,
     path: str,
@@ -281,7 +309,7 @@ async def replace_library_file(
     return ok({"path": name, "bytes": len(data)})
 
 
-@router.delete("/{project_id}/library")
+@router.delete("/{project_id}/library", dependencies=[ROUTE_DECIDES])
 async def delete_library_file(
     project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

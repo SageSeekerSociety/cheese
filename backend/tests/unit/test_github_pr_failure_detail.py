@@ -9,9 +9,14 @@ leaves `output.summary` null, and its `##[error]` line is the useless
 `Process completed with exit code 1.` rather than the failure itself.
 """
 
+import json
+import time
+from collections import OrderedDict
+
 import httpx
 import pytest
 
+from app.core import forge_etags, forge_quota
 from app.domain.review.github_pr import HttpxGitHubPrClient
 
 _JOB_ID = 93711698702
@@ -223,3 +228,222 @@ async def test_green_and_pending_checks_never_touch_the_logs_api():
         "https://api.github.com/repos/acme/widgets/commits/deadbeef/check-runs"
         "?per_page=100"
     ]
+
+
+@pytest.fixture
+def owned_tokens(monkeypatch):
+    monkeypatch.setattr(forge_quota, "_owners", {})
+    monkeypatch.setattr(forge_quota, "_readings", {})
+    monkeypatch.setattr(forge_quota, "_refused_until", {})
+    monkeypatch.setattr(forge_etags, "_kept", OrderedDict())
+    for token, installation in (("owned", 1), ("rotated", 1), ("other", 2)):
+        forge_quota.own(token, installation, time.time() + 3600)
+
+
+async def _read_failure(client, token="owned"):
+    return await client.check_state(
+        owner="acme", repo="widgets", ref="deadbeef", token=token
+    )
+
+
+def _log_requests(recorder):
+    return [r for r in recorder.requests if "/actions/jobs/" in r.url.path]
+
+
+@pytest.mark.anyio
+async def test_repeated_failure_polls_reuse_logs_but_read_live_checks(owned_tokens):
+    recorder = _Recorder(runs=[_check_run()])
+    client = _client(recorder)
+    first = await _read_failure(client)
+    second = await _read_failure(client)
+
+    assert second == first
+    assert len(_log_requests(recorder)) == 1
+    assert (
+        len([r for r in recorder.requests if r.url.path.endswith("/check-runs")]) == 2
+    )
+
+
+@pytest.mark.anyio
+async def test_failure_logs_refresh_after_five_minutes(owned_tokens):
+    recorder = _Recorder(runs=[_check_run()])
+    now = [0.0]
+    client = HttpxGitHubPrClient(
+        transport=httpx.MockTransport(recorder), clock=lambda: now[0]
+    )
+    await _read_failure(client)
+    now[0] = 299
+    await _read_failure(client)
+    assert len(_log_requests(recorder)) == 1
+
+    now[0] = 300
+    await _read_failure(client)
+    assert len(_log_requests(recorder)) == 2
+
+
+@pytest.mark.anyio
+async def test_a_rerun_job_reads_its_new_log_immediately(owned_tokens):
+    recorder = _Recorder(runs=[_check_run()])
+    client = _client(recorder)
+    await _read_failure(client)
+
+    next_url = _JOB_URL.replace(str(_JOB_ID), str(_JOB_ID + 1))
+    recorder.runs = [
+        _check_run(id=_JOB_ID + 1, details_url=next_url, html_url=next_url)
+    ]
+    recorder.log = "FAIL: a different failure after rerunning"
+    state, tail = await _read_failure(client)
+
+    assert state == "failure"
+    assert "a different failure after rerunning" in tail
+    assert len(_log_requests(recorder)) == 2
+
+
+@pytest.mark.anyio
+async def test_failure_logs_are_not_shared_across_tokens_or_installations(owned_tokens):
+    recorder = _Recorder(runs=[_check_run()])
+
+    def handler(request):
+        if (
+            "/actions/jobs/" in request.url.path
+            and request.headers.get("authorization") == "Bearer rotated"
+        ):
+            recorder.requests.append(request)
+            return httpx.Response(403)
+        return recorder(request)
+
+    client = _client(handler)
+    await _read_failure(client)
+    _, denied = await _read_failure(client, token="rotated")
+    assert "FAIL: the secret file" not in denied
+    assert len(_log_requests(recorder)) == 2
+
+    recorder.log = "FAIL: another installation's log"
+    _, tail = await _read_failure(client, token="other")
+    assert "another installation's log" in tail
+    assert len(_log_requests(recorder)) == 3
+
+
+@pytest.mark.anyio
+async def test_unowned_credentials_do_not_reuse_failure_logs(owned_tokens):
+    recorder = _Recorder(runs=[_check_run()])
+    client = _client(recorder)
+    await _read_failure(client, token="unowned")
+    recorder.log = "FAIL: freshly authorized log"
+    _, tail = await _read_failure(client, token="unowned")
+    assert "freshly authorized log" in tail
+    assert len(_log_requests(recorder)) == 2
+
+
+@pytest.mark.anyio
+async def test_an_unreachable_log_is_retried_on_the_next_poll(owned_tokens):
+    recorder = _Recorder(runs=[_check_run()])
+    failed = [True]
+
+    def handler(request):
+        if "/actions/jobs/" in request.url.path and failed[0]:
+            recorder.requests.append(request)
+            return httpx.Response(500)
+        return recorder(request)
+
+    client = _client(handler)
+    _, first = await _read_failure(client)
+    assert "FAIL: the secret file" not in first
+    failed[0] = False
+    _, second = await _read_failure(client)
+    assert "FAIL: the secret file" in second
+    assert len(_log_requests(recorder)) == 2
+
+
+class _MeteredRecorder(_Recorder):
+    """A stable GitHub that charges authenticated non-304 API responses."""
+
+    def __init__(self):
+        runs = []
+        for i in range(3):
+            url = _JOB_URL.replace(str(_JOB_ID), str(_JOB_ID + i))
+            runs.append(_check_run(id=_JOB_ID + i, details_url=url, html_url=url))
+        super().__init__(runs=runs)
+        self.api_reads = 0
+        self.charged_reads = 0
+        self.not_modified = 0
+
+    def __call__(self, request):
+        if request.url.host != "api.github.com":
+            return super().__call__(request)
+        self.api_reads += 1
+        path = request.url.path
+        if path.endswith("/check-runs") or path.endswith("/actions/runs"):
+            self.requests.append(request)
+            etag = '"stable"'
+            if request.headers.get("if-none-match") == etag:
+                self.not_modified += 1
+                return httpx.Response(304, headers={"etag": etag})
+            body = (
+                {"check_runs": self.runs, "total_count": len(self.runs)}
+                if path.endswith("/check-runs")
+                else {"workflow_runs": [], "total_count": 0}
+            )
+            response = httpx.Response(200, json=body, headers={"etag": etag})
+        else:
+            response = super().__call__(request)
+        self.charged_reads += 1
+        return response
+
+
+@pytest.mark.anyio
+async def test_one_hour_of_failure_polling_has_a_counted_request_budget(owned_tokens):
+    recorder = _MeteredRecorder()
+    now = [0.0]
+    client = HttpxGitHubPrClient(
+        transport=httpx.MockTransport(recorder), clock=lambda: now[0]
+    )
+    polls = 0
+    for second in range(0, 3600, 60):
+        now[0] = second
+        state, tail = await _read_failure(client)
+        assert state == "failure" and "FAIL: the secret file" in tail
+        polls += 1
+
+    counts = {
+        "polls": polls,
+        "api_http_reads": recorder.api_reads,
+        "primary_charged_reads": recorder.charged_reads,
+        "not_modified": recorder.not_modified,
+        "job_log_reads": len(_log_requests(recorder)),
+    }
+    print(json.dumps(counts, sort_keys=True))
+    assert counts["job_log_reads"] == 36
+    assert counts["primary_charged_reads"] == 38
+    assert counts["not_modified"] == 118
+    assert counts["api_http_reads"] == 156
+
+
+@pytest.mark.anyio
+async def test_an_empty_log_is_not_kept_while_uploading_finishes(owned_tokens):
+    recorder = _Recorder(runs=[_check_run()], log="")
+    client = _client(recorder)
+    _, first = await _read_failure(client)
+    assert "FAIL: the upload is ready" not in first
+
+    recorder.log = "FAIL: the upload is ready"
+    _, second = await _read_failure(client)
+    assert "FAIL: the upload is ready" in second
+    assert len(_log_requests(recorder)) == 2
+
+
+@pytest.mark.anyio
+async def test_failure_log_storage_evicts_older_jobs_at_capacity(
+    owned_tokens, monkeypatch
+):
+    from app.domain.review.github_pr import httpx_client
+
+    monkeypatch.setattr(httpx_client, "_FAILURE_LOG_CACHE_ENTRIES", 2)
+    recorder = _Recorder(runs=[])
+    client = _client(recorder)
+    for i in (0, 1, 2, 0):
+        url = _JOB_URL.replace(str(_JOB_ID), str(_JOB_ID + i))
+        recorder.runs = [_check_run(id=_JOB_ID + i, details_url=url, html_url=url)]
+        await _read_failure(client)
+
+    assert len(_log_requests(recorder)) == 4

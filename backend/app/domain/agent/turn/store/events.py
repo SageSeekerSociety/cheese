@@ -14,11 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.obs import scrub_secrets
 from app.core.sentences import say
 from app.domain.agent.step_output import output_tail
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.output_effects import append_output, fail_step, retain_step_output
+from app.domain.block.models import BlockKind
+from app.domain.block.output_effects import (
+    append_output,
+    fail_step,
+    retain_step_calls,
+    retain_step_output,
+)
 from app.domain.block.queries import output_event_exists, turn_action_exists
 from app.domain.block.schemas import BlockOut
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 
 logger = logging.getLogger("app.domain.agent.room_events")
 
@@ -150,7 +156,7 @@ async def _mark_step_failed(
             )
             await session.commit()
         return payload
-    except Exception:  # noqa: BLE001 — a step's verdict is not worth a turn
+    except Exception:  # a step's verdict is not worth a turn
         logger.warning("could not mark step %s failed", block_id)
         return None
 
@@ -170,6 +176,29 @@ async def _record_step_output(
             )
             await session.commit()
         return payload
-    except Exception:  # noqa: BLE001 — a step's output is not worth a turn
+    except Exception:  # a step's output is not worth a turn
         logger.warning("could not record the output of step %s", block_id)
+        return None
+
+
+async def _record_step_calls(
+    sessions: async_sessionmaker, block_id: uuid.UUID, calls: list[dict]
+) -> dict | None:
+    """Keep the tools a step called on its own, their arguments scrubbed like
+    its output. Never fails a turn over it."""
+    kept = [
+        {**call, "arg": scrub_secrets(str(call.get("arg") or ""))} for call in calls
+    ]
+    try:
+        async with sessions() as session:
+            block = await retain_step_calls(session, block_id, kept)
+            payload = (
+                BlockOut.model_validate(block).model_dump(mode="json")
+                if block is not None
+                else None
+            )
+            await session.commit()
+        return payload
+    except Exception:  # a step's calls are not worth a turn
+        logger.warning("could not record the calls of step %s", block_id)
         return None

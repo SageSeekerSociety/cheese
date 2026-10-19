@@ -92,17 +92,15 @@ async def project_distribution(db, project_id) -> dict:
             )
         else:
             specs[environment.spec] = specs.get(environment.spec, 0) + 1
-    devices = sql_device_service(db)
-    listed = []
-    for device_id, agents in on_devices.items():
-        device = await devices.get_device(device_id)
-        listed.append(
-            {
-                "device_id": device_id,
-                "name": device.name if device is not None else None,
-                "agents": agents,
-            }
-        )
+    devices = await sql_device_service(db).get_devices(list(on_devices))
+    listed = [
+        {
+            "device_id": device_id,
+            "name": devices[device_id].name if device_id in devices else None,
+            "agents": agents,
+        }
+        for device_id, agents in on_devices.items()
+    ]
     listed.sort(key=lambda entry: (-entry["agents"], entry["name"] or ""))
     return {
         "sandboxes": [
@@ -144,26 +142,45 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
         )
     )
 
+    task_ids = {
+        row.conversation_id
+        for row, topic, _e in placed
+        if row.conversation_id != topic.id
+    }
+    task_titles = (
+        dict(
+            (
+                await db.execute(
+                    select(Task.id, Task.title).where(Task.id.in_(task_ids))
+                )
+            ).all()
+        )
+        if task_ids
+        else {}
+    )
+    agent_names: dict[tuple, dict] = {}
+
     out = []
     for row, topic, environment in sorted(
         placed, key=lambda entry: entry[0].updated_at, reverse=True
     ):
-        task = (
-            await db.get(Task, row.conversation_id)
-            if row.conversation_id != topic.id
-            else None
-        )
+        has_task = row.conversation_id in task_titles
+        agent_key = (topic.id, row.agent_handle)
+        if agent_key not in agent_names:
+            agent_names[agent_key] = await _agent_name(
+                db, project, topic, row.agent_handle
+            )
         out.append(
             (
                 topic,
                 {
                     "id": str(row.id),
                     "topic_id": str(topic.id),
-                    "task_id": str(task.id) if task is not None else None,
-                    "task_title": task.title if task is not None else None,
+                    "task_id": str(row.conversation_id) if has_task else None,
+                    "task_title": task_titles.get(row.conversation_id),
                     "topic_title": topic.title,
                     "agent_handle": row.agent_handle,
-                    **await _agent_name(db, project, topic, row.agent_handle),
+                    **agent_names[agent_key],
                     "environment": environment.model_dump(),
                     "last_active": row.updated_at.isoformat(),
                     "working": topic.id in busy,

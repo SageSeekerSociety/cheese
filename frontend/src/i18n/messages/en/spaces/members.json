@@ -1,0 +1,31 @@
+{
+  "columns": {
+    "joinedVia": "Joined via",
+    "member": "Member",
+    "role": "Role"
+  },
+  "confirmRevoke": "Remove {name} as an admin?",
+  "confirmTransfer": "Transfer ownership to {name}? You will become an admin.",
+  "count": "{n} people",
+  "createdSpace": "Creator",
+  "empty": "No members",
+  "invite": "Invite members",
+  "inviteCodes": "Invite codes",
+  "inviteDomainGroups": "Email domain groups",
+  "loadMembersFailed": "Couldn't load members",
+  "makeAdmin": "Make admin",
+  "revoke": "Remove admin",
+  "role": {
+    "admin": "Admin",
+    "adminHint": "Review challenges, data, categories and invites",
+    "member": "Member",
+    "memberHint": "Take part: challenges and announcements",
+    "owner": "Owner",
+    "ownerHint": "Full control, including member roles"
+  },
+  "search": "Search by name or username",
+  "title": "Members",
+  "transfer": "Transfer ownership",
+  "unknown": "Unknown",
+  "you": "(you)"
+}

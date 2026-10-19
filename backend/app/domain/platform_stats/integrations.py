@@ -33,6 +33,7 @@ from app.domain.delivery.models import Delivery
 from app.domain.identity.models import AgentBinding
 from app.domain.oauth.models import UserOAuthConnection
 from app.domain.passkey.models import PasskeyCredential
+from app.domain.platform_stats.ports import count
 from app.domain.user.models import User
 
 
@@ -57,16 +58,18 @@ class IntegrationsRepository:
         「没有 refresh_token」这一档单独列，是因为它和「过期」不是一件事：过期的还
         能刷，没有 refresh 的到期那天就**永远**接不上了，而账号看起来仍然连着。
         """
-        total = await self._count(UserOAuthConnection)
-        expired = await self._count(
-            UserOAuthConnection, UserOAuthConnection.token_expires < now
+        total = await count(self._session, UserOAuthConnection)
+        expired = await count(
+            self._session, UserOAuthConnection, UserOAuthConnection.token_expires < now
         )
-        expiring_soon = await self._count(
+        expiring_soon = await count(
+            self._session,
             UserOAuthConnection,
             UserOAuthConnection.token_expires >= now,
             UserOAuthConnection.token_expires < now + timedelta(days=7),
         )
-        no_refresh = await self._count(
+        no_refresh = await count(
+            self._session,
             UserOAuthConnection,
             or_(
                 UserOAuthConnection.refresh_token.is_(None),
@@ -136,12 +139,14 @@ class IntegrationsRepository:
         两档必须分开：前者补发扫描还会再试，后者按设计已放弃 —— 合成一个「未送达」
         会让「有救的」和「没救的」看起来一样，而管理员的动作完全不同。
         """
-        unsent = await self._count(
+        unsent = await count(
+            self._session,
             Delivery,
             Delivery.sent_at.is_(None),
             Delivery.attempts < MAX_ATTEMPTS,
         )
-        dead = await self._count(
+        dead = await count(
+            self._session,
             Delivery,
             Delivery.sent_at.is_(None),
             Delivery.attempts >= MAX_ATTEMPTS,
@@ -194,9 +199,3 @@ class IntegrationsRepository:
                 ),
             },
         ]
-
-    async def _count(self, model: Any, *where: Any) -> int:
-        stmt = select(func.count()).select_from(model)
-        if where:
-            stmt = stmt.where(*where)
-        return int((await self._session.execute(stmt)).scalar_one() or 0)

@@ -183,6 +183,13 @@ async def lookup_account(session: AsyncSession, q: str) -> dict | None:
     return {"id": user_id, "handle": handle, "name": name, "avatar_id": avatar_id}
 
 
+async def lookup_accounts(session: AsyncSession, qs: Sequence[str]) -> dict[str, str]:
+    """Each asked username or email, lowercased and stripped, -> the handle of
+    the one person it names, in one statement; see
+    ``UserRepository.lookup_accounts``. Values that name nobody are absent."""
+    return await UserRepository(session).lookup_accounts(qs)
+
+
 async def search_accounts(
     session: AsyncSession, q: str, limit: int
 ) -> Sequence[tuple[str, str]]:
@@ -636,7 +643,6 @@ class UserAuthService:
                 "answer_count": stats["answerCount"],
                 "team_count": stats["teamCount"],
                 "task_participation_count": stats["taskParticipationCount"],
-                "knowledge_count": stats["knowledgeCount"],
                 "submission_count": stats["submissionCount"],
             }
         )

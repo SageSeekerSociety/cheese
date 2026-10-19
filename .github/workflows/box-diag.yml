@@ -27,17 +27,93 @@ permissions:
 jobs:
   dev-box:
     runs-on: [self-hosted, cheese-dev]
-    timeout-minutes: 5
+    # Ten, not five: two of the probes below walk the disk and ask Docker about
+    # every volume, and on the box this job exists for that is minutes. Both are
+    # individually bounded (see "Disk breakdown"); this is the ceiling that keeps
+    # a slow one from cancelling the job and losing every probe after it.
+    timeout-minutes: 10
     steps:
+      # Its OWN directory, never the workspace Deploy uses. cheese-dev runs one
+      # job at a time in ONE workspace (_work/cheese/cheese), and a checkout
+      # there is only as good as what the last job left in its .git. This job
+      # poisoned it once: the non-cone sparse checkout it used until #4271 left
+      # `.git/info/sparse-checkout` and `core.sparseCheckout=true` behind, and
+      # the next Deploy's checkout re-applied the old pattern and lost
+      # deploy/check-auto-deploy.py (runs 39116642574, 39120411594,
+      # 39121017323). #4275 repairs that state before the deploy job and
+      # deploy-drift check out; this change removes the source, so nothing has
+      # to repair it again.
+      #
+      # The probe takes `.box-diag/` in that workspace instead — one depth-1
+      # checkout, ~145MB (105MB worktree + 40MB .git) — and every step that
+      # needs a file from the tree says so by path. Deploy's `git clean -ffdx`
+      # removes the directory between runs, so nothing accumulates; a probe must
+      # not be able to change the thing it is probing.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          sparse-checkout: deploy/app-container.sh
-          sparse-checkout-cone-mode: false
+          path: .box-diag
+      # Disk comes first on purpose: on 2026-10-18 the dev box was at 98%
+      # (527 of 567 GiB) and the probe that should have said what filled it ran
+      # after a database read that had already gone stale and failed the job,
+      # so the one run that mattered never reached it. Nothing below can keep
+      # these two from reporting.
+      - name: Deployed images and disk
+        run: |
+          docker ps --format '{{.Names}}  {{.Image}}' || true
+          df -h / | tail -1
+      # Read-only, top-down: whole filesystems, then the biggest directories
+      # under the trees that grow without bound, then what docker itself says
+      # it could reclaim. `sudo -n` never prompts — without passwordless sudo
+      # the same walk runs unprivileged and prints whatever it may read.
+      # Deletes nothing; a probe must not be able to change the box.
+      #
+      # Every heavy call is bounded. The `du` walk is minutes of metadata on
+      # this box (deploy/dev-box-disk-cleanup.sh measured a whole-root walk at
+      # over ten), and `docker system df -v` asks the daemon about every volume
+      # before printing anything — over five minutes on the 718-volume box this
+      # probe exists for. Unbounded, either outlives the job timeout, and a
+      # cancelled job loses every probe after it; `continue-on-error` cannot
+      # save a cancelled job. The plain summary is printed first, so a verbose
+      # call that times out still leaves an answer behind.
+      - name: Disk breakdown
+        run: |
+          echo "===== filesystem usage ====="
+          df -h / /tmp /var/lib/docker 2>/dev/null || true
+          echo "===== biggest directories (depth 2) ====="
+          if sudo -n true 2>/dev/null; then DU=(sudo -n du); else DU=(du); fi
+          du_out="$RUNNER_TEMP/box-diag-du.txt"
+          rc=0
+          # `du` exits non-zero for any unreadable path even when it listed
+          # everything; only 124 means it ran out of time. Tell the two apart
+          # rather than calling every partial read a timeout.
+          timeout 150 "${DU[@]}" -xh --max-depth=2 /home /var/lib/docker /tmp \
+            >"$du_out" 2>/dev/null || rc=$?
+          sort -h "$du_out" 2>/dev/null | tail -40 || true
+          if [ "$rc" -eq 124 ]; then
+            echo "(du hit the 150s bound; above is what it reached)"
+          fi
+          echo "===== docker space usage ====="
+          timeout 60 docker system df 2>&1 || true
+          # To a file first: piped straight into `head`, a long listing would
+          # end on SIGPIPE and read as a failure it never had.
+          dfv_out="$RUNNER_TEMP/box-diag-docker-df-v.txt"
+          rc=0
+          timeout 120 docker system df -v >"$dfv_out" 2>&1 || rc=$?
+          head -60 "$dfv_out" || true
+          if [ "$rc" -eq 124 ]; then
+            echo "(docker system df -v hit the 120s bound; above is what it printed)"
+          fi
       # The backend runs as cheese-backend-1 or cheese-backend-b-1 depending
       # on the last release (deploy/deploy-docker.sh, "Two slots").
       - name: Find the running backend container
-        run: echo "BACKEND=$(bash deploy/app-container.sh backend)" >> "$GITHUB_ENV"
+        run: echo "BACKEND=$(bash .box-diag/deploy/app-container.sh backend)" >> "$GITHUB_ENV"
       - name: Read session host readiness and recent startup failures
+        # The readiness/startup read is one probe among many; the rest of the
+        # job must still report when it breaks. It did on 2026-10-18: the query
+        # still named `blocks.topic_id`, a column b6fcc6362b79 folded into
+        # `conversation_id`, so asyncpg raised UndefinedColumnError and took
+        # every later step — the disk ones above included — down with it.
+        continue-on-error: true
         run: |
           docker exec -i "$BACKEND" python - <<'PY'
           import asyncio
@@ -67,7 +143,7 @@ jobs:
                   async with db.transaction(readonly=True):
                       await db.execute("SET LOCAL statement_timeout = '15s'")
                       rows = await db.fetch("""
-                          SELECT created_at, topic_id,
+                          SELECT created_at, conversation_id,
                             CASE
                               WHEN concat(content, meta->>'detail') LIKE '%机器尚未配置或未连接%'
                                 THEN 'session_host_unavailable'
@@ -131,10 +207,6 @@ jobs:
                       cur.execute(Q)
                       show(cur.fetchone())
           '
-      - name: Deployed images and disk
-        run: |
-          docker ps --format '{{.Names}}  {{.Image}}' || true
-          df -h / | tail -1
       - name: Backend log tail
         # The backend process's own stdout is not reachable any other way: the
         # box has no public inbound, `backend_log.py` is a POST-only intake, and

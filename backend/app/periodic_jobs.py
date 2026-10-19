@@ -12,16 +12,27 @@ from datetime import datetime
 from app.core.background import PeriodicJobs, PeriodicRunner
 from app.core.db import SessionFactory
 from app.domain import backend_log
+from app.domain.agent import checkout_sweep
 from app.domain.agent import periodic as agent_periodic
+from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent_instance.adapters import task_teammate
+from app.domain.block.queries import turn_starts
 from app.domain.block.services import last_block_at
+from app.domain.ci_activity import periodic as ci_activity_periodic
 from app.domain.delivery import periodic as delivery_periodic
+from app.domain.delivery.agent import (
+    dispatch_pending as dispatch_pending_work,
+)
+from app.domain.delivery.agent import (
+    record_task_instruction,
+)
+from app.domain.delivery.ledger import settle_card
 from app.domain.docs_site import periodic as docs_periodic
 from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
-from app.domain.ratchet import periodic as ratchet_periodic
 from app.domain.review import periodic as review_periodic
 from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
@@ -36,10 +47,10 @@ PERIODIC_JOB_NAMES = (
     "forge credential cache cleanup",
     "forge orphan account sweep",
     "quiet task reminder",
-    "pr poll",
-    "task pr poll",
-    "landing watch",
-    "draft pr sweep",
+    "pr poll",  # forge_bound: PR status reads
+    "task pr poll",  # forge_bound: task branch/PR reads
+    "landing watch",  # forge_bound: merge, checks and deployment reads
+    "draft pr sweep",  # forge_bound: branch/compare reads and PR creation
     "orphan sweep",
     "closed task stop",
     "queued message sweep",
@@ -59,12 +70,14 @@ PERIODIC_JOB_NAMES = (
     "notification digest",
     "delivery resend",
     "docs question retention",
+    "turn resumes",
+    "failed turn resume deliveries",
     "timed deliveries",
     "overdue deliveries",
     "routines",
     "task deadline sweep",
     "memory dream",
-    "ratchet ingest",
+    "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
     "wake watch",
 )
 
@@ -122,6 +135,14 @@ def periodic_jobs(
         chat=chat, sessions=chat.session_factory, get_runner=get_runner
     )
 
+    # 投递包的那几件事，review 自己够不着，由这里递给它（`review.periodic`）。
+    # 泵不带参数：会话工厂、房间服务和跑机器在这里就定好了，tick 到的时候只差
+    # 「放」这一个动作。
+    async def dispatch_pending() -> object:
+        return await dispatch_pending_work(
+            chat.session_factory, chat=chat, runner=chat.work_runner
+        )
+
     async def last_activity(topic_ids: set[uuid.UUID]) -> dict[uuid.UUID, datetime]:
         return await last_block_at(chat.session_factory, topic_ids)
 
@@ -137,8 +158,14 @@ def periodic_jobs(
     review_periodic.register_periodic_jobs(
         jobs,
         chat=chat,
+        announce=announce,
         gate_sessions=chat.session_factory,
         gate_nudge_factory=gate_nudges,
+        settle_card=settle_card,
+        record_instruction=record_task_instruction,
+        dispatch_pending=dispatch_pending,
+        task_teammate=task_teammate,
+        machines=checkout_sweep.sweep,
     )
     machine_periodic.register_periodic_jobs(
         jobs,
@@ -147,19 +174,25 @@ def periodic_jobs(
         compute=compute,
         sessions=sessions,
     )
-    usage_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    usage_periodic.register_periodic_jobs(
+        jobs, sessions=sessions, turn_starts=turn_starts
+    )
     backend_log.register_periodic_jobs(jobs)
     run_record_periodic.register_periodic_jobs(jobs, sessions=sessions)
     notification_periodic.register_periodic_jobs(jobs, sessions=sessions)
     delivery_periodic.register_periodic_jobs(
-        jobs, sessions=sessions, chat=chat, get_runner=get_runner
+        jobs,
+        sessions=sessions,
+        chat=chat,
+        get_runner=get_runner,
+        machines=checkout_sweep.sweep,
     )
     docs_periodic.register_periodic_jobs(jobs, sessions=sessions)
     routine_periodic.register_periodic_jobs(
         jobs, sessions=sessions, chat=chat, get_runner=get_runner
     )
     task_periodic.register_periodic_jobs(jobs, sessions=sessions)
-    ratchet_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
     wake_watch_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)
 

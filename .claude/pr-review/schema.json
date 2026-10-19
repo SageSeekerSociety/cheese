@@ -12,17 +12,16 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["severity", "kind", "file", "line", "title", "failure", "evidence", "rung", "confirm_with"],
+        "required": ["severity", "kind", "file", "line", "title", "failure", "evidence", "rung"],
         "properties": {
-          "severity": {"enum": ["blocker", "major", "minor"]},
-          "kind": {"enum": ["runtime", "test", "ci", "rule", "claim"]},
+          "severity": {"enum": ["blocker", "major"], "description": "Only what must be fixed. A minor or a nit changes no code the author is going to touch and is dropped, not filed: 88% of the minors this method filed were never acted on (#1936)"},
+          "kind": {"enum": ["runtime", "test", "ci", "rule", "claim", "spec"], "description": "spec is a finding against the requirement contract: missing work, or work the contract did not ask for (step 5b)"},
           "file": {"type": "string"},
           "line": {"type": "integer", "minimum": 0},
           "title": {"type": "string", "description": "One line, the defect itself"},
           "failure": {"type": "string", "description": "Concrete input or state -> wrong result"},
           "evidence": {"type": "string", "description": "What was read, with file:line at the pinned SHA, and why refutation failed"},
-          "rung": {"type": "integer", "minimum": 1, "maximum": 5},
-          "confirm_with": {"type": "string", "description": "Exact command that would confirm or kill it; empty only when rung >= 4"}
+          "rung": {"type": "integer", "minimum": 4, "maximum": 5, "description": "Evidence rung: 4 is a command run that would fail loudly if the claim were wrong, 5 is the failure reproduced live. A candidate below 4 is dropped, not filed"}
         }
       }
     },

@@ -14,7 +14,7 @@ async function openChannel(page: Page) {
     title: `支线 ${Date.now()}`,
   })) as { id: string };
   await page.goto(`/projects/${project.id}/topics/${room.id}`);
-  const composer = page.locator('.composer-input textarea').first();
+  const composer = page.locator('.composer-input .ProseMirror').first();
   await expect(composer).toBeEnabled({ timeout: 30_000 });
   return composer;
 }
@@ -72,7 +72,7 @@ test.describe('支线', () => {
     const pane = page.getByTestId('thread-pane');
     await expect(pane).toBeVisible({ timeout: 15_000 });
     const reply = `e2e thread reply ${Date.now()}`;
-    const inThread = pane.locator('.composer-input textarea').first();
+    const inThread = pane.locator('.composer-input .ProseMirror').first();
     await expect(inThread).toBeEnabled({ timeout: 20_000 });
     await inThread.fill(reply);
     await inThread.press('Enter');

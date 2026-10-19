@@ -1,7 +1,7 @@
 """when a person opted out of their content being used for training
 
 Revision ID: b3c41f7e9a20
-Revises: b29905fee2b7
+Revises: d6a4c8f0192b
 Create Date: 2026-10-11 04:00:00.000000
 
 一列，可空：这个人拒绝把自己的内容用于模型训练、提供给合作方的时间（隐私政策
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b3c41f7e9a20"
-down_revision: str | Sequence[str] | None = "b29905fee2b7"
+down_revision: str | Sequence[str] | None = "d6a4c8f0192b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

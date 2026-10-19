@@ -7,9 +7,8 @@ Read [`../AGENTS.md`](../AGENTS.md) first; this file only adds what applies here
 Nothing under `src/components/**` may import `@/api`, `@/services/*` or
 `vue-router`. Data arrives as a prop or from a composable the
 view called; `src/views/**` is where knowing that a server exists is allowed.
-CI runs `pnpm run lint:boundary` (`lint:boundary:update` rewrites the baseline
-downward); violations are frozen in `import-boundary-baseline.json`, so read the
-current counts there. Reason, and the four component principles:
+CI runs `pnpm run lint:boundary`, which fails on any violation. Reason, and the
+four component principles:
 [`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
 
 ## When a component needs to know where it is
@@ -35,9 +34,7 @@ may reference them. Import `storageGet`, `storageSet`, `storageRemove`,
 `storageAvailable`: they never throw, and a
 blocked storage just means the preference does not persist. Keep the key and the
 value format that is already in users' browsers. CI runs
-`pnpm run lint:storage` (`lint:storage:update` rewrites the baseline downward);
-the references still in the tree are frozen per file in
-`browser-storage-baseline.json`. Rule and messages:
+`pnpm run lint:storage`, which fails on any reference. Rule and messages:
 `scripts/browser-storage-ratchet-core.mjs`. `useStorage` from `@vueuse/core` is
 fine where a reactive, cross-tab value is what you want.
 
@@ -47,15 +44,9 @@ fine where a reactive, cross-tab value is what you want.
 component, one stage per state, no backend/login/environment. To add one:
 `node scripts/catalog-scaffold.mjs <src/...vue>` prints the entry skeleton (every
 sentence a person owes is `TODO(catalog)`); paste it into a `catalog*.ts` volume
-that `catalog.ts` imports and spreads; run
-`pnpm exec vitest run src/views/demo/catalog.spec.ts`; then
-`pnpm run lint:catalog:update`. Steps in Chinese:
+that `catalog.ts` imports and spreads; and run
+`pnpm exec vitest run src/views/demo/catalog.spec.ts`. Steps in Chinese:
 [`../docs/manual/dev/frontend.md#catalog`](../docs/manual/dev/frontend.md#catalog).
-
-**Every grade-A component must be catalogued or pending.** `pnpm run lint:catalog`
-fails on a grade-A component in neither `catalog.ts` and its volumes nor the
-`pending` list in `catalog-baseline.json`, and that list may only shrink. A
-layout or a shell is not a candidate.
 
 ## A new scene runs standalone from day one
 
@@ -103,8 +94,8 @@ clips row popovers), `../desktop/AGENTS.md` (a browser repro misses
 
 After merging main, compare a failing scene's `ready`/`debt` membership on both
 sides, not only the grade error, and never move it back to debt or weaken the
-grader to go green. The type ratchet reports counts (its JSON too); to see
-diagnostics for a small change, use a disposable tsconfig under `frontend/` that
+grader to go green. To see type diagnostics for a small change without a
+whole-tree run, use a disposable tsconfig under `frontend/` that
 extends `tsconfig.json` and keeps ambient types such as `vite/client`, run
 `tsc --noEmit -p <config>` (or `vue-tsc`), then delete it — diagnosis, not proof.
 Read baseline counts from their JSON, not a prose snapshot; when lowering a
@@ -114,14 +105,20 @@ Metric-page merge handling:
 
 ## Caps and conventions
 
-- Files under `src/` over **1000 lines** may not grow.
-  `.claude/scripts/check-file-sizes.py` judges each changed file against its size
-  at the merge base with `origin/main`.
 - `pnpm run lint` is the read-only ESLint (`lint:fix` writes); never gate on the
   writing form. Design tokens and the two themes:
   [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).
 - From the repository root, `task ci:fast` before you push runs the checks your
   changed paths select; `task fe:check` runs the whole frontend check.
+- `pnpm run test:ratchet` tests the check scripts themselves
+  (`scripts/*.test.mjs`) and takes minutes. Run it locally when the change
+  touches `scripts/`, an `eslint*.config.mjs` or a `*-baseline.json`, and then
+  only the test file for the script you changed
+  (`node --test scripts/<name>.test.mjs`). `task ci:fast` never selects it. CI
+  runs the whole set on every frontend change, and a few of those tests also
+  read the rest of the tree (`mdi-` icon names across `src/`, `index.html`,
+  `demo.html`, `nginx.conf`, `src/styles/fonts.css`, `src/views/demo/`,
+  `tsconfig.app.json`), so an ordinary change can still turn it red there.
 - A dev server may already be running in this worktree; do not restart one you
   did not start.
 - A new page under `src/views/admin/features/`: the chart components take props

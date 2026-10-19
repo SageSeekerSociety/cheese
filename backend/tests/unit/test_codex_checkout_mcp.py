@@ -4,8 +4,9 @@ A repository whose `.mcp.json` names a stdio server gets its tools in a Claude
 Code room and in a pi room. A Codex room is started before it holds its
 machine's lease, with a target that names no machine server; the lease is what
 names them. So a Codex session started on its leased machine takes the lease
-before it lists its tools, as Claude Code's session does, and the server runs
-on the machine with the project's hooks around its calls.
+before it opens, as Claude Code's session does, and its own MCP client then
+reaches the server at the session's gateway; the server runs on the machine
+with the project's hooks around its calls.
 
 The machine is a real executor over a checkout whose `.mcp.json` and
 `.claude/settings.json` are the repository's own. The platform's side is a
@@ -31,6 +32,7 @@ from app.domain.agent.harness.claude_code.remote_execution.bootstrap import (
 from app.domain.agent.harness.codex.tools import RemoteTools
 from tests.pinned_claude import claude_binary
 from tests.support import executor_release
+from tests.support.mcp_gateway_client import call_tool, text_of, tool_names
 
 # The repository's server: it answers with where it runs and what it was asked,
 # and leaves a mark for every call it receives.
@@ -175,7 +177,7 @@ def platform(machine, monkeypatch, lease_answers):
         def log_message(self, *_):
             pass
 
-        def do_POST(self):  # noqa: N802 — the stdlib's name
+        def do_POST(self):  # the stdlib's name
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path == "/lease" and lease_answers:
                 seen.append("lease")
@@ -242,41 +244,33 @@ def _log(work: Path) -> list[dict]:
 def test_a_codex_room_lists_and_calls_the_checkouts_server(machine, platform):
     work, _ = machine
     tools = RemoteTools(_session(str(work)))
-    names = [tool["name"] for tool in asyncio.run(tools.discover())]
-    assert "mcp__notes__where" in names
+    asyncio.run(tools.discover())
     assert platform[0] == "lease", platform
+    assert "notes" in tools.mcp_servers
+    gateway = tools.gateway()
+    gateway.start()
+    try:
+        assert tool_names(gateway, "notes") == ["where"]
 
-    def call(call_id, note):
-        return asyncio.run(
-            tools(
-                "item/tool/call",
-                {
-                    "tool": "mcp__notes__where",
-                    "callId": call_id,
-                    "arguments": {"note": note},
-                },
-            )
+        allowed = call_tool(gateway, "notes", "where", {"note": "hello"})
+        assert not allowed.get("isError"), allowed
+        assert text_of(allowed) == f"CHECKOUT_SERVER from-the-checkout hello @{work}"
+        pre, post = _log(work)
+        assert (pre["hook_event_name"], pre["tool_name"]) == (
+            "PreToolUse",
+            "mcp__notes__where",
+        )
+        assert pre["tool_input"] == {"note": "hello"}
+        assert (post["hook_event_name"], post["tool_name"]) == (
+            "PostToolUse",
+            "mcp__notes__where",
         )
 
-    allowed = call("call-1", "hello")
-    assert allowed["success"] is True, allowed
-    assert allowed["contentItems"][0]["text"] == (
-        f"CHECKOUT_SERVER from-the-checkout hello @{work}"
-    )
-    pre, post = _log(work)
-    assert (pre["hook_event_name"], pre["tool_name"]) == (
-        "PreToolUse",
-        "mcp__notes__where",
-    )
-    assert pre["tool_input"] == {"note": "hello"}
-    assert (post["hook_event_name"], post["tool_name"]) == (
-        "PostToolUse",
-        "mcp__notes__where",
-    )
-
-    denied = call("call-2", "FORBIDDEN")
-    assert denied["success"] is False
-    assert "PROJECT_POLICY: no forbidden notes" in denied["contentItems"][0]["text"]
+        denied = call_tool(gateway, "notes", "where", {"note": "FORBIDDEN"})
+        assert denied["isError"] is True
+        assert "PROJECT_POLICY: no forbidden notes" in text_of(denied)
+    finally:
+        gateway.close()
     assert [e["hook_event_name"] for e in _log(work)[2:]] == ["PreToolUse"]
     assert (work / "server-calls.txt").read_text() == "hello\n", (
         "a denied call never reaches the server"
@@ -286,11 +280,9 @@ def test_a_codex_room_lists_and_calls_the_checkouts_server(machine, platform):
 def test_a_codex_session_at_the_placeholder_lists_no_checkout_server(machine, platform):
     """Before it is relaunched onto its machine, a session lists none of the
     machine's stdio servers, as on every harness."""
-    names = [
-        tool["name"]
-        for tool in asyncio.run(RemoteTools(_session(DEFERRED_WORKSPACE)).discover())
-    ]
-    assert not [name for name in names if name.startswith("mcp__notes__")]
+    tools = RemoteTools(_session(DEFERRED_WORKSPACE))
+    asyncio.run(tools.discover())
+    assert "notes" not in tools.mcp_servers
 
 
 def test_a_codex_session_whose_machine_is_being_prepared_starts_at_the_placeholder(
@@ -302,9 +294,7 @@ def test_a_codex_session_whose_machine_is_being_prepared_starts_at_the_placehold
     servers, its own tools taking the machine once it is there."""
     work, _ = machine
     lease_answers.append({"unavailable": "环境仍在准备", "preparing": True})
-    names = [
-        tool["name"]
-        for tool in asyncio.run(RemoteTools(_session(str(work))).discover())
-    ]
+    tools = RemoteTools(_session(str(work)))
+    names = [tool["name"] for tool in asyncio.run(tools.discover())]
     assert "Bash" in names
-    assert not [name for name in names if name.startswith("mcp__notes__")]
+    assert "notes" not in tools.mcp_servers

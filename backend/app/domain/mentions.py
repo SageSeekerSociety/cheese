@@ -24,6 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.text import markdown_preview
 from app.domain.block.models import Block
 from app.domain.conversation.models import ConversationKind
+from app.domain.living_doc import links as doc_links
+from app.domain.membership.ports import ProjectTeam
 from app.domain.membership.roster import roster_rows
 from app.domain.room_task.models import Task
 from app.domain.thread.models import Thread
@@ -83,6 +85,7 @@ async def canonicalize_refs(
     project_id: uuid.UUID,
     text: str,
     *,
+    team: ProjectTeam,
     exclude_topic_id: uuid.UUID | None = None,
 ) -> str:
     """Load the project's roster + topic list and canonicalize friendly @refs
@@ -92,7 +95,7 @@ async def canonicalize_refs(
     发的那条 chat（结论 12）就是从这里变成可点名、通知得到的一条消息的。"""
     if not text or "@" not in text:
         return text
-    roster = await roster_rows(session, project_id)
+    roster = await roster_rows(session, project_id, team=team)
     topics = [
         {"id": str(t.id), "title": t.title}
         for t in await TopicRepository(session).list_for_project(project_id)
@@ -181,9 +184,9 @@ def _ref_ids(text: str) -> list[str]:
 async def dangling_refs(
     session: AsyncSession, project_id: uuid.UUID, text: str
 ) -> list[str]:
-    """The ``<#id>`` references in ``text`` that name no channel, task or 支线
-    of this project, as written. A reader sees each as a reference that opens
-    nothing."""
+    """The ``<#id>`` references in ``text`` that name no channel, task, 支线
+    or document of this project, as written. A reader sees each as a reference
+    that opens nothing."""
     written = _ref_ids(text)
     if not written:
         return []
@@ -194,12 +197,17 @@ async def dangling_refs(
         except ValueError:
             continue
     refs = await conversation_refs(session, parsed.values())
+    documents = set(
+        await doc_links.documents_of_projects_team(session, project_id, parsed.values())
+    )
     return [
         raw
         for raw in written
         if raw not in parsed
-        or (ref := refs.get(parsed[raw])) is None
-        or ref.project_id != project_id
+        or (
+            parsed[raw] not in documents
+            and ((ref := refs.get(parsed[raw])) is None or ref.project_id != project_id)
+        )
     ]
 
 
@@ -208,7 +216,7 @@ def dangling_refs_warning(dangling: list[str]) -> str:
     that stored them or the read that found them."""
     named = "、".join(f"`<#{ref}>`" for ref in dangling)
     return (
-        f"{named} 指不到这个项目里的任何频道、任务或支线，读的人看到的是一个打不开的"
-        "「引用不存在」。`<#id>` 只认频道、任务和支线自己的 id：换成正确的 id，"
-        "或者改成普通文字。"
+        f"{named} 指不到这个项目里的任何频道、任务、支线或文档，读的人看到的是一个"
+        "打不开的「引用不存在」。`<#id>` 只认频道、任务、支线和文档自己的 id："
+        "换成正确的 id，或者改成普通文字。"
     )

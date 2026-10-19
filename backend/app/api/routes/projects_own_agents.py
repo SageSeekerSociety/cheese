@@ -47,6 +47,7 @@ from app.domain.device.login_kind import ConnectionKind
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -163,7 +164,7 @@ async def get_own_agents(
     project = await ProjectService(db).get_or_404(project_id)
     can_manage = True
     try:
-        await MemberService(db).require_manager(project_id, actor)
+        await MemberService(db).require(project_id, actor, Permission.edit_settings)
     except ForbiddenError:
         can_manage = False
     allowed = allows_own_agents(project.settings)
@@ -195,6 +196,7 @@ async def get_own_agents(
 @router.put(
     "/{project_id}/own-agents",
     **typed_response(OwnAgentsOut),
+    dependencies=[ROUTE_DECIDES],
 )
 async def set_own_agents(
     project_id: uuid.UUID,
@@ -210,7 +212,7 @@ async def set_own_agents(
     them there."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     service = ProjectService(db)
     project = await service.get_or_404(project_id)
     patch: dict[str, object] = {}

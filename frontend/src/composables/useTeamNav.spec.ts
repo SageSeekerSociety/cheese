@@ -87,7 +87,7 @@ async function mount(path = '/inbox') {
         children: [
           { path: '', name: 'TeamsDetailDefault', component: blank },
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
-          { path: 'knowledge', name: 'TeamsDetailKnowledge', component: blank },
+          { path: 'docs', name: 'TeamsDetailDocs', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
           { path: 'credits', name: 'TeamsDetailCredits', component: blank },
         ],
@@ -189,12 +189,16 @@ describe('目录的名单', () => {
 describe('退出团队', () => {
   it('确认了才退：这一行消失，项目清单跟着刷新', async () => {
     confirm.mockResolvedValue(true)
-    removeMember.mockResolvedValue({})
+    removeMember.mockImplementation(async () => {
+      getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组')] })
+      return {}
+    })
     await mount('/teams/lab')
     await fireEvent.contextMenu(await screen.findByLabelText('收起 数据课第三组'))
     await fireEvent.click(await screen.findByText('退出团队'))
 
     await waitFor(() => expect(removeMember).toHaveBeenCalledWith(team('lab', '').id, 42))
+    await waitFor(() => expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox'))
     await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
     expect(refreshProjects).toHaveBeenCalled()
   })

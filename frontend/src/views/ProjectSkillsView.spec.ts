@@ -97,8 +97,13 @@ const base = {
   updated_at: '2026-09-25T00:00:00Z',
 }
 
+/** 导入技能要「改项目设置」这一项权限（#3830），看的是后端给的 `my_permissions`，不是角色名。 */
 function manager(yes: boolean) {
-  vi.mocked(getProject).mockResolvedValue({ id: 'p1', can_manage_members: yes } as never)
+  vi.mocked(getProject).mockResolvedValue({
+    id: 'p1',
+    my_role: 'admin',
+    my_permissions: yes ? ['edit_settings'] : ['speak', 'comment'],
+  } as never)
 }
 
 beforeEach(() => {
@@ -274,7 +279,7 @@ describe('技能', () => {
     expect(vi.mocked(updateProjectSkill).mock.calls[0][1].files).toEqual({ 'scripts/a.py': 'print(1)\n' })
   })
 
-  it('不是项目管理员，页头上没有导入', async () => {
+  it('没有改项目设置的权限，页头上没有导入', async () => {
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('站会纪要'))
     expect(command('skills.import')).toBeUndefined()

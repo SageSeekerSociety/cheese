@@ -1,0 +1,9 @@
+{
+  "add": "添加文件",
+  "limit": "单个文件不超过 {size}",
+  "remove": "移除 {name}",
+  "removeFailed": "「{name}」移除失败：{error}",
+  "title": "附件",
+  "uploadFailed": "「{name}」上传失败：{error}",
+  "uploading": "上传中…"
+}

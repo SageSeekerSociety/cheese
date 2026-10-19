@@ -14,6 +14,10 @@ import DocThreadCard from '../components/panels/doc/DocThreadCard.vue'
 import { usePanelDoc } from './usePanelDoc'
 
 const addComment = vi.fn(async () => ({}))
+
+// 文档的链接那一侧（#3827）：打开文档时问一次被引用、打 # 时问一次能引用的文档。这里不关心。
+vi.mock('@/api/docLinks', () => ({ getDocumentBacklinks: async () => ({ links_to: [], linked_from: [] }) }))
+vi.mock('@/lib/linkableDocuments', () => ({ linkableDocuments: async () => [] }))
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   addComment: (...a: unknown[]) => addComment(...(a as [])),
@@ -65,6 +69,7 @@ describe('asking the AI teammate in a document comment', () => {
       } as never,
       global: { plugins: [createVuetify()] },
     })
-    expect(screen.getByText('@芝士 来自课程要求第 3 页')).toBeTruthy()
+    // The teammate's name is a chip inside the line, so the line is read whole.
+    expect(screen.getByText(/来自课程要求第 3 页/).textContent).toBe('@芝士 来自课程要求第 3 页')
   })
 })

@@ -30,7 +30,6 @@
   "taskMachineFailed": "任务的环境没能完成这次操作：{error}。可以查看已提交版本",
   "taskMachineNotResponding": "任务的环境暂时无法响应，重新读取文件后再操作；也可以查看已提交版本",
   "taskNoOwnFileVersion": "任务没有独立的文件版本",
-  "taskNotStarted": "这个任务还没开始，负责人点「开始」后才能改动项目",
   "taskNothingCommitted": "这个任务还没有提交文件",
   "taskRequired": "请选择任务",
   "taskSandboxReleased": "任务的环境空闲后已释放；可以查看已提交版本",

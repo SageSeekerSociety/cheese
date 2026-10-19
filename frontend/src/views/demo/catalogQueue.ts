@@ -22,7 +22,9 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import {
   QUEUE_DETAIL_ITEM,
   queueAssigneeProps,
+  queueDetailBodyProps,
   queueDetailProps,
+  queueDetailSideProps,
   queueEmptyProps,
   queueHeaderProps,
   queuePageProps,
@@ -33,6 +35,8 @@ import {
 
 import AdminAssigneeSelect from '@/components/admin/AdminAssigneeSelect.vue'
 import AdminQueueDetail from '@/components/admin/AdminQueueDetail.vue'
+import AdminQueueDetailBody from '@/components/admin/AdminQueueDetailBody.vue'
+import AdminQueueDetailSide from '@/components/admin/AdminQueueDetailSide.vue'
 import AdminQueueEmpty from '@/components/admin/queue/AdminQueueEmpty.vue'
 import AdminQueueHeader from '@/components/admin/queue/AdminQueueHeader.vue'
 import AdminQueueToolbar from '@/components/admin/queue/AdminQueueToolbar.vue'
@@ -220,6 +224,70 @@ export const QUEUE_ENTRIES: CatalogEntry[] = [
         note: '指派 / 改优先级 / 标安全问题 / 加备注失败时，原话挂在分诊面板上方，面板本身照旧可用。',
         props: queueDetailProps({ writeError: '指派失败：没有这个账号' }),
         expect: '指派失败',
+      },
+    ],
+  },
+  {
+    id: 'admin-queue-detail-side',
+    title: 'AdminQueueDetailSide',
+    about:
+      '详情左栏：返回、身份（状态轨 + 标题 + 支持数）、分诊面板（收起时只是一行摘要）、事实五项、状态时间线。1280 以上它是左边那 440px，以下它是上面那一段。',
+    file: 'src/components/admin/AdminQueueDetailSide.vue',
+    component: AdminQueueDetailSide,
+    needs: UI,
+    states: [
+      {
+        name: '分诊面板展开着',
+        note: '展开时才是那三个控件：状态梯子（当前那一格不画按钮，只标出来）、指派、优先级。梯子竖着排，因为队列页的 1/2/3 三个键就是这几行。',
+        props: queueDetailSideProps(),
+        expect: '返回',
+      },
+      {
+        name: '面板收起，且还没指派',
+        note: '收起时只留一行「状态 · 指派 · 优先级」，空值一律不画 —— 所以这一档说的是「未指派」而不是留白。',
+        props: queueDetailSideProps({ item: UNASSIGNED_FEEDBACK, triageOpen: false }),
+        expect: '未指派',
+      },
+      {
+        name: '还没拿到这一条',
+        note: '`item` 为空时只剩顶上那颗「返回」：身份、面板、事实、时间线全挂在 `item` 上，一条都不画。',
+        props: queueDetailSideProps({ item: null }),
+        expect: '返回',
+      },
+    ],
+  },
+  {
+    id: 'admin-queue-detail-body',
+    title: 'AdminQueueDetailBody',
+    about:
+      '详情右栏：顶上一行事实，正文那几段（正文 / 为什么 / 期望、现场、会话信息、讨论、安全问题、备注），以及加载、读不到、没有这条三档。',
+    file: 'src/components/admin/AdminQueueDetailBody.vue',
+    component: AdminQueueDetailBody,
+    needs: UI,
+    states: [
+      {
+        name: '一条完整的反馈',
+        note: '备注那个框是 `v-model` 的一半：草稿攥在详情那一层，因为操作栏那颗「提交备注」在那边。',
+        props: queueDetailBodyProps(),
+        expect: '在看板上按一下刷新',
+      },
+      {
+        name: '正在读',
+        note: '拿不到内容之前先摆四条骨头、各三行，不是一块空白 —— 这一页从列表点进来几乎必然经过这一档。',
+        props: queueDetailBodyProps({ item: null, loading: true }),
+        expectSelector: '.qdet__skel',
+      },
+      {
+        name: '读失败',
+        note: '主副两行是给不知道往哪看的人的地图，最后那一行才是服务端给的事实：原话照旧画出来，不另写一句「操作失败」。',
+        props: queueDetailBodyProps({ item: null, error: 'TypeError: Failed to fetch' }),
+        expect: 'TypeError: Failed to fetch',
+      },
+      {
+        name: '没有这一条',
+        note: '和「读不到」是两件事：这一档没有原话可画，因为服务端什么都没说错。',
+        props: queueDetailBodyProps({ item: null }),
+        expect: '这条反馈不存在',
       },
     ],
   },

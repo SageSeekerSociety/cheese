@@ -240,6 +240,9 @@ class Layout:
         on PATH itself, and the reference is given it there."""
         return {
             **contract.fixture_env(self.home, self.session, port),
+            # Native platform sessions receive the same directory shorthand
+            # that client.prepare gives sessions using a shell prefix.
+            client.WORKING_DIRECTORY: str(self.project),
             "CLAUDE_CONFIG_DIR": str(self.config),
             "CLAUDE_CODE_TMPDIR": str(self.temporary),
             "SHELL": shutil.which(self.shell),

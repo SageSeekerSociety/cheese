@@ -476,7 +476,7 @@ def sql_log(client):
 
     statements: list[str] = []
 
-    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def record(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
     engine = client.test_request_factory.kw["bind"].sync_engine

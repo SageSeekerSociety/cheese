@@ -57,6 +57,7 @@ function onKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the send and cancel shortcuts bubble here from the field -->
   <div class="comment-box" @keydown="onKeydown">
     <v-textarea
       ref="field"

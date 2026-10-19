@@ -60,13 +60,6 @@ NO_MATCH = "no_match"
 FAILED = "failed"
 
 
-def _ratio(numerator: int | None, denominator: int | None) -> float | None:
-    """``None`` when the denominator is empty — a rate with no base is not 0."""
-    if not denominator or numerator is None:
-        return None
-    return numerator / denominator
-
-
 async def _visits(session: AsyncSession, since, until) -> dict:
     """Who came: distinct visitors, how many of them signed in, and the daily shape."""
     window = (DocsVisit.day >= since.date(), DocsVisit.day < until.date())
@@ -241,14 +234,14 @@ async def load(session: AsyncSession, *, days: int) -> dict[str, Any]:
                 # The denominator is signed-in visitors: 问芝士 needs an account,
                 # so counting against everyone who read the docs would make the
                 # share fall whenever a signed-out reader arrived.
-                "share": _ratio(questions["askers"], visits["logged_in"]),
+                "share": stats.ratio(questions["askers"], visits["logged_in"]),
             },
             "questions": {
                 "value": total,
-                "per_asker": _ratio(total, questions["askers"]),
+                "per_asker": stats.ratio(total, questions["askers"]),
             },
             "answer_rate": {
-                "value": _ratio(answered, total),
+                "value": stats.ratio(answered, total),
                 "answered": answered,
                 "total": total,
             },

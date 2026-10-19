@@ -1,5 +1,6 @@
 {
   "close": "收起概览",
+  "closeFiles": "收起文件",
   "detailPair": "{first}，{second}",
   "fileCount": "{count} 个文件",
   "inProgress": "{count} 件进行中",
@@ -7,6 +8,7 @@
   "newChanges": "有新改动",
   "newContent": "有新内容",
   "open": "打开概览",
+  "openFiles": "打开文件",
   "pickTopic": "选择一个频道查看文档",
   "tabDetail": "{label}（{detail}）"
 }

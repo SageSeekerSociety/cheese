@@ -1,7 +1,6 @@
 """平台工具在 pi 这边的样子：一份工具目录，和一次调用。
 
-pi has no MCP client, so a room's platform tools cannot arrive the way they do
-for the other harnesses. What CAN arrive is the file they are built out of: the
+A room's platform tools reach pi as extension tools, built out of one file: the
 platform's CLI (`sandbox/cheese`, shipped in the runner archive as `cheese.py`)
 carries both the platform's tool table (`PLATFORM_TOOLS`, run here against the
 backend) and the CLI's argparse tree for what must run on the room's machine as
@@ -41,7 +40,7 @@ def _module() -> Any:
     # file only to fingerprint itself (`--version`), which this never asks.
     module = types.ModuleType("cheese_platform_tools")
     module.__file__ = str(checkout)
-    exec(compile(source, "cheese", "exec"), module.__dict__)  # noqa: S102
+    exec(compile(source, "cheese", "exec"), module.__dict__)
     return module
 
 

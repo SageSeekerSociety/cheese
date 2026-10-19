@@ -1,5 +1,8 @@
+from functools import partial
+
 from fastapi import Depends, Request
 
+from app.api.doc_access import ensure_team_documents
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
@@ -8,19 +11,16 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
-from app.domain.knowledge.services import KnowledgeService
 from app.domain.materials.services import MaterialService
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.review_service import SpaceReviewService
-from app.domain.space.services import SpaceLabels, SpaceService
+from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
-from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
-    UserRealNameRepository,
     UserRepository,
 )
 
@@ -52,14 +52,14 @@ async def require_reviewed_space(
 async def get_space_service(db=Depends(get_db)) -> SpaceService:
     # The space domain wires its own repositories (see `SpaceService.for_routes`);
     # the route hands in only the three collaborators that belong to other
-    # domains. `knowledge_service` / `material_service` guard the write side of
-    # `teaching`'s references — a 项目集 may only name 知识 its teacher could
-    # already read, 课件 that exist, and 课件 an ordinary member could read
+    # domains. `document_check` / `material_service` guard the write side of
+    # `teaching`'s references — a 项目集 may only name team documents its teacher
+    # could already read, 课件 that exist, and 课件 an ordinary member could read
     # (never one locked to a board's managers).
     return SpaceService.for_routes(
         db,
         task_repo=TaskRepository(session=db),
-        knowledge_service=KnowledgeService.for_lookup(db),
+        document_check=partial(ensure_team_documents, db),
         material_service=MaterialService.for_lookup(db),
     )
 
@@ -93,21 +93,6 @@ async def get_space_topics_service(
     db=Depends(get_db),
 ) -> SpaceTagsService:
     return SpaceTagsService(session=db)
-
-
-async def get_space_user_realname_service(
-    db=Depends(get_db),
-) -> UserRealNameService:
-    user_repo = UserRepository(session=db)
-    profile_repo = UserProfileRepository(session=db)
-    realname_repo = UserRealNameRepository(session=db)
-    return UserRealNameService(
-        session=db,
-        user_repo=user_repo,
-        profile_repo=profile_repo,
-        realname_repo=realname_repo,
-        space_labels=SpaceLabels(session=db),
-    )
 
 
 async def _ensure_space_visible(*, db, space_id: int, user_id: int) -> None:

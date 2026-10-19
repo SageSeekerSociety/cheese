@@ -15,6 +15,16 @@ import aiofiles.os
 import aiofiles.ospath
 
 from app.core.config import settings
+from app.core.errors import UpstreamUnavailableError
+
+logger = logging.getLogger(__name__)
+
+
+class ObjectStoreUnreachableError(UpstreamUnavailableError):
+    """The bucket did not answer: the same operation succeeds once the way out
+    to it is back."""
+
+    retryable = True
 
 
 @dataclass
@@ -170,7 +180,37 @@ class S3StorageBackend(StorageBackend):
 
     @asynccontextmanager
     async def _get_client(self):  # type: ignore[override]
+        """A client for one operation, and the operation's failure to reach the
+        bucket said as what it is.
+
+        By the time a connection error reaches here the SDK has already retried
+        it (``retries`` in ``_client``), so it is an outage of the way out to the bucket
+        — the box's uplink, a proxy — and not a fault of this server: answered
+        503 and retryable (`ObjectStoreUnreachableError`), not as an unhandled
+        500 with a traceback per request. An answer from the bucket, a 403 or a
+        404, is not this and passes through unchanged.
+        """
+        # deferred-import: start-up cost; botocore loads only for a bucket call
+        from botocore import exceptions as bucket
+
+        try:
+            async with self._client() as client:
+                yield client
+        except (bucket.ConnectionError, bucket.HTTPClientError) as exc:
+            # Said here, with its cause, because the 503 the caller gets does
+            # not carry it: a TLS failure or a wrong endpoint looks exactly like
+            # an outage from outside, and this line is what tells them apart.
+            # WARNING, not ERROR: a bucket that is away is not this server's
+            # fault, and the alert channel is for this server's faults.
+            logger.warning("object store unreachable: %s: %s", type(exc).__name__, exc)
+            raise ObjectStoreUnreachableError() from exc
+
+    @asynccontextmanager
+    async def _client(self):
+        # deferred-import: start-up cost; botocore loads only for a bucket call
         import aioboto3
+
+        # deferred-import: start-up cost; aiobotocore.config, for the same bucket call
         from aiobotocore.config import AioConfig
 
         kwargs = dict(
@@ -271,75 +311,6 @@ class S3StorageBackend(StorageBackend):
                 ExpiresIn=expires_s,
             )
 
-    async def multipart_upload(self, key: str, content_type: str) -> tuple[str, bool]:
-        """The id of the multipart upload in progress to ``key``, started if
-        there is none, and whether it was started now: whoever comes back to
-        an object it was sending goes on with the parts the bucket already
-        holds. Of several, the one listed first, so that two callers settle on
-        the same one. R2 spells the id of one upload differently each time it
-        lists it, so the id says which upload it is to the bucket alone."""
-        async with self._get_client() as client:
-            listed = await client.list_multipart_uploads(
-                Bucket=self._bucket, Prefix=key
-            )
-            for upload in listed.get("Uploads", []):
-                if upload["Key"] == key:
-                    return str(upload["UploadId"]), False
-            started = await client.create_multipart_upload(
-                Bucket=self._bucket, Key=key, ContentType=content_type
-            )
-            return str(started["UploadId"]), True
-
-    async def presign_parts(
-        self, key: str, upload_id: str, count: int, expires_s: int
-    ) -> list[str]:
-        """URLs to PUT parts 1 to ``count`` of ``upload_id`` with, as
-        ``presign`` is for a whole object: each part is signed on its own."""
-        async with self._get_client() as client:
-            return [
-                await client.generate_presigned_url(
-                    "upload_part",
-                    Params={
-                        "Bucket": self._bucket,
-                        "Key": key,
-                        "UploadId": upload_id,
-                        "PartNumber": number,
-                    },
-                    ExpiresIn=expires_s,
-                )
-                for number in range(1, count + 1)
-            ]
-
-    async def complete_multipart(
-        self, key: str, upload_id: str, etags: list[str]
-    ) -> None:
-        """Join the parts, in order, given each part's ETag as the bucket
-        answered it."""
-        async with self._get_client() as client:
-            await client.complete_multipart_upload(
-                Bucket=self._bucket,
-                Key=key,
-                UploadId=upload_id,
-                MultipartUpload={
-                    "Parts": [
-                        {"PartNumber": number, "ETag": etag}
-                        for number, etag in enumerate(etags, start=1)
-                    ]
-                },
-            )
-
-    async def abort_multipart(self, key: str) -> None:
-        """Drop every unfinished upload to ``key`` and the parts it holds."""
-        async with self._get_client() as client:
-            listed = await client.list_multipart_uploads(
-                Bucket=self._bucket, Prefix=key
-            )
-            for upload in listed.get("Uploads", []):
-                if upload["Key"] == key:
-                    await client.abort_multipart_upload(
-                        Bucket=self._bucket, Key=key, UploadId=upload["UploadId"]
-                    )
-
     async def stat(self, key: str) -> tuple[int, str] | None:
         """The object's size and ETag, or None for an object that is not there.
         An object written in one PUT has its bytes' MD5 as ETag; one joined from
@@ -365,7 +336,7 @@ class S3StorageBackend(StorageBackend):
 def multipart_etag(part_md5s: list[str]) -> str:
     """The ETag S3 and R2 give an object joined from parts with these MD5s."""
     joined = b"".join(bytes.fromhex(md5) for md5 in part_md5s)
-    return f"{hashlib.md5(joined).hexdigest()}-{len(part_md5s)}"  # noqa: S324
+    return f"{hashlib.md5(joined).hexdigest()}-{len(part_md5s)}"
 
 
 def generate_storage_key(filename: str, prefix: str = "uploads") -> str:

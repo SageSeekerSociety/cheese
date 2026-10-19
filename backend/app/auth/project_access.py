@@ -10,22 +10,13 @@ and before this module existed they answered it three separate ways -
 which had already drifted apart once (see below). An answer that lives in three
 places is three answers.
 
-What the answer is: **the owner, the roster, a member of the team the project
-belongs to (minus anyone who has left THIS project - see
-``ProjectMemberExclusion``), the 出题者 of the 赛题 the project was opened for,
-or a 管理员 (an admin/creator) of the 题目板 that 赛题 sits on.** The first three
-are exactly the claims ``ProjectRepository.list_visible_to`` lists a project
-under, and that is not a coincidence kept for its own sake - a listing and a
-door have to agree. The fourth and fifth are not in that listing (a teacher's
-sidebar does not want forty projects they do not work in); they are here
-because the student dashboard needs to open one that a class produced.
-``_is_asker_of_the_task`` explains why the fourth stops at the task's creator;
-the fifth is the board's teacher, in ``app.auth.space_access``. Until
-2026-09-04 two of the three copies accepted only the first two, so a teammate
-saw the project in their sidebar and on the team page, clicked in, and got 403
-from every room behind it. Measured on dev: a member who had accepted a team
-invitation minutes earlier got 200 on ``/projects/{id}`` and 403 on
-``/topics?project_id=``.
+What the answer is: **anyone who sits in the project** — its owner, an admin,
+a member or a mentor, as ``app.auth.project_roles.standing`` places them. The
+出题者 of the 赛题 a project was opened for and the admins of its space are not
+in it unless the project made them mentors (#3830, #945): setting a problem
+does not open the projects that answer it. Until 2026-09-04 three copies of
+this rule had drifted apart, so a teammate saw the project in their sidebar and
+on the team page, clicked in, and got 403 from every room behind it.
 
 Team membership is keyed by user id while every other authorization key here is
 the handle string, so the handle is resolved to its user rather than trusting a
@@ -42,71 +33,141 @@ a member".
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence, Set
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.space_access import is_admin_of_projects_task
+from app.auth.project_roles import owner_of, standing
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import Project, ProjectMember
 from app.domain.project.repositories import ProjectRepository
-from app.domain.task.repositories import TaskRepository
-from app.domain.team.repositories import TeamRepository
+from app.domain.project_permissions import Seat
+from app.domain.team.models import TeamUserRelation
+from app.domain.team.protocol import TeamMemberRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
-from app.domain.user.repositories import UserRepository
+from app.domain.user.models import User
 
 
 async def may_read_project(
     session: AsyncSession, *, project_id: uuid.UUID, handle: str | None
 ) -> bool:
-    """Whether ``handle`` may read this project's conversations and summaries.
+    """Whether ``handle`` may read this project's conversations and summaries:
+    anyone who sits in it (``app.auth.project_roles``), mentors included.
 
     ``handle is None`` (nobody authenticated) is False, never True: "nobody
     asked" must not read as "anybody may".
     """
-    if not handle:
-        return False
-    if await MemberRepository(session).get(project_id=project_id, user_handle=handle):
-        return True
+    return await standing(session, project_id, handle) is not None
+
+
+async def may_read_project_many(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    handles: Sequence[str],
+    agents: Set[str] | None = None,
+) -> dict[str, bool]:
+    """``may_read_project`` for many handles, in a fixed number of reads.
+
+    The answer is the one :func:`standing` gives handle by handle; only the
+    price changes. Asking one at a time reads the project, its owner, its
+    exclusions and the team relations once per person, so a room roster of
+    people the project does not list costs a statement for every seat — the
+    shape a 20-seat room's audience check paid ~160 statements for. Here the
+    project is read once, its exclusions, its roster rows and the team
+    relations once, and each handle is decided in memory.
+
+    ``agents`` lets a caller that already asked
+    :meth:`IdentityService.agents_among` for these exact handles hand the
+    answer over instead of paying for the same two reads twice.
+    """
     project = await ProjectRepository(session).get(project_id)
-    if project is None:
-        return False
-    if project.owner_handle == handle:
-        return True
-    user = await UserRepository(session).get_by_username(handle)
-    if user is None:
-        return False
-    if await _is_asker_of_the_task(session, project=project, user_id=user.id):
-        return True
-    # The board's teacher: an admin (or creator) of the 题目板 the project's
-    # 赛题 sits on. The product now says a 题目板 is a course and its 管理员 is
-    # its 管理员 — the person who runs the board, not merely whoever set one
-    # problem, and a course has many problems and several 助教. Deliberately
-    # still ONE board and the people who administer it (see
-    # ``app.auth.space_access``), not ``TaskVisibilityService.can_view_task``:
-    # that would widen the audience with a participation row or an email
-    # domain, i.e. hand a whole class of students every team's conversations.
-    if await is_admin_of_projects_task(
-        session, external_task_id=project.external_task_id, user_id=user.id
-    ):
-        return True
-    # 小队那条主张要减去「他不在这个项目里」：退出项目记下的那一条事实
-    # （``ProjectMemberExclusion``）。它只减这一条 —— 「在小队里」和「在这个项目里」
-    # 是两件事，而按下的那颗按钮说的是后者。
-    #
-    # 位置是这份名单读出来的顺序：所有者、出题者、题目板管理员三条主张都在它前面，
-    # 因为它们说的本来就不是「他在这个项目里」。一个退出过项目的人后来接手了它（转让）
-    # 照样是所有者；而所有者退不掉，``MemberService.leave`` 先拒他。
-    #
-    # 名册行那一条（函数最上面那个 return）也在它前面，因为两者不可能同时成立：名册行
-    # 是显式加进去的，而加人就清掉这条事实（``MemberRepository.add``）。
-    if await MemberRepository(session).is_excluded(
-        project_id=project_id, user_handle=handle
-    ):
-        return False
-    return await TeamRepository(session).is_team_member(project.team_id, user.id)
+    return await _may_read_project_many(
+        session, project, handles=handles, agents=agents
+    )
+
+
+async def _may_read_project_many(
+    session: AsyncSession,
+    project: Project | None,
+    *,
+    handles: Sequence[str],
+    agents: Set[str] | None = None,
+) -> dict[str, bool]:
+    """``may_read_project_many`` over a project the caller has already read.
+
+    The branches follow ``app.auth.project_roles.standing`` in order — agent,
+    project owner, team owner, team admin unless excluded, then 「on the roster,
+    or in the project through the team and not excluded」 — because the answer
+    has to stay the same one, handle for handle.
+    """
+    asked = list(dict.fromkeys(handles))
+    # No handle is nobody, and nobody reads nothing — the answer
+    # ``may_read_project`` gives ``None``. Every handle asked about gets a key,
+    # so a caller can index the answer with what it passed in.
+    named = [handle for handle in asked if handle]
+    if project is None or not named:
+        return {handle: False for handle in asked}
+    out: dict[str, bool] = {handle: False for handle in asked if not handle}
+    if agents is None:
+        agents = await IdentityService(session).agents_among(named)
+    owner = await owner_of(session, project)
+    listed = set(
+        (
+            await session.scalars(
+                select(ProjectMember.user_handle).where(
+                    ProjectMember.project_id == project.id,
+                    ProjectMember.user_handle.in_(named),
+                )
+            )
+        ).all()
+    )
+    excluded = await MemberRepository(session).excluded_handles(project.id)
+    team_roles: dict[str, int] = {}
+    if project.team_id is not None:
+        rows = await session.execute(
+            select(User.username, TeamUserRelation.role)
+            .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+            .where(
+                TeamUserRelation.team_id == project.team_id,
+                TeamUserRelation.deleted_at.is_(None),
+                User.deleted_at.is_(None),
+                User.username.in_(named),
+            )
+        )
+        team_roles = {name: role for name, role in rows.all()}
+    for handle in named:
+        if handle in agents:
+            # An AI teammate sits only where the project put it on the roster.
+            out[handle] = handle in listed
+            continue
+        if handle == owner:
+            out[handle] = True
+            continue
+        team_role = team_roles.get(handle)
+        if team_role == TeamMemberRole.OWNER:
+            out[handle] = True
+            continue
+        if team_role == TeamMemberRole.ADMIN and handle not in excluded:
+            out[handle] = True
+            continue
+        out[handle] = handle in listed or (
+            team_role is not None and handle not in excluded
+        )
+    return out
+
+
+async def may_write_project(
+    session: AsyncSession, *, project_id: uuid.UUID, handle: str | None
+) -> bool:
+    """Whether ``handle`` works in this project rather than looking on: everyone
+    who sits in it but a mentor. What exactly they may change is the one
+    permission each route asks for (``project_roles.may``)."""
+    found = await standing(session, project_id, handle)
+    return found is not None and found.seat is not Seat.mentor
 
 
 async def outsiders_reading(
@@ -119,9 +180,12 @@ async def outsiders_reading(
     project's own people (a room that is not private) and the room's roster
     (any room), and only a roster seat can belong to somebody outside the
     project: someone added to one channel, or still in a private chat after
-    leaving the project. So the roster alone is asked, and the full answer of
-    ``may_read_project`` is paid only for the seats the project roster and its
-    owner leave unexplained. A seat with no handle is nobody and reads nothing.
+    leaving the project. So the roster alone is asked, and ``may_read_project``
+    is paid only for the seats the project roster and its owner leave
+    unexplained — asked once for all of them (:func:`may_read_project_many`),
+    not once per seat, because the roster's length is the room's to choose and
+    the answer's cost must not be. A seat with no handle is nobody and reads
+    nothing.
     """
     seats = [
         m.member_handle
@@ -146,41 +210,13 @@ async def outsiders_reading(
     if not unexplained:
         return []
     agents = await IdentityService(session).agents_among(unexplained)
-    return [
-        handle
-        for handle in unexplained
-        if handle not in agents
-        and not await may_read_project(session, project_id=project_id, handle=handle)
-    ]
-
-
-async def _is_asker_of_the_task(
-    session: AsyncSession, *, project: Project, user_id: int
-) -> bool:
-    """出题者: the person who set the 赛题 this project was opened for.
-
-    A 赛题 registration project is owned by whoever applies
-    (``ProjectService.for_participation`` passes the applicant as
-    ``owner_handle``), so the teacher who set the problem is a stranger to every
-    project it produces - they cannot read a single one of its rooms, and the
-    dashboard that is supposed to show them how their class did has nothing to
-    stand on. The link that identifies them is ``Project.external_task_id`` →
-    ``Task.creator_id``, and it is on the task, not on the project.
-
-    Deliberately the TASK CREATOR only. ``TaskVisibilityService.can_view_task``
-    answers a wider question that is right for a task page (space admins,
-    participants, an allowed email domain) and wrong here: a class-wide domain
-    allowlist would hand every student of a class the conversations of every
-    team's project, which is the over-permission this module exists to close,
-    just with a school's blessing. The 出题者 is not 全站管理员, either - this is
-    one person and the projects of one task.
-    """
-    if project.external_task_id is None:
-        return False
-    task = await TaskRepository(session).get_by_id(project.external_task_id)
-    if task is None or task.creator_id is None:
-        return False
-    return task.creator_id == user_id
+    people = [handle for handle in unexplained if handle not in agents]
+    if not people:
+        return []
+    readable = await _may_read_project_many(
+        session, project, handles=people, agents=agents
+    )
+    return [handle for handle in people if not readable[handle]]
 
 
 async def may_read_topic(

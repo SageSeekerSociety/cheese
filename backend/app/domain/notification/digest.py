@@ -41,15 +41,15 @@ from sqlalchemy import or_, select
 
 from app.core.db import SessionFactory
 from app.core.email import get_email_sender, is_placeholder_email
-from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification.letter import (
     letter_for,
     render_digest_html,
     render_digest_text,
 )
 from app.domain.notification.maintenance import display_names
+from app.domain.notification.models import ChannelDelivery
 from app.domain.notification.outbox import LEASE_SECONDS
-from app.domain.notification.preferences import DigestCadence, EmailMode
+from app.domain.notification.preferences import DigestCadence, EmailMode, Preferences
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.user.models import User
 
@@ -101,12 +101,15 @@ async def send_digest_email(
 
 
 async def _claim_due_digest(
-    sessions: SessionFactory, receiver_id: int, *, now: datetime
+    sessions: SessionFactory,
+    receiver_id: int,
+    pref: Preferences,
+    *,
+    now: datetime,
 ) -> tuple[uuid.UUID, list[dict[str, Any]]] | None:
     """这个人的摘要攒够他的周期了吗？够了就认领，返回 (令牌, 内容)；没够返回 None。"""
     stamp = datetime.now(UTC)
     async with sessions() as session:
-        pref = await PreferencesRepository(session).for_user(receiver_id)
         period = _PERIOD.get(pref.digest_cadence)
         # 关掉了摘要、或把邮件整个关掉了：这一轮不带他的。
         if period is None or pref.email_mode is EmailMode.off:
@@ -182,8 +185,13 @@ async def run_notification_digests(
                 .distinct()
             )
         )
+        preferences = await PreferencesRepository(session).for_users(receivers)
     for receiver_id in receivers:
-        claimed = await _claim_due_digest(sessions, receiver_id, now=now)
+        pref = preferences[receiver_id]
+        period = _PERIOD.get(pref.digest_cadence)
+        if period is None or pref.email_mode is EmailMode.off:
+            continue
+        claimed = await _claim_due_digest(sessions, receiver_id, pref, now=now)
         if claimed is None:
             continue
         token, items = claimed

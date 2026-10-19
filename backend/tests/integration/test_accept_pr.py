@@ -20,6 +20,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.announce import announce
+from app.domain.delivery.agent import (
+    record_task_instruction,
+)
+from app.domain.delivery.ledger import settle_card
 from app.domain.review import github_pr
 from app.domain.review.github_pr import OpenedPR
 from app.domain.review.github_pr_status import PullRequestStatus
@@ -36,6 +41,7 @@ from tests.integration.conftest import (
 from tests.landing import summary_turn_ends
 from tests.machine_work import machine_commits
 from tests.support import git_store
+from tests.support.review_ports import task_teammate
 
 REPO = "acme/widgets"
 
@@ -187,7 +193,15 @@ def _poll(client) -> dict:
     """
     from app.domain.review import pr_poll
 
-    return client.portal.call(pr_poll.poll_open_prs, _chat_service())
+    return client.portal.call(
+        lambda: pr_poll.poll_open_prs(
+            _chat_service(),
+            announce,
+            settle_card=settle_card,
+            record_instruction=record_task_instruction,
+            task_teammate=task_teammate,
+        )
+    )
 
 
 def _room(client, topic_id: str) -> str:
@@ -464,9 +478,6 @@ class FakeGitHubPrClient:
             signals = [s for s in signals if s.kind != "comment"]
         return signals
 
-    async def check_run_names(self, *, owner, repo, ref, token) -> set[str]:
-        return {r["name"] for r in self._derived_check_runs(ref)}
-
     async def update_branch(self, *, owner, repo, number, token) -> bool:
         self.update_branch_calls.append(number)
         self.update_branch_tokens.append(token)
@@ -505,11 +516,11 @@ def app_world(client, monkeypatch):
     The fake records proposal edits and remote merges. Repository protection is
     disabled so the project approval policy is exercised by these tests.
     """
-    from app.domain.agent import github_app
     from app.domain.project import forge as project_forge
+    from app.domain.project import github_app
     from app.domain.project.models import ProjectForge
     from app.domain.repository import forge_files
-    from app.domain.review import pr_publish
+    from app.domain.review import forge_clients, pr_publish
     from app.domain.review import services as review_services
 
     fake = FakeGitHubPrClient()
@@ -545,6 +556,7 @@ def app_world(client, monkeypatch):
             title: str,
             body: str,
             draft: bool = False,
+            as_user_token: str | None = None,
         ) -> OpenedPR:
             if head in recorded["prs_by_head"]:
                 adopted = recorded["prs_by_head"][head]
@@ -642,7 +654,7 @@ def app_world(client, monkeypatch):
     monkeypatch.setattr(
         project_forge, "github_app_tokens_for_project", _tokens_for_project
     )
-    monkeypatch.setattr(project_forge, "GitHubPRClient", _AppPrOpener)
+    monkeypatch.setattr(forge_clients, "GitHubPRClient", _AppPrOpener)
 
     async def provision(project_id, session, **kwargs):
         binding = ProjectForge(
@@ -662,7 +674,12 @@ def app_world(client, monkeypatch):
 
     async def branch_head(project_id, session, branch, **_):
         repo = git_store.path(project_id)
-        head = git_store.git(repo, "rev-parse", branch).strip()
+        if not repo.exists():
+            return None
+        result = git_store.run(["git", "rev-parse", "--verify", branch], repo, 20, None)
+        if result.returncode != 0:
+            return None
+        head = result.stdout.strip()
         ahead = int(git_store.git(repo, "rev-list", "--count", f"main..{head}"))
         fake.compare_status_by_pair.setdefault(
             ("main", head), "ahead" if ahead else "identical"
@@ -872,6 +889,17 @@ def _age_queue_mirror(client, card_id: str, *, seconds: int) -> str:
     return stale_at
 
 
+def _watch_window() -> int:
+    """「还在等 CI」的持有窗口，秒 —— `queries.CHECK_WATCH_TICKS` 个轮询间隔
+    （默认 3 × 60）。拨时钟的用例照它算，别复写「900」「300」这类数字：
+    `accept_pr_poll_interval_s` 一动它们就悄悄错位，而错位的那一侧是断言不
+    再钉在边界上（2026-10-16 300→60 时这里红过一次）。"""
+    from app.core.config import settings
+    from app.domain.review.queries import CHECK_WATCH_TICKS
+
+    return CHECK_WATCH_TICKS * settings.accept_pr_poll_interval_s
+
+
 def _waiting_on_checks(client, topic_id: str) -> bool:
     """环境释放判据读的就是它（`machine.lifecycle`）。"""
     from app.domain.review.queries import waiting_on_checks
@@ -892,7 +920,7 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     队列里 PR 的 `mergeStateStatus` 被 GitHub 钉在 BLOCKED，判定重算没有意义，
     所以进队以后不再重算它，只由轮询每跳把 `checked_at` 推到此刻（`state`、
     `reasons` 一条不动）。`checked_at` 是「还在等 CI」这句话的有效期：冻在入队
-    那一刻，过 `CHECK_WATCH_TICKS` 个轮询间隔（默认 15 分钟）就没人再当这张卡在
+    那一刻，过 `CHECK_WATCH_TICKS` 个轮询间隔（默认 3 分钟）就没人再当这张卡在
     等 CI，环境释放判据把机器收掉 —— 而轮询其实一直在看，回头还要叫醒这条线重建
     环境、重读文档。队列里这段和普通路径是同一件事，就该挂同一根钟（1 小时）。
 
@@ -924,7 +952,7 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     assert first["checked_at"] > enqueued["checked_at"]  # 只有 checked_at 走
 
     # 摆成「上一次看这张卡是三个轮询间隔以前」：不再刷的话，判据就不认它了。
-    stale_at = _age_queue_mirror(client, cid, seconds=3 * 300 + 1)
+    stale_at = _age_queue_mirror(client, cid, seconds=_watch_window() + 1)
     assert not _waiting_on_checks(client, tid)
 
     _poll(client)  # 队列里的下一跳：把有效期续上
@@ -939,10 +967,19 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     assert again["checked_at"] > stale_at
     assert _waiting_on_checks(client, tid)
 
-    # 这时浏览器来读一次卡。读卡这条路对「比地板（`accept_pr_snapshot_floor_s`
-    # = 60s）还旧」的快照会自己重算一遍，所以把 `checked_at` 拨到地板之外、
-    # 持有窗口（900s）之内：读卡会去重算它。
-    aged_at = _age_queue_mirror(client, cid, seconds=300)
+    # 这时浏览器来读一次卡。读卡这条路对「比地板（`accept_pr_snapshot_floor_s`）
+    # 还旧」的快照会自己重算一遍，所以把 `checked_at` 拨到地板之外、持有窗口
+    # 之内的一段——两个数都从设置里算，下面那条 assert 钉着这段确实存在：
+    # 地板追平窗口时这条用例就没法摆出「读卡会重算、判据却还认」这个状态了。
+    from app.core.config import settings as _settings
+
+    floor = _settings.accept_pr_snapshot_floor_s
+    window = _watch_window()
+    assert floor < window, (
+        f"地板的 {floor}s 不小于持有窗口的 {window}s，这条用例摆不出"
+        "「读卡重算、但判据仍认它是等 CI」的那段区间"
+    )
+    aged_at = _age_queue_mirror(client, cid, seconds=(floor + window) // 2)
     assert _waiting_on_checks(client, tid)  # 还在窗口里，判据照样认它
 
     _cards(client, tid)
@@ -1539,6 +1576,101 @@ def test_click_405_surfaces_githubs_reason_and_stops(client, app_world):
     assert "Merge commits are not allowed" in r.json()["message"]
     assert _cards(client, tid)[0]["status"] == "pending"
     assert _topic(client, tid)["accepted_at"] is None
+
+
+def _github_enforces(monkeypatch) -> None:
+    """这个项目的仓库自己开着分支保护/合并队列：平台不再自己判，直接调 GitHub
+    的合并 API（`_pr_verdict` 返回的 `enforces`）。真实实现要打 HTTP，`app_world`
+    把它钉成 False（「平台补位」那条路），走强制那条路的用例自己钉成 True。"""
+    from app.domain.review import services as review_services
+
+    async def _enforces(_repo, _token):
+        return True
+
+    monkeypatch.setattr(review_services, "_github_enforces", _enforces)
+
+
+def _room_event_settled(
+    client, topic_id: str, event_type: str, *, times: int = 1, tries: int = 40
+) -> int:
+    """房间事件是 fire-and-forget（spawn 出去的），给事件循环几拍落块的时间。"""
+    count = _room_event_count(client, topic_id, event_type)
+    for _ in range(tries):
+        if count >= times:
+            break
+        time.sleep(0.05)
+        count = _room_event_count(client, topic_id, event_type)
+    return count
+
+
+def test_a_conflicting_pr_stops_the_accept_in_a_github_enforced_project(
+    client, app_world, monkeypatch
+):
+    """GitHub 自己开着保护的项目：冲突的 PR 在点击那一刻停下，说清是冲突。
+
+    这道闸过去只在平台补位的项目上（`if not enforces` 那一条），强制项目会带着
+    `dirty` 去调合并 API；合并队列不收一个合不进去的 PR，入队那一步抛出的
+    `GitHubPrError` 落进调用点笼统的 `except Exception`，成了「PR 的合并结果暂时
+    无法确认，请重试以核对仓库状态」——把「先解冲突」读成了「重试一次」，而重试
+    不会让冲突消失（2026-10-16 采纳 PR #3927 时的样子）。
+
+    钉 `enforces=True` 是为了让这真的走强制那条路：不钉的话，`if not enforces`
+    那道守卫会替这道闸挡住合并调用，测的就不是强制项目了。"""
+    fake = app_world["fake"]
+    _github_enforces(monkeypatch)
+    _, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.mergeable_by_number[number] = False  # GitHub: CONFLICTING / DIRTY
+
+    attempts: list[dict] = []
+
+    async def refused_by_the_queue(**kw):
+        # 生产上这是 `_enqueue_if_required` 撞上 GitHub 的拒收：合并队列不要一个
+        # 合不进去的 PR，`_queue_request` 因此抛 GitHubPrError。
+        attempts.append(kw)
+        raise github_pr.GitHubPrError("GitHub did not confirm queue entry")
+
+    monkeypatch.setattr(fake, "merge_pull_request", refused_by_the_queue)
+
+    r = _accept(client, cid)
+    assert r.status_code == 422, r.text
+    message = r.json()["message"]
+    assert "冲突" in message
+    assert "无法确认" not in message
+    assert attempts == []  # 压根没去撞那道墙
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert "冲突" in card["note"]
+    assert card["note_level"] == "error"
+    assert _room_event_settled(client, tid, "accept_conflict") == 1
+    assert _topic(client, tid)["accepted_at"] is None
+
+
+def test_a_conflicting_pr_stops_the_accept_when_the_platform_enforces(
+    client, app_world
+):
+    """平台补位的项目：冲突同样停下，说清是冲突、卡上写明、房间有事件。
+
+    这条路上过去只有一句 `acceptBlocked`（「现在不能采纳（合并态：dirty）：与
+    目标分支冲突」）：一个状态词，卡上没有 note，房间也没有事件——芝士不知道有
+    活要干，人也不知道这件事不会自己好。"""
+    fake = app_world["fake"]
+    _, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.mergeable_by_number[number] = False
+
+    r = _accept(client, cid)
+    assert r.status_code == 422, r.text
+    message = r.json()["message"]
+    assert "冲突" in message
+    assert "现在不能采纳" not in message  # 不是那句「合并态：dirty」
+    assert "无法确认" not in message
+    assert fake.merge_calls == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert "冲突" in card["note"]
+    assert card["note_level"] == "error"
+    assert _room_event_settled(client, tid, "accept_conflict") == 1
 
 
 def _strip_delivery_claim(client, card_id: str) -> None:
@@ -3092,9 +3224,18 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
 
 
 def _sweep(client) -> dict:
+    """每 300 秒那一拍：只扫活动窗口里动过的活。"""
+    from app.core.config import settings
     from app.domain.review import pr_publish
 
-    return client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
+    return client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+            quiet_window_s=settings.draft_pr_sweep_activity_window_s,
+        )
+    )
 
 
 def _room_with_work(client) -> tuple[str, str]:
@@ -3172,7 +3313,7 @@ def test_a_quiet_branch_is_asked_about_without_locking_its_task(
                     select(Task.id).where(Task.id == task_id).with_for_update()
                 )
                 locked_elsewhere.append(False)
-            except Exception:  # noqa: BLE001 — the lock wait is the observation
+            except Exception:  # the lock wait is the observation
                 locked_elsewhere.append(True)
             await other.rollback()
         return "identical"  # nothing new on the branch since its base
@@ -3209,7 +3350,7 @@ def test_github_is_asked_about_its_quota_without_the_task_locked(
                     select(Task.id).where(Task.id == task_id).with_for_update()
                 )
                 locked_while_asked.append(False)
-            except Exception:  # noqa: BLE001 — the lock wait is the observation
+            except Exception:  # the lock wait is the observation
                 locked_while_asked.append(True)
             await other.rollback()
         return 5000, 5000
@@ -3256,6 +3397,135 @@ def test_a_batch_left_open_in_an_archived_room_gets_no_pr(client, sweeping):
 
     assert counts == {"opened": 0, "skipped": 0, "failed": 0}
     assert sweeping["opened"] == []
+
+
+def test_a_branch_quiet_for_hours_is_not_asked_about(client, sweeping):
+    """草稿扫描只看最近动过的活。
+
+    每个候选每扫一遍要问 GitHub 两次（分支头 + 比较）。一条几小时没人碰过的
+    分支不会有人在往上推：等它再有人说活时再扫，而不是每一拍都花这两次。
+    """
+    from app.domain.room_task.models import Task
+
+    fresh = _room_with_work(client)  # 刚刚建出来 = 10 分钟内动过
+    three_hours = _room_with_work(client)
+    two_days = _room_with_work(client)
+
+    def backdate(room, ago):
+        task_id = _uuid.UUID(str(delivery_task_id(client, room[1])))
+        at = datetime.now(UTC) - ago
+
+        async def _do() -> None:
+            async with client.test_factory() as s:
+                task = await s.get(Task, task_id)
+                task.created_at = at
+                await s.commit()
+
+        asyncio.run(_do())
+
+    backdate(three_hours, timedelta(hours=3))
+    backdate(two_days, timedelta(days=2))
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    [opened] = sweeping["opened"]
+    assert opened["head"] == _disk_branch(client, fresh[1])
+    # 只有那一条被问过：另外两条一次 GitHub 请求都没花。一条被开出来的活
+    # 会被问两次（锁外看一眼、锁内再确认），所以数的是被问过的分支头。
+    assert len({head for _, head in sweeping["fake"].compare_status_calls}) == 1
+
+
+def test_a_task_that_spoke_recently_is_swept_even_when_it_is_old(client, sweeping):
+    """「最近动过」看的是最后一次说话，不是建这条活的时刻：一条开了两天的活，
+    十分钟前还在说，就说明有人在推它的分支。"""
+    from app.domain.block.models import AuthorType, Block, BlockKind
+    from app.domain.room_task.models import Task
+
+    pid, tid = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
+
+    async def seed() -> None:
+        async with client.test_factory() as s:
+            task = await s.get(Task, task_id)
+            task.created_at = datetime.now(UTC) - timedelta(days=2)
+            s.add(
+                Block(
+                    project_id=_uuid.UUID(pid),
+                    conversation_id=task_id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.platform,
+                    author="cheese",
+                    content="还在推",
+                    created_at=datetime.now(UTC) - timedelta(minutes=10),
+                )
+            )
+            await s.commit()
+
+    asyncio.run(seed())
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    assert len({head for _, head in sweeping["fake"].compare_status_calls}) == 1
+
+
+def test_a_catch_up_sweep_still_asks_about_a_quiet_branch(client, sweeping):
+    """掉线重连、丢了事件时的那次补扫不带窗口。
+
+    被漏掉的那次「有提交」只能在这里补上；任务已经安静下来也一样 —— 分支上确实
+    有东西。窗口是给每 300 秒那一拍省请求用的，不是「这条活不用再开 PR 了」。
+    """
+    from app.domain.review import pr_publish
+    from app.domain.room_task.models import Task
+
+    _, tid = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
+
+    async def backdate() -> None:
+        async with client.test_factory() as s:
+            task = await s.get(Task, task_id)
+            task.created_at = datetime.now(UTC) - timedelta(days=2)
+            await s.commit()
+
+    asyncio.run(backdate())
+
+    counts = client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
+
+    assert counts["opened"] == 1, counts
+    [opened] = sweeping["opened"]
+    assert opened["draft"] is True
+
+
+@pytest.mark.parametrize("window", [0, -3600])
+def test_a_window_of_zero_or_less_sweeps_every_open_branch(
+    client, sweeping, monkeypatch, window
+):
+    """窗口配成 0 或负数就是不设窗口 —— 顺带钉住扫的是这个设置，不是写死的数。"""
+    from app.core.config import settings
+    from app.domain.room_task.models import Task
+
+    monkeypatch.setattr(settings, "draft_pr_sweep_activity_window_s", window)
+    _, tid = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
+
+    async def backdate() -> None:
+        async with client.test_factory() as s:
+            task = await s.get(Task, task_id)
+            task.created_at = datetime.now(UTC) - timedelta(days=2)
+            await s.commit()
+
+    asyncio.run(backdate())
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
 
 
 def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):
@@ -3328,8 +3598,8 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
     task_id = delivery_task_id(client, tid)
     original = TaskService.open_without_pr
 
-    async def _list_then_merge(self):
-        trees = await original(self)
+    async def _list_then_merge(self, **kwargs):
+        trees = await original(self, **kwargs)
 
         async def _merge_it() -> None:
             async with client.test_request_factory() as s:
@@ -3344,7 +3614,13 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
 
     monkeypatch.setattr(TaskService, "open_without_pr", _list_then_merge)
 
-    counts = client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
+    counts = client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
 
     assert counts["opened"] == 0, counts
     assert sweeping["opened"] == []
@@ -3443,8 +3719,7 @@ def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sw
 def test_ready_reports_github_installation_rate_limit_without_changing_pr(
     client, sweeping, monkeypatch
 ):
-    from app.domain.project import forge as project_forge
-    from app.domain.review.github_pr import GitHubPRRateLimited
+    from app.domain.review.github_pr import GitHubPRClient, GitHubPRRateLimited
 
     _, tid = _room_with_work(client)
     _sweep(client)
@@ -3453,7 +3728,7 @@ def test_ready_reports_github_installation_rate_limit_without_changing_pr(
     async def limited(_self, _number):
         raise GitHubPRRateLimited("API rate limit exceeded for installation ID")
 
-    monkeypatch.setattr(project_forge.GitHubPRClient, "pr_view", limited)
+    monkeypatch.setattr(GitHubPRClient, "pr_view", limited)
     response = _ready(client, tid)
 
     assert response.status_code == 200, response.text
@@ -3476,6 +3751,58 @@ def test_ready_never_opens_a_pr(client, sweeping):
     assert "先提交并同步代码" in data["reason"]
     assert sweeping["opened"] == []
     assert sweeping["prs_by_head"] == {}
+
+
+def test_ready_rebases_a_behind_branch_then_the_ci_reads_the_new_check_set(
+    client, sweeping, monkeypatch
+):
+    """落后 main 的 draft：`ready` 先把 main 合进分支，再翻 ready。
+
+    分支 CI 用的是分支 head 上的工作流。不换基的话，翻 ready 之后跑的是这条分支
+    被切出来那天的工作流（旧检查集），合进 main 之后 merge_group 又要用新的跑
+    一遍 —— 这就是要省掉的那一轮。换基之后，轮询读 CI 用的 head 是带着 main 上
+    那套工作流的那个。"""
+    pid, tid = _room_with_work(client)
+    _sweep(client)
+    fake = sweeping["fake"]
+    pr = sweeping["prs_by_head"][_disk_branch(client, tid)]
+    number = pr["number"]
+    old_head = fake.prs[number]["head_sha"]
+    new_head = f"{old_head}-rebased"
+    # 有自己的提交、main 也往前走了 → compare 说 diverged（落后）。
+    fake.compare_status_by_pair[("main", old_head)] = "diverged"
+    # 旧工作流的检查集只挂在旧 head 上；main 上新工作流的检查集在换基后的 head。
+    fake.check_runs_by_sha[old_head] = [
+        {"name": "old-suite", "status": "completed", "conclusion": "success"}
+    ]
+    fake.check_runs_by_sha[new_head] = [
+        {"name": "new-suite", "status": "completed", "conclusion": "success"}
+    ]
+    read_refs: list[str] = []
+    original = fake.list_check_runs
+
+    async def recording(*, owner, repo, ref, token):
+        read_refs.append(ref)
+        return await original(owner=owner, repo=repo, ref=ref, token=token)
+
+    monkeypatch.setattr(fake, "list_check_runs", recording)
+
+    r = _ready(client, tid)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["ready"] is True
+    assert fake.update_branch_calls == [number]
+    assert fake.update_branch_tokens == ["ghs_app_write"]
+    assert fake.prs[number]["head_sha"] == new_head
+    assert sweeping["readied"] == [pr["node_id"]]
+
+    # 转可评审之后 CI 读的是换过基的 head —— 也就是 main 上那套工作流的检查集。
+    _make_card(client, tid)
+    _poll(client)
+    assert read_refs == [new_head]
+    assert [run["name"] for run in fake.check_runs_by_sha[read_refs[-1]]] == [
+        "new-suite"
+    ]
 
 
 # ======================= 更正卡片描述，PR 跟着改 =============================
@@ -3638,6 +3965,27 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(
 
     assert swept == {"opened": 0, "skipped": 1, "failed": 0}, swept
     assert [o for o in sweeping["opened"] if o["draft"]] == []
+
+
+def test_a_card_still_waiting_to_be_settled_keeps_the_sweep_away(client, sweeping):
+    """这张卡还没结算，所以巡检连问都不问 GitHub 就把这批跳过。
+
+    判据是「有没有还没结算的卡」，不是「有没有递过卡」：一张 `pending` 的卡是
+    「这批活正在交付里」，巡检在那儿开 PR 只会多出一个没人要合的；结算过的卡不
+    挡，因为第二步正是靠这一点才开得出自己的 PR
+    （`test_a_task_delivers_in_steps.py::test_the_next_step_gets_a_draft_pr_of_its_own`）。
+
+    这条咬的是不加锁的预判那一步：预判先返回 False，锁里那一步这两条根本走不到
+    （把它删掉这条仍然绿，`test_a_batch_being_merged_right_now_does_not_get_a_second_pr`
+    管的就是那个窗口）。两条判据一起拿掉，这条和它一起红。
+    """
+    _pid, tid = _room_with_work(client)
+    _make_card(client, tid)  # 递出去就是 pending
+
+    counts = _sweep(client)
+
+    assert counts == {"opened": 0, "skipped": 1, "failed": 0}, counts
+    assert sweeping["opened"] == []
 
 
 def _treeless_card(client, topic_id: str, status: str) -> None:

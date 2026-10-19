@@ -2,21 +2,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
+from app.api.deps import get_discussion_service
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.answers.services import AnswersService
-from app.domain.discussion.models import DiscussableModelType
-from app.domain.discussion.reaction_services import DiscussionReactionService
-from app.domain.discussion.repositories import (
-    DiscussionReactionRepository,
-    DiscussionRepository,
-    ReactionTypeRepository,
-)
-from app.domain.discussion.services import DiscussionService
+from app.domain.discussion.services import DiscussableModelType, DiscussionService
 from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.repositories import UserProfileRepository
 
@@ -31,20 +26,6 @@ async def get_answers_service(db=Depends(get_db)) -> AnswersService:
         repo=answer_repo,
         question_repo=question_repo,
         profile_repo=profile_repo,
-    )
-
-
-async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
-    discussion_repo = DiscussionRepository(session=db)
-    reaction_repo = DiscussionReactionRepository(session=db)
-    reaction_type_repo = ReactionTypeRepository(session=db)
-    reaction_service = DiscussionReactionService(
-        reaction_repo=reaction_repo, reaction_type_repo=reaction_type_repo
-    )
-    return DiscussionService(
-        repo=discussion_repo,
-        reaction_service=reaction_service,
-        session=db,
     )
 
 
@@ -68,11 +49,7 @@ async def list_answers(
     return ok({"answers": answers, "page": page})
 
 
-@router.post(
-    "",
-    summary="Create Answer",
-    status_code=201,
-)
+@router.post("", summary="Create Answer", status_code=201, dependencies=[ROUTE_DECIDES])
 async def create_answer(
     question_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
@@ -91,8 +68,7 @@ async def create_answer(
 
 
 @router.post(
-    "/{answer_id}/vote",
-    summary="Vote on Answer",
+    "/{answer_id}/vote", summary="Vote on Answer", dependencies=[ROUTE_DECIDES]
 )
 async def vote_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -112,8 +88,7 @@ async def vote_answer(
 
 
 @router.delete(
-    "/{answer_id}/vote",
-    summary="Remove Vote from Answer",
+    "/{answer_id}/vote", summary="Remove Vote from Answer", dependencies=[ROUTE_DECIDES]
 )
 async def remove_answer_vote(
     question_id: Annotated[int, Path(ge=0)],
@@ -186,6 +161,7 @@ async def list_answer_comments(
     "/{answer_id}/comments",
     summary="Create Answer Comment",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_answer_comment(
     question_id: Annotated[int, Path(ge=0)],
@@ -215,6 +191,7 @@ async def create_answer_comment(
 @router.delete(
     "/{answer_id}/comments/{comment_id}",
     summary="Delete Answer Comment",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_answer_comment(
     question_id: Annotated[int, Path(ge=0)],
@@ -271,10 +248,7 @@ async def get_answer(
     return ok({"answer": answer, "question": question})
 
 
-@router.put(
-    "/{answer_id}",
-    summary="Update Answer",
-)
+@router.put("/{answer_id}", summary="Update Answer", dependencies=[ROUTE_DECIDES])
 async def update_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
@@ -299,10 +273,7 @@ async def update_answer(
     return ok({"answer": answer})
 
 
-@router.delete(
-    "/{answer_id}",
-    summary="Delete Answer",
-)
+@router.delete("/{answer_id}", summary="Delete Answer", dependencies=[ROUTE_DECIDES])
 async def delete_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
@@ -320,8 +291,7 @@ async def delete_answer(
 
 
 @router.put(
-    "/{answer_id}/favorite",
-    summary="Favorite Answer",
+    "/{answer_id}/favorite", summary="Favorite Answer", dependencies=[ROUTE_DECIDES]
 )
 async def favorite_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -337,8 +307,7 @@ async def favorite_answer(
 
 
 @router.delete(
-    "/{answer_id}/favorite",
-    summary="Unfavorite Answer",
+    "/{answer_id}/favorite", summary="Unfavorite Answer", dependencies=[ROUTE_DECIDES]
 )
 async def unfavorite_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -358,6 +327,7 @@ async def unfavorite_answer(
 @router.post(
     "/{answer_id}/attitudes",
     summary="Attitude on Answer (Vote)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def attitude_answer(
     question_id: Annotated[int, Path(ge=0)],

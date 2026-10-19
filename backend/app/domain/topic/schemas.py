@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.room_task.schemas import PresentationOut
+from app.domain.presentation_meta import PresentationOut
 from app.domain.topic.models import TopicKind, TopicStatus
 
 
@@ -67,10 +67,11 @@ class TopicOut(BaseModel):
     # Derived per query, so only the endpoints that ask for it
     # (list_topics/get_topic) fill it in; elsewhere it stays None.
     last_activity_at: datetime | None = None
-    # 上一次有**输出**是什么时候：在跑的那一轮最后一帧（`agent/turn/intake/
-    # status.live_work_for_topic`）。`last_activity_at` 只说「有人说了话」——一个块
-    # 落了地；这一位说「队友还在输出」。一次长工具调用期间多半没有新块、只有帧，
-    # 所以「显示在跑、但五分钟没动静」（侧栏红灯）只可能看这一位。
+    # 上一次有**动静**是什么时候：在跑的那一轮最后一帧，或者读它的那一路最后一次
+    # 收到 runner 的应答 —— 两者取较新的（`agent/turn/intake/status.
+    # live_work_for_topic`）。`last_activity_at` 只说「有人说了话」——一个块落了地；
+    # 这一位说「队友还在」。长思考、一次长工具调用期间没有块、也没有帧，只有那一声
+    # 应答，所以「显示在跑、但五分钟没动静」（侧栏红灯）只可能看这一位。
     #
     # None：此刻没有在跑的轮次，或者记录里没有这个戳（那种「不知道」不当成「很新」
     # 用，读的人自己决定，前后端都不许自己编一个）。
@@ -80,6 +81,16 @@ class TopicOut(BaseModel):
     # 传一遍 —— 和 `activity` 不带 `expires_in` 是同一条理由。取整把它压到一分钟
     # 最多变一次；灯判的是五分钟，误差最多一分钟，够了。
     last_output_at: datetime | None = None
+    # 这间房里**还没恢复**的失败从什么时候开始（`block/waits.MemberWaits.
+    # unresolved_failures`）。一条把失败的事实也画成红灯：这一行不只是「显示在跑却没
+    # 动静」，也可能是「一条活/一轮停下报错，五分钟了没人接手」——两者都是在跑却没
+    # 动静。None = 没有未恢复的失败（恢复了、或本来就没坏过），不亮。
+    #
+    # 汇总的是这间房自己那条线、它的支线，以及它名下**还没关**的活里最早的一条：
+    # 名下一件活报错停下，上面那间房就是在出问题；一件活自己恢复只清它自己，别的
+    # 活、这间房自己那条线照旧。只有 list/get 话题时填，别处一律 None（「没人算过」，
+    # 不是「没有」）。
+    incomplete_since: datetime | None = None
     # 交到这里、且**读的人还没点开看过**的活：这个频道名下有这么一件「卡片被采纳
     # 过、而他从那以后没在这间房或那件活上点开过」（`room_task/repositories.
     # unseen_deliveries`）。侧栏的**长绿**问的就是它——「这里做过事、都交付完了、

@@ -7,7 +7,7 @@ covers:
   - backend/app/domain/agent/supply.py
   - backend/app/domain/agent/profiles.py
   - backend/app/domain/room_task/binding.py
-  - backend/app/domain/agent_instance/configuration.py
+  - backend/app/domain/agent/model_catalog.py
 ---
 
 # 准入与供给 {#admission}
@@ -44,14 +44,14 @@ covers:
 
 ## 席位 {#seat}
 
-凭据只证明它是给哪位队友、哪个房间签的，证明不了这位队友现在还在不在房间里，而会话凭据能活好几十天。所以准入和 catch-all 每次都问一遍名册（`api/auth.py` 的 `require_seated_in_its_room`）：凭据写着房间，而它的队友已经不在那个房间的名册上，准入答 `allow=false`、`reason_kind` 为 `binding`（代理回 400、不重试，正文是名册拒绝的那句话）；catch-all 直接回 403。准入不用 HTTP 错误来拒，是因为代理把任何非 200 都当成后端连不上，按 fail-open 放行。不写房间的凭据（平台自己的项目凭据、不在任何房间里的文档的凭据）没有名册可问，照常放行。
+凭据只证明它是给哪位队友、哪个房间签的，证明不了这位队友现在还在不在房间里，而会话凭据能活好几十天。所以准入和 catch-all 每次都问一遍名册（`api/auth/` 的 `require_seated_in_its_room`）：凭据写着房间，而它的队友已经不在那个房间的名册上，准入答 `allow=false`、`reason_kind` 为 `binding`（代理回 400、不重试，正文是名册拒绝的那句话）；catch-all 直接回 403。准入不用 HTTP 错误来拒，是因为代理把任何非 200 都当成后端连不上，按 fail-open 放行。不写房间的凭据（平台自己的项目凭据、不在任何房间里的文档的凭据）没有名册可问，照常放行。
 
 队友被移出房间时，它正在跑的那一轮先被停下（`DELETE /topics/{id}/members/{handle}`），之后这枚凭据再来的请求都被拒。代理会把一次准入的答案缓存 30 秒，所以移出之后最多还有这么久，同一枚凭据可能凭缓存里那次放行再发出请求。
 
 ## 预算这一半 {#budget}
 
 - 项目来自 scoped token 的已验证 claims（`claims["p"]`），不是请求头——头是可以自称的。没有 token 或没有 `p` 就是 401。
-- `UsageService.admit_project()`（`usage/ledger.py` 的 `Ledger.admit`）答能不能跑：放行时 `reason` 是 `admitted`，拒绝时是账本的那句话（「本月额度已用完，11月1日重置。」或时间窗口满了几点恢复），见[计费流程](/dev/billing#plans)。
+- `UsageService.admit_project()`（账本 `Ledger.admit`，只读那一半，在 `usage/ledger_queries.py`）答能不能跑：放行时 `reason` 是 `admitted`，拒绝时是账本的那句话（「本月额度已用完，11月1日重置。」或时间窗口满了几点恢复），见[计费流程](/dev/billing#plans)。
 - 同一份额度，网关那把 `max_budget` 也按它折成美元——**一个预算，两个执行点**。
 - 拒绝时顺手告诉房间：`agent/credits_notice.py` 的 `note_credits_refusal` 给正在跑的那个回合（主线或它开的分身）发一条事件，说的是账本那句拒绝理由，和回合开始前被拒时房间里那句一样（#715）。它用自己的数据库会话。
 
@@ -87,7 +87,7 @@ covers:
 | `api/routes/llm_proxy.py` | `/llm/admission` 本身，以及给 Codex / Pi 这类走 base URL 的 harness 用的 catch-all 转发 |
 | `domain/agent/supply.py` | `SUBSCRIPTION` / `GATEWAY` 两个池的名字与 `resolve_pool`，池的定义只有这一处 |
 | `room_task/binding.py` | `WorkBinding(model, supply, effort)`、`wire_model`、`catalog()`、`resolve()` |
-| `agent_instance/configuration.py` | `project_pool()` 与 `model_choices()`：订阅的清单加网关目录里可上架的（tier 取网关上的 `cheese_tier`，缺省 included），按 harness 过滤掉跑不起来的模型；项目的 harness 没注册时是空列表 |
+| `agent/model_catalog.py` | `project_pool()` 与 `model_choices()`：订阅的清单加网关目录里可上架的（tier 取网关上的 `cheese_tier`，缺省 included），按 harness 过滤掉跑不起来的模型；项目的 harness 没注册时是空列表。目录在这里而不是在 `agent_instance`：它答的是部署和项目的事实，`agent_instance` 读它会把 `agent_instance -> agent` 那条环加回去 |
 | `domain/agent/profiles.py` | 执行 profile：一个项目跑哪个模型、带哪套供应商环境；`full_env()` 显式把 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` 清成空串，免得从后端 `os.environ` 漏进来的别的供应商配置把路由劫走 |
 
 ## 反过来那半：不能改 base URL 的 harness {#catch-all}

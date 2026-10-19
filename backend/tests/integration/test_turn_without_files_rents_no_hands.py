@@ -29,15 +29,16 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code import ClaudeLaunch
+from app.domain.agent_instance.adapters import named_teammate
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.ask_fixtures import question_row
 from tests.conftest import StubChannel, finish_turn, settle_turn
 from tests.integration.conftest import (
     post_project,
+    project_service,
     registered,
     session_auth_headers,
 )
@@ -250,9 +251,11 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     channel.reply = "上一轮的结论是先把闸门做出来。"
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).get_or_create_private(
-            project_id=project.id, user_handle="u"
+            project_id=project.id,
+            user_handle="u",
+            named_teammate=named_teammate,
         )
         topic_id = topic.id
         await session.commit()
@@ -287,7 +290,7 @@ async def test_a_room_turn_still_waits_for_its_hands(business_db_factory, tmp_pa
     )
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="Work", created_by="u"
         )

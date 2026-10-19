@@ -14,6 +14,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.sentences import say
+from app.domain.agent import turn_resume
 from app.domain.agent.credits_notice import spent_reason
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
 from app.domain.agent.platform_failures import (
@@ -28,6 +29,7 @@ from app.domain.agent.service import (
     AgentResult,
     AgentRetrying,
     AgentSessionInfo,
+    AgentStepCalls,
     AgentStepFailed,
     AgentStepOutput,
     AgentToolResult,
@@ -54,7 +56,11 @@ from app.domain.agent.turn.intake.notes import (
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.state.notices import _TOOL_ACTION, _turn_failure_notice
 from app.domain.agent.turn.steps.hooks import HookActivity, LandedEvent, execute_event
-from app.domain.agent.turn.store.events import _mark_step_failed, _record_step_output
+from app.domain.agent.turn.store.events import (
+    _mark_step_failed,
+    _record_step_calls,
+    _record_step_output,
+)
 from app.domain.agent.turn.store.intervals import turn_credits_refused
 from app.domain.agent.turn_inputs import mark_session_for_turn
 from app.domain.delivery.receipts import inputs_answered_inside
@@ -115,8 +121,37 @@ class HookEvents:
     async def credits_refused(self, turn_id: uuid.UUID) -> bool:
         try:
             return await turn_credits_refused(self.sessions, turn_id)
-        except Exception:  # noqa: BLE001 — a failed read must not break the notice
+        except Exception:  # a failed read must not break the notice
             logger.exception("could not read credits-refused stamp for %s", turn_id)
+            return False
+
+    async def _resume_later(
+        self,
+        project_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        result: AgentResult,
+        *,
+        seat: str | None,
+        route: str | None,
+    ) -> bool:
+        try:
+            row = await turn_resume.after_failure(
+                self.sessions,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                seat=seat,
+                failed_turn_id=turn_id,
+                result=result,
+                route=route,
+            )
+            if row is None:
+                return False
+            return row.dropped_at is None
+        except Exception:
+            logger.exception(
+                "could not schedule a resume after turn %s failed", turn_id
+            )
             return False
 
     async def accept(
@@ -132,6 +167,7 @@ class HookEvents:
         sessions, live, work_runner = self.sessions, self.live, self.work_runner
         frame: dict | None = None
         error_line, error_code = "", None
+        recovering = False
         state = live.hook_work.get((topic_id, turn_id))
         if state is None and platform_unsolicited and proves_output([event]):
             # Nobody fed this session anything and it is producing output anyway
@@ -270,6 +306,13 @@ class HookEvents:
                 payload = await _record_step_output(sessions, block_id, event.text)
                 if payload is not None:
                     frame = {"type": "block_updated", "block": without_output(payload)}
+        elif isinstance(event, AgentStepCalls):
+            # The tools a script called, written onto the script's step.
+            block_id = state.steps.get(event.call_id) if state is not None else None
+            if block_id is not None and event.calls:
+                payload = await _record_step_calls(sessions, block_id, event.calls)
+                if payload is not None:
+                    frame = {"type": "block_updated", "block": without_output(payload)}
         elif isinstance(event, AgentCompacting):
             if event.done:
                 await _note_compaction(sessions, live, turn_id, event, channel=channel)
@@ -332,6 +375,9 @@ class HookEvents:
                     harness=event.harness,
                 )
             if event.is_error:
+                # Only a failure the service reported: the watchdog's timeout
+                # and a spent balance are not waits (`turn_resume`).
+                resumable = False
                 if event.text.strip() == TURN_TIMEOUT_MESSAGE:
                     # The watchdog's own verdict, and the only failure whose
                     # session may still be alive — everything downstream of it
@@ -376,18 +422,30 @@ class HookEvents:
                     line, meta = _turn_failure_notice(
                         event.text, event.failure_code, log=event.log
                     )
+                    resumable = True
                 error_line, error_code = line, meta.get("code")
-                payload = await post_system_event(
-                    sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
-                )
-                if payload is not None:
-                    frame = {"type": "event_block", "block": payload}
-                    # In a 支线 nobody has replied to yet, this line is the only
-                    # thing in it: the main line reads its 支线 again, so the
-                    # message it hangs under says the reply failed.
-                    if inner_id is not None:
-                        await self.thread_replied(inner_id)
-            elif event.text.strip():
+                if resumable:
+                    recovering = await self._resume_later(
+                        project_id,
+                        topic_id,
+                        turn_id,
+                        event,
+                        # Only the seat that failed: the room's last speaker
+                        # is a guess, and with several seats a guess wakes the
+                        # wrong agent. Not resuming is the safer miss.
+                        seat=event.agent_handle
+                        or (state.acting_agent if state is not None else None),
+                        route=state.route if state is not None else None,
+                    )
+                if not recovering:
+                    payload = await post_system_event(
+                        sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
+                    )
+                    if payload is not None:
+                        frame = {"type": "event_block", "block": payload}
+                        if inner_id is not None:
+                            await self.thread_replied(inner_id)
+            if not event.is_error and event.text.strip():
                 # Terminal output, the final response included, stays in
                 # activity: a reply reaches the room only through chat_send,
                 # in a private chat exactly as in any other room.
@@ -422,7 +480,7 @@ class HookEvents:
             turn_id=turn_id,
             event=event,
             state=state,
-            landed=LandedEvent(frame, error_line, error_code),
+            landed=LandedEvent(frame, error_line, error_code, recovering),
             close_interval=self.close_interval,
             finish_work=self.completion.close,
             forget_claims=self.completion.forget_claims,

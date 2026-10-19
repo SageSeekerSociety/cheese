@@ -29,6 +29,16 @@ to keep one in step. A violation this tree has and that tree does not is new —
 that is the whole verdict. A `--base` that does not resolve is not something to
 guess at: it is exit 2.
 
+**A module that was split.** The baseline is named against the tree it was
+measured from, and a module that was one file there and is a package here
+renames every pair it is in: `M -> Y` arrives as `M.reads -> Y` and reads as new
+debt. That is how a split pull request ends up writing exemptions for its own
+refactor — #3890 did, seven of them. A pair this run flags whose importer and
+imported are, each, the same module the base tree held as one file is that tree's
+debt under a new name, and is held open without being written down. A dependency
+the base tree's module never had is not covered by the rename of one it did:
+`M.reads -> Z` is still new.
+
 **The exceptions.** A contract may still carry an `ignore_imports` block, and
 here it means one thing: a violation knowingly accepted that the merge-base tree
 does not have. It is meant to be short, and each line on it should say why. The
@@ -48,11 +58,10 @@ Everything else is import-linter's own machinery: the contracts live in
 is enough to reproduce a verdict by hand. This script adds the two things above
 and nothing more.
 
-    ... --self-test   plant each violation the nine contracts exist to catch,
+    ... --self-test   plant each violation the ten contracts exist to catch,
                       in a throwaway tree, and require them to fire
     ... --json        one JSON record on stdout instead of the report; the exit
-                      code is unchanged. The record's shape is fixed in
-                      docs/topics/棘轮页方案 section 3.1.
+                      code is unchanged.
 """
 
 from __future__ import annotations
@@ -131,11 +140,12 @@ CONTRACT_IDS = (
     "turn-storage-purity",
     "routes-independent",
     "domain-layers",
+    "platform-not-claude-code",
 )
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
 
-#: The check id in the ratchet snapshot, and the longest a `reason` may be.
+#: The check id in JSON output, and the longest a `reason` may be.
 CHECK_ID = "be-contracts"
 REASON_LIMIT = 2000
 
@@ -160,7 +170,7 @@ def _unmatched(warnings, written: set[str]) -> list[str]:
 
 
 # --- the JSON record ---------------------------------------------------------
-# Fixed in docs/topics/棘轮页方案 section 3.1, and written by hand here rather
+# Written by hand here rather
 # than imported from .claude/scripts/ratchet_report.py: this script is run from
 # backend/ and reaching across directories for fifteen lines would tie two CI
 # working directories together. The frontend ratchets share that helper.
@@ -380,6 +390,12 @@ _BOUNDARY_FIXES = {
         "`.importlinter` first — this contract is exhaustive, so every child of "
         "app.domain, package or top-level module, must be named in it."
     ),
+    "H1": (
+        "H1 the platform side (the chat, room, runtime and turn modules H1 lists "
+        "in `.importlinter`) does not import the Claude Code adapter. Take the "
+        "finished `AgentEvent` from the room's session path, or put the Claude "
+        "Code knowledge in its session-host driver."
+    ),
 }
 
 
@@ -478,7 +494,7 @@ def _load_declarations(config_path: Path) -> tuple[int, str, Any]:
     """(exit code, message, options) for the declarations in `config_path`.
 
     The two shapes this format must not accept are refused here, before any
-    tree is graded: a declaration that lost one of the nine contracts, and an
+    tree is graded: a declaration that lost one of the ten contracts, and an
     exception written as a wildcard.
     """
     try:
@@ -565,6 +581,16 @@ def _run_contracts(options, render: bool):
     if render:
         rendering.render_report(report)
     return report
+
+
+def _render(report) -> None:
+    """import-linter's own report: what each contract kept, and its warnings.
+
+    Apart from _run_contracts so a run that is graded more than once prints its
+    report once — from the run that decided the verdict.
+    """
+    _, rendering, _, _, _ = _importlinter()
+    rendering.render_report(report)
 
 
 def _merge_base(root: Path, base: str) -> str:
@@ -685,17 +711,73 @@ def _overlay_new_modules(where: Path, work: Path) -> int:
     return added
 
 
-def _derive_base(config_path: Path, rev: str) -> dict[str, list[str]]:
+def _tree_modules(where: Path) -> dict[str, bool]:
+    """Every module under the root package of the tree rooted at `where`.
+
+    Dotted name -> whether that tree holds it as a package (a directory with an
+    `__init__.py`) rather than as one file.
+    """
+    modules: dict[str, bool] = {}
+    for path in (where / ROOT_PACKAGE).rglob("*.py"):
+        parts = list(path.relative_to(where).with_suffix("").parts)
+        package = parts[-1] == "__init__"
+        if package:
+            parts.pop()
+        if parts:
+            modules[".".join(parts)] = package
+    return modules
+
+
+def _split_modules(before: Path, after: Path) -> set[str]:
+    """Modules the base tree holds as one file and this tree holds as a package.
+
+    The shape #3890 gave `app/domain/topic/repositories.py`. Only a file that
+    became a package of the same name counts: a package that was already a
+    package keeps its pairs by name, and a file that is still a file never moved.
+    A wider shape would let a module import its way out of a contract by growing
+    a directory beside itself.
+    """
+    was = _tree_modules(before)
+    now = _tree_modules(after)
+    return {
+        name
+        for name, package in now.items()
+        if package and name in was and not was[name]
+    }
+
+
+def _split_ancestor(module: str, splits: set[str]) -> str:
+    """`module` as the merge-base tree named it.
+
+    The longest prefix of it that tree held as one file: `M.reads`, under a split
+    `M`, is the module `M` grew out of, so a pair it is in is a pair `M` was in.
+    A module nothing was split out of is its own ancestor.
+    """
+    parts = module.split(".")
+    for stop in range(len(parts), 0, -1):
+        prefix = ".".join(parts[:stop])
+        if prefix in splits:
+            return prefix
+    return module
+
+
+def _derive_base(config_path: Path, rev: str) -> tuple[dict[str, list[str]], set[str]]:
     """The module pairs the tree at `rev` breaks, per contract id.
 
     Graded in a process of its own, from a directory holding that tree:
     import-linter finds the root package on sys.path and in the working
     directory, and running it twice in this process would be two answers to
     which `app` is on disk.
+
+    The second half is the modules `rev` holds as one file and the working tree
+    holds as a package, read off the two trees before the placeholders below are
+    laid down: a placeholder makes a module this branch added look like one that
+    tree had, which is the one thing a rename must not be confused with.
     """
     work = Path.cwd()
     with tempfile.TemporaryDirectory(prefix="boundary-base-") as scratch:
         where = _base_tree(work, rev, Path(scratch))
+        splits = _split_modules(where, work)
         declaration = where / config_path.name
         declaration.write_text(
             _without_exceptions(config_path.read_text(encoding="utf-8"))
@@ -733,15 +815,15 @@ def _derive_base(config_path: Path, rev: str) -> dict[str, list[str]]:
                     f"grading the tree at {rev} offered {entry!r} for "
                     f"{contract_id}; a baseline is module pairs, never a pattern"
                 )
-    return derived
+    return derived, splits
 
 
-def entries_from_metadata(metadata: dict) -> list[str]:
-    """The `ignore_imports` expression behind each violation in one contract.
+def edges_from_metadata(metadata: dict) -> set[tuple[str, str]]:
+    """The direct `importer -> imported` pairs behind one contract's violations.
 
-    One line per *direct* import, because that is what `ignore_imports` matches:
-    a layer contract reports chains of imports, and the pair that is held open
-    is a link of one. Every link of every chain is named.
+    One per *direct* import, because that is what `ignore_imports` matches: a
+    layer contract reports chains of imports, and the pair that is held open is
+    a link of one. Every link of every chain is named.
     """
     edges: set[tuple[str, str]] = set()
 
@@ -766,7 +848,15 @@ def entries_from_metadata(metadata: dict) -> list[str]:
     for breakers in metadata.get("cycle_breakers_by_package", {}).values():
         edges.update(breakers)
 
-    return sorted(f"{importer} -> {imported}" for importer, imported in edges)
+    return edges
+
+
+def entries_from_metadata(metadata: dict) -> list[str]:
+    """Those pairs as the `ignore_imports` lines a declaration spells them with."""
+    return sorted(
+        f"{importer} -> {imported}"
+        for importer, imported in edges_from_metadata(metadata)
+    )
 
 
 def _derived_by_contract(report, options) -> dict[str, list[str]]:
@@ -809,6 +899,40 @@ def _with_baseline(options, derived, written):
     return type(options)(options.session_options, contracts)
 
 
+def _inherited(report, options, derived, splits) -> dict[str, list[str]]:
+    """The pairs a failing run flagged that are the base tree's debt renamed.
+
+    A split moves a module's imports into the children it grew, so a pair the
+    base tree breaks arrives here under another name: `M -> Y` as `M.reads -> Y`.
+    `derived` cannot say so — it is measured from a tree where `M` was one file —
+    and the two would read as new debt, which is the refactor paying for itself.
+
+    Every pair named here is one this run actually reported, so the hold is the
+    same size the tree asked for and not a package-wide allowance. And renaming
+    only renames: a dependency `M` never had is not covered by the rename of one
+    it did.
+    """
+    ids = {option.get("name"): option.get("id") for option in options.contracts_options}
+    inherited: dict[str, list[str]] = {}
+    for contract, check in report.get_contracts_and_checks():
+        contract_id = ids.get(contract.name)
+        if check.kept or contract_id not in derived:
+            continue
+        known = set(derived[contract_id])
+        hits: list[str] = []
+        for importer, imported in sorted(edges_from_metadata(check.metadata)):
+            entry = f"{importer} -> {imported}"
+            before = (
+                f"{_split_ancestor(importer, splits)} -> "
+                f"{_split_ancestor(imported, splits)}"
+            )
+            if entry not in known and before in known:
+                hits.append(entry)
+        if hits:
+            inherited[contract_id] = hits
+    return inherited
+
+
 def judge(config_path: Path, base: str) -> tuple[int, str, list[dict[str, Any]] | None]:
     """Grade the tree at the cwd against the tree at the merge base with `base`.
 
@@ -822,7 +946,7 @@ def judge(config_path: Path, base: str) -> tuple[int, str, list[dict[str, Any]] 
 
     try:
         rev = _merge_base(Path.cwd(), base)
-        derived = _derive_base(config_path, rev)
+        derived, splits = _derive_base(config_path, rev)
     except Unjudgeable as exc:
         return (
             CANNOT_JUDGE,
@@ -833,7 +957,25 @@ def judge(config_path: Path, base: str) -> tuple[int, str, list[dict[str, Any]] 
         )
 
     try:
-        report = _run_contracts(_with_baseline(options, derived, written), render=True)
+        report = _run_contracts(_with_baseline(options, derived, written), render=False)
+        # A module this branch split keeps the debt the base tree had on it, but
+        # under the names of the children it grew, which the pairs measured from
+        # that tree cannot match. Only a run that says which pairs it broke can
+        # say which children inherited them, so that run comes first and the
+        # verdict comes from the run that holds them open. A tree with nothing
+        # split, or a run with nothing broken, pays for one run, as before.
+        inherited = (
+            _inherited(report, options, derived, splits)
+            if splits and report.contains_failures
+            else {}
+        )
+        for contract_id, pairs in inherited.items():
+            derived[contract_id] = sorted(set(derived[contract_id]) | set(pairs))
+        if inherited:
+            report = _run_contracts(
+                _with_baseline(options, derived, written), render=False
+            )
+        _render(report)
     except Exception as exc:
         return CANNOT_JUDGE, f"the contracts could not be run at all: {exc!r}", None
 
@@ -998,6 +1140,23 @@ _SEED = {
     "app/domain/alpha/__init__.py": "",
     "app/domain/agent/__init__.py": "",
     "app/domain/agent/chat.py": "",
+    # H1's sources and the adapter it keeps them from.
+    "app/domain/agent/chat_admission.py": "",
+    "app/domain/agent/chat_lifecycle.py": "",
+    "app/domain/agent/chat_live_input.py": "",
+    "app/domain/agent/chat_places.py": "",
+    "app/domain/agent/room/__init__.py": "",
+    "app/domain/agent/room_events.py": "",
+    "app/domain/agent/runtime_orphans.py": "",
+    "app/domain/agent/turn_adoption.py": "",
+    "app/domain/agent/turn_counts.py": "",
+    "app/domain/agent/turn_inputs.py": "",
+    "app/domain/agent/turn_ledger.py": "",
+    "app/domain/agent/turn_speakers.py": "",
+    "app/domain/agent/turn_times.py": "",
+    "app/domain/agent/turn_usage.py": "",
+    "app/domain/agent/harness/__init__.py": "",
+    "app/domain/agent/harness/claude_code/__init__.py": "",
     "app/domain/agent/runtime.py": "",
     "app/domain/agent/fixture_bridge.py": "",
     "app/domain/agent/run_records.py": "",
@@ -1021,6 +1180,7 @@ _IMPORT_BRIDGE = "import app.domain.agent.fixture_bridge\n"
 _IMPORT_BROKER = "import app.domain.agent.realtime.broker\n"
 _IMPORT_RECORDS = "import app.domain.agent.run_records\n"
 _IMPORT_AGENT = "import app.domain.agent\n"
+_IMPORT_CHAT = "import app.domain.agent.chat\n"
 
 
 _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
@@ -1185,6 +1345,17 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
         BROKEN,
         "app.api.space_payloads is not allowed to import app.domain.bar.models",
         ("routes-touch-no-models",),
+    ),
+    (
+        "the platform side importing the Claude Code adapter (H1)",
+        {
+            "app/domain/agent/chat.py": (
+                "from app.domain.agent.harness.claude_code import ended\n"
+            )
+        },
+        BROKEN,
+        "app.domain.agent.chat -> app.domain.agent.harness.claude_code",
+        ("platform-not-claude-code",),
     ),
 ]
 
@@ -1492,12 +1663,14 @@ def _self_test_verdict(failures: list[str]) -> int:
         )
         return 1
     print(
-        "PASS: check_boundaries self-test (9 contracts fire on the violation they "
+        "PASS: check_boundaries self-test (10 contracts fire on the violation they "
         "exist to catch; an absent, a trimmed and a wildcarded declaration each "
         "come back not-passing; a base tree's own violations are held open while "
-        "the ones this tree adds are reported, and a declaration naming a module "
-        "this branch adds is still judged; every case agrees with the exit code "
-        "under --json, on one line of stdout, naming all nine contracts)"
+        "the ones this tree adds are reported, under a rename too when a module "
+        "it held as one file this tree holds as a package, and a declaration "
+        "naming a module this branch adds is still judged; every case agrees "
+        "with the exit code under --json, on one line of stdout, naming all "
+        "ten contracts)"
     )
     return 0
 
@@ -1568,9 +1741,18 @@ def self_test() -> int:
                 )
                 for contract_id in _broken:
                     # In `CONTRACT_IDS` order: the ids in `.importlinter` order.
-                    prefix = ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4", "C5")[
-                        CONTRACT_IDS.index(contract_id)
-                    ]
+                    prefix = (
+                        "C1",
+                        "C2",
+                        "C3",
+                        "T1",
+                        "T2",
+                        "T3",
+                        "T4",
+                        "C4",
+                        "C5",
+                        "H1",
+                    )[CONTRACT_IDS.index(contract_id)]
                     report(
                         f"{what}: specific fix",
                         code,
@@ -1618,12 +1800,15 @@ def self_test() -> int:
             extra: tuple[str, ...] = (),
             frozen_at_least: int = 0,
             needle: str | None = None,
+            removed: tuple[str, ...] = (),
         ) -> dict[str, Any] | None:
             """One case whose base tree is a commit of its own.
 
             `base` is committed as the tree the branch starts from, `planted` is
             written afterwards and uncommitted, and `expected` is what the check
-            must make of the difference.
+            must make of the difference. `removed` drops base files first — a
+            module split into a package of the same name needs the file it was
+            gone, and `_write` only adds.
             """
             tmp = sandbox / name
             tmp.mkdir()
@@ -1633,6 +1818,8 @@ def self_test() -> int:
             # A case with no base debt of its own has nothing to add to it.
             if base:
                 _commit(tmp)
+            for relative in removed:
+                (tmp / relative).unlink()
             _write(tmp, planted)
             code, out, err = _invoke(tmp, *extra)
             # Both streams: the verdict and where the violations are go to
@@ -1658,7 +1845,7 @@ def self_test() -> int:
             if problem is None and expected == BROKEN:
                 for contract_id in broken:
                     fix = _BOUNDARY_FIXES[
-                        ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4", "C5")[
+                        ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4", "C5", "H1")[
                             CONTRACT_IDS.index(contract_id)
                         ]
                     ]
@@ -1703,6 +1890,49 @@ def self_test() -> int:
             frozen_at_least=1,
         )
 
+        # A module split into a package of the same name: one file before the
+        # branch, `__init__` and a child after it. The base tree breaks
+        # `...turn.steps.execute -> ...turn.intake`, and the branch moves that
+        # import into the child, so the pair is now
+        # `...turn.steps.execute.run -> ...turn.intake`. One debt with one name
+        # on it per tree — and the name the base tree's grading produces cannot
+        # match it, which is why #3890 paid seven exemptions for its own
+        # refactor. Nothing else changed, so this tree owes nothing for it.
+        split_base = {"app/domain/agent/turn/steps/execute.py": _IMPORT_INTAKE}
+        split_planted = {
+            "app/domain/agent/turn/steps/execute/__init__.py": "",
+            "app/domain/agent/turn/steps/execute/run.py": _IMPORT_INTAKE,
+        }
+        split_removed = ("app/domain/agent/turn/steps/execute.py",)
+        baseline_case(
+            "split",
+            "a module split, keeping the base tree's debt on it",
+            split_base,
+            split_planted,
+            OK,
+            removed=split_removed,
+        )
+
+        # The same split, one dependency further. `execute.run -> intake` is the
+        # base tree's debt renamed, so it stays held open; `execute.other ->
+        # agent.chat` is a dependency the module `execute` never had, so the
+        # rename does not cover it and the run is red for it alone. Renaming only
+        # renames: holding a split package's every pair open would make growing
+        # a directory a way out of the contract.
+        baseline_case(
+            "split-and-new",
+            "a split module reaching something the base tree's module never did",
+            split_base,
+            split_planted
+            | {
+                "app/domain/agent/turn/steps/execute/other.py": _IMPORT_CHAT,
+            },
+            BROKEN,
+            removed=split_removed,
+            broken=("turn-no-composition-imports",),
+            needle="app/domain/agent/turn/steps/execute/other.py:1",
+        )
+
         # A declaration naming a module this branch adds. The tree before the
         # branch has no such module, and import-linter refuses to grade a tree
         # whose declaration names a missing one — so without a placeholder for
@@ -1739,7 +1969,7 @@ def self_test() -> int:
         tmp = sandbox / "thin"
         tmp.mkdir()
         report(
-            "a declaration that lost all nine contracts",
+            "a declaration that lost all ten contracts",
             *_run(_THIN_CONFIG, {}, tmp),
             CANNOT_JUDGE,
             "missing",
@@ -1909,7 +2139,7 @@ def self_test() -> int:
             for index, (what, _f, expected, _n, _broken) in enumerate(_CASES)
         ]
         json_cases.append(
-            ("thin", "a declaration that lost all nine contracts", CANNOT_JUDGE)
+            ("thin", "a declaration that lost all ten contracts", CANNOT_JUDGE)
         )
         json_cases.append(("wildcard", "an exception written as a wildcard", BROKEN))
         json_cases.append(("absent", "no config to read at all", CANNOT_JUDGE))

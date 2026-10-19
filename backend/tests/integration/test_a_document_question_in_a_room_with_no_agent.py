@@ -15,9 +15,9 @@ from app.domain.agent.harness.channel import mint_session_token
 from app.main import app
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_a_removed_agent_loses_its_session_channels import (
-    model_pool as model_pool,  # noqa: F401
+    model_pool as model_pool,
 )
-from tests.integration.test_doc_agent import sessions as sessions  # noqa: F401
+from tests.integration.test_doc_agent import sessions as sessions
 from tests.integration.test_doc_agent_box import _ask, _done, _selection
 from tests.integration.test_doc_edits import _document
 

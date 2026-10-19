@@ -27,7 +27,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.claude_code.session_launch import (
     session_settings,
 )
-from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.launch import MachinePlace
 from app.domain.project_skill.service import session_skill_bundle
 
 PIN = device_launch.CLAUDE_PINNED_VERSION
@@ -205,25 +205,70 @@ def test_the_contract_moves_with_whatever_the_session_reads_only_at_launch(
     assert device_launch.launch_holes(state=STATE).contract != before
 
 
-def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
-    _, env = _screen_launch(
-        token="test", home_dir=str(tmp_path), work_dir=str(tmp_path)
+def _commit_in_session(command: list[str], env: dict[str, str], repo: Path) -> str:
+    """Commit in ``repo`` from the session's shell — the launch script up to the
+    point the agent starts — on a machine with no git identity of its own, and
+    return the commit's author and committer."""
+    script = command[2]
+    start = script.index('SEATD="$HOME/.cheese/seats/')
+    end = script.index('cat > "$HOME/.cheese/cheese-environment.py"')
+    shell = {
+        **_clean_environ(),
+        **env,
+        "HOME": env["CHEESE_HOME"],
+        # No identity from the machine: not its config, not its account name.
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+    Path(env["CHEESE_HOME"]).mkdir(parents=True, exist_ok=True)
+    (Path(env["CHEESE_HOME"]) / ".gitconfig").write_text(
+        "[user]\n\tuseConfigOnly = true\n"
     )
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "Fix"],
-        cwd=tmp_path,
-        env={**os.environ, **env},
+        [
+            "sh",
+            "-c",
+            script[start:end] + 'git -C "$1" -c commit.gpgsign=false '
+            "commit -q --allow-empty -m Fix",
+            "sh",
+            str(repo),
+        ],
+        env=shell,
         check=True,
         capture_output=True,
     )
-    actual = subprocess.check_output(
-        ["git", "log", "-1", "--format=%an <%ae>%n%cn <%ce>"], cwd=tmp_path, text=True
+    return subprocess.check_output(
+        ["git", "log", "-1", "--format=%an <%ae>%n%cn <%ce>"], cwd=repo, text=True
     )
+
+
+def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
+    command, env = _screen_launch(
+        token="test", home_dir=str(tmp_path / "home"), work_dir=str(tmp_path)
+    )
+    actual = _commit_in_session(command, env, tmp_path / "repo")
     assert actual.splitlines() == [
         "ops <ops@agent.cheese.local>",
         "芝士 <cheese@zhishi.local>",
     ]
+
+
+def test_a_tasks_checkout_names_its_own_author_over_the_teammate(tmp_path):
+    """The teammate is only the default: a checkout that names an author (a
+    task's, per `cheese worktree`) commits as that author."""
+    command, env = _screen_launch(
+        token="test", home_dir=str(tmp_path / "home"), work_dir=str(tmp_path)
+    )
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Owner"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "owner@example.com"],
+        check=True,
+    )
+    actual = _commit_in_session(command, env, repo)
+    assert actual.splitlines()[0] == "Owner <owner@example.com>"
 
 
 def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
@@ -595,6 +640,9 @@ def _fetching_curl(log: Path, version: str = PIN, bundle: Path | None = None) ->
     )
     return (
         "#!/bin/sh\n"
+        # A `--head` is the platform asking a package mirror whether it answers
+        # (`package_mirrors`), and it is not a download this fixture counts.
+        'for a in "$@"; do [ "$a" = "--head" ] && exit 0; done\n'
         'dest=""; url=""\n'
         'while [ "$#" -gt 0 ]; do\n'
         '  case "$1" in -o) shift; dest="$1" ;; http*) url="$1" ;; esac\n'
@@ -787,7 +835,13 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     _owner, session, _work, claude, env = _machine(tmp_path)
     network = tmp_path / "network.calls"
     curl = tmp_path / "bin/curl"
-    curl.write_text(f'#!/bin/sh\necho attempted >> "{network}"\nexit 1\n')
+    curl.write_text(
+        # A `--head` is the platform asking a package mirror whether it answers
+        # (`package_mirrors`), which is the one call here that is not a fetch.
+        "#!/bin/sh\n"
+        'for a in "$@"; do [ "$a" = "--head" ] && exit 0; done\n'
+        f'echo attempted >> "{network}"\nexit 1\n'
+    )
     curl.chmod(0o755)
 
     result = _launch(tmp_path, env)
@@ -866,7 +920,7 @@ def _bundle_server(bundle: bytes | None):
     hits: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
+        def do_GET(self):
             hits.append(self.path)
             if bundle is None or "/connector/skill-bundles/" not in self.path:
                 self.send_response(404)
@@ -1379,7 +1433,7 @@ def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
     home, _up_script = _tunnel_up_home(tmp_path)
     port_file = home / ".cheese" / "cheese-tunnel.port"
     tmux = shutil.which("tmux") or "tmux"  # the skipif above already found it
-    sock = f"/tmp/cu{os.getpid()}.sock"  # noqa: S108 — ephemeral, killed below
+    sock = f"/tmp/cu{os.getpid()}.sock"  # ephemeral, killed below
     try:
         subprocess.run(
             [tmux, "-S", sock, "new-session", "-d", "-s", "s", "sleep 60"], check=True
@@ -1902,7 +1956,7 @@ def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_pa
     from app.domain.agent import environment_runner
     from app.domain.project.environment import EnvironmentConfig
 
-    socket_path = f"/tmp/ce{os.getpid()}.sock"  # noqa: S108 — test-owned tmux socket
+    socket_path = f"/tmp/ce{os.getpid()}.sock"  # test-owned tmux socket
     home = tmp_path / "home"
     helpers = home / ".cheese"
     helpers.mkdir(parents=True)

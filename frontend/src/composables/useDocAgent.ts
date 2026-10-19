@@ -245,6 +245,14 @@ export function useDocAgent(options: DocAgentOptions) {
     void send({ preset: preset.id }, preset.kind, label)
   }
 
+  /** 为还空着的项目总览起草第一版：`note` 是提问人的补充（可以是空的）。 */
+  function draft(note: string) {
+    if (options.scope !== 'document') return
+    open()
+    if (phase.value !== 'asking') return
+    void send({ preset: 'draft', text: note.trim() || undefined }, 'edit', t('work.room.docAgent.draftLabel'))
+  }
+
   /** 自己写的一句：改还是答由它判断。 */
   function say(text: string) {
     const body = text.trim()
@@ -319,6 +327,7 @@ export function useDocAgent(options: DocAgentOptions) {
     close,
     run,
     say,
+    draft,
     stop,
     stopped,
     undo,

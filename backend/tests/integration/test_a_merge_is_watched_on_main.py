@@ -12,13 +12,25 @@ The rules, as stated before the code was written:
   that it failed. A failed one is told to the owner and reopens nothing.
 - A repository that records no deployments the platform may read says nothing.
 - What has not finished when the watch runs out is never reported.
+- A task that delivers in steps has a landing per merge: two merges whose checks
+  fail in the same sweep reopen the task once, and say what each look saw.
 """
 
+import uuid
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.domain.review import landing_forge, landing_watch
-from app.domain.review.landing_forge import Check, Deployment, ForgeUnavailable
+from app.domain.review.landing_forge import (
+    BatchCommits,
+    Check,
+    CommitChange,
+    Deployment,
+    ForgeUnavailable,
+)
+from app.domain.review.landing_models import TaskLanding
 from tests.integration.test_a_task_delivers_in_steps import (
     _accepted_step,
     _told,
@@ -32,29 +44,67 @@ app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-
 
 MERGED = "merge-sha-1"
 BEFORE = "parent-sha-0"
+SECOND = "merge-sha-2"
 
 
 class _Forge:
-    """The repository as the watch reads it: checks per commit, deployments."""
+    """The repository as the watch reads it: checks per commit, deployments,
+    and — when a test fills them in — the batched main gate's reads."""
 
     def __init__(self):
         self.ran: dict[str, list[Check]] = {}
         self.deployed: Deployment | None = None
         self.records_deployments = True
+        #: The newest finished batch gate at or after a commit: sha -> (head, checks).
+        self.covered: dict[str, tuple[str, list[Check]]] = {}
+        #: The commit `main-green` names, when the repository batches.
+        self.green: str | None = None
+        #: (anchor, head) -> the commits of that batch.
+        self.batches: dict[tuple[str, str], BatchCommits] = {}
+        #: sha -> what that commit changed.
+        self.changes: dict[str, CommitChange] = {}
+        #: head -> the test files the red jobs name.
+        self.failing: dict[str, list[str]] = {}
+        #: (commit, descendant) pairs the forge says are in that order.
+        self.ahead: set[tuple[str, str]] = set()
+        #: PR number -> the commit its merge put on main.
+        self.merges: dict[int, str] = {}
+        #: sha -> its first parent, for tests that walk a batch back.
+        self.parents: dict[str, str | None] = {}
 
     async def merge_sha(self, pr_number):
-        return MERGED
+        return self.merges.get(pr_number, MERGED)
 
     async def checks(self, sha):
         return self.ran.get(sha, [])
 
     async def parent(self, sha):
+        if sha in self.parents:
+            return self.parents[sha]
         return BEFORE if sha == MERGED else None
 
     async def deployment(self, sha, since):
         if not self.records_deployments:
             raise ForgeUnavailable("no deployments")
         return self.deployed
+
+    async def covering_run(self, sha, *, anchor=None):
+        return self.covered.get(sha)
+
+    async def main_green(self):
+        return self.green
+
+    async def commits_between(self, base, head):
+        return self.batches.get((base, head))
+
+    async def commit_change(self, sha):
+        return self.changes.get(sha)
+
+    async def failed_tests(self, head):
+        return self.failing.get(head, [])
+
+    async def is_ancestor(self, commit, descendant):
+        return commit == descendant or (commit, descendant) in self.ahead
 
 
 def _ran(name: str, conclusion: str | None) -> Check:
@@ -63,6 +113,7 @@ def _ran(name: str, conclusion: str | None) -> Check:
         status="completed" if conclusion else "in_progress",
         conclusion=conclusion,
         url=f"https://ci.example/{name}",
+        suite=1,
     )
 
 
@@ -86,6 +137,32 @@ def _completed_task(client, app_world) -> str:
     summary_turn_ends(client, task_id)
     assert _task(client, task_id)["status"] == "closed"
     return task_id
+
+
+def _another_merge_lands(client, task_id: str) -> None:
+    """The task's next step merged too: the second landing the watch makes for a
+    task that delivers in steps, still being watched when the sweep runs."""
+
+    async def insert():
+        async with client.test_factory() as session:
+            task = uuid.UUID(str(task_id))
+            first = await session.scalar(
+                select(TaskLanding).where(TaskLanding.task_id == task)
+            )
+            assert first is not None
+            now = datetime.now(UTC)
+            session.add(
+                TaskLanding(
+                    task_id=task,
+                    pr_number=first.pr_number + 1,
+                    merge_sha=SECOND,
+                    landed_at=now,
+                    watch_until=now + timedelta(hours=2),
+                )
+            )
+            await session.commit()
+
+    client.portal.call(insert)
 
 
 def _task(client, task_id) -> dict:
@@ -134,6 +211,31 @@ def test_a_check_the_merge_broke_reopens_the_task_for_its_teammate(
     assert "https://ci.example/frontend" not in told
     assert any("合并后检查未通过" in line for line in _said(client, task_id))
     assert _owner_heard(client, task_id) > heard
+
+
+def test_two_merges_of_one_task_that_both_fail_reopen_it_once(client, app_world, forge):
+    task_id = _completed_task(client, app_world)
+    _another_merge_lands(client, task_id)
+    forge.ran[BEFORE] = [_ran("backend", "success")]
+    forge.ran[MERGED] = [_ran("backend", "failure")]
+    forge.ran[SECOND] = [_ran("e2e", "failure")]
+    heard = _owner_heard(client, task_id)
+
+    watch(client)
+
+    said = _said(client, task_id)
+    reopened = [line for line in said if "任务已重新打开" in line]
+    still_going = [line for line in said if "会在这一步一起修复" in line]
+    assert len(reopened) == 1
+    assert len(still_going) == 1
+    # The earlier merge is the one that reopens the task, as it was when the
+    # looks went one merge at a time: which of the two is a new step is not
+    # something a tick may decide by which look got there first.
+    assert "backend" in reopened[0]
+    assert "e2e" in still_going[0]
+    assert _task(client, task_id)["status"] == "open"
+    # One merge each: a merge that broke a check is told to the owner either way.
+    assert _owner_heard(client, task_id) == heard + 2
 
 
 def test_a_check_that_was_failing_before_the_merge_is_not_the_tasks(

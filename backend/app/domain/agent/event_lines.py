@@ -45,6 +45,7 @@ _TOOL_VERB = {
 _TOOL_VERB.update(
     {
         "Bash": "执行命令",
+        "codemode": "运行脚本",
         "Write": "写入文件",
         "Edit": "修改文件",
         "Read": "读取文件",
