@@ -2,11 +2,12 @@
 
 The rules, as stated before the code was written:
 
-- One run covers every commit since the last run that was not superseded. A
-  commit inside a batch has no run of its own — its push was superseded and
-  its check runs are cancelled — so the watch reads the run that covers it:
-  the first after it that was not cancelled. The batch reaches back to the
-  last commit whose run went green.
+- One run covers every commit since the last one that ran it. A commit inside
+  a batch has no run of the batch's checks — its push was superseded before
+  the run started, which on GitHub leaves no check runs at all — so the watch
+  reads the run that covers it: the first later commit that ran those checks.
+  The batch reaches back to the commit before it that ran them. Other
+  workflows (an image build on every push) run on every commit as usual.
 - The failed tests in the red job's log name test files. A commit of the batch
   whose changes are about those files is the one that broke it, when exactly
   one commit matches: only that task's line hears.
@@ -23,6 +24,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.domain.review import landing_watch
 from app.domain.review.landing_forge import Check, CommitChange
 from app.domain.review.landing_models import TaskLanding
 from tests.delivery import delivery_task_id
@@ -48,6 +50,12 @@ ANCHOR = "anchor-a"
 LINE_ONE = "commit-b"
 LINE_TWO = "commit-c"
 HEAD = "commit-d"
+NEXT = "commit-e"
+
+
+def _build() -> Check:
+    """The image build, which runs on every push to main."""
+    return _gate("success", "build")
 
 
 def _gate(conclusion: str, name: str = "CI required") -> Check:
@@ -87,21 +95,24 @@ def _two_lines(client, app_world, forge) -> tuple[str, str]:
 def _red_batch(forge, *, failing: list[str]) -> None:
     """One batch (ANCHOR, HEAD] with commits B and C in it, red at HEAD.
 
-    HEAD is the commit the gate ran on; B and C are inside the batch and have
-    only the cancelled runs their superseded pushes left.
+    HEAD is the commit the gate ran on; B and C are inside the batch.
     """
-    forge.later = [ANCHOR, LINE_ONE, LINE_TWO, HEAD]
+    forge.line = [ANCHOR, LINE_ONE, LINE_TWO, HEAD]
     forge.parents = {HEAD: LINE_TWO, LINE_TWO: LINE_ONE, LINE_ONE: ANCHOR}
-    forge.ran[ANCHOR] = [_gate("success")]
-    # The pushes at B and C were superseded by a newer one in the concurrency
-    # group: their gate is cancelled, and only HEAD's ran. A job that finished
-    # before the cancellation stays green — it must not be read as the gate's
-    # verdict.
-    forge.ran[LINE_ONE] = [_gate("cancelled"), _gate("success", "scope")]
-    forge.ran[LINE_TWO] = [_gate("cancelled"), _gate("success", "scope")]
+    forge.ran[ANCHOR] = [
+        _gate("success"),
+        _gate("success", "backend tests (unit)"),
+        _build(),
+    ]
+    # The pushes at B and C were superseded in the queue before their run
+    # started: no check runs of it at all, only the build that runs on every
+    # push, which went green and must not be read as the batch's verdict.
+    forge.ran[LINE_ONE] = [_build()]
+    forge.ran[LINE_TWO] = [_build()]
     forge.ran[HEAD] = [
         _gate("failure"),
         _gate("failure", "backend tests (unit)"),
+        _build(),
     ]
     forge.changes = {
         LINE_ONE: CommitChange(LINE_ONE, "feat: a", ("backend/a.py",)),
@@ -208,7 +219,7 @@ def test_a_gate_still_queued_says_nothing(client, app_world, forge):
     ]
     # A covering answer exists; without the queued rule the look would read
     # this commit as passed through it.
-    forge.later = [LINE_ONE, HEAD]
+    forge.line = [LINE_ONE, HEAD]
     forge.ran[HEAD] = [_gate("success")]
 
     watch(client)
@@ -223,10 +234,12 @@ def test_a_later_green_batch_settles_an_intermediate_commit(client, app_world, f
     project = _make_project(client)
     task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
     told = _told(client, task_id)
-    forge.ran[LINE_ONE] = [_gate("cancelled"), _gate("success", "scope")]
-    forge.ran[HEAD] = [_gate("success")]
-    forge.ran["later"] = [_gate("failure")]
-    forge.later = [LINE_ONE, HEAD, "later"]
+    forge.parents = {LINE_ONE: ANCHOR}
+    forge.ran[ANCHOR] = [_gate("success"), _build()]
+    forge.ran[LINE_ONE] = [_build()]
+    forge.ran[HEAD] = [_gate("success"), _build()]
+    forge.ran["later"] = [_gate("failure"), _build()]
+    forge.line = [ANCHOR, LINE_ONE, HEAD, "later"]
 
     watch(client)
 
@@ -239,10 +252,10 @@ def test_the_batch_reaches_back_to_the_last_green_run(client, app_world, forge):
     task_id = _task(client, app_world, forge, project, pr_number=7, sha=HEAD)
     told = _told(client, task_id)
     forge.parents = {HEAD: LINE_TWO, LINE_TWO: LINE_ONE, LINE_ONE: ANCHOR}
-    forge.ran[HEAD] = [_gate("failure")]
-    forge.ran[LINE_TWO] = [_gate("cancelled")]
-    forge.ran[LINE_ONE] = [_gate("cancelled")]
-    forge.ran[ANCHOR] = [_gate("success")]
+    forge.ran[HEAD] = [_gate("failure"), _build()]
+    forge.ran[LINE_TWO] = [_build()]
+    forge.ran[LINE_ONE] = []
+    forge.ran[ANCHOR] = [_gate("success"), _build()]
     forge.changes = {
         HEAD: CommitChange(HEAD, "feat: d", ("backend/d.py",)),
         LINE_TWO: CommitChange(LINE_TWO, "feat: b", ("backend/b.py",)),
@@ -265,8 +278,8 @@ def test_a_later_batch_that_is_red_again_keeps_the_fix(client, app_world, forge)
     watch(client)
     assert "各自排除" in _told(client, second)
 
-    forge.ran["next"] = [_gate("failure")]
-    forge.later.append("next")
+    forge.ran[NEXT] = [_gate("failure"), _build()]
+    forge.line.append(NEXT)
 
     watch(client)
 
@@ -282,7 +295,7 @@ def test_a_red_check_the_batch_does_not_rerun_is_not_withdrawn(
     project = _make_project(client)
     task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
     forge.parents = {LINE_ONE: ANCHOR}
-    forge.ran[ANCHOR] = [_gate("success")]
+    forge.ran[ANCHOR] = [_gate("success"), _gate("success", "build-gateway")]
     forge.ran[LINE_ONE] = [
         _gate("success"),
         _gate("failure", "build-gateway"),
@@ -297,7 +310,7 @@ def test_a_red_check_the_batch_does_not_rerun_is_not_withdrawn(
         # it says nothing about the build of the merge commit.
         _gate("success", "build-gateway"),
     ]
-    forge.later = [LINE_ONE, HEAD]
+    forge.line = [LINE_ONE, HEAD]
 
     watch(client)
 
@@ -336,11 +349,12 @@ def test_a_red_commit_a_later_green_batch_covered_says_nothing(
     task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
     told = _told(client, task_id)
     # LINE_ONE ended a batch: the push before it was superseded.
-    forge.parents = {LINE_ONE: ANCHOR}
-    forge.ran[ANCHOR] = [_gate("cancelled")]
+    forge.parents = {LINE_ONE: LINE_TWO, LINE_TWO: ANCHOR}
+    forge.ran[ANCHOR] = [_gate("success")]
+    forge.ran[LINE_TWO] = []
     forge.ran[LINE_ONE] = [_gate("failure")]
     forge.ran[HEAD] = [_gate("success")]
-    forge.later = [ANCHOR, LINE_ONE, HEAD]
+    forge.line = [ANCHOR, LINE_TWO, LINE_ONE, HEAD]
 
     watch(client)
 
@@ -352,10 +366,11 @@ def test_a_green_batch_says_nothing(client, app_world, forge):
     first, second = _two_lines(client, app_world, forge)
     told_first = _told(client, first)
     told_second = _told(client, second)
-    forge.later = [ANCHOR, LINE_ONE, LINE_TWO, HEAD]
+    forge.line = [ANCHOR, LINE_ONE, LINE_TWO, HEAD]
+    forge.parents = {HEAD: LINE_TWO, LINE_TWO: LINE_ONE, LINE_ONE: ANCHOR}
     forge.ran[ANCHOR] = [_gate("success")]
-    forge.ran[LINE_ONE] = [_gate("cancelled")]
-    forge.ran[LINE_TWO] = [_gate("cancelled")]
+    forge.ran[LINE_ONE] = []
+    forge.ran[LINE_TWO] = []
     forge.ran[HEAD] = [_gate("success")]
 
     watch(client)
@@ -388,7 +403,7 @@ def test_an_unsettled_red_is_not_withdrawn(client, app_world, forge):
     project = _make_project(client)
     task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
     forge.parents = {LINE_ONE: ANCHOR}
-    forge.ran[ANCHOR] = [_gate("success")]
+    forge.ran[ANCHOR] = [_gate("success"), _gate("success", "build-gateway")]
     forge.ran[LINE_ONE] = [
         _gate("success"),
         _gate("failure", "build-gateway"),
@@ -397,7 +412,7 @@ def test_an_unsettled_red_is_not_withdrawn(client, app_world, forge):
     assert _landing(client, task_id).checks.value == "failed"
 
     forge.ran[HEAD] = [_gate("success")]
-    forge.later = [LINE_ONE, HEAD]
+    forge.line = [LINE_ONE, HEAD]
     forge.ran[LINE_ONE] = [
         _gate("success"),
         _gate("failure", "build-gateway"),
@@ -427,8 +442,8 @@ def test_a_neutral_anchor_ends_the_walk_back(client, app_world, forge):
     told = _told(client, task_id)
     forge.parents = {HEAD: LINE_TWO, LINE_TWO: LINE_ONE, LINE_ONE: ANCHOR}
     forge.ran[HEAD] = [_gate("failure")]
-    forge.ran[LINE_TWO] = [_gate("cancelled")]
-    forge.ran[LINE_ONE] = [_gate("cancelled")]
+    forge.ran[LINE_TWO] = []
+    forge.ran[LINE_ONE] = []
     forge.ran[ANCHOR] = [Check("CI required", "completed", "neutral", "u")]
     forge.changes = {
         HEAD: CommitChange(HEAD, "feat: d", ("backend/d.py",)),
@@ -451,7 +466,7 @@ def test_a_green_rerun_of_another_workflows_check_settles_it(client, app_world, 
     project = _make_project(client)
     task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
     forge.parents = {LINE_ONE: ANCHOR}
-    forge.ran[ANCHOR] = [_gate("success")]
+    forge.ran[ANCHOR] = [_gate("success"), _gate("success", "build-gateway")]
     forge.ran[LINE_ONE] = [
         _gate("success"),
         _gate("failure", "build-gateway"),
@@ -468,3 +483,69 @@ def test_a_green_rerun_of_another_workflows_check_settles_it(client, app_world, 
 
     assert "这条催修撤销" in _told(client, task_id)
     assert _landing(client, task_id).checks.value == "preexisting"
+
+
+def test_a_batch_end_that_went_red_is_withdrawn_once_a_later_batch_is_green(
+    client, app_world, forge
+):
+    """The merge that ended the batch is the one the red run is on; its push
+    before it was superseded and left no runs. A later batch going green over
+    it settles that red."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=HEAD)
+    _red_batch(forge, failing=["backend/tests/test_d.py"])
+    watch(client)
+    assert _landing(client, task_id).checks.value == "failed"
+
+    forge.ran[NEXT] = [
+        _gate("success"),
+        _gate("success", "backend tests (unit)"),
+        _build(),
+    ]
+    forge.line.append(NEXT)
+    watch(client)
+
+    assert "这条催修撤销" in _told(client, task_id)
+    assert _landing(client, task_id).checks.value == "preexisting"
+
+
+def test_a_merge_whose_batch_is_still_queued_waits_for_it(client, app_world, forge):
+    """The build ran on the merge and passed; the batch's run is queued behind
+    another and has no runs yet. The merge is not judged on the build alone."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    forge.parents = {LINE_ONE: ANCHOR}
+    forge.ran[ANCHOR] = [_gate("success"), _build()]
+    forge.ran[LINE_ONE] = [_build()]
+    forge.line = [ANCHOR, LINE_ONE]
+
+    watch(client)
+
+    assert _landing(client, task_id).checks.value == "watching"
+
+
+def test_a_batch_longer_than_is_read_blames_nobody(client, app_world, forge):
+    """Past `BATCH_COMMITS` the batch is not read whole: its failing tests may
+    name one commit of what was read, but nothing is pinned on it."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=HEAD)
+    told = _told(client, task_id)
+    skipped = [f"skipped-{i}" for i in range(landing_watch.BATCH_COMMITS + 1)]
+    forge.parents = {HEAD: skipped[0]}
+    for newer, older in zip(skipped, skipped[1:], strict=False):
+        forge.parents[newer] = older
+    forge.parents[skipped[-1]] = ANCHOR
+    for sha in skipped:
+        forge.ran[sha] = []
+        forge.changes[sha] = CommitChange(sha, f"feat: {sha}", (f"backend/{sha}.py",))
+    forge.ran[ANCHOR] = [_gate("success")]
+    forge.ran[HEAD] = [_gate("failure")]
+    forge.changes[HEAD] = CommitChange(HEAD, "feat: d", ("backend/d.py",))
+    forge.failing[HEAD] = ["backend/tests/test_d.py"]
+
+    watch(client)
+
+    told_after = _told(client, task_id)
+    assert told_after != told
+    assert "各自排除" in told_after
+    assert "只有这条线" not in told_after

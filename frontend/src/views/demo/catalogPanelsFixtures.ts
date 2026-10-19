@@ -734,7 +734,6 @@ export const SITE_RAW_RECORDS: Block[] = [
       content: '',
       meta: {
         record,
-        harness: 'claude-code',
         sequence: i + 1,
         in_room: false,
         tool: i === 1 ? 'Bash' : undefined,

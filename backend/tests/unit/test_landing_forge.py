@@ -22,13 +22,13 @@ from app.domain.review.landing_forge import (
     ForgeUnavailable,
     GitHubLandingReads,
     _failed_paths,
-    named_runs,
+    standing,
+    verdicts,
 )
 from app.domain.review.landing_watch import Batch, BatchCommit, _search_for_culprit
 
 #: The check a repository runs on its branch in batches.
 GATE = "rocket-build"
-GATES = frozenset({GATE})
 
 MERGED = "m" * 40
 SINCE = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
@@ -134,8 +134,8 @@ def _reads_with(handle):
         "r",
         transport=httpx.MockTransport(
             lambda request: (
-                httpx.Response(200, json={"statuses": []})
-                if request.url.path.endswith("/status")
+                httpx.Response(200, json=[])
+                if request.url.path.endswith("/statuses")
                 else handle(request)
             )
         ),
@@ -152,64 +152,45 @@ def _gate_run(status: str, conclusion: str | None, name: str = GATE):
     }
 
 
-def _later(runs_by_sha):
-    """The branch after "a": the commits of ``runs_by_sha``, oldest first."""
+def _compare(commits):
+    """The branch after "a", as GitHub's compare lists it: (sha, parents)."""
 
     def handle(request):
         path = request.url.path.removeprefix("/repos/o/r")
-        if path.startswith("/compare/"):
-            return httpx.Response(
-                200,
-                json={
-                    "status": "ahead",
-                    "commits": [{"sha": sha} for sha in runs_by_sha],
-                },
-            )
-        if path.endswith("/check-runs"):
-            return httpx.Response(
-                200, json={"check_runs": runs_by_sha[path.split("/")[2]]}
-            )
-        return httpx.Response(404)
+        assert path.startswith("/compare/a..."), path
+        return httpx.Response(
+            200,
+            json={
+                "status": "ahead",
+                "commits": [
+                    {"sha": sha, "parents": [{"sha": p} for p in parents]}
+                    for sha, parents in commits
+                ],
+            },
+        )
 
     return _reads_with(handle)
 
 
-def test_the_covering_run_is_the_first_after_the_commit_that_was_not_cancelled():
-    reads = _later(
-        {
-            "b": [_gate_run("completed", "cancelled")],
-            "c": [_gate_run("completed", "failure")],
-            "d": [_gate_run("completed", "success")],
-        }
+def test_the_commits_after_a_merge_are_its_branchs_first_parent_line():
+    """A side branch merged in is not on the line, and the order is the
+    parents', not the order the forge listed them in."""
+    reads = _compare(
+        [
+            ("d", ["c", "x"]),
+            ("x", ["a"]),
+            ("b", ["a"]),
+            ("c", ["b"]),
+        ]
     )
-    assert asyncio.run(reads.run_after("a", GATES))[0] == "c"
+    assert asyncio.run(reads.later("a")) == ["b", "c", "d"]
 
 
-def test_a_covering_run_still_going_is_waited_for():
-    reads = _later(
-        {
-            "b": [_gate_run("queued", None)],
-            "c": [_gate_run("completed", "success")],
-        }
-    )
-    assert asyncio.run(reads.run_after("a", GATES)) is None
+def test_a_branch_that_did_not_move_has_nothing_after_the_merge():
+    def handle(request):
+        return httpx.Response(200, json={"status": "identical", "commits": []})
 
-
-def test_a_later_green_run_is_found_past_a_newer_red_one():
-    reads = _later(
-        {
-            "b": [_gate_run("completed", "success")],
-            "c": [_gate_run("completed", "failure")],
-            "d": [_gate_run("in_progress", None)],
-        }
-    )
-    assert asyncio.run(reads.run_after("a", GATES, passed=True))[0] == "b"
-
-
-def test_a_branch_whose_pushes_run_no_such_check_has_no_later_run():
-    reads = _later({"b": [_gate_run("completed", "success", name="lint")]})
-    assert asyncio.run(reads.run_after("a", GATES)) is None
-    assert asyncio.run(reads.run_after("a", GATES, passed=True)) is None
+    assert asyncio.run(_reads_with(handle).later("a")) == []
 
 
 def _reads_failed_log(log, *, redirect=False):
@@ -449,35 +430,32 @@ async def test_a_static_failure_in_a_test_file_is_not_bisected_by_running_tests(
 
 
 def test_a_rerun_that_passed_wins_over_the_red_it_replaced():
-
     red_then_green = [
         Check(GATE, "completed", "failure", ""),
         Check(GATE, "completed", "success", ""),
     ]
-    assert named_runs(red_then_green, GATES).conclusion == "success"
+    assert standing(red_then_green).conclusion == "success"
 
 
-def test_a_red_gate_beats_a_cancelled_one_whatever_the_order():
-
-    for runs in (
-        [
-            Check(GATE, "completed", "cancelled", ""),
-            Check(GATE, "completed", "failure", ""),
-        ],
-        [
-            Check(GATE, "completed", "failure", ""),
-            Check(GATE, "completed", "cancelled", ""),
-        ],
-    ):
-        assert named_runs(runs, GATES).conclusion == "failure"
+def test_a_rerun_that_failed_after_a_pass_is_red():
+    green_then_red = [
+        Check(GATE, "completed", "success", ""),
+        Check(GATE, "completed", "failure", ""),
+    ]
+    assert standing(green_then_red).conclusion == "failure"
 
 
-def test_a_neutral_gate_counts_as_a_pass():
-
-    # The precedence has to matter: with the neutral run first the old
-    # first-match code would return the failure.
+def test_a_cancelled_rerun_says_nothing_about_the_run_before_it():
     runs = [
         Check(GATE, "completed", "failure", ""),
-        Check(GATE, "completed", "neutral", ""),
+        Check(GATE, "completed", "cancelled", ""),
     ]
-    assert named_runs(runs, GATES).conclusion == "neutral"
+    assert standing(runs).conclusion == "failure"
+
+
+def test_a_name_every_attempt_of_which_was_cancelled_did_not_run():
+    runs = [
+        Check(GATE, "completed", "cancelled", ""),
+        Check("build", "completed", "success", ""),
+    ]
+    assert set(verdicts(runs)) == {"build"}

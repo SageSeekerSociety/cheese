@@ -11,6 +11,9 @@ The rules, as stated before the code was written:
 - A merge commit on which nothing runs has no post-merge signal: once the
   forge has had a few minutes to start its runs, the watch says so instead of
   waiting out the two hours.
+- A red check is settled only by its latest attempt passing. A re-run still
+  in flight settles nothing, even where the forge lists only the newest
+  attempt unless asked for all of them; a re-run that fails keeps it red.
 
 Both forges, on a repository that is not the platform's own: GitHub reports
 check runs and commit statuses; Forgejo reports commit statuses whose
@@ -28,6 +31,7 @@ from app.domain.review import landing_forge, landing_watch
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.landing_models import TaskLanding
 from tests.integration.test_a_merge_is_watched_on_main import _completed_task
+from tests.integration.test_a_task_delivers_in_steps import _told
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
@@ -89,16 +93,26 @@ class _GitHub:
         if path == "/commits":
             return httpx.Response(200, json=[{"sha": MERGE}, {"sha": PARENT}])
         if path.endswith("/check-runs"):
-            return httpx.Response(
-                200, json={"check_runs": self.runs.get(path.split("/")[2], [])}
-            )
-        if path.endswith("/status"):
-            return httpx.Response(200, json={"statuses": []})
+            runs = self.runs.get(path.split("/")[2], [])
+            if request.url.params.get("filter") != "all":
+                # GitHub's default (`filter=latest`): one run per name.
+                newest = {}
+                for run in sorted(runs, key=lambda run: run["id"]):
+                    newest[run["name"]] = run
+                runs = list(newest.values())
+            return httpx.Response(200, json={"check_runs": runs})
+        if path.endswith("/statuses"):
+            return httpx.Response(200, json=[])
         if path.startswith("/compare/"):
             return httpx.Response(200, json={"status": "identical", "commits": []})
         if path.startswith("/commits/"):
-            return httpx.Response(200, json={"parents": [{"sha": PARENT}]})
+            return httpx.Response(200, json={"parents": _parents(path)})
         return httpx.Response(404)
+
+
+def _parents(path: str) -> list[dict]:
+    """MERGE was merged onto PARENT, the repository's first commit."""
+    return [{"sha": PARENT}] if path.rstrip("/").endswith(MERGE) else []
 
 
 class _Forgejo:
@@ -126,6 +140,8 @@ class _Forgejo:
             return httpx.Response(
                 200, json=self.statuses.get(sha, []) if page == 1 else []
             )
+        if path.startswith("/git/commits/"):
+            return httpx.Response(200, json={"parents": _parents(path)})
         if path.startswith("/pulls/"):
             return httpx.Response(
                 200,
@@ -212,8 +228,9 @@ def _checks(client, task_id) -> str:
     return client.portal.call(read)
 
 
-def _deploy_run(conclusion: str) -> dict:
+def _deploy_run(conclusion: str, run_id: int = 1) -> dict:
     return {
+        "id": run_id,
         "name": "deploy",
         "app": {"id": 15368},
         "status": "completed",
@@ -226,16 +243,22 @@ def test_github_a_merge_whose_push_checks_passed_passes_on_the_first_look(
     client, app_world, github
 ):
     task_id = _completed_task(client, app_world)
-    github.runs[MERGE] = [_deploy_run("success")]
+    github.runs[PARENT] = [_deploy_run("success")]
+    github.runs[MERGE] = [_deploy_run("success", run_id=2)]
     github.asked.clear()
 
     watch(client)
 
     assert _checks(client, task_id) == "passed"
-    # One look reads the merge commit's own checks, and nothing else.
+    # One look reads the merge commit's checks and the commit before it, to
+    # know which checks run on this branch's pushes; nothing else.
     assert sorted(github.asked) == [
+        f"GET /repos/acme/rocket/commits/{MERGE}",
         f"GET /repos/acme/rocket/commits/{MERGE}/check-runs",
-        f"GET /repos/acme/rocket/commits/{MERGE}/status",
+        f"GET /repos/acme/rocket/commits/{MERGE}/statuses",
+        f"GET /repos/acme/rocket/commits/{PARENT}",
+        f"GET /repos/acme/rocket/commits/{PARENT}/check-runs",
+        f"GET /repos/acme/rocket/commits/{PARENT}/statuses",
     ]
 
 
@@ -281,3 +304,77 @@ def test_forgejo_a_merge_nothing_ran_on_has_no_post_merge_signal(
     watch(client)
 
     assert _checks(client, task_id) == "unchecked"
+
+
+# ---- a re-run of a red check -------------------------------------------------
+
+
+def _github_run(run_id: int, status: str, conclusion: str | None) -> dict:
+    return {
+        "id": run_id,
+        "name": "test",
+        "status": status,
+        "conclusion": conclusion,
+        "html_url": f"https://github.test/acme/rocket/runs/{run_id}",
+    }
+
+
+def _forgejo_status(status_id: int, state: str) -> dict:
+    return {
+        "id": status_id,
+        "context": "CI / test (push)",
+        "status": state,
+        "target_url": f"https://forge.test/acme/rocket/actions/runs/{status_id}",
+    }
+
+
+def _withdrawn(client, task_id) -> bool:
+    return "这条催修撤销" in _told(client, task_id)
+
+
+@pytest.mark.parametrize(
+    ("rerun", "settled"),
+    [("in_progress", False), ("success", True), ("failure", False)],
+    ids=["in-flight", "passed", "failed-again"],
+)
+def test_github_a_red_check_is_settled_only_by_its_rerun_passing(
+    client, app_world, github, rerun, settled
+):
+    task_id = _completed_task(client, app_world)
+    github.runs[PARENT] = [_github_run(1, "completed", "success")]
+    github.runs[MERGE] = [_github_run(2, "completed", "failure")]
+    watch(client)
+    assert _checks(client, task_id) == "failed"
+
+    github.runs[MERGE].append(
+        _github_run(
+            3,
+            "completed" if rerun != "in_progress" else "in_progress",
+            None if rerun == "in_progress" else rerun,
+        )
+    )
+    watch(client)
+
+    assert _withdrawn(client, task_id) is settled
+    assert _checks(client, task_id) == ("preexisting" if settled else "failed")
+
+
+@pytest.mark.parametrize(
+    ("rerun", "settled"),
+    [("pending", False), ("success", True), ("failure", False)],
+    ids=["in-flight", "passed", "failed-again"],
+)
+def test_forgejo_a_red_check_is_settled_only_by_its_rerun_passing(
+    client, app_world, forgejo, rerun, settled
+):
+    task_id = _completed_task(client, app_world)
+    forgejo.statuses[PARENT] = [_forgejo_status(1, "success")]
+    forgejo.statuses[MERGE] = [_forgejo_status(2, "failure")]
+    watch(client)
+    assert _checks(client, task_id) == "failed"
+
+    forgejo.statuses[MERGE].append(_forgejo_status(3, rerun))
+    watch(client)
+
+    assert _withdrawn(client, task_id) is settled
+    assert _checks(client, task_id) == ("preexisting" if settled else "failed")

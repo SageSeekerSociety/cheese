@@ -132,6 +132,7 @@ async def _send_transcripts(operation: RoomCleanup, entry: dict) -> str | None:
     except Exception as exc:
         # A signed URL changes on every retry. The persisted failure state
         # names the stage and resource; the first traceback keeps the cause.
+        # i18n-exempt: a cleanup's reason for waiting, for the logs and the row
         raise RuntimeError(
             f"transcript upload failed resource={entry['resource_id']}"
         ) from exc
@@ -141,6 +142,7 @@ async def _send_transcripts(operation: RoomCleanup, entry: dict) -> str | None:
     try:
         verified = await transcripts_kept(key, sent)
     except Exception as exc:
+        # i18n-exempt: a cleanup's reason for waiting, for the logs and the row
         raise RuntimeError(
             f"transcript bucket check failed resource={entry['resource_id']}"
         ) from exc

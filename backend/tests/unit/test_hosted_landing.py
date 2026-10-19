@@ -17,18 +17,17 @@ def test_a_commit_status_is_a_check_that_ran_on_the_commit():
     def forge(request):
         if request.url.path.endswith("/check-runs"):
             return httpx.Response(200, json={"check_runs": []})
-        assert request.url.path.endswith("/status")
+        assert request.url.path.endswith("/statuses")
         return httpx.Response(
             200,
-            json={
-                "statuses": [
-                    {
-                        "context": "external-ci",
-                        "state": "success",
-                        "target_url": "https://ci.test/7",
-                    }
-                ]
-            },
+            json=[
+                {
+                    "id": 7,
+                    "context": "external-ci",
+                    "state": "success",
+                    "target_url": "https://ci.test/7",
+                }
+            ],
         )
 
     reads = GitHubLandingReads(

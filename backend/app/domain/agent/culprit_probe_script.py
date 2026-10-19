@@ -45,6 +45,7 @@ def run(argv, cwd, directory, timeout=600):
 def package_of(tree, test):
     path = tree / test.split("::", 1)[0]
     if not path.resolve().is_relative_to(tree.resolve()) or not path.is_file():
+        # i18n-exempt: the probe's own log on the machine; the platform reads only its verdict
         raise ValueError("Test file is absent at the probed revision")
     for parent in path.parents:
         if any(
@@ -54,6 +55,7 @@ def package_of(tree, test):
             return parent
         if parent == tree:
             break
+    # i18n-exempt: the probe's own log on the machine; the platform reads only its verdict
     raise ValueError("No supported package manifest owns the test")
 
 
@@ -176,6 +178,7 @@ def main():
     verdict = "unknown"
     try:
         if run(["cheese", "revision-tree", sha, str(tree)], directory, directory):
+            # i18n-exempt: the probe's own log on the machine; the platform reads only its verdict
             raise RuntimeError("The probed commit could not be checked out")
         verdict = probe(tree, tests, directory)
     except Exception as error:

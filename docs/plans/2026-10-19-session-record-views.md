@@ -24,9 +24,15 @@ These are tool steps (with the output, failure and calls written onto them), sub
 
 `scripts/dev/count-retired-site.py` holds the predicate, runs in a read-only transaction and reports the retired rows by kind, the hidden rows kept, and `run_records` counted by kind. No `run_records` writer was removed; platform statuses still use the table, so none of its rows is retired.
 
-TODO (coordinator): rerun `scripts/dev/count-retired-site.py` on dev and record the counts here before asking the product owner to confirm deletion.
+The read-only dev recount with this predicate: `retired_site_rows` 1,139,401; `hidden_rows_kept` 352; every `run_records` kind is one a live writer still produces. The product owner approved deleting the 1,139,401 retired rows in release two.
 
-The coordinator must confirm deletion with the product owner before merging. Release one removes readers/writers and adds only the conversation launch boundary. Release two removes the retired rows in bounded, committed periodic batches after the preceding release has stopped producing them. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule.
+Release one removes readers/writers and adds only the conversation launch boundary. Release two removes the retired rows in bounded, committed periodic batches after the preceding release has stopped producing them. Agent traces are kept forever, so the release-two job must, for each batch, in this order:
+
+1. Export the batch's retired rows, keyed by conversation, as gzip JSONL to the private bucket at `archive/site-event-blocks/<conversation>/<batch>.jsonl.gz`.
+2. Read each object back and verify it against what was exported.
+3. Only then delete exactly the rows that object holds.
+
+Nothing deletes those archive objects. The database dumps on R2 are not that copy: `db/` has a 30-day lifecycle rule. This PR does not implement the job. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule.
 
 ## Sources adopted
 

@@ -12,12 +12,14 @@ checks are the forge's gate before the merge, which the forge has already
 enforced; a check that only runs on pull requests never reports on the merge
 commit, so it is not looked for there.
 
-A repository may run its default-branch checks in batches, cancelling the run
-a newer push supersedes. Such a commit's runs are cancelled, and the run that
-covers it is the first one after it on the branch that was not (GitHub's
-compare reads the commits after it). GitHub also supplies a batch's commits
-and its failed-job logs. Forgejo reports commit statuses, which are never
-cancelled, so every merge there is judged on its own.
+A repository may run its default-branch checks in batches: a push whose run
+was superseded before it started has no runs of its own, or only cancelled
+ones (which forge and which concurrency setting decides). Either way it has
+no verdict of its own, and the run that covers it is that of the first later
+commit, along the branch's first parents, that has one. The forge's compare
+names the commits after a merge; both GitHub and Forgejo list each commit's
+parents there, so the order is read off the parents rather than off the
+list. GitHub also supplies a batch's commit changes and its failed-job logs.
 """
 
 import logging
@@ -58,6 +60,32 @@ class Check:
     #: success / failure / cancelled / skipped / timed_out / … once completed
     conclusion: str | None
     url: str
+    #: Which attempt of the name this is: a later attempt has a larger value.
+    #: A commit's checks are listed oldest attempt first.
+    attempt: int = 0
+
+
+def verdicts(runs: list[Check]) -> dict[str, Check]:
+    """Where each check that ran on a commit stands (`standing`), by name. A
+    name every attempt of which was cancelled said nothing, and is left out:
+    a commit with no verdicts has no run of its own."""
+    by_name: dict[str, list[Check]] = {}
+    for run in runs:
+        by_name.setdefault(run.name, []).append(run)
+    return {
+        name: now
+        for name, attempts in by_name.items()
+        if (now := standing(attempts)).conclusion != "cancelled"
+    }
+
+
+def standing(attempts: list[Check]) -> Check:
+    """Where one check name stands across its attempts on a commit, oldest
+    first: the latest attempt that was not cancelled. A cancelled re-run says
+    nothing about the run before it; only when every attempt was cancelled is
+    the name cancelled."""
+    said = [run for run in attempts if run.conclusion != "cancelled"]
+    return (said or attempts)[-1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,17 +132,10 @@ class LandingReads(Protocol):
         records none the platform may read."""
         ...
 
-    async def run_after(
-        self, sha: str, names: frozenset[str], *, passed: bool = False
-    ) -> tuple[str, list[Check]] | None:
-        """A later run of the checks ``names`` on the branch, after ``sha``:
-        the commit it reported on, and that commit's checks.
-
-        By default the first run after ``sha`` that was not cancelled, which
-        is the batch that covered it; None while that run is still going or
-        has not started. ``passed`` asks instead for the newest one that went
-        green, which settles a red on ``sha``: that commit contains it. None
-        on a forge that cannot list the commits after one."""
+    async def later(self, sha: str) -> list[str]:
+        """The commits after ``sha`` on the default branch's first-parent
+        line, oldest first, at most `LOOK_AHEAD` of them; empty on a forge
+        that cannot say."""
         ...
 
     async def commit_change(self, sha: str) -> CommitChange | None:
@@ -138,9 +159,9 @@ async def reads_for(
     client = await proposal_client(project_id, session)
     tokens = await tokens_for_project(project_id, session)
     owner, repo = binding.repo.split("/", 1)
+    # Empty means "not resolved from the provider yet" (`repositories.py`
+    # never assumes main); there is then no branch to look ahead on.
     if binding.kind == "github_app":
-        # Empty means "not resolved from the provider yet" (`repositories.py`
-        # never assumes main); there is then no branch to look ahead on.
         return GitHubLandingReads(
             client,
             tokens,
@@ -149,7 +170,14 @@ async def reads_for(
             repo,
             branch=binding.default_branch or None,
         )
-    return ForgejoLandingReads(client, tokens, binding.api_url, owner, repo)
+    return ForgejoLandingReads(
+        client,
+        tokens,
+        binding.api_url,
+        owner,
+        repo,
+        branch=binding.default_branch or None,
+    )
 
 
 _FINISHED_DEPLOYMENT = ("success", "failure", "error")
@@ -159,7 +187,7 @@ _FINISHED_DEPLOYMENT = ("success", "failure", "error")
 _COMMIT_MAX_FILES = 300
 #: How many commits after a merge are looked at for a later run. It bounds
 #: forge calls rather than express a rule: a batch is a handful of commits.
-_LOOK_AHEAD = 20
+LOOK_AHEAD = 20
 #: How many red jobs get their log read for failing file names.
 _RED_LOGS = 3
 
@@ -192,55 +220,31 @@ _RED_CONCLUSIONS = frozenset(
     {"failure", "timed_out", "startup_failure", "action_required", "stale"}
 )
 
-#: A completed check that passed, as `merge_state` reads it.
-_PASS_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 
-
-def named_runs(runs: list[Check], names: frozenset[str]) -> Check | None:
-    """What the checks ``names`` came to on one commit, as one check; None
-    when one of them has no run there.
-
-    A re-run leaves more than one run of the same name on a commit; as
-    `merge_state._outcome` reads them, any pass wins, a run still going beats
-    an old red, and only then is the remaining one the answer."""
-    selected = []
-    for name in sorted(names):
-        same = [run for run in runs if run.name == name]
-        if not same:
-            return None
-        selected.append(
-            next(
-                (
-                    run
-                    for run in same
-                    if run.status == "completed" and run.conclusion in _PASS_CONCLUSIONS
-                ),
-                next(
-                    (run for run in same if run.status != "completed"),
-                    next(
-                        (run for run in same if run.conclusion in _RED_CONCLUSIONS),
-                        same[0],
-                    ),
-                ),
-            )
-        )
-    if len(selected) == 1:
-        return selected[0]
-    pending = any(run.status != "completed" for run in selected)
-    red = any(run.conclusion in _RED_CONCLUSIONS for run in selected)
-    cancelled = any(run.conclusion == "cancelled" for run in selected)
-    return Check(
-        ", ".join(run.name for run in selected),
-        "in_progress" if pending else "completed",
-        None
-        if pending
-        else "failure"
-        if red
-        else "cancelled"
-        if cancelled
-        else "success",
-        next((run.url for run in selected if run.url), ""),
-    )
+def _first_parents_after(commits: list[dict], sha: str) -> list[str]:
+    """The branch's first-parent line after ``sha``, oldest first, out of a
+    compare's commits (each naming its parents). A side branch merged in is
+    not on it: its commits were checked on their own branch, not here."""
+    first_parent = {
+        commit["sha"]: (commit.get("parents") or [{}])[0].get("sha")
+        for commit in commits
+        if isinstance(commit, dict) and isinstance(commit.get("sha"), str)
+    }
+    # The tip is the one commit no other names as a parent of any kind.
+    named = {
+        parent.get("sha")
+        for commit in commits
+        if isinstance(commit, dict)
+        for parent in commit.get("parents") or []
+    }
+    tips = [commit for commit in first_parent if commit not in named]
+    if len(tips) != 1:
+        return []
+    line, current = [], tips[0]
+    while current in first_parent and current != sha:
+        line.append(current)
+        current = first_parent[current]
+    return list(reversed(line)) if current == sha else []
 
 
 def _failed_paths(log: str, *, tests_only: bool = False) -> list[str]:
@@ -318,11 +322,16 @@ class GitHubLandingReads:
         return (await self._client.pr_status(pr_number)).merge_commit_sha
 
     async def checks(self, sha: str) -> list[Check]:
+        """Every attempt of every check on ``sha``, oldest first. GitHub lists
+        only the latest run of a name unless asked for all of them (`filter`),
+        and the combined status only the latest per context: a re-run still
+        in flight would hide the failure it is re-running."""
         found: list[Check] = []
         page = 1
         while True:
             data = await self._get(
-                f"/commits/{sha}/check-runs", {"per_page": 100, "page": page}
+                f"/commits/{sha}/check-runs",
+                {"filter": "all", "per_page": 100, "page": page},
             )
             runs = data.get("check_runs") or []
             found += [
@@ -331,6 +340,7 @@ class GitHubLandingReads:
                     status=run.get("status") or "",
                     conclusion=run.get("conclusion"),
                     url=run.get("html_url") or "",
+                    attempt=int(run.get("id") or 0),
                 )
                 for run in runs
             ]
@@ -339,10 +349,9 @@ class GitHubLandingReads:
             page += 1
         page = 1
         while True:
-            data = await self._get(
-                f"/commits/{sha}/status", {"per_page": 100, "page": page}
+            statuses = await self._get(
+                f"/commits/{sha}/statuses", {"per_page": 100, "page": page}
             )
-            statuses = data.get("statuses") or []
             found += [
                 Check(
                     status["context"],
@@ -353,11 +362,12 @@ class GitHubLandingReads:
                         "error": "failure",
                     }.get(status["state"]),
                     status.get("target_url") or "",
+                    attempt=int(status.get("id") or 0),
                 )
                 for status in statuses
             ]
             if len(statuses) < 100:
-                return found
+                return sorted(found, key=lambda run: run.attempt)
             page += 1
 
     async def parent(self, sha: str) -> str | None:
@@ -366,40 +376,18 @@ class GitHubLandingReads:
 
     # --- a branch checked in batches (#4249) ------------------------------
 
-    async def run_after(
-        self, sha: str, names: frozenset[str], *, passed: bool = False
-    ) -> tuple[str, list[Check]] | None:
+    async def later(self, sha: str) -> list[str]:
         if not self._branch:
-            return None
+            return []
         try:
             data = await self._get(
                 f"/compare/{quote(sha, safe='')}...{quote(self._branch, safe='')}"
             )
         except ForgeUnavailable:
-            return None
+            return []
         if data.get("status") != "ahead":
-            return None
-        later = [
-            commit["sha"]
-            for commit in data.get("commits") or []
-            if isinstance(commit, dict) and isinstance(commit.get("sha"), str)
-        ]
-        # Oldest first, as the compare lists them. The covering run is the
-        # first that was not cancelled; one still going is the answer to wait
-        # for. A green one is looked for from the other end, past whatever
-        # has not finished or went red since.
-        candidates = reversed(later[-_LOOK_AHEAD:]) if passed else later[:_LOOK_AHEAD]
-        for commit in candidates:
-            runs = await self.checks(commit)
-            ran = named_runs(runs, names)
-            if ran is None or ran.conclusion == "cancelled":
-                continue
-            if passed:
-                if ran.status == "completed" and ran.conclusion in _PASS_CONCLUSIONS:
-                    return commit, runs
-                continue
-            return (commit, runs) if ran.status == "completed" else None
-        return None
+            return []
+        return _first_parents_after(data.get("commits") or [], sha)[:LOOK_AHEAD]
 
     async def commit_change(self, sha: str) -> CommitChange | None:
         try:
@@ -515,23 +503,46 @@ class GitHubLandingReads:
 
 
 class ForgejoLandingReads:
-    def __init__(self, client, tokens, api_base: str, owner: str, repo: str):
+    def __init__(
+        self,
+        client,
+        tokens,
+        api_base: str,
+        owner: str,
+        repo: str,
+        *,
+        branch: str | None = None,
+    ):
         self._client = client
         self._tokens = tokens
+        self._branch = branch
         self._repo = f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
 
     async def merge_sha(self, pr_number: int) -> str | None:
         return (await self._client.pr_status(pr_number)).merge_commit_sha
 
     async def checks(self, sha: str) -> list[Check]:
+        """Every status posted on ``sha``, oldest first: a context's earlier
+        statuses are its earlier attempts, which a re-run still in flight
+        must not hide."""
+        token, _ = await self._tokens.installation_token()
+        forgejo = self._client.client
+        rows = await forgejo.pages(
+            f"{self._repo}/commits/{quote(sha, safe='')}/statuses", token=token
+        )
         return [
             Check(
-                name=run["name"] or "",
-                status=run["status"] or "",
-                conclusion=run["conclusion"],
-                url=run.get("url") or "",
+                name=row["context"],
+                status="in_progress" if row["status"] == "pending" else "completed",
+                conclusion={
+                    "success": "success",
+                    "failure": "failure",
+                    "error": "failure",
+                }.get(row["status"]),
+                url=row.get("target_url") or "",
+                attempt=int(row["id"]),
             )
-            for run in await self._client.check_runs(sha)
+            for row in sorted(rows, key=lambda row: row["id"])
         ]
 
     async def parent(self, sha: str) -> str | None:
@@ -546,13 +557,23 @@ class ForgejoLandingReads:
     async def deployment(self, sha: str, since: datetime) -> Deployment | None:
         raise ForgeUnavailable
 
-    # Forgejo reports commit statuses, which are never cancelled: each merge
-    # is judged on its own, and there is no batch to read.
+    async def later(self, sha: str) -> list[str]:
+        if not self._branch:
+            return []
+        token, _ = await self._tokens.installation_token()
+        forgejo = self._client.client
+        response = await forgejo.request(
+            "GET",
+            f"{self._repo}/compare/{quote(sha, safe='')}...{quote(self._branch, safe='')}",
+            token=token,
+        )
+        if response.is_error:
+            return []
+        commits = forgejo._data(response).get("commits") or []
+        return _first_parents_after(commits, sha)[:LOOK_AHEAD]
 
-    async def run_after(
-        self, sha: str, names: frozenset[str], *, passed: bool = False
-    ) -> tuple[str, list[Check]] | None:
-        return None
+    # A batch's commit changes and failed-job logs are read on GitHub only:
+    # on Forgejo a red batch is told to every line in it.
 
     async def commit_change(self, sha: str) -> CommitChange | None:
         return None

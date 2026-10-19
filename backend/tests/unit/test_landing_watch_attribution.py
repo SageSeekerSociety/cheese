@@ -159,9 +159,10 @@ def test_a_search_that_named_nobody_says_so_and_why():
 
 
 def test_a_neutral_run_counts_as_a_pass():
-    """`merge_state` treats neutral as passing; the watcher reads it the same."""
+    """`merge_state` treats neutral as passing; the watcher reads it the same:
+    a re-run that came back neutral settles the failure before it."""
     runs = [
-        Check("shell-tests", "completed", "neutral", ""),
         Check("shell-tests", "completed", "failure", ""),
+        Check("shell-tests", "completed", "neutral", ""),
     ]
     assert _red_checks(runs) == []

@@ -414,7 +414,8 @@ class TopicService:
            than the threshold. That is the shape a turn leaves when it is cut off
            between doing something and hearing back. A turn that ends leaves its
            result record, and a turn the platform ended (failed, timed out,
-           swept) is closed, so neither counts.
+           swept) is closed, so neither counts. The calls are read in Claude
+           Code's record shape only: a Codex or pi session is not checked.
         """
         if threshold_s is None:
             threshold_s = settings.turn_stall_signal_s

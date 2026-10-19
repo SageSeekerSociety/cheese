@@ -20,9 +20,11 @@ async def keep(
         for digest, encoded in row.get("images", {}).items():
             raw = base64.b64decode(encoded, validate=True)
             if len(raw) > MAX_IMAGE_BYTES or hashlib.sha256(raw).hexdigest() != digest:
+                # i18n-exempt: the mirror logs a page it could not keep and retries it; nobody is shown it
                 raise ValueError("journal image checksum or size mismatch")
             key = image_key(conversation_id, digest)
             if not await storage.exists(key):
                 await storage.upload(io.BytesIO(raw), key, "application/octet-stream")
             if await storage.download(key) != raw:
+                # i18n-exempt: the mirror logs a page it could not keep and retries it; nobody is shown it
                 raise RuntimeError("session image archive verification failed")

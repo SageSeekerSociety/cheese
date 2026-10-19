@@ -93,6 +93,7 @@ def import_attached(entries: list[dict], connection) -> None:
         for digest, encoded in entry.get("images", {}).items():
             raw = base64.b64decode(encoded, validate=True)
             if len(raw) > MAX_IMAGE_BYTES or hashlib.sha256(raw).hexdigest() != digest:
+                # i18n-exempt: a corrupt sidecar fails the journal import, for the logs
                 raise ValueError("journal image checksum or size mismatch")
             connection.execute(
                 "INSERT OR IGNORE INTO images VALUES (?, ?)", (digest, raw)

@@ -364,6 +364,7 @@ async def _seal_one(
         # A retry may publish another run; reads deduplicate native identities.
         await storage.upload(io.BytesIO(body), key, "application/gzip")
         if await storage.download(key) != body:
+            # i18n-exempt: the sealer's failure, logged and retried; nobody is shown it
             raise RuntimeError(f"session record archive verification failed: {key}")
         # Publication follows verification. Listing data objects would expose
         # an unverified upload while the database still holds its safe copy.
@@ -559,6 +560,7 @@ async def read(
             body = await archive.download(run["object_key"])
             opened.add(run["object_key"])
             if body is None:
+                # i18n-exempt: an invariant broken in storage, a 500 for the logs
                 raise RuntimeError(
                     f"sealed session records missing: {run['object_key']}"
                 )

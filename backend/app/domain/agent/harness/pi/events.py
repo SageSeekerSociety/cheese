@@ -204,10 +204,9 @@ class Assembler:
             )
             return user_entry
         if role == "toolResult":
-            # What the tool handed back goes onto its step, not onto a line of
-            # its own. A FAILURE also marks that step, because the effect of a
-            # failed step is that nothing happened, which looks exactly like a
-            # step that is still going.
+            # What the tool handed back stays in the raw journal. A FAILURE
+            # marks its call, because the effect of a failed call is that
+            # nothing happened, which looks exactly like a call still going.
             call = message.get("toolCallId")
             if not isinstance(call, str):
                 return []

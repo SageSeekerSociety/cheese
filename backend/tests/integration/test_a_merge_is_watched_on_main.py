@@ -28,7 +28,6 @@ from app.domain.review.landing_forge import (
     CommitChange,
     Deployment,
     ForgeUnavailable,
-    named_runs,
 )
 from app.domain.review.landing_models import TaskLanding
 from tests.integration.test_a_task_delivers_in_steps import (
@@ -41,8 +40,6 @@ from tests.integration.test_accept_pr import (
 from tests.landing import summary_turn_ends, time_passes, watch
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
-
-_PASSED = ("success", "neutral", "skipped")
 
 MERGED = "merge-sha-1"
 BEFORE = "parent-sha-0"
@@ -57,9 +54,9 @@ class _Forge:
         self.ran: dict[str, list[Check]] = {}
         self.deployed: Deployment | None = None
         self.records_deployments = True
-        #: The commits on the branch after the merges, oldest first; their
-        #: checks are in `ran`.
-        self.later: list[str] = []
+        #: The branch's first-parent line, oldest first; each commit's checks
+        #: are in `ran`, and a commit whose push was superseded has none.
+        self.line: list[str] = []
         #: sha -> what that commit changed.
         self.changes: dict[str, CommitChange] = {}
         #: head -> the test files the red jobs name.
@@ -85,21 +82,8 @@ class _Forge:
             raise ForgeUnavailable("no deployments")
         return self.deployed
 
-    async def run_after(self, sha, names, *, passed=False):
-        """As the forge reads it: the first later run that was not cancelled,
-        or the newest that went green."""
-        after = self.later[self.later.index(sha) + 1 :] if sha in self.later else []
-        for commit in reversed(after) if passed else after:
-            runs = self.ran.get(commit, [])
-            ran = named_runs(runs, names)
-            if ran is None or ran.conclusion == "cancelled":
-                continue
-            if passed:
-                if ran.status == "completed" and ran.conclusion in _PASSED:
-                    return commit, runs
-                continue
-            return (commit, runs) if ran.status == "completed" else None
-        return None
+    async def later(self, sha):
+        return self.line[self.line.index(sha) + 1 :] if sha in self.line else []
 
     async def commit_change(self, sha):
         return self.changes.get(sha)
