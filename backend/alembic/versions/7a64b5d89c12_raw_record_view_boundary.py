@@ -6,7 +6,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision = "7a64b5d89c12"
-down_revision = "c9e25a7b38f1"
+down_revision = "d1f37c8a46b2"
 branch_labels = None
 depends_on = None
 

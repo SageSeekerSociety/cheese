@@ -54,6 +54,19 @@ function stubTitle(material) {
   return `E2E ${text.slice(0, 10)}`.trim();
 }
 
+// Voice input (backend voice/service.py) asks twice: a transcription, whose
+// message carries the audio as a list of parts rather than a string, then a tidy
+// of that transcript. Canned answers for both, so a browser can watch the words
+// land and swap between the two; before this the list crashed the stub and
+// took the whole sandbox stack down with it.
+const HEARD = '呃，下午三点之前吧，把那个第二章的实验数据整理一下';
+const TIDIED = '下午三点前把第二章的实验数据整理好。';
+function voiceReply(material) {
+  if (typeof material !== 'string') return HEARD;
+  if (material.includes(`转写：${HEARD}`)) return TIDIED;
+  return null;
+}
+
 function readJson(request) {
   return new Promise((resolve) => {
     let body = '';
@@ -78,7 +91,7 @@ createServer(async (request, response) => {
   if (path === '/v1/chat/completions' && request.method === 'POST') {
     const body = await readJson(request);
     const material = body.messages?.at(-1)?.content ?? '';
-    const content = JSON.stringify({ keep: false, title: stubTitle(material) });
+    const content = voiceReply(material) ?? JSON.stringify({ keep: false, title: stubTitle(material) });
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content } }] }));
     return;

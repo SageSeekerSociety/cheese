@@ -31,6 +31,8 @@
   "cardFiled": "《{task}》已提交，待 {reviewer} 审阅",
   "cardRedescribed": "{actor} 修改了审阅说明（已同步到 PR）",
   "cardRedescribedDetail": "改前标题：{beforeSubject}\n改后标题：{afterSubject}\n\n改前正文：{beforeBody}\n\n改后正文：{afterBody}",
+  "cardRedelivered": "{actor} 换了审阅中的交付物，之前的批准已清除，请重新查看",
+  "cardRedeliveredDetail": "换前：{before}\n换后：{after}",
   "cardRejectedClosed": "{who} 退回了改动，原任务已关闭",
   "cardRejectedFixing": "{who} 退回了改动，正在修改",
   "cardVoided": "{actor} 作废了审阅",

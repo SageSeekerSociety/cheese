@@ -178,7 +178,7 @@ def _propose_feedback(client, pid: str, rid: str) -> str:
         json={
             "title": "沙箱里 make 装不上依赖",
             "what_happened": "make 停在 could not resolve host",
-            "user_said": "用户没有就这个问题说过话，以上是芝士自己观察到的",
+            "user_said_absent": True,
         },
         headers=_agent(pid, rid),
     )

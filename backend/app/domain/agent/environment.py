@@ -10,12 +10,12 @@ An environment is one of two things:
 - a sandbox, ``{"kind": "sandbox", "spec": ...}``. The spec names the kind of
   machine the sandbox needs, and every spec is a peer of the others, as resource
   classes are: ``standard`` and ``vm`` are the platform's machines, and
-  ``devices_of:<user id>`` is one person's own enrolled computers. The platform
+  ``team_devices`` is the team's enrolled computers. The platform
   places the sandbox on a device that offers its spec; a sandbox never names a
   device, and nobody is shown which one it is on.
 - a self-hosted machine, ``{"kind": "self_hosted", "device_id": ...}``: the one
   case where a session must use one particular enrolled computer. It runs
-  there without isolation, so only that computer's owner may choose it.
+  there without isolation, so only the device's team administrators may choose it.
 """
 
 import uuid
@@ -39,8 +39,7 @@ STANDARD = "standard"
 #: A whole virtual machine of the platform's for the sandbox: Docker, KVM,
 #: kernel modules, root.
 VM = "vm"
-#: One person's own enrolled computers: ``devices_of:<user id>``.
-DEVICES_OF = "devices_of:"
+#: The devices enrolled into the project's team.
 TEAM_DEVICES = "team_devices"
 
 
@@ -87,11 +86,7 @@ def stored(raw: object) -> Sandbox | SelfHosted | None:
     """An environment read back from storage; None when nothing is stored."""
     if not raw:
         return None
-    environment = _ENVIRONMENT.validate_python(raw)
-    # Stop propagating the previous stored spec before its cleanup migration.
-    if isinstance(environment, Sandbox) and environment.spec.startswith(DEVICES_OF):
-        return Sandbox(spec=TEAM_DEVICES)
-    return environment
+    return _ENVIRONMENT.validate_python(raw)
 
 
 def dump(environment: Sandbox | SelfHosted | None) -> dict | None:
@@ -105,15 +100,13 @@ class Spec:
     long a command still running for the session keeps it up."""
 
     name: str
-    #: The platform's machines (``standard``, ``vm``), as against a person's.
+    #: The platform's machines (``standard``, ``vm``), as against a team's.
     platform: bool
     idle_s: float
     #: How long a command the executor still runs for the session keeps an
     #: idle sandbox up, counted from the session's last activity. A whole VM's
     #: idle release is longer than a sandbox's, so its cap is longer too.
     background_cap_s: float
-    #: The person whose computers ``devices_of:<id>`` places on.
-    owner_user_id: int | None = None
 
     @property
     def paid(self) -> bool:
@@ -143,21 +136,7 @@ def spec_of(name: str) -> Spec | None:
             idle_s=settings.cloud_sandbox_idle_stop_s,
             background_cap_s=settings.cloud_sandbox_background_cap_s,
         )
-    if name.startswith(DEVICES_OF):
-        owner = name.removeprefix(DEVICES_OF)
-        if owner.isdigit():
-            return Spec(
-                name,
-                platform=False,
-                idle_s=settings.cloud_sandbox_idle_stop_s,
-                background_cap_s=settings.cloud_sandbox_background_cap_s,
-                owner_user_id=int(owner),
-            )
     return None
-
-
-def devices_of(user_id: int) -> str:
-    return f"{DEVICES_OF}{user_id}"
 
 
 def default_environment() -> Sandbox:
@@ -175,9 +154,7 @@ async def works_tasks_of(
 ) -> bool:
     """Whether a device may work a task owned by ``owner_handle``.
 
-    A device shared with the project's team is the team's, and works anyone's
-    tasks. Any other device in the project is a person's own computer, and
-    works only its owner's tasks."""
+    A device belongs to the project's team and works any member's tasks."""
     devices = sql_device_service(session)
     device = await devices.get_device(device_id)
     if device is None:

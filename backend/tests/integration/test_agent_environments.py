@@ -178,29 +178,6 @@ async def test_a_default_moves_nobody_and_a_new_agent_takes_it(client, monkeypat
     )
 
 
-async def test_new_agent_saves_the_team_pool_from_a_legacy_room_default(
-    client, monkeypatch
-):
-    room = await _room(client)
-    newcomer = await _second_agent(client, room)
-    _machines(monkeypatch, online=False)
-    async with client.test_factory() as db:
-        topic = await db.get(Topic, room.topic_id)
-        topic.default_environment = {"kind": "sandbox", "spec": "devices_of:1"}
-        await db.commit()
-
-    asked = client.post(
-        f"/topics/{room.conversation_id}/sessions/{newcomer.session_id}/work-lease",
-        headers=newcomer.agent,
-        json={"env": {}, "timeout": 0.01},
-    )
-    assert asked.status_code == 200, asked.text
-    assert await _stored(client, room.conversation_id, newcomer.handle) == {
-        "kind": "sandbox",
-        "spec": "team_devices",
-    }
-
-
 async def test_a_tasks_agent_keeps_the_default_it_started_with(client, monkeypatch):
     room = await _room(client, in_task=True)
     newcomer = await _second_agent(client, room)

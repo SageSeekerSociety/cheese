@@ -19,6 +19,26 @@ class DevicePollRequest(BaseModel):
     device_code: str
 
 
+class RunningDeviceSessionOut(BaseModel):
+    session_id: str
+    agent_name: str
+    agent_name_source: str | None
+    project_id: str
+    project_name: str
+    team_id: int
+    team_name: str
+    conversation_id: str
+    conversation_kind: Literal["room", "task", "thread"]
+    conversation_title: str
+    room_id: str
+    roles: list[Literal["center", "executor"]]
+    since: str
+
+
+class RunningDeviceSessionsOut(BaseModel):
+    sessions: list[RunningDeviceSessionOut]
+
+
 class ConnectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     device_code: str
@@ -57,6 +77,30 @@ class ModelConnectionOut(ClaudeCodeLoginOut):
     online: bool
     #: When a session of the owner's Claude Code last ran on that machine.
     last_used_at: str | None
+
+
+class DeviceScreenOut(BaseModel):
+    sid: str
+    agent_handle: str
+    agent_user_id: str
+    project_id: str | None
+    topic_id: str | None
+    agent_name: str | None
+    agent_name_source: str | None
+
+
+class EnrollmentDeviceOut(BaseModel):
+    device_id: str
+    name: str
+    online: bool
+    team_id: int
+    last_seen_at: str | None
+    screens: list[DeviceScreenOut]
+    logins: list[ClaudeCodeLoginOut]
+
+
+class AccessibleDevicesOut(BaseModel):
+    devices: list[EnrollmentDeviceOut]
 
 
 class AccountConnectionOut(BaseModel):

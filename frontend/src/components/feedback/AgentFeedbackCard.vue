@@ -42,8 +42,9 @@ import { useWorkspaceStore } from '@/stores/workspace'
 //     （提案的 agent），提交者取调用者（我）。正文以表单里那份为准 —— 人要为自己
 //     发出去的东西负责，所以他能改。
 //
-// 卡片正文里最显眼的那一块是**用户原话**（`user_said`）。服务端把它做成必填，
-// 且只认两种填法：引用原话，或者那句「用户没有就这个问题说过话」。把这一条摆在
+// 卡片正文里最显眼的那一块是**用户原话**（`user_said`）。服务端要求二选一：
+// 引用原话，或者 `user_said_absent` 说用户没就此说过话。后者只显示一行说明，不放
+// 在「你当时说的」下面当引文 —— 那样读起来像是用户说了这句话（FB-100）。把这一条摆在
 // 「判断依据」上面，是这张卡唯一一个不用解释就成立的诚信机制：读的人第一眼看到的
 // 不是芝士的推理，而是这句话有没有根据。
 defineOptions({ name: 'AgentFeedbackCard' })
@@ -52,6 +53,18 @@ const props = defineProps<{ topicId: string }>()
 
 const store = useFeedbackStore()
 const workspace = useWorkspaceStore()
+
+/**
+ * 用户没有就这个问题说过话。早于 `user_said_absent` 的卡把这件事写成 `user_said`
+ * 里那句约定好的话，库里还存着这样的卡，所以那句话也算。按开头认而不是整句相等：
+ * 有的卡在后面多写了半句（「，以上是芝士自己观察到的」「。」），整句相等会把它们
+ * 照旧当成用户原话引出来。
+ */
+const LEGACY_SAID_NOTHING = '用户没有就这个问题说过话' // i18n-data: compared against stored payloads, never shown
+function saidNothing(proposal: FeedbackProposal): boolean {
+  const { user_said, user_said_absent } = proposal.payload
+  return user_said_absent === true || !!user_said?.trim().startsWith(LEGACY_SAID_NOTHING)
+}
 
 /** 名册上的名字；名册里没有（还没加载、或者不在这个项目里）就退回 handle。 */
 function nameOf(handle: string): string {
@@ -205,7 +218,10 @@ function onSubmitted(id: string) {
 
         <!-- 用户原话。**放在判断依据上面**，理由见文件开头：这是这张卡唯一一个
              不用解释就成立的诚信机制，读的人该先看见它。 -->
-        <div class="fb-agent-card__said mb-3">
+        <div v-if="saidNothing(proposal)" class="t-body fb-agent-card__said-nothing mb-3">
+          {{ t('feedback.proposal.userSaidNothing', { name: nameOf(proposal.author_handle) }) }}
+        </div>
+        <div v-else class="fb-agent-card__said mb-3">
           <div class="t-eyebrow mb-1">{{ t('feedback.proposal.userSaid') }}</div>
           <div class="t-body fb-agent-card__quote">{{ proposal.payload.user_said }}</div>
         </div>
@@ -331,6 +347,10 @@ function onSubmitted(id: string) {
 .fb-agent-card__said {
   padding: 8px 10px 8px 12px;
   border-left: 2px solid var(--line-2);
+}
+/* 用户没说过话：一行说明，不画引用竖线 —— 那道线说的是「下面是原话」。 */
+.fb-agent-card__said-nothing {
+  color: var(--muted);
 }
 .fb-agent-card__quote {
   font-style: italic;

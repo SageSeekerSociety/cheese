@@ -14,9 +14,9 @@ answer. "建好项目" sends everything here in one request:
 * the people they named are invited; anyone who cannot be is returned, and the
   project is made regardless;
 * from the desktop app, someone who wants the AI teammate on this computer sends
-  its device id: the computer joins the project and 综合's new agents get a
-  sandbox on it (`devices_of`). A computer that is not theirs or cannot make
-  a sandbox leaves 综合 on the platform's default, and the answer says so;
+  its device id: if it belongs to the project's team and can make a sandbox,
+  综合's new agents use the team's devices (`team_devices`). Otherwise 综合
+  keeps the platform's default, and the answer says so;
 * `onboarded_at` is stamped the first time, so the guide is not shown again on
   any device. Opening it again from the help menu makes another project.
 
@@ -171,9 +171,8 @@ async def finish_onboarding(
 async def _work_on_own_computer(
     session: AsyncSession, project, device_id: str, me: Actor
 ) -> bool:
-    """Attach the person's computer to the project and give 综合's new agents
-    a sandbox on their computers. False, with nothing changed, when the
-    computer is not theirs or cannot make a sandbox."""
+    """Give 综合's new agents the team pool when this device belongs to it
+    and can make a sandbox; otherwise leave the default unchanged."""
     assert me.user_id is not None
     try:
         async with session.begin_nested():

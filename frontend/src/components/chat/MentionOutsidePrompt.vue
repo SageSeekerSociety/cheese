@@ -17,6 +17,8 @@ defineProps<{
   adding: boolean
   /** 说的是一份文档里的 @，不是一条消息：私密频道外的人打不开的是那份文档。 */
   inDocument?: boolean
+  /** 贴在输入框顶上，当输入框的那一种提示条（RoomComposer 的 `strip` 插槽）：不再自己画框。 */
+  docked?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -26,7 +28,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="mention-outside" role="status">
+  <div class="mention-outside" :class="{ 'mention-outside--docked': docked }" role="status">
     <div class="mention-outside__text t-body">
       <span>{{
         membersOnly && inDocument
@@ -65,6 +67,18 @@ const emit = defineEmits<{
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--fill);
+}
+.mention-outside--docked {
+  margin: 0;
+  padding: 4px 4px 4px 12px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-size: 13px;
+}
+.mention-outside--docked .mention-outside__text {
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 .mention-outside__text {
   display: flex;

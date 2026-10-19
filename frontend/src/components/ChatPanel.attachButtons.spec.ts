@@ -11,7 +11,7 @@ import type { Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, screen } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
@@ -36,6 +36,22 @@ const topic = {
 beforeEach(() => {
   // These assertions read the Chinese copy.
   setLocale('zh-CN')
+  // 「+」的菜单和底部面板是 VOverlay：happy-dom 没有 ResizeObserver、visualViewport，不补上浮层挂不起来。
+  if (!('ResizeObserver' in globalThis)) {
+    ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  }
+  vi.stubGlobal('visualViewport', {
+    width: 390,
+    height: 844,
+    offsetLeft: 0,
+    offsetTop: 0,
+    addEventListener() {},
+    removeEventListener() {},
+  })
   vi.stubGlobal(
     'WebSocket',
     class {
@@ -87,7 +103,8 @@ describe('输入区的上传入口', () => {
     const media = fileInputs(c).find((i) => i.accept === 'image/*,video/*')
     expect(media).toBeTruthy()
     const opened = vi.spyOn(media!, 'click')
-    await fireEvent.click(c.querySelector('[title="发送照片或视频"]')!)
+    await fireEvent.click(c.querySelector('[aria-label="更多操作"]')!)
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '发送照片或视频' }))
     expect(opened).toHaveBeenCalled()
   })
 
@@ -96,13 +113,16 @@ describe('输入区的上传入口', () => {
     const any = fileInputs(c).find((i) => !i.accept)
     expect(any).toBeTruthy()
     const opened = vi.spyOn(any!, 'click')
-    await fireEvent.click(c.querySelector('[title="上传文件（每个最大 10MB，视频 200MB）"]')!)
+    await fireEvent.click(c.querySelector('[aria-label="更多操作"]')!)
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '上传文件（每个最大 10MB，视频 200MB）' }))
     expect(opened).toHaveBeenCalled()
   })
 
-  // 桌面上截图一贴、文件一拖就完事了，再摆一颗「照片」只是把这一行挤窄。
-  it('桌面上不摆「照片」那一颗', () => {
+  // 桌面上截图一贴、文件一拖就完事了，「+」里不必再多一项「照片」。
+  it('桌面上「+」里没有「照片」那一项', async () => {
     const c = mount(1440)
-    expect(c.querySelector('[title="发送照片或视频"]')).toBeNull()
+    await fireEvent.click(c.querySelector('[aria-label="更多操作"]')!)
+    await screen.findByRole('menuitem', { name: '上传文件（每个最大 10MB，视频 200MB）' })
+    expect(screen.queryByRole('menuitem', { name: '发送照片或视频' })).toBeNull()
   })
 })

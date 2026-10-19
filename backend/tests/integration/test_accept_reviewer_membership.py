@@ -95,7 +95,7 @@ def _cards(client, room: str) -> list[dict]:
 def _reassign(client, card_id: str, reviewer: str, *, by: str = OWNER):
     return client.post(
         f"/accept-cards/{card_id}/reassign",
-        json={"reviewer_handle": reviewer, "focus": "换个人更合适"},
+        json={"reviewer_handle": reviewer},
         headers=session_auth_headers(by),
     )
 
