@@ -75,6 +75,11 @@ class OAuthEmailVerifyRequest(OAuthEmailCodeRequest):
     code: str = Field(..., min_length=1)
 
 
+class GithubAppIntentOut(BaseModel):
+    #: Passed to the GitHub login URL as `intent`; spent once there.
+    intent: str
+
+
 class SignupConsent(BaseModel):
     #: document key → the version shown on the signup page.
     documents: dict[str, str]
@@ -113,10 +118,6 @@ class SudoAuthRequest(BaseModel):
     # so minting them a ticket would only put an unusable credential on the
     # wire. See ``SudoPurpose``.
     purpose: SudoPurpose | None = None
-
-
-class TwoFactorCodeRequest(BaseModel):
-    code: str = Field(..., min_length=1)
 
 
 class EmailCodeSignInRequest(BaseModel):

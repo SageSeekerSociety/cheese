@@ -28,8 +28,9 @@ from app.api.deps import (
     get_user_auth_service,
 )
 from app.api.legal_deps import client_context
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.routes.users._common import (
+    GithubAppIntentOut,
     OAuthEmailCodeRequest,
     OAuthEmailVerifyRequest,
     _check_email_code,
@@ -551,7 +552,11 @@ async def get_oauth_login_url(
     return redirect
 
 
-@router.post("/auth/oauth/github-app/intent", dependencies=[ROUTE_DECIDES])
+@router.post(
+    "/auth/oauth/github-app/intent",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(GithubAppIntentOut),
+)
 async def github_app_intent(
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:

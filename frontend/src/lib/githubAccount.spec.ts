@@ -6,6 +6,7 @@ import {
   explainRepoInstallFailure,
   findGithubAccountConnection,
   isGithubAccountTokenExpired,
+  ownGithub,
 } from './githubAccount'
 
 import { setLocale } from '@/i18n'
@@ -57,6 +58,25 @@ describe('isGithubAccountTokenExpired', () => {
 
   it('treats an unparsable tokenExpires as not expired rather than crashing', () => {
     expect(isGithubAccountTokenExpired(conn({ tokenExpires: 'not-a-date' }), now)).toBe(false)
+  })
+})
+
+describe('ownGithub', () => {
+  const now = new Date('2026-08-10T12:00:00Z')
+  const past = '2026-08-01T00:00:00Z'
+
+  it('is expired only when the token expired and nothing can renew it', () => {
+    expect(ownGithub(conn({ tokenExpires: past, hasRefreshToken: false }), true, now)).toEqual({
+      state: 'expired',
+      login: 'octocat',
+    })
+  })
+
+  it('stays linked when an expired token still has a refresh token', () => {
+    expect(ownGithub(conn({ tokenExpires: past, hasRefreshToken: true }), true, now)).toEqual({
+      state: 'linked',
+      login: 'octocat',
+    })
   })
 })
 

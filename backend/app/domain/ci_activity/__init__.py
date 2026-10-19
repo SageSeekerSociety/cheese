@@ -9,7 +9,7 @@ The numbers are copied out of GitHub into tables by a periodic sweep
 (``ingest``) and the page reads only the tables, so opening it costs GitHub
 nothing and cannot be what spends the installation's quota. The repository is
 the deployment's own (`settings.platform_repository`), read with the platform
-App's installation token, the same identity the ratchet ingest uses.
+App's installation token for repository reads.
 
 * ``models`` — the tables and what each column means.
 * ``github`` — the three reads: run listing, a run's jobs, merge-queue events.
