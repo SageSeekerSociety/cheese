@@ -272,6 +272,63 @@ def test_an_object_expiry_could_not_delete_does_not_outlive_the_retention(
     assert [item["record"]["message"]["content"] for item in kept] == [ASKED]
 
 
+def test_forgetting_one_conversation_leaves_every_other_alone(client, tmp_path, bucket):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    gone, _ = _start(client, tmp_path / "a", bucket)
+    kept, work = _start(client, tmp_path / "b", bucket)
+    _expire(client, bucket, days=31)
+    # The kept conversation's newer turn, still whole, beside its archive.
+    kept.write(_turn(str(uuid.uuid4())))
+    kept.drain()
+    _seal(client, bucket)
+    theirs = {key for key in bucket.objects if str(kept.ref.topic_id) in key}
+    assert len(theirs) == 2
+
+    _delete_room(client, gone.ref.topic_id)
+    _forget(client, bucket)
+
+    assert theirs <= set(bucket.objects)
+    assert [
+        item["record"]["message"]["content"] for item in kept.read(turn_id=work)
+    ] == [ASKED]
+
+
+def test_the_orphan_sweep_takes_only_old_objects_nothing_names(
+    client, tmp_path, monkeypatch, bucket
+):
+    session, _work = _start(client, tmp_path, bucket)
+    named = set(bucket.objects)
+    room = session.ref.topic_id
+    young = f"{service.PREFIX}/{room}/young-and-uncommitted.jsonl.gz"
+    old = f"{service.PREFIX}/{room}/old-and-unnamed.jsonl.gz"
+    archive = f"{retention.ARCHIVE_PREFIX}/{room}/kept-by-design.jsonl.gz"
+    for key in (young, old, archive):
+        bucket.objects[key] = b""
+    now = datetime.now(UTC)
+    ages = {
+        young: now,
+        old: now - timedelta(days=40),
+        archive: now - timedelta(days=40),
+    }
+
+    async def listed(prefix: str):
+        yield [
+            (key, ages.get(key, now - timedelta(days=40)))
+            for key in bucket.objects
+            if key.startswith(prefix)
+        ]
+
+    monkeypatch.setattr(bucket, "listed", listed)
+    _call(
+        client,
+        lambda: retention.forget_orphans(client.test_request_factory, bucket, now=now),
+    )
+
+    # The sealed run's own object is old too, but its row still names it.
+    assert named | {young, archive} == set(bucket.objects)
+
+
 def test_a_channel_deleted_while_its_last_records_are_sealed_leaves_no_object(
     client, tmp_path, monkeypatch
 ):

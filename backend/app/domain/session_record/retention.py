@@ -303,8 +303,8 @@ async def _forget(
 ) -> None:
     async with sessions() as db:
         # The rows this deletes are exactly the ones whose objects go: a run
-        # the sealer commits meanwhile is not among them, and is found on the
-        # next pass with its object.
+        # the sealer commits meanwhile is not among them and is found on the
+        # next pass (its object may already be gone with the prefix below).
         keys = (
             (
                 await db.execute(
