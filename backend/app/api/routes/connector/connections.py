@@ -17,6 +17,7 @@ from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.routes.connector.devices import DeviceServiceDep
 from app.api.routes.connector.schemas import (
+    AccessibleDevicesOut,
     AccountConnectionIn,
     AccountConnectionOut,
     ClaudeCodeLoginOut,
@@ -142,7 +143,12 @@ async def my_devices(
     return {"devices": views}
 
 
-@router.get("/my/team-devices")
+# Connector lists return a raw object, without the platform response envelope.
+@router.get(
+    "/my/team-devices",
+    response_model=None,
+    responses={200: {"model": AccessibleDevicesOut}},
+)
 async def accessible_devices(
     resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
 ) -> dict[str, Any]:
