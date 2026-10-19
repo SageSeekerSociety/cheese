@@ -299,7 +299,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/topics.py": 8,
     "app/api/routes/topics_channel.py": 1,
     "app/api/routes/topics_compute.py": 2,
-    "app/api/routes/topics_messages.py": 5,
+    "app/api/routes/topics_messages.py": 4,
     "app/api/routes/topics_pins.py": 1,
     "app/api/routes/topics_preview.py": 1,
     "app/api/routes/topics_side_routes.py": 1,
