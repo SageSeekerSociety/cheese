@@ -18,7 +18,6 @@ from app.domain.agent.nonce import new_nonce
 from app.domain.agent.platform_notices import (
     delivery_checking_notice,
 )
-from app.domain.agent.turn_resume import show_started
 from app.domain.agent.service import AgentEvent, AgentResult
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.steps.prepared import PreparedSend
@@ -254,8 +253,6 @@ async def send_prepared(
         nonce=nonce,
         at=datetime.now(UTC),
     )
-    if delivery_id is not None:
-        await show_started(sessions, turn_id)
     # `open_interval` waited on its OWN commit, so the row is durable here and
     # this process may name the turn running: the mark is placed with that
     # commit, not with the session's first Working event, which a session may

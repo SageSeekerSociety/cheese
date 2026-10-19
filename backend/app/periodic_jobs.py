@@ -71,6 +71,7 @@ PERIODIC_JOB_NAMES = (
     "delivery resend",
     "docs question retention",
     "turn resumes",
+    "failed turn resume deliveries",
     "timed deliveries",
     "overdue deliveries",
     "routines",

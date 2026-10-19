@@ -13,6 +13,7 @@ import json
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select, text
@@ -20,6 +21,7 @@ from sqlalchemy import select, text
 from app.api.deps import get_work_runner
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
+from app.domain.agent.input_registration import confirm_receipt
 from app.domain.agent.models import TurnResume
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.resumable_failures import (
@@ -29,6 +31,8 @@ from app.domain.agent.resumable_failures import (
 )
 from app.domain.agent.run_records import for_site
 from app.domain.agent.service import AgentResult
+from app.domain.agent.turn.intake.messages import RunnerIntake
+from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent.turn_resume import (
     RESUME_NOTE,
     after_failure,
@@ -39,6 +43,8 @@ from app.domain.block.models import Block
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.models import Delivery
+from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
+from app.domain.delivery.receipts import register_input
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.topic.services import TopicService
@@ -232,14 +238,32 @@ async def test_a_rate_limited_turn_resumes_by_itself(
         assert str(RESUME_NOTE) in screen.handed[-1]
         assert len(screen.sessions) == 1
         await runner.drain(timeout_s=10)
-        async with factory() as session:
-            completed = await for_site(session, conversation, since=None, until=None)
+        deadline = time.monotonic() + HANG_S
+        while True:
+            async with factory() as session:
+                completed = await for_site(
+                    session, conversation, since=None, until=None
+                )
+            if (
+                any(
+                    r["meta"].get("event_type") == "turn_resume_started"
+                    for r in completed
+                )
+                or time.monotonic() >= deadline
+            ):
+                break
+            await asyncio.sleep(0.05)
         assert [
             r["meta"].get("event_type")
             for r in completed
             if r["meta"].get("event_type")
             in ("api_retry", "turn_resume_wait", "turn_resume_started")
-        ] == ["api_retry", "turn_resume_wait", "turn_resume_started"]
+        ] == [
+            "api_retry",
+            "turn_resume_wait",
+            "turn_resume_started",
+            "api_retry",
+        ]
         assert await _failure_cards(factory, conversation) == 0
         assert not [f for f in frames if f.get("type") == "error"]
         # Handed over once: the clock running again sends nothing more.
@@ -301,7 +325,7 @@ async def test_exhausted_resume_budget_shows_failure_card(
 async def test_a_failed_resume_delivery_keeps_wait_and_appends_failure(
     business_db_factory,
 ):
-    from app.domain.agent.turn_resume import report_failed_deliveries, show_waiting
+    from app.domain.agent.turn_resume import report_failed_deliveries
 
     factory = business_db_factory
     project, conversation, seat, _instance = await _room_with_agent(factory)
@@ -315,7 +339,6 @@ async def test_a_failed_resume_delivery_keeps_wait_and_appends_failure(
         route="subscription",
     )
     assert row is not None
-    await show_waiting(factory, row)
     assert await hand_due(factory, now=row.due_at + timedelta(seconds=1)) == 1
 
     async with factory() as session:
@@ -339,6 +362,111 @@ async def test_a_failed_resume_delivery_keeps_wait_and_appends_failure(
         if r["meta"].get("event_type") in ("turn_resume_wait", "turn_resume_stopped")
     ] == ["turn_resume_wait", "turn_resume_stopped"]
     assert await _failure_cards(factory, conversation) == 1
+
+
+@pytest.mark.anyio
+async def test_an_unread_joined_resume_is_not_recorded_as_started(business_db_factory):
+    factory = business_db_factory
+    project, conversation, seat, _instance = await _room_with_agent(factory)
+    row = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=uuid.uuid4(),
+        result=_failed(RATE_LIMITED),
+        route="subscription",
+    )
+    assert row is not None
+    assert await hand_due(factory, now=row.due_at + timedelta(seconds=1)) == 1
+
+    attempt_id = uuid.uuid4()
+    async with factory() as session:
+        delivery = await session.scalar(
+            select(Delivery).where(Delivery.event_id == row.id)
+        )
+        assert delivery is not None
+        delivery.attempt_id = attempt_id
+        delivery.state = "sending"
+        delivery_id = delivery.id
+        identity = InputIdentity(
+            project_id=project,
+            conversation_id=conversation,
+            recipient_handle=seat,
+            harness="claude_code",
+            native_session_id="joined-resume",
+            input_id=uuid.uuid4(),
+            work_id=attempt_id,
+        )
+        await register_input(
+            session,
+            identity,
+            InputEffects(delivery_id=delivery_id, attempt_id=attempt_id),
+        )
+        await session.commit()
+
+    async def no_op(*_args):
+        return None
+
+    class AcceptedTransport:
+        session_factory = factory
+
+        async def join_running_turn(self, _delivery_id, _attempt_id):
+            return True  # Transport accepted; the CLI has not echoed the input.
+
+    intake = SimpleNamespace(_wait_to_start=no_op, _wait_for_replay=no_op)
+    await RunnerIntake._run(
+        intake,
+        AcceptedTransport(),
+        conversation,
+        attempt_id,
+        author="platform",
+        content="resume",
+        addressed=None,
+        delivery_id=delivery_id,
+    )
+    async with factory() as session:
+        unread = await for_site(session, conversation, since=None, until=None)
+    assert [
+        r["meta"].get("event_type")
+        for r in unread
+        if r["meta"].get("event_type") in ("turn_resume_wait", "turn_resume_started")
+    ] == ["turn_resume_wait"]
+
+    receipt = InputReceipt(identity=identity, evidence="native_echo")
+    await confirm_receipt(factory, LiveWork(), receipt)
+    await confirm_receipt(factory, LiveWork(), receipt)
+    async with factory() as session:
+        seen = await for_site(session, conversation, since=None, until=None)
+    assert [
+        r["meta"].get("event_type")
+        for r in seen
+        if r["meta"].get("event_type") in ("turn_resume_wait", "turn_resume_started")
+    ] == ["turn_resume_wait", "turn_resume_started"]
+
+
+@pytest.mark.anyio
+async def test_a_resume_without_a_record_is_not_owed(business_db_factory, monkeypatch):
+    from app.domain.agent import turn_resume
+
+    factory = business_db_factory
+    project, conversation, seat, _instance = await _room_with_agent(factory)
+
+    async def record_unavailable(*_args, **_kwargs):
+        raise RuntimeError("run record unavailable")
+
+    monkeypatch.setattr(turn_resume, "record", record_unavailable)
+    with pytest.raises(RuntimeError, match="run record unavailable"):
+        await after_failure(
+            factory,
+            project_id=project,
+            conversation_id=conversation,
+            seat=seat,
+            failed_turn_id=uuid.uuid4(),
+            result=_failed(RATE_LIMITED),
+            route="subscription",
+        )
+    assert await _resumes(factory, conversation) == []
 
 
 @pytest.mark.anyio

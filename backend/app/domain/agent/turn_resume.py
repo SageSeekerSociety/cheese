@@ -48,7 +48,7 @@ from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.models import AgentTurn, TurnResume
-from app.domain.agent.run_records import publish, record_now
+from app.domain.agent.run_records import publish
 from app.domain.agent.own_limit import refused_until
 from app.domain.agent.resumable_failures import (
     SUBSCRIPTION_COOLING,
@@ -78,6 +78,7 @@ from app.domain.notice_meta import (
 from app.domain.notification.models import NotificationType
 from app.domain.delivery.models import Delivery
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.run_record.models import RunRecord
 from app.domain.run_record.service import as_payload, record
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.usage.claude_pool import read_claude_pool, snapshot_path
@@ -148,6 +149,7 @@ async def after_failure(
     )
     if found is None or not seat:
         return None
+    recorded: tuple[dict, uuid.UUID | None] | None = None
     async with sessions() as session:
         instance = await instance_for_seat(session, project_id, seat)
         if instance is None or not instance.is_active:
@@ -186,6 +188,9 @@ async def after_failure(
             if dropped:
                 owed.dropped_at = now
                 owed.dropped_reason = dropped
+            recorded = await _record_schedule(session, owed, now)
+            if recorded is None:
+                return None
             await session.commit()
             logger.info(
                 "turn resume: %s in %s failed again before its resume (%s); "
@@ -196,38 +201,46 @@ async def after_failure(
                 owed.due_at.isoformat(),
                 attempt,
             )
-            return owed
-        attempt = await _streak(session, conversation_id, seat, now) + 1
-        wait, dropped = _wait(found, attempt, now)
-        row = {
-            "id": uuid.uuid4(),
-            "project_id": project_id,
-            "conversation_id": conversation_id,
-            "recipient_handle": seat,
-            "agent_instance_id": instance.id,
-            "failed_turn_id": failed_turn_id,
-            "reason": found.kind,
-            "said": str(scrub_secrets(result.text or ""))[:_SAID_MAX],
-            "attempt": attempt,
-            "failed_at": now,
-            "due_at": now + timedelta(seconds=wait or 0),
-            "dropped_at": now if dropped else None,
-            "dropped_reason": dropped,
-        }
-        written = await session.scalar(
-            insert(TurnResume)
-            .values(**row)
-            .on_conflict_do_nothing(
-                index_elements=["conversation_id", "recipient_handle"],
-                index_where=text(_OWED_SQL),
+            stored = owed
+        else:
+            attempt = await _streak(session, conversation_id, seat, now) + 1
+            wait, dropped = _wait(found, attempt, now)
+            row = {
+                "id": uuid.uuid4(),
+                "project_id": project_id,
+                "conversation_id": conversation_id,
+                "recipient_handle": seat,
+                "agent_instance_id": instance.id,
+                "failed_turn_id": failed_turn_id,
+                "reason": found.kind,
+                "said": str(scrub_secrets(result.text or ""))[:_SAID_MAX],
+                "attempt": attempt,
+                "failed_at": now,
+                "due_at": now + timedelta(seconds=wait or 0),
+                "dropped_at": now if dropped else None,
+                "dropped_reason": dropped,
+            }
+            written = await session.scalar(
+                insert(TurnResume)
+                .values(**row)
+                .on_conflict_do_nothing(
+                    index_elements=["conversation_id", "recipient_handle"],
+                    index_where=text(_OWED_SQL),
+                )
+                .returning(TurnResume.id)
             )
-            .returning(TurnResume.id)
-        )
-        await session.commit()
-        if written is None:
-            # Another failure of the same seat got there first.
-            return None
-        stored = await session.get(TurnResume, written)
+            if written is None:
+                # Another failure of the same seat got there first.
+                return None
+            stored = await session.get(TurnResume, written)
+            assert stored is not None
+            recorded = await _record_schedule(session, stored, now)
+            if recorded is None:
+                return None
+            await session.commit()
+    assert recorded is not None
+    payload, room = recorded
+    await publish(payload, room=room)
     if dropped:
         logger.warning(
             "turn resume: %s in %s failed again (%s, attempt %s); not resuming: %s",
@@ -249,22 +262,40 @@ async def after_failure(
     return stored
 
 
-async def show_waiting(sessions: SessionFactory, row: TurnResume) -> None:
-    """Append the failure and its scheduled recovery to 现场."""
-    minutes = max(1, math.ceil((row.due_at - _now()).total_seconds() / 60))
-    line = say(_WAIT_KEYS[row.reason], minutes=minutes)
-    await record_now(
-        sessions,
+async def _record_schedule(
+    session: AsyncSession, row: TurnResume, now: datetime
+) -> tuple[dict, uuid.UUID | None] | None:
+    """Keep the recovery outcome in the transaction that schedules it."""
+    dropped = row.dropped_at is not None
+    if dropped:
+        key = (
+            "turnResumeExhausted"
+            if row.dropped_reason == ATTEMPTS_USED_UP
+            else "turnResumeNoReset"
+        )
+        content = say(key)
+    else:
+        minutes = max(1, math.ceil((row.due_at - now).total_seconds() / 60))
+        content = say(_WAIT_KEYS[row.reason], minutes=minutes)
+    kept = await record(
+        session,
         conversation_id=row.conversation_id,
-        content=line,
+        content=content,
         meta={
-            **notice(EVENT_TURN_RESUME_WAIT, severity=SEVERITY_WARN, who=WHO_PLATFORM),
-            "reason": row.reason,
+            **notice(
+                EVENT_TURN_RESUME_STOPPED if dropped else EVENT_TURN_RESUME_WAIT,
+                severity=SEVERITY_WARN,
+                who=WHO_PLATFORM,
+            ),
+            "reason": row.dropped_reason if dropped else row.reason,
             "resume_id": str(row.id),
         },
         turn_id=row.failed_turn_id,
         seat=row.recipient_handle,
     )
+    if kept is None:
+        return None
+    return as_payload(kept), await room_of_thread(session, row.conversation_id)
 
 
 _WAIT_KEYS: Final = {
@@ -278,36 +309,34 @@ _WAIT_KEYS: Final = {
 }
 
 
-async def show_stopped(sessions: SessionFactory, row: TurnResume, key: str) -> None:
-    """Append a terminal or canceled recovery outcome without changing history."""
-    await record_now(
-        sessions,
-        conversation_id=row.conversation_id,
-        content=say(key),
-        meta={
-            **notice(
-                EVENT_TURN_RESUME_STOPPED, severity=SEVERITY_WARN, who=WHO_PLATFORM
-            ),
-            "resume_id": str(row.id),
-            "reason": row.dropped_reason,
-        },
-        turn_id=row.failed_turn_id,
-        seat=row.recipient_handle,
+async def started_on_receipt(
+    session: AsyncSession, delivery_id: uuid.UUID | None, attempt_id: uuid.UUID | None
+) -> tuple[dict, uuid.UUID | None] | None:
+    """Record a resume only when the session echoes its instruction.
+
+    The receipt transaction owns the delivery lock. Replayed echoes find the
+    existing record, so the history keeps one start for this attempt.
+    """
+    if delivery_id is None or attempt_id is None:
+        return None
+    row = await session.scalar(
+        select(TurnResume)
+        .join(Delivery, Delivery.event_id == TurnResume.id)
+        .where(Delivery.id == delivery_id, Delivery.attempt_id == attempt_id)
     )
-
-
-async def show_started(sessions: SessionFactory, attempt_id: uuid.UUID) -> None:
-    """Record the resume after its turn interval actually opens."""
-    async with sessions() as session:
-        row = await session.scalar(
-            select(TurnResume)
-            .join(Delivery, Delivery.event_id == TurnResume.id)
-            .where(Delivery.attempt_id == attempt_id)
-        )
     if row is None:
-        return
-    await record_now(
-        sessions,
+        return None
+    existing = await session.scalar(
+        select(RunRecord.id).where(
+            RunRecord.conversation_id == row.conversation_id,
+            RunRecord.kind == EVENT_TURN_RESUME_STARTED,
+            RunRecord.meta["resume_id"].as_string() == str(row.id),
+        )
+    )
+    if existing is not None:
+        return None
+    kept = await record(
+        session,
         conversation_id=row.conversation_id,
         content=say("turnResumeStarted"),
         meta={
@@ -319,6 +348,9 @@ async def show_started(sessions: SessionFactory, attempt_id: uuid.UUID) -> None:
         turn_id=attempt_id,
         seat=row.recipient_handle,
     )
+    if kept is None:
+        return None
+    return as_payload(kept), await room_of_thread(session, row.conversation_id)
 
 
 async def report_failed_deliveries(sessions: SessionFactory) -> int:

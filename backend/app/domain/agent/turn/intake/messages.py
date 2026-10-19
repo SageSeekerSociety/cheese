@@ -650,10 +650,6 @@ class RunnerIntake:
             except DeliveryTargetChanged:
                 return
             if joined is not None and joined is not False:
-                if joined is True:
-                    from app.domain.agent.turn_resume import show_started
-
-                    await show_started(chat_service.session_factory, turn_id)
                 return
         admit_started = time.monotonic()
         verdict, gate = await self._admit(

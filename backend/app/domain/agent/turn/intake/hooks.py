@@ -147,17 +147,7 @@ class HookEvents:
             )
             if row is None:
                 return False
-            if row.dropped_at is not None:
-                await turn_resume.show_stopped(
-                    self.sessions,
-                    row,
-                    "turnResumeExhausted"
-                    if row.dropped_reason == turn_resume.ATTEMPTS_USED_UP
-                    else "turnResumeNoReset",
-                )
-                return False
-            await turn_resume.show_waiting(self.sessions, row)
-            return True
+            return row.dropped_at is None
         except Exception:
             logger.exception(
                 "could not schedule a resume after turn %s failed", turn_id
