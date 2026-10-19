@@ -3,8 +3,10 @@
 A session's runner numbers every record its harness writes (Claude Code's
 stream-json lines, Codex's app-server notifications, pi's entries) and the
 backend mirrors that journal (`agent.harness.driven`). This table keeps those
-records for good, the way they came, so that what the agent did can be read
-after the mirror has forgotten it.
+records the way they came, so that what the agent did can be read after the
+mirror has forgotten it: for `service.RETENTION` (30 days), after which only
+the inputs the session was sent are kept, as a run of their own under
+`archive/user-messages/` (`service.expire`).
 
 A row is a run of consecutive records of one session's journal, all of one
 turn. A record arrives as a run of one, with the record in the row
@@ -27,7 +29,6 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
@@ -39,10 +40,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import UuidPk
-
-# The registry `conversation_id` points at: mapped wherever this is, so the
-# foreign key resolves in a process that never imports `app.models`.
-from app.domain.conversation.models import Conversation  # noqa: F401
 
 
 class SessionRecord(UuidPk, Base):
@@ -71,13 +68,11 @@ class SessionRecord(UuidPk, Base):
         ),
     )
 
-    conversation_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey(
-            "conversations.id",
-            ondelete="CASCADE",
-            name="fk_session_records_conversation_id_conversations",
-        )
-    )
+    # The conversation (`conversations.id`), deliberately without a foreign
+    # key: a cascade would take the rows and leave their objects in the bucket
+    # with nothing naming them. `service.forget_gone` removes a gone
+    # conversation's rows and objects together.
+    conversation_id: Mapped[uuid.UUID] = mapped_column()
     # The turn the runner stamped on these records (`cheese.work_id`); empty for
     # what a session wrote before its first input.
     turn_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)

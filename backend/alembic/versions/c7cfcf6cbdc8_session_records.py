@@ -1,7 +1,6 @@
 """Keep every session's raw records: `session_records`, append-only."""
 
 import sqlalchemy as sa
-from migration_helpers import with_lock_retries
 from sqlalchemy.dialects import postgresql
 
 from alembic import op
@@ -13,7 +12,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    with_lock_retries("conversations")
     op.create_table(
         "session_records",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -35,12 +33,10 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["conversation_id"],
-            ["conversations.id"],
-            ondelete="CASCADE",
-            name="fk_session_records_conversation_id_conversations",
-        ),
+        # No foreign key to conversations, on purpose: a cascade would take
+        # the rows and leave their objects in the bucket with nothing naming
+        # them. The retention sweep removes a gone conversation's rows and
+        # objects together (session_record.service.forget_gone).
         sa.UniqueConstraint(
             "conversation_id",
             "agent_handle",

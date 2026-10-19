@@ -11,6 +11,9 @@ Three operations, all on `SessionRecord`:
 - `read` hands a conversation's records back in the order they were written,
   from whichever of the two homes each run is in.
 
+How long they are kept, and what goes when a conversation does, is
+`retention`'s.
+
 What is kept is the journal row as the runner wrote it, the platform's
 `cheese` stamp included. The only change is the scrub (`scrubbed`):
 credentials go the way `core.obs.scrub_secrets` takes them out of logs (a
@@ -169,7 +172,7 @@ def _turn(record: dict) -> uuid.UUID | None:
         return None
 
 
-def _size(entry: dict) -> int:
+def size(entry: dict) -> int:
     return len(json.dumps(entry, ensure_ascii=False).encode())
 
 
@@ -201,7 +204,7 @@ async def append(sessions: SessionFactory, stream: Stream, rows: list[dict]) -> 
                 "first_at": at,
                 "last_at": at,
                 "count": 1,
-                "bytes": _size(entry),
+                "bytes": size(entry),
                 "records": [entry],
             }
         )
@@ -266,7 +269,7 @@ async def _not_sealed(
 # --- sealing -----------------------------------------------------------------
 
 
-def _bucket() -> StorageBackend | None:
+def bucket() -> StorageBackend | None:
     """The private bucket, or None where this deployment has none: records then
     stay in their rows."""
     if not (
@@ -286,7 +289,7 @@ async def seal(
     now: datetime | None = None,
 ) -> int:
     """Seal runs older than `SEAL_AFTER` into the private bucket; how many runs."""
-    storage = storage or _bucket()
+    storage = storage or bucket()
     if storage is None:
         return 0
     cutoff = (now or datetime.now(UTC)) - SEAL_AFTER
@@ -346,7 +349,7 @@ async def _seal_one(
         if not run:
             return False
         entries = [entry for row in run for entry in row.records or []]
-        body = await asyncio.to_thread(_pack, entries)
+        body = await pack(entries)
         key = f"{PREFIX}/{head.conversation_id}/{uuid.uuid4().hex}.jsonl.gz"
         # Uploaded before the rows go: a crash in between leaves an object
         # nothing names, never a run with nothing behind it.
@@ -374,7 +377,12 @@ async def _seal_one(
     return True
 
 
-def _pack(entries: list[dict]) -> bytes:
+async def pack(entries: list[dict]) -> bytes:
+    """Entries as one gzip JSONL object's body, an entry a line."""
+    return await asyncio.to_thread(_gzip, entries)
+
+
+def _gzip(entries: list[dict]) -> bytes:
     lines = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries)
     return gzip.compress(lines.encode(), compresslevel=6)
 
@@ -473,7 +481,7 @@ async def read(
             del found[limit + 1 :]
             if row.first_at > found[limit]["_at"]:
                 break
-        for entry in await _open(row, storage):
+        for entry in await open_run(row, storage):
             at = datetime.fromisoformat(entry["at"])
             item = {
                 "sequence": int(entry["sequence"]),
@@ -494,7 +502,7 @@ async def read(
     return Page(page, cursor)
 
 
-async def _open(row: SessionRecord, storage: StorageBackend | None) -> list[dict]:
+async def open_run(row: SessionRecord, storage: StorageBackend | None) -> list[dict]:
     if row.records is not None:
         return row.records
     assert row.object_key is not None

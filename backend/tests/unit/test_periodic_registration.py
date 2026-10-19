@@ -122,6 +122,7 @@ def _world():
         ("sandbox disk guard", "machine.disk_guard.sweep", "sessions"),
         ("run record expiry", "run_record.service.purge_expired", "sessions"),
         ("session record seal", "session_record.service.seal", "sessions"),
+        ("session record retention", "session_record.retention.sweep", "sessions"),
         (
             "notification email drain",
             "notification.maintenance.drain_email_queue",
@@ -468,6 +469,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("backend error flush", 109),
         ("run record expiry", 110),
         ("session record seal", 60),
+        ("session record retention", 600),
         ("notification email drain", 111),
         ("notification push drain", 112),
         ("notification digest", 113),

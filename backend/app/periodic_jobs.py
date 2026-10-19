@@ -67,6 +67,7 @@ PERIODIC_JOB_NAMES = (
     "backend error flush",
     "run record expiry",
     "session record seal",
+    "session record retention",
     "notification email drain",
     "notification push drain",
     "notification digest",
