@@ -10,12 +10,15 @@ from app.domain.conversation.models import Conversation
 from app.domain.session_record.models import SessionRecord
 from app.domain.session_record.service import Key, encode_cursor
 
+# `agent` sits layers above this package, so its table is read bare; the
+# copy is held against the model by `test_a_turn_read_mirrors_the_tables_it_may_not_import`.
 _turns = table(
     "agent_turns",
     column("id", Uuid),
     column("conversation_id", Uuid),
     column("agent_handle", String),
     column("started_at", DateTime(timezone=True)),
+    column("stopped_at", DateTime(timezone=True)),
 )
 
 

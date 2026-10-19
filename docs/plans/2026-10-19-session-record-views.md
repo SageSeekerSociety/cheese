@@ -12,14 +12,21 @@ Hidden tool, narration and subagent event-block writes and mutations are removed
 
 ## Data deletion: confirmation required before integration merges
 
-No deployed data was changed. The read-only dev transaction reported `transaction_read_only=on` and these counts:
+No deployed data was changed. Release two deletes exactly the rows the removed 现场 writers produced, identified by what each one stored, never by visibility alone:
 
-- Hidden event blocks matching `kind='event' AND meta->>'in_room'='false'`: 1,139,682.
-- All event blocks: 1,168,297.
-- Hidden tool rows: 1,005,193; hidden subagent rows: 6,897; hidden rows with output: 685,439. Hidden narration rows: 127,240. Categories overlap.
-- Retired `run_records`: 0. Platform statuses still use this table.
+```sql
+kind = 'event'
+AND meta::jsonb @> '{"in_room": false}'
+AND (meta::jsonb ? 'tool' OR meta::jsonb ? 'subagent' OR meta::jsonb @> '{"progress": true}')
+```
 
-The coordinator must confirm deletion with the product owner before merging. Release one removes readers/writers and adds only the conversation launch boundary. Release two removes the hidden event rows in bounded, committed periodic batches after the preceding release has stopped producing them. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule. The count script is read-only and reproducible.
+These are tool steps (with the output, failure and calls written onto them), subagent conclusions and narration. Hidden event blocks that are still written fall outside it: agent notices for an edited message (`block/editing.py`) and for memory changes (`agent/queries.py`), which agents read back as input (`block/history.py`), and the line beside a message whose @ names nobody (`agent/mentions.py`). `backend/tests/integration/test_retired_site_rows_are_only_the_removed_kinds.py` writes both sets through the real writers and holds the predicate to them.
+
+`scripts/dev/count-retired-site.py` holds the predicate, runs in a read-only transaction and reports the retired rows by kind, the hidden rows kept, and `run_records` counted by kind. No `run_records` writer was removed; platform statuses still use the table, so none of its rows is retired.
+
+TODO (coordinator): rerun `scripts/dev/count-retired-site.py` on dev and record the counts here before asking the product owner to confirm deletion.
+
+The coordinator must confirm deletion with the product owner before merging. Release one removes readers/writers and adds only the conversation launch boundary. Release two removes the retired rows in bounded, committed periodic batches after the preceding release has stopped producing them. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule.
 
 ## Sources adopted
 
