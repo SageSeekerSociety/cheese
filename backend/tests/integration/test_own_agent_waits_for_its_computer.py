@@ -76,6 +76,9 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
                 installed=True,
                 logged_in=True,
                 checked_at=datetime.now(UTC),
+                # The rollout trigger that used to fill this is gone (#4462);
+                # an empty list now reads as "no model allowed", not "any".
+                allowed_models=["sonnet"],
             )
         )
         await db.flush()
