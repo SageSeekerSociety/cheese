@@ -262,8 +262,8 @@ async def project_task_rows(
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
-    # （`ix_blocks_questions`）。这是唯一会中断「运行中」的一格，所以不能留
-    # 给调用方各自去问。
+    # （`ix_blocks_questions`）。它压过队友报的「在做」，所以不能留给调用方
+    # 各自去问。
     asked = await awaiting_an_answer(db, task_ids)
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。

@@ -4,9 +4,11 @@ to do it with (``Wire``).
 A harness differs from the next in four things, and only in those: how its
 process is started on the session host, what its runner names the verbs of
 talking to it mid-work and of stopping it, how its records are read into the
-platform's events (its subscription), and the shape images travel in. The rest
-of driving a session — when to start it again, how a reading lands, when a
-session is gone — is the core's, the same for every harness (`host.py`).
+platform's events (from what its runner reports, ``Reports``, or from a mirror
+of its journal, ``Mirrors``), and the shape images travel in. The rest of
+driving a session — when to start it again, how a reading lands — is the
+core's (`host.py`); for a ``Reports`` harness, its runner says when the session
+is gone.
 """
 
 import json

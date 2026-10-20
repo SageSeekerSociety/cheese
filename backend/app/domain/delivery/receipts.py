@@ -465,9 +465,8 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
         raise ValidationError("Native input has a different execution owner")
     if execution_work is None and row.execution_work_id is None:
         # An echo that names no execution work is an echo under the input's own
-        # work: that is the one ``identity.work_id`` names, and the only work a
-        # completion for this input may later claim. Leaving it empty would make
-        # the input uncompletable — its holds could never be released again.
+        # work: that is the one ``identity.work_id`` names, and the work the
+        # echo below consumes the input's batch under.
         execution_work = identity.work_id
     if row.settled_at is not None:
         if execution_work is not None:

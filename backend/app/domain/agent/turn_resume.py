@@ -22,7 +22,10 @@ Why it cannot storm:
   after `Policy.attempts`; the row that would have exceeded it is written as
   dropped, so the record says why the seat was left alone. A resumed turn that
   failed more than `STREAK_WINDOW` after it was handed over made progress, and
-  starts a new streak; so does a person speaking.
+  starts a new streak; so does a person speaking. A platform interruption
+  (`Policy.platform`, the upgrade replacing the runner a turn was in) is
+  exempt: it is resumed after `base_s` whatever the streak stands at, and it
+  does not count as one more attempt, because the agent did not fail.
 - **It stops when it no longer applies.** At its due time a row is dropped, not
   handed over, when a person has spoken in the conversation since the failure,
   when the seat has run another turn since (somebody already woke it), or when
