@@ -22,7 +22,7 @@ AND meta::jsonb @> '{"in_room": false}'
 AND (meta::jsonb ? 'tool' OR meta::jsonb ? 'subagent' OR meta::jsonb @> '{"progress": true}')
 ```
 
-These are tool steps (with the output, failure and calls written onto them), subagent conclusions and narration. Hidden event blocks that are still written fall outside it: agent notices for an edited message (`block/editing.py`) and for memory changes (`agent/queries.py`), which agents read back as input (`block/history.py`), and the line beside a message whose @ names nobody (`agent/mentions.py`). `backend/tests/integration/test_retired_site_rows_are_only_the_removed_kinds.py` writes both sets through the real writers and holds the predicate to them.
+These are tool steps (with the output, failure and calls written onto them), subagent conclusions and narration. Hidden event blocks that are still written fall outside it: agent notices for an edited message (`block/editing.py`) and for memory changes (`agent/queries.py`), which agents read back as input (`block/history.py`). The line beside a message whose @ names nobody (`agent/mentions.py`) is a run record, not a block. `backend/tests/integration/test_retired_site_rows_are_only_the_removed_kinds.py` writes both sets through the real writers and holds the predicate to them.
 
 `scripts/dev/count-retired-site.py` holds the predicate, runs in a read-only transaction and reports the retired rows by kind, the hidden rows kept, and `run_records` counted by kind. No `run_records` writer was removed; platform statuses still use the table, so none of its rows is retired.
 
