@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.common.auth import create_access_token, verify_access_token
 from app.domain.agent.device_hub import HubScreen, device_hub
+from app.domain.device.models import DeviceRow
 from app.domain.user.repositories import UserRepository
 from app.domain.user.sessions import SessionService
 from tests.conftest import seed_user
@@ -534,35 +535,59 @@ def test_a_machine_learns_its_approval_was_withdrawn(client):
     )
 
 
-def test_device_login_refresh_is_visible_on_team_models(client, monkeypatch):
-    """Refreshing a device discovers its subscription on team Models while
-    the device list continues to describe devices alone."""
+def test_registered_login_refresh_is_visible_on_team_models(client, monkeypatch):
+    """A registered subscription reports its status on Models; probing an
+    execution device does not register a credential."""
     alice = _login_real(client, "alice")
     device_id = _enroll_device(client, alice)["device_id"]
-    status = {"loggedIn": False}
+    listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
+    mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
+    team_id = mine["team_id"]
+    models_path = f"/connector/teams/{team_id}/model-connections"
+
+    async def transport_token():
+        async with client.test_factory() as db:
+            device = await db.get(DeviceRow, device_id)
+            assert device is not None
+            return device.token
+
+    token = client.portal.call(transport_token)
+    login_id = "default"
+    status = {"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max"}
 
     async def exec_(device, argv, *, stdin, timeout):
-        answer = {"installed": True, "logins": [{"id": "default", "status": status}]}
+        answer = {"installed": True, "logins": [{"id": login_id, "status": status}]}
         return {"exit": 0, "stdout": json.dumps(answer) + "\n", "stderr": ""}
 
     monkeypatch.setattr(device_hub, "is_online", lambda device: device == device_id)
     monkeypatch.setattr(device_hub, "exec", exec_)
     asked = client.post(
-        f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(alice)
+        "/connector/model-login/refresh", json={"token": token}
     )
-    assert asked.status_code == 200 and asked.json() is None
-    listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
-    mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
-    models_path = f"/connector/teams/{mine['team_id']}/model-connections"
+    assert asked.status_code == 200, asked.text
     assert client.get(models_path, headers=_bearer(alice)).json()["connections"] == []
 
-    status.update(loggedIn=True, subscriptionType="max")
-    asked = client.post(
-        f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(alice)
+    authorization = client.post(
+        f"/connector/teams/{team_id}/claude-login", headers=_bearer(alice)
     )
-    assert asked.status_code == 200 and asked.json() is None
+    assert authorization.status_code == 200, authorization.text
+    registered = client.post(
+        "/connector/model-login/register",
+        json={
+            "ticket": authorization.json()["ticket"],
+            "transport_token": token,
+            "computer_name": "macbook",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    login_id = registered.json()["login_id"]
+    asked = client.post(
+        "/connector/model-login/refresh", json={"token": token}
+    )
+    assert asked.status_code == 200, asked.text
     connections = client.get(models_path, headers=_bearer(alice)).json()["connections"]
     assert len(connections) == 1
+    assert connections[0]["id"] == login_id
     assert connections[0]["device_id"] == device_id
     assert connections[0]["logged_in"] is True
     assert connections[0]["subscription_type"] == "max"
@@ -572,6 +597,7 @@ def test_device_login_refresh_is_visible_on_team_models(client, monkeypatch):
 
     bob = _login_real(client, "bob")
     theirs = client.post(
-        f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(bob)
+        f"/connector/teams/{team_id}/claude-logins/{login_id}/check",
+        headers=_bearer(bob),
     )
     assert theirs.status_code == 403
