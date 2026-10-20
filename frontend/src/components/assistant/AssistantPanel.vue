@@ -104,9 +104,7 @@
           @open-draft="(id) => emit('openDraft', id)"
           @open-task="(id) => emit('openTask', id)"
         >
-          <p v-if="!streaming && (queued || !steps.length)" class="ap__looking">
-            {{ queued ? t('tasks.assistant.queued') : toolLabel }}
-          </p>
+          <p v-if="!streaming && queued" class="ap__looking">{{ t('tasks.assistant.queued') }}</p>
           <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
           <div v-else-if="streaming" class="ap__md" v-html="render(streaming)" />
         </AssistantTurn>
@@ -322,20 +320,6 @@ const ready = computed(
   () =>
     (draft.value.trim().length > 0 || props.files.length > 0) && !props.busy && !props.files.some((f) => f.uploading)
 )
-
-const toolLabel = computed(() => {
-  switch (props.tool) {
-    case 'cheese_docs_search':
-    case 'cheese_docs_read':
-      return t('tasks.assistant.readingDocs')
-    case 'cheese_my_tasks':
-      return t('tasks.assistant.readingTasks')
-    case 'cheese_task_write':
-      return t('tasks.assistant.writing')
-    default:
-      return t('tasks.assistant.thinking')
-  }
-})
 
 function render(text: string): string {
   return markdown.render(text)

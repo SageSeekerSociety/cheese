@@ -480,9 +480,9 @@ def test_a_question_is_answered_from_the_task_kept_and_paid_for(client, gateway)
     deltas = [d["text"] for e, d in events if e == "delta"]
     assert "".join(deltas) == "要先会 PyTorch。"
     assert events[-1] == ("done", {"stopped": False})
-    # The model is asked without thinking, for a bounded answer.
+    # The model reasons (nothing turns it off), within a bounded answer.
     sent = gateway.requests[0]
-    assert sent["thinking"] == {"type": "disabled"}
+    assert sent.get("thinking") != {"type": "disabled"}
     assert "max_completion_tokens" not in sent and sent["max_tokens"] > 0
     # 芝士 was told the task it was asked about.
     told = json.dumps(sent, ensure_ascii=False)
@@ -1018,6 +1018,12 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     assert any(event == "tool_args" for event, _ in events)
     told = json.dumps(gateway.requests[0], ensure_ascii=False)
     assert "<当前页面>" in told and f"草稿 {draft}" in told
+    # What it did is kept with the answer: the conversation shows it again.
+    kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    parts = kept["data"]["messages"][-1]["parts"]
+    assert [step["name"] for step in parts["steps"]] == ["cheese_task_write"]
+    assert '"difficulty"' in parts["steps"][0]["args"]
+    assert parts["edits"][0]["changed"] == {"rank": {"before": 2, "after": 3}}
 
     for question in ("还有吗", "好的"):
         gateway.script = [("text", "没有了。")]

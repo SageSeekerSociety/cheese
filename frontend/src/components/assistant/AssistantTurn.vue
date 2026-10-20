@@ -12,7 +12,7 @@
         @click="open = !open"
       >
         <v-icon size="16" class="at__chev" :class="{ 'at__chev--open': open }">mdi-chevron-right</v-icon>
-        {{ t('tasks.assistant.steps.folded', { first: steps[0].verb, n: steps.length }) }}
+        {{ t('tasks.assistant.steps.folded', { first: (calls[0] ?? steps[0]).verb, n: calls.length || steps.length }) }}
       </button>
       <ul v-if="!folded || open" class="at__steps">
         <li v-for="step in steps" :key="step.key" class="at__step" :class="`at__step--${step.state}`">
@@ -140,6 +140,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const open = ref(false)
+
+/** 工具调用（推理的那几段不算步数）。 */
+const calls = computed(() => props.steps.filter((step) => !step.thinking))
 
 /** 答完了、做了两步以上：收成一行，点开再看。 */
 const folded = computed(() => !props.live && props.steps.length > 1)

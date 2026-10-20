@@ -15,7 +15,7 @@
       :style="{ left: `${mark.x}px`, top: `${mark.y}px` }"
       :data-testid="`agent-mark-${mark.key}`"
     >
-      <span class="al__mark-av" aria-hidden="true" />
+      <CheeseAvatar :size="14" aria-hidden="true" />
       <span>{{ t('tasks.agentLayer.filled') }}</span>
       <button
         type="button"
@@ -50,6 +50,8 @@
 //
 // 位置都由外面量好交进来（相对这一层的左上角）；这里只画、只往上报撤销。
 import { useI18n } from 'vue-i18n'
+
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 
 export interface AgentPointer {
   x: number
@@ -119,13 +121,6 @@ const { t } = useI18n()
   white-space: nowrap;
   transform: translateX(-100%);
   pointer-events: auto;
-}
-
-.al__mark-av {
-  width: 12px;
-  height: 12px;
-  background: var(--agent-tone-0);
-  border-radius: 4px;
 }
 
 .al__undo {

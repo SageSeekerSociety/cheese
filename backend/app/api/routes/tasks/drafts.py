@@ -73,7 +73,7 @@ _APPROVALS = {APPROVE_APPROVED: "APPROVED", APPROVE_DISAPPROVED: "DISAPPROVED"}
 async def _person(resolver: ActorResolverDep) -> int:
     actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
-        raise AuthenticationRequiredError("Login required")
+        raise AuthenticationRequiredError(say("invalidToken"))
     return actor.user_id
 
 

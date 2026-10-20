@@ -183,6 +183,7 @@ async def read_conversation(
                     "text": m.text,
                     "stopped": m.stopped,
                     "at": m.created_at.isoformat(),
+                    **({"parts": m.parts} if m.parts else {}),
                 }
                 for m in messages
             ],

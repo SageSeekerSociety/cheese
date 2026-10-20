@@ -26,13 +26,24 @@ export interface AssistantConversation {
   questions?: number
 }
 
-/** 芝士调的一次工具。`args` 是参数原文，边写边长。 */
+/** 芝士调的一次工具，或者它推理的一段（`name` 是 `thinking`）。`args` 是参数原文，
+ *  边写边长；推理没有参数，`ms` 是它推理了多久。 */
 export interface AssistantStep {
   call: string
   name: string
   args: string
   state: 'run' | 'done' | 'failed'
   error?: string
+  ms?: number
+  /** 开始的时刻（本页的钟），算推理用了多久。 */
+  startedAt?: number
+}
+
+/** 服务端存下的那一轮做了什么（`assistant_messages.parts`）。 */
+interface StoredParts {
+  steps?: { call: string; name: string; args: string; failed?: string; ms?: number }[]
+  edits?: Record<string, unknown>[]
+  published?: AssistantPublished[]
 }
 
 /** 芝士往草稿里写的一次：改了哪几格（各自原来是什么），哪几格因为人改过而没动，以及
@@ -152,11 +163,14 @@ export function useAssistant(opts: AssistantOptions) {
   }
 
   async function open(id: string) {
-    const data = await request<AssistantConversation & { messages: AssistantMessage[]; answering?: string | null }>(
-      `/assistant/conversations/${id}`
-    )
+    const data = await request<
+      AssistantConversation & {
+        messages: (AssistantMessage & { parts?: StoredParts })[]
+        answering?: string | null
+      }
+    >(`/assistant/conversations/${id}`)
     current.value = id
-    messages.value = data.messages
+    messages.value = data.messages.map(({ parts, ...message }) => (parts ? { ...message, ...kept(parts) } : message))
     notice.value = null
     const home = opts.home()
     if (home?.kind === 'draft') conversations.value = [{ id, title: data.title, lastActiveAt: data.lastActiveAt }]
@@ -257,12 +271,46 @@ export function useAssistant(opts: AssistantOptions) {
     }
   }
 
-  /** 还在跑的那几步算做完了：芝士开始说话、调下一个工具、或答完了。 */
+  /** 存下的那一轮，读回成面板上的步骤、改动和结果。 */
+  function kept(parts: StoredParts): Pick<AssistantMessage, 'steps' | 'edits' | 'published'> {
+    return {
+      steps: (parts.steps ?? []).map((step) => ({
+        call: step.call,
+        name: step.name,
+        args: step.args,
+        ms: step.ms,
+        state: step.failed !== undefined ? ('failed' as const) : ('done' as const),
+        error: step.failed,
+      })),
+      edits: (parts.edits ?? []).map(toEdit),
+      published: parts.published ?? [],
+    }
+  }
+
+  function toEdit(payload: Record<string, unknown>): AssistantEdit {
+    return {
+      id: ++editSeq,
+      draft: Number(payload.draft),
+      taskId: typeof payload.taskId === 'number' ? payload.taskId : null,
+      created: payload.created === true,
+      version: Number(payload.version) || 0,
+      name: typeof payload.name === 'string' ? payload.name : '',
+      changed: (payload.changed as AssistantEdit['changed']) ?? {},
+      kept: Array.isArray(payload.kept) ? (payload.kept as string[]) : [],
+      notes: Array.isArray(payload.notes) ? (payload.notes as AssistantEdit['notes']) : [],
+      undone: [],
+    }
+  }
+
+  /** 还在跑的那几步算做完了：芝士开始说话、调下一个工具、或答完了。推理的那一段记下
+   *  它用了多久。 */
   function settleSteps() {
     let changed = false
+    const now = Date.now()
     const next = steps.value.map((step) => {
       if (step.state !== 'run') return step
       changed = true
+      if (step.name === 'thinking') return { ...step, state: 'done' as const, ms: now - (step.startedAt ?? now) }
       on.toolEnded?.(step.call, step.name, false)
       return { ...step, state: 'done' as const }
     })
@@ -270,7 +318,14 @@ export function useAssistant(opts: AssistantOptions) {
   }
 
   function onStep(event: string, payload: Record<string, unknown>) {
-    if (event === 'tool') {
+    if (event === 'thinking') {
+      settleSteps()
+      steps.value = [
+        ...steps.value,
+        { call: `thinking-${steps.value.length}`, name: 'thinking', args: '', state: 'run', startedAt: Date.now() },
+      ]
+      queued.value = false
+    } else if (event === 'tool') {
       settleSteps()
       const call = typeof payload.call === 'string' ? payload.call : `step-${steps.value.length}`
       const name = typeof payload.name === 'string' ? payload.name : ''
@@ -293,18 +348,7 @@ export function useAssistant(opts: AssistantOptions) {
         return { ...step, state: 'failed', error: typeof payload.text === 'string' ? payload.text : '' }
       })
     } else if (event === 'edit') {
-      const edit: AssistantEdit = {
-        id: ++editSeq,
-        draft: Number(payload.draft),
-        taskId: typeof payload.taskId === 'number' ? payload.taskId : null,
-        created: payload.created === true,
-        version: Number(payload.version) || 0,
-        name: typeof payload.name === 'string' ? payload.name : '',
-        changed: (payload.changed as AssistantEdit['changed']) ?? {},
-        kept: Array.isArray(payload.kept) ? (payload.kept as string[]) : [],
-        notes: Array.isArray(payload.notes) ? (payload.notes as AssistantEdit['notes']) : [],
-        undone: [],
-      }
+      const edit = toEdit(payload)
       edits.value = [...edits.value, edit]
       on.edit?.(edit)
     } else if (event === 'published') {

@@ -289,7 +289,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/tags.py": 1,
     "app/api/routes/task_inheritance.py": 1,
     "app/api/routes/tasks/_common.py": 10,
-    "app/api/routes/tasks/lifecycle.py": 29,
+    "app/api/routes/tasks/lifecycle.py": 19,
     "app/api/routes/tasks/participation.py": 25,
     "app/api/routes/tasks/publish_pdf.py": 8,
     "app/api/routes/tasks/roster.py": 12,

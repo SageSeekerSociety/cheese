@@ -40,10 +40,10 @@ MEMORY_MB = 512
 #: How long its runner may be out of reach mid-answer before the answer is
 #: given up on.
 GONE_AFTER_S = 15.0
-#: The longest answer, in tokens; the model's other limits follow from it. A
-#: tool call's arguments count: a 题目's whole description written into a
-#: draft is one answer.
-MAX_TOKENS = 8000
+#: The longest answer, in tokens; the model's other limits follow from it. Its
+#: reasoning counts, and so do a tool call's arguments: a 题目's whole
+#: description written into a draft is one answer.
+MAX_TOKENS = 16000
 #: The context the session may grow to, and how much of it compaction keeps
 #: free: pi summarises the older part of the conversation once a question's
 #: context passes ``CONTEXT_TOKENS - RESERVE_TOKENS``, keeping the latest
@@ -94,7 +94,8 @@ def session(
         gone_after_s=GONE_AFTER_S,
         host_wait_s=HOST_WAIT_S,
         model_settings=ModelSettings(
-            thinking=False,
+            # It reasons: reading a handout and writing a 题目 from it needs it.
+            thinking=True,
             max_tokens=MAX_TOKENS,
             context_tokens=CONTEXT_TOKENS,
             reserve_tokens=RESERVE_TOKENS,

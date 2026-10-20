@@ -11,8 +11,6 @@
   "noQuestions": "No questions yet",
   "placeholder": "Ask a question about this task…",
   "queued": "Queued. It starts when resources free up",
-  "readingDocs": "Reading the docs…",
-  "readingTasks": "Looking at your tasks…",
   "reads": "Cheese has read this task's description, requirements and details.",
   "send": "Send",
   "starters": {
@@ -22,11 +20,11 @@
   },
   "stop": "Stop",
   "stopped": "Stopped",
-  "thinking": "Thinking…",
   "today": "Today",
-  "writing": "Filling in…",
   "steps": {
-    "folded": "{first} and {n} steps"
+    "folded": "{first} and {n} steps",
+    "thinking": "Thinking",
+    "thought": "Thought for {s}s"
   },
   "changes": {
     "title": "Form changes",

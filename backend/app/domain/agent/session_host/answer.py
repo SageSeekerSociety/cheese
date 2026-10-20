@@ -68,6 +68,12 @@ class Tool:
 
 
 @dataclass(frozen=True)
+class Thinking:
+    """The model started reasoning: what it reasons is never handed on, only
+    that it is."""
+
+
+@dataclass(frozen=True)
 class ToolArgs:
     """More of a call's arguments as the model writes them: raw JSON, from its
     ``at``-th character. A reader can show what a call is about to do before
@@ -109,7 +115,7 @@ async def ask(
     work_id: uuid.UUID,
     ceiling_s: float,
     stopped: Callable[[], Awaitable[bool]] | None = None,
-) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Waiting | Answer]:
+) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Thinking | Waiting | Answer]:
     """Say ``prompt`` and hand on the answer as it is written; ends with one
     ``Answer``. ``prompt`` may be what makes it once the session has started,
     for a prompt whose credential should count from then rather than from
@@ -186,6 +192,8 @@ class Progress:
     announced: set[str] = field(default_factory=set)
     #: How much of each call's arguments was handed on.
     argued: dict[str, int] = field(default_factory=dict)
+    #: The reasoning blocks already told, by message and position.
+    thought: set[str] = field(default_factory=set)
     #: The records of the messages already folded in, so one read again is
     #: not said twice.
     taken: set[str] = field(default_factory=set)
@@ -219,9 +227,16 @@ class Progress:
         self.argued[call] = len(raw)
         return [ToolArgs(call, raw[seen:], seen)]
 
-    def writing(self, blocks: tuple[dict, ...]) -> list[Words | Tool | ToolArgs]:
-        said: list[Words | Tool | ToolArgs] = []
-        for block in blocks:
+    def writing(
+        self, blocks: tuple[dict, ...]
+    ) -> list[Words | Tool | ToolArgs | Thinking]:
+        said: list[Words | Tool | ToolArgs | Thinking] = []
+        for index, block in enumerate(blocks):
+            if block.get("type") == "thinking":
+                key = f"{len(self.parts)}:{index}"
+                if key not in self.thought:
+                    self.thought.add(key)
+                    said.append(Thinking())
             if block.get("type") == "tool":
                 call = block.get("id")
                 said += self.tool(call, str(block.get("name") or ""))
@@ -244,6 +259,7 @@ class Progress:
             "shown": self.shown,
             "announced": sorted(self.announced),
             "argued": self.argued,
+            "thought": sorted(self.thought),
             "taken": sorted(self.taken),
             "result": (
                 None
@@ -260,6 +276,7 @@ class Progress:
             shown=str(data.get("shown") or ""),
             announced=set(data.get("announced") or []),
             argued={str(k): int(v) for k, v in (data.get("argued") or {}).items()},
+            thought=set(data.get("thought") or []),
             taken=set(data.get("taken") or []),
             result=None if result is None else Answer(result["text"], result["error"]),
         )
@@ -273,7 +290,7 @@ async def follow(
     deadline: float,
     progress: Progress,
     keep: Callable[[Progress], Awaitable[None]] | None = None,
-) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Answer]:
+) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Thinking | Answer]:
     """Read the answer to work ``work_id`` on from ``progress``, handing on
     what more of it is written; ends with one ``Answer``. Past ``deadline``
     (on the monotonic clock) the work is stopped and the answer is what failed
@@ -314,7 +331,7 @@ async def follow(
             if read.work_id not in (None, work):
                 continue
             event = read.event
-            said: list[Words | Tool | ToolArgs | ToolFailed] = []
+            said: list[Words | Tool | ToolArgs | ToolFailed | Thinking] = []
             if isinstance(event, Report):
                 # What a runner reported: of all of it, only the ending of the
                 # work, or of the session, ends an answer.

@@ -11,8 +11,6 @@
   "noQuestions": "还没有提问",
   "placeholder": "问一个关于这道题的问题…",
   "queued": "正在排队，资源空出后自动开始",
-  "readingDocs": "正在查文档…",
-  "readingTasks": "正在看你参与的题…",
   "reads": "芝士读过这道题的说明、要求和题目信息。",
   "send": "发送",
   "starters": {
@@ -22,11 +20,11 @@
   },
   "stop": "停止",
   "stopped": "已停止",
-  "thinking": "正在想…",
   "today": "今天",
-  "writing": "正在填写…",
   "steps": {
-    "folded": "{first}等 {n} 步"
+    "folded": "{first}等 {n} 步",
+    "thinking": "思考中",
+    "thought": "思考了 {s} 秒"
   },
   "changes": {
     "title": "表单改动",

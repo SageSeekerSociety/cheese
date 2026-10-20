@@ -20,6 +20,8 @@ export interface PanelStep {
   arg: string
   state: AssistantStep['state']
   error?: string
+  /** 推理的那一段，不是一次工具调用。 */
+  thinking?: boolean
 }
 
 export interface PanelChangeRow {
@@ -89,6 +91,17 @@ const STEP_ARG: Record<string, string> = {
 }
 
 export function stepView(step: AssistantStep): PanelStep {
+  if (step.name === 'thinking')
+    return {
+      key: step.call,
+      verb:
+        step.state === 'run'
+          ? t('tasks.assistant.steps.thinking')
+          : t('tasks.assistant.steps.thought', { s: Math.max(1, Math.round((step.ms ?? 0) / 1000)) }),
+      arg: '',
+      state: step.state,
+      thinking: true,
+    }
   const key = STEP_ARG[step.name]
   const arg = key ? partialStringField(step.args, key)?.text ?? '' : ''
   return {

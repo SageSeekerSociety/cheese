@@ -27,6 +27,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.core.sentences import say
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
@@ -92,7 +93,7 @@ async def update_task(
     /tasks/{id}`` answers with."""
     task = await service.get_task(task_id)
     if task is None:
-        raise NotFoundError("Task not found")
+        raise NotFoundError.for_resource("task", task_id)
 
     # is_space_admin 仍单独保留：下面「审批/驳回」只认管理员，出题者不可自审 ——
     # 那是一个比「管理员」更窄的问题，不能拿 may_teach_task 顶。
@@ -100,7 +101,7 @@ async def update_task(
     is_space_admin = await admin_repo.get_relation(task.space_id, user_id) is not None
 
     if not await may_teach_task(session=db, task=task, user_id=user_id):
-        raise ForbiddenError("Only task owner or space admin can update this task")
+        raise ForbiddenError(say("draftTaskNotYours"))
 
     # 「给 AI 队友的指导」(#944) 的引用先查再改：拒了就不该动这一行的任何一格
     # （同一个请求里可能还带着改名），所以拦住的位置与 项目集 PATCH 一样靠前。
@@ -134,7 +135,7 @@ async def update_task(
                 int(payload.deadline) / 1000.0, tz=UTC
             )
         except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid deadline: {exc}") from exc
+            raise BadRequestError(say("taskTimeInvalid", field="deadline")) from exc
     if payload.has_deadline is False:
         task.deadline = None
 
@@ -144,7 +145,9 @@ async def update_task(
                 int(payload.registration_start_at) / 1000.0, tz=UTC
             )
         except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
+            raise BadRequestError(
+                say("taskTimeInvalid", field="registrationStartAt")
+            ) from exc
     if payload.has_registration_start is False:
         task.registration_start_at = None
 
@@ -165,14 +168,12 @@ async def update_task(
     # 审批状态与驳回原因 — 需要 space admin 权限，任务创建者不可自审
     if payload.approved is not None or payload.reject_reason is not None:
         if not is_space_admin:
-            raise ForbiddenError("Only space admins can approve or reject tasks")
+            raise ForbiddenError(say("taskReviewAdminsOnly"))
         if payload.approved is not None:
             next_approved = map_approve_type(payload.approved)
             if next_approved == 0 and task.approved != 0:
                 if await service.has_prior_pending_task_for_creator(task):
-                    raise BadRequestError(
-                        "Creator has earlier pending tasks that must be reviewed first"
-                    )
+                    raise BadRequestError(say("taskEarlierPending"))
                 if task.published_at is None:
                     task.published_at = datetime.now(UTC)
             task.approved = next_approved
@@ -186,7 +187,7 @@ async def update_task(
 
     if "ended_at" in payload.model_fields_set or payload.has_ended_at is not None:
         if not await may_teach_task(session=db, task=task, user_id=user_id):
-            raise ForbiddenError("Only task owner or space admin can update endedAt")
+            raise ForbiddenError(say("draftTaskNotYours"))
         if payload.has_ended_at is False or (
             "ended_at" in payload.model_fields_set
             and payload.ended_at is None
@@ -199,7 +200,7 @@ async def update_task(
                     int(payload.ended_at) / 1000.0, tz=UTC
                 )
             except (TypeError, ValueError) as exc:
-                raise BadRequestError(f"Invalid endedAt: {exc}") from exc
+                raise BadRequestError(say("taskTimeInvalid", field="endedAt")) from exc
         elif payload.has_ended_at is True:
             task.ended_at = datetime.now(UTC)
 
@@ -214,9 +215,7 @@ async def update_task(
     if task.submitter_type != 1 and (
         min_team_size is not None or max_team_size is not None
     ):
-        raise BadRequestError(
-            "minTeamSize and maxTeamSize can only be set for TEAM type tasks."
-        )
+        raise BadRequestError(say("taskTeamSizeTeamOnly"))
 
     task.min_team_size = min_team_size
     task.max_team_size = max_team_size
@@ -224,9 +223,7 @@ async def update_task(
     # teamLockingPolicy
     if payload.team_locking_policy is not None:
         if payload.team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
-            raise BadRequestError(
-                f"Invalid teamLockingPolicy: {payload.team_locking_policy}"
-            )
+            raise BadRequestError(say("taskLockingPolicyInvalid"))
         task.team_locking_policy = payload.team_locking_policy
 
     # accessControlEnabled + accessDomainGroupIds

@@ -42,6 +42,7 @@ from app.domain.agent.personal.prompt import earlier, page
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
 from app.domain.agent.session_host.answer import (
     Answer,
+    Thinking,
     Tool,
     ToolArgs,
     ToolFailed,
@@ -230,6 +231,7 @@ class AssistantConversations:
         text: str,
         *,
         stopped: bool = False,
+        parts: dict | None = None,
     ) -> AssistantMessage:
         seq = (
             await self._s.scalar(
@@ -244,6 +246,7 @@ class AssistantConversations:
             role=role,
             text=text,
             stopped=stopped,
+            parts=parts,
         )
         self._s.add(row)
         conversation.last_active_at = datetime.now(UTC)
@@ -262,6 +265,58 @@ async def follow_task(
     row = await session.get(AssistantConversation, conversation_id)
     if row is not None and row.place_kind == "draft":
         row.place_kind, row.place_id = "task", str(task_id)
+
+
+def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
+    """What 芝士 did while answering, from what its viewers were told: each
+    time it reasoned and for how long, each tool call with its arguments and
+    whether it failed, each draft write, each publish. Kept with the answer, so
+    the conversation shows them again."""
+    steps: list[dict] = []
+    by_call: dict[str, dict] = {}
+    edits: list[dict] = []
+    published: list[dict] = []
+    reasoning: dict | None = None
+
+    def ms(position: str) -> int:
+        return int(position.split("-", 1)[0])
+
+    for position, event, data in told:
+        if reasoning is not None and event not in ("tool_args",):
+            # Reasoning lasts until the next thing it does.
+            reasoning["ms"] = ms(position) - reasoning.pop("from")
+            reasoning = None
+        if event == "thinking":
+            reasoning = {
+                "call": f"thinking-{len(steps)}",
+                "name": "thinking",
+                "args": "",
+                "from": ms(position),
+            }
+            steps.append(reasoning)
+        elif event == "tool":
+            call = str(data.get("call") or f"step-{len(steps)}")
+            if call in by_call:
+                continue
+            step = {"call": call, "name": data.get("name") or "", "args": ""}
+            by_call[call] = step
+            steps.append(step)
+        elif event == "tool_args" and data.get("call") in by_call:
+            step = by_call[data["call"]]
+            step["args"] = step["args"][: int(data.get("at") or 0)] + str(
+                data.get("text") or ""
+            )
+        elif event == "tool_failed" and data.get("call") in by_call:
+            by_call[data["call"]]["failed"] = str(data.get("text") or "")
+        elif event == "edit":
+            edits.append(data)
+        elif event == "published":
+            published.append(data)
+    if reasoning is not None:
+        reasoning.pop("from")
+    if not (steps or edits or published):
+        return None
+    return {"steps": steps, "edits": edits, "published": published}
 
 
 #: What a question to a person's 芝士 is, to the questions the platform reads
@@ -292,7 +347,7 @@ class Answers:
     async def took(
         self,
         consumption: Consumption,
-        item: Waiting | Words | Tool | ToolArgs | ToolFailed,
+        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
     ) -> None:
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})
@@ -304,6 +359,9 @@ class Answers:
             await self._consumptions.publish(
                 consumption, "tool", {"name": item.name, "call": item.call}
             )
+        elif isinstance(item, Thinking):
+            # That it reasons, never what: the page shows 思考中.
+            await self._consumptions.publish(consumption, "thinking", {})
         elif isinstance(item, ToolArgs):
             # A call's arguments as they are written: the page shows a form
             # field filling with the value before the call writes it.
@@ -312,7 +370,7 @@ class Answers:
                 "tool_args",
                 {"call": item.call, "text": item.text, "at": item.at},
             )
-        else:
+        elif isinstance(item, ToolFailed):
             await self._consumptions.publish(
                 consumption, "tool_failed", {"call": item.call, "text": item.text}
             )
@@ -343,11 +401,18 @@ class Answers:
         if stopped:
             # What it had written when it was stopped stays, marked as such.
             text, failed = written.strip(), None
-        if (text and not failed) or stopped:
+        parts = parts_of(await self._consumptions.told(consumption.work_id))
+        if (text and not failed) or stopped or parts:
             async with self._sessions() as session:
                 store = AssistantConversations(session)
                 conversation = await store.owned(user_id, conversation_id)
-                await store.append(conversation, "assistant", text, stopped=stopped)
+                await store.append(
+                    conversation,
+                    "assistant",
+                    "" if failed and not stopped else text,
+                    stopped=stopped,
+                    parts=parts,
+                )
                 await session.commit()
         spawn(
             billing.settle(

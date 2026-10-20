@@ -255,3 +255,69 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
     ])
   })
 })
+
+describe('芝士这一轮做了什么', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reasoning is one step that knows how long it took; a call is another', async () => {
+    serve(() =>
+      events(
+        ['thinking', {}],
+        ['tool', { name: 'cheese_task_search', call: 'c1' }],
+        ['tool_args', { call: 'c1', text: '{"query":"Lab"}', at: 0 }],
+        ['delta', { text: '有两道。' }],
+        ['done', {}]
+      )
+    )
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    await a.load()
+
+    await a.ask('空间里有哪些实验？', '答不上来')
+
+    const steps = a.messages.value.at(-1)?.steps ?? []
+    expect(steps.map((s) => [s.name, s.state])).toEqual([
+      ['thinking', 'done'],
+      ['cheese_task_search', 'done'],
+    ])
+    expect(typeof steps[0].ms).toBe('number')
+    expect(steps[1].args).toBe('{"query":"Lab"}')
+  })
+
+  it('a conversation opened again shows what was kept of each answer', async () => {
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.endsWith('/assistant/tasks/7/conversations')) return envelope({ conversations: [CONVERSATION] })
+      if (url.endsWith('/assistant/conversations/c1'))
+        return envelope({
+          ...CONVERSATION,
+          answering: null,
+          messages: [
+            { role: 'user', text: '改一下截止时间', at: '2026-10-20T08:00:00Z' },
+            {
+              role: 'assistant',
+              text: '改好了。',
+              at: '2026-10-20T08:00:09Z',
+              parts: {
+                steps: [
+                  { call: 'thinking-0', name: 'thinking', args: '', ms: 3000 },
+                  { call: 'c1', name: 'cheese_task_write', args: '{"task":88}', failed: '草稿还不完整' },
+                ],
+                edits: [{ draft: 41, changed: { deadline: { before: 1, after: 2 } }, kept: [], notes: [] }],
+                published: [],
+              },
+            },
+          ],
+        })
+      return new Response('not found', { status: 404 })
+    })
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+
+    await a.load()
+
+    const answer = a.messages.value[1]
+    expect(answer.steps?.map((s) => [s.name, s.state, s.ms ?? null])).toEqual([
+      ['thinking', 'done', 3000],
+      ['cheese_task_write', 'failed', null],
+    ])
+    expect(answer.edits?.[0].changed).toEqual({ deadline: { before: 1, after: 2 } })
+  })
+})
