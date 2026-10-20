@@ -1,8 +1,7 @@
 """Release two deletes the 现场 rows the removed writers produced, and only those.
 
 `scripts/dev/count-retired-site.py` holds the deletion's `WHERE`. Hidden event
-blocks are still written for other reasons (an agent notice for an edited
-message, a line beside a message whose @ names nobody), and agents read the
+blocks are still written for edited-message notices, and agents read those
 notices back as input. A predicate that matched them would delete live input.
 The script also counts `run_records` for real, by kind, rather than asserting
 a number.
@@ -90,8 +89,8 @@ async def test_only_the_removed_kinds_are_retired(business_db_factory):
                 kind=BlockKind.event,
                 meta=meta,
             )
-        # Live writers of hidden event blocks: an edited message's agent notice,
-        # and the line beside an agent's message whose @ names nobody.
+        # An edited message still creates a live hidden notice. Unresolved
+        # references and retries belong to the platform's run-record ledger.
         said = await blocks.add(
             project_id=project.id,
             conversation_id=room.id,
@@ -131,5 +130,5 @@ async def test_only_the_removed_kinds_are_retired(business_db_factory):
     assert counts["subagent_rows"] == 1
     assert counts["narration_rows"] == 1
     assert counts["rows_with_output"] == 1
-    assert counts["hidden_rows_kept"] == 2, counts
-    assert counts["run_records_by_kind"] == {"api_retry": 1}
+    assert counts["hidden_rows_kept"] == 1, counts
+    assert counts["run_records_by_kind"] == {"api_retry": 1, "unresolved_reference": 1}
