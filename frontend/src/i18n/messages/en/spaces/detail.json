@@ -109,36 +109,31 @@
     "createSuccess": "Challenge created",
     "createSuccessAndWaitingAudit": "Challenge created — awaiting review",
     "drafts": {
-      "content": "Challenge {n} · Content",
-      "discard": "Discard import",
-      "missingDescription": "Description missing",
-      "missingName": "Name missing",
-      "page": "Page {n}",
-      "pick": "Select {name}",
-      "replace": "Replace file",
-      "shared": "The settings below apply to the {n} selected challenges",
-      "source": "{file} · {total} found, {picked} selected",
       "untitled": "Untitled"
-    },
-    "import": "Import from file",
-    "importErrors": {
-      "failed": "Import failed: {reason}",
-      "noDrafts": "No challenges were found in the file",
-      "notPdf": "Only PDF files can be imported",
-      "tooLarge": "The file is larger than 15 MB"
     },
     "initializationFailed": "Couldn't start",
     "needsReview": "An admin reviews it after publishing",
     "publish": "Publish",
-    "publishMany": "Publish {n} challenges",
-    "publishedMany": "{n} challenges published",
     "teaching": {
       "inherit": "Use the space default",
       "own": "Set for this challenge",
       "subtitle": "Applies to projects created from this challenge",
       "title": "AI guidance"
     },
-    "useTemplate": "Use template"
+    "useTemplate": "Use template",
+    "draftsMenu": {
+      "label": "Drafts",
+      "heading": "My drafts in this space",
+      "new": "New draft",
+      "edit": "Changes"
+    },
+    "save": {
+      "saving": "Saving…",
+      "saved": "Draft saved",
+      "failed": "Could not save",
+      "published": "Published"
+    },
+    "draftLoadFailed": "Could not load this draft"
   },
   "tasks": {
     "allTopics": "All tags",

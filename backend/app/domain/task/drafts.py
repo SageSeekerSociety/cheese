@@ -33,10 +33,11 @@ from app.core.sentences import say
 from app.domain.task.models import TaskDraft
 from app.domain.task.task_service import TaskService
 
-#: The form's fields, as the page and ``POST /tasks`` name them. Two are the
-#: page's own and never reach ``POST /tasks``: ``descriptionMarkdown`` (the
-#: description as Markdown, which is what 芝士 reads and edits) and
-#: ``teachingOwn`` (whether the 题目 has its own AI 队友辅导).
+#: The form's fields, as the page and ``POST /tasks`` name them. Three are the
+#: page's own and never reach ``POST /tasks`` (``PAGE_ONLY``):
+#: ``descriptionMarkdown`` (the description as Markdown, which is what 芝士
+#: reads and edits), ``teachingOwn`` (whether the 题目 has its own AI 队友辅导)
+#: and ``attachmentFiles`` (the names the page lists beside ``attachmentIds``).
 FORM_FIELDS = frozenset(
     {
         "name",
@@ -61,12 +62,14 @@ FORM_FIELDS = frozenset(
         "rubric",
         "rubricPublic",
         "attachmentIds",
+        "attachmentFiles",
         "teaching",
         "teachingOwn",
     }
 )
-#: The page's own fields, left out of what is published.
-PAGE_ONLY = frozenset({"descriptionMarkdown", "teachingOwn"})
+#: The page's own fields, left out of what is published: the files' names the
+#: page lists beside ``attachmentIds`` are one of them.
+PAGE_ONLY = frozenset({"descriptionMarkdown", "teachingOwn", "attachmentFiles"})
 
 #: The longest a draft's whole form may be, as JSON.
 MAX_FORM_BYTES = 200_000

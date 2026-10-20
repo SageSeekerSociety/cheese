@@ -49,7 +49,7 @@ describe('题目页上问芝士', () => {
 
   it('sends the question and keeps the streamed answer in the conversation', async () => {
     const asked = serve(() => events(['delta', { text: '先会' }], ['delta', { text: ' gdb。' }], ['done', {}]))
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -71,7 +71,7 @@ describe('题目页上问芝士', () => {
           headers: { 'content-type': 'application/json' },
         })
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -90,7 +90,7 @@ describe('题目页上问芝士', () => {
         ['done', {}]
       )
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', 'fallback')
@@ -102,7 +102,7 @@ describe('题目页上问芝士', () => {
     serve(() =>
       events(['error', { message: '服务端的原话', i18n: { key: 'noSuchSentence', params: {} } }], ['done', {}])
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', 'fallback')
@@ -128,7 +128,7 @@ describe('题目页上问芝士', () => {
           { status: 401, headers: { 'content-type': 'text/event-stream' } }
         )
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', 'fallback')
@@ -152,7 +152,7 @@ describe('题目页上问芝士', () => {
           { status: 429, headers: { 'content-type': 'application/json' } }
         )
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -195,7 +195,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
       }
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -219,7 +219,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
         return placed(['answering', { id: 'q1' }], ['delta', { text: '先会', at: 0 }, '1-0'])
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -244,7 +244,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
         return placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0'])
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
 
     await a.load()
     await vi.waitFor(() => expect(a.busy.value).toBe(false))

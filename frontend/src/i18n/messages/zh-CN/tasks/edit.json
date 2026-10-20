@@ -1,6 +1,9 @@
 {
   "crumb": "编辑",
+  "discard": "放弃修改",
+  "loadFailed": "无法读取这道题的修改",
   "resubmitted": "重新提交审核成功，等待管理员审核",
   "saveAndResubmit": "保存并提交审核",
-  "saveChanges": "保存更改"
+  "saveChanges": "保存更改",
+  "unsaved": "有未保存的修改"
 }

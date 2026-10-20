@@ -2,20 +2,21 @@
 // （真 axios 会被 `src/test/setup-network.ts` 逮住，未预期的请求直接判失败）。量的是人
 // 在这一页上做一件事之后真的发出去了什么：
 //
-// 1. **必填空着点发布**：一个请求都不发，页头说还有几项；填好了才 `POST /tasks`，带的
-//    是这一页装配的那份参数（空间、提交表、附件 id），发完落到「我发布的」。
-// 2. **AI 指导**：沿用空间默认时不带它；为本题单独设置才带上整份。
-// 3. **从文件导入**：读出一道就填进这张表；读出几道就逐道列出来，勾上的、改过的那几道
-//    原样走批量发布，共用设置和原文件一起带上。不是 PDF、太大的，一个请求都不发。
+// 1. **边写边存**：停手后才建一份草稿（`POST /task-drafts`），地址栏记下它；打开地址栏里
+//    的草稿，表单就是它存的样子。
+// 2. **必填空着点发布**：一个请求都不发，页头说还有几项；填好了先把校验过的表单存进草稿，
+//    再发布草稿，发完落到「我发布的」。
+// 3. **AI 指导**：沿用空间默认时不单独带它；为本题单独设置才带上整份。
 // 4. **模板**：选一份，表单按它填好。
 //
 // i18n 装真的那一份并锁到 zh-CN；tiptap 换成壳 —— 它跟这一页要量的事无关。
 import type { Component } from 'vue'
 
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
+import { VApp } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
@@ -23,10 +24,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import i18n, { setLocale } from '@/i18n'
 
-const previewFromPdf = vi.fn()
-const confirmFromPdf = vi.fn()
-const createTask = vi.fn()
 const listTasks = vi.fn()
+const listDrafts = vi.fn()
+const startDraft = vi.fn()
+const readDraft = vi.fn()
+const saveDraft = vi.fn()
+const publishDraft = vi.fn()
 
 const spaceDetail = vi.fn()
 const listCategories = vi.fn()
@@ -37,12 +40,47 @@ const uploadAttachment = vi.fn()
 const attachmentLimits = vi.fn()
 const toastError = vi.fn()
 
+// 芝士：开对话走 `request`，问一句走事件流。事件流按 `script` 一条条念出来，照的是
+// 服务端真推的那几种（`tool`、`tool_args`、`edit`、`delta`、`done`）。
+const apiRequest = vi.fn()
+let script: [string, Record<string, unknown>][] = []
+
+vi.mock('@/api', async (original) => ({
+  ...(await original<Record<string, unknown>>()),
+  request: (...a: unknown[]) => apiRequest(...a),
+}))
+
+vi.mock('@/api/eventStream', async (original) => ({
+  ...(await original<Record<string, unknown>>()),
+  postEventStream: async (
+    _path: string,
+    _body: unknown,
+    onEvent: (event: string, data: Record<string, unknown>, id?: string) => void,
+    options?: { onOpen?: () => void }
+  ) => {
+    options?.onOpen?.()
+    onEvent('answering', { id: 'w1' })
+    let n = 0
+    for (const [event, data] of script) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      onEvent(event, data, String(++n))
+    }
+  },
+}))
+
 vi.mock('@/api/taskBoard', () => ({
   TaskBoardApi: {
-    previewFromPdf: (...a: unknown[]) => previewFromPdf(...a),
-    confirmFromPdf: (...a: unknown[]) => confirmFromPdf(...a),
-    create: (...a: unknown[]) => createTask(...a),
     list: (...a: unknown[]) => listTasks(...a),
+  },
+}))
+
+vi.mock('@/api/taskDrafts', () => ({
+  TaskDraftsApi: {
+    list: (...a: unknown[]) => listDrafts(...a),
+    start: (...a: unknown[]) => startDraft(...a),
+    read: (...a: unknown[]) => readDraft(...a),
+    save: (...a: unknown[]) => saveDraft(...a),
+    publish: (...a: unknown[]) => publishDraft(...a),
   },
 }))
 
@@ -74,7 +112,7 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
     default: defineComponent({
       name: 'TipTapEditorStub',
       setup(_, { expose }) {
-        expose({ editor: { getText: () => '正文（测试）。' } })
+        expose({ editor: { getText: () => '正文（测试）。', getMarkdown: () => '正文（测试）。' } })
         return () => h('div', { class: 'tiptap-editor' })
       },
     }),
@@ -138,13 +176,15 @@ beforeAll(() => {
 
 afterAll(() => vi.unstubAllGlobals())
 
-async function mount() {
+async function mount(query = '') {
   const router = makeRouter()
-  await router.push(`/spaces/${SPACE_ID}/tasks/publish`)
+  await router.push(`/spaces/${SPACE_ID}/tasks/publish${query}`)
   await router.isReady()
   const pinia = createPinia()
   setActivePinia(pinia)
-  const view = render(TaskPublish as Component, {
+  // 芝士的面板停在页面外框的右边（导航抽屉），外框要有。
+  const Page = defineComponent({ render: () => h(VApp, () => h(TaskPublish as Component)) })
+  const view = render(Page, {
     global: { plugins: [createVuetify({ components, directives }), router, pinia, i18n] },
   })
   // 表单是异步组件、空间也要先装 —— 等到它真画出来为止。第一条用例要冷加载
@@ -153,6 +193,11 @@ async function mount() {
     timeout: 20_000,
   })
   return { ...view, router }
+}
+
+/** 名称那一格（芝士标在它旁边的「撤销名称」也带着「名称」两个字）。 */
+function nameInput(view: ReturnType<typeof render>): HTMLInputElement {
+  return view.getAllByLabelText('名称', { exact: false }).find((el) => el.tagName === 'INPUT') as HTMLInputElement
 }
 
 /** 页头那颗发布。 */
@@ -178,7 +223,7 @@ async function fillSettings(view: ReturnType<typeof render>) {
 
 /** 必填都填上（名称加上共用的那几项）。 */
 async function fillRequired(view: ReturnType<typeof render>, name = '用 gdb 定位一次段错误') {
-  await fireEvent.update(view.getByLabelText('名称', { exact: false }), name)
+  await fireEvent.update(nameInput(view), name)
   await fillSettings(view)
 }
 
@@ -221,69 +266,47 @@ async function boardAs(user: { id: number; username: string; nickname: string })
   AccountService.user = user as never
 }
 
-/** 从文件导入：选中就读。 */
-async function importFile(view: ReturnType<typeof render>, file: File) {
-  const input = view.getByTestId('publish-import-input') as HTMLInputElement
-  Object.defineProperty(input, 'files', { value: [file], configurable: true })
-  await fireEvent.change(input)
-}
-
-function pdfFile(name = '计算机系统基础-第五次作业.pdf', bytes = 1024): File {
+function pdfFile(name = '讲义.pdf', bytes = 1024): File {
   return new File([new Uint8Array(bytes)], name, { type: 'application/pdf' })
 }
 
-/** 真接口那一版返回：三样东西 + 每条草稿那几项（`PdfTaskDraftData`）。
- *  每次现造一份，免得用例之间互相改到同一份对象。 */
-function previewBody() {
+/** 草稿那一份：`fields` 是存下的表单。 */
+function draftBody(fields: Record<string, unknown> = {}, id = 61) {
   return {
-    drafts: [
-      {
-        name: '用 gdb 定位一次段错误',
-        intro: '用 gdb 找出崩在哪一行。',
-        description: '给定一段会崩的程序。\n\n![第 2 页-图 1](https://storage.test/task-images/a.png)',
-        space: SPACE_ID,
-        categoryId: 3,
-      },
-      {
-        name: '手写一个最简内存分配器',
-        intro: '实现 malloc / free 的最简版本。',
-        description: '实现 malloc / free 的最简版本，说明碎片是怎么来的。',
-        space: SPACE_ID,
-        categoryId: 3,
-      },
-    ],
-    templateUsed: { title: '计算机系统基础 · 标准题模板' },
-    tokenUsed: 18742,
-    // 预览这一步服务端顺带落好的附件行：原 PDF 一份、抽出的插图一张。id 是后端
-    // 数据库里的号，前端只负责在勾中的时候原样报回去。
-    attachments: {
-      pdf: {
-        id: 911,
-        name: '计算机系统基础-第五次作业.pdf',
-        size: 1024,
-        contentType: 'application/pdf',
-      },
-      images: [
-        {
-          id: 912,
-          name: 'input.pdf-0001-01.png',
-          size: 2048,
-          contentType: 'image/png',
-        },
-      ],
-    },
+    id,
+    spaceId: SPACE_ID,
+    taskId: null,
+    taskName: null,
+    name: (fields.name as string) ?? '',
+    source: '',
+    conversationId: null,
+    version: 1,
+    updatedAt: '2026-10-20T08:00:00Z',
+    fields,
   }
 }
 
+/** 发布前存进草稿的那份表单：最后一次存。 */
+function sent(): Record<string, unknown> {
+  const calls = saveDraft.mock.calls
+  return calls[calls.length - 1][1] as Record<string, unknown>
+}
+
 beforeEach(() => {
+  apiRequest.mockImplementation(async (path: string) =>
+    path.endsWith('/conversations') ? { id: 'c1', title: '', lastActiveAt: '2026-10-20T08:00:00Z' } : {}
+  )
+  script = []
   spaceDetail.mockImplementation(async () => spaceBody())
   listCategories.mockImplementation(async () => categoriesBody())
   listDomainGroups.mockImplementation(async () => ({ groups: [] }))
   listMaterials.mockImplementation(async () => ({ materials: [], canManage: false }))
   listTasks.mockImplementation(async () => ({ tasks: [], distinctParticipants: 0 }))
-  previewFromPdf.mockImplementation(async () => previewBody())
-  confirmFromPdf.mockImplementation(async () => ({ tasks: [{ id: 101, name: '用 gdb 定位一次段错误' }], count: 1 }))
-  createTask.mockImplementation(async () => ({ task: { id: 501, approved: false } }))
+  listDrafts.mockImplementation(async () => [])
+  startDraft.mockImplementation(async (_space: number, fields: Record<string, unknown>) => draftBody(fields))
+  readDraft.mockImplementation(async (id: number) => draftBody({ name: '存着的那道题' }, id))
+  saveDraft.mockImplementation(async () => ({ version: 2, updatedAt: '2026-10-20T08:01:00Z' }))
+  publishDraft.mockImplementation(async () => ({ task: { id: 501, approved: false }, draftId: 61 }))
   uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ id: 41, file }))
   // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
   attachmentLimits.mockImplementation(async () => ({ maxFileBytes: LIMIT_BYTES }))
@@ -304,7 +327,7 @@ describe('发题页：发一道', () => {
     await publish(view)
 
     await waitFor(() => expect(view.getByTestId('publish-blocking').textContent).toMatch(/\d+ 项未填写或填写有误/))
-    expect(createTask).not.toHaveBeenCalled()
+    expect(publishDraft).not.toHaveBeenCalled()
     expect(view.router.currentRoute.value.name).toBe('SpacesDetailPublishTask')
   })
 
@@ -326,15 +349,14 @@ describe('发题页：发一道', () => {
     await check(view.getByTestId('task-form-rubric-public').querySelector('input')!)
 
     await publish(view)
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
-    const sent = createTask.mock.calls[0][0] as Record<string, unknown>
-    expect(sent.submissionSchema).toEqual([
+    expect(sent().submissionSchema).toEqual([
       { prompt: 'csim.c 源文件', type: 'FILE' },
       { prompt: '合作与参考说明', type: 'TEXT' },
     ])
-    expect(sent.rubric).toEqual([{ item: '正确性', points: 60, criteria: '8 组记录全对' }])
-    expect(sent.rubricPublic).toBe(false)
+    expect(sent().rubric).toEqual([{ item: '正确性', points: 60, criteria: '8 组记录全对' }])
+    expect(sent().rubricPublic).toBe(false)
   })
 
   it('评分行写了标准没写名称：不发，那一节说为什么', async () => {
@@ -347,7 +369,7 @@ describe('发题页：发一道', () => {
     await publish(view)
 
     expect(await view.findByText('写了评分标准的项需要填写项目名称')).toBeTruthy()
-    expect(createTask).not.toHaveBeenCalled()
+    expect(publishDraft).not.toHaveBeenCalled()
   })
 
   it('填好点发布：POST /tasks 带着空间、提交表和附件，发完落到「我发布的」', async () => {
@@ -355,23 +377,22 @@ describe('发题页：发一道', () => {
     const view = await mount()
     await fillRequired(view, '用 gdb 定位一次段错误（E2E 发的）')
     const input = view.getByTestId('attachment-input') as HTMLInputElement
-    Object.defineProperty(input, 'files', { value: [pdfFile('讲义.pdf')], configurable: true })
+    Object.defineProperty(input, 'files', { value: [pdfFile()], configurable: true })
     await fireEvent.change(input)
     await waitFor(() => expect(view.getAllByTestId('attached-file')).toHaveLength(1))
 
     await publish(view)
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
-    const sent = createTask.mock.calls[0][0] as Record<string, unknown>
-    expect(sent.space).toBe(SPACE_ID)
-    expect(sent.name).toBe('用 gdb 定位一次段错误（E2E 发的）')
-    expect(sent.submitterType).toBe('USER')
-    expect(sent.rank).toBe(1)
-    expect(sent.categoryId).toBe(3)
-    expect(sent.submissionSchema).toEqual([{ prompt: '提交文件', type: 'FILE' }])
-    expect(sent.attachmentIds).toEqual([41])
-    // 沿用空间的默认指导：不带这一项，让空间那一层生效。
-    expect(sent.teaching).toBeUndefined()
+    expect(publishDraft).toHaveBeenCalledWith(61)
+    expect(sent().name).toBe('用 gdb 定位一次段错误（E2E 发的）')
+    expect(sent().submitterType).toBe('USER')
+    expect(sent().rank).toBe(1)
+    expect(sent().categoryId).toBe(3)
+    expect(sent().submissionSchema).toEqual([{ prompt: '提交文件', type: 'FILE' }])
+    expect(sent().attachmentIds).toEqual([41])
+    // 沿用空间的默认指导：不单独设置，让空间那一层生效。
+    expect(sent().teachingOwn).toBe(false)
 
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('SpacesDetailTasksList'))
     expect(view.router.currentRoute.value.query.filter).toBe('publishing')
@@ -385,11 +406,10 @@ describe('发题页：发一道', () => {
     await fireEvent.update(view.getByLabelText('对 AI 的要求'), '不要直接给出答案。')
 
     await publish(view)
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
-    expect((createTask.mock.calls[0][0] as { teaching?: { systemPrompt?: string } }).teaching?.systemPrompt).toBe(
-      '不要直接给出答案。'
-    )
+    expect((sent() as { teaching?: { systemPrompt?: string } }).teaching?.systemPrompt).toBe('不要直接给出答案。')
+    expect(sent().teachingOwn).toBe(true)
   })
 
   it('选了「为本题单独设置」却一格没填：当作沿用默认，不带这一项', async () => {
@@ -399,9 +419,9 @@ describe('发题页：发一道', () => {
     await ownTeaching(view)
 
     await publish(view)
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
-    expect((createTask.mock.calls[0][0] as { teaching?: unknown }).teaching).toBeUndefined()
+    expect(sent().teaching).toEqual({})
   })
 
   it('选一份模板：表单按它填好', async () => {
@@ -419,111 +439,79 @@ describe('发题页：发一道', () => {
     await fireEvent.click(await view.findByText('实验题'))
     await pickCategory(view)
     await publish(view)
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
-    const sent = createTask.mock.calls[0][0] as Record<string, unknown>
-    expect(sent.name).toBe('实验 N：')
-    expect(sent.rank).toBe(2)
+    expect(sent().name).toBe('实验 N：')
+    expect(sent().rank).toBe(2)
   })
 })
 
-describe('发题页：从文件导入', () => {
-  it('读出一道：就是这一道题的内容，接着在同一张表上发', async () => {
+describe('发题页：边写边存', () => {
+  it('停手后建一份草稿，地址栏记下它；之后只存改了的那几格', async () => {
     await boardAs(MEMBER)
-    previewFromPdf.mockImplementation(async () => {
-      const body = previewBody()
-      body.drafts = body.drafts.slice(0, 1)
-      return body
-    })
     const view = await mount()
+    expect(startDraft).not.toHaveBeenCalled()
 
-    await importFile(view, pdfFile())
-    await waitFor(() => expect(previewFromPdf).toHaveBeenCalledTimes(1))
-    expect((previewFromPdf.mock.calls[0][0] as { file: File }).file.name).toBe('计算机系统基础-第五次作业.pdf')
-    await waitFor(() =>
-      expect((view.getByLabelText('名称', { exact: false }) as HTMLInputElement).value).toBe('用 gdb 定位一次段错误')
-    )
-    expect(view.queryByTestId('publish-drafts')).toBeNull()
+    await fireEvent.update(nameInput(view), '缓存模拟器')
+    await waitFor(() => expect(startDraft).toHaveBeenCalledTimes(1), { timeout: 3000 })
+    expect((startDraft.mock.calls[0][1] as { name?: string }).name).toBe('缓存模拟器')
+    await waitFor(() => expect(view.router.currentRoute.value.query.draft).toBe('61'))
 
-    await fillSettings(view)
-    await publish(view)
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
-    const sent = createTask.mock.calls[0][0] as Record<string, unknown>
-    expect(sent.name).toBe('用 gdb 定位一次段错误')
-    // 描述带着从 PDF 里抽出的那张插图。
-    const description = JSON.parse(sent.description as string)
-    expect(JSON.stringify(description)).toContain('"type":"image"')
-    expect(JSON.stringify(description)).toContain('https://storage.test/task-images/a.png')
-    // 原 PDF 与插图放进了附件。
-    expect(sent.attachmentIds).toEqual([911, 912])
+    await fireEvent.update(nameInput(view), 'Lab 3 缓存模拟器')
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled(), { timeout: 3000 })
+    expect(saveDraft.mock.calls[0]).toEqual([61, { name: 'Lab 3 缓存模拟器' }])
+    expect(await view.findByText('草稿已保存')).toBeTruthy()
   })
 
-  it('读出几道：勾掉的不发，改过的按改过的发，共用设置和原文件一起带上', async () => {
+  it('打开地址栏里的草稿：表单就是它存的样子', async () => {
     await boardAs(MEMBER)
-    previewFromPdf.mockImplementation(async () => {
-      const body = previewBody()
-      body.drafts.push({ ...body.drafts[1], name: '附录：评分细则', intro: '评分细则。' })
-      return body
-    })
-    const view = await mount()
+    const view = await mount('?draft=73')
 
-    await importFile(view, pdfFile())
-    await waitFor(() => expect(view.getByTestId('publish-drafts')).toBeTruthy())
-    expect(view.getByTestId('publish-drafts').textContent).toContain('识别出 3 道题，已选 3 道')
-
-    // 第三道不要。
-    await check(view.getByRole('checkbox', { name: '选中 附录：评分细则' }))
-    // 改第二道的名称。
-    await fireEvent.click(view.getByText('手写一个最简内存分配器'))
-    await fireEvent.update(view.getByLabelText('名称', { exact: false }), '手写一个内存分配器')
-
-    await fillSettings(view)
-    expect(view.getByTestId('publish-submit').textContent).toContain('发布 2 道题')
-    await publish(view)
-    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
-
-    const sent = confirmFromPdf.mock.calls[0][0] as {
-      drafts: { name: string; intro: string }[]
-      taskOptions: Record<string, unknown>
-    }
-    expect(sent.drafts.map((draft) => draft.name)).toEqual(['用 gdb 定位一次段错误', '手写一个内存分配器'])
-    // 出处还写在简介里（审核队列与题目页认它）。
-    expect(sent.drafts[0].intro.startsWith('【PDF · 第 1 页】')).toBe(true)
-    expect(sent.taskOptions.space).toBe(SPACE_ID)
-    expect(sent.taskOptions.rank).toBe(1)
-    expect(sent.taskOptions.categoryId).toBe(3)
-    expect(sent.taskOptions.attachmentIds).toEqual([911, 912])
-    expect(createTask).not.toHaveBeenCalled()
-    await waitFor(() => expect(view.router.currentRoute.value.query.filter).toBe('publishing'))
+    await waitFor(() => expect(readDraft).toHaveBeenCalledWith(73))
+    await waitFor(() => expect(nameInput(view).value).toBe('存着的那道题'))
   })
+})
 
-  it('勾上的那几道里有一道没有名称：一个请求都不发，那一道标出来', async () => {
+describe('发题页：和芝士一起写', () => {
+  it('芝士写的几格填进表单，改动卡上能撤销；撤销的那一格当作人改的存下', async () => {
     await boardAs(MEMBER)
-    previewFromPdf.mockImplementation(async () => {
-      const body = previewBody()
-      body.drafts[1].name = ''
-      return body
-    })
+    script = [
+      ['tool', { name: 'cheese_task_write', call: 'c1' }],
+      ['tool_args', { call: 'c1', text: '{"draft":61,"name":"Lab 3 缓', at: 0 }],
+      ['tool_args', { call: 'c1', text: '存模拟器","difficulty":"中级"}', at: 26 }],
+      [
+        'edit',
+        {
+          draft: 61,
+          taskId: null,
+          created: false,
+          version: 2,
+          name: 'Lab 3 缓存模拟器',
+          changed: { name: { before: '', after: 'Lab 3 缓存模拟器' }, rank: { before: null, after: 2 } },
+          kept: [],
+          notes: [{ field: 'deadline', text: '附件没写截止时间，需要你定' }],
+        },
+      ],
+      ['delta', { text: '已填写名称和难度。', at: 0 }],
+      ['done', { stopped: false }],
+    ]
     const view = await mount()
-    await importFile(view, pdfFile())
-    await waitFor(() => expect(view.getByTestId('publish-drafts')).toBeTruthy())
-    await fillSettings(view)
 
-    await publish(view)
+    await fireEvent.update(view.getByPlaceholderText('描述题目或输入修改要求'), '出一道缓存实验题')
+    await fireEvent.click(view.getByRole('button', { name: '发送' }))
 
-    await waitFor(() => expect(view.getByTestId('publish-blocking')).toBeTruthy())
-    expect(view.getByTestId('publish-drafts').textContent).toContain('缺少名称')
-    expect(confirmFromPdf).not.toHaveBeenCalled()
-  })
+    // 问之前先有草稿：芝士写的就是它。
+    await waitFor(() => expect(startDraft).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(nameInput(view).value).toBe('Lab 3 缓存模拟器'))
+    expect(await view.findByText('已填写名称和难度。')).toBeTruthy()
+    expect(view.getByText('表单改动')).toBeTruthy()
+    expect(view.getByText('待你确认')).toBeTruthy()
+    // 芝士写进去的不是人改的：不为它再存一遍。
+    expect(saveDraft).not.toHaveBeenCalled()
 
-  it('不是 PDF、或者太大：一个请求都不发，说清为什么', async () => {
-    await boardAs(MEMBER)
-    const view = await mount()
-
-    await importFile(view, new File(['x'], '作业.docx', { type: 'application/msword' }))
-    await importFile(view, pdfFile('太大.pdf', 16 * 1024 * 1024))
-
-    expect(previewFromPdf).not.toHaveBeenCalled()
-    expect(toastError.mock.calls.map(([message]) => message)).toEqual(['只能导入 PDF 文件', '文件超过 15 MB'])
+    await fireEvent.click(view.getAllByRole('button', { name: '撤销名称' })[0])
+    await waitFor(() => expect(nameInput(view).value).toBe(''))
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled(), { timeout: 3000 })
+    expect(saveDraft.mock.calls[0]).toEqual([61, { name: '' }])
   })
 })

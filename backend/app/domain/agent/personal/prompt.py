@@ -55,9 +55,12 @@ def task_brief(
     *,
     claim: TaskMembership | None = None,
     timezone: str | None = None,
+    materials: list[tuple[int, str]] | None = None,
+    materials_readable: bool = False,
 ) -> str:
     """The task as 芝士 is shown it: what anyone who can open the task page
-    reads there, and nothing from its attachments — plus the asker's own claim
+    reads there, and its materials by name (``materials``: what
+    ``cheese_file_read`` reads, when the asker may) — plus the asker's own claim
     (``app.domain.task.claims.own_claim``) when they have one. Times are on the
     asker's clock (``timezone``, the one their browser reported). Wrapped so
     the rules can call it material rather than instructions."""
@@ -81,6 +84,13 @@ def task_brief(
         "说明：",
         task.description,
     ]
+    if materials:
+        lines.append(
+            "材料（用 cheese_file_read 读取）："
+            if materials_readable
+            else "材料（领取获批后才能读取，现在读不到）："
+        )
+        lines += [f"- {name}（文件 id {file_id}）" for file_id, name in materials]
     return f"<题目 id={task.id}>\n" + "\n".join(lines) + "\n</题目>"
 
 

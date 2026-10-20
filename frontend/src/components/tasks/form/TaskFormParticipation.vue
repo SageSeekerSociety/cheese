@@ -91,6 +91,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
   <TaskFormSection :title="t('tasks.form.participation')">
     <div class="tf-grid">
       <BaseField
+        data-agent-field="form"
         :label="t('tasks.form.submitterType')"
         required
         :hint="t('tasks.form.submitterTypeFixed')"
@@ -109,7 +110,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
         }}</span>
       </BaseField>
 
-      <BaseField :label="t('tasks.form.rank')" required :error="errorOf(rankControl)">
+      <BaseField data-agent-field="difficulty" :label="t('tasks.form.rank')" required :error="errorOf(rankControl)">
         <SegmentedControl
           v-model="rankValue"
           :options="rankOptions"
@@ -122,6 +123,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
 
     <div class="tf-grid">
       <BaseField
+        data-agent-field="team_min"
         v-if="isTeam"
         :label="t('tasks.form.teamSize')"
         required
@@ -157,7 +159,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
         </div>
       </BaseField>
 
-      <BaseField :label="limitLabel" :error="errorOf(participantLimitControl)">
+      <BaseField data-agent-field="participant_limit" :label="limitLabel" :error="errorOf(participantLimitControl)">
         <template #default="{ id, describedby, invalid }">
           <div class="tf-inline">
             <v-text-field

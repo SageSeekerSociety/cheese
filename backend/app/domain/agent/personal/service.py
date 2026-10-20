@@ -373,6 +373,7 @@ async def ask(
     slot: Slot,
     context: str = "",
     kind: str = billing.ASKING,
+    files: list[tuple[int, str]] | None = None,
 ) -> Consumption:
     """Ask ``question`` in the conversation; the answer is read to its end in
     the background (``Answers``), and what its readers see of it is the
@@ -385,7 +386,8 @@ async def ask(
     conversation's hold at ``held_at`` (``take_conversation``). The session is
     ``started`` (`personal.session`). ``context`` is the page the person has
     open, when the conversation has not been told it yet (``page_to_say``);
-    ``kind`` the line its spend is charged under (``billing``)."""
+    ``kind`` the line its spend is charged under (``billing``); ``files`` the
+    ones handed over with it, as (id, name)."""
     work = uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
@@ -409,6 +411,10 @@ async def ask(
         # The page goes with the question itself: a preface is said only to a
         # session that has not been spoken to yet.
         said = f"{page(context)}\n\n{question}" if context else question
+        if files:
+            said += "\n\n附上的文件（用 cheese_file_read 读取）：\n" + "\n".join(
+                f"- {name}（文件 id {file_id}）" for file_id, name in files
+            )
         return Prompt(work, said, acting=acting, preface=earlier(before))
 
     return await consumptions.begin(

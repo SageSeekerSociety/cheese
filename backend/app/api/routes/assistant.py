@@ -28,6 +28,7 @@ from app.api.refusal import refuse
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
 from app.api.space_deps import get_space_service
+from app.api.task_deps import _task_attachment_service
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
@@ -217,10 +218,15 @@ async def _page(db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo) -> s
         return await drafts.context(db, spaces, row, zones.get(auth.user_id))
     task = await _readable_task(db, page.id, auth)
     zones = await timezones_by_ids(db, [auth.user_id])
+    files, _, readable = await _task_attachment_service(db).list_for_task(
+        task=task, user_id=auth.user_id
+    )
     return task_brief(
         task,
         claim=await claim_of(db, task=task, user_id=auth.user_id),
         timezone=zones.get(auth.user_id),
+        materials=[(f.id, (f.meta or {}).get("filename") or str(f.id)) for f in files],
+        materials_readable=readable,
     )
 
 
@@ -231,10 +237,18 @@ def _page_of(row) -> PageIn | None:
     return None
 
 
+class FileIn(BaseModel):
+    id: int = Field(ge=1)
+    name: str = Field(min_length=1, max_length=255)
+
+
 class AskIn(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     #: The page it is asked from; the conversation's own place when left out.
     page: PageIn | None = None
+    #: Files handed over with it (uploaded with ``POST /attachments``); 芝士
+    #: reads them with ``cheese_file_read``, as the asker may.
+    files: list[FileIn] = Field(default_factory=list, max_length=10)
 
     @field_validator("question")
     @classmethod
@@ -295,6 +309,7 @@ async def ask(
             held_at=held_at,
             slot=slot,
             context=said,
+            files=[(f.id, f.name) for f in body.files],
             kind=(
                 billing.WRITING
                 if shown is not None and shown.kind == "draft"

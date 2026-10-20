@@ -1,39 +1,42 @@
 <script setup lang="ts">
-// 发题页的容器：装空间、读文件、传附件、发布。画面在 `PublishTaskView.vue`。
+// 发题页的容器：装空间、开草稿、边写边存、和芝士一起写、发布。画面在 `PublishTaskView.vue`。
 //
-// 发一道走 `POST /tasks`；从文件里读出好几道时走 `POST /tasks/publish/from-pdf/confirm`，
-// 逐道的名称、描述、简介由草稿给，其余设置这一批共用。
+// 题目写成草稿存在服务端（`useTaskDraft`）：地址栏 `?draft=` 记着眼前这份，刷新、换设备
+// 都能接着写。刚打开、还没写一个字时不建草稿；第一次改动或第一次问芝士才建。芝士在右边，
+// 它写这份草稿时表单跟着动（`useDraftAgent`）。发布就是把草稿发出去：先把表单校验过的
+// 样子存进草稿，再由服务端照草稿发布，和人点「发布」、芝士调发布工具走的是同一条路。
 //
-// 表单要的分类、话题、域名组、模板都从 pinia 的 `space` store 来，这一页自己装，
-// **装完才挂表单**：`fetchCategories()` 在 `currentSpaceId` 为空时直接返回，装晚了
-// 分类下拉是空的。`?categoryId=`（从某个分类的列表过来）在这里读。
-import type { PickedAttachment } from '@/composables/useAttachmentUploads'
-import type { SpaceTeaching, TaskFormSubmitData } from '@/types'
-import type { PublishDraft } from './publishDrafts'
+// 表单要的分类、话题、域名组、模板都从 pinia 的 `space` store 来，这一页自己装，**装完才
+// 挂表单**：`fetchCategories()` 在 `currentSpaceId` 为空时直接返回，装晚了分类下拉是空的。
+// `?categoryId=`（从某个分类的列表过来）在这里读。
+import type { AgentBox, AgentMark, AgentPointer } from '@/components/tasks/AgentLayer.vue'
+import type { SpaceTeaching, TaskDraft, TaskDraftFields, TaskDraftSummary, TaskFormSubmitData } from '@/types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
+import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
-import { descriptionDoc } from '@/composables/useTaskForm'
+import { useTaskDraft } from '@/composables/useTaskDraft'
 
-import { toDraftPayload, toDrafts } from './publishDrafts'
-import { MAX_DRAFTS, MAX_PDF_BYTES } from './publishLimits'
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
-import { TaskBoardApi } from '@/api/taskBoard'
+import { TaskDraftsApi } from '@/api/taskDrafts'
+import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { mentorOptions } from '@/lib/taskMentors'
 import { isTeachingBlank } from '@/lib/teaching'
 import { myAccount, myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
+import { draftFieldsOf } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,29 +48,31 @@ const { currentSpaceId, templates, classificationTopics, categories, domainGroup
 
 const spaceId = computed(() => Number(route.params.spaceId))
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
+const draftParam = computed(() => {
+  const id = Number(route.query.draft)
+  return Number.isFinite(id) && id > 0 ? id : null
+})
 
 // --- 装这块板 ------------------------------------------------------------------
 
-/** 装好之前不挂表单。 */
-const ready = ref(false)
+/** 空间装好之前不挂表单。 */
+const spaceReady = ref(false)
 
 /** 顺序有意义（见文件头）：分类与域名组都挂在 `currentSpaceId` 上，空间没装好它们就是空操作。 */
 async function loadSpace(id: number) {
   if (!Number.isFinite(id) || id <= 0) return
-  ready.value = false
+  spaceReady.value = false
   await spaceData.fetchSpace(id)
   if (currentSpaceId.value !== id) return
   const ok = await errorHandler.withErrorHandling(
     async () => {
       await spaceData.fetchCategories()
       await spaceData.fetchDomainGroups()
-      // 回调的返回值就是「装完没有」：栽了给的是 `undefined`。
       return true
     },
     { defaultMessage: t('spaces.detail.publishTask.initializationFailed') }
   )
-  // 装配期间空间被换掉/页面被切走时不要再放行 —— 放行了表单拿到的就是别人的分类。
-  if (ok === true && currentSpaceId.value === id) ready.value = true
+  if (ok === true && currentSpaceId.value === id) spaceReady.value = true
 }
 
 watch(spaceId, (id) => void loadSpace(id), { immediate: true })
@@ -86,23 +91,88 @@ const preselectedCategoryId = computed(() => {
   return activeCategories.value.some((category) => category.id === id) ? id : undefined
 })
 
-// --- 表单初值：空白、模板、或者从文件里读出的那一道 --------------------------------
+/** 芝士换算分类、标签名字用的。 */
+const terms = () => ({
+  categories: activeCategories.value.map((c) => ({ id: c.id, name: c.name })),
+  topics: classificationTopics.value.map((topic) => ({ id: topic.id, name: topic.name })),
+})
 
+// --- 草稿 ------------------------------------------------------------------------
+
+const draft = useTaskDraft({
+  spaceId: () => currentSpaceId.value ?? spaceId.value,
+  started: (row) => {
+    void router.replace({ query: { ...route.query, draft: String(row.id) } })
+    void refreshDrafts()
+  },
+})
+
+const drafts = ref<TaskDraftSummary[]>([])
+async function refreshDrafts() {
+  try {
+    drafts.value = await TaskDraftsApi.list(spaceId.value)
+  } catch {
+    // 列表读不出来不挡着写题：顶栏的「草稿」暂时是空的。
+  }
+}
+
+const draftReady = ref(false)
 const initialData = ref<Partial<TaskFormSubmitData>>({})
 /** 换一份初值就重挂表单。 */
 const formKey = ref(0)
-/** 读文件时用哪份模板；没用模板就是空白（`-1`）。 */
-const templateIndex = ref(-1)
+const publishedHere = ref(false)
 
-const templateOptions = computed(() =>
-  templates.value.map((template, index) => ({ index, name: template.name, description: template.description }))
-)
+/** 不在表单里、但也存进草稿的几样：附件、AI 指导。 */
+const teaching = ref<SpaceTeaching>({})
+const teachingOwn = ref(false)
+const uploads = useAttachmentUploads({
+  upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).id,
+})
+
+function fill(fields: TaskDraftFields) {
+  initialData.value = fields as Partial<TaskFormSubmitData>
+  teaching.value = { ...(fields.teaching ?? {}) }
+  teachingOwn.value = !!fields.teachingOwn
+  const files = fields.attachmentFiles ?? []
+  uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
+  // 这些是装进来的起点，不是人改的。
+  draft.baseline({
+    teaching: teaching.value,
+    teachingOwn: teachingOwn.value,
+    attachmentIds: files.map((f) => f.id),
+    attachmentFiles: files,
+  })
+  formKey.value++
+}
+
+/** 打开地址栏里的那份草稿；没有就是一份还没存的空白草稿。 */
+async function openDraft(id: number | null) {
+  draftReady.value = false
+  publishedHere.value = false
+  await draft.flush()
+  let row: TaskDraft | null = null
+  if (id !== null) {
+    try {
+      row = await TaskDraftsApi.read(id)
+    } catch (error) {
+      void errorHandler.handle(error as Error, { defaultMessage: t('spaces.detail.publishTask.draftLoadFailed') })
+    }
+  }
+  // 改已发布题目的草稿在改题页上写。
+  if (row?.taskId) {
+    await router.replace({ name: 'TasksEdit', params: { spaceId: spaceId.value, taskId: row.taskId } })
+    return
+  }
+  draft.open(row)
+  fill(row?.fields ?? {})
+  draftReady.value = true
+  await agent.assistant.reload()
+}
 
 function useTemplate(index: number) {
   const template = templates.value[index]
   if (!template) return
-  templateIndex.value = index
-  initialData.value = {
+  const fields = {
     name: template.title,
     description: template.content,
     submitterType: template.submitterType ?? undefined,
@@ -112,88 +182,51 @@ function useTemplate(index: number) {
     defaultDeadline: template.defaultDeadline ?? undefined,
     requireRealName: template.requireRealName ?? undefined,
   }
-  formKey.value++
+  // 模板没写的几格保持原样。
+  const given = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined))
+  void view.value?.form.apply(given as TaskDraftFields)
 }
 
-// --- 从文件导入 ------------------------------------------------------------------
+watch([teaching, teachingOwn], () => draft.changed({ teaching: teaching.value, teachingOwn: teachingOwn.value }), {
+  deep: true,
+})
+watch(
+  () => uploads.files.value,
+  (files) =>
+    draft.changed({
+      attachmentIds: files.map((f) => f.id),
+      attachmentFiles: files.map(({ id, name, size }) => ({ id, name, size })),
+    }),
+  { deep: true }
+)
 
-const importing = ref(false)
-const importedFile = ref<string | null>(null)
-const drafts = ref<PublishDraft[]>([])
+// --- 芝士 --------------------------------------------------------------------------
 
-async function importFile(file: File) {
-  const id = currentSpaceId.value
-  if (!id) return
-  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-    toast.error(t('spaces.detail.publishTask.importErrors.notPdf'))
-    return
-  }
-  if (file.size > MAX_PDF_BYTES) {
-    toast.error(t('spaces.detail.publishTask.importErrors.tooLarge'))
-    return
-  }
+const view = ref<InstanceType<typeof PublishTaskView> | null>(null)
+watch(view, (v) => draft.bind(v ? v.form : null))
 
-  importing.value = true
-  try {
-    const data = await TaskBoardApi.previewFromPdf({
-      spaceId: id,
-      file,
-      categoryId: preselectedCategoryId.value,
-      templateIndex: templateIndex.value,
-      maxTasks: MAX_DRAFTS,
-    })
-    if (!data.drafts?.length) {
-      toast.error(t('spaces.detail.publishTask.importErrors.noDrafts'))
-      return
-    }
+const agent = useDraftAgent({
+  draft,
+  terms,
+  home: () =>
+    draft.draft.value
+      ? { kind: 'draft', id: draft.draft.value.id, conversationId: draft.draft.value.conversationId }
+      : null,
+  draftsChanged: () => void refreshDrafts(),
+  publishedHere: () => (publishedHere.value = true),
+})
+const { assistant } = agent
 
-    // 服务端顺带落好的原 PDF 与插图，直接放进附件：不要的可以去掉。
-    const imported: PickedAttachment[] = [
-      ...(data.attachments?.pdf ? [data.attachments.pdf] : []),
-      ...(data.attachments?.images ?? []),
-    ].map(({ id: fileId, name, size }) => ({ id: fileId, name, size }))
-    const known = new Set(uploads.files.value.map((existing) => existing.id))
-    uploads.reset([...uploads.files.value, ...imported.filter((item) => !known.has(item.id))])
-
-    importedFile.value = file.name
-    const read = toDrafts(data.drafts, descriptionDoc)
-    if (read.length === 1) {
-      // 只有一道：就是这一道题的内容，接着在同一张表上改。
-      drafts.value = []
-      initialData.value = { ...initialData.value, name: read[0].name, description: JSON.stringify(read[0].description) }
-      formKey.value++
-    } else {
-      drafts.value = read
-    }
-  } catch (error) {
-    toast.error(
-      t('spaces.detail.publishTask.importErrors.failed', {
-        reason: error instanceof Error ? error.message : t('tasks.submit.unknownError'),
-      })
-    )
-  } finally {
-    importing.value = false
-  }
-}
-
-function discardImport() {
-  drafts.value = []
-  importedFile.value = null
-}
-
-// --- 附件与 AI 指导 --------------------------------------------------------------
-
-/** 发题时先传成游离的附件，建题那条请求带着它们的 id。 */
-const uploads = useAttachmentUploads({
-  upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).id,
+const host = computed(() => (view.value?.host as unknown as HTMLElement | null) ?? null)
+const layer = useAgentPointer({
+  host,
+  writing: draft.writing,
+  marks: draft.marks,
+  active: computed(() => assistant.busy.value),
+  descriptionEnd: () => view.value?.descriptionEnd() ?? null,
 })
 
-/** 这道题自己的「给 AI 队友的指导」覆盖（#944）。不单独写就沿用空间（或项目集）的默认。 */
-const teaching = ref<SpaceTeaching>({})
-const teachingOwn = ref(false)
-const teachingPayload = computed(() =>
-  teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : undefined
-)
+const agentOpen = ref(false)
 
 // --- 发布 --------------------------------------------------------------------------
 
@@ -207,56 +240,83 @@ const mentorChoices = computed(() => {
 })
 
 async function publish(form: TaskFormSubmitData) {
-  const id = currentSpaceId.value
-  if (!id || publishing.value) return
+  if (publishing.value) return
   // 材料还在上传就先别发：附件 id 是发题那条请求的一部分，这时发出去会静默少一份。
   if (uploads.uploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
-
-  const options = {
-    ...form,
-    submissionSchema: form.submissionSchema ?? [],
-    space: id,
-    attachmentIds: uploads.ids.value.length ? uploads.ids.value : undefined,
-    teaching: teachingPayload.value,
-  }
-
   publishing.value = true
   try {
-    const picked = drafts.value.filter((draft) => draft.picked)
-    if (picked.length > 1 || drafts.value.length > 1) {
-      const payloads = picked.map((draft) => toDraftPayload(draft, id))
-      const data = await TaskBoardApi.confirmFromPdf({
-        drafts: payloads,
-        taskOptions: { ...options, name: payloads[0].name, description: payloads[0].description },
+    await draft.flush()
+    const row = await draft.ensure()
+    // 表单校验过的样子就是要发的样子：先存进草稿，再照草稿发布。
+    await TaskDraftsApi.save(
+      row.id,
+      draftFieldsOf({
+        ...form,
+        descriptionMarkdown: view.value?.form.values().descriptionMarkdown,
+        teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
+        teachingOwn: teachingOwn.value,
+        attachmentIds: uploads.ids.value,
       })
-      toast.success(t('spaces.detail.publishTask.publishedMany', { n: data.count || data.tasks.length }))
-    } else {
-      const {
-        task: { approved },
-      } = await TaskBoardApi.create(options)
-      toast.success(
-        approved
-          ? t('spaces.detail.publishTask.createSuccess')
-          : t('spaces.detail.publishTask.createSuccessAndWaitingAudit')
-      )
-    }
-    await router.replace(publishDoneRoute(id))
+    )
+    const {
+      task: { approved },
+    } = await TaskDraftsApi.publish(row.id)
+    draft.gone()
+    toast.success(
+      approved
+        ? t('spaces.detail.publishTask.createSuccess')
+        : t('spaces.detail.publishTask.createSuccessAndWaitingAudit')
+    )
+    await router.replace(publishDoneRoute(spaceId.value))
   } catch (error) {
     void errorHandler.handle(error as Error, { defaultMessage: t('spaces.detail.publishTask.createFailed') })
   } finally {
     publishing.value = false
   }
 }
+
+function newDraft() {
+  void router.push({ query: { ...route.query, draft: undefined } }).then(() => openDraft(null))
+}
+
+function openOther(id: number) {
+  if (id !== draft.id.value) void router.push({ query: { ...route.query, draft: String(id) } })
+}
+
+function openTask(id: number) {
+  void router.push({ name: 'TasksDetail', params: { spaceId: spaceId.value, taskId: id } })
+}
+
+onBeforeUnmount(() => void draft.flush())
+
+watch(draftParam, (id) => {
+  if (id !== draft.id.value) void openDraft(id)
+})
+
+watch(
+  spaceId,
+  () => {
+    void refreshDrafts()
+    void openDraft(draftParam.value)
+  },
+  { immediate: true }
+)
+
+const pointer = computed<AgentPointer | null>(() => layer.pointer.value)
+const outline = computed<AgentBox | null>(() => layer.outline.value)
+const marks = computed<AgentMark[]>(() => layer.marks.value)
+const ready = computed(() => spaceReady.value && draftReady.value)
 </script>
 
 <template>
   <PublishTaskView
-    v-model:drafts="drafts"
+    ref="view"
     v-model:teaching="teaching"
     v-model:teaching-own="teachingOwn"
+    v-model:agent-open="agentOpen"
     :ready="ready"
     :list-to="listTo"
     :form-key="formKey"
@@ -265,9 +325,7 @@ async function publish(form: TaskFormSubmitData) {
     :categories="activeCategories"
     :selected-category-id="preselectedCategoryId"
     :domain-groups="domainGroups"
-    :templates="templateOptions"
-    :importing="importing"
-    :imported-file="importedFile"
+    :templates="templates.map((template, index) => ({ index, name: template.name, description: template.description }))"
     :attachments="uploads.files.value"
     :uploading="uploads.uploading.value"
     :max-file-bytes="uploads.maxFileBytes.value"
@@ -277,12 +335,66 @@ async function publish(form: TaskFormSubmitData) {
     :publishing="publishing"
     :mentor-options="mentorChoices"
     :default-mentor="myHandle() || undefined"
+    :drafts="drafts"
+    :current-draft-id="draft.id.value"
+    :save-state="draft.saveState.value"
+    :published-here="publishedHere"
+    :pointer="pointer"
+    :outline="outline"
+    :marks="marks"
+    :agent-name="t('work.agentAvatar.defaultName')"
     @cancel="router.push(listTo)"
     @use-template="useTemplate"
-    @import="importFile"
-    @discard-import="discardImport"
     @add-attachments="uploads.add"
     @remove-attachment="uploads.remove"
     @submit="publish"
-  />
+    @change="draft.changed"
+    @form-ready="draft.baseline"
+    @open-draft="openOther"
+    @new-draft="newDraft"
+    @undo="agent.undoMark"
+  >
+    <template #agent>
+      <AssistantPanel
+        :personal-team-handle="myHandle()"
+        :conversations="assistant.conversations.value"
+        :current-id="assistant.current.value"
+        :title="assistant.title.value"
+        :messages="agent.panel.value.messages"
+        :streaming="assistant.streaming.value"
+        :tool="assistant.tool.value"
+        :queued="assistant.queued.value"
+        :notice="assistant.notice.value"
+        :credit-refused="assistant.creditRefused.value"
+        :busy="assistant.busy.value"
+        :steps="agent.panel.value.steps"
+        :changes="agent.panel.value.changes"
+        :results="agent.panel.value.results"
+        :files="agent.panel.value.files"
+        context=""
+        :greeting="t('tasks.assistant.draft.greeting')"
+        :starters="[
+          t('tasks.assistant.draft.starters.rubric'),
+          t('tasks.assistant.draft.starters.harder'),
+          t('tasks.assistant.draft.starters.check'),
+        ]"
+        :placeholder="t('tasks.assistant.draft.placeholder')"
+        :hint="t('tasks.assistant.draft.hint')"
+        can-attach
+        :closable="agentOpen"
+        @send="agent.ask"
+        @stop="assistant.stop().catch(() => undefined)"
+        @new="assistant.startNew"
+        @select="assistant.select"
+        @close="agentOpen = false"
+        @undo="agent.undo"
+        @undo-all="agent.undoAll"
+        @jump="layer.jump"
+        @open-draft="openOther"
+        @open-task="openTask"
+        @attach="agent.attach"
+        @remove-file="agent.removeFile"
+      />
+    </template>
+  </PublishTaskView>
 </template>

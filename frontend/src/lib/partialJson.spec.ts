@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { partialStringField } from './partialJson'
+import { partialStringField, partialValue } from './partialJson'
 
 const content = (raw: string) => partialStringField(raw, 'content')
 
@@ -68,5 +68,31 @@ describe('partialStringField', () => {
     expect(content('{"content":42}')).toBeNull()
     expect(content('["content","x"]')).toBeNull()
     expect(content('not json')).toBeNull()
+  })
+})
+
+describe('partialValue', () => {
+  it('reads every complete value and the string being written', () => {
+    expect(partialValue('{"name":"Lab 3","description":"用 C 写')).toEqual({
+      name: 'Lab 3',
+      description: '用 C 写',
+    })
+    expect(partialValue('{"rubric":[{"item":"正确性","points":60},{"item":"报')).toEqual({
+      rubric: [{ item: '正确性', points: 60 }, { item: '报' }],
+    })
+  })
+
+  it('leaves out a key, a number or a literal that has not finished', () => {
+    expect(partialValue('{"name":"Lab 3","diffi')).toEqual({ name: 'Lab 3' })
+    expect(partialValue('{"name":"Lab 3","points":6')).toEqual({ name: 'Lab 3' })
+    expect(partialValue('{"name":"Lab 3","public":tr')).toEqual({ name: 'Lab 3' })
+    expect(partialValue('{"name":"Lab 3",')).toEqual({ name: 'Lab 3' })
+    expect(partialValue('{"tags":["实验","C')).toEqual({ tags: ['实验', 'C'] })
+  })
+
+  it('reads a finished value whole, and nothing from what is not JSON', () => {
+    expect(partialValue('{"a":[1,2],"b":{"c":null}}')).toEqual({ a: [1, 2], b: { c: null } })
+    expect(partialValue('')).toBeNull()
+    expect(partialValue('{"na')).toEqual({})
   })
 })

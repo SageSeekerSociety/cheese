@@ -1,7 +1,7 @@
 <template>
   <section class="ap" :aria-label="t('tasks.assistant.label')">
     <header class="ap__head">
-      <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" /></span>
+      <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" :state="busy ? 'think' : null" /></span>
       <v-menu location="bottom start" :disabled="busy">
         <template #activator="{ props: menu }">
           <button v-bind="menu" type="button" class="ap__title" :disabled="busy">
@@ -37,6 +37,7 @@
         @click="!busy && emit('new')"
       />
       <BaseButton
+        v-if="closable"
         icon="mdi-close"
         size="sm"
         :title="t('tasks.assistant.close')"
@@ -47,13 +48,13 @@
 
     <div ref="scroller" class="ap__chat">
       <template v-if="messages.length === 0 && streaming === null">
-        <p class="ap__ctx">{{ t('tasks.assistant.reads') }}</p>
+        <p v-if="context !== ''" class="ap__ctx">{{ context ?? t('tasks.assistant.reads') }}</p>
         <div class="ap__a">
           <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
-          <p class="ap__text">{{ t('tasks.assistant.greeting') }}</p>
+          <p class="ap__text">{{ greeting ?? t('tasks.assistant.greeting') }}</p>
         </div>
         <div class="ap__starters">
-          <button v-for="s in starters" :key="s" type="button" class="ap__starter" @click="emit('send', s)">
+          <button v-for="s in starterList" :key="s" type="button" class="ap__starter" @click="emit('send', s)">
             {{ s }}
           </button>
         </div>
@@ -61,14 +62,29 @@
 
       <template v-for="(m, i) in messages" :key="i">
         <p v-if="dayOf(i)" class="ap__day">{{ dayOf(i) }}</p>
-        <p v-if="m.role === 'user'" class="ap__q">{{ m.text }}</p>
+        <div v-if="m.role === 'user'" class="ap__q">
+          <p class="ap__q-t">{{ m.text }}</p>
+          <p v-for="name in m.files ?? []" :key="name" class="ap__q-file">
+            <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
+          </p>
+        </div>
         <div v-else class="ap__a">
           <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
-          <div class="ap__text">
+          <AssistantTurn
+            class="ap__text"
+            :steps="m.steps ?? []"
+            :changes="m.changes ?? []"
+            :results="m.results ?? []"
+            @undo="(id, key) => emit('undo', id, key)"
+            @undo-all="(id) => emit('undoAll', id)"
+            @jump="(key) => emit('jump', key)"
+            @open-draft="(id) => emit('openDraft', id)"
+            @open-task="(id) => emit('openTask', id)"
+          >
             <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
             <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
             <p v-if="m.stopped" class="ap__stopped">{{ t('tasks.assistant.stopped') }}</p>
-          </div>
+          </AssistantTurn>
         </div>
       </template>
 
@@ -76,11 +92,24 @@
         <span class="ap__avatar" aria-hidden="true"
           ><CheeseAvatar :size="26" :state="streaming ? null : 'think'"
         /></span>
-        <div class="ap__text">
-          <p v-if="!streaming" class="ap__looking">{{ queued ? t('tasks.assistant.queued') : toolLabel }}</p>
+        <AssistantTurn
+          class="ap__text"
+          live
+          :steps="steps"
+          :changes="changes"
+          :results="results"
+          @undo="(id, key) => emit('undo', id, key)"
+          @undo-all="(id) => emit('undoAll', id)"
+          @jump="(key) => emit('jump', key)"
+          @open-draft="(id) => emit('openDraft', id)"
+          @open-task="(id) => emit('openTask', id)"
+        >
+          <p v-if="!streaming && (queued || !steps.length)" class="ap__looking">
+            {{ queued ? t('tasks.assistant.queued') : toolLabel }}
+          </p>
           <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
-          <div v-else class="ap__md" v-html="render(streaming)" />
-        </div>
+          <div v-else-if="streaming" class="ap__md" v-html="render(streaming)" />
+        </AssistantTurn>
       </div>
 
       <p v-if="notice" class="ap__notice" role="status">
@@ -95,6 +124,22 @@
     </div>
 
     <footer class="ap__foot">
+      <ul v-if="files.length" class="ap__files">
+        <li v-for="(file, i) in files" :key="i" class="ap__file">
+          <v-icon size="14">mdi-paperclip</v-icon>
+          <span class="ap__file-n" data-user-content>{{ file.name }}</span>
+          <span v-if="file.uploading" class="ap__file-s">{{ t('tasks.assistant.files.uploading') }}</span>
+          <button
+            type="button"
+            class="ap__file-x"
+            :aria-label="t('tasks.assistant.files.remove', { name: file.name })"
+            :title="t('tasks.assistant.files.remove', { name: file.name })"
+            @click="emit('removeFile', i)"
+          >
+            <v-icon size="14">mdi-close</v-icon>
+          </button>
+        </li>
+      </ul>
       <div class="ap__box" :class="{ 'ap__box--ready': ready }">
         <textarea
           ref="input"
@@ -102,12 +147,32 @@
           class="ap__input"
           rows="2"
           autocomplete="off"
-          :placeholder="t('tasks.assistant.placeholder')"
-          :aria-label="t('tasks.assistant.placeholder')"
+          :placeholder="placeholder ?? t('tasks.assistant.placeholder')"
+          :aria-label="placeholder ?? t('tasks.assistant.placeholder')"
           @keydown="onKeydown"
           @input="grow"
         />
         <div class="ap__acts">
+          <template v-if="canAttach">
+            <input
+              ref="picker"
+              type="file"
+              multiple
+              class="ap__picker"
+              :aria-label="t('tasks.assistant.files.add')"
+              @change="onPick"
+            />
+            <BaseButton
+              icon="mdi-paperclip"
+              size="sm"
+              kind="ghost"
+              :disabled="busy"
+              :title="t('tasks.assistant.files.add')"
+              :aria-label="t('tasks.assistant.files.add')"
+              @click="picker?.click()"
+            />
+          </template>
+          <span class="ap__grow" />
           <BaseButton
             v-if="busy"
             class="ap__send"
@@ -130,17 +195,22 @@
           />
         </div>
       </div>
-      <p class="ap__hint">{{ t('tasks.assistant.hint') }}</p>
+      <p class="ap__hint">{{ hint ?? t('tasks.assistant.hint') }}</p>
     </footer>
   </section>
 </template>
 
 <script setup lang="ts">
-// 个人芝士在一个地方的面板（#2285）：这里的几段对话、当前这段的内容、输入框。
-// 只拿 props、只发事件：说话、换对话、开新对话都由外面那一层去做。
+// 个人芝士在一个地方的面板（#2285）：这里的几段对话、当前这段的内容、输入框。题目页、
+// 发布页、改题页用的都是它；芝士每一轮做的事（调的工具、写进草稿的改动、发布的结果）
+// 由 `AssistantTurn` 画。只拿 props、只发事件：说话、换对话、撤销、交文件都由外面那一层去做。
+import type { PanelChange, PanelResult, PanelStep } from '@/lib/assistantView'
+
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
+
+import AssistantTurn from './AssistantTurn.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
@@ -160,25 +230,68 @@ export interface PanelMessage {
   /** 回答被停下了，`text` 是停下时写出的部分。 */
   stopped?: boolean
   at: string
+  /** 随问题交给芝士的文件名。 */
+  files?: string[]
+  steps?: PanelStep[]
+  changes?: PanelChange[]
+  results?: PanelResult[]
 }
 
-const props = defineProps<{
-  conversations: PanelConversation[]
-  currentId: string | null
-  title: string
-  messages: PanelMessage[]
-  /** 正在流进来的回答；没在答是 null，刚开始答、还没有字是空串。 */
-  streaming: string | null
-  /** 芝士此刻在用的工具。 */
-  tool: string | null
-  /** 在等会话机空出来，还没开始答。 */
-  queued?: boolean
-  notice: string | null
-  /** 被拒是因为额度不够：提示旁给「查看用量」。 */
-  creditRefused?: boolean
-  personalTeamHandle?: string
-  busy: boolean
-}>()
+/** 要随下一个问题交给芝士的文件。 */
+export interface PanelFile {
+  name: string
+  uploading?: boolean
+}
+
+const props = withDefaults(
+  defineProps<{
+    conversations: PanelConversation[]
+    currentId: string | null
+    title: string
+    messages: PanelMessage[]
+    /** 正在流进来的回答；没在答是 null，刚开始答、还没有字是空串。 */
+    streaming: string | null
+    /** 芝士此刻在用的工具。 */
+    tool: string | null
+    /** 在等会话机空出来，还没开始答。 */
+    queued?: boolean
+    notice: string | null
+    /** 被拒是因为额度不够：提示旁给「查看用量」。 */
+    creditRefused?: boolean
+    personalTeamHandle?: string
+    busy: boolean
+    /** 这一轮正在做的几步、写的草稿、发布的结果。 */
+    steps?: PanelStep[]
+    changes?: PanelChange[]
+    results?: PanelResult[]
+    /** 空对话上面那一行（芝士读了什么）；空串就不显示。 */
+    context?: string
+    greeting?: string
+    starters?: string[]
+    placeholder?: string
+    hint?: string
+    /** 能把文件交给芝士。 */
+    canAttach?: boolean
+    files?: PanelFile[]
+    closable?: boolean
+  }>(),
+  {
+    queued: false,
+    creditRefused: false,
+    personalTeamHandle: undefined,
+    steps: () => [],
+    changes: () => [],
+    results: () => [],
+    context: undefined,
+    greeting: undefined,
+    starters: undefined,
+    placeholder: undefined,
+    hint: undefined,
+    canAttach: false,
+    files: () => [],
+    closable: true,
+  }
+)
 
 const emit = defineEmits<{
   send: [text: string]
@@ -186,6 +299,13 @@ const emit = defineEmits<{
   select: [id: string]
   stop: []
   close: []
+  undo: [changeId: number, key: string]
+  undoAll: [changeId: number]
+  jump: [key: string]
+  openDraft: [draftId: number]
+  openTask: [taskId: number]
+  attach: [files: File[]]
+  removeFile: [index: number]
 }>()
 
 const { t } = useI18n()
@@ -193,9 +313,15 @@ const markdown = new MarkdownRenderer()
 const draft = ref('')
 const input = ref<HTMLTextAreaElement | null>(null)
 const scroller = ref<HTMLElement | null>(null)
+const picker = ref<HTMLInputElement | null>(null)
 
-const starters = computed(() => (['basics', 'start', 'hard'] as const).map((k) => t(`tasks.assistant.starters.${k}`)))
-const ready = computed(() => draft.value.trim().length > 0 && !props.busy)
+const starterList = computed(
+  () => props.starters ?? (['basics', 'start', 'hard'] as const).map((k) => t(`tasks.assistant.starters.${k}`))
+)
+const ready = computed(
+  () =>
+    (draft.value.trim().length > 0 || props.files.length > 0) && !props.busy && !props.files.some((f) => f.uploading)
+)
 
 const toolLabel = computed(() => {
   switch (props.tool) {
@@ -204,6 +330,8 @@ const toolLabel = computed(() => {
       return t('tasks.assistant.readingDocs')
     case 'cheese_my_tasks':
       return t('tasks.assistant.readingTasks')
+    case 'cheese_task_write':
+      return t('tasks.assistant.writing')
     default:
       return t('tasks.assistant.thinking')
   }
@@ -237,9 +365,16 @@ function grow() {
 
 function submit() {
   if (!ready.value) return
-  emit('send', draft.value.trim())
+  emit('send', draft.value.trim() || t('tasks.assistant.files.readThese'))
   draft.value = ''
   nextTick(grow)
+}
+
+function onPick(e: Event) {
+  const input = e.target as HTMLInputElement
+  const picked = Array.from(input.files ?? [])
+  if (picked.length) emit('attach', picked)
+  input.value = ''
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -250,7 +385,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 watch(
-  () => [props.messages.length, props.streaming, props.notice],
+  () => [props.messages.length, props.streaming, props.notice, props.steps.length, props.changes.length],
   () => nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight })),
   { immediate: true }
 )
@@ -347,6 +482,20 @@ watch(
   white-space: pre-wrap;
   background: var(--fill-2);
   border-radius: var(--radius-lg);
+}
+
+.ap__q-t {
+  margin: 0;
+}
+
+.ap__q-file {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
 }
 
 .ap__a {
@@ -461,7 +610,7 @@ watch(
 
 .ap__acts {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   min-height: 28px;
   margin-top: 2px;
 }
@@ -469,6 +618,54 @@ watch(
 .ap__send {
   width: 28px;
   height: 28px;
+}
+
+.ap__picker {
+  display: none;
+}
+
+.ap__files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.ap__file {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  background: var(--fill);
+  border-radius: var(--radius-md);
+}
+
+.ap__file-n {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap__file-s {
+  color: var(--muted);
+}
+
+.ap__file-x {
+  display: inline-flex;
+  padding: 2px;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+
+.ap__file-x:hover {
+  color: var(--ink);
+  background: var(--fill-2);
 }
 
 .ap__hint {

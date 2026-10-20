@@ -16,8 +16,9 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
   DOMAIN_GROUP,
-  PUBLISH_DRAFT_MANY,
-  PUBLISH_DRAFT_ONE,
+  PANEL_DONE,
+  PANEL_LIVE,
+  PUBLISH_DRAFTS,
   SPACE_CATEGORY,
   SPACE_MATERIALS,
   SPACE_SETTINGS_GROUPS,
@@ -31,6 +32,7 @@ import {
   TASK_ROSTER,
 } from './catalogSpaceTasksFixtures'
 
+import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import ManageDeniedView from '@/views/spaces/detail/ManageDeniedView.vue'
@@ -74,7 +76,69 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'assistant-panel',
+    title: 'AssistantPanel',
+    get about() {
+      return t('catalog.assistantPanel.about')
+    },
+    file: 'src/components/assistant/AssistantPanel.vue',
+    component: AssistantPanel,
+    needs: UI_T_R,
+    args: {
+      conversations: [],
+      currentId: null,
+      title: '',
+      messages: [],
+      streaming: null,
+      tool: null,
+      notice: null,
+      busy: false,
+      context: '',
+      get greeting() {
+        return t('tasks.assistant.draft.greeting')
+      },
+      get starters() {
+        return [t('tasks.assistant.draft.starters.rubric'), t('tasks.assistant.draft.starters.check')]
+      },
+      canAttach: true,
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.assistantPanel.s1.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s1.note')
+        },
+        props: {},
+        expect: '起草提交内容和评分要点',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s2.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s2.note')
+        },
+        props: { ...PANEL_LIVE, busy: true, streaming: '' },
+        expect: '填写题目',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s3.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s3.note')
+        },
+        props: PANEL_DONE,
+        expect: '待你确认',
+      },
+    ],
+  },
+  {
     id: 'publish-task-view',
+    // 芝士的面板停在页面外框的右边（导航抽屉），外框要有。
+    layout: true,
     title: 'PublishTaskView',
     get about() {
       return t('catalog.publishTaskView.about')
@@ -92,8 +156,6 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       selectedCategoryId: SPACE_CATEGORY.id,
       domainGroups: [DOMAIN_GROUP],
       templates: SPACE_TEMPLATES,
-      importing: false,
-      importedFile: null,
       attachments: [],
       uploading: false,
       maxFileBytes: 20_000_000,
@@ -101,9 +163,15 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       materialsState: 'ready',
       libraryTo: spaceLibraryPath('7'),
       publishing: false,
-      drafts: PUBLISH_DRAFT_ONE,
       teaching: {},
       teachingOwn: false,
+      drafts: PUBLISH_DRAFTS,
+      currentDraftId: 41,
+      saveState: 'saved',
+      pointer: null,
+      outline: null,
+      marks: [],
+      agentName: t('work.agentAvatar.defaultName'),
     },
     states: [
       {
@@ -114,9 +182,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.publishTaskView.s1.note')
         },
         props: {},
-        // 单道题才有「题目内容」那一块，它右上角那两颗动作按钮里有一颗是稳定的锚：装好
-        // 了（`ready`）且不是从文件读出的多道（否则只留选题参数、不下这一块）才在。
-        expectSelector: '[data-testid="publish-import"]',
+        expect: '草稿已保存',
       },
       {
         get name() {
@@ -125,8 +191,14 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.publishTaskView.s2.note')
         },
-        props: { drafts: PUBLISH_DRAFT_MANY, importedFile: '第十章习题.pdf' },
-        expect: '第十章习题.pdf · 识别出 3 道题，已选 2 道',
+        // 芝士正在写名称：带名字的文字光标停在字后面，那一格描着边；描述已经填过。
+        props: {
+          saveState: 'saving',
+          pointer: { x: 180, y: 120, mode: 'caret', height: 22 },
+          outline: { x: 12, y: 96, w: 600, h: 48 },
+          marks: [{ key: 'description', label: t('tasks.form.description'), x: 620, y: 160 }],
+        },
+        expectSelector: '[data-testid="agent-mark-description"]',
       },
       {
         get name() {
