@@ -2,21 +2,16 @@
 // 任务，地址 `/topics/{task}` ＋ `readSince`/`signal` 的清单）是两个东西 —— 名字只
 // 为避开它。返回的都是 payload（新栈），不再是整只 `{code,message,data}` 信封。
 //
-// 从旧网络栈搬过来时地址、查询、正文与超时一字未改：PDF 那两个用
-// `VITE_PDF_UPLOAD_TIMEOUT_MS`（缺省 600000），附件上传 60000 且带上传进度。
+// 从旧网络栈搬过来时地址、查询、正文与超时一字未改：附件上传 60000 且带上传进度。
 import type { EncodedCursorPage, Page, Task, TaskMembership, TaskSubmission, TeamSummary } from '@/types'
 import type {
   AddTaskParticipantRequestData,
-  ConfirmTaskFromPdfRequestData,
-  ConfirmTaskFromPdfResponseData,
-  CreateTaskFromPdfRequestData,
   PatchTaskParticipantRequestData,
   PatchTaskRequestData,
   PatchTaskSubmissionReviewRequestData,
   PostTaskRequestData,
   PostTaskSubmissionRequestData,
   PostTaskSubmissionReviewRequestData,
-  PreviewTaskFromPdfResponseData,
   TaskAttachmentListResponseData,
   TaskInheritanceData,
   TaskParticipationInfo,
@@ -28,56 +23,6 @@ import { AxiosProgressEvent } from 'axios'
 import { axiosMutation, axiosRequest } from './axiosHttp'
 
 export namespace TaskBoardApi {
-  /** PDF 上传/解析请求的超时时间（毫秒），可通过 VITE_PDF_UPLOAD_TIMEOUT_MS 环境变量配置 */
-  const PDF_TIMEOUT_MS = Number(import.meta.env.VITE_PDF_UPLOAD_TIMEOUT_MS) || 600000
-
-  /**
-   * 上传 PDF 并解析生成赛题草稿预览
-   * @param data - 包含空间ID、PDF文件、模板参数等的请求数据
-   * @returns 解析出的赛题草稿列表、使用的模板信息及 token 消耗
-   */
-  export const previewFromPdf = (data: CreateTaskFromPdfRequestData) => {
-    const formData = new FormData()
-    formData.append('spaceId', data.spaceId.toString())
-    formData.append('file', data.file)
-    formData.append('templateIndex', (data.templateIndex ?? -1).toString())
-    formData.append('maxTasks', (data.maxTasks ?? 5).toString())
-
-    if (data.categoryId !== undefined && data.categoryId !== null) {
-      formData.append('categoryId', data.categoryId.toString())
-    }
-
-    if (data.submitterType) {
-      formData.append('submitterType', data.submitterType)
-    }
-
-    return axiosRequest<PreviewTaskFromPdfResponseData>(
-      {
-        url: '/tasks/publish/from-pdf/preview',
-        method: 'POST',
-        data: formData,
-        timeout: PDF_TIMEOUT_MS,
-      },
-      true
-    )
-  }
-
-  /**
-   * 确认并批量发布 PDF 解析生成的赛题草稿
-   * @param data - 包含待发布草稿列表的请求数据
-   * @returns 已创建的赛题列表和数量
-   */
-  export const confirmFromPdf = (data: ConfirmTaskFromPdfRequestData) =>
-    axiosRequest<ConfirmTaskFromPdfResponseData>(
-      {
-        url: '/tasks/publish/from-pdf/confirm',
-        method: 'POST',
-        data,
-        timeout: PDF_TIMEOUT_MS,
-      },
-      true
-    )
-
   export const create = (data: PostTaskRequestData) =>
     axiosRequest<{ task: Task }>({ url: '/tasks', method: 'POST', data }, true)
 

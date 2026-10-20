@@ -1,12 +1,10 @@
-"""守卫：六个全仓零引用的方法已经删掉，不许再长回来（候选池第十批 Y2）。
+"""守卫：全仓零引用的几个方法已经删掉，不许再长回来（候选池第十批 Y2）。
 
 删之前每个都在全仓（含测试、文档、配置）用 `git grep -w` 核过一次，只有定义行一个
 命中：
 
 - `MicroCloudClient.suspend_machine` / `resume_machine`：机器回收走
   `DELETE /machine/{id}`；
-- `TaskPdfDraftService.generate_task_payload_from_pdf`：只是复数方法 `max_tasks=1`
-  的包装；
 - `MetricsRegistry.histograms_named`：没有读者；
 - `ProposalService._is_dismissed`：单条查询版，实际用的是集合版 `_dismissed`；
 - `AvatarRepository.increment_usage`：`usage_count` 字段保留，但写它的调用方并不存在。
@@ -41,7 +39,6 @@ from app.domain.machine.microcloud import MicroCloudClient
 from app.domain.review.forgejo_pr import ForgejoClient
 from app.domain.review.github_pr.httpx_client import HttpxGitHubPrClient
 from app.domain.review.github_pr.protocol import GitHubPrClient
-from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 
 APP_ROOT = Path(app.__file__).resolve().parent
 
@@ -58,9 +55,6 @@ RETIRED = {
         "HttpxGitHubPrClient": ("check_run_names",)
     },
     "app.domain.review.github_pr.protocol": {"GitHubPrClient": ("check_run_names",)},
-    "app.domain.task.task_pdf_draft_service": {
-        "TaskPdfDraftService": ("generate_task_payload_from_pdf",)
-    },
 }
 
 #: 类对象，给第一道断言用。导入本身也钉住「类还在」。
@@ -72,7 +66,6 @@ CLASSES = {
     "ForgejoClient": ForgejoClient,
     "HttpxGitHubPrClient": HttpxGitHubPrClient,
     "GitHubPrClient": GitHubPrClient,
-    "TaskPdfDraftService": TaskPdfDraftService,
 }
 
 CASES = [

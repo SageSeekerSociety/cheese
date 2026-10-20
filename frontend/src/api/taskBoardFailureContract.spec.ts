@@ -275,29 +275,6 @@ describe('task board: upload progress, timeout and multipart shape', () => {
     }
   })
 
-  it('raises the PDF preview timeout to the PDF budget, not the 30s default', async () => {
-    const { axiosNewApi } = await import('./axiosHttp')
-    let seenTimeout: number | undefined
-    const interceptor = axiosNewApi.interceptors.request.use((config) => {
-      seenTimeout = config.timeout
-      return config
-    })
-    try {
-      server.use(
-        http.post(`${newer}/tasks/publish/from-pdf/preview`, async () => {
-          await delay(200)
-          return HttpResponse.json(envelope({ tasks: [], template: { id: 1 }, tokens: 0 }))
-        })
-      )
-      const preview = await tasks.previewFromPdf({ spaceId: 7, file: uploadFile() })
-      expect(preview).toEqual({ tasks: [], template: { id: 1 }, tokens: 0 })
-      // PDF_TIMEOUT_MS defaults to 600000 when VITE_PDF_UPLOAD_TIMEOUT_MS is unset.
-      expect(seenTimeout).toBe(600000)
-    } finally {
-      axiosNewApi.interceptors.request.eject(interceptor)
-    }
-  })
-
   it('keeps multipart fields as an ordered entry list, not a folded object', async () => {
     const seen: unknown[] = []
     server.use(

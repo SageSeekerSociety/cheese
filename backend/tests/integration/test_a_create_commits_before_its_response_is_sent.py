@@ -356,41 +356,37 @@ def test_a_task_approval_is_committed_before_its_response_is_sent(
     _assert_committed_before_responding(asgi)
 
 
-def test_pdf_drafts_are_committed_before_their_response_is_sent(
+def test_a_published_draft_is_committed_before_its_response_is_sent(
     asgi: _Asgi, db_session: AsyncSession, _portal, author
 ) -> None:
-    """Found behind the task-approval fix (#1886), with a delay injected before
-    the teardown commit in ``get_db``::
-
-        POST /tasks/publish/from-pdf/confirm   200
-        (the review queue opened next)         <- the confirmed task is missing
-    """
+    """The publish page publishes its draft (``POST /task-drafts/{id}/publish``):
+    the task it makes is read right after, as the PDF import's was (#1886)."""
     _, token = author
     space_id = _an_approved_board(asgi, db_session, _portal, token)
 
     asgi.post(
-        "/tasks/publish/from-pdf/confirm",
+        "/task-drafts",
         {
-            "drafts": [
-                {
-                    "name": f"Drafted task ({uuid.uuid4().hex[:8]})",
-                    "intro": "An intro.",
-                    "description": "A description.",
-                }
-            ],
-            "taskOptions": {
-                "space": space_id,
+            "space": space_id,
+            "fields": {
+                "name": f"Drafted task ({uuid.uuid4().hex[:8]})",
+                "description": "A description.",
+                "descriptionMarkdown": "A description.",
                 "submitterType": "USER",
-                "resubmittable": True,
-                "editable": True,
+                "rank": 1,
                 "defaultDeadline": 30,
+                "submissionSchema": [{"prompt": "Report", "type": "FILE"}],
             },
         },
         token=token,
     )
+    assert asgi.status == 201, asgi.body
+    draft = json.loads(asgi.body)["data"]["id"]
+
+    asgi.post(f"/task-drafts/{draft}/publish", {}, token=token)
 
     assert asgi.status == 200, asgi.body
-    assert json.loads(asgi.body)["data"]["count"] == 1
+    assert json.loads(asgi.body)["data"]["task"]["id"]
     _assert_committed_before_responding(asgi)
 
 
