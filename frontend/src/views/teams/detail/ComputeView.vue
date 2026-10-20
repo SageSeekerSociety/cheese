@@ -51,7 +51,8 @@ function openRename(device: MyDevice) {
   renaming.value = device
 }
 function saveRename() {
-  if (renaming.value && renameReady.value) emit('rename', renaming.value, renameText.value.trim())
+  if (!renaming.value || !renameReady.value || props.busy === renaming.value.device_id) return
+  emit('rename', renaming.value, renameText.value.trim())
 }
 watch(
   () => props.busy,
@@ -142,6 +143,7 @@ watch(
         :label="t('account.thisDevice.name')"
         @keydown.enter.prevent="saveRename"
       />
+      <p v-if="error" role="alert" class="compute-rename__error">{{ error }}</p>
     </AdaptiveDialog>
   </div>
 </template>
@@ -186,6 +188,13 @@ watch(
   border-radius: var(--radius-md);
   font-size: 13px;
   line-height: var(--lh-13);
+}
+
+.compute-rename__error {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--danger-ink);
 }
 
 .compute-list {

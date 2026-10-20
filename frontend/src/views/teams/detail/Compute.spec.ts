@@ -57,6 +57,21 @@ it('lets an admin rename a team device enrolled by any member', async () => {
   await waitFor(() => expect(renameMyDevice).toHaveBeenCalledWith('team-computer', 'Team computer'))
 })
 
+it('a failed rename says why in the dialog, and a retry that succeeds closes it', async () => {
+  vi.mocked(renameMyDevice)
+    .mockRejectedValueOnce(new Error('Name taken'))
+    .mockResolvedValueOnce(undefined as never)
+  const view = mount()
+  await fireEvent.click(await view.findByRole('button', { name: '重命名' }))
+  await fireEvent.update(await screen.findByRole('textbox', { name: '设备名称' }), 'Team computer')
+  await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(screen.getAllByText('Name taken').length).toBeGreaterThan(0))
+  expect(screen.getByRole('textbox', { name: '设备名称' })).toBeTruthy()
+  await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(screen.queryByRole('textbox', { name: '设备名称' })).toBeNull())
+  expect(renameMyDevice).toHaveBeenCalledTimes(2)
+})
+
 it('closing the rename dialog without saving keeps the device name', async () => {
   const view = mount()
   await fireEvent.click(await view.findByRole('button', { name: '重命名' }))
