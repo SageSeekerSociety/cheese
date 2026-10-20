@@ -10,7 +10,14 @@
  * 的正文」，不是每一次敲键盘。所以它以 `readDescriptionText` 回调传进来。
  */
 import type { JSONContent } from '@tiptap/core'
-import type { DomainGroup, SpaceCategory, TaskFormSubmitData, Topic } from '@/types'
+import type {
+  DomainGroup,
+  SpaceCategory,
+  TaskFormSubmitData,
+  TaskRubricLine,
+  TaskSubmissionSchemaEntry,
+  Topic,
+} from '@/types'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -35,6 +42,12 @@ export interface TaskFormProps {
   /** 新发一道题时导师默认是谁：出题人自己。 */
   defaultMentor?: string
 }
+
+/** 新发一道题时学生要交的东西：一个文件。 */
+export const DEFAULT_SUBMISSION_SCHEMA: TaskSubmissionSchemaEntry[] = [{ prompt: '提交文件', type: 'FILE' }] // i18n-data: 存进题目数据的提交项名，和出题人写的题面一样不随界面语言变
+
+/** 评分要点里一行还空着（加了没填）：提交时去掉，不算错。 */
+const blankLine = (line: TaskRubricLine) => !line.item.trim() && !line.criteria.trim()
 
 /** 富文本那一份内容：编辑器的 JSON 文档（`description` 这个 ref 装的就是它）。 */
 export type DescriptionDoc = JSONContent
@@ -199,6 +212,18 @@ export function useTaskForm(
 
   const description = ref<DescriptionDoc>(descriptionDoc(props.initialData?.description))
 
+  // 提交与评分：学生交哪几样东西，评分要点，以及评分要点给不给学生看。
+  const submissionSchema = ref<TaskSubmissionSchemaEntry[]>(
+    (props.initialData?.submissionSchema?.length ? props.initialData.submissionSchema : DEFAULT_SUBMISSION_SCHEMA).map(
+      (entry) => ({ ...entry })
+    )
+  )
+  const rubric = ref<TaskRubricLine[]>((props.initialData?.rubric ?? []).map((line) => ({ ...line })))
+  const rubricPublic = ref(props.initialData?.rubricPublic ?? true)
+  /** 点过发布后，有写了标准却没写名称的那一行。 */
+  const rubricMissingName = ref(false)
+  watch(rubric, () => (rubricMissingName.value = false), { deep: true })
+
   /** 点过发布之后还拦着的项数；没点过就是 0（打开页面不该满屏红字）。 */
   const invalidCount = computed(() => (submitCount.value > 0 ? Object.keys(errors.value).length : 0))
   watch(invalidCount, (count) => emit('invalid', count), { immediate: true })
@@ -215,6 +240,14 @@ export function useTaskForm(
   })
 
   const submitFormData = (values: any) => {
+    const lines = rubric.value.filter((line) => !blankLine(line))
+    if (lines.some((line) => !line.item.trim())) {
+      rubricMissingName.value = true
+      return
+    }
+    const items = submissionSchema.value
+      .map((entry) => ({ ...entry, prompt: entry.prompt.trim() }))
+      .filter((entry) => entry.prompt)
     const descriptionText = pendingSubmission.value?.descriptionText ?? readDescriptionText()
     const deadlineDate = values.deadline ? new Date(values.deadline) : null
     const registrationStartAtDate = values.registrationStartAt ? new Date(values.registrationStartAt) : null
@@ -239,6 +272,13 @@ export function useTaskForm(
       accessControlEnabled: accessControlEnabled.value,
       accessDomainGroupIds: accessControlEnabled.value ? accessDomainGroupIds.value : undefined,
       mentors: mentorsJoin.value ? mentors.value : [],
+      submissionSchema: items.length ? items : DEFAULT_SUBMISSION_SCHEMA,
+      rubric: lines.map((line) => ({
+        item: line.item.trim(),
+        points: Number(line.points) || 0,
+        criteria: line.criteria.trim(),
+      })),
+      rubricPublic: rubricPublic.value,
     }
     emit('submit', submissionData)
   }
@@ -296,6 +336,10 @@ export function useTaskForm(
     mentorsJoin,
     mentors,
     description,
+    submissionSchema,
+    rubric,
+    rubricPublic,
+    rubricMissingName,
     isSubmitting,
     submitForm,
     privacyDialogOpen,

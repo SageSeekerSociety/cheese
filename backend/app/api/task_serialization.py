@@ -77,6 +77,9 @@ def _task_to_api_model(task: Task) -> dict:
         "rank": task.rank,
         "submitterType": submitter_type_map.get(task.submitter_type, "USER"),
         "submissionSchema": [],
+        # 评分要点只在详情与改题的响应里填（见 lifecycle）；列表不带。
+        "rubric": [],
+        "rubricPublic": task.rubric_public,
         "space": {"id": task.space_id},
         "category": {"id": task.category_id, "name": ""},
         "categoryId": task.category_id,

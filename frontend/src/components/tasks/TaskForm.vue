@@ -19,6 +19,7 @@ import { useTaskForm } from '@/composables/useTaskForm'
 
 import TaskFormClassify from './form/TaskFormClassify.vue'
 import TaskFormContent from './form/TaskFormContent.vue'
+import TaskFormGrading from './form/TaskFormGrading.vue'
 import TaskFormMore from './form/TaskFormMore.vue'
 import TaskFormParticipation from './form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from './form/TaskFormPrivacyDialog.vue'
@@ -107,6 +108,10 @@ const {
   mentorsJoin,
   mentors,
   description,
+  submissionSchema,
+  rubric,
+  rubricPublic,
+  rubricMissingName,
   isSubmitting,
   submitForm,
   privacyDialogOpen,
@@ -135,6 +140,13 @@ defineExpose({
     </TaskFormContent>
 
     <slot name="shared" />
+
+    <TaskFormGrading
+      v-model:submission-schema="submissionSchema"
+      v-model:rubric="rubric"
+      v-model:rubric-public="rubricPublic"
+      :missing-name="rubricMissingName"
+    />
 
     <TaskFormParticipation
       v-model:submitter-type="submitterType"

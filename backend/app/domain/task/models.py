@@ -85,6 +85,11 @@ class Task(Base):
     access_control_enabled: Mapped[bool] = mapped_column(
         "access_control_enabled", Boolean, nullable=False, default=False
     )
+    # 评分要点（``TaskRubricItem``）给不给领题的人看。批改的人（出题人、空间管理员）
+    # 总能看到；关掉它只是不对学生显示。
+    rubric_public: Mapped[bool] = mapped_column(
+        "rubric_public", Boolean, nullable=False, default=True, server_default="true"
+    )
     published_at: Mapped[datetime | None] = mapped_column(
         "published_at", DateTime(timezone=True), nullable=True
     )
@@ -211,6 +216,26 @@ class TaskSubmissionSchemaEntry(Base):
     index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
     description: Mapped[str] = mapped_column("description", String, nullable=False)
     type: Mapped[int] = mapped_column("type", SmallInteger, nullable=False)
+
+
+class TaskRubricItem(Base):
+    """One line of a task's 评分要点: what is scored, how many points, and what
+    earns them. Read by whoever grades the submissions, and by the students when
+    the task's ``rubric_public`` says so. Replaced as a whole, like the
+    submission form above."""
+
+    __tablename__ = "task_rubric_item"
+
+    task_id: Mapped[int] = mapped_column(
+        "task_id",
+        BigInteger,
+        ForeignKey("task.id", name="fk_task_rubric_item_task_id_task"),
+        primary_key=True,
+    )
+    index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
+    item: Mapped[str] = mapped_column("item", String(64), nullable=False)
+    points: Mapped[int] = mapped_column("points", Integer, nullable=False)
+    criteria: Mapped[str] = mapped_column("criteria", Text, nullable=False, default="")
 
 
 class TaskMentor(Base):

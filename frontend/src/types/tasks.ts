@@ -55,6 +55,13 @@ export interface TaskSubmissionSchemaEntry {
   type: TaskSubmissionEntryType
 }
 
+/** 评分要点的一行：评什么、多少分、怎样算做到（`app/domain/task/rubric.py`）。 */
+export interface TaskRubricLine {
+  item: string
+  points: number
+  criteria: string
+}
+
 /** 我在一道题上走到哪一步：没交、交了等判、通过、退回可重交。
  *
  *  由后端按**提交与评审**算（`app/domain/task/submission_state.py`），不读
@@ -80,6 +87,9 @@ export interface Task {
   space?: Space
   category?: SpaceCategory
   submissionSchema: TaskSubmissionSchemaEntry[]
+  /** 评分要点。批改的人总能读到；学生只在 `rubricPublic` 时读到，否则是空的。 */
+  rubric?: TaskRubricLine[]
+  rubricPublic?: boolean
   participants: {
     total: number
     examples: TaskParticipantSummary[]
@@ -223,4 +233,8 @@ export type TaskFormSubmitData = {
   teaching?: SpaceTeaching
   /** 加入每个领取者项目的导师（#3830）；空 = 没有导师。 */
   mentors?: string[]
+  /** 学生提交时逐项填写的东西。 */
+  submissionSchema?: TaskSubmissionSchemaEntry[]
+  rubric?: TaskRubricLine[]
+  rubricPublic?: boolean
 }
