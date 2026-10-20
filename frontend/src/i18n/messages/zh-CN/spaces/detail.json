@@ -133,7 +133,25 @@
       "failed": "保存失败",
       "published": "已发布"
     },
-    "draftLoadFailed": "无法读取这份草稿"
+    "draftLoadFailed": "无法读取这份草稿",
+    "strip": {
+      "label": "这份文件拆出的几道题",
+      "from": "来自 {file}",
+      "untitled": "未命名题目",
+      "writing": "正在填写",
+      "published": "已发布",
+      "missing": "缺 {n} 项",
+      "joiner": "、",
+      "remove": "删除",
+      "removeOne": "删除「{name}」",
+      "removeAsk": "删除这道题？",
+      "publishAll": "全部发布（{n}）",
+      "publishedSome": "已发布 {n} 道",
+      "lacks": "《{name}》缺少{fields}",
+      "failed": "《{name}》发布失败",
+      "separator": "；",
+      "removeFailed": "删除失败"
+    }
   },
   "tasks": {
     "allTopics": "全部标签",

@@ -16,7 +16,7 @@ import type { TaskDraft, TaskDraftField, TaskDraftFields } from '@/types'
 import { computed, nextTick, ref } from 'vue'
 
 import { TaskDraftsApi } from '@/api/taskDrafts'
-import { AGENT_FIELDS, type DraftTerms, previewOf } from '@/lib/taskDraftAgent'
+import { AGENT_FIELDS, type DraftTerms, type Preview, previewOf } from '@/lib/taskDraftAgent'
 
 /** 表单那一头：读现在的样子，填进几格。 */
 export interface DraftForm {
@@ -54,6 +54,10 @@ export function useTaskDraft(options: DraftOptions) {
   const previewing = ref(new Set<TaskDraftField>())
   /** 芝士正在写的那一格（它的字段名），指针停在这里。 */
   const writing = ref<string | null>(null)
+  /** 芝士正在改的详情里那一段（见 `previewOf`）：指针先选中原文，再跟着新文字走。 */
+  const passage = ref<NonNullable<Preview['passage']> | null>(null)
+  /** 芝士停在一格前面、还没开始写（`lib/typist.ts` 的 held）：原来有字就先选中一下。 */
+  const holding = ref(false)
   /** 芝士写过、人还没再碰的格子（芝士的字段名），各自是哪次写入。 */
   const marks = ref<Record<string, number>>({})
   /** 已经发布了：这份草稿没了，页面不再存。 */
@@ -187,10 +191,14 @@ export function useTaskDraft(options: DraftOptions) {
   let lastApplied = ''
 
   /** 一次 `cheese_task_write` 的参数写到了这里：能确定的几格先填上。 */
-  async function preview(args: unknown, terms: DraftTerms) {
+  async function preview(args: unknown, terms: DraftTerms, held: string | null = null) {
     if (!form || !args || typeof args !== 'object' || !aimsHere(args as Record<string, unknown>)) return
-    const shown = previewOf(args, terms)
-    writing.value = shown.writing
+    const shown = previewOf(args, terms, typeof saved.descriptionMarkdown === 'string' ? saved.descriptionMarkdown : '')
+    // 停在一格前面时，指针已经先过去了。
+    const aim = held && held in AGENT_FIELDS ? held : held === 'replace' ? 'description' : null
+    writing.value = aim ?? shown.writing
+    holding.value = aim !== null && held !== 'replace'
+    passage.value = shown.passage ?? null
     const keys = Object.keys(shown.fields) as TaskDraftField[]
     if (!keys.length) return
     const next = new Set(previewing.value)
@@ -205,6 +213,8 @@ export function useTaskDraft(options: DraftOptions) {
   /** 调用结束了。报错就把预览收回成已存的样子。 */
   async function ended(failed: boolean) {
     writing.value = null
+    passage.value = null
+    holding.value = false
     lastApplied = ''
     if (!failed || !form || !previewing.value.size) return
     const back: TaskDraftFields = {}
@@ -221,6 +231,8 @@ export function useTaskDraft(options: DraftOptions) {
     for (const [key, change] of Object.entries(edit.changed)) (after as Record<string, unknown>)[key] = change.after
     previewing.value = new Set()
     writing.value = null
+    passage.value = null
+    holding.value = false
     lastApplied = ''
     saved = { ...saved, ...after }
     if (form) {
@@ -264,6 +276,8 @@ export function useTaskDraft(options: DraftOptions) {
     saveState,
     previewing,
     writing,
+    passage,
+    holding,
     marks,
     published,
     bind,

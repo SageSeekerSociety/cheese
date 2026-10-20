@@ -38,7 +38,8 @@
     "rubric": "{n} items, {total} points",
     "yes": "Yes",
     "no": "No",
-    "kept": "You changed this; left as is"
+    "kept": "You changed this; left as is",
+    "ordinal": "No. {n}"
   },
   "notes": {
     "title": "Needs your check"
@@ -51,7 +52,8 @@
   },
   "files": {
     "readThese": "Read the attached files",
-    "failed": "File upload failed"
+    "failed": "File upload failed",
+    "add": "Add files"
   },
   "draft": {
     "greeting": "Describe the task you have in mind, or upload a lab handout or lecture notes, and I will fill in the form.",

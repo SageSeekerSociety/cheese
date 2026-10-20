@@ -515,6 +515,10 @@
     "s3": {
       "name": "Space not ready",
       "note": "Categories and domain groups are still on their way: no form, and the publish button is disabled."
+    },
+    "s4": {
+      "name": "Several tasks from one file",
+      "note": "Above the form, the tasks Cheese made from one file: the first is published, the second shows 1 missing after Publish all, the third is being filled in. Publish all (2) sits at the end."
     }
   },
   "basicInfoView": {

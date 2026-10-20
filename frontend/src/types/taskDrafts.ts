@@ -56,6 +56,8 @@ export interface TaskDraftSummary {
   conversationId: string | null
   version: number
   updatedAt: string
+  /** 发布前还缺的格子（芝士的字段名：name、description、form、difficulty）。 */
+  missing: string[]
 }
 
 export interface TaskDraft extends TaskDraftSummary {

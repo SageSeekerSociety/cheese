@@ -217,6 +217,7 @@ export const PUBLISH_DRAFTS: TaskDraftSummary[] = [
     conversationId: null,
     version: 6,
     updatedAt: new Date(NOW - 2 * 60_000).toISOString(),
+    missing: [],
   },
   {
     id: 42,
@@ -228,6 +229,7 @@ export const PUBLISH_DRAFTS: TaskDraftSummary[] = [
     conversationId: null,
     version: 2,
     updatedAt: new Date(NOW - 40 * 60_000).toISOString(),
+    missing: [],
   },
   {
     id: 38,
@@ -239,6 +241,7 @@ export const PUBLISH_DRAFTS: TaskDraftSummary[] = [
     conversationId: null,
     version: 1,
     updatedAt: new Date(NOW - 3 * DAY).toISOString(),
+    missing: [],
   },
 ]
 

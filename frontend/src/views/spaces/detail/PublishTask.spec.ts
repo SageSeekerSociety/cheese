@@ -30,6 +30,7 @@ const startDraft = vi.fn()
 const readDraft = vi.fn()
 const saveDraft = vi.fn()
 const publishDraft = vi.fn()
+const removeDraft = vi.fn()
 
 const spaceDetail = vi.fn()
 const listCategories = vi.fn()
@@ -81,6 +82,7 @@ vi.mock('@/api/taskDrafts', () => ({
     read: (...a: unknown[]) => readDraft(...a),
     save: (...a: unknown[]) => saveDraft(...a),
     publish: (...a: unknown[]) => publishDraft(...a),
+    remove: (...a: unknown[]) => removeDraft(...a),
   },
 }))
 
@@ -283,6 +285,7 @@ function draftBody(fields: Record<string, unknown> = {}, id = 61) {
     conversationId: null,
     version: 1,
     updatedAt: '2026-10-20T08:00:00Z',
+    missing: [],
     fields,
   }
 }
@@ -515,5 +518,81 @@ describe('发题页：和芝士一起写', () => {
     await waitFor(() => expect(nameInput(view).value).toBe(''))
     await waitFor(() => expect(saveDraft).toHaveBeenCalled(), { timeout: 3000 })
     expect(saveDraft.mock.calls[0]).toEqual([61, { name: '' }])
+  })
+})
+
+describe('发题页：一份文件拆出几道题', () => {
+  /** 芝士从同一份文件建的两份草稿，挂在同一段对话上。 */
+  function pair() {
+    const lab3 = {
+      ...draftBody({ name: 'Lab 3 缓存模拟器', description: '写一个缓存模拟器', submitterType: 'USER', rank: 2 }, 61),
+      source: '实验3.pdf',
+      conversationId: 'c9',
+    }
+    const lab4 = {
+      ...draftBody({ name: 'Lab 4 矩阵转置', description: '优化转置', submitterType: 'TEAM' }, 62),
+      source: '实验3.pdf',
+      conversationId: 'c9',
+    }
+    listDrafts.mockImplementation(async () => [
+      { ...lab3, fields: undefined, missing: [] },
+      { ...lab4, fields: undefined, missing: ['difficulty'] },
+    ])
+    readDraft.mockImplementation(async (id: number) => (id === 61 ? lab3 : lab4))
+    apiRequest.mockImplementation(async (path: string) =>
+      path.endsWith('/conversations/c9')
+        ? { id: 'c9', title: '出题', lastActiveAt: '2026-10-20T08:00:00Z', messages: [] }
+        : path.endsWith('/conversations')
+          ? { conversations: [] }
+          : {}
+    )
+  }
+
+  const conversationReads = () =>
+    apiRequest.mock.calls.filter(([path]) => String(path).endsWith('/conversations/c9')).length
+
+  it('表单上方排着这几道，点了切过去；对话还是那一段，不重读', async () => {
+    await boardAs(MEMBER)
+    pair()
+    const view = await mount('?draft=61')
+
+    const strip = await view.findByTestId('draft-strip')
+    expect(strip.textContent).toContain('来自 实验3.pdf')
+    expect(strip.textContent).toContain('Lab 3 缓存模拟器')
+    expect(strip.textContent).toContain('Lab 4 矩阵转置')
+    await waitFor(() => expect(conversationReads()).toBe(1))
+
+    await fireEvent.click(view.getByTestId('draft-strip-62'))
+    await waitFor(() => expect(nameInput(view).value).toBe('Lab 4 矩阵转置'))
+    expect(conversationReads()).toBe(1)
+  })
+
+  it('全部发布：齐了的发出去，缺项的那道标出来、留在原处', async () => {
+    await boardAs(MEMBER)
+    pair()
+    const view = await mount('?draft=61')
+
+    await fireEvent.click(await view.findByTestId('draft-strip-publish-all'))
+
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledWith(61))
+    expect(publishDraft).not.toHaveBeenCalledWith(62)
+    expect(await view.findByText('已发布 1 道；《Lab 4 矩阵转置》缺少难度')).toBeTruthy()
+    // 眼前这道发出去了：切到没发出去的那道。
+    await waitFor(() => expect(nameInput(view).value).toBe('Lab 4 矩阵转置'))
+  })
+})
+
+describe('发题页：右边的芝士', () => {
+  it('能收起来，顶栏多一个按钮叫回来；收起来这件事记在这台浏览器里', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    await fireEvent.click(view.getByRole('button', { name: '关闭' }))
+    expect(view.queryByRole('region', { name: /芝士/ })).toBeNull()
+    expect(localStorage.getItem('cheesex.agentDocked')).toBe('false')
+
+    await fireEvent.click(view.getByTestId('publish-agent-dock'))
+    await waitFor(() => expect(view.queryByTestId('publish-agent-dock')).toBeNull())
+    expect(localStorage.getItem('cheesex.agentDocked')).toBe('true')
   })
 })

@@ -19,12 +19,14 @@ import type {
   Topic,
 } from '@/types'
 import type { SpaceMaterial, SpaceMaterialsState } from '@/types/spaces'
+import type { StripItem } from './TaskDraftStrip.vue'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
 import TaskDraftMenu from './TaskDraftMenu.vue'
+import TaskDraftStrip from './TaskDraftStrip.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
@@ -62,10 +64,20 @@ const props = withDefaults(
     saveState: SaveState
     /** 芝士已经把眼前这份草稿发布了。 */
     publishedHere?: boolean
+    /** 一份文件拆出的几道题：表单上方那一排；不是这种情况时是 null。 */
+    strip?: {
+      items: StripItem[]
+      source: string
+      flagged: boolean
+      publishing: boolean
+      note: { text: string; ok: boolean } | null
+    } | null
     /** 芝士那一层。 */
     pointer: AgentPointer | null
     outline: AgentBox | null
     marks: AgentMark[]
+    /** 芝士选中、要换掉的那段字。 */
+    selection?: AgentBox[]
     agentName: string
   }>(),
   {
@@ -73,6 +85,8 @@ const props = withDefaults(
     mentorOptions: () => [],
     defaultMentor: undefined,
     publishedHere: false,
+    strip: null,
+    selection: () => [],
   }
 )
 
@@ -81,6 +95,8 @@ const teaching = defineModel<SpaceTeaching>('teaching', { required: true })
 const teachingOwn = defineModel<boolean>('teachingOwn', { required: true })
 /** 窄屏上芝士是一张从下面拉起来的面板。 */
 const agentOpen = defineModel<boolean>('agentOpen', { default: false })
+/** 宽屏上芝士停在右边；收起来以后顶栏多一个按钮把它叫回来。 */
+const agentDocked = defineModel<boolean>('agentDocked', { default: true })
 
 const emit = defineEmits<{
   cancel: []
@@ -92,6 +108,8 @@ const emit = defineEmits<{
   'form-ready': [fields: TaskDraftFields]
   'open-draft': [id: number]
   'new-draft': []
+  'remove-draft': [id: number]
+  'publish-all': []
   undo: [key: string]
 }>()
 
@@ -138,6 +156,11 @@ defineExpose({
     apply: async (fields: TaskDraftFields) => (await form.value?.apply(fields)) ?? {},
   },
   descriptionEnd: () => form.value?.descriptionEnd() ?? null,
+  /** 标出这一道缺的格子（一次发几道、这道没发出去时）。 */
+  check: () => {
+    attempted.value = true
+    void form.value?.check()
+  },
   /** 芝士那一层量位置用的外框。 */
   host,
 })
@@ -146,7 +169,7 @@ defineExpose({
 <template>
   <div class="pub">
     <div>
-      <PageHeader show-on-mobile>
+      <PageHeader show-on-mobile class="pub__head">
         <nav class="pub__crumb">
           <NavLink :to="listTo" class="pub__crumb-parent">{{ t('spaces.detail.allContests') }}</NavLink>
           <v-icon size="16" class="pub__crumb-sep">mdi-chevron-right</v-icon>
@@ -170,6 +193,14 @@ defineExpose({
             t('spaces.detail.publishTask.blocking', { n: blocking })
           }}</span>
           <span v-else class="pub__note">{{ t('spaces.detail.publishTask.needsReview') }}</span>
+          <BaseButton
+            v-if="mdAndUp && !agentDocked"
+            kind="secondary"
+            prepend-icon="mdi-creation-outline"
+            data-testid="publish-agent-dock"
+            @click="agentDocked = true"
+            >{{ agentName }}</BaseButton
+          >
           <BaseButton kind="ghost" :disabled="publishing" @click="emit('cancel')">{{ t('global.cancel') }}</BaseButton>
           <BaseButton
             kind="primary"
@@ -184,6 +215,18 @@ defineExpose({
 
       <div>
         <div ref="host" class="pub__page">
+          <TaskDraftStrip
+            v-if="strip"
+            :items="strip.items"
+            :current-id="currentDraftId"
+            :source="strip.source"
+            :flagged="strip.flagged"
+            :publishing="strip.publishing"
+            :note="strip.note"
+            @open="emit('open-draft', $event)"
+            @remove="emit('remove-draft', $event)"
+            @publish-all="emit('publish-all')"
+          />
           <TaskForm
             v-if="ready"
             ref="form"
@@ -254,6 +297,7 @@ defineExpose({
             :pointer="pointer"
             :outline="outline"
             :marks="marks"
+            :selection="selection"
             :name="agentName"
             @undo="emit('undo', $event)"
           />
@@ -262,10 +306,10 @@ defineExpose({
     </div>
 
     <!-- Docked like the task page's 问芝士: the drawer registers with the page frame. -->
-    <v-navigation-drawer v-if="mdAndUp" permanent location="right" width="380" class="pub__agent">
+    <v-navigation-drawer v-if="mdAndUp && agentDocked" permanent location="right" width="380" class="pub__agent">
       <slot name="agent" />
     </v-navigation-drawer>
-    <template v-else>
+    <template v-else-if="!mdAndUp">
       <BaseButton
         class="pub__agent-open"
         kind="secondary"
@@ -287,18 +331,48 @@ defineExpose({
   background: var(--surface);
 }
 
+/* 左边这一栏多宽，取决于两侧的侧栏和芝士：顶栏按自己的宽窄收，不按窗口。 */
+.pub__head {
+  container-type: inline-size;
+}
+
 .pub__crumb {
   display: flex;
+  flex: 0 1 auto;
   gap: 4px;
   align-items: center;
   min-width: 0;
+  overflow: hidden;
   font-size: 14px;
   line-height: var(--lh-14);
+  white-space: nowrap;
 }
 
 .pub__crumb-parent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--muted);
   text-decoration: none;
+}
+
+.pub__crumb-sep,
+.pub__crumb-here {
+  flex: none;
+}
+
+/* 窄的时候先让出说明，再让出上一级。 */
+@container (max-width: 760px) {
+  .pub__note {
+    display: none;
+  }
+}
+
+@container (max-width: 600px) {
+  .pub__crumb-parent,
+  .pub__crumb-sep {
+    display: none;
+  }
 }
 
 .pub__crumb-parent:hover {

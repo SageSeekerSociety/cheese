@@ -46,6 +46,8 @@ export interface Preview {
   fields: TaskDraftFields
   /** 正在写的那一格（芝士的字段名）：参数里最后出现、还在写的那一个。 */
   writing: string | null
+  /** 正在改的详情里的那一段：原文，和写到一半的新文字（还没开始写是 null，这时原文是选中的样子）。 */
+  passage?: { find: string; replace: string | null }
 }
 
 function text(value: unknown): string | null {
@@ -56,12 +58,29 @@ function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null
 }
 
-/** 参数写到这里时，表单上能确定的那几格。 */
-export function previewOf(args: unknown, terms: DraftTerms): Preview {
+/** 参数写到这里时，表单上能确定的那几格。`markdown` 是详情现在的样子：只改几处
+ * （`description_edits`）时，在它上面把已经写出来的那几处换掉。 */
+export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Preview {
   const fields: TaskDraftFields = {}
   if (!args || typeof args !== 'object' || Array.isArray(args)) return { fields, writing: null }
   const given = args as Record<string, unknown>
-  const keys = Object.keys(given).filter((k) => k in AGENT_FIELDS)
+  const keys = Object.keys(given).filter((k) => k in AGENT_FIELDS || k === 'description_edits')
+  let passage: Preview['passage']
+  if (Array.isArray(given.description_edits) && markdown) {
+    let text = markdown
+    for (const edit of given.description_edits) {
+      const { find, replace } = (edit ?? {}) as { find?: unknown; replace?: unknown }
+      // 原文要写完整才找得到；新文字写到哪换到哪。
+      if (typeof find !== 'string' || !find || !text.includes(find)) continue
+      const typed = typeof replace === 'string' ? replace : null
+      passage = { find, replace: typed }
+      if (typed !== null) text = text.replace(find, typed)
+    }
+    if (text !== markdown) {
+      fields.description = text
+      fields.descriptionMarkdown = text
+    }
+  }
   const name = text(given.name)
   if (name !== null) fields.name = name
   const description = text(given.description)
@@ -123,5 +142,34 @@ export function previewOf(args: unknown, terms: DraftTerms): Preview {
   }
   if (typeof given.rubric_public === 'boolean') fields.rubricPublic = given.rubric_public
   if (typeof given.real_name === 'boolean') fields.requireRealName = given.real_name
-  return { fields, writing: keys.length ? keys[keys.length - 1] : null }
+  const last = keys.length ? keys[keys.length - 1] : null
+  return { fields, writing: last === 'description_edits' ? 'description' : last, passage }
+}
+
+/** 发布前还缺的格子（芝士的字段名），和后端 `drafts.missing` 同一条规矩：名称、详情、参与方式、难度。 */
+export function missingOf(fields: TaskDraftFields): string[] {
+  const out: string[] = []
+  if (!fields.name?.trim()) out.push('name')
+  const markdown = fields.descriptionMarkdown?.trim()
+  const doc = typeof fields.description === 'string' ? docText(fields.description) : ''
+  if (!markdown && !doc) out.push('description')
+  if (fields.submitterType !== 'USER' && fields.submitterType !== 'TEAM') out.push('form')
+  if (fields.rank !== 1 && fields.rank !== 2 && fields.rank !== 3) out.push('difficulty')
+  return out
+}
+
+/** 详情里读得出的字：编辑器的 JSON 取文字，别的原样。 */
+function docText(description: string): string {
+  if (!description.trim().startsWith('{')) return description.trim()
+  try {
+    const words: string[] = []
+    const walk = (node: { type?: string; text?: string; content?: unknown[] }) => {
+      if (node.type === 'text' && node.text) words.push(node.text)
+      for (const child of node.content ?? []) walk(child as typeof node)
+    }
+    walk(JSON.parse(description))
+    return words.join('').trim()
+  } catch {
+    return description.trim()
+  }
 }

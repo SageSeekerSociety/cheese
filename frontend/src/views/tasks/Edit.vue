@@ -15,6 +15,7 @@ import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useAgentDock } from '@/composables/useAgentDock'
 import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
@@ -150,11 +151,14 @@ const layer = useAgentPointer({
   marks: draft.marks,
   active: computed(() => assistant.busy.value),
   descriptionEnd: () => form.value?.descriptionEnd() ?? null,
+  passage: draft.passage,
+  holding: draft.holding,
 })
 const pointer = computed<AgentPointer | null>(() => layer.pointer.value)
 const outline = computed<AgentBox | null>(() => layer.outline.value)
 const marks = computed<AgentMark[]>(() => layer.marks.value)
 const agentOpen = ref(false)
+const agentDocked = useAgentDock()
 
 // --- 保存 ---------------------------------------------------------------------------
 
@@ -276,7 +280,7 @@ const panelProps = computed(() => ({
   placeholder: t('tasks.assistant.draft.placeholder'),
   hint: t('tasks.assistant.draft.hint'),
   canAttach: true,
-  closable: !mdAndUp.value,
+  closable: true,
 }))
 
 const panelEvents = {
@@ -284,9 +288,9 @@ const panelEvents = {
   stop: () => void assistant.stop().catch(() => undefined),
   new: () => assistant.startNew(),
   select: (id: string) => void assistant.select(id),
-  close: () => (agentOpen.value = false),
+  close: () => (mdAndUp.value ? (agentDocked.value = false) : (agentOpen.value = false)),
   undo: (id: number, key: string) => void agent.undo(id, key),
-  undoAll: (id: number) => void agent.undoAll(id),
+  undoAll: (rows: { change: number; key: string }[]) => void agent.undoAll(rows),
   jump: (key: string) => layer.jump(key),
   openTask,
   attach: (files: File[]) => void agent.attach(files),
@@ -311,6 +315,14 @@ const panelEvents = {
       <BaseButton v-if="unsaved" kind="ghost" :disabled="saving" @click="discard">{{
         t('tasks.edit.discard')
       }}</BaseButton>
+      <BaseButton
+        v-if="mdAndUp && !agentDocked"
+        kind="secondary"
+        prepend-icon="mdi-creation-outline"
+        data-testid="edit-agent-dock"
+        @click="agentDocked = true"
+        >{{ t('work.agentAvatar.defaultName') }}</BaseButton
+      >
       <BaseButton kind="ghost" :disabled="saving" @click="navigateToDetail">{{ t('global.cancel') }}</BaseButton>
       <BaseButton
         v-if="rejected"
@@ -384,15 +396,16 @@ const panelEvents = {
       :pointer="pointer"
       :outline="outline"
       :marks="marks"
+      :selection="layer.selection.value"
       :name="t('work.agentAvatar.defaultName')"
       @undo="agent.undoMark"
     />
   </div>
 
-  <v-navigation-drawer v-if="mdAndUp" permanent location="right" width="380" class="te__agent">
+  <v-navigation-drawer v-if="mdAndUp && agentDocked" permanent location="right" width="380" class="te__agent">
     <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
   </v-navigation-drawer>
-  <template v-else>
+  <template v-else-if="!mdAndUp">
     <BaseButton class="te__agent-open" kind="secondary" @click="agentOpen = true">{{
       t('tasks.assistant.label')
     }}</BaseButton>
@@ -412,9 +425,12 @@ const panelEvents = {
 
 .te__crumb {
   display: flex;
+  flex: 0 1 auto;
   gap: 4px;
   align-items: center;
   min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   font-size: 14px;
   line-height: var(--lh-14);
 }
@@ -432,6 +448,7 @@ const panelEvents = {
 }
 
 .te__crumb-sep {
+  flex: none;
   color: var(--faint);
 }
 

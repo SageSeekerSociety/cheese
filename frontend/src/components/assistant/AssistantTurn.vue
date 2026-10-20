@@ -38,6 +38,9 @@
         <span class="at__card-t">{{
           change.created ? t('tasks.assistant.changes.created') : t('tasks.assistant.changes.title')
         }}</span>
+        <span v-if="change.ordinal" class="at__card-no">{{
+          t('tasks.assistant.changes.ordinal', { n: change.ordinal })
+        }}</span>
         <button
           v-if="change.created"
           type="button"
@@ -66,14 +69,14 @@
             kind="ghost"
             :title="t('tasks.assistant.changes.undoOne', { field: row.label })"
             :aria-label="t('tasks.assistant.changes.undoOne', { field: row.label })"
-            @click="emit('undo', change.id, row.key)"
+            @click="emit('undo', row.change, row.key)"
           />
         </li>
       </ul>
       <footer v-if="change.canUndo && undoable(change)" class="at__card-f">
         <span>{{ t('tasks.assistant.changes.count', { n: undoable(change) }) }}</span>
         <span class="at__grow" />
-        <BaseButton size="sm" kind="ghost" @click="emit('undoAll', change.id)">{{
+        <BaseButton size="sm" kind="ghost" @click="emit('undoAll', undoRows(change))">{{
           t('tasks.assistant.changes.undoAll')
         }}</BaseButton>
       </footer>
@@ -132,7 +135,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   undo: [changeId: number, key: string]
-  undoAll: [changeId: number]
+  undoAll: [rows: { change: number; key: string }[]]
   jump: [key: string]
   openDraft: [draftId: number]
   openTask: [taskId: number]
@@ -151,8 +154,12 @@ const notes = computed(() =>
   props.changes.filter((change) => change.notes.length).map((change) => ({ id: change.id, items: change.notes }))
 )
 
+function undoRows(change: PanelChange) {
+  return change.rows.filter((row) => !row.undone && !row.kept).map((row) => ({ change: row.change, key: row.key }))
+}
+
 function undoable(change: PanelChange): number {
-  return change.rows.filter((row) => !row.undone && !row.kept).length
+  return undoRows(change).length
 }
 </script>
 
@@ -380,6 +387,11 @@ function undoable(change: PanelChange): number {
 
 .at__card--ask .at__card-h {
   background: var(--warn-wash);
+}
+
+.at__card-no {
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .at__result {

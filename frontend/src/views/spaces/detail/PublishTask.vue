@@ -11,13 +11,16 @@
 // `?categoryId=`（从某个分类的列表过来）在这里读。
 import type { AgentBox, AgentMark, AgentPointer } from '@/components/tasks/AgentLayer.vue'
 import type { SpaceTeaching, TaskDraft, TaskDraftFields, TaskDraftSummary, TaskFormSubmitData } from '@/types'
+import type { StripItem } from './TaskDraftStrip.vue'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useAgentDock } from '@/composables/useAgentDock'
 import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
@@ -30,7 +33,9 @@ import PublishTaskView from './PublishTaskView.vue'
 import { AttachmentsApi } from '@/api/attachments'
 import { TaskDraftsApi } from '@/api/taskDrafts'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import { fieldLabel } from '@/lib/assistantView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
+import { missingOf } from '@/lib/taskDraftAgent'
 import { mentorOptions } from '@/lib/taskMentors'
 import { isTeachingBlank } from '@/lib/teaching'
 import { myAccount, myHandle } from '@/me'
@@ -147,6 +152,7 @@ function fill(fields: TaskDraftFields) {
 
 /** 打开地址栏里的那份草稿；没有就是一份还没存的空白草稿。 */
 async function openDraft(id: number | null) {
+  const talking = agent.assistant.current.value
   draftReady.value = false
   publishedHere.value = false
   await draft.flush()
@@ -164,9 +170,16 @@ async function openDraft(id: number | null) {
     return
   }
   draft.open(row)
+  live.value = { ...(row?.fields ?? {}) }
   fill(row?.fields ?? {})
   draftReady.value = true
-  await agent.assistant.reload()
+  // 同一份文件拆出的几道题挂在同一段对话上：切过去对话不变，不重读。
+  if (!row?.conversationId || row.conversationId !== talking) await agent.assistant.reload()
+  // 全部发布时这道没发出去：切过来就把缺的格子标出来。
+  if (flagged.value && row && missingOf(row.fields ?? {}).length) {
+    await nextTick()
+    view.value?.check()
+  }
 }
 
 function useTemplate(index: number) {
@@ -214,6 +227,10 @@ const agent = useDraftAgent({
       : null,
   draftsChanged: () => void refreshDrafts(),
   publishedHere: () => (publishedHere.value = true),
+  ordinal: (id) => {
+    const at = stripIds.value.indexOf(id)
+    return at >= 0 && stripIds.value.length > 1 ? at + 1 : undefined
+  },
 })
 const { assistant } = agent
 
@@ -224,9 +241,153 @@ const layer = useAgentPointer({
   marks: draft.marks,
   active: computed(() => assistant.busy.value),
   descriptionEnd: () => view.value?.descriptionEnd() ?? null,
+  passage: draft.passage,
+  holding: draft.holding,
 })
 
 const agentOpen = ref(false)
+const agentDocked = useAgentDock()
+const { mdAndUp } = useDisplay()
+
+// --- 一份文件拆出的几道题 ------------------------------------------------------------
+//
+// 芝士在同一段对话里建的几份新题目草稿排在表单上方（`TaskDraftStrip`），点了切换；末尾的
+// 「全部发布」把齐了的几道一起发出去，缺项的那道标出来、留在原处。
+
+/** 眼前这份表单现在的样子（人改的、芝士写的都算），算「还缺什么」用。 */
+const live = ref<TaskDraftFields>({})
+function onFormChange(fields: TaskDraftFields) {
+  live.value = { ...live.value, ...fields }
+  draft.changed(fields)
+}
+function onFormReady(fields: TaskDraftFields) {
+  live.value = { ...fields }
+  draft.baseline(fields)
+}
+
+/** 这一组里已经发出去的（发布后草稿就没了，这一排还留着它，标「已发布」）。 */
+const publishedInGroup = ref<{ id: number; name: string; conversationId: string }[]>([])
+const flagged = ref(false)
+const stripNote = ref<{ text: string; ok: boolean } | null>(null)
+const publishingAll = ref(false)
+
+const conversationHere = computed(() => {
+  const here = draft.draft.value
+  return here && !here.taskId ? here.conversationId : null
+})
+const group = computed(() =>
+  conversationHere.value ? drafts.value.filter((d) => !d.taskId && d.conversationId === conversationHere.value) : []
+)
+watch(conversationHere, () => {
+  publishedInGroup.value = []
+  flagged.value = false
+  stripNote.value = null
+})
+
+const stripItems = computed<StripItem[]>(() => {
+  const here = draft.id.value
+  const target = agent.writingTarget.value
+  const done = new Set(publishedInGroup.value.map((d) => d.id))
+  const rows: StripItem[] = group.value
+    .filter((d) => !done.has(d.id))
+    .map((d) => ({
+      id: d.id,
+      name: d.id === here ? live.value.name ?? d.name : d.name,
+      writing: !!target && target.draft === d.id,
+      missing: (d.id === here ? missingOf(live.value) : d.missing).map(fieldLabel),
+      published: false,
+    }))
+  for (const done of publishedInGroup.value)
+    if (done.conversationId === conversationHere.value)
+      rows.push({ id: done.id, name: done.name, writing: false, missing: [], published: true })
+  rows.sort((a, b) => (a.id ?? 0) - (b.id ?? 0))
+  // 芝士正在建的那份：服务端还没给 id，先占一格。
+  if (target && target.draft === null && conversationHere.value)
+    rows.push({ id: null, name: target.name, writing: true, missing: [], published: false })
+  return rows
+})
+const stripIds = computed(() => stripItems.value.map((item) => item.id).filter((id): id is number => id !== null))
+
+const strip = computed(() =>
+  stripItems.value.length > 1
+    ? {
+        items: stripItems.value,
+        source: draft.draft.value?.source || group.value.find((d) => d.source)?.source || '',
+        flagged: flagged.value,
+        publishing: publishingAll.value,
+        note: stripNote.value,
+      }
+    : null
+)
+
+async function removeDraft(id: number) {
+  try {
+    await TaskDraftsApi.remove(id)
+  } catch (error) {
+    void errorHandler.handle(error as Error, { defaultMessage: t('spaces.detail.publishTask.strip.removeFailed') })
+    return
+  }
+  const next = stripIds.value.find((other) => other !== id && !publishedInGroup.value.some((d) => d.id === other))
+  await refreshDrafts()
+  if (id !== draft.id.value) return
+  draft.gone()
+  if (next !== undefined) openOther(next)
+  else newDraft()
+}
+
+/** 全部发布：每道各自看齐没齐，齐的发出去，缺项的标出来、留在原处。 */
+async function publishAll() {
+  if (publishingAll.value || publishing.value) return
+  if (uploads.uploading.value) {
+    toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
+    return
+  }
+  flagged.value = true
+  publishingAll.value = true
+  stripNote.value = null
+  const items = stripItems.value.filter((item) => item.id !== null && !item.published)
+  const sentences: string[] = []
+  let sent = 0
+  try {
+    await draft.flush()
+    for (const item of items) {
+      const name = item.name || t('spaces.detail.publishTask.strip.untitled')
+      if (item.missing.length) {
+        sentences.push(
+          t('spaces.detail.publishTask.strip.lacks', {
+            name,
+            fields: item.missing.join(t('spaces.detail.publishTask.strip.joiner')),
+          })
+        )
+        continue
+      }
+      try {
+        await TaskDraftsApi.publish(item.id as number)
+        sent += 1
+        publishedInGroup.value = [
+          ...publishedInGroup.value,
+          { id: item.id as number, name, conversationId: conversationHere.value ?? '' },
+        ]
+        if (item.id === draft.id.value) draft.gone()
+      } catch {
+        sentences.push(t('spaces.detail.publishTask.strip.failed', { name }))
+      }
+    }
+  } finally {
+    publishingAll.value = false
+    await refreshDrafts()
+  }
+  if (!sentences.length) {
+    toast.success(t('spaces.detail.publishTask.strip.publishedSome', { n: sent }))
+    await router.replace(publishDoneRoute(spaceId.value))
+    return
+  }
+  if (sent) sentences.unshift(t('spaces.detail.publishTask.strip.publishedSome', { n: sent }))
+  stripNote.value = { text: sentences.join(t('spaces.detail.publishTask.strip.separator')), ok: false }
+  const left = stripItems.value.find((item) => item.id !== null && !item.published)
+  if (draft.published.value && left?.id) openOther(left.id)
+  else view.value?.check()
+}
 
 // --- 发布 --------------------------------------------------------------------------
 
@@ -317,6 +478,7 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     v-model:teaching="teaching"
     v-model:teaching-own="teachingOwn"
     v-model:agent-open="agentOpen"
+    v-model:agent-docked="agentDocked"
     :ready="ready"
     :list-to="listTo"
     :form-key="formKey"
@@ -342,16 +504,20 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :pointer="pointer"
     :outline="outline"
     :marks="marks"
+    :selection="layer.selection.value"
+    :strip="strip"
     :agent-name="t('work.agentAvatar.defaultName')"
     @cancel="router.push(listTo)"
     @use-template="useTemplate"
     @add-attachments="uploads.add"
     @remove-attachment="uploads.remove"
     @submit="publish"
-    @change="draft.changed"
-    @form-ready="draft.baseline"
+    @change="onFormChange"
+    @form-ready="onFormReady"
     @open-draft="openOther"
     @new-draft="newDraft"
+    @remove-draft="removeDraft"
+    @publish-all="publishAll"
     @undo="agent.undoMark"
   >
     <template #agent>
@@ -381,12 +547,12 @@ const ready = computed(() => spaceReady.value && draftReady.value)
         :placeholder="t('tasks.assistant.draft.placeholder')"
         :hint="t('tasks.assistant.draft.hint')"
         can-attach
-        :closable="agentOpen"
+        closable
         @send="agent.ask"
         @stop="assistant.stop().catch(() => undefined)"
         @new="assistant.startNew"
         @select="assistant.select"
-        @close="agentOpen = false"
+        @close="mdAndUp ? (agentDocked = false) : (agentOpen = false)"
         @undo="agent.undo"
         @undo-all="agent.undoAll"
         @jump="layer.jump"

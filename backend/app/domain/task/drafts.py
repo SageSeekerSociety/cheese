@@ -118,6 +118,9 @@ class Space:
     categories: dict[str, int]
     tags: dict[str, int]
     zone: tzinfo
+    #: The space's 题目 templates (``Space.task_templates``): a name, what it is
+    #: for, and the form it fills in.
+    templates: tuple[dict, ...] = ()
 
 
 @dataclass
@@ -163,6 +166,11 @@ async def terms(spaces: SpaceReads, space_id: int, zone_name: str | None) -> Spa
         categories={c.name: c.id for c in categories},
         tags={t.name: t.id for t in tags},
         zone=zone,
+        templates=tuple(
+            t
+            for t in (getattr(space, "task_templates", None) or [])
+            if isinstance(t, dict) and str(t.get("name") or "").strip()
+        ),
     )
 
 
@@ -307,7 +315,7 @@ def from_agent(args: dict, space: Space, current: dict) -> dict:
     """What 芝士 asked to write, as form fields. Refuses, with what to write
     instead, a value the form would not take: a category the space does not
     have, a deadline it cannot read."""
-    out: dict = {}
+    out: dict = _template(args["template"], space) if "template" in args else {}
     if "name" in args:
         name = str(args["name"] or "").strip()
         if not name or len(name) > 100:
@@ -508,6 +516,106 @@ def published_view(task_id: int, name: str, fields: dict, space: Space) -> str:
     )
 
 
+def _template(name, space: Space) -> dict:
+    """The form a space template fills in, as 芝士's 「使用模板」 does on the
+    page: only what the template says; the fields after it in the same write
+    are written over it."""
+    wanted = str(name or "").strip()
+    found = next((t for t in space.templates if t.get("name") == wanted), None)
+    if found is None:
+        raise BadRequestError(
+            say(
+                "draftTemplateChoice",
+                names="、".join(str(t.get("name")) for t in space.templates) or "—",
+            )
+        )
+    out: dict = {}
+    if str(found.get("title") or "").strip():
+        out["name"] = str(found["title"]).strip()[:100]
+    content = found.get("content")
+    text = (
+        doc_markdown(content)
+        if isinstance(content, str) and _is_doc_json(content)
+        else str(content or "")
+    )
+    if text.strip():
+        out["description"] = text
+        out["descriptionMarkdown"] = text
+    for key in (
+        "submitterType",
+        "rank",
+        "minTeamSize",
+        "maxTeamSize",
+        "defaultDeadline",
+        "requireRealName",
+    ):
+        if found.get(key) is not None:
+            out[key] = found[key]
+    return out
+
+
+def doc_markdown(text: str) -> str:
+    """An editor document (TipTap JSON, as a template keeps its description)
+    as Markdown: headings, paragraphs, lists, quotes, code and inline marks."""
+
+    def inline(nodes) -> str:
+        parts = []
+        for node in nodes or []:
+            if node.get("type") == "hardBreak":
+                parts.append("  \n")
+                continue
+            if node.get("type") != "text":
+                parts.append(inline(node.get("content")))
+                continue
+            value = str(node.get("text") or "")
+            for mark in node.get("marks") or []:
+                kind = mark.get("type")
+                if kind == "bold":
+                    value = f"**{value}**"
+                elif kind == "italic":
+                    value = f"*{value}*"
+                elif kind == "code":
+                    value = f"`{value}`"
+            parts.append(value)
+        return "".join(parts)
+
+    def block(node, indent: str = "") -> list[str]:
+        kind = node.get("type")
+        content = node.get("content") or []
+        if kind == "heading":
+            level = int((node.get("attrs") or {}).get("level") or 2)
+            return [f"{'#' * min(max(level, 1), 6)} {inline(content)}"]
+        if kind == "paragraph":
+            return [indent + inline(content)]
+        if kind in ("bulletList", "orderedList", "taskList"):
+            lines = []
+            for n, item in enumerate(content, 1):
+                lead = f"{n}. " if kind == "orderedList" else "- "
+                inner = [
+                    line
+                    for child in item.get("content") or []
+                    for line in block(child, indent + "  ")
+                ]
+                if inner:
+                    lines.append(indent + lead + inner[0].strip())
+                    lines += inner[1:]
+            return lines
+        if kind == "blockquote":
+            return ["> " + line for child in content for line in block(child)]
+        if kind == "codeBlock":
+            return ["```", inline(content), "```"]
+        if kind == "horizontalRule":
+            return ["---"]
+        return [line for child in content for line in block(child, indent)]
+
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return text
+    blocks = ["\n".join(block(node)) for node in doc.get("content") or []]
+    return "\n\n".join(b for b in blocks if b.strip())
+
+
 def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) -> str:
     by_id = {v: k for k, v in space.categories.items()}
     tag_by_id = {v: k for k, v in space.tags.items()}
@@ -555,6 +663,7 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         markdown_of(fields) or "（空）",
         f"这个空间可选的分类：{_names(space.categories)}",
         f"这个空间可选的标签：{_names(space.tags)}",
+        f"这个空间的模板：{_templates(space)}",
         close_tag,
     ]
     return "\n".join(lines)
@@ -562,6 +671,20 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
 
 #: The most names of a space's categories or tags said with a draft.
 CHOICES_SAID = 80
+
+
+def _templates(space: Space) -> str:
+    if not space.templates:
+        return "（无）"
+    return "；".join(
+        str(t.get("name"))
+        + (
+            f"（{str(t.get('description')).strip()}）"
+            if str(t.get("description") or "").strip()
+            else ""
+        )
+        for t in space.templates[:CHOICES_SAID]
+    )
 
 
 def _names(choices: dict[str, int]) -> str:
