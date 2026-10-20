@@ -2800,8 +2800,9 @@ def seed_task_with_protocol(
     space admin and a filled form, and none of that is what the protocol tests
     are about. `override` populates the 赛题's own `protocol_override` (#370
     option (c)). `shell` and `override` carry the 壳 layer the same way, so a
-    项目集-level 壳 and a 赛题-level one are set up in one call. `teaching` is
-    the 课程级教学配置 (#8d772257), on the same row and by the same route.
+    项目集-level 壳 and a 赛题-level one are set up in one call. `teaching` lands
+    on the 项目集 row, which guidance no longer reads (e5f1a9c3d7b2): tests use
+    it only to show that; a 题目's own guidance goes in `override["teaching"]`.
     `space_teaching` is the OUTERMOST level of the same key (#944): the 空间
     default every 项目集 on the board inherits — set on the `Space` row this call
     creates, so it only applies when `space_id` is not passed.

@@ -6,7 +6,7 @@
 //    的草稿，表单就是它存的样子。
 // 2. **必填空着点发布**：一个请求都不发，页头说还有几项；填好了先把校验过的表单存进草稿，
 //    再发布草稿，发完落到「我发布的」。
-// 3. **AI 指导**：沿用空间默认时不单独带它；为本题单独设置才带上整份。
+// 3. **AI 队友辅导**：本题什么都没写时不带它，空间那一份照常生效；写了就带上整份。
 // 4. **模板**：选一份，表单按它填好。
 //
 // i18n 装真的那一份并锁到 zh-CN；tiptap 换成壳 —— 它跟这一页要量的事无关。
@@ -230,11 +230,10 @@ async function fillRequired(view: ReturnType<typeof render>, name = '用 gdb 定
   await fillSettings(view)
 }
 
-/** 点开「更多设置」，选「为本题单独设置」AI 指导。 */
+/** 点开「更多设置」，露出 AI 队友辅导那几格。 */
 async function ownTeaching(view: ReturnType<typeof render>) {
   await fireEvent.click(view.getByTestId('task-form-more'))
-  await check(await view.findByRole('radio', { name: '为本题单独设置' }))
-  await view.findByLabelText('对 AI 的要求')
+  await view.findByLabelText('本题补充要求')
 }
 
 /** 点一个原生单选框。走原生 click：`fireEvent.click` 派发的合成事件不翻 `checked`。 */
@@ -402,21 +401,24 @@ describe('发题页：发一道', () => {
     expect(view.router.currentRoute.value.query.filter).toBe('publishing')
   })
 
-  it('为本题单独写了 AI 指导：整份带上', async () => {
+  it('本题写了补充要求、选了方式：整份带上', async () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)
     await ownTeaching(view)
-    await fireEvent.update(view.getByLabelText('对 AI 的要求'), '不要直接给出答案。')
+    await fireEvent.click(view.getByRole('radio', { name: /先明确需求再实现/ }))
+    await fireEvent.update(view.getByLabelText('本题补充要求'), '不要直接给出答案。')
 
     await publish(view)
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
-    expect((sent() as { teaching?: { systemPrompt?: string } }).teaching?.systemPrompt).toBe('不要直接给出答案。')
+    const teaching = (sent() as { teaching?: { systemPrompt?: string; mode?: string } }).teaching
+    expect(teaching?.systemPrompt).toBe('不要直接给出答案。')
+    expect(teaching?.mode).toBe('spec')
     expect(sent().teachingOwn).toBe(true)
   })
 
-  it('选了「为本题单独设置」却一格没填：当作沿用默认，不带这一项', async () => {
+  it('打开了却一格没填：沿用空间设置，不带这一项', async () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)

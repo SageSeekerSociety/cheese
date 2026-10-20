@@ -25,8 +25,8 @@
     "summaryDomains": "Only {names}",
     "summaryNoRealName": "No real name",
     "summaryRealName": "Real name required",
-    "summaryTeachingDefault": "Space AI guidance",
-    "summaryTeachingOwn": "Own AI guidance",
+    "summaryTeachingDefault": "AI teammates follow the space's guidance",
+    "summaryTeachingOwn": "This task adds AI teammate guidance",
     "title": "More settings"
   },
   "name": "Name",

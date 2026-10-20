@@ -1,6 +1,7 @@
 {
   "contributorNotInProject": "Only project members can be added as collaborators",
   "draftAccessChoice": "The e-mail domain groups {unknown} are not in this space; it has: {names}",
+  "draftAiModeChoice": "The way of helping must be one of: guide with questions, explain with examples, goal first, no limits, or the space’s",
   "draftCategoryChoice": "The category must be one this space has: {names}",
   "draftTemplateChoice": "The template must be one this space has: {names}",
   "draftDeadlineFormat": "Write the deadline as YYYY-MM-DD HH:MM, for example 2026-11-08 23:59",

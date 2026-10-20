@@ -540,6 +540,7 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :marks="marks"
     :selection="layer.selection.value"
     :agent-writing="draft.writing.value"
+    :space-teaching="spaceStore.currentSpace?.teaching ?? null"
     :strip="strip"
     :agent-name="t('work.agentAvatar.defaultName')"
     @cancel="router.push(listTo)"

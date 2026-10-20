@@ -6,7 +6,7 @@
 块板的管理员」，题目是「管得了这道题的人」（出题人或空间管理员）。
 
 这里钉四件事：写进去读得回来；同一个键的「整份替换 / 省略即不动」；引用校验与空
-间设置里的管理员门；以及题目那一层确实盖过空间默认 —— 后者走真读路
+间设置里的管理员门；以及题目那一层和空间那一层合起来生效 —— 后者走真读路
 （`for_project`）验一次，免得两级各自都对、合起来却不生效。
 
 登录接口按用户名限速，所以每个用户都用 `user_client.create_user()` 现造。
@@ -28,30 +28,22 @@ from tests.integration.conftest import (
     unique_int,
 )
 
-SPACE_WEEK = {
-    "systemPrompt": "空间默认：第 {current_week} 周",
-    "currentWeek": 1,
-    "allowedTopics": ["空间话题"],
-}
+SPACE_GUIDE = {"mode": "guide", "systemPrompt": "空间的要求"}
 
-#: All six fields set, in the request's spelling — what the settings form sends.
+#: All four fields set, in the request's spelling — what the settings form sends.
 #: No 课件 / 知识 ids: naming one needs a real row, and the reference check has
 #: its own tests (`test_teaching_references.py`).
 FULL_TEACHING = {
-    "systemPrompt": "第 {current_week} 周，只做 {allowed_topics}。",
-    "currentWeek": 3,
-    "allowedTopics": ["循环", "数组"],
-    "avoidInCode": ["递归"],
+    "mode": "spec",
+    "systemPrompt": "先写需求说明，再动手。",
     "materialIds": [],
     "documentIds": [],
 }
 
 #: What a level that says nothing reads back as.
 EMPTY_TEACHING = {
+    "mode": None,
     "systemPrompt": None,
-    "currentWeek": None,
-    "allowedTopics": [],
-    "avoidInCode": [],
     "materialIds": [],
     "documentIds": [],
 }
@@ -190,7 +182,7 @@ def test_a_space_patch_that_omits_teaching_leaves_it_alone(
     board = _new_board(user_client, api_client)
     api_client.patch(
         f"/spaces/{board['space_id']}",
-        json={"teaching": SPACE_WEEK},
+        json={"teaching": SPACE_GUIDE},
         headers=_auth(board["token"]),
     )
 
@@ -200,7 +192,7 @@ def test_a_space_patch_that_omits_teaching_leaves_it_alone(
         headers=_auth(board["token"]),
     )
     assert renamed.status_code == 200, renamed.text
-    assert _space_teaching_of(api_client, board)["currentWeek"] == 1
+    assert _space_teaching_of(api_client, board)["mode"] == "guide"
 
 
 def test_an_empty_object_clears_the_space_default(
@@ -209,7 +201,7 @@ def test_an_empty_object_clears_the_space_default(
     board = _new_board(user_client, api_client)
     api_client.patch(
         f"/spaces/{board['space_id']}",
-        json={"teaching": SPACE_WEEK},
+        json={"teaching": SPACE_GUIDE},
         headers=_auth(board["token"]),
     )
 
@@ -219,7 +211,7 @@ def test_an_empty_object_clears_the_space_default(
         headers=_auth(board["token"]),
     )
     assert cleared.status_code == 200, cleared.text
-    # 「清空」在读取侧的意思 = 六格全空，于是下一级（或没有下一级时）说了算。
+    # 「清空」在读取侧的意思 = 每一格都空，这一层不再说话。
     assert _space_teaching_of(api_client, board) == EMPTY_TEACHING
 
 
@@ -232,7 +224,7 @@ def test_a_non_admin_cannot_write_the_space_default(
 
     resp = api_client.patch(
         f"/spaces/{board['space_id']}",
-        json={"teaching": SPACE_WEEK},
+        json={"teaching": SPACE_GUIDE},
         headers=_auth(outsider_token),
     )
     assert resp.status_code == 403, resp.text
@@ -297,39 +289,40 @@ def test_a_stranger_cannot_write_a_task_override(
     outsider_token = user_client.login(api_client, outsider.username, outsider.password)
     resp = api_client.patch(
         f"/tasks/{task['id']}",
-        json={"teaching": {"currentWeek": 9}},
+        json={"teaching": {"mode": "free"}},
         headers=_auth(outsider_token),
     )
     assert resp.status_code == 403, resp.text
 
 
-def test_the_task_override_beats_the_space_default_on_the_real_read_path(
+def test_the_task_and_the_space_are_both_read_on_the_real_read_path(
     api_client: TestClient,
     user_client: UserCreator,
     db_session,
     _portal,
 ):
-    """两级都写了，芝士开新会话时读到题目的那份 —— 读的是 `for_project`，不是把
-    两个响应摆在一起比。"""
+    """两级都写了，芝士开新会话时两份都读到，题目选的方式生效 —— 读的是
+    `for_project`，不是把两个响应摆在一起比。"""
     board = _new_board(user_client, api_client)
     api_client.patch(
         f"/spaces/{board['space_id']}",
-        json={"teaching": SPACE_WEEK},
+        json={"teaching": SPACE_GUIDE},
         headers=_auth(board["token"]),
     )
     task = _publish_task(
         api_client,
         board,
-        name="覆盖空间默认的题",
-        teaching={"systemPrompt": "题目的", "currentWeek": 3},
+        name="加了自己要求的题",
+        teaching={"mode": "example", "systemPrompt": "题目的"},
     )
     project_id = _project_under(api_client, user_client, board, task_id=task["id"])
 
     context = _for_project(_portal, db_session, project_id)
 
     assert context is not None
-    assert context.teaching.current_week == 3
+    assert context.teaching.mode == "example"
     assert context.teaching.system_prompt == "题目的"
+    assert context.teaching.space_prompt == "空间的要求"
 
 
 def test_a_later_edit_reaches_an_existing_project_on_its_next_read(
@@ -351,23 +344,23 @@ def test_a_later_edit_reaches_an_existing_project_on_its_next_read(
     board = _new_board(user_client, api_client)
     api_client.patch(
         f"/spaces/{board['space_id']}",
-        json={"teaching": SPACE_WEEK},
+        json={"teaching": SPACE_GUIDE},
         headers=_auth(board["token"]),
     )
-    task = _publish_task(api_client, board, name="改天换周次的题")
+    task = _publish_task(api_client, board, name="改天换方式的题")
     project_id = _project_under(api_client, user_client, board, task_id=task["id"])
 
     before = _for_project(_portal, db_session, project_id)
     assert before is not None
-    assert before.teaching.current_week == 1
+    assert before.teaching.mode == "guide"
 
     changed = api_client.patch(
         f"/spaces/{board['space_id']}",
-        json={"teaching": {**SPACE_WEEK, "currentWeek": 4}},
+        json={"teaching": {**SPACE_GUIDE, "mode": "spec"}},
         headers=_auth(board["token"]),
     )
     assert changed.status_code == 200, changed.text
 
     after = _for_project(_portal, db_session, project_id)
     assert after is not None
-    assert after.teaching.current_week == 4
+    assert after.teaching.mode == "spec"

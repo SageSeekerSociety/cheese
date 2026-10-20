@@ -11,6 +11,7 @@
   "intro": "Everyone in this space can see these. Anything marked “admins only” is hidden from members and from their AI teammates.",
   "pickFile": "Choose a file",
   "remove": "Remove",
+  "title": "Library",
   "toast": {
     "downloadFailed": "Download failed",
     "loadFailed": "Could not load the library",

@@ -46,6 +46,7 @@ async function mount(userId: number) {
     routes: [
       { path: '/inbox', name: 'inbox', component: Blank },
       { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: Blank },
+      { path: '/spaces/:spaceId/library', name: 'SpacesLibrary', component: Blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: Blank },
       { path: '/spaces/:spaceId/manage/audit', name: 'SpacesDetailAuditTasks', component: Blank },
       { path: '/spaces/:spaceId/manage/members', name: 'SpacesDetailMembers', component: Blank },

@@ -170,12 +170,6 @@ async def patch_space_category(
         description=payload.description,
         display_order=payload.display_order,
         archived=archived,
-        # `model_dump()` (field names, not aliases): what lands in the column is
-        # the shape `Teaching.from_json` reads back, so the write path and the
-        # read path cannot drift into two different spellings of one config.
-        teaching=(
-            payload.teaching.model_dump() if payload.teaching is not None else None
-        ),
     )
     return ok({"category": _category_to_api_model(category)})
 

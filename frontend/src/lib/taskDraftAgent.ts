@@ -5,7 +5,7 @@
 // 停在正在写的那一格。这只是预览：调用真正写进草稿以后，服务端推回来的「改动」才是
 // 定数，页面用它覆盖预览。所以这里只做页面能当场做的换算，拿不准的值（没写完的日期、
 // 空间里没有的分类）先不填，等服务端那一份。
-import type { TaskDraftField, TaskDraftFields, TaskSubmissionEntryType } from '@/types'
+import type { SpaceTeaching, TaskDraftField, TaskDraftFields, TaskSubmissionEntryType, TeachingMode } from '@/types'
 
 import dayjs from 'dayjs'
 
@@ -32,10 +32,11 @@ export const AGENT_FIELDS: Record<string, TaskDraftField[]> = {
   access: ['accessControlEnabled', 'accessDomainGroupIds'],
   real_name: ['requireRealName'],
   ai_guidance: ['teaching', 'teachingOwn'],
+  ai_mode: ['teaching', 'teachingOwn'],
 }
 
 /** 收在「更多设置」里的几格：芝士写到它们时那一块要展开。 */
-export const MORE_FIELDS = ['access', 'real_name', 'ai_guidance']
+export const MORE_FIELDS = ['access', 'real_name', 'ai_guidance', 'ai_mode']
 
 // 芝士写的值，按原文比对（后端 `drafts.FORMS` 等同一份）。
 const FORMS: Record<string, 'USER' | 'TEAM'> = { 个人: 'USER', 团队: 'TEAM' }
@@ -44,6 +45,13 @@ const KINDS: Record<string, TaskSubmissionEntryType> = { 文件: 'FILE', 文字:
 const LOCKING: Record<string, 'NO_LOCK' | 'LOCK_ON_APPROVAL'> = {
   允许变更: 'NO_LOCK',
   报名通过后锁定: 'LOCK_ON_APPROVAL',
+}
+const AI_MODES: Record<string, TeachingMode | null> = {
+  引导为主: 'guide',
+  讲解与示例: 'example',
+  先明确需求再实现: 'spec',
+  不加限制: 'free',
+  沿用空间设置: null,
 }
 
 /** 只认写完整的日期：流到一半的「2026-11-0」先不填。 */
@@ -149,9 +157,13 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
     fields.accessDomainGroupIds = ids
   }
   const guidance = text(given.ai_guidance)
-  if (guidance !== null) {
-    fields.teaching = guidance.trim() ? { systemPrompt: guidance } : {}
-    fields.teachingOwn = !!guidance.trim()
+  const way = text(given.ai_mode)
+  if (guidance !== null || (way !== null && way in AI_MODES)) {
+    const teaching: SpaceTeaching = {}
+    if (guidance !== null) teaching.systemPrompt = guidance.trim() ? guidance : null
+    if (way !== null && way in AI_MODES) teaching.mode = AI_MODES[way]
+    fields.teaching = teaching
+    fields.teachingOwn = !!(teaching.mode || teaching.systemPrompt?.trim())
   }
   const category = text(given.category)
   const found = category ? terms.categories.find((c) => c.name === category) : undefined

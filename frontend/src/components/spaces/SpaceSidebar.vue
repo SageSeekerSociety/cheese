@@ -15,6 +15,13 @@
         :to="{ name: 'SpacesAnnouncements', params: { spaceId } }"
         :title="t('spaces.sidebar.announcements')"
       />
+      <v-list-item
+        rounded="lg"
+        prepend-icon="mdi-bookshelf"
+        :to="{ name: 'SpacesLibrary', params: { spaceId } }"
+        :title="t('spaces.materials.title')"
+        data-testid="space-side-library"
+      />
 
       <v-list-subheader>{{ t('spaces.sidebar.tasks') }}</v-list-subheader>
       <v-list-item

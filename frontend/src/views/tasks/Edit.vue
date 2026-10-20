@@ -90,6 +90,12 @@ const mentorChoices = computed(() =>
 const teaching = ref<SpaceTeaching>({})
 const teachingOwn = ref(false)
 
+/** 题目和空间的辅导设置同时生效：这道题写了什么，就算「本题有自己的」。 */
+function setTeaching(value: SpaceTeaching) {
+  teaching.value = value
+  teachingOwn.value = !isTeachingBlank(value)
+}
+
 // --- 修改草稿 ------------------------------------------------------------------------
 
 const draft = useTaskDraft({ spaceId: () => spaceId.value })
@@ -385,17 +391,15 @@ const panelEvents = {
         <div data-agent-field="ai_guidance">
           <p class="te__label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
           <p class="te__hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
-          <v-radio-group v-model="teachingOwn" hide-details density="compact" class="te__choices">
-            <v-radio :value="false" :label="t('spaces.detail.publishTask.teaching.inherit')" />
-            <v-radio :value="true" :label="t('spaces.detail.publishTask.teaching.own')" />
-          </v-radio-group>
           <TeachingFields
-            v-if="teachingOwn"
-            v-model="teaching"
+            :model-value="teaching"
             class="te__teaching"
+            inherit
+            :space-teaching="spaceStore.currentSpace?.teaching ?? null"
             :materials="materials"
             :materials-state="materialsState"
             :library-to="spaceLibraryPath(spaceId)"
+            @update:model-value="setTeaching"
           />
         </div>
       </template>
@@ -477,13 +481,6 @@ const panelEvents = {
 
 .te__hint {
   margin: 4px 0 8px;
-}
-
-.te__choices :deep(.v-label) {
-  color: var(--text);
-  font-size: 14px;
-  line-height: var(--lh-14);
-  opacity: 1;
 }
 
 .te__teaching {

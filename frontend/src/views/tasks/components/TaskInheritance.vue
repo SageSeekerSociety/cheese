@@ -2,10 +2,8 @@
 // 「领这道题 / 从这道题建项目，会继承到什么」 (#944)。只吃 props —— 取数在
 // `composables/useTaskInheritance.ts`，三处入口共用这一块渲染。
 //
-// 三样东西，缺一不可：资源包（吃到多少算力）、合成后的「给 AI 队友的指导」
-// （**连它来自哪一层一起说**，空间 / 项目集 / 题目 / 项目）、以及会被带上的资料。
-// 层名不是装饰：一份指导说「来自项目集」和「来自这道题」对人是两件事 —— 前者改
-// 一次二十道题都变，后者只有这一道。
+// 三样东西，缺一不可：资源包（吃到多少算力）、合成后的「AI 队友辅导」
+// （**连它来自哪里一起说**：空间、这道题、两者都有，或项目）、以及会被带上的资料。
 //
 // 合成在服务端由 `protocol.resolve()` 那一个循环算出来（`teaching.source` 也是
 // 它带出来的），这一块只把它摆出来，不重算、不猜。
@@ -24,8 +22,8 @@ const { t } = useI18n()
 // 层名 → 文案键。一张表而不是拼字符串：拼出来的键在换语言或改键名时会静默落空。
 const SOURCE_KEYS: Record<TaskInheritanceSource, string> = {
   space: 'tasks.inheritance.from.space',
-  category: 'tasks.inheritance.from.category',
   task: 'tasks.inheritance.from.task',
+  both: 'tasks.inheritance.from.both',
   project: 'tasks.inheritance.from.project',
 }
 
@@ -41,16 +39,10 @@ const sourceLabel = computed(() => {
   return source ? t(SOURCE_KEYS[source]) : null
 })
 
-/** 指导里有没有一句话可说 —— 四层都没说时连标题都不摆。 */
+/** 辅导里有没有一句话可说 —— 都没说时连标题都不摆。 */
 const hasTeaching = computed(() => {
   const g = teaching.value
-  if (!g) return false
-  return (
-    !!g.systemPrompt ||
-    (g.currentWeek !== null && g.currentWeek !== undefined) ||
-    !!g.allowedTopics?.length ||
-    !!g.avoidInCode?.length
-  )
+  return !!g && (!!g.mode || !!g.systemPrompt || !!g.spacePrompt)
 })
 
 const materials = computed(() => props.inheritance?.materials ?? [])
@@ -85,21 +77,14 @@ const materials = computed(() => props.inheritance?.materials ?? [])
       </div>
 
       <div v-if="hasTeaching" class="inheritance__body">
-        <p v-if="teaching?.systemPrompt" class="inheritance__prompt">{{ teaching.systemPrompt }}</p>
-        <p v-if="teaching?.currentWeek !== null && teaching?.currentWeek !== undefined">
-          {{ t('tasks.inheritance.week', { n: teaching.currentWeek }) }}
-        </p>
-        <div v-if="teaching?.allowedTopics?.length" class="inheritance__list">
-          <span class="inheritance__sublabel">{{ t('tasks.inheritance.topics') }}</span>
-          <ul>
-            <li v-for="topic in teaching.allowedTopics" :key="topic">{{ topic }}</li>
-          </ul>
+        <p v-if="teaching?.mode">{{ t(`spaces.teaching.mode.${teaching.mode}`) }}</p>
+        <div v-if="teaching?.spacePrompt" class="inheritance__list">
+          <span class="inheritance__sublabel">{{ t('tasks.inheritance.spacePrompt') }}</span>
+          <p class="inheritance__prompt" data-user-content>{{ teaching.spacePrompt }}</p>
         </div>
-        <div v-if="teaching?.avoidInCode?.length" class="inheritance__list">
-          <span class="inheritance__sublabel">{{ t('tasks.inheritance.avoid') }}</span>
-          <ul>
-            <li v-for="item in teaching.avoidInCode" :key="item">{{ item }}</li>
-          </ul>
+        <div v-if="teaching?.systemPrompt" class="inheritance__list">
+          <span v-if="teaching.spacePrompt" class="inheritance__sublabel">{{ t('tasks.inheritance.taskPrompt') }}</span>
+          <p class="inheritance__prompt" data-user-content>{{ teaching.systemPrompt }}</p>
         </div>
       </div>
 
