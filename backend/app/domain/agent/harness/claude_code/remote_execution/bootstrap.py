@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -76,6 +77,74 @@ SANDBOX_UNAVAILABLE_EXIT = 78
 class UpgradeDeferred(Exception):
     def __init__(self, info):
         self.info = info
+
+
+# A write refused for want of space: the disk's, or on a platform host the
+# room's own quota (`sandbox_host.py`), which XFS also answers ENOSPC.
+FULL = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
+
+
+def free_mb(path):
+    """What is left at `path`, in MB: by its own quota where it has one, as
+    a `statvfs` of a directory in an XFS project answers."""
+    if hasattr(os, "statvfs"):
+        found = os.statvfs(path)
+        return found.f_bavail * found.f_frsize // 10**6
+    return shutil.disk_usage(path).free // 10**6
+
+
+def spared(disk, home, write):
+    """Run `write`, which the executor can do without (skills, the preview
+    token, the environment's config). Refused for want of space, it is
+    skipped and what is left noted in `disk`, which the room is told
+    (`session_work`): a room that filled its disk still gets its executor,
+    and its agent the chance to make room."""
+    try:
+        write()
+    except OSError as error:
+        if error.errno not in FULL:
+            raise
+        disk["disk_full_mb"] = free_mb(home)
+        print(f"skipped for want of space: {error}", file=sys.stderr)
+
+
+def kept_on_full_disk(owner, home, payload, anchors, error):
+    """No room to stage this payload's release: keep the running executor, as
+    a busy one is kept (`UpgradeDeferred`), when it speaks this payload's
+    protocol. Its release is read from the record made outside the room
+    (`record_sandbox`), never from the config a sandboxed room writes, and
+    must be one of the store's. Raises `error` when there is none to keep."""
+    marker = execution_root(owner) / SANDBOXES / home.parent.name / home.name
+    previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
+    try:
+        named = marker.read_text() if marker.exists() else previous["release"]
+    except (OSError, TypeError, KeyError):
+        raise error from None
+    release = Path(named.strip())
+    if release.parent != release_store(owner) or not release.is_dir():
+        raise error
+    state = executor_state(home, anchors, bool(payload.get("sandbox")))
+    runtime = runpy.run_path(str(release / "remote-execution/runtime.py"))
+    try:
+        info = runtime["request"](state, "ping")
+    except (ConnectionError, FileNotFoundError):
+        raise error from None
+    if info.get("protocol_version", 1) != payload.get("protocol_version", 1):
+        raise error
+    refreshed = {**previous.get("env", {}), **payload["env"]}
+    runtime["request"](
+        state,
+        "configure",
+        {"env": refreshed, "env_reset": previous.get("env_reset", {})},
+    )
+    info.update(
+        state=str(home / PLATFORM_DIR / "executor"),
+        mcp_servers=process_servers({"mcp_servers": previous.get("mcp_servers", {})}),
+        upgrade_pending=True,
+        desired_release=None,
+        disk_full_mb=free_mb(home),
+    )
+    return info
 
 
 def predecessor(release):
@@ -342,18 +411,23 @@ def stage_release(store, platform_dir, payload):
     if not release.exists():
         staged = store / (digest + "." + uuid.uuid4().hex)
         staged.mkdir(mode=0o700)
-        for name, data in contents.items():
-            relative = Path(name)
-            if relative.is_absolute() or ".." in relative.parts:
-                raise ValueError("Executor file must be inside its release")
-            path = staged / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
-            path.chmod(0o700)
-            shim = windows_shim(name, data) if sys.platform == "win32" else None
-            if shim:
-                path.with_name(path.name + ".cmd").write_text(shim)
-        (staged / "executor-files.json").write_text(json.dumps(list(contents)))
+        try:
+            for name, data in contents.items():
+                relative = Path(name)
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("Executor file must be inside its release")
+                path = staged / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                path.chmod(0o700)
+                shim = windows_shim(name, data) if sys.platform == "win32" else None
+                if shim:
+                    path.with_name(path.name + ".cmd").write_text(shim)
+            (staged / "executor-files.json").write_text(json.dumps(list(contents)))
+        except BaseException:
+            # Half a release, on a disk with no room for the whole.
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
         try:
             staged.rename(release)
         except OSError:
@@ -384,6 +458,11 @@ def activate_release(platform_dir, release, names):
         directory = beneath(platform_dir, relative.parent, create=True)
         temporary = relative.name + ".next"
         try:
+            # Already there: a prepare that changes nothing writes nothing,
+            # and so still goes through in a room whose disk is full.
+            with contextlib.suppress(OSError):
+                if os.readlink(relative.name, dir_fd=directory) == str(release / name):
+                    continue
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(temporary, dir_fd=directory)
             os.symlink(release / name, temporary, dir_fd=directory)
@@ -935,12 +1014,25 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         # would otherwise be renaming the same `.next` file.
         platform = payload.get("platform_skills") or []
         project = payload.get("project_skills") or []
-        prune_platform_skills(
-            home, platform, project, payload.get("skills_before_list") or []
-        )
-        prune_project_skills(home, project, platform)
-        plant_native_skills(home, payload.get("skills") or {})
-        release, contents = stage_release(release_store(owner), platform_dir, payload)
+        disk = {}
+
+        def skills():
+            before = payload.get("skills_before_list") or []
+            prune_platform_skills(home, platform, project, before)
+            prune_project_skills(home, project, platform)
+            plant_native_skills(home, payload.get("skills") or {})
+
+        spared(disk, home, skills)
+        try:
+            release, contents = stage_release(
+                release_store(owner), platform_dir, payload
+            )
+        except OSError as error:
+            if error.errno not in FULL or not refresh_runtime:
+                raise
+            raise UpgradeDeferred(
+                kept_on_full_disk(owner, home, payload, anchors, error)
+            ) from None
         stop_previous_root(home, release)
         # Where this room's package downloads come from, as a variable set for
         # the mirrors that answer this machine right now (`package_mirrors`).
@@ -1034,9 +1126,8 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
             config["mcp_servers"] = mcp.get("mcpServers", {})
         recorded = platform_dir / "executor"
         state = executor_state(home, anchors, bool(payload.get("sandbox")))
-        write_beneath(
-            home, Path(PLATFORM_DIR) / "cheese-preview.token", env["CHEESE_TOKEN"]
-        )
+        token = Path(PLATFORM_DIR) / "cheese-preview.token"
+        spared(disk, home, lambda: write_beneath(home, token, env["CHEESE_TOKEN"]))
         previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
         if previous is not None:
             # The running executor is reached with the release staged above,
@@ -1112,6 +1203,7 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
                             ),
                             upgrade_pending=True,
                             desired_release=str(release),
+                            **disk,
                         )
                         if payload.get("environment"):
                             runner = runpy.run_path(
@@ -1147,12 +1239,10 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
                 **toolchain_options,
             )
         if payload.get("environment"):
-            write_beneath(
-                home,
-                Path(".cheese-environment/config.json"),
-                json.dumps(payload["environment"]),
-            )
-        yield home, config, state, env
+            settings = json.dumps(payload["environment"])
+            where = Path(".cheese-environment/config.json")
+            spared(disk, home, lambda: write_beneath(home, where, settings))
+        yield home, config, state, env, disk
 
 
 def configure(payload):
@@ -1178,6 +1268,7 @@ def configure_idle(payload):
         config,
         state,
         env,
+        disk,
     ):
         platform_dir = home / PLATFORM_DIR
         # Where the backend and the sandbox find the state; `state` is the
@@ -1213,6 +1304,7 @@ def configure_idle(payload):
                             **info,
                             "mcp_servers": process_servers(config),
                             "state": str(recorded),
+                            **disk,
                         }
                     )
                 )
@@ -1315,6 +1407,7 @@ def configure_idle(payload):
                     "workspace": str(work),
                     "mcp_servers": process_servers(config),
                     "state": str(recorded),
+                    **disk,
                 }
             )
         )

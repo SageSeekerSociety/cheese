@@ -54,6 +54,7 @@ from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
     DISK_FULL,
+    DISK_FULL_NOTICE,
     EXECUTOR_SETUP_FAILED,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
@@ -1250,6 +1251,7 @@ async def _install(
             author=actor_handle,
             work_resource=work_resource,
         )
+        disk_full_mb = None
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
                 info = await _start_executor(
@@ -1281,6 +1283,7 @@ async def _install(
                 }
                 target.pop("claim")
                 target.pop("claim_until")
+                disk_full_mb = info.get("disk_full_mb")
                 if setup.get("CHEESE_ENVIRONMENT"):
                     status = await environment_status(
                         hub, device_id, project_id, uuid.UUID(work_resource)
@@ -1417,10 +1420,13 @@ async def _install(
             return _Preparing(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
             )
+        notices = [SANDBOX_LOST] * bool(lost)
+        if disk_full_mb is not None:
+            notices.append(DISK_FULL_NOTICE.format(mb=disk_full_mb))
         return {
             "target": target,
             "token": execution_token,
-            **({"notice": SANDBOX_LOST} if lost else {}),
+            **({"notice": "\n".join(notices)} if notices else {}),
         }
 
 

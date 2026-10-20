@@ -395,6 +395,7 @@ def prepare(self, payload):
         config,
         _,
         _,
+        disk,
     ):
         # The two keys a configure replaces, and so the two the running
         # room is allowed to differ in: everything else has to match.
@@ -409,6 +410,7 @@ def prepare(self, payload):
             **self.dispatch("configure", configure),
             "mcp_servers": bootstrap["process_servers"](config),
             "context_tree": self.context_fs({"operation": "tree"}),
+            **disk,
         }
         if payload.get("environment"):
             runner = runpy.run_path(str(self.programs / "cheese-environment.py"))

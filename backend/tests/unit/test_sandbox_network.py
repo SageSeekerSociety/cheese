@@ -95,19 +95,31 @@ class Room:
         self.project, self.resource = uuid.uuid4(), uuid.uuid4()
         self.home = owner / ".cheese/home" / str(self.project) / str(self.resource)
         self.state = self.home / ".cheese/executor"
-        payload = payload_for(
-            self.project,
-            self.resource,
-            {"CHEESE_API": api, "CHEESE_TOKEN": "test", **(env or {})},
-            sandbox=True,
-            platform_machine=True,
-        )
+        self.env = {"CHEESE_API": api, "CHEESE_TOKEN": "test", **(env or {})}
+        self.capsys = capsys
+        payload = self.payload()
         try:
             bootstrap.configure(payload)
         except RuntimeError:
             log = self.home / ".cheese/executor-bootstrap.log"
             pytest.fail(log.read_text() if log.exists() else "no executor log")
         self.release = Path(json.loads(capsys.readouterr().out)["release"])
+
+    def payload(self) -> dict:
+        """What the backend sends to install or prepare this room."""
+        return payload_for(
+            self.project,
+            self.resource,
+            self.env,
+            sandbox=True,
+            platform_machine=True,
+        )
+
+    def install_again(self, payload: dict | None = None) -> dict:
+        """The install, run again as the next tool call runs it: what it said."""
+        self.capsys.readouterr()
+        bootstrap.configure(payload or self.payload())
+        return json.loads(self.capsys.readouterr().out.strip().splitlines()[-1])
 
     def bash(self, command: str) -> dict:
         answer = runtime.request(
@@ -363,6 +375,75 @@ def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
     assert "No space left on device" in result["stdout"] + result["stderr"]
     assert "exit=1" in result["stdout"]
     assert runtime.request(room.state, "ping")
+
+
+def fill(room: "Room") -> None:
+    """The room's disk, 953 MiB here, filled to the last block."""
+    room.bash("fallocate -l 900M most; head -c 100M /dev/zero > big")
+
+
+@with_sandbox_host
+def test_a_room_whose_disk_is_full_is_prepared_again_and_told_so(
+    rooms, machine_service, small_disk
+):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    fill(room)
+    # The next lease's token, which the preview token in the home is
+    # rewritten with and the disk has no room for.
+    room.env["CHEESE_TOKEN"] = "test-2"
+
+    installed = room.install_again()
+
+    assert installed["disk_full_mb"] < 64
+    assert room.bash("echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_a_command_that_fails_on_a_full_disk_says_the_disk_is_full(
+    rooms, machine_service, small_disk
+):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    fill(room)
+
+    result = room.bash("echo more >> big")
+
+    assert "disk full:" in result["stdout"] and "MB free" in result["stdout"]
+
+
+@with_sandbox_host
+def test_an_upgrade_with_no_room_for_its_release_keeps_the_running_executor(
+    rooms, machine_service
+):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    store = Path(os.environ["HOME"]) / ".cheese/executor-releases"
+    mount = subprocess.run(
+        ["findmnt", "-n", "-o", "TARGET", "--target", str(store)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    project = str(4_000_000 + os.getpid() % 1000)
+
+    def quota(command: str) -> None:
+        subprocess.run(
+            ["sudo", "-n", "xfs_quota", "-x", "-c", command, mount], check=True
+        )
+
+    newer = room.payload()
+    newer["files"]["remote-execution/newer.txt"] = "bmV3ZXI="
+    if "file_names" in newer:
+        newer["file_names"] = [*newer["file_names"], "remote-execution/newer.txt"]
+    # The release store with no room left for another release.
+    quota(f"project -s -p {store} {project}")
+    quota(f"limit -p bhard=1m {project}")
+    try:
+        answer = room.install_again(newer)
+    finally:
+        quota(f"limit -p bhard=0 {project}")
+
+    assert answer["upgrade_pending"] is True
+    assert answer["release"] == str(room.release)
+    assert room.bash("echo ok")["stdout"].strip() == "ok"
 
 
 @with_sandbox_host
