@@ -26,6 +26,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import wait_for_record
 
 PLAN = [
     {"content": "核实 issue 论断", "status": "completed"},
@@ -114,13 +115,9 @@ def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):
 def _start(client, ws, topic_id: str, *, handle: str = "user-1") -> uuid.UUID:
     """Start a turn on ``topic_id`` and leave it running; return its work_id."""
     post_message(client, topic_id, handle, {"content": "@芝士 做一件事"})
-    while True:
-        frame = ws.receive_json()
-        if (
-            frame["type"] == "event_block"
-            and frame["block"]["content"] == "Internal output"
-        ):
-            break
+    wait_for_record(
+        client, topic_id, lambda record: "Internal output" in str(record), owner=handle
+    )
     live = client.portal.call(
         chat_of(client).live.active_turn_ids.get, uuid.UUID(topic_id)
     )

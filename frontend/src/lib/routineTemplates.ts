@@ -17,7 +17,7 @@ export interface RoutineTemplate {
   goal: string
   /** 有补充说明的就一起铺进去。 */
   note?: string
-  trigger: RoutineTrigger
+  trigger: RoutineTrigger | ''
   /** 时间那几格（`trigger` 是 `schedule` 时才有），或者条件那几条带的 `scope`。 */
   spec: Record<string, unknown>
 }
@@ -27,14 +27,16 @@ export interface RoutineTemplateInput {
   title?: string
   goal: string
   note?: string
-  trigger: RoutineTrigger
+  /** '' 是「还没定什么时候跑」：照它建出来的规则先停着。 */
+  trigger: RoutineTrigger | ''
   spec: Record<string, unknown>
 }
 
 const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const
 
 /** 「每周一 09:00」那样的一句话：这一条什么时候跑。 */
-export function routineWhenText(trigger: RoutineTrigger, spec: Record<string, unknown>): string {
+export function routineWhenText(trigger: RoutineTrigger | '', spec: Record<string, unknown>): string {
+  if (!trigger) return t('routines.form.triggerUnset')
   if (trigger !== 'schedule') return t(`routines.trigger.${trigger}`)
   const freq = String(spec.freq ?? 'daily')
   const time = String(spec.time ?? '09:00')

@@ -24,6 +24,7 @@ from app.domain.block.models import Block
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.main import app
+from tests.support.session_records import assistant_texts, records, wait_for_record
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import (
@@ -110,14 +111,31 @@ def test_a_tool_that_failed_marks_its_step_with_what_it_said(client, stub_hooks)
     assert frames[-1]["type"] == "done", frames[-1]
     _wait_work_idle()
 
-    steps = [
+    kept = records(client, room)
+    calls = [
+        part
+        for item in kept
+        for part in item["record"].get("message", {}).get("content", [])
+        if isinstance(part, dict) and part.get("type") == "tool_use"
+    ]
+    assert [(part["id"], part["name"], part["input"]) for part in calls] == [
+        ("toolu_pandoc", "Bash", {"command": "pandoc a.md"})
+    ]
+    results = [
+        part
+        for item in kept
+        for part in item["record"].get("message", {}).get("content", [])
+        if isinstance(part, dict) and part.get("type") == "tool_result"
+    ]
+    assert len(results) == 1
+    assert results[0]["tool_use_id"] == calls[0]["id"]
+    assert results[0]["is_error"] is True
+    assert results[0]["content"] == "Exit code 127\nbash: pandoc: command not found"
+    assert not [
         block
         for block in _blocks(client, conversation_id=uuid.UUID(room))
-        if (block.meta or {}).get("tool") == "Bash"
+        if (block.meta or {}).get("tool")
     ]
-    assert len(steps) == 1
-    assert steps[0].meta.get("failed") is True
-    assert steps[0].meta.get("error") == "bash: pandoc: command not found"
 
 
 def test_an_input_counts_as_received_only_once_the_session_echoes_it(
@@ -170,10 +188,7 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
     topic = uuid.UUID(room)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 看一下"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and f["block"]["content"] == "在看",
-        )
+        wait_for_record(client, room, lambda record: "在看" in str(record))
         assert receipts == [], "a queue record was taken for the receipt"
 
         stub_hooks.record(
@@ -208,10 +223,7 @@ def test_a_long_command_gets_the_progress_reminder_written_to_the_session(
     topic = uuid.UUID(room)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "make test" in str(record))
         before = len(_written(stub_hooks, room))
         monkeypatch.setattr(settings, "chat_progress_reminder_after_s", 0)
         assert client.portal.call(chat.remind_silent_turns) == 1
@@ -246,10 +258,7 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
     topic = uuid.UUID(room)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "make test" in str(record))
 
         # Use the running session's actual injection path. Hiding that path
         # exercises durable deferral, not a message read inside this work.
@@ -330,12 +339,9 @@ def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
     async def no_live_handoff(*args, **kwargs):
         return None
 
-    with room_socket(client, room, "alice") as ws:
+    with room_socket(client, room, "alice"):
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "make test" in str(record))
         before = len(_written(stub_hooks, room))
         with monkeypatch.context() as hidden:
             hidden.setattr(chat, "merge_into_running_turn", no_live_handoff)
@@ -394,10 +400,7 @@ def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
     room = _room(client)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 编一下"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make build" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "make build" in str(record))
         stub_hooks.alive = False
         frames = _until_done(ws)
     assert frames[-1]["type"] == "error", frames[-1]
@@ -420,10 +423,7 @@ def test_a_message_after_a_dead_runner_gets_a_turn(client, stub_hooks):
     topic = uuid.UUID(room)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 编一下"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make build" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "make build" in str(record))
         stub_hooks.alive = False
         assert _until_done(ws)[-1]["type"] == "error"
 
@@ -504,17 +504,14 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/claude-records-ws",
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=client.test_request_factory),
         )
 
     before = StillWorking()
     app.dependency_overrides[get_chat_service] = lambda: service(before)
-    with room_socket(client, room, "alice") as ws:
+    with room_socket(client, room, "alice"):
         post_message(client, room, "alice", {"content": "@芝士 睡一会"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "sleep 600" in str(record))
     # The old process stops reading, as a replaced backend does. `_detach` takes
     # a seat, not a room, so `_detach(room)` removed nothing and the old reader
     # went on handling the session's records next to the new one.
@@ -535,10 +532,10 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
     after.stops(topic, "睡醒了")
     client.portal.call(settle_turn, replaced, topic)
 
-    said = [block.content for block in _blocks(client, conversation_id=topic)]
-    assert "睡醒了" in said
-    assert (
-        _blocks(client, conversation_id=topic, content="睡醒了")[0].turn_id is not None
+    kept = records(client, room)
+    assert assistant_texts(kept) == ["睡醒了"]
+    assert all(
+        item["turn_id"] for item in kept if item["record"].get("type") == "assistant"
     )
 
 
@@ -560,17 +557,14 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/claude-records-ws",
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=client.test_request_factory),
         )
 
     before = StillWorking()
     app.dependency_overrides[get_chat_service] = lambda: service(before)
-    with room_socket(client, room, "alice") as ws:
+    with room_socket(client, room, "alice"):
         post_message(client, room, "alice", {"content": "@芝士 睡一会"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "sleep 600" in str(record))
     client.portal.call(before.runtime.stop_listening)
 
     after = StubChannel()
@@ -586,7 +580,7 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
 
 
 def test_a_turn_the_next_backend_picks_up_still_answers_its_message(client):
-    topic, _, after = _picked_up_by_a_new_backend(client)
+    topic, room, after = _picked_up_by_a_new_backend(client)
     (asked,) = _blocks(client, conversation_id=topic, author="alice")
 
     after.returns(topic, "Bash", "done", call=after.calls["Bash"])
@@ -594,8 +588,18 @@ def test_a_turn_the_next_backend_picks_up_still_answers_its_message(client):
     after.stops(topic, "睡醒了")
     client.portal.call(settle_turn, app.dependency_overrides[get_chat_service](), topic)
 
-    (answer,) = _blocks(client, conversation_id=topic, content="睡醒了")
-    assert answer.reply_to == asked.id
+    kept = records(client, room)
+    assert assistant_texts(kept) == ["睡醒了"]
+    answers = [item for item in kept if item["record"].get("type") == "assistant"]
+    (asked,) = _blocks(client, conversation_id=topic, author="alice")
+    assert {item["turn_id"] for item in answers} == {asked.meta["consumed_turn"]}
+
+    async def reply_anchor():
+        async with client.test_factory() as session:
+            turn = await session.get(AgentTurn, uuid.UUID(answers[0]["turn_id"]))
+            assert turn.reply_to == asked.id
+
+    client.portal.call(reply_anchor)
 
 
 def test_a_message_joins_the_turn_the_next_backend_picked_up(client):
@@ -666,7 +670,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/claude-records-ws",
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=client.test_request_factory),
         )
 
     before = StillWorking()
@@ -674,10 +678,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     app.dependency_overrides[get_chat_service] = lambda: old
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@Opus 睡一会"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "sleep 600" in str(record))
     (running,) = old.live.hook_work.values()
     assert running.agent_instance_handle == "opus"
     client.portal.call(before.runtime.stop_listening)

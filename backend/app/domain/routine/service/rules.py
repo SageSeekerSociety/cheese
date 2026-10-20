@@ -19,6 +19,8 @@ from sqlalchemy import func, select
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import settle_proposal
+from app.domain.delivery.agent import instance_for_seat
+from app.domain.delivery.timer import deliver_at
 from app.domain.agent_instance.adapters import project_team
 from app.domain.feedback import claims as feedback_claims
 from app.domain.notice_meta import EVENT_ROUTINE_PROPOSED
@@ -60,6 +62,9 @@ def name_of(title: str, instructions: str) -> str:
 
 
 def validate_spec(trigger: str, spec: dict, tz: str) -> dict:
+    # 不选触发方式：存得下去，先不跑（见 create 里 paused 那一段）。
+    if not trigger:
+        return {}
     try:
         kind = RoutineTrigger(trigger)
     except ValueError as exc:
@@ -214,7 +219,7 @@ async def create(
         id=uuid.uuid4(),
         project_id=topic.project_id,
         topic_id=topic.id,
-        title=name_of(title, instructions),
+        title=(title or "").strip()[:200],
         instructions=instructions.strip(),
         note=(note or "").strip(),
         trigger=trigger,
@@ -226,9 +231,69 @@ async def create(
         created_by=by,
     )
     svc._session.add(row)
-    svc._activate(row)
+    if trigger:
+        svc._activate(row)
+    else:
+        # 「两个都不选」：先存着，不排下一次，同时让这个房间的队友照目标挑一个 ——
+        # 空白由它补，规则不会一直停在那儿等人。
+        row.state = RoutineState.paused.value
+        row.next_run_at = None
+        row.event_cursor = now()
     await svc._session.flush()
+    if not by_agent and (not row.title or not trigger):
+        await _ask_the_teammate_to_fill(svc, row, topic.id)
     return row
+
+
+UNSET_PROMPT = """\
+有人建了一条例行事务{title_line}，有几项空着：
+
+{missing}
+- 目标：{instructions}
+{note}
+请照这个目标把它们补上，用 cheese_routine_update(routine="{routine_id}", ...) 写回：
+{asks}
+补完这条规则就按你定的开始跑。定完在频道里说一句你定的是什么。
+"""
+
+
+async def _ask_the_teammate_to_fill(
+    svc: pkg.RoutineService, row: Routine, conversation_id: uuid.UUID
+) -> None:
+    """空白由芝士补：名字、什么时候跑这些空着的项，交给这个房间的队友一轮。
+
+    它补的是这些空项，不是目标 —— 目标永远是写规则那个人说的。
+    """
+    agent = await instance_for_seat(svc._session, row.project_id, row.agent_handle)
+    if agent is None or not agent.is_active:
+        return
+    missing: list[str] = []
+    asks: list[str] = []
+    if not row.title:
+        missing.append("- 名字：还没起")
+        asks.append("title：照目标起一个短名字")
+    if not row.trigger:
+        missing.append("- 什么时候跑：还没定")
+        asks.append("trigger 和 spec：到点跑还是等哪件事发生，并给出对应的时间或范围")
+    if not missing:
+        return
+    note = f"- 补充说明：{row.note}\n" if row.note else ""
+    title_line = f"「{row.title}」" if row.title else ""
+    await deliver_at(
+        svc._session,
+        when=now(),
+        event=UNSET_PROMPT.format(
+            title_line=title_line,
+            missing="\n".join(missing),
+            instructions=row.instructions,
+            note=note,
+            asks="\n".join(asks),
+            routine_id=row.id,
+        ),
+        recipient=row.agent_handle,
+        conversation_id=conversation_id,
+        project_id=row.project_id,
+    )
 
 
 def _activate(svc: pkg.RoutineService, row: Routine) -> None:
@@ -255,12 +320,16 @@ async def resume(svc: pkg.RoutineService, row: Routine) -> Routine:
     """Continue from the next future moment; what was missed is not replayed."""
     if row.state != RoutineState.paused.value:
         raise ValidationError(say("routineResumePausedOnly"))
+    # 没定触发方式的规则没有「下一次」：恢复它只会让它挂着「运行中」却永不响。
+    if not row.trigger:
+        raise ValidationError(say("routineResumeNeedsTrigger"))
     svc._activate(row)
     await svc._session.flush()
     return row
 
 
 async def update(svc: pkg.RoutineService, row: Routine, *, changes: dict) -> Routine:
+    title_was = row.title
     trigger = changes.get("trigger", row.trigger)
     spec = changes.get("spec", row.spec)
     tz = changes.get("timezone", row.timezone)
@@ -271,17 +340,24 @@ async def update(svc: pkg.RoutineService, row: Routine, *, changes: dict) -> Rou
             setattr(row, key, str(changes[key]).strip())
     if not row.instructions:
         raise ValidationError(say("routineInstructionsRequired"))
-    if not row.title:
-        row.title = name_of(row.title, row.instructions)
     if changes.get("agent_handle"):
         row.agent_handle = await svc._agent_for(row.topic_id, changes["agent_handle"])
+    was_unset = not row.trigger
     row.trigger, row.spec, row.timezone = trigger, new_spec, tz
     row.revision += 1
     # An edit takes effect the same way a new rule does: an AI teammate's
-    # edit needs nobody's confirmation either.
-    if row.state == RoutineState.active.value:
+    # edit needs nobody's confirmation either. Taking the trigger away leaves
+    # the rule sitting there (nothing to be due at); giving one to a rule that
+    # never had it starts it from the next moment — that is the moment it was
+    # waiting for.
+    if not trigger:
+        row.state = RoutineState.paused.value
+        row.next_run_at = None
+    elif row.state == RoutineState.active.value or was_unset:
         svc._activate(row)
     await svc._session.flush()
+    if (not trigger and not was_unset) or (not row.title and title_was):
+        await _ask_the_teammate_to_fill(svc, row, row.topic_id)
     return row
 
 
