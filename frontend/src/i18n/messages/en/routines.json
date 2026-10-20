@@ -145,7 +145,8 @@
     "time": "Time",
     "minute": "Minute",
     "day": "Day of month",
-    "timezone": "Time zone"
+    "timezone": "Time zone",
+    "triggerUnset": "Fine to pick neither: it is saved and stays idle until you set one when editing"
   },
   "deleteTitle": "Delete “{title}”",
   "deleteBody": "It stops running and its run history is deleted too; result files already in the channel are kept",

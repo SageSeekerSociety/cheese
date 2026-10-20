@@ -44,7 +44,7 @@ from app.domain.thread.services import answered_in
 
 def run_prompt(routine: Routine, run: RoutineRun) -> str:
     lines = [
-        f"【{TRIGGER_LABELS[RoutineTrigger(routine.trigger)]}工作】{routine.title}",
+        f"【{TRIGGER_LABELS[RoutineTrigger(routine.trigger)] if routine.trigger else '手动'}工作】{routine.title}",
         f"这是例行事务「{routine.title}」的一次执行（执行 id {run.id}）。"
         f"{run.trigger_detail}",
         "",

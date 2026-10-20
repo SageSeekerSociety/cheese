@@ -32,7 +32,8 @@ export interface Routine {
   instructions: string
   /** 补充说明。可以空着 —— 空着就没有这一项，不替谁编一段。 */
   note: string
-  trigger: RoutineTrigger
+  /** '' 是「还没定什么时候跑」：存下来先不跑。 */
+  trigger: RoutineTrigger | ''
   /** The server's text, with the key that renders it in the reader's language. */
   trigger_text: string
   i18n?: { trigger_text?: NoticeMessage }

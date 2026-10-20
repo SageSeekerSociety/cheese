@@ -6,6 +6,8 @@ from app.domain.routine.models import Routine, RoutineTrigger
 
 
 def describe_trigger(routine: Routine) -> NoticeText | str:
+    if not routine.trigger:
+        return say("routineTriggerUnset")
     trigger = RoutineTrigger(routine.trigger)
     if trigger is RoutineTrigger.schedule:
         return schedule.describe(routine.spec, routine.timezone)
