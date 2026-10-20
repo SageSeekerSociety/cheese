@@ -281,6 +281,11 @@ everything is still allowed to answer unknown.
   tests are matched by classname module prefix (pytest writes no `file`
   attribute). Running only the guards never proves a changed module has
   coverage; a change whose modules have no `pure` consumer at all is unknown.
+  Migrations are the exception: `backend/alembic/**` and `backend/alembic.ini`
+  have no static consumer and need a database this tier does not have, so a
+  change there narrows like any other backend edit (the guards still run) and
+  the report records `backend-pure:alembic` as not run — full CI's
+  integration/e2e judges those files.
   Excluded `integration`/`contract` nodes are the tier working as designed —
   recorded not-run and owned by full CI — not a silent gap. Unresolvable
   dynamic imports (`import_module(name)`,
