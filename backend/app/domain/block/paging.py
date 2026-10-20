@@ -22,8 +22,10 @@ from dataclasses import dataclass
 
 from sqlalchemy import (
     Text,
+    and_,
     cast,
     func,
+    not_,
     or_,
     select,
     text,
@@ -50,6 +52,24 @@ class BlockPage:
     has_more: bool
 
 
+#: The session output the removed 现场 writers left in `blocks`: a tool step,
+#: a subagent's conclusion, a line of narration, each a hidden event. Session
+#: output is read from session_records, so no conversation read serves these.
+#: Other hidden events are not session output (an agent notice for an edited
+#: message or a memory change, an unresolved-reference line) and stay readable.
+#: Same rows as `RETIRED_SITE_ROWS` in `scripts/dev/count-retired-site.py`;
+#: every term is non-NULL, so `NOT` is its exact complement.
+SESSION_OUTPUT = and_(
+    Block.kind == BlockKind.event,
+    Block.meta["in_room"].as_string().is_not_distinct_from("false"),
+    or_(
+        Block.meta["tool"].as_string().is_not(None),
+        Block.meta["subagent"].as_string().is_not(None),
+        Block.meta["progress"].as_string().is_not_distinct_from("true"),
+    ),
+)
+
+
 def _narrow(
     stmt,
     *,
@@ -61,13 +81,7 @@ def _narrow(
     to some kinds, to one author, and to what the room shows (`shown=True`) or
     keeps out of it (`False`). `SHOWN_ROWS` goes in as its literal text, so a
     shown read can use `ix_blocks_shown`."""
-    # Private harness activity is read from session_records, never from blocks.
-    stmt = stmt.where(
-        or_(
-            Block.kind != BlockKind.event,
-            Block.meta["in_room"].as_string().is_distinct_from("false"),
-        )
-    )
+    stmt = stmt.where(not_(SESSION_OUTPUT))
     if kinds is not None:
         stmt = stmt.where(Block.kind.in_(list(kinds)))
     if author is not None:

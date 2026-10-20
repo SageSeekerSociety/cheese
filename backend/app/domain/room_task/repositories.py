@@ -584,11 +584,8 @@ class TaskRepository:
     async def last_block_at_for_tasks(
         self, task_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
-        """每条活最后一次说话是什么时候，一次查完 —— 看板的心跳。
-
-        `Task.last_turn_at` 只在一轮**开始**时盖一次，跑起来之后不再刷新，所以它
-        回答不了「这一轮现在还在动吗」。一轮里每一步都会落 block，这才是持续的
-        信号：在这条活自己身上实测，一轮之内 block 间隔中位数 8 秒、p90 34 秒。
+        """每条活最后一次有人或芝士说话是什么时候，一次查完 —— 侧栏按它排「最近
+        有动静」，安静提醒也读它。
 
         每条活单独取一次最大值：PostgreSQL 会把它变成在
         `ix_blocks_conversation_created_at` 上倒着读一行，所以成本跟着活的条数走，跟

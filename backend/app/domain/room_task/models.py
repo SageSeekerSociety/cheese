@@ -29,9 +29,9 @@ class TaskStatus(enum.StrEnum):
     """Whether this piece of work is still going.
 
     Two values, because two is what is actually observable: work is either being
-    done or it is not. Where the work stands while it is open (working, blocked,
-    in review) is its teammate's own report, `TaskProgress`, kept beside this
-    and never folded into it.
+    done or it is not. Where the work stands while it is open is its teammate's
+    own report (working, waiting, blocked), `TaskProgress`, kept beside this and
+    never folded into it; while a card waits on review the card says it (等审).
 
     A task may deliver in several steps: accepting the step its card calls the
     last closes the task, accepting an earlier one leaves it open
