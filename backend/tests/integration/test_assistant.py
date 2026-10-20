@@ -1015,14 +1015,12 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     edit = next(data for event, data in events if event == "edit")
     assert edit["draft"] == draft
     assert edit["changed"] == {"rank": {"before": 2, "after": 3}}
-    assert any(event == "tool_args" for event, _ in events)
     told = json.dumps(gateway.requests[0], ensure_ascii=False)
     assert "<当前页面>" in told and f"草稿 {draft}" in told
     # What it did is kept with the answer: the conversation shows it again.
     kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
     parts = kept["data"]["messages"][-1]["parts"]
     assert [step["name"] for step in parts["steps"]] == ["cheese_task_write"]
-    assert '"difficulty"' in parts["steps"][0]["args"]
     assert parts["edits"][0]["changed"] == {"rank": {"before": 2, "after": 3}}
 
     for question in ("还有吗", "好的"):

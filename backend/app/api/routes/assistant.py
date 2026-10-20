@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.deps import get_consumptions, get_session_host
 from app.api.refusal import refuse
 from app.api.request_deps import AuthUser, DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service
 from app.api.task_deps import _task_attachment_service
 from app.api.write_access import ROUTE_DECIDES
@@ -128,8 +128,20 @@ async def start_task_conversation(
     return ok(_conversation_out(row, 0))
 
 
+class ConversationOut(BaseModel):
+    """A conversation as the panel lists it."""
+
+    id: str
+    title: str
+    lastActiveAt: str
+    questions: int | None = None
+
+
 @router.post(
-    "/drafts/{draftId}/conversations", status_code=201, dependencies=[ROUTE_DECIDES]
+    "/drafts/{draftId}/conversations",
+    status_code=201,
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ConversationOut),
 )
 async def start_draft_conversation(
     draft_id: Annotated[int, Path(ge=1, alias="draftId")], db: DbSession, auth: AuthUser

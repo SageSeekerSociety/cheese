@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_consumptions
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.routes.tasks._common import CreateTaskRequest, PatchTaskRequest
 from app.api.routes.tasks._writes import create_task_from, update_task
 from app.api.space_deps import get_space_service
@@ -59,6 +59,51 @@ from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.user.services import timezones_by_ids
 
 router = APIRouter(prefix="/task-drafts", tags=["Tasks"])
+
+
+class TaskDraftSummaryOut(BaseModel):
+    """A draft as the draft list shows it."""
+
+    id: int
+    spaceId: int
+    #: The published 题目 these are changes to; None for a new one.
+    taskId: int | None
+    taskName: str | None
+    name: str
+    #: The file it came from; empty when it was started by hand.
+    source: str
+    #: The 芝士 conversation working on it.
+    conversationId: str | None
+    version: int
+    updatedAt: str
+
+
+class TaskDraftOut(TaskDraftSummaryOut):
+    """A draft, with its form (the shape ``POST /tasks`` takes)."""
+
+    fields: dict
+
+
+class TaskDraftListOut(BaseModel):
+    drafts: list[TaskDraftSummaryOut]
+
+
+class TaskDraftSavedOut(BaseModel):
+    version: int
+    updatedAt: str
+
+
+class TaskDraftPublishedOut(BaseModel):
+    """What ``POST /tasks`` or ``PATCH /tasks/{id}`` answers, and the draft
+    that is gone now."""
+
+    task: dict
+    draftId: int
+
+
+class TaskDraftGoneOut(BaseModel):
+    """Nothing: the draft is gone."""
+
 
 Spaces = Annotated[SpaceService, Depends(get_space_service)]
 Tasks = Annotated[TaskService, Depends(get_task_service)]
@@ -146,7 +191,7 @@ async def _edit_draft(db, task, user_id: int, conversation_id=None):
 # --- the page's ----------------------------------------------------------------
 
 
-@router.get("")
+@router.get("", **typed_response(TaskDraftListOut))
 async def list_drafts(
     resolver: ActorResolverDep,
     space: Annotated[int, Query(ge=1)],
@@ -169,7 +214,9 @@ class StartIn(BaseModel):
     source: str = ""
 
 
-@router.post("", status_code=201, dependencies=[ROUTE_DECIDES])
+@router.post(
+    "", status_code=201, dependencies=[ROUTE_DECIDES], **typed_response(TaskDraftOut)
+)
 async def start_draft(
     body: StartIn, resolver: ActorResolverDep, db=Depends(get_db)
 ) -> dict:
@@ -196,7 +243,7 @@ async def start_draft(
     return ok(_full(row, names))
 
 
-@router.get("/{draftId:int}")
+@router.get("/{draftId:int}", **typed_response(TaskDraftOut))
 async def read_draft(
     draft_id: Annotated[int, Path(ge=1, alias="draftId")],
     resolver: ActorResolverDep,
@@ -211,7 +258,9 @@ class SaveIn(BaseModel):
     fields: dict
 
 
-@router.patch("/{draftId:int}", dependencies=[ROUTE_DECIDES])
+@router.patch(
+    "/{draftId:int}", dependencies=[ROUTE_DECIDES], **typed_response(TaskDraftSavedOut)
+)
 async def save_draft(
     draft_id: Annotated[int, Path(ge=1, alias="draftId")],
     body: SaveIn,
@@ -226,7 +275,9 @@ async def save_draft(
     return ok({"version": row.version, "updatedAt": row.updated_at.isoformat()})
 
 
-@router.delete("/{draftId:int}", dependencies=[ROUTE_DECIDES])
+@router.delete(
+    "/{draftId:int}", dependencies=[ROUTE_DECIDES], **typed_response(TaskDraftGoneOut)
+)
 async def delete_draft(
     draft_id: Annotated[int, Path(ge=1, alias="draftId")],
     resolver: ActorResolverDep,
@@ -239,7 +290,11 @@ async def delete_draft(
     return ok({})
 
 
-@router.post("/{draftId:int}/publish", dependencies=[ROUTE_DECIDES])
+@router.post(
+    "/{draftId:int}/publish",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TaskDraftPublishedOut),
+)
 async def publish_draft(
     draft_id: Annotated[int, Path(ge=1, alias="draftId")],
     resolver: ActorResolverDep,

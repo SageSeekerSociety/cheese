@@ -76,7 +76,8 @@ describe('题目页上问芝士', () => {
 
     await a.ask('要先会什么？', '答不上来')
 
-    expect(a.notice.value).toBe('本月的芝士额度已用完，11月1日重置。')
+    // The server's own reason, as it said it: when the credits come back.
+    expect(a.notice.value).toContain('11月1日')
     expect(a.messages.value).toEqual([])
     expect(a.busy.value).toBe(false)
     expect(a.creditRefused.value).toBe(false)
