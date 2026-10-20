@@ -21,6 +21,8 @@ from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
 from app.main import app
+from tests.support.session_records import wait_for_record
+from tests.conftest import stub_compute
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
     in_thread,
@@ -28,7 +30,6 @@ from tests.integration.conftest import (
     post_project,
     room_socket,
 )
-from tests.integration.test_claude_session_records import _until
 from tests.integration.test_native_batch_ownership import _blocks
 from tests.support.seat_channel import SeatChannel
 from tests.unit.test_claude_runner import Machine
@@ -71,14 +72,13 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
             return await runner.dispatch(method, params)
 
     def service(channel):
-        from app.domain.agent.compute import ComputePool
 
         return ChatService(
             work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(machine.workspace),
-            compute=ComputePool([channel.runtime]),
+            compute=stub_compute(channel, sessions=client.test_request_factory),
         )
 
     before = Channel()
@@ -94,16 +94,12 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
             ),
             description="wait for recovery",
         )
-        with room_socket(client, str(topic), "alice") as ws:
+        with room_socket(client, str(topic), "alice"):
             # 这个 socket 只推不收（`test_chat_ws_auth` 钉的就是那条拒绝）；
             # 说话走 POST。
             post_message(client, str(topic), "alice", {"content": "@芝士 " + directive})
-            _until(
-                ws,
-                lambda frame: (
-                    frame["type"] == "event_block"
-                    and "NATIVE_RECOVERY" in str(frame["block"])
-                ),
+            wait_for_record(
+                client, str(topic), lambda record: "NATIVE_RECOVERY" in str(record)
             )
         native, work, process = (
             runner.session_id,

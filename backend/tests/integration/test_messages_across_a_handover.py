@@ -31,6 +31,7 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.support.run_records import records_of
+from tests.support.session_records import wait_for_record
 
 
 def _room(client) -> tuple[str, StubChannel, ChatService]:
@@ -42,7 +43,7 @@ def _room(client) -> tuple[str, StubChannel, ChatService]:
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/handover-messages-ws",
-        compute=stub_compute(channel),
+        compute=stub_compute(channel, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     # 芝士 answers in a 支线: that is where these messages are said.
@@ -98,10 +99,14 @@ def _handed_over(client, service: ChatService) -> int:
 
 
 def _until_answered(client, service, channel: StubChannel, room: str) -> None:
-    deadline = time.monotonic() + 10
-    while channel.reply not in [block.content for block in _blocks(client, room)]:
-        assert time.monotonic() < deadline, "the message was never answered"
-        time.sleep(0.05)
+    wait_for_record(
+        client,
+        room,
+        lambda record: (
+            record.get("type") == "result" and record.get("result") == channel.reply
+        ),
+        timeout=10,
+    )
     client.portal.call(settle_turn, service, uuid.UUID(room))
 
 
@@ -216,7 +221,7 @@ def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/handover-messages-ws",
-        compute=stub_compute(channel),
+        compute=stub_compute(channel, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     # 芝士 answers in a 支线 of each channel; the machine is the channel's.

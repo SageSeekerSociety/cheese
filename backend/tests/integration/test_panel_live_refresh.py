@@ -19,10 +19,10 @@ from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
-from app.domain.agent.compute import ComputePool
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.models import Block
 from app.main import app
+from tests.conftest import stub_compute
 from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
@@ -35,6 +35,7 @@ from tests.integration.conftest import (
 )
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.support.living_doc import document_of
+from tests.support.session_records import records
 
 
 def _doc(client, task) -> str:
@@ -253,7 +254,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([channel.runtime]),
+        compute=stub_compute(channel, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     _, room = _room(client)
@@ -286,9 +287,16 @@ def test_a_call_the_backend_never_received_refreshes_nothing(
 
     _Calls.tool, _Calls.arguments = tool, arguments
     seen = _turn_frames(client, tmp_path, _Calls())
-    # The turn ran and its step reached the room — otherwise this asserts
-    # nothing at all.
-    assert any(f["type"] == "event_block" for f in seen)
+    room = next(
+        f["block"]["conversation_id"] for f in seen if f["type"] == "user_block"
+    )
+    kept = records(client, room)
+    assert any(
+        part.get("name") == tool
+        for item in kept
+        for part in item["record"].get("message", {}).get("content", [])
+        if isinstance(part, dict) and part.get("type") == "tool_use"
+    )
     assert [f for f in seen if f.get("type") == "state"] == []
 
 
@@ -337,7 +345,7 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([channel.runtime]),
+        compute=stub_compute(channel, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     _, room = _room(client)

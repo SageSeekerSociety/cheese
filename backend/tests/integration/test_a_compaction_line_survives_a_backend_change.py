@@ -51,7 +51,12 @@ def _compaction_lines(client, topic: uuid.UUID) -> list[RunRecord]:
             assert not [
                 b for b in said if (b.meta or {}).get("event_type") == "context_compact"
             ]
-            return await records_of(session, topic, "context_compact")
+            transitions = await records_of(session, topic, "context_compact")
+            latest = {}
+            for line in transitions:
+                series = (line.meta or {}).get("series_id", str(line.id))
+                latest[series] = line
+            return list(latest.values())
 
     return asyncio.run(read())
 
@@ -105,7 +110,7 @@ def _service(client):
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/compaction-across-backends-ws",
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=client.test_request_factory),
         )
 
     return build

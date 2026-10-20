@@ -973,12 +973,16 @@ async def finish_turn(service, topic_id) -> None:
     await close_topic_subscriptions(service, topic_id)
 
 
-def stub_compute(channel: StubChannel | None = None) -> "ComputePool":
+def stub_compute(channel: StubChannel | None = None, *, sessions=None) -> "ComputePool":
     """A pool holding one screen, for the many tests that build a ChatService
     by hand. Pass the channel when the test asserts against it."""
     from app.domain.agent.compute import ComputePool
 
     screen = channel or StubChannel()
+    if sessions is not None:
+        from app.domain.session_record import service as session_records
+
+        screen.host._records = functools.partial(session_records.append, sessions)
     return ComputePool([screen.runtime])
 
 
