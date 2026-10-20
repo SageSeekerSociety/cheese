@@ -326,7 +326,11 @@ successor serves requests at once but holds the turns asked of it until the lock
 reaches it. The outgoing backend, on SIGTERM,
 lets the prompts it is still sending arrive, stops reading its sessions, lets go
 of its turns without ending them and releases the lock. The successor then picks every running turn up
-where it stands and starts any turn a message was left waiting for. The whole
+where it stands and starts any turn a message was left waiting for. A Claude
+Code runner that does not speak the lifecycle protocol the successor reads
+(`harness/driven/lifecycle.py`, `PROTOCOL`) is replaced rather than picked up:
+what it was written and never read is offered again, and the turn it was in
+ends with `runner_replaced` and is resumed at once. The whole
 of that fits in the backend's 60-second `stop_grace_period`, which is why the
 old slot is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
 The in-place recreate on boxes without `ACTIVE_BACKEND_DIR` hands over the same
@@ -793,7 +797,9 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **Session records** (what each session's runner journaled,
   `session_records`): the last few minutes sit in the table and go out with the
   DB dump; older runs are gzip objects under `session-records/` in the private
-  `TRANSCRIPT_S3_BUCKET`, which nothing else backs up. The objects are kept
+  `TRANSCRIPT_S3_BUCKET`, which nothing else backs up. Each object is read
+  back byte for byte, and its index marker under `session-record-index/`
+  published, before the rows it replaces are deleted. The objects are kept
   for good, a deleted conversation's included; a sealed run's row (and so the
   app's way to read it) goes after 30 days.
 - **Transcripts** (the CLI's own `.jsonl` files: Claude Code's, Codex's, pi's)

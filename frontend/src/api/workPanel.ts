@@ -13,9 +13,9 @@ import { ApiError, authHeaders, BASE, request } from './http'
 
 // ---- 执行面板 (Phase 4 tool drawers) ----
 
-// 现场 (施工现场): a topic's tool/event record (read-only), newest window first.
-// Paged: events are the most numerous kind of block (one per tool call), so an
-// unpaged 现场 is the largest request the app can make and it only grows.
+// 现场 (施工现场): a conversation's raw session records (read-only), newest
+// window first. Paged: one record per harness line, so an unpaged 现场 would be
+// the largest request the app can make and it only grows.
 //
 // `author` narrows a page to one teammate's steps — a room can seat several, and
 // 现场 reads them one at a time. It narrows the query, not the page: the filter

@@ -29,7 +29,7 @@ export interface MemberActivityLine {
   detail?: string | null
   /** 更细的一步（「执行命令 pnpm test」），从 live 帧读的；有它就顶掉 `detail`。 */
   step?: string | null
-  /** 最后一次收到这位成员一帧的时刻（epoch 毫秒）；不知道就是 null，不说卡住。 */
+  /** 最后一次收到这位成员一帧的时刻（epoch 毫秒），用来认出上一轮留下的帧；不知道就是 null。 */
   lastFrameAt?: number | null
 }
 

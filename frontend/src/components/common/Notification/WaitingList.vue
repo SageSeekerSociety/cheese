@@ -229,7 +229,7 @@ const emit = defineEmits<{
   allow: [item: WaitingRun, yes: boolean]
 }>()
 
-/** 这一件要你做什么。负责人那一条按停在哪一格说：检查没过，或被退回。 */
+/** 这一件要你做什么。负责人那一条按停在哪一格说：检查没过、卡住了，或被退回。 */
 function askOf(item: WaitingWork): { text: string; tone: 'warn' | 'danger' } {
   if (item.reason === 'reviewer') return { text: t('home.inbox.reason.reviewer'), tone: 'warn' }
   if (item.reason === 'reporter') return { text: t('home.inbox.reason.reporter'), tone: 'warn' }
@@ -237,6 +237,7 @@ function askOf(item: WaitingWork): { text: string; tone: 'warn' | 'danger' } {
   if (item.reason === 'decide') return { text: t('home.inbox.reason.decide'), tone: 'warn' }
   if (item.reason === 'read') return { text: t('home.inbox.reason.read'), tone: 'warn' }
   if (item.phrase === 'checks_failed') return { text: t('home.inbox.reason.checksFailed'), tone: 'danger' }
+  if (item.phrase === 'blocked') return { text: t('home.inbox.reason.blocked'), tone: 'warn' }
   return { text: t('home.inbox.reason.bounced'), tone: 'warn' }
 }
 
@@ -254,7 +255,8 @@ function iconOf(item: WaitingWork): string {
     case 'read':
       return 'mdi-text-box-outline'
     default:
-      return item.phrase === 'checks_failed' ? 'mdi-close-circle-outline' : 'mdi-undo-variant'
+      if (item.phrase === 'checks_failed') return 'mdi-close-circle-outline'
+      return item.phrase === 'blocked' ? 'mdi-alert-circle-outline' : 'mdi-undo-variant'
   }
 }
 

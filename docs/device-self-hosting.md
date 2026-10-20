@@ -214,7 +214,7 @@ When a credential host connects, the backend runs `claude auth status` through i
 ### 5.1 屏幕面板显示什么
 
 - **团队「设备」页**（`/teams/:handle/compute`）：列出团队的接入、在线状态和只读登录摘要。管理员可以改名、移除和接入设备。桌面端「设置 → 这台设备」只读列出本机各次接入、所属团队和管理页链接。
-- **「现场」面板**：浏览器里**只读**的真终端，字节级 relay 设备上那块 screen 的输出。screen 里跑的是 runner，`claude` 在它下面 headless 运行，所以这里看不到 `claude` 的界面；只能发 `resize` 控制帧，**不能敲键**。空白/连不上 = screen 没开，或你无权看（无权与未知 screen 以同样的 1008 关闭，不可枚举）。
+- **「现场」面板**：读这个会话的原始记录（`session_records`，见[会话记录](manual/dev/session-records.md)），默认是概览，也可以切到原始视图看思考、完整的工具输入输出和 JSON。screen 里跑的是 runner，`claude` 在它下面 headless 运行；产品里没有直接看那块 screen 终端的面板。
 
 ### 5.2 会话记录和生命周期事件走哪条路径
 

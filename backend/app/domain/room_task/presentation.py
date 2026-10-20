@@ -48,7 +48,7 @@ from app.domain.review_note_codes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
 
 # `Task` 是这一层唯一还**按类**标进签名的 ORM 行 —— **暂留**，不是读模型。项目 rail
-# 的 Task 暂交给 task_liveness、card_model 和 TaskOut.model_validate：card_model 读
+# 的 Task 暂交给 card_model 和 TaskOut.model_validate：card_model 读
 # 的是这条活绑了什么模型（`Task.model` / `Task.effort`），标 `Task` 才读得出来。
 # `facts_for_task` 不在此列：`room_task` 已经有了自己的窄读输出
 # （`repositories.ListedTask`），所以那一格走结构契约（`TaskSignals` / `TaskRow`），
@@ -271,8 +271,8 @@ class NeedsYou(enum.StrEnum):
     checks_failed = "checks_failed"
     awaiting_review = "awaiting_review"
     bounced = "bounced"
-    #: 芝士提出了待确认问题，本轮停止等待回答。这是唯一一种**会中断运行**的：
-    #: 其余几格都是一轮结束之后的状态。
+    #: 芝士提出了待确认问题，本轮停止等待回答。这一格压过队友报的状态
+    #: （`task_presentation` 第 2 条）；其余几格看卡或队友自己报的。
     awaiting_answer = "awaiting_answer"
     #: 队友说它卡住了，没有人帮忙走不下去（`TaskProgress.blocked`）。
     blocked = "blocked"
@@ -373,7 +373,7 @@ class TaskFacts:
 class RoomFacts:
     status: str
     #: 本轮是否在跑。房间的这一位来自跑轮次的进程本身（内存里的当下事实），不是
-    #: 一列陈旧的时间戳 —— 所以房间没有「失联」这一格：它没有可能过期的东西。
+    #: 一列陈旧的时间戳。
     running: bool
     accepted_at: datetime | None
     card: CardFacts | None
@@ -769,8 +769,9 @@ def is_stalled(shown: Presentation, *, last_activity: datetime, now: datetime) -
 def room_presentation(facts: RoomFacts, *, now: datetime) -> Presentation:
     """一个房间此刻在哪一列、显示哪句话。
 
-    和一条活同两条优先级规矩。差别只有两处，都是因为房间和活确实不是一种东西：
-    房间会归档（活不会），房间没有「失联」（见 `RoomFacts.running`）。
+    和一条活共用「关了就是结束」「待回答压过在做」两条。不同的是：房间会归档
+    （活不会）；房间的「运行中」看本轮在不在跑（`RoomFacts.running`），而且压过卡，
+    活的「在做」是队友自己报的，排在卡后面。
 
     `now` 收在签名里是为了和 `task_presentation` 同一个形状 —— 房间今天没有需要
     对时间的判据，但调用方不该为这个差别写两种调用。
