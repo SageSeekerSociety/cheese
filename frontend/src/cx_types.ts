@@ -182,13 +182,6 @@ export interface BlockMeta extends AskBlockMeta {
   quoted_context?: import('./lib/quotedContext').QuotedContext
 }
 
-/** 一段脚本里调过的一样工具（pi 的 codemode），记在脚本那一步的 `meta.calls` 上。 */
-export interface ScriptCall {
-  tool: string
-  arg: string
-  failed?: boolean
-}
-
 export interface ChecklistMeta {
   items: TodoItem[]
   /** 做完时队友写的一句结果。 */

@@ -12,14 +12,15 @@ from sqlalchemy import select
 from app.api import deps as session_turn_deps
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
-from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.adapters import named_teammate
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.session_record.service import read
 from app.domain.topic.services import TopicService
+from tests.conftest import stub_compute
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import project_service, registered
 
@@ -73,7 +74,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         svc = ChatService(
             work_runner=session_turn_deps.get_work_runner(),
             session_factory=factory,
-            compute=ComputePool([screen.runtime]),
+            compute=stub_compute(screen, sessions=factory),
             base_system_prompt="You are Cheese.",
             workspace_root=str(tmp_path / "ws"),
         )
@@ -127,12 +128,14 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         assert ("\n# 私聊\n" in screen.last_system_prompt) is private
         async with factory() as session:
             blocks = await BlockRepository(session).list_for_topic(topic_id)
-        assert any(
-            looks_like_agent_handle(b.author)
-            and b.kind == BlockKind.event
-            and b.content == "Draft saved."
-            for b in blocks
-        )
+            kept = await read(session, topic_id)
+        stopped = [
+            item for item in kept.items if item["record"].get("type") == "result"
+        ]
+        assert len(stopped) == 1
+        assert stopped[0]["record"]["result"] == "Draft saved."
+        assert stopped[0]["turn_id"] == str(turns[0].id)
+        assert stopped[0]["agent_handle"] == "cheese"
         assert not any(
             looks_like_agent_handle(b.author) and b.kind == BlockKind.message
             for b in blocks

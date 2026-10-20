@@ -139,7 +139,13 @@ const actions = computed<MenuAction[]>(() =>
       divider: true,
       onSelect: () => emit('delete'),
     },
-  ].filter((a) => a.key !== 'delete' || props.routine.can_delete)
+  ].filter(
+    (a) =>
+      (a.key !== 'delete' || props.routine.can_delete) &&
+      // 还没定触发方式的规则没有「恢复」：恢复它只会挂着「运行中」却永不响。
+      // 让它跑起来的动作是「修改」里把触发方式定下来。
+      (a.key !== 'resume' || props.routine.trigger)
+  )
 )
 </script>
 
@@ -151,7 +157,7 @@ const actions = computed<MenuAction[]>(() =>
     </AdaptiveMenu>
     <div class="routine-row__head">
       <div class="routine-row__id">
-        <div class="t-body routine-row__title">{{ routine.title }}</div>
+        <div class="t-body routine-row__title">{{ routine.title || t('routines.unnamed') }}</div>
         <div v-if="roomLine" class="t-meta c-faint">{{ roomLine }}</div>
       </div>
       <span

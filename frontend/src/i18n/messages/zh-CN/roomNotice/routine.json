@@ -7,6 +7,7 @@
   "routineTriggerMonthly": "每月 {day} 号 {time}（{timezone}）",
   "routineTriggerFeedback": "{when}，每次附上最多 {count} 条待分诊反馈",
   "routineTriggerEvent": "{label}（{scope}）",
+  "routineTriggerUnset": "还没定什么时候跑",
   "routineTriggerLibraryFile": "资料库新增文件",
   "routineTriggerTaskClosed": "任务关闭",
   "routineTriggerCardAccepted": "成果被采纳",

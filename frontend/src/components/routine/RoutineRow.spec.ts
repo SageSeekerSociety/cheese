@@ -164,6 +164,13 @@ describe('一条规则这一行', () => {
     expect(await openMenu(container)).not.toContain('暂停')
   })
 
+  it('还没定触发方式的：没有「恢复」，让它跑起来的是「修改」', async () => {
+    const { container } = mount({ ...base, state: 'paused', trigger: '', trigger_text: '还没定什么时候跑' })
+    const items = await openMenu(container)
+    expect(items).not.toContain('恢复')
+    expect(items).toContain('修改')
+  })
+
   // 这两档不在规则自己身上（`state` 只知道启用 / 暂停）：正在跑的那条画沙漏，上一次
   // 没跑成的那条画红叉 —— 都得看最近一次执行跑成什么样。
   it('最近一次在排队：画沙漏，不看规则自己的状态', () => {

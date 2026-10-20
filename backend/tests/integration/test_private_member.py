@@ -7,6 +7,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import assistant_texts, records
 
 
 def _project(client) -> str:
@@ -54,7 +55,10 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
             frames.append(f["type"])
             if f["type"] in ("done", "error"):
                 break
-    assert "event_block" in frames and "error" not in frames
+    assert "turn_started" in frames and "error" not in frames
+    assert assistant_texts(records(client, private["id"], owner="user-1")) == [
+        "Hello world"
+    ]
 
 
 def test_private_human_chat_seeds_both_participants_and_rejects_outsiders(

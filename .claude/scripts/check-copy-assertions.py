@@ -134,7 +134,6 @@ BASELINE: tuple[tuple[str, str], ...] = (
     ("frontend/src/apiRateLimit.spec.ts", "still answering the last question"),
     ("frontend/src/components/admin/AdminQuestionTable.spec.ts", "怎么把项目里的成员换成管理员？"),
     ("frontend/src/components/base/SaveStatus.spec.ts", "Save failed: HTTP 500"),
-    ("frontend/src/components/panels/PanelSite.expand.spec.ts", "bash: pandoc: command not found"),
     ("frontend/src/components/panels/doc/blocks/reader.spec.ts", "组会报名\\n时间：周四下午三点\\n地点：B201\\n报名找林老师"),
     ("frontend/src/services/ErrorHandler.spec.ts", "Request failed with status 500"),
     ("frontend/src/views/tasks/composables/useAssistant.spec.ts", "本月的芝士额度已用完，11月1日重置。"),
