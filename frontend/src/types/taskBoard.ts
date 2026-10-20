@@ -3,6 +3,7 @@
 import type {
   SpaceTeaching,
   Task,
+  TaskRubricLine,
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
@@ -52,6 +53,8 @@ export type PostTaskRequestData = {
   /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。整份替换；不带它 = 没说，
    *  让空间的默认生效。 */
   teaching?: SpaceTeaching
+  rubric?: TaskRubricLine[]
+  rubricPublic?: boolean
 }
 
 export type { TaskAttachmentData, TaskAttachmentListResponseData } from '@/types/taskAttachments'
@@ -154,6 +157,9 @@ export type PatchTaskRequestData = {
   accessDomainGroupIds?: number[]
   /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。整份替换；省掉它 = 不动。 */
   teaching?: SpaceTeaching
+  /** 评分要点：整份替换；省掉它 = 不动。 */
+  rubric?: TaskRubricLine[]
+  rubricPublic?: boolean
   endedAt?: number | null
   hasEndedAt?: boolean
 }

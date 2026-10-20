@@ -504,7 +504,7 @@ def collect(args: argparse.Namespace) -> dict:
         "workflows": args.workflow,
         "since": args.since,
         "until": args.until,
-        "events": getattr(args, "event", None) or ["pull_request", "merge_group"],
+        "events": getattr(args, "event", None) or ["pull_request", "push"],
     }
     inputs_path = output / "inputs.json"
     if inputs_path.exists():
@@ -638,7 +638,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--event",
         action="append",
-        choices=["pull_request", "merge_group", "push", "workflow_dispatch"],
+        choices=["pull_request", "push", "workflow_dispatch"],
     )
     parser.add_argument(
         "--since", required=True, help="inclusive UTC run-created bound"

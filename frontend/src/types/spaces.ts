@@ -290,3 +290,13 @@ export type SpaceApplication = {
   reviewedAt: string | null
   createdAt: string
 }
+
+/**
+ * 首页目录里一个空间那一行：id、名字，以及还没过审时是哪一种。过审的空间点进去是
+ * 它自己的目录；还在审核或被驳回的，点进去是这份申请。
+ */
+export type SpaceLink = {
+  id: number
+  name: string
+  review?: 'PENDING' | 'REJECTED'
+}

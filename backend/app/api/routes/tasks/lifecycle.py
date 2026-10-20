@@ -59,6 +59,7 @@ from app.domain.task.inputs import (
     map_approve_type,
     map_approve_type_to_int,
 )
+from app.domain.task.rubric import rubric_lines, rubric_to_api
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
@@ -239,6 +240,13 @@ async def get_task(
     # Fetch submissionSchema
     schema_entries = await service.list_submission_schema(task_id)
     task_dict["submissionSchema"] = _submission_schema_to_api(schema_entries)
+
+    # 评分要点：批改的人（出题人、空间管理员）总能读到；别人只在它公开时读到。
+    may_grade = auth_user.user_id > 0 and await may_teach_task(
+        session=db, task=task, user_id=auth_user.user_id
+    )
+    if task.rubric_public or may_grade:
+        task_dict["rubric"] = rubric_to_api(await service.list_rubric(task_id))
 
     # Fetch topics if queryTopics is true
     if queryTopics:
@@ -469,6 +477,12 @@ async def patch_task(
     if payload.submission_schema is not None:
         await service.replace_submission_schema(task.id, payload.submission_schema)
 
+    # 评分要点：同样整份替换。
+    if payload.rubric is not None:
+        await service.replace_rubric(task.id, rubric_lines(payload.rubric))
+    if payload.rubric_public is not None:
+        task.rubric_public = payload.rubric_public
+
     # 话题列表：简单覆盖语义，先全部软删除，再插入新集合。
     if payload.topics is not None:
         await service.replace_topic_relations(task_id=task.id, topic_ids=payload.topics)
@@ -493,6 +507,7 @@ async def patch_task(
     schema_entries = await service.list_submission_schema(task.id)
     task_response = _task_to_api_model(task)
     task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
+    task_response["rubric"] = rubric_to_api(await service.list_rubric(task.id))
     task_response = (
         await _enrich_task_models(db, [task_response], space_id=task.space_id)
     )[0]

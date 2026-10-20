@@ -36,7 +36,6 @@
 | 20 | `/projects/:projectId/skills` | `views/ProjectSkillsView.vue` | 行 `.skills-row`（分组 `.skills-group`），文本 ≥ 3；排除加载 `.py-8.text-center[role="status"]` | `Promise.all([ listProjectSkills(projectId), queryClient.fetchQuery(projectQuery(projectId)) ])`（**并行**，`watch` immediate） | 部分（projectQuery 有缓存，skills 新鲜） |
 | 21 | `/teams` | 父 `views/teams/Index.vue` → 重定向 `home-teams-mine` → `views/teams/Mine.vue`（渲染半 `MineView.vue`） | 行 `.my-team-item`（列表 `.my-teams-list`），文本 ≥ 3；排除 `.d-flex.flex-column.align-center.py-5 .v-progress-circular` | `await fetchMyTeams()` → `TeamsApi.getMyTeams()` GET `/teams/my-teams`（onMounted） | 否 |
 | 22 | `/teams/:handle` | `views/teams/Detail.vue`（默认子 `TeamProjects.vue`） | 卡片 `.project-card`（TeamProjects）；成员/资料见 TeamProfile；排除加载 `div.py-10.text-center`（v-progress-circular） | `TeamsApi.detailByHandle(handle)`（`watch(route.params.handle,{immediate})`）→ 子页 `TeamProjects` 再 `listProjects(teamId)`（**串行**：等 team 取到 teamId 才取项目） | 否 |
-| 23 | `/spaces` | `views/spaces/Index.vue` | 卡片 `.space-card`；加载态来自 `components/common/InfiniteScroll.vue`：`.skeleton` 内含 v-progress-circular + 「加载中」文案，命中即未就绪 | 空间列表接口（具体路径未确认） | 否 |
 | 24 | `/spaces/:spaceId` | `views/spaces/Detail.vue`（子 `layouts/spaces/SpacesTasks.vue` → `views/spaces/detail/Tasks.vue` + PageHeader） | 未确认（Tasks 页列/卡片类未逐字确认）；`settled` 后才 `<router-view>` | `onMounted: getSpace(Number(spaceId))` → `fetchSpace(spaceId)` 再 `fetchCategories()`（**串行**） | 否 |
 
 「未确认」的行（8、9、13 部分、16、19、23、24 等）我按现有信息只能给到文件名/大致位置，选择器或接口路径没读到确切值——需要再读对应 view 文件补。

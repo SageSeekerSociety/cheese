@@ -26,7 +26,7 @@ vi.mock('@/views/home/HomeSidebar.vue', () => ({ default: { template: '<div />' 
 vi.mock('@/views/home/HomeHub.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/InboxView.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/home/Landing.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('@/views/spaces/Index.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('@/views/spaces/SpaceApplication.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/teams/Index.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/teams/Mine.vue', () => ({ default: { template: '<div />' } }))
 
@@ -190,11 +190,19 @@ describe('首页那一层', () => {
     expect(r.currentRoute.value.name).toBe('inbox')
   })
 
-  it('空间列表这个地址还在', async () => {
+  it('原来的空间列表地址回到待办', async () => {
     AccountService.loggedIn = true
     const r = router()
     await r.push('/spaces')
-    expect(r.currentRoute.value.name).toBe('HomeSpaces')
+    expect(r.currentRoute.value.name).toBe('inbox')
+  })
+
+  it('一份空间申请有自己的地址', async () => {
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/space-applications/9')
+    expect(r.currentRoute.value.name).toBe('HomeSpaceApplication')
+    expect(r.currentRoute.value.params.spaceId).toBe('9')
   })
 
   // 我的工作那一页已经拆了：地址不再有，走到未知地址上。

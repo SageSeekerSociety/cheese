@@ -308,6 +308,48 @@ describe('发题页：发一道', () => {
     expect(view.router.currentRoute.value.name).toBe('SpacesDetailPublishTask')
   })
 
+  it('提交项和评分要点：照填的发，空着的评分行去掉，不公开就说不公开', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+
+    await fireEvent.update(view.getByLabelText('第 1 个提交项'), 'csim.c 源文件')
+    await fireEvent.click(view.getByRole('button', { name: '添加提交项' }))
+    await fireEvent.update(view.getByLabelText('第 2 个提交项'), '合作与参考说明')
+    await fireEvent.click(view.getAllByRole('radio', { name: '文字' })[1])
+
+    await fireEvent.click(view.getByRole('button', { name: '添加一项' }))
+    await fireEvent.update(view.getByLabelText('第 1 项项目'), '正确性')
+    await fireEvent.update(view.getByLabelText('第 1 项分值'), '60')
+    await fireEvent.update(view.getByLabelText('第 1 项评分标准'), '8 组记录全对')
+    await fireEvent.click(view.getByRole('button', { name: '添加一项' }))
+    await check(view.getByTestId('task-form-rubric-public').querySelector('input')!)
+
+    await publish(view)
+    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+
+    const sent = createTask.mock.calls[0][0] as Record<string, unknown>
+    expect(sent.submissionSchema).toEqual([
+      { prompt: 'csim.c 源文件', type: 'FILE' },
+      { prompt: '合作与参考说明', type: 'TEXT' },
+    ])
+    expect(sent.rubric).toEqual([{ item: '正确性', points: 60, criteria: '8 组记录全对' }])
+    expect(sent.rubricPublic).toBe(false)
+  })
+
+  it('评分行写了标准没写名称：不发，那一节说为什么', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    await fireEvent.click(view.getByRole('button', { name: '添加一项' }))
+    await fireEvent.update(view.getByLabelText('第 1 项评分标准'), '格式规范')
+
+    await publish(view)
+
+    expect(await view.findByText('写了评分标准的项需要填写项目名称')).toBeTruthy()
+    expect(createTask).not.toHaveBeenCalled()
+  })
+
   it('填好点发布：POST /tasks 带着空间、提交表和附件，发完落到「我发布的」', async () => {
     await boardAs(MEMBER)
     const view = await mount()

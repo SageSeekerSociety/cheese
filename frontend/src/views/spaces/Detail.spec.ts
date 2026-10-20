@@ -2,7 +2,7 @@
 // 只会换来一个 403），读到的数就是侧栏「待审核」旁边那个数。
 import type { Component } from 'vue'
 
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, markRaw } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -58,7 +58,7 @@ async function mount(userId: number, extra: Record<string, unknown> = {}, child:
     history: createMemoryHistory(),
     routes: [
       { path: '/spaces/:spaceId', component: Detail, children: [{ path: '', component: child }] },
-      { path: '/spaces', name: 'HomeSpaces', component: Blank },
+      { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: Blank },
     ],
   })
   await router.push(`/spaces/${SPACE_ID}`)
@@ -70,7 +70,8 @@ async function mount(userId: number, extra: Record<string, unknown> = {}, child:
     { render: () => h(Detail) },
     { global: { plugins: [router, pinia, i18n, createVuetify({ components, directives })] } }
   )
-  return Object.assign(useSpaceStore(), { view })
+  // markRaw: the store is reactive, and a router put into it would have currentRoute unwrapped.
+  return Object.assign(useSpaceStore(), { view, router: markRaw(router) })
 }
 
 describe('空间外壳读待审核的题数', () => {
@@ -96,7 +97,7 @@ describe('空间外壳读待审核的题数', () => {
   })
 })
 
-// 没过审的板：后端除了详情一律 404。外壳要先认出来，换成一屏「审核中」，而不是
+// 没过审的板：后端除了详情一律 404。外壳要先认出来，换到这份申请上，而不是
 // 把页面挂上去、让每一页各自取数各自弹一条红色的「获取失败」。
 describe('所有者打开一块还没过审的空间', () => {
   afterEach(() => {
@@ -105,26 +106,16 @@ describe('所有者打开一块还没过审的空间', () => {
     vi.clearAllMocks()
   })
 
-  it('待审核：说它在审核中，不去读分类，也不弹错', async () => {
+  it.each(['PENDING', 'REJECTED'])('%s：换到这份申请上，不挂页面、不读分类、不弹错', async (reviewStatus) => {
     setLocale('zh-CN')
-    const { view } = await mount(ADMIN_ID, { reviewStatus: 'PENDING' }, Page)
+    const { view, router } = await mount(ADMIN_ID, { reviewStatus }, Page)
 
-    await view.findByText('空间还在审核中')
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('HomeSpaceApplication'))
+    expect(router.currentRoute.value.params.spaceId).toBe(String(SPACE_ID))
     expect(view.queryByText('题目列表')).toBeNull()
-    expect(view.getByRole('link', { name: '回到空间列表' }).getAttribute('href')).toBe('/spaces')
     expect(listCategories).not.toHaveBeenCalled()
     expect(taskList).not.toHaveBeenCalled()
     expect(toastError).not.toHaveBeenCalled()
-  })
-
-  it('被驳回：说被驳回了，带上驳回原因', async () => {
-    setLocale('zh-CN')
-    const { view } = await mount(ADMIN_ID, { reviewStatus: 'REJECTED', reviewReason: '名称不清楚' }, Page)
-
-    await view.findByText('空间申请被驳回')
-    view.getByText(/名称不清楚/)
-    expect(view.queryByText('题目列表')).toBeNull()
-    expect(listCategories).not.toHaveBeenCalled()
   })
 
   it('过审了：照常挂页面、读分类', async () => {
@@ -133,6 +124,5 @@ describe('所有者打开一块还没过审的空间', () => {
 
     await view.findByText('题目列表')
     await waitFor(() => expect(listCategories).toHaveBeenCalled())
-    expect(view.queryByText('空间还在审核中')).toBeNull()
   })
 })

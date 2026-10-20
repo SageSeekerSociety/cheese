@@ -23,7 +23,7 @@ import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import { descriptionDoc } from '@/composables/useTaskForm'
 
 import { toDraftPayload, toDrafts } from './publishDrafts'
-import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
+import { MAX_DRAFTS, MAX_PDF_BYTES } from './publishLimits'
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
@@ -217,7 +217,7 @@ async function publish(form: TaskFormSubmitData) {
 
   const options = {
     ...form,
-    submissionSchema: TASK_SUBMISSION_SCHEMA,
+    submissionSchema: form.submissionSchema ?? [],
     space: id,
     attachmentIds: uploads.ids.value.length ? uploads.ids.value : undefined,
     teaching: teachingPayload.value,

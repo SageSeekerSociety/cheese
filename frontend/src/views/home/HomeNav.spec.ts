@@ -58,7 +58,7 @@ async function mount(overrides: Record<string, unknown> = {}) {
     history: createMemoryHistory(),
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
-      { path: '/spaces', name: 'HomeSpaces', component: blank },
+      { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
       {

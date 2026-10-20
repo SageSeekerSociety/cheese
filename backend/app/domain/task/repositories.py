@@ -13,9 +13,11 @@ from app.domain.task.models import (
     TaskAccessDomain,
     TaskMembership,
     TaskMentor,
+    TaskRubricItem,
     TaskSubmissionSchemaEntry,
     TaskTagRelation,
 )
+from app.domain.task.rubric import RubricLine
 from app.domain.task.submission_repositories import (
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
@@ -790,6 +792,37 @@ class TaskSubmissionSchemaRepository:
             new_entries.append(row)
         await self._session.flush()
         return new_entries
+
+
+class TaskRubricRepository:
+    """A task's 评分要点, kept in order and replaced as a whole."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_by_task_id(self, task_id: int) -> list[TaskRubricItem]:
+        stmt = (
+            select(TaskRubricItem)
+            .where(TaskRubricItem.task_id == task_id)
+            .order_by(TaskRubricItem.index.asc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def replace(self, task_id: int, items: Sequence[RubricLine]) -> None:
+        await self._session.execute(
+            delete(TaskRubricItem).where(TaskRubricItem.task_id == task_id)
+        )
+        for idx, line in enumerate(items):
+            self._session.add(
+                TaskRubricItem(
+                    task_id=task_id,
+                    index=idx,
+                    item=line.item,
+                    points=line.points,
+                    criteria=line.criteria,
+                )
+            )
+        await self._session.flush()
 
 
 class TaskAccessDomainRepository:

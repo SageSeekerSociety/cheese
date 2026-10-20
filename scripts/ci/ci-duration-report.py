@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Required CI job-duration, timeout-headroom and tree-identity measurement.
+"""Required CI job-duration and timeout-headroom measurement.
 
-Read-only for the repository: it calls `gh api` and `git merge-tree` and changes
+Read-only for the repository: it calls `gh api` and changes
 nothing in it. (`jobs --cache` does keep one raw payload per run under the cache
 directory it is given, so a re-run needs no API call for the runs it has already
 seen.) The runs it measures are pinned in a file rather than selected as "the
 last N", because a sliding window is a different measurement every time the
 merge queue moves — re-pin deliberately when you want a new snapshot.
 
-Two questions, and why each needs the pin to be exact:
+The question, and why it needs the pin to be exact:
 
   jobs   How long does each job class take, and how much of its
          `timeout-minutes` is left? GitHub reports a skipped reusable-workflow
@@ -20,22 +20,9 @@ Two questions, and why each needs the pin to be exact:
          fails the run instead of entering a percentile, because a wrong
          percentile and a right one look the same in the table.
 
-  trees  Does the merge_group run test the same tree as the pull_request run for
-         the same head? It is supposed to — the queue exists to test
-         `merge(base, head)`. Reconstructing that tree locally with
-         `git merge-tree` and comparing it against the tree of the queue's own
-         commit answers it from the two objects, without trusting either CI log.
-         A pair that does not reconstruct cleanly is reported as excluded rather
-         than counted as a different tree, and the two ways that happens are
-         reported apart: the pair conflicts when replayed, or this clone cannot
-         rebuild it at all (a pinned commit it does not have). The first is a
-         property of the pair, the second of the clone.
-
 Usage:
     python3 scripts/ci/ci-duration-report.py jobs \\
         --runs scripts/ci/required-ci-pinned-runs.json [--cache DIR]
-    python3 scripts/ci/ci-duration-report.py trees \\
-        --trees scripts/ci/required-ci-pinned-trees.json [--repo DIR]
 """
 
 from __future__ import annotations
@@ -151,55 +138,6 @@ def mode_jobs(args) -> int:
     return 0
 
 
-def mode_trees(args) -> int:
-    rows = json.loads(Path(args.trees).read_text(encoding="utf-8"))["rows"]
-    same = 0
-    compared = 0
-    conflicted: list[int] = []
-    unbuildable: list[int] = []
-    for row in rows:
-        reconstruction = subprocess.run(
-            ["git", "merge-tree", "--write-tree", row["base"], row["head"]],
-            capture_output=True, text=True, cwd=args.repo,
-        )
-        tree = reconstruction.stdout.split("\n", 1)[0].strip()
-        if reconstruction.returncode != 0:
-            # Neither case can be counted as "different" — that would invent a
-            # finding — but which one it is decides whether the reader goes after
-            # the pinned pair or after the clone. A tree oid on stdout means git
-            # did merge and conflicted; nothing on stdout means it never got that
-            # far, which is a commit this clone does not hold.
-            if tree:
-                conflicted.append(row["pr"])
-                print(f"  pr {row['pr']:>5}: the pinned pair does not reconstruct cleanly — excluded")
-            else:
-                unbuildable.append(row["pr"])
-                detail = reconstruction.stderr.strip() or "no output"
-                print(f"  pr {row['pr']:>5}: this clone cannot build the pair ({detail}) — excluded")
-            continue
-        compared += 1
-        queue_tree = _gh(f"repos/{REPO}/commits/{row['mg_head']}")["commit"]["tree"]["sha"]
-        is_same = tree == queue_tree
-        same += is_same
-        base_same = row["mg_parent"] == row["base"]
-        flag = "" if is_same == base_same else "  <-- INVARIANT BROKEN"
-        print(f"  pr {row['pr']:>5}: tree_same={is_same!s:5} base_same={base_same!s:5}{flag}")
-
-    if conflicted:
-        print(f"\nExcluded {len(conflicted)} of {len(rows)} row(s) (the pair conflicts when "
-              f"replayed): pr {', '.join(str(pr) for pr in conflicted)}.")
-    if unbuildable:
-        print(f"\nExcluded {len(unbuildable)} of {len(rows)} row(s) (this clone cannot rebuild "
-              f"the pair — fetch the pinned commits or use a fuller clone): "
-              f"pr {', '.join(str(pr) for pr in unbuildable)}.")
-    if compared == 0:
-        print("No row could be compared — nothing was measured.")
-        return 1
-    print(f"\n{same}/{compared} merge_group runs tested the SAME tree as the PR run "
-          f"({same / compared * 100:.1f}%).")
-    return 0
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="mode", required=True)
@@ -207,10 +145,6 @@ def main() -> int:
     jobs.add_argument("--runs", required=True, help="pinned run ids (JSON)")
     jobs.add_argument("--cache", help="directory to keep one jobs payload per run in")
     jobs.set_defaults(func=mode_jobs)
-    trees = sub.add_parser("trees", help="did merge_group test the same tree as pull_request")
-    trees.add_argument("--trees", required=True, help="pinned rows (JSON)")
-    trees.add_argument("--repo", default=".", help="clone whose objects hold the pinned commits")
-    trees.set_defaults(func=mode_trees)
     args = parser.parse_args()
     return args.func(args)
 
