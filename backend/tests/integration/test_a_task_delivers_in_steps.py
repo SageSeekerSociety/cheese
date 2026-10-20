@@ -24,7 +24,7 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     sweeping as _sweeping_fixture,
 )
-from tests.landing import written_up, time_passes, watch
+from tests.landing import time_passes, watch, written_up
 from tests.machine_work import machine_commits
 from tests.support import git_store
 

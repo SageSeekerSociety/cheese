@@ -16,7 +16,6 @@ from sqlalchemy import update
 from app.api.deps import get_chat_service
 from app.domain.agent.announce import announce
 from app.domain.agent_instance.adapters import task_teammate
-from app.domain.identity.handles import agent_instance_handle
 from app.domain.delivery.agent import (
     begin_send,
     dispatch_pending,
@@ -24,6 +23,7 @@ from app.domain.delivery.agent import (
     record_task_instruction,
     run_attempt,
 )
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.review import pr_poll
 from app.domain.room_task.models import Task
 from tests.integration.conftest import task_agent_headers

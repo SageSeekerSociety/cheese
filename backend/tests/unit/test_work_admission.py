@@ -142,7 +142,9 @@ async def test_slow_agent_subscriber_does_not_block_receive_and_preserves_order(
             self.unblock = asyncio.Event()
             self.delivered = []
 
-        async def merge_into_running_session(self, topic, ids, content, *args, **kwargs):
+        async def merge_into_running_session(
+            self, topic, ids, content, *args, **kwargs
+        ):
             if content == "first":
                 self.entered.set()
                 await self.unblock.wait()
@@ -175,7 +177,9 @@ async def test_slow_agent_subscriber_does_not_block_receive_and_preserves_order(
 @pytest.mark.anyio
 async def test_failed_agent_delivery_does_not_stop_next_message():
     class FailedDelivery(FakeChat):
-        async def merge_into_running_session(self, topic, ids, content, *args, **kwargs):
+        async def merge_into_running_session(
+            self, topic, ids, content, *args, **kwargs
+        ):
             if content == "first":
                 raise RuntimeError("executor unavailable")
             self.converse_calls.append({"delivered": content})
@@ -229,7 +233,9 @@ async def test_message_to_another_teammate_starts_its_turn_beside_a_live_one(
                 }
             return payloads, anchor, ids, duplicate
 
-        async def merge_into_running_session(self, topic, ids, content, *args, **kwargs):
+        async def merge_into_running_session(
+            self, topic, ids, content, *args, **kwargs
+        ):
             # A 的轮次活着之后，点到 A 的并得进去；B 没有活轮次，并不进去。
             return self.a_started.is_set() and kwargs.get("recipient_handle") == (
                 "cheese-a"
@@ -932,7 +938,9 @@ async def test_only_a_message_to_the_agent_owes_the_running_turn_an_answer():
         async def work_policy(self, topic_id, agent_instance_id=None):
             raise AssertionError("a delivered mid-turn message needs no new turn")
 
-        async def merge_into_running_session(self, topic, ids, content, *args, **kwargs):
+        async def merge_into_running_session(
+            self, topic, ids, content, *args, **kwargs
+        ):
             self.owed[content] = kwargs.get("owes_reply", True)
             return True
 
