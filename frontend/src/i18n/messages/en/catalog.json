@@ -578,6 +578,10 @@
     "s2": {
       "name": "Brief only, no materials",
       "note": "This task brings no materials: the whole materials section isn't drawn, no empty heading left — just the brief section."
+    },
+    "s3": {
+      "name": "Rubric kept to graders",
+      "note": "The publisher or a space admin still sees the rubric, marked as visible to graders only; students do not see this section."
     }
   },
   "insightsView": {

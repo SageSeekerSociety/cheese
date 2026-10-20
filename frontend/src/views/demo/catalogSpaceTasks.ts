@@ -343,9 +343,28 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.briefView.s2.note')
         },
-        props: { attachments: [] },
+        props: { attachments: [], taskData: { ...TASK_DEMO, submissionSchema: [] } },
         // 只剩一节时，它既是第一个也是最后一个：上一格那个兄弟选择器在这边匹配不到东西。
         expectSelector: '.tb__sec:first-child:last-child',
+      },
+      {
+        get name() {
+          return t('catalog.briefView.s3.name')
+        },
+        get note() {
+          return t('catalog.briefView.s3.note')
+        },
+        props: {
+          taskData: {
+            ...TASK_DEMO,
+            rubricPublic: false,
+            rubric: [
+              { item: '正确性', points: 60, criteria: '样例全部通过，调度顺序与参考输出一致' },
+              { item: '报告', points: 40, criteria: '说明优先级反转如何避免' },
+            ],
+          },
+        },
+        expect: '仅批改的人可见',
       },
     ],
   },
