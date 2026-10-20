@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import type { MyDevice } from '@/types/devices'
 
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
+import { relTime } from '@/lib/relTime'
+import { lastSeenOf } from '@/types/devices'
 
-defineProps<{
+const props = defineProps<{
   devices: MyDevice[]
   canManage: boolean
   loading: boolean
@@ -28,28 +31,58 @@ const emit = defineEmits<{
 }>()
 const error = defineModel<string | null>('error', { required: true })
 const adding = ref(false)
+
+/** 离线的设备写上次在线的时间；在线的只说在线。 */
+function status(device: MyDevice): string {
+  if (device.online) return t('teams.compute.online')
+  const seen = relTime(lastSeenOf(device))
+  return seen ? t('teams.compute.offlineSince', { time: seen }) : t('teams.compute.offline')
+}
+
+// 正在改名的那台设备和输入框里的字。保存后等这一次请求回来：没出错就关上，出错留着框和字。
+const renaming = ref<MyDevice | null>(null)
+const renameText = ref('')
+const renameReady = computed(() => {
+  const name = renameText.value.trim()
+  return name !== '' && name !== renaming.value?.name
+})
+function openRename(device: MyDevice) {
+  renameText.value = device.name
+  renaming.value = device
+}
+function saveRename() {
+  if (renaming.value && renameReady.value) emit('rename', renaming.value, renameText.value.trim())
+}
+watch(
+  () => props.busy,
+  (now, before) => {
+    if (renaming.value && before === renaming.value.device_id && now === null && !error.value) renaming.value = null
+  }
+)
 </script>
 
 <template>
-  <v-container class="px-6 py-5" fluid>
-    <div class="compute-heading">
-      <p class="t-body c-muted">{{ t('teams.compute.ownership') }}</p>
+  <div class="settings-page">
+    <div class="compute-bar">
+      <p class="compute-bar__lede">{{ t('teams.compute.ownership') }}</p>
       <BaseButton v-if="canManage" kind="primary" prepend-icon="mdi-plus" @click="adding = !adding">{{
         t('teams.compute.addDevice')
       }}</BaseButton>
     </div>
-    <v-alert v-if="error" type="error" closable class="mb-4" @click:close="error = null">{{ error }}</v-alert>
-    <section v-if="adding && canManage" class="compute-add">
+    <v-alert v-if="error" type="error" closable @click:close="error = null">{{ error }}</v-alert>
+    <section v-if="adding && canManage" class="settings-card compute-add">
       <p class="t-body">{{ t('teams.compute.enrollHint') }}</p>
-      <BaseButton v-if="desktop" kind="primary" @click="emit('connect')">{{
+      <BaseButton v-if="desktop" kind="primary" class="compute-add__btn" @click="emit('connect')">{{
         t('teams.compute.connectHere')
       }}</BaseButton>
-      <p class="t-caption c-muted">{{ t('teams.compute.cliHint') }}</p>
-      <BaseButton kind="secondary" to="/download">{{ t('teams.compute.downloadDesktop') }}</BaseButton>
-      <p class="t-caption c-muted">{{ t('account.devices.os.unix') }}</p>
+      <p class="compute-add__note">{{ t('teams.compute.cliHint') }}</p>
+      <BaseButton kind="secondary" class="compute-add__btn" to="/download">{{
+        t('teams.compute.downloadDesktop')
+      }}</BaseButton>
+      <p class="compute-add__note">{{ t('account.devices.os.unix') }}</p>
       <pre>{{ command }}</pre>
       <template v-if="windowsCommand">
-        <p class="t-caption c-muted">{{ t('account.devices.os.windows') }}</p>
+        <p class="compute-add__note">{{ t('account.devices.os.windows') }}</p>
         <pre>{{ windowsCommand }}</pre>
       </template>
     </section>
@@ -67,79 +100,171 @@ const adding = ref(false)
       icon="mdi-laptop-off"
       :title="t('teams.compute.selfHostedEmptyTitle')"
     />
-    <div v-else class="compute-devices">
-      <section v-for="device in devices" :key="device.device_id" class="compute-device">
-        <div class="compute-heading">
-          <v-text-field
-            v-if="canManage"
-            autocomplete="off"
-            :model-value="device.name"
-            :aria-label="t('account.thisDevice.name')"
-            variant="outlined"
-            density="compact"
-            hide-details
-            :disabled="busy === device.device_id"
-            @change="emit('rename', device, ($event.target as HTMLInputElement).value)"
-          />
-          <h3 v-else class="t-title">{{ device.name }}</h3>
-          <span class="compute-status" :class="{ 'compute-status--online': device.online }">{{
-            device.online ? t('teams.compute.online') : t('teams.compute.offline')
-          }}</span>
+    <ul v-else class="settings-card compute-list">
+      <li v-for="device in devices" :key="device.device_id" class="compute-row">
+        <v-icon class="compute-row__icon" icon="mdi-laptop" size="20" aria-hidden="true" />
+        <div class="compute-row__main">
+          <div class="compute-row__name" data-user-content>{{ device.name }}</div>
+          <div class="compute-row__status">
+            <span class="compute-dot" :class="{ 'compute-dot--on': device.online }" aria-hidden="true" />
+            <span :class="{ 'c-ok': device.online }">{{ status(device) }}</span>
+          </div>
+        </div>
+        <div v-if="canManage" class="compute-row__actions">
+          <BaseButton kind="ghost" size="sm" :disabled="busy === device.device_id" @click="openRename(device)">{{
+            t('teams.compute.rename')
+          }}</BaseButton>
           <BaseButton
-            v-if="canManage"
-            kind="danger"
+            kind="ghost"
             size="sm"
-            :loading="busy === device.device_id"
+            :loading="busy === device.device_id && !renaming"
+            :disabled="busy === device.device_id"
             @click="emit('remove-machine', device)"
             >{{ t('teams.compute.remove') }}</BaseButton
           >
         </div>
-      </section>
-    </div>
-  </v-container>
+      </li>
+    </ul>
+
+    <AdaptiveDialog
+      :model-value="!!renaming"
+      :title="t('teams.compute.renameTitle')"
+      :primary-label="t('global.save')"
+      :primary-loading="!!renaming && busy === renaming.device_id"
+      :primary-disabled="!renameReady"
+      @update:model-value="renaming = null"
+      @primary="saveRename"
+    >
+      <v-text-field
+        v-if="renaming"
+        v-model="renameText"
+        autocomplete="off"
+        :label="t('account.thisDevice.name')"
+        @keydown.enter.prevent="saveRename"
+      />
+    </AdaptiveDialog>
+  </div>
 </template>
 
+<style scoped src="@/styles/settings-card.css"></style>
 <style scoped>
-.compute-heading {
+.compute-bar {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 12px 16px;
+  align-items: center;
+  justify-content: space-between;
 }
-.compute-heading > :first-child {
-  flex: 1;
-  min-width: min(240px, 100%);
+
+.compute-bar__lede {
+  flex: 1 1 240px;
   margin: 0;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
 }
+
 .compute-add {
-  padding: 20px;
-  margin-bottom: 24px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
+  padding: 20px 24px;
 }
+
+.compute-add > * + * {
+  margin-top: 12px;
+}
+
+.compute-add__note {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
 .compute-add pre {
   padding: 12px;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   background: var(--fill);
+  border-radius: var(--radius-md);
   font-size: 13px;
   line-height: var(--lh-13);
 }
-.compute-devices {
-  display: grid;
-  gap: 24px;
+
+.compute-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
 }
-.compute-device {
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 16px;
+
+.compute-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-height: 64px;
+  padding: 12px 16px 12px 24px;
 }
-.compute-status {
+
+.compute-row + .compute-row {
+  border-top: 1px solid var(--line);
+}
+
+.compute-row__icon {
+  flex-shrink: 0;
   color: var(--muted);
+}
+
+.compute-row__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.compute-row__name {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: var(--lh-14);
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compute-row__status {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
   font-size: 13px;
   line-height: var(--lh-13);
+  color: var(--muted);
 }
-.compute-status--online {
-  color: var(--ok-ink);
+
+.compute-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  background: var(--faint);
+  border-radius: var(--radius-pill);
+}
+
+.compute-dot--on {
+  background: var(--ok);
+}
+
+.compute-row__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+@media (max-width: 767.98px) {
+  .compute-add {
+    padding: 16px;
+  }
+
+  .compute-row {
+    padding: 12px 8px 12px 16px;
+  }
+
+  .compute-row__icon {
+    display: none;
+  }
 }
 </style>

@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import Compute from './Compute.vue'
@@ -29,19 +29,40 @@ function mount() {
   })
 }
 beforeEach(() => {
+  // The rename dialog is a VOverlay, and happy-dom has no visualViewport to place it with.
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    addEventListener() {},
+    removeEventListener() {},
+  })
   vi.clearAllMocks()
   setLocale('zh-CN')
   vi.mocked(listTeamDevices).mockResolvedValue({ devices: [device], can_manage: true })
   confirm.mockReturnValue({ wait: async () => true })
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 it('lets an admin rename a team device enrolled by any member', async () => {
   const view = mount()
-  const input = await view.findByRole('textbox', { name: '设备名称' })
+  await fireEvent.click(await view.findByRole('button', { name: '重命名' }))
+  const input = await screen.findByRole('textbox', { name: '设备名称' })
   await fireEvent.update(input, 'Team computer')
-  await fireEvent.change(input)
+  await fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(renameMyDevice).toHaveBeenCalledWith('team-computer', 'Team computer'))
+})
+
+it('closing the rename dialog without saving keeps the device name', async () => {
+  const view = mount()
+  await fireEvent.click(await view.findByRole('button', { name: '重命名' }))
+  await fireEvent.update(await screen.findByRole('textbox', { name: '设备名称' }), 'Team computer')
+  await fireEvent.click(screen.getByRole('button', { name: '取消' }))
+  expect(renameMyDevice).not.toHaveBeenCalled()
 })
 
 it('cancelling removal leaves the enrollment working', async () => {
@@ -63,6 +84,7 @@ it('members can see the team device but cannot change its enrollment', async () 
   const view = mount()
   await view.findByText('Lab computer')
   expect(view.queryByRole('textbox')).toBeNull()
+  expect(view.queryByRole('button', { name: '重命名' })).toBeNull()
   expect(view.queryByRole('button', { name: '移除' })).toBeNull()
   expect(view.queryByRole('button', { name: '添加设备' })).toBeNull()
 })
