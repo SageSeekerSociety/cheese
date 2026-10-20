@@ -201,7 +201,7 @@ class ChatService(
         # `app.domain.agent.gateway`). None = off.
         self._gateway = gateway
         # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
-        # 由 harness 在两个时刻问它：输入之前、这一轮结束之后。这一簇连同它按
+        # 由 harness 在两个时刻问它：输入之前、会话停下来之后（runner 报会话空闲）。这一簇连同它按
         # 房间记的四份状态都在 `memory_ledger.py` 里；它会用到的协作者显式
         # 传进去（`gateway` 要先建好），留在 `ChatService` 上的
         # 只有 `_lock_for` 和 `_model_kwargs` 两件同事还在用的东西。

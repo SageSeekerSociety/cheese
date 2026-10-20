@@ -181,8 +181,9 @@ async def _take(
         assert work is not None
         await svc._activity(project, seat, work, event.active)
         if not event.active:
-            # 一轮结束时问一次记忆：agent 该写的记忆按规矩写在回复之前，所
-            # 以一轮读完就是它写完的时刻。
+            # 这一段工作结束时问一次记忆（不报会话状态的骨架；Claude Code 在
+            # runner 报会话空闲时问，见 `_keep`）：agent 该写的记忆按规矩写在
+            # 回复之前，所以工作停下来就是它写完的时刻。
             await svc.reconcile_memory(live.session)
             svc._went_quiet(live.session)
     elif isinstance(event, Moved):
