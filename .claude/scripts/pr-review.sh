@@ -36,8 +36,7 @@
 #       and post prints the line with 增量自.
 #       The round — REVIEW-RESULT.md, meta and the review tree — is left under
 #       $HOME/.cheese/review-cache (PR_REVIEW_DIR overrides), not /tmp, so a
-#       machine change does not take it away; the old
-#       /tmp/pr-review-PR-SHA12.input path stays as a symlink to the round.
+#       machine change does not take it away.
 #   .claude/scripts/pr-review.sh post DIR [--dry-run]
 #       Check DIR/result.json against the schema and the pinned commit, write
 #       the rendered result to DIR/REVIEW-RESULT.md, print it, and remove the
@@ -85,32 +84,16 @@ METHOD=.claude/pr-review
 # Where prepare leaves a round. REVIEW-RESULT.md and meta have to outlive the review tree
 # and the machine's /tmp, so they live in the seat's home; PR_REVIEW_DIR still overrides.
 REVIEW_ROOT=${PR_REVIEW_DIR:-${HOME:-/tmp}/.cheese/review-cache}
-# The roots a round may be under. An explicit PR_REVIEW_DIR is isolation: reaching into /tmp
-# as well would hand a caller (or a test) the default directory's round, and a re-prepare
-# would delete a /tmp round it was never asked to touch.
-if [ -n "${PR_REVIEW_DIR:-}" ]; then
-  REVIEW_ROOTS=("$REVIEW_ROOT")
-else
-  REVIEW_ROOTS=("$REVIEW_ROOT" /tmp)
-fi
 
 usage() { sed -n '/^#   \.claude/,/^# Exit status/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "pr-review: $*" >&2; exit 1; }
 
-# The round for PR $1 at $2 (a pinned 12-char prefix). The current root
-# is searched first and /tmp only when it has nothing: /tmp is shared with every other seat
-# on the machine (same uid, different HOME), and a newer round of theirs must not answer
-# for this seat's. With a prefix the same order applies: the first root holding that round
-# wins. A path that is not a directory is skipped — a
-# compatibility symlink whose target is gone is not a round. Prints the .input directory;
+# The round for PR $1 at $2 (a pinned 12-char prefix). Prints the .input directory;
 # fails when there is none.
 round_input() {
-  local pr=$1 want=$2 root d
-  for root in "${REVIEW_ROOTS[@]}"; do
-    d=$root/pr-review-$pr-${want:0:12}.input
-    [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
-  done
-  return 1
+  local d=$REVIEW_ROOT/pr-review-$1-${2:0:12}.input
+  [ -d "$d" ] || return 1
+  printf '%s\n' "$d"
 }
 
 head_of() { gh api "repos/$REPO/pulls/$1" -q .head.sha; }
@@ -159,41 +142,20 @@ prepare() {
   # What a second prepare of the same commit must not throw away: the conclusion, the
   # result behind it, and the requirement contract the review was handed all still belong
   # to that commit, and losing them is what made a re-prepare after a machine change cost
-  # a whole review. A real /tmp directory from before the default moved holds the same
-  # round for this same commit; read it before the compatibility symlink below replaces it.
-  # Only the default root looks there — an explicit PR_REVIEW_DIR owns its files and must
-  # not read or delete another root's round.
-  local keep="" old_tmp=""
+  # a whole review.
+  local keep=""
   keep=$(mktemp -d "${TMPDIR:-/tmp}/pr-review-keep.XXXXXX") || die "could not make a temporary directory"
-  [ -n "${PR_REVIEW_DIR:-}" ] || old_tmp=/tmp/pr-review-$pr-${sha:0:12}.input
   for cand in "$dir/REVIEW-RESULT.md" "$dir/result.json" "$dir/spec.md"; do
     [ -f "$cand" ] && cp "$cand" "$keep/"
   done
-  # A symlink at the old path is another seat's round (a different HOME), not this seat's
-  # old-layout directory: following it would copy that seat's conclusion and contract into
-  # this round. Only a real pre-move directory is migrated.
-  if [ -n "$old_tmp" ] && [ -d "$old_tmp" ] && [ ! -L "$old_tmp" ]; then
-    for cand in "$old_tmp/REVIEW-RESULT.md" "$old_tmp/result.json" "$old_tmp/spec.md"; do
-      [ -f "$cand" ] && [ ! -f "$keep/${cand##*/}" ] && cp "$cand" "$keep/"
-    done
-  fi
   # Unconditionally: a tree whose directory is gone (a reboot cleared /tmp)
   # still holds its registration, and that alone blocks a second add.
   git -C "$ROOT" worktree remove --force "$tree" 2>/dev/null; rm -rf "$tree"
-  if [ -n "$old_tmp" ] && [ -d "$old_tmp" ] && [ ! -L "$old_tmp" ] && [ "$old_tmp" != "$dir" ]; then
-    rm -rf "$old_tmp"
-  fi
   rm -rf "$dir"; mkdir -p "$dir"
   for f in REVIEW-RESULT.md result.json spec.md; do
     [ ! -f "$keep/$f" ] || cp "$keep/$f" "$dir/$f"
   done
   rm -rf "$keep"
-  # Commands and habits written before the move address a round by its /tmp path. Only the
-  # default root gets the link: an explicit PR_REVIEW_DIR is a caller saying where it wants
-  # its files, and a link into a test's throwaway directory would outlive the test.
-  if [ -n "$old_tmp" ] && [ "$old_tmp" != "$dir" ]; then
-    ln -sfn "$dir" "$old_tmp" 2>/dev/null || true
-  fi
   git -C "$ROOT" worktree add -q --detach "$tree" "$sha" || die "could not check out $sha"
 
   # The method as merged on the default branch; the PR cannot rewrite it.

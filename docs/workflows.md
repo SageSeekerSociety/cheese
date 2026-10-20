@@ -145,7 +145,7 @@ uv run --with playwright python scripts/shots.py
 
 ## 6. 开 PR 前：task ci:fast（本地快检）
 
-Required CI 第一条有用信号约 8 分钟墙钟。`task ci:fast` 在本地按 merge diff 选出命中的检查并真实执行，让 lint 错误、超 cap 文件、被改模块的 pure 测试和窄类型这类问题在开 PR 前就暴露。完整 Required CI 仍是唯一合并门禁，ci:fast 绿不代表完整 CI 通过。
+Required CI 第一条有用信号约 8 分钟墙钟。`task ci:fast` 在本地按 merge diff 选出命中的检查并真实执行，让 lint 错误、超 cap 文件、被改模块的 pure 测试和窄类型这类问题在开 PR 前就暴露。PR 上的合并门禁就是这个 quick 档（`CI required`），完整套件在合并后的主干批次上跑；ci:fast 绿不代表完整 CI 通过。
 
 ```bash
 task ci:fast                 # quick 档（按可用 CPU 默认 180–720s）：先跑静态检查，再跑选中的 pure 测试 + 窄类型/前端 related；先把分支跟进 main（fetch + merge/rebase）
