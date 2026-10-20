@@ -17,9 +17,9 @@ permissions:
   packages: read
 
 concurrency:
-  # Keep each main and merge-group result, including runs still pending.
-  group: remote-execution-${{ (github.ref == 'refs/heads/main' || github.event_name == 'merge_group') && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'merge_group' }}
+  # Keep each main result, including runs still pending.
+  group: remote-execution-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   windows:

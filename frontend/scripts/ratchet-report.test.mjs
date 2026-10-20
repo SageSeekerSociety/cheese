@@ -167,7 +167,7 @@ describe('--json on the real checkers', () => {
       assert.equal(plain.status, 1, `${plain.stdout}${plain.stderr}`)
       assert.equal(json.status, plain.status, `${json.stdout}${json.stderr}`)
       assert.equal(JSON.parse(json.stdout).status, 'fail')
-      // --json is what ci:fast calls: stdout stays the one record line, and the
+      // --json is what the collector calls: stdout stays the one record line, and the
       // human report with the line and the fix rides on stderr instead.
       assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)
       assert.match(json.stderr, /__ratchetReportProbe\.vue:\d+:\d+ {2}boundary\/no-api-or-router/)
@@ -255,7 +255,7 @@ describe('--json on the real checkers', () => {
     assert.match(plain.stdout, /planted\.ts\(1,\d+\): error TS2322:/)
     assert.match(plain.stdout, /docs\/manual\/dev\/frontend\.md/)
 
-    // Under --json (what ci:fast calls) stdout stays the one record line; the
+    // Under --json (what the collector calls) stdout stays the one record line; the
     // same raw diagnostic and the fix ride on stderr.
     const json = runChecker('tsc-ratchet.mjs', '--json', ...args)
     assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)

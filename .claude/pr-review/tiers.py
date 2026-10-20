@@ -123,12 +123,12 @@ B_FAST_LINES = 250
 B_FAST_DEPTH = "一路全新上下文找茬，两个镜头都跑并说明每条候选来自哪个镜头，再逐条证伪只留站得住的"
 
 #: 让一张小 B 档不能只派一路的面，按路径里的字面词匹配。两件事都在说同一件事：
-#: 分支 CI 不跑它（contract、remote、Windows），或者它的数字和别的在途 PR 相撞
+#: PR 上的 CI 不跑它（remote），或者它跨了前后端或平台（contract、Windows），或者它的数字和别的在途 PR 相撞
 #: （全仓棘轮基线）。宁严勿松：误判只是多花一路分身，漏判才是把该两路看的改动交给
 #: 一个人。
 WIDE_SURFACE = (
-    ("contract", "契约层，分支 ci-fast 不跑"),
-    ("remote", "远程执行，分支 CI 不跑"),
+    ("contract", "契约层"),
+    ("remote", "远程执行，PR 上不跑"),
     ("windows", "Windows 专属代码，分支 CI 不跑"),
     ("ratchet", "全仓棘轮"),
     ("baseline", "全仓棘轮基线"),
@@ -249,7 +249,6 @@ def is_test(path):
     # This runs tests; it is not itself a test module.
     claude_script_self_test = (
         path.startswith(".claude/scripts/")
-        and path != ".claude/scripts/test-changed.py"
         and name.endswith(".py")
         and (name.startswith("test-") or name.endswith("-test.py"))
     )
@@ -643,7 +642,6 @@ def self_test():
         (".claude/scripts/review.py", "B"),  # ordinary implementation script
         (".claude/scripts/testing.py", "B"),  # not test- or -test.py
         (".claude/scripts/latest.py", "B"),  # no hyphen before test.py
-        (".claude/scripts/test-changed.py", "B"),  # test runner, not a test module
         (".claude/scripts/test-dev-db.sh", "B"),  # only Python test files match
         (".claude/test-review.py", "B"),  # hyphen pattern is scoped to scripts/
         ("scripts/test-review.py", "B"),  # hyphen pattern is scoped to .claude/scripts/
@@ -654,7 +652,7 @@ def self_test():
         ("cli/e2e/task.go", "C"),  # /e2e/
         ("frontend/src/views/Home.spec.ts", "C"),
         ("e2e/tests/task.spec.ts", "C"),
-        (".github/workflows/ci-fast.yml", "D"),
+        (".github/workflows/cli.yml", "D"),
         ("backend/scripts/route_index.json", "D"),
         ("AGENTS.md", "E"),
         (".claude/rules/migrations.md", "E"),

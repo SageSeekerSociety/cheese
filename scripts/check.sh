@@ -11,11 +11,11 @@
 # `task check` is not on a work machine at all (no `task` binary), and the
 # repository root has no pyproject/package.json/pytest.ini, so "run something at
 # the root" had no true answer — the first attempt spent half an hour on
-# `No module named pytest` (#1965). This script is that answer: it exists, it
-# needs nothing beyond python3, and it names the review entry the same way.
+# `No module named pytest` (#1965). The answer now is the pull request's own
+# Required CI; this script keeps the review entry, which needs nothing beyond
+# bash, at the path the instructions name.
 #
-# Usage: check.sh                        the quick tier of ci-fast, from the root
-#        check.sh review <PR> [flags]    start an independent review (prepare)
+# Usage: check.sh review <PR> [flags]    start an independent review (prepare)
 #        check.sh --self-test            prove the dispatch still works
 #
 # Exit status: whatever the dispatched command returns (0 pass), 2 for usage.
@@ -26,8 +26,7 @@ REPO_ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 
 usage() {
   cat >&2 <<'EOF'
-usage: check.sh                        quick tier of ci-fast, from the repo root
-       check.sh review <PR> [flags]    independent review (pr-review.sh prepare)
+usage: check.sh review <PR> [flags]    independent review (pr-review.sh prepare)
        check.sh --self-test            prove the dispatch still works
 EOF
 }
@@ -37,7 +36,7 @@ if [ "${1:-}" = "--self-test" ]; then
 
   # Dispatch is tested against a copy of this script inside a fake tree: the
   # root is derived from the script's own location, so the stubs below are
-  # exactly what it will exec. The real quick tier must not run here.
+  # exactly what it will exec.
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
   mkdir -p "$tmp/repo/scripts" "$tmp/repo/.github/scripts" \
@@ -45,24 +44,10 @@ if [ "${1:-}" = "--self-test" ]; then
   cp "$SELF" "$tmp/repo/scripts/check.sh"
   fake_root="$(cd "$tmp/repo" && pwd)"
 
-  # No arguments: quick tier, from the repo root, exit code untouched.
-  cat > "$tmp/repo/.github/scripts/ci-fast.py" <<'PY'
-import os
-import sys
-
-with open(os.environ["CHECK_SH_LOG"], "w", encoding="utf-8") as fh:
-    fh.write(f"{os.getcwd()}\n{' '.join(sys.argv[1:])}\n")
-sys.exit(7)
-PY
-  log="$tmp/quick.log"
+  # No arguments is a usage error: verification is the pull request's CI.
   code=0
-  ( cd "$tmp/elsewhere" && CHECK_SH_LOG="$log" bash "$tmp/repo/scripts/check.sh" ) \
-    || code=$?
-  [ "$code" -eq 7 ] || self_fail "no-arg must pass the child's exit code through (got $code)"
-  [ "$(sed -n 1p "$log")" = "$fake_root" ] \
-    || self_fail "no-arg must run from the repo root (got $(sed -n 1p "$log"))"
-  [ "$(sed -n 2p "$log")" = "--tier quick" ] \
-    || self_fail "no-arg must run the quick tier (got $(sed -n 2p "$log"))"
+  ( cd "$tmp/elsewhere" && bash "$tmp/repo/scripts/check.sh" >/dev/null 2>&1 ) || code=$?
+  [ "$code" -eq 2 ] || self_fail "no arguments must exit 2 (got $code)"
 
   # review <PR> [flags] is the prepare step, with the arguments intact.
   cat > "$tmp/repo/.claude/scripts/pr-review.sh" <<'SH'
@@ -90,24 +75,20 @@ SH
     || self_fail "README.md no longer names ./scripts/check.sh"
   grep -qF '`scripts/check.sh`' "$REPO_ROOT/docs/topics/沙箱跑测试标准方法.md" \
     || self_fail "the sandbox testing note no longer names scripts/check.sh"
-  grep -qF '"scripts/check.sh"' "$REPO_ROOT/.github/scripts/test_required_ci.py" \
-    || self_fail "test_required_ci.py no longer names scripts/check.sh"
   grep -qF 'scripts/check.sh review' "$REPO_ROOT/AGENTS.md" \
     || self_fail "AGENTS.md no longer names scripts/check.sh review"
-  [ -f "$REPO_ROOT/.github/scripts/ci-fast.py" ] \
-    || self_fail ".github/scripts/ci-fast.py is missing"
   [ -x "$REPO_ROOT/.claude/scripts/pr-review.sh" ] \
     || self_fail ".claude/scripts/pr-review.sh is missing or not executable"
 
-  echo "PASS: check.sh self-test (quick tier from the root, exit codes, review"
-  echo "      dispatch, usage error, and the files that name this entry)"
+  echo "PASS: check.sh self-test (review dispatch, exit codes, usage errors, and"
+  echo "      the files that name this entry)"
   exit 0
 fi
 
 case "${1:-}" in
   "")
-    cd "$REPO_ROOT" || { echo "check.sh: cannot enter $REPO_ROOT" >&2; exit 1; }
-    exec python3 .github/scripts/ci-fast.py --tier quick
+    usage
+    exit 2
     ;;
   review)
     shift

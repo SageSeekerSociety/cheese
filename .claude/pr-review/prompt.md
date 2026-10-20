@@ -100,17 +100,15 @@ lens each candidate came from.
 **Precomputed facts.** When the review directory holds a `PRECOMPUTED.md`, or
 this file carries a section that `prepare` appended from one, hand it to every
 finder and tell them to start there. It holds what a script already
-established at the pinned SHA — which `ci-fast` checks ran and passed, which
-did not run, where the changed symbols are referenced, whether reverting the
-change really reddens the new tests, and whether a trial merge with another
-open PR stays green. A fact it prints is answered: do not re-derive it, and do
-not re-run a check it reports as passed. That includes `ruff`, `eslint`,
-`stylelint`, the boundary and import guards, the file-size and scene/contrast
-ratchets, `check_boundaries.py` and the rest of what `ci-fast` runs on every
-change — a finder that spends minutes reproducing one of those has bought
-nothing this review did not already have. Aim instead at the checks the facts
-report as not run (contract, integration, e2e, the remote-execution and
-Windows jobs, a full type check) and at what no script can decide. With no
+established at the pinned SHA — where the changed symbols are referenced,
+whether reverting the change really reddens the new tests, and whether a trial
+merge with another open PR stays green. A fact it prints is answered: do not
+re-derive it. What CI checks — `ruff`, `eslint`, types, the boundary and import
+guards, the ratchets and the suites the pull request runs — is answered by the
+PR's own checks; a finder that spends minutes reproducing one of those has bought
+nothing this review did not already have. Aim instead at what no script or
+suite can decide, and at the suites that run only after merge (e2e, the
+remote-execution and MCP suites). With no
 such file or section, nothing changes: read the change the way these steps
 say.
 

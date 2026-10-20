@@ -412,7 +412,7 @@ class PrReview(unittest.TestCase):
 
     def test_the_method_says_what_a_finder_must_not_spend_time_on(self):
         # The prompt is what a finder reads, so the rules this method added have to be in
-        # it: start from the precomputed facts, do not re-run what ci-fast already passed,
+        # it: start from the precomputed facts, do not re-run what CI already checks,
         # do not file an auxiliary case that passes on the baseline, and file only rung-4
         # blocker/major findings. Asserted by phrase, not by line: rewording that keeps the
         # rule stays green, and removing it goes red.

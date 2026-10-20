@@ -54,8 +54,8 @@ MERGE_ADVICE = (
     "See .claude/rules/migrations.md."
 )
 
-# Exit 2 is this directory's "could not judge" (check-file-sizes.py, test-changed.py
-# and the ratchets all use it). A guard that could not read its comparison base — or
+# Exit 2 is this directory's "could not judge" (check-file-sizes.py and the
+# ratchets use it). A guard that could not read its comparison base — or
 # a tree with no revisions in it — has judged nothing at all, so exiting 0 there is
 # indistinguishable from a tree it read and cleared, and it is the one failure this
 # file exists to prevent. Distinct from 1, which means the tree was read and refused,

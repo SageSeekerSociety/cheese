@@ -6,8 +6,8 @@ covers:
   - .github/workflows/required-ci.yml
   - .github/scripts/required-ci.py
   - .github/scripts/required-ci-paths.json
-  - .github/scripts/merge-group-fail-fast.py
-  - .github/workflows/ci-fast.yml
+  - .github/scripts/main-fail-fast.py
+  - .github/scripts/backend_imports.py
   - .github/workflows/build.yml
   - .github/workflows/deploy-dev.yml
   - .github/workflows/deploy-prod.yml
@@ -27,23 +27,28 @@ covers:
 |---|---|---|
 | backend | `test.yml` | 后端 pytest，带 Postgres 和 Valkey 服务容器 |
 | frontend | `frontend.yml` | 类型检查、eslint、vitest |
-| e2e | `e2e.yml` | Playwright 端到端测试 |
+| e2e | `e2e.yml` | Playwright 端到端测试（只在合并后跑） |
 | cli | `cli.yml` | Go 连接器的测试 |
 | guards | `repo-guards.yml` | 仓库规矩的机器检查和文档站构建（链接与锚点、每页的类型/摘要/涉及代码、参考页生成器），每次都跑 |
 | deploy | `deploy-scripts-test.yml` | 部署脚本的测试 |
 | harness | `harness-contract.yml` | 骨架请求契约 |
-| mcp | `mcp-contract.yml` | Claude Code 构建契约 |
-| equivalence | `mcp-equivalence.yml` | 房间里的远程 Bash 和机器上直接跑的 Claude Code 行为一致（`equivalence.py`），每种运行方式覆盖一次，每种 shell 两个 job（各跑一组运行方式） |
-| remote | `remote-execution.yml` | 远端执行验收 |
-| cifast | `ci-fast.yml` | `ci:fast` 本地快检的黑盒测试，驱动真实 pre-commit |
+| mcp | `mcp-contract.yml` | Claude Code 构建契约（只在合并后跑） |
+| equivalence | `mcp-equivalence.yml` | 房间里的远程 Bash 和机器上直接跑的 Claude Code 行为一致（`equivalence.py`），每种运行方式覆盖一次，每种 shell 两个 job（各跑一组运行方式）；只在合并后跑 |
+| remote | `remote-execution.yml` | 远端执行验收（只在合并后跑） |
 
-最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）；后端套件选中时，它还核对每个分片跑过的用例加起来正好是独立收集出来的那份（`assert_shards_complete`）。改到这套检查本身时，所有套件都会跑。`required` 要等最慢的套件跑完才能开始，所以主干 push 的批次里另有一个 `Fail fast` job：这个 run 里任何一个 job 失败，它马上在这个 commit 上发一条失败的 `CI required`，主干立刻读到红，不用等剩下的套件（`.github/scripts/merge-group-fail-fast.py`）。剩下的套件照常跑完，`required` 最后照样列出全部原因。PR 上没有这个 job。两个档各有一个聚合 job：`required`（`name: CI required`）跑完整档，`required-draft`（`name: CI required (draft quick)`）跑快检档，名字都写死在 workflow 里，不是用表达式拼的（表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示）。
+最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）；后端套件选中时，它还核对每个分片跑过的用例加起来正好是独立收集出来的那份（`assert_shards_complete`）。改到这套检查本身时，所有套件都会跑。`required` 要等最慢的套件跑完才能开始，所以主干 push 的批次里另有一个 `Fail fast` job：这个 run 里任何一个 job 失败，它马上在这个 commit 上发一条失败的 `CI required`，主干立刻读到红，不用等剩下的套件（`.github/scripts/main-fail-fast.py`）。剩下的套件照常跑完，`required` 最后照样列出全部原因。PR 上没有这个 job。聚合 job 有两个：`required`（`name: CI required`）给正式 PR 和主干 push，`required-draft`（`name: CI required (draft quick)`）给草稿，名字都写死在 workflow 里，不是用表达式拼的（表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示）。
 
 前端套件还有一个不看路径的入口：前端的类型是从后端的 OpenAPI 文档生成的，后端改动可能改了这份文档，而没有哪个文件能说明它变没变。所以路径选中了后端、没选中前端时，`api` job 在这次 diff 的基点和这次提交上各打印一次文档（`export_openapi --stdout`）逐字节比较，不同就跑前端套件。`required` 按它的回答要求前端套件成功或跳过；`api` 自己没给出回答（失败、取消、输出缺失）也判失败。这件事原来靠仓库里提交的一行文档摘要 `backend/openapi.sha256`：每个改 API 的 PR 都要改这一行，任意两个这样的 PR 都会在这一行上冲突，合并队列里尤其多。
 
-**主干是提交后门禁**：PR squash 进 main 之后，每次落码触发一次 `push` run，它判的是**一批**而不是这一条提交。`scope` 的基点不是 `github.event.before`（那只是上一个 tip，被顶掉的排队 run 里的提交会落在所有后续 diff 之外），而是 `refs/heads/main-green`：上一次这道理检查通过的提交。`mark-green` job 只在 main push 的 `required` 绿之后把锚点推到这个提交，红了不动，下一批自然把这段一起盖上。push 的并发组固定为 `required-ci-push-main`、`cancel-in-progress` 为 `false`：GitHub 同时只让一个 run 在跑、最多一个排队，新的排队顶掉旧的排队，所以攒批不丢提交。第一次落地时还没有 `main-green`，`scope` 把所有已跟踪路径都算作改动、选全部套件——宁宽不窄。部署门禁认 main 上这次 `push` run，认不到时仍可认合并队列的 `merge_group` run。
+**主干是提交后门禁**：PR squash 进 main 之后，每次落码触发一次 `push` run，它判的是**一批**而不是这一条提交。`scope` 的基点不是 `github.event.before`（那只是上一个 tip，被顶掉的排队 run 里的提交会落在所有后续 diff 之外），而是 `refs/heads/main-green`：上一次这道理检查通过的提交。`mark-green` job 只在 main push 的 `required` 绿之后把锚点推到这个提交，红了不动，下一批自然把这段一起盖上。push 的并发组固定为 `required-ci-push-main`、`cancel-in-progress` 为 `false`：GitHub 同时只让一个 run 在跑、最多一个排队，新的排队顶掉旧的排队，所以攒批不丢提交。第一次落地时还没有 `main-green`，`scope` 把所有已跟踪路径都算作改动、选全部套件——宁宽不窄。部署门禁认 main 上这次 `push` run。
 
-**PR 只跑快检档**：草稿和正式 PR 都只跑一个内联 job（`ci-fast.py --tier quick --budget 1200 --memory-mib 9216 --pull-request "$RUNNER_TEMP/pull.json"`，那之前先 `gh api .../pulls/N` 把 PR 的 JSON 写成文件），所有套件跳过；草稿由 `required-draft` 聚合（`CI required (draft quick)`），正式 PR 由 `required` 聚合（`CI required`），后者额外检查提交标题。选中范围与本地 quick 档一致，边界按 runner 给（本地 quick 默认按可用 CPU 给 180–720s，内存默认 3072 MiB；环境变量 `CI_FAST_BUDGET_SECONDS` 与显式 `--budget` 可覆盖时间预算。草稿 job 显式传入的 1200s 不变；详见 `.github/scripts/ci-fast.md`）。这个档不判自己没有的东西：草稿的占位标题（`WIP: <任务标题>`）不查，需要固定版 Claude Code / Codex / pi 的测试记未执行，Redis 由这个 job 自带（和完整档同一个 valkey 镜像和端口）。所以让草稿变红的只有两种：`ci-fast.py` 的报告判出真的失败（退出码 1），和一次根本没留下报告就结束的退出；预算耗尽、读不出东西（2/3）只打警告并把逐条未判项写进步骤摘要（2/3 指 `ci-fast.py` 那份报告里的判定，不是 shell 拿到的数字：报告说 unknown/blocked 才走警告，没留下报告的退出码，比如 argparse 拒绝参数留下的 2，照旧判红）——绿不等于全判过了，摘要才是全部信息。完整套件只在 main 的 `push` 上跑；事件读不出时按完整档处理（fail closed）。档位判定在 `required-ci.py` 的 `tier_for`。平台递卡会把还开着的 draft PR 转正式（`pr_publish.py` 递卡时调 `mark_ready_for_review`），触发正式 PR 的 `CI required`。
+**三档**（`required-ci.py` 的 `tier_for`）：
+
+- **草稿 PR 不跑套件**：只有 `scope` 和 `required-draft`，几秒钟结束。草稿是还没做完的东西，平台递卡时会把它转正式（`pr_publish.py` 调 `mark_ready_for_review`），`ready_for_review` 触发下一档。
+- **正式 PR**：路径选中的套件都跑，只有 e2e、remote、mcp、equivalence 留到合并后。这四个要专门的机器或耗时是其余套件的几倍，2026-10-18 到 10-20 里合进 main 之后把 main 弄红的次数也远少于其余套件。后端的 integration 层只跑这次改动通过 import 能到达的测试文件（`backend_imports.select_integration`）：迁移、`pyproject.toml`、`uv.lock`、`alembic.ini`、`backend/sandbox/`、任何 conftest、`tests/integration`/`tests/support`/`tests/fixtures` 下的数据文件，所有测试都靠它们，改到就整层跑；改到选择规则自己、改到 gate、或者从 `backend/` 以外的路径选中了后端套件，也整层跑。选中的文件按每片 144 个分片，最多 5 片；一个也没选中时 integration 不跑。拿 10-18 到 10-20 弄红 main 的 13 次 integration 故障回测，这条规则 13 次都选中了挂掉的测试；一次普通的后端提交大约跑这一层的三分之一。
+- **主干 push**：选中的套件全跑、整层跑，这是部署认的结果。
+
+事件读不出时按主干那一档处理（fail closed）。
 
 这样做的好处：分支保护里只有一个名字，加减套件不用改仓库设置；只改文档不会触发后端测试，改了后端也不可能漏跑。
 
@@ -51,7 +56,7 @@ covers:
 title: 勾几行路径，看这套检查选了什么
 note: 左边勾上这次改到的路径，右边就是 Required CI 会要求成功的套件。选中的必须成功，没选中的必须是跳过。
 source: ci-scope
-expect: backend, frontend, e2e, cli, guards, deploy, harness, remote, mcp, equivalence, cifast
+expect: backend, frontend, e2e, cli, guards, deploy, harness, remote, mcp, equivalence
 paths:
   - path: docs/manual/dev/ci.md
     label: 改文档
@@ -63,8 +68,6 @@ paths:
     label: 改部署脚本
   - path: cli/cheese
     label: 改 CLI 连接器
-  - path: .github/scripts/required-ci.py
-    label: 改这套检查本身
 scenarios:
   - key: docs
     label: 只改文档
@@ -81,9 +84,6 @@ scenarios:
   - key: cli
     label: 改 CLI 连接器
     paths: cli/cheese
-  - key: gate
-    label: 改这套检查本身
-    paths: .github/scripts/required-ci.py
 ```
 
 上面这张表里的套件名、pattern 和勾选结果都是构建时从 `.github/scripts/required-ci-paths.json` 读出来的，而且和真跑一遍 `required-ci.py` 的结果逐条对过：对不上，构建就失败。
@@ -97,7 +97,7 @@ scenarios:
 ## 合并之后 {#after-merge}
 
 1. `build.yml`：main 上的每个提交构建一整套镜像，以提交号为标签；没变的镜像直接给旧镜像加上新标签。这一步也把文档站构建进前端镜像。
-2. `deploy-dev.yml`：`Required CI` 结束时触发，确认这个提交的镜像构建成功、它的 `Required CI` 也成功，就自动部署到测试环境（也可以手动触发），见[部署拓扑](/dev/topology)。批次先结束、镜像还在构建时，会等构建跑完（最多 10 分钟）；等不到时这次运行失败，摘要说明构建仍在进行，构建完成后重跑这次运行或由下一次合入一并部署。`Required CI` 认两条路里的任一条：main 上 `push` 的那次（提交直接合进 main 时），或合并队列里 `merge_group` 的那次（提交走过队列时）；同一个提交只会有其中一条，缺另一条不算缺口。这个提交的镜像构建或 `Required CI` 没有成功的最新一次时，这次运行失败。GitHub 的运行列表有时比运行本身晚一分钟左右才显示构建已成功，所以判定失败之前会每 15 秒重读一次，最多读两分钟；测试环境已经在跑同一个或更新的版本时，跳过部署，运行成功。`desktop.yml` 发布桌面端安装包之后会重建一遍镜像，再手动触发这个工作流，点名它重建的那个提交（不是触发时 main 的最新提交）；这时测试环境在跑同一个提交也照样部署，因为这个提交的镜像已经换成了新的。部署组里同时只能有一个运行在等，后来的会取消先在等的那个；镜像构建又不按合并顺序结束，所以如果 main 上已经有一个更新的提交可以部署（镜像和 `Required CI` 都成功），这个提交的运行就不再去排队，摘要写明由哪个更新的提交连它一起部署。每次运行的摘要都写明测试环境实际在跑哪个提交。
+2. `deploy-dev.yml`：`Required CI` 结束时触发，确认这个提交的镜像构建成功、它的 `Required CI` 也成功，就自动部署到测试环境（也可以手动触发），见[部署拓扑](/dev/topology)。批次先结束、镜像还在构建时，会等构建跑完（最多 10 分钟）；等不到时这次运行失败，摘要说明构建仍在进行，构建完成后重跑这次运行或由下一次合入一并部署。`Required CI` 认的是 main 上 `push` 的那次；那次被后来的批次顶掉时，认覆盖了它的那个绿批次。这个提交的镜像构建或 `Required CI` 没有成功的最新一次时，这次运行失败。GitHub 的运行列表有时比运行本身晚一分钟左右才显示构建已成功，所以判定失败之前会每 15 秒重读一次，最多读两分钟；测试环境已经在跑同一个或更新的版本时，跳过部署，运行成功。`desktop.yml` 发布桌面端安装包之后会重建一遍镜像，再手动触发这个工作流，点名它重建的那个提交（不是触发时 main 的最新提交）；这时测试环境在跑同一个提交也照样部署，因为这个提交的镜像已经换成了新的。部署组里同时只能有一个运行在等，后来的会取消先在等的那个；镜像构建又不按合并顺序结束，所以如果 main 上已经有一个更新的提交可以部署（镜像和 `Required CI` 都成功），这个提交的运行就不再去排队，摘要写明由哪个更新的提交连它一起部署。每次运行的摘要都写明测试环境实际在跑哪个提交。
 3. `deploy-prod.yml`：只在发布 GitHub Release 或手动指定提交时触发，并且要有人批准才会执行。
 4. `warm-caches.yml`：依赖锁文件或版本 pin 变了的时候（另外每天一次），在 main 上照各套件的 key 装一遍依赖并存下缓存，不跑测试。PR 上的套件只恢复、不保存：从 PR 的 ref 存的缓存，别的 ref 读不到。
 

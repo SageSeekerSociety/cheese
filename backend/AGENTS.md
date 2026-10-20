@@ -56,9 +56,9 @@ and cache-pricing constraints in
 
 ## Caps and conventions
 
-- Run `task ci:fast` from the repository root before you push (see
-  [`../AGENTS.md`](../AGENTS.md)); add `--types` when you touch shared types.
-  `task be:check` runs the whole backend check locally.
+- The pull request's CI is the verdict (see [`../AGENTS.md`](../AGENTS.md));
+  locally, run the test files your change touches. `task be:check` runs the
+  whole backend check on a machine that can hold it.
 - Migrations: [`../.claude/rules/migrations.md`](../.claude/rules/migrations.md)
   — the alembic chain has exactly one head at all times.
 - Test pitfalls by symptom:
