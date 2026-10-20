@@ -26,7 +26,7 @@ These are tool steps (with the output, failure and calls written onto them), sub
 
 `scripts/dev/count-retired-site.py` holds the predicate, runs in a read-only transaction and reports the retired rows by kind, the hidden rows kept, and `run_records` counted by kind. No `run_records` writer was removed; platform statuses still use the table, so none of its rows is retired.
 
-The read-only dev recount with this predicate: `retired_site_rows` 1,139,401; `hidden_rows_kept` 352; every `run_records` kind is one a live writer still produces. The product owner approved deleting the 1,139,401 retired rows in release two.
+The read-only dev recount with this predicate: `retired_site_rows` 1,139,401; `hidden_rows_kept` 352; every `run_records` kind is one a live writer still produces. The product owner approved deleting the 1,139,401 retired rows in release two. The recount on 2026-10-20, after release one reached dev: `retired_site_rows` 1,141,809, `hidden_rows_kept` 352. The newest retired row was written at 06:18:42 UTC, during the deploy that carried release one, and none since.
 
 Release one removes readers/writers and adds only the conversation launch boundary. Release two removes the retired rows in bounded, committed periodic batches after the preceding release has stopped producing them. Agent traces are kept forever, so the release-two job must, for each batch, in this order:
 
