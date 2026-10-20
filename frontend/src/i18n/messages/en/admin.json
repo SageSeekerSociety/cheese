@@ -110,7 +110,8 @@
       "waitingNote": "The longest has waited {for}",
       "failures": "Provider failures",
       "failuresNote": "Hosts the provider broke in the last {minutes} minutes; at {limit} the platform stops opening machines and tries one every {probe} minutes",
-      "hostsNote": "Whole VMs count toward the cap; given-up and releasing hosts do not."
+      "hostsNote": "Whole VMs count toward the cap; given-up and releasing hosts do not.",
+      "warm": "Warm machines are counted separately: {n} now, target {target}."
     },
     "alert": {
       "notConfigured": "This deployment has no MicroCloud configured; cloud sandboxes are unavailable",
@@ -120,6 +121,7 @@
     "hosts": "Hosts",
     "noHosts": "No hosts right now",
     "vm": "Whole VM",
+    "warmChip": "Warm",
     "col": {
       "host": "Host",
       "phase": "Phase",
@@ -185,15 +187,12 @@
       "hostsLostValue": "{n} ({error} · {away} · {never})",
       "sandboxesLost": "Working sandboxes lost with their host"
     },
-    "warm": "Warm pool (target {target})",
-    "noWarm": "No warm machines right now",
-    "warmAge": "Age {for}",
     "config": "Each host takes the smaller of {perCore} sandboxes per core and as many as fit in its memory at {memory} GB each; a sandbox is destroyed after {sandboxIdle} idle, a host released after {hostIdle} idle, a whole VM after {vmIdle} idle",
     "attempts": "1 attempt | {n} attempts",
     "warmState": {
-      "preparing": "Preparing",
-      "ready": "Ready",
-      "reserved": "Reserved",
+      "preparing": "Warming up",
+      "ready": "Unclaimed",
+      "reserved": "Being claimed",
       "claimFailed": "Claim failed",
       "deleting": "Deleting",
       "cleanupFailed": "Delete failed"

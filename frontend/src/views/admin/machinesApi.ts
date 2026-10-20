@@ -95,6 +95,10 @@ export interface WarmMachineRow {
   id: string
   state: string
   machine_id: number | null
+  hostname: string | null
+  cores: number | null
+  memory_mb: number | null
+  disk_gb: number | null
   ip: string | null
   online: boolean
   created_at: string | null
