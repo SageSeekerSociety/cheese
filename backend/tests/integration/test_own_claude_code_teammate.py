@@ -70,7 +70,7 @@ def _add(client, project_id, handle: str, connection: str):
                 sql_device_service(db), row.device_id, uuid.UUID(project_id)
             )
             await db.commit()
-            return row.model or "sonnet", row.device_id
+            return "sonnet", row.device_id
 
     model, device = client.portal.call(setup)
     return client.post(
