@@ -13,7 +13,7 @@ from app.domain.agent_instance.own import (
     owned_by_seat,
 )
 from app.domain.agent_instance.own.admission import why_not
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.handles import AGENT_HANDLE_PREFIX, agent_instance_handle
 from app.domain.notice_meta import EVENT_TURN_FAILED, SEVERITY_INFO, WHO_HUMAN, notice
 from app.domain.room_task.place import Place
 from app.domain.topic.models import is_private_chat
@@ -23,11 +23,12 @@ from app.domain.topic_membership.services import TopicMemberService
 async def seat_if_named(
     session: AsyncSession, project, topic, content: str, author: str
 ) -> None:
-    """Seat any personal agent named in a project that allows personal agents.
+    """Seat named project teammates using team connections.
 
-    A private chat keeps its two (`privateChatTwoPeopleOnly`): there only the
-    owner brings their own agent in, since whoever is seated reads the chat."""
-    if not content or "<@" not in content:
+    Their generated seat handles use the agent namespace. Human mentions need
+    no connection lookup; actual seats are still checked against project rows.
+    """
+    if not content or f"<@{AGENT_HANDLE_PREFIX}" not in content:
         return
     owned = await session.scalars(
         select(AgentInstance.id)

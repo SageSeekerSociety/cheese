@@ -114,11 +114,9 @@ async def project_team(
 ) -> list[TeammateSeat]:
     """`app.domain.membership.ports.ProjectTeam`：这个项目里坐着的队友。
 
-    筛在这一次里，因为它要的两个输入都是本包的一行：项目设置里那句「成员可以带自己
-    的 agent 进来」、以及谁是谁的 agent。关了那项的项目把成员自己的 agent 收回了
-    ——它们不是「叫不动」，是不在项目里（`own.py` 的 ``team connection access``）；被主人
-    停用的也一样。项目自己的队友无论如何都在，``active`` 照实说：名册上留着它，因为
-    它接手的房间还在照常工作。
+    Team connections determine availability; member provenance describes whose
+    teammate it is. Inactive member-owned instances are omitted here. Other
+    project instances retain their active state for rooms already using them.
 
     名字、席位 handle、默认队友这几样也在这里一次收成内置值：名册那一侧认不出
     ``AgentInstance``，也不该认得。"""

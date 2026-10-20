@@ -84,6 +84,21 @@ class ProbeTests(unittest.TestCase):
         )
         self.assertEqual(rows[1]["inference"], "not_checked")
 
+    def test_a_catalog_larger_than_a_small_body_is_still_ready(self):
+        # The live catalog carries every model's full litellm_params; 46 rows
+        # were already 290 KB. Its size says nothing about readiness.
+        rows = [
+            {"model_name": f"model-{i}", "litellm_params": {"pad": "x" * 8000}}
+            for i in range(60)
+        ]
+        catalog = json.dumps({"data": rows}).encode()
+        self.assertGreater(len(catalog), 262144)
+        code, out, _ = self.run_probe(
+            [Response(b'{"status":"healthy","db":"connected"}'), Response(catalog)]
+        )
+        self.assertEqual((code, out[-1]["phase"]), (0, "complete"), out[-1])
+        self.assertEqual(out[1]["models"], 60)
+
     def test_database_failure_is_not_green(self):
         code, rows, requests = self.run_probe([Response(b'{"db":"disconnected"}')])
         self.assertEqual(code, 1)

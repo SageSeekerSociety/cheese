@@ -5,4 +5,3 @@ type Schemas = components['schemas']
 
 /** Team connections and project teammate instances. */
 export type OwnAgentsSettings = Schemas['OwnAgentsOut']
-export type OwnAgentConnection = Schemas['OwnAgentConnectionOut']
