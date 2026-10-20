@@ -20,6 +20,11 @@ const listCategories = vi.fn()
 const delSpace = vi.fn()
 const updateSpace = vi.fn()
 
+// 侧栏「我的草稿」旁边的数，换空间时读一次。
+vi.mock('@/api/taskDrafts', () => ({
+  TaskDraftsApi: { list: vi.fn().mockResolvedValue([]) },
+}))
+
 vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spacesDetail(...a),

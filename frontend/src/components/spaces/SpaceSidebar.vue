@@ -25,6 +25,18 @@
         :title="t('spaces.detail.allContests')"
       />
       <v-list-item
+        v-if="myDraftCount || isDraftsPage"
+        rounded="lg"
+        prepend-icon="mdi-file-document-edit-outline"
+        :to="{ name: 'SpacesDetailDrafts', params: { spaceId } }"
+        :title="t('spaces.detail.myDrafts.title')"
+        data-testid="space-side-drafts"
+      >
+        <template v-if="myDraftCount" #append>
+          <span class="side-nav__count">{{ myDraftCount > 99 ? '99+' : myDraftCount }}</span>
+        </template>
+      </v-list-item>
+      <v-list-item
         v-for="category in activeCategories"
         :key="`category-${category.id}`"
         rounded="lg"
@@ -88,7 +100,7 @@ import { useSpaceStore } from '@/stores/space'
 const { t } = useI18n()
 const nav = useNavigation()
 const spaceStore = useSpaceStore()
-const { currentSpace: space, categories, isManager, pendingAuditCount } = storeToRefs(spaceStore)
+const { currentSpace: space, categories, isManager, pendingAuditCount, myDraftCount } = storeToRefs(spaceStore)
 const { mdAndUp } = useDisplay()
 
 /** 侧栏里的分类：未归档的，按显示顺序。 */
@@ -101,6 +113,8 @@ const spaceId = computed(() => Number(nav?.route?.params?.spaceId))
 const isSettingsActive = computed(
   () => nav?.route?.path?.startsWith(`/spaces/${spaceId.value}/manage/settings`) ?? false
 )
+/** 在「我的草稿」页上：删光了那一格也留着，不让人站在一个侧栏里找不到的页面上。 */
+const isDraftsPage = computed(() => nav?.route?.name === 'SpacesDetailDrafts')
 const isUnderTasksSection = computed(
   () => nav?.route?.matched?.some((record) => record.name === 'SpacesDetailTasks') ?? false
 )

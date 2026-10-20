@@ -118,6 +118,7 @@ const drafts = ref<TaskDraftSummary[]>([])
 async function refreshDrafts() {
   try {
     drafts.value = await TaskDraftsApi.list(spaceId.value)
+    spaceStore.setMyDraftCount(drafts.value.length)
   } catch {
     // 列表读不出来不挡着写题：顶栏的「草稿」暂时是空的。
   }

@@ -234,5 +234,16 @@
     "updateSuccess": "Template updated"
   },
   "updateFailed": "Couldn't update",
-  "updateSuccess": "Updated"
+  "updateSuccess": "Updated",
+  "myDrafts": {
+    "title": "My drafts",
+    "name": "Name",
+    "source": "Source",
+    "updated": "Updated",
+    "actions": "Actions",
+    "fromFile": "Imported from {file}",
+    "empty": "No drafts",
+    "loadFailed": "Couldn't load drafts",
+    "removeAsk": "Delete “{name}”?"
+  }
 }

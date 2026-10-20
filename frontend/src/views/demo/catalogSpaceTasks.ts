@@ -37,6 +37,7 @@ import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import ManageDeniedView from '@/views/spaces/detail/ManageDeniedView.vue'
+import MyDraftsView from '@/views/spaces/detail/MyDraftsView.vue'
 import PublishTaskView from '@/views/spaces/detail/PublishTaskView.vue'
 import BasicInfoView from '@/views/spaces/detail/settings/BasicInfoView.vue'
 import IndexView from '@/views/spaces/detail/settings/IndexView.vue'
@@ -249,6 +250,55 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           },
         },
         expectSelector: '[data-testid="draft-strip"]',
+      },
+      {
+        get name() {
+          return t('catalog.publishTaskView.s5.name')
+        },
+        get note() {
+          return t('catalog.publishTaskView.s5.note')
+        },
+        props: { agentDocked: false },
+        expectSelector: '[data-testid="publish-agent-dock"]',
+      },
+    ],
+  },
+  {
+    id: 'my-drafts-view',
+    title: 'MyDraftsView',
+    get about() {
+      return t('catalog.myDraftsView.about')
+    },
+    file: 'src/views/spaces/detail/MyDraftsView.vue',
+    component: MyDraftsView,
+    needs: UI_T_R,
+    args: {
+      drafts: PUBLISH_DRAFTS,
+      loading: false,
+      failed: false,
+      removing: false,
+      publishTo: '/spaces/7/tasks/publish',
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.myDraftsView.s1.name')
+        },
+        get note() {
+          return t('catalog.myDraftsView.s1.note')
+        },
+        props: {},
+        expect: 'Lab 4 矩阵转置优化',
+      },
+      {
+        get name() {
+          return t('catalog.myDraftsView.s2.name')
+        },
+        get note() {
+          return t('catalog.myDraftsView.s2.note')
+        },
+        props: { drafts: [] },
+        expect: '暂无草稿',
       },
     ],
   },

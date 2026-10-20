@@ -234,5 +234,16 @@
     "updateSuccess": "模板更新成功"
   },
   "updateFailed": "更新失败",
-  "updateSuccess": "更新成功"
+  "updateSuccess": "更新成功",
+  "myDrafts": {
+    "title": "我的草稿",
+    "name": "名称",
+    "source": "来源",
+    "updated": "修改时间",
+    "actions": "操作",
+    "fromFile": "从 {file} 导入",
+    "empty": "暂无草稿",
+    "loadFailed": "无法读取草稿",
+    "removeAsk": "删除「{name}」？"
+  }
 }

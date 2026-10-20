@@ -20,6 +20,11 @@ vi.mock('@/api/taskBoard', () => ({
   TaskBoardApi: { list: (...a: unknown[]) => taskList(...a) },
 }))
 
+// 侧栏「我的草稿」旁边的数，换空间时读一次。
+vi.mock('@/api/taskDrafts', () => ({
+  TaskDraftsApi: { list: vi.fn().mockResolvedValue([]) },
+}))
+
 vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spacesDetail(...a),
