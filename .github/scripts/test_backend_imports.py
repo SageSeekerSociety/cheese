@@ -35,6 +35,11 @@ TREE = {
     "tests/conftest.py": "from app.domain.billing import service\n",
     "tests/support/__init__.py": "",
     "tests/support/rooms.py": "from app.domain.rooms import service\n",
+    "tests/support/baseline.py": "PATH = 'debt_baseline.json'\n",
+    "tests/support/debt_baseline.json": "{}\n",
+    "tests/integration/test_debt.py": "from tests.support.baseline import PATH\n",
+    "tests/integration/seats.json": "[]\n",
+    "tests/integration/conftest.py": "SEATS = 'seats.json'\n",
     "tests/integration/__init__.py": "",
     "tests/integration/test_tasks.py": "from app.domain.tasks.service import now\n",
     "tests/integration/test_rooms.py": "from tests.support.rooms import service\n",
@@ -92,6 +97,16 @@ class SelectIntegrationTest(unittest.TestCase):
                      "backend/tests/support/schema.json"):
             with self.subTest(path=path):
                 self.assertIsNone(self.select(path, "backend/app/core/clock.py"))
+
+    def test_test_data_runs_the_tests_that_reach_the_module_naming_it(self):
+        self.assertEqual(self.select("backend/tests/support/debt_baseline.json"),
+                         ["tests/integration/test_debt.py"])
+
+    def test_test_data_a_conftest_names_runs_everything(self):
+        self.assertIsNone(self.select("backend/tests/integration/seats.json"))
+
+    def test_an_image_built_from_the_sandbox_is_read_by_no_test(self):
+        self.assertEqual(self.select("backend/sandbox/Dockerfile.private"), [])
 
     def test_notes_and_baselines_beside_the_code_change_nothing(self):
         for path in ("backend/AGENTS.md", "backend/openapi-untyped.json",

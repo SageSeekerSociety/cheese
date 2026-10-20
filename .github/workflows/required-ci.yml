@@ -7,7 +7,8 @@ name: Required CI
 #   when it hands the work over, and `ready_for_review` starts the next tier.
 # - A ready pull request runs every suite its diff selects, except the
 #   post-merge suites (e2e, remote, mcp, equivalence), with the backend's
-#   integration layer narrowed to the test files the diff reaches. It
+#   integration layer narrowed to the test files that executed what the
+#   diff changed (the coverage map, coverage-map.yml). It
 #   aggregates as `CI required`, the merge gate, and checks the commit title.
 # - A push to main is the post-submit gate: every suite the cumulative diff
 #   since `refs/heads/main-green` selects, all of each (see `main-green` at the
@@ -45,6 +46,11 @@ jobs:
     # deleted fork stay on GitHub's machines.
     runs-on: ${{ fromJSON((github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
+    # actions: read is for the integration coverage map (coverage-map.yml's
+    # newest artifact), which a ready pull request's selection reads.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       backend: ${{ steps.scope.outputs.backend }}
       frontend: ${{ steps.scope.outputs.frontend }}
@@ -75,6 +81,7 @@ jobs:
           # base worth passing here (github.event.before is only the previous
           # tip), so the script resolves its own from the `main-green` ref.
           EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -n "$EVENT_BASE" ]; then
             # The base the checked-out merge ref was built on, not the payload's:

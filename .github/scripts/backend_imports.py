@@ -1,4 +1,4 @@
-"""The backend's static import graph, and the integration tests a change reaches.
+"""The backend's static import graph, and the test files a change imports.
 
 Read from the source with ``ast``, never by importing app code: the graph has to
 be built by a job with nothing but python3 (Required CI's ``scope``), and an
@@ -9,16 +9,14 @@ import x``, ``from . import b``, or ``importlib.import_module("b")`` with a
 literal name. Importing ``app.x.y`` is also an edge to ``app.x`` and ``app``:
 Python runs every parent package's ``__init__`` on the way down.
 
-:func:`select_integration` answers which test files' integration-layer cases a
-pull request must run — the layer is decided per case by whether it reaches for
-a database (tests/conftest.py: ``_layer_of``), so a file under ``tests/unit/``
-can hold some: every one that reaches a changed module through imports, or
-all of them when the change is to something every test shares or the graph
-cannot see. Measured against the main breakages of 2026-10-18..20 (13 episodes,
-55 failing test files), this rule selected the failing file in 54 of 55 and
-every episode, while a typical backend commit selected about a quarter of the
-layer. A ``conftest.py`` is not followed as a consumer: every test sits under
-one, and following it would select everything for every change.
+:func:`select_integration` is the import half of a pull request's integration
+selection (coverage_map.py holds the rest): every test file that reaches a
+changed module through imports, or None — the whole layer — when the change is
+to something every test shares that neither imports nor a trace can see. It
+alone misses most of the layer: an integration case reaches the code through
+HTTP on the conftest's client, an edge no import records. A ``conftest.py`` is
+not followed as a consumer: every test sits under one, and following it would
+select everything for every change.
 """
 
 import ast
@@ -32,9 +30,12 @@ CONTRACT_PREFIX = "tests/contract/"
 
 #: Backend inputs every integration test depends on without importing them: the
 #: dependencies, the schema the database is built from, and the sandbox scripts
-#: the test platform loads by path. A change to one runs every integration test.
+#: and skills the test platform loads by path. A change to one runs every
+#: integration test.
 SHARED_INPUTS = ("pyproject.toml", "uv.lock", "alembic.ini")
 SHARED_PREFIXES = ("alembic/", "sandbox/")
+#: Under a shared prefix, files no test reads: the images built from it.
+NOT_READ = ("sandbox/Dockerfile",)
 #: Test data integration tests read by path. Data elsewhere under tests/ (the
 #: contract layer's route index, the duration and quarantine lists) belongs to
 #: suites that run whole.
@@ -116,6 +117,12 @@ def graph(backend):
     return paths, importers
 
 
+def data_readers(backend, paths, filename):
+    """The modules whose source names ``filename``: who reads a data file by path."""
+    return {module for module, rel in paths.items()
+            if filename in (backend / rel).read_text(encoding="utf-8")}
+
+
 def is_conftest(module):
     return module == "conftest" or module.endswith(".conftest")
 
@@ -148,6 +155,8 @@ def select_integration(backend, changed):
             continue
         rel = path[len("backend/"):]
         top = rel.split("/", 1)[0]
+        if rel.startswith(NOT_READ):
+            continue
         if rel in SHARED_INPUTS or rel.startswith(SHARED_PREFIXES):
             return None, f"{path} is shared by every test"
         if PurePosixPath(rel).name == "conftest.py":
@@ -160,7 +169,14 @@ def select_integration(backend, changed):
             seeds.add(module_name(rel))
             continue
         if rel.startswith(TEST_DATA_PREFIXES):
-            return None, f"{path} is test data, read by path rather than imported"
+            # Read by path: by the modules that name the file.
+            if paths is None:
+                paths, importers = graph(backend)
+            readers = data_readers(backend, paths, PurePosixPath(rel).name)
+            if not readers or any(is_conftest(m) for m in readers):
+                return None, f"{path} is test data {'a conftest reads' if readers else 'no module names'}"
+            seeds.update(readers)
+            continue
         if top == "tests":
             continue
         # A data file beside code (a prompt, a template) is read by the modules

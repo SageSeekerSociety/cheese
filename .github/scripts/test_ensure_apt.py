@@ -28,6 +28,45 @@ echo ok
 }
 
 
+class EnsureAptFromCachedPackages(unittest.TestCase):
+    """With CHEESE_APT_DEBS holding the packages, apt is never opened."""
+
+    def run_with(self, dpkg_installs):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin").mkdir()
+            debs = root / "debs"
+            debs.mkdir()
+            (debs / "zsh_5.9_arm64.deb").write_text("")
+            stubs = {**STUBS, "dpkg": f"""#!/bin/sh
+if [ "$1" = "-i" ]; then {'touch "$STATE/installed"; exit 0' if dpkg_installs else 'exit 1'}; fi
+[ -e "$STATE/installed" ]
+""", "id": "#!/bin/sh\necho 0\n", "chown": "#!/bin/sh\nexit 0\n"}
+            for name, body in stubs.items():
+                stub = root / "bin" / name
+                stub.write_text(body)
+                stub.chmod(0o755)
+            env = {**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}",
+                   "STATE": str(root), "FAILS": "0", "MESSAGE": "",
+                   "CHEESE_APT_STEP_SECONDS": "1", "CHEESE_APT_LOCK": str(root / "lock"),
+                   "CHEESE_APT_DEBS": str(debs)}
+            result = subprocess.run(["bash", str(SCRIPT), "zsh"], env=env,
+                                    capture_output=True, text=True, timeout=60)
+            calls = (root / "calls").read_text().splitlines() if (root / "calls").exists() else []
+            return result, calls
+
+    def test_packages_the_cache_holds_install_without_apt(self):
+        result, calls = self.run_with(dpkg_installs=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, [])
+
+    def test_a_cache_that_does_not_install_falls_back_to_apt_and_refills(self):
+        result, calls = self.run_with(dpkg_installs=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(" update", calls[0])
+        self.assertIn("Dir::Cache::archives=", calls[-1])
+
+
 class EnsureApt(unittest.TestCase):
     def run_script(self, fails, message, hangs=0):
         with tempfile.TemporaryDirectory() as directory:

@@ -9,7 +9,8 @@
     ".github/scripts/ensure-apt.sh",
     ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/test.yml",
-    ".github/scripts/backend_imports.py"
+    ".github/scripts/backend_imports.py",
+    ".github/scripts/coverage_map.py"
   ],
   "frontend": [
     "frontend/**",

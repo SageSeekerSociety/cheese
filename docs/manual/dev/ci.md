@@ -8,6 +8,8 @@ covers:
   - .github/scripts/required-ci-paths.json
   - .github/scripts/main-fail-fast.py
   - .github/scripts/backend_imports.py
+  - .github/scripts/coverage_map.py
+  - .github/workflows/coverage-map.yml
   - .github/workflows/build.yml
   - .github/workflows/deploy-dev.yml
   - .github/workflows/deploy-prod.yml
@@ -45,7 +47,7 @@ covers:
 **三档**（`required-ci.py` 的 `tier_for`）：
 
 - **草稿 PR 不跑套件**：只有 `scope` 和 `required-draft`，几秒钟结束。草稿是还没做完的东西，平台递卡时会把它转正式（`pr_publish.py` 调 `mark_ready_for_review`），`ready_for_review` 触发下一档。
-- **正式 PR**：路径选中的套件都跑，只有 e2e、remote、mcp、equivalence 留到合并后。这四个要专门的机器或耗时是其余套件的几倍，2026-10-18 到 10-20 里合进 main 之后把 main 弄红的次数也远少于其余套件。后端的 integration 层只跑这次改动通过 import 能到达的测试文件（`backend_imports.select_integration`）：迁移、`pyproject.toml`、`uv.lock`、`alembic.ini`、`backend/sandbox/`、任何 conftest、`tests/integration`/`tests/support`/`tests/fixtures` 下的数据文件，所有测试都靠它们，改到就整层跑；改到选择规则自己、改到 gate、或者从 `backend/` 以外的路径选中了后端套件，也整层跑。选中的文件按每片 144 个分片，最多 5 片；一个也没选中时 integration 不跑。拿 10-18 到 10-20 弄红 main 的 13 次 integration 故障回测，这条规则 13 次都选中了挂掉的测试；一次普通的后端提交大约跑这一层的三分之一。
+- **正式 PR**：路径选中的套件都跑，只有 e2e、remote、mcp、equivalence 留到合并后。这四个要专门的机器或耗时是其余套件的几倍，2026-10-18 到 10-20 里合进 main 之后把 main 弄红的次数也远少于其余套件。后端的 integration 层只跑执行过这次改动的测试文件。依据是覆盖率映射表：`coverage-map.yml` 每天两次在 `main-green` 上带覆盖率跑整层 integration，按测试记下每个函数被哪些测试文件执行过（`coverage_map.py`）。改了函数体，就跑执行过这个函数的测试文件；改了函数外面的代码（常量、类字段这类只在 import 时执行一次的），就找出读这些名字的函数，再跑这些函数的测试文件；函数外不绑定任何名字的语句（比如注册调用），跑 import 这个模块的所有模块的测试文件。PR 改到的测试文件一律跑，映射表里没有对应测试的测试文件每次都跑。迁移、`pyproject.toml`、`uv.lock`、`alembic.ini`、`backend/sandbox/`（镜像的 Dockerfile 除外）、任何 conftest，所有测试都靠它们，改到就整层跑；测试数据只跑读这个文件的模块能到达的测试，conftest 读的数据整层跑；改到选择规则自己、改到 gate、从 `backend/` 以外的路径选中了后端套件，或者读不到映射表，也整层跑。选中的文件按每片 144 个分片，最多 5 片；一个也没选中时 integration 不跑。漏选由合并后 main 上的整层跑兜底。
 - **主干 push**：选中的套件全跑、整层跑，这是部署认的结果。
 
 事件读不出时按主干那一档处理（fail closed）。
@@ -99,7 +101,8 @@ scenarios:
 1. `build.yml`：main 上的每个提交构建一整套镜像，以提交号为标签；没变的镜像直接给旧镜像加上新标签。这一步也把文档站构建进前端镜像。
 2. `deploy-dev.yml`：`Required CI` 结束时触发，确认这个提交的镜像构建成功、它的 `Required CI` 也成功，就自动部署到测试环境（也可以手动触发），见[部署拓扑](/dev/topology)。批次先结束、镜像还在构建时，会等构建跑完（最多 10 分钟）；等不到时这次运行失败，摘要说明构建仍在进行，构建完成后重跑这次运行或由下一次合入一并部署。`Required CI` 认的是 main 上 `push` 的那次；那次被后来的批次顶掉时，认覆盖了它的那个绿批次。这个提交的镜像构建或 `Required CI` 没有成功的最新一次时，这次运行失败。GitHub 的运行列表有时比运行本身晚一分钟左右才显示构建已成功，所以判定失败之前会每 15 秒重读一次，最多读两分钟；测试环境已经在跑同一个或更新的版本时，跳过部署，运行成功。`desktop.yml` 发布桌面端安装包之后会重建一遍镜像，再手动触发这个工作流，点名它重建的那个提交（不是触发时 main 的最新提交）；这时测试环境在跑同一个提交也照样部署，因为这个提交的镜像已经换成了新的。部署组里同时只能有一个运行在等，后来的会取消先在等的那个；镜像构建又不按合并顺序结束，所以如果 main 上已经有一个更新的提交可以部署（镜像和 `Required CI` 都成功），这个提交的运行就不再去排队，摘要写明由哪个更新的提交连它一起部署。每次运行的摘要都写明测试环境实际在跑哪个提交。
 3. `deploy-prod.yml`：只在发布 GitHub Release 或手动指定提交时触发，并且要有人批准才会执行。
-4. `warm-caches.yml`：依赖锁文件或版本 pin 变了的时候（另外每天一次），在 main 上照各套件的 key 装一遍依赖并存下缓存，不跑测试。PR 上的套件只恢复、不保存：从 PR 的 ref 存的缓存，别的 ref 读不到。
+4. `warm-caches.yml`：依赖锁文件或版本 pin 变了的时候（另外每天一次），在 main 上照各套件的 key 装一遍依赖（包括测试分片用 apt 装的那几个工具的 .deb 包）并存下缓存，不跑测试。PR 上的套件只恢复、不保存：从 PR 的 ref 存的缓存，别的 ref 读不到。
+5. `coverage-map.yml`：每天两次，在 `main-green` 上带覆盖率跑整层 integration，发布正式 PR 精选 integration 用的映射表。带覆盖率比平时慢约 37%，所以不放在任何有人等结果的运行里；缺一片就不发布，PR 继续用上一份。
 
 ## PR 上的两个机器人 {#bots}
 
