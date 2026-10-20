@@ -34,6 +34,7 @@ import {
 } from './catalogSpaceTasksFixtures'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import TeachingFields from '@/components/common/TeachingFields.vue'
 import { t } from '@/i18n'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import ManageDeniedView from '@/views/spaces/detail/ManageDeniedView.vue'
@@ -419,6 +420,39 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         props: { teaching: undefined, materials: undefined, materialsState: 'error' },
         expectSelector: '[data-testid="teaching-materials-error"]',
+      },
+    ],
+  },
+  {
+    id: 'teaching-fields',
+    title: 'TeachingFields',
+    about:
+      '「AI 队友辅导」那几格，空间设置和发题页、改题页共用。题目那一层多一张「沿用空间设置」，底下折着空间那一份要求。',
+    file: 'src/components/common/TeachingFields.vue',
+    component: TeachingFields,
+    needs: UI_T,
+    args: { materials: SPACE_MATERIALS, materialsState: 'ready' },
+    states: [
+      {
+        name: '题目那一层，沿用空间的方式',
+        note: '没选方式就用空间的「引导为主」；本题补充要求只写这道题自己的，空间那一份折在最下面。',
+        props: {
+          inherit: true,
+          spaceTeaching: SPACE_TEACHING,
+          modelValue: {
+            mode: null,
+            systemPrompt: '这道题考调度算法。学生问到时间片轮转时，先让他画出甘特图，再讨论时间片大小。',
+            materialIds: [],
+            documentIds: [],
+          },
+        },
+        expectSelector: '[data-testid="teaching-space-prompt"]',
+      },
+      {
+        name: '空间那一层',
+        note: '四种方式，没有「沿用」；选中的那张描深色边。',
+        props: { modelValue: SPACE_TEACHING },
+        expect: '引导为主',
       },
     ],
   },
