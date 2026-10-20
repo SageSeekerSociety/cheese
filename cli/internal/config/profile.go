@@ -80,7 +80,7 @@ func Activate(path string) error {
 		fmt.Fprintf(os.Stderr, "warning: Claude logins not moved yet: %v\n", err)
 	}
 	for _, dir := range retained {
-		fmt.Fprintf(os.Stderr, "warning: %s was recreated after its login moved; it is no longer read and was left in place\n", dir)
+		fmt.Fprintf(os.Stderr, "warning: %s was left in place because its login already exists in the new store; it is no longer read\n", dir)
 	}
 	return os.Setenv(place.ProfileRootEnv, Root(path))
 }
