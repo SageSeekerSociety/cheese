@@ -208,6 +208,10 @@ GENERATED = ("frontend/src/api/openapi.d.ts",)
 #: it is a dereference in Go and Rust (`*p = 3`) and the universal selector in CSS, and a
 #: diff line does not say which. A block comment's continuation lines are therefore not
 #: judged mechanical; the file falls to the tier its path asks for — 判不了按 B.
+#: File types whose indentation is syntax: a line's leading whitespace is part of what it
+#: means, so changing it is not 纯格式.
+INDENTED = frozenset({".py", ".yml", ".yaml"})
+
 COMMENT = {
     ".py": ("#",),
     ".sh": ("#",),
@@ -383,45 +387,39 @@ def mechanical(repo, base, head, path):
 
 def liftable_only(repo, base, head, path):
     """Every added AND every removed line is blank, starts with this file's comment token,
-    or is the same line on the other side with only its spacing changed — comments,
-    reindentation and whitespace-only edits, which is what §4's 纯注释 and 纯格式 come to in
-    a diff.
+    or is paired with a line on the other side that differs from it only in spacing —
+    comments and whitespace-only edits, which is what §4's 纯注释 and 纯格式 come to in a
+    diff.
 
-    Both sides are judged, and both are compared with all whitespace taken out: a line
-    whose twin is on the other side only moved or was re-indented — §4's 纯格式, so a
-    change that only reorders lines inside one file is mechanical too. A line with no twin
-    was added or deleted, and deleting a line of code is not mechanical: the removed line
-    has nothing to match, which is how a removed guard or a removed feature still gets
-    read. A file type with no entry in COMMENT is not judged here (False), not assumed
-    clean."""
-    tokens = COMMENT.get(Path(path).suffix)
+    The file is compared whole, comments and blank lines left out: its code lines at
+    `head`, read top to bottom, must be its code lines at `base` with only their spacing
+    changed. A line added or deleted breaks that, and deleting a line of code is not
+    mechanical: it is how a removed guard or a removed feature still gets read. Moving a
+    line of code breaks it too — it changes the order things run in. In a file whose
+    indentation is syntax (INDENTED), a line's leading whitespace must stay as it was: in
+    Python moving a `return` out of an `if` changes what runs, and in YAML re-indenting a
+    key moves it to another mapping. A file type with no entry in COMMENT is not judged
+    here (False), not assumed clean."""
+    suffix = Path(path).suffix
+    tokens = COMMENT.get(suffix)
     if not tokens:
         return False
-    diff = _git(repo, "diff", "-U0", "--no-color", base, head, "--", path)
-    if diff is None:
-        return False
-    added, removed = [], []
-    for line in diff.splitlines():
-        if line.startswith(("+++", "---", "@@", "diff ", "index ", "new file", "deleted ",
-                            "similarity ", "rename ", "old mode", "new mode")):
-            continue
-        if line[:1] == "+":
-            added.append(line[1:])
-        elif line[:1] == "-":
-            removed.append(line[1:])
-    if not added and not removed:
+    before = _git(repo, "show", f"{base}:{path}")
+    after = _git(repo, "show", f"{head}:{path}")
+    if before == after:
         return False
 
-    def liftable(raw, others):
-        body = raw.strip()
-        if not body or body.startswith(tokens):
-            return True
-        return "".join(raw.split()) in others
+    def code(text):
+        out = []
+        for raw in (text or "").splitlines():
+            body = raw.strip()
+            if not body or body.startswith(tokens):
+                continue
+            indent = raw[: len(raw) - len(raw.lstrip())] if suffix in INDENTED else ""
+            out.append(indent + "".join(body.split()))
+        return out
 
-    stripped_added = ["".join(l.split()) for l in added]
-    stripped_removed = ["".join(l.split()) for l in removed]
-    return all(liftable(l, stripped_removed) for l in added) and all(
-        liftable(l, stripped_added) for l in removed)
+    return code(before) == code(after)
 
 
 def clean_revert(repo, base, head, path):
@@ -811,8 +809,15 @@ def self_test():
              {"frontend/pnpm-lock.yaml": "lockfileVersion: 2\n"}, "G")
         case("只加注释，是 G", {"f.py": "x = 1\n# why\n"}, "G")
         case("只改空格，是 G", {"f.py": "x  =  1\n"}, "G")
-        case("只改缩进，是 G", {"f.py": "if x:\n    y = 1\n"}, "G",
-             parent=from_(base, {"f.py": "if x:\ny = 1\n"}))
+        # Indentation is syntax in Python and YAML: moving a line in or out of a block
+        # changes what runs or what the document says. In a brace language it does not.
+        case("Python 里把 return 移出 if，不是 G",
+             {"f.py": "def f(x):\n    if x:\n        y = 1\n    return 2\n"}, "B",
+             parent=from_(base, {"f.py": "def f(x):\n    if x:\n        y = 1\n        return 2\n"}))
+        case("YAML 改缩进会改结构，不是 G", {"f.yml": "a:\n  b: 1\n  c: 2\n"}, "B",
+             parent=from_(base, {"f.yml": "a:\n  b: 1\nc: 2\n"}))
+        case("TypeScript 只改缩进，是 G", {"f.ts": "if (x) {\n    y = 1;\n}\n"}, "G",
+             parent=from_(base, {"f.ts": "if (x) {\n  y = 1;\n}\n"}))
         case("注释里带引号里的井号，仍算注释行", {"f.py": 'x = 1\n# see "a # b"\n'}, "G")
         case("加一行代码，是 B", {"f.py": "x = 1\ny = 2\n"}, "B")
         case("字符串里出现井号的那一行，不算注释", {"f.py": 'x = "# not a comment"\n'}, "B")
@@ -854,7 +859,7 @@ def self_test():
         # clean revert (G) by the rule below, and that is not what is being tested here.
         del_parent = from_(base, {"f.py": "x = 1\ny = 2\nz = 3\n"})
         case("删掉一行代码，不是机械改动", {"f.py": "x = 1\nz = 3\n"}, "B", parent=del_parent)
-        case("把一行挪个位置，算移动，是 G", {"f.py": "y = 2\nz = 3\nx = 1\n"}, "G",
+        case("把一行代码挪个位置会改执行顺序，不是 G", {"f.py": "y = 2\nz = 3\nx = 1\n"}, "B",
              parent=del_parent)
         rm_parent = from_(base, {"f.py": "x = 1\n", "g.py": "g = 1\n"})
         (repo / "g.py").unlink()
