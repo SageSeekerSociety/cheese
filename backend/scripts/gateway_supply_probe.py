@@ -178,7 +178,10 @@ def readiness(base, key):
     ):
         raise ProbeFailure("gateway_dependency")
     with open_request(base, key, "/model/info") as response:
-        catalog = read_json(response, key=key)
+        # Every row carries its full litellm_params, so the catalog outgrows
+        # the default cap as models are added (46 rows were 290 KB); the same
+        # 8 MiB gateway_conformance.py reads it with.
+        catalog = read_json(response, limit=8 << 20, key=key)
     rows = catalog.get("data") if isinstance(catalog, dict) else None
     if not isinstance(rows, list) or not rows:
         raise ProbeFailure("invalid_catalog")

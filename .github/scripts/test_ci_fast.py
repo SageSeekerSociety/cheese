@@ -1844,6 +1844,8 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(verdict["result"], "fail")
         self.assertIn("failed before running a test", verdict["reason"])
         self.assertIn("Failed to load url", verdict["reason"])
+        self.assertIn("/repo/frontend/src/i18n/catalog.spec.ts", verdict["reason"])
+        self.assertIn("/repo/frontend/src/views/x.spec.ts", verdict["reason"])
         self.assertEqual(verdict["evidence"]["failed_suites"], 2)
         # Some suites ran: without this the report is green even though the
         # changed component never loaded.
@@ -1994,6 +1996,45 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
         self.assertEqual(omissions[0]["id"], "frontend-unit")
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+
+    def test_a_demo_scene_seeds_its_loader_instead_of_the_full_suite(self):
+        # A scene is data its loader globs in; the graph has no edge from the
+        # JSON, so without a seed a one-line scene edit ran the whole suite
+        # (measured 900 s, the per-check timeout).
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/views/demo/scenes/index.ts", "export const SCENES = {}\n")
+        self.put("frontend/src/views/demo/scenes/seats.json", "{}\n")
+        plan, _ = test_plan(self.root, ["frontend/src/views/demo/scenes/seats.json"],
+                            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "related")
+        self.assertEqual(unit["evidence"]["roots"], ["src/views/demo/scenes/index.ts"])
+        # The docs build holds the same scene's step titles to the fence.
+        self.assertTrue(any(p["id"] == "docs-build" for p in plan))
+        # A deleted scene still seeds the loader; its glob names the set.
+        plan, _ = test_plan(self.root, ["frontend/src/views/demo/scenes/gone.json"],
+                            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "related")
+
+    def test_the_docs_build_runs_only_for_docs_or_scene_changes(self):
+        from ci_fast_checks import test_plan
+        plan, _ = test_plan(self.root, ["docs/manual/dev/turn.md"], {"guards": True}, self.root)
+        ids = [p["id"] for p in plan]
+        self.assertIn("docs-deps", ids)
+        build = next(p for p in plan if p["id"] == "docs-build")
+        self.assertEqual(build["command"], ["npm", "run", "build"])
+        self.assertEqual(build["env"], {"OUT": str(self.root / "docs")})
+        # The build runs only when the install passed: missing dependencies
+        # must not turn into a failed build, which would red the change.
+        self.assertEqual(build["needs"], "docs-deps")
+        deps = next(p for p in plan if p["id"] == "docs-deps")
+        self.assertFalse(deps["evidence"]["strict"])
+        plan, _ = test_plan(self.root, ["docs/site/package.json"], {"guards": True}, self.root)
+        deps = next(p for p in plan if p["id"] == "docs-deps")
+        self.assertTrue(deps["evidence"]["strict"])
+        plan, _ = test_plan(self.root, ["backend/app/core/config.py"], {}, self.root)
+        self.assertFalse(any(p["id"].startswith("docs-") for p in plan))
 
     def test_frontend_deleted_spec_is_not_a_dangling_import(self):
         # A deleted spec leaves no importer behind, so the narrow project
@@ -2284,6 +2325,27 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(config["compilerOptions"]["paths"], {"@/*": ["src/*"]})
         self.assertEqual(config["references"], [])
         self.assertEqual(config["files"], [str(self.root / "frontend/src/new.vue")])
+
+    def test_an_install_failure_is_blocked_not_a_verdict(self):
+        # npm ci failing is the machine or the registry missing a dependency,
+        # not the docs being wrong. Exit 3 says that; exit 1 says a change is
+        # red, and an install failure must not be read as one.
+        from ci_fast_checks import resolve
+        failed = resolve({"result": "fail", "returncode": 1, "output": "npm error"},
+                         {"kind": "install"})
+        self.assertEqual(failed["result"], "blocked")
+        self.assertIn("could not install", failed["reason"])
+        # A change that edits the docs' own package files is judging those
+        # files: an install that fails there is a failure, not the machine.
+        strict = resolve({"result": "fail", "returncode": 1},
+                         {"kind": "install", "strict": True})
+        self.assertEqual(strict["result"], "fail")
+        self.assertEqual(
+            resolve({"result": "pass", "returncode": 0}, {"kind": "install"})["result"], "pass")
+        # A killed install judged nothing either; it keeps its unknown result.
+        self.assertEqual(
+            resolve({"result": "unknown", "returncode": -9}, {"kind": "install"})["result"],
+            "unknown")
 
 
 class BoundedProcessTest(unittest.TestCase):
@@ -2615,7 +2677,7 @@ class PlanConcurrencyTest(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
-    def _drive(self, plan, jobs):
+    def _drive(self, plan, jobs, results=None):
         module = self._module()
         report = {"ran": [], "not_run": [], "reasons": []}
         active = {}
@@ -2636,7 +2698,7 @@ class PlanConcurrencyTest(unittest.TestCase):
             with lock:
                 active[str(cwd)] -= 1
                 report["ran"].append({"id": identifier})
-            return {}
+            return (results or {}).get(identifier, "pass")
 
         module.run_plan_checks(plan, invoke, jobs, report)
         return report, overlaps, peak[0]
@@ -2683,6 +2745,21 @@ class PlanConcurrencyTest(unittest.TestCase):
             jobs=1)
         self.assertEqual(peak, 1)
         self.assertEqual(overlaps, [])
+
+    def test_a_check_whose_dependency_did_not_pass_is_not_run(self):
+        # docs-build needs the install; without it the build fails for a
+        # reason that is not the change, which is the red this pair exists to
+        # avoid. A passed dependency runs it as usual.
+        plan = self._plan(("docs-deps", "docs/site"), ("docs-build", "docs/site"))
+        plan[1]["needs"] = "docs-deps"
+        report, _, _ = self._drive(plan, jobs=2, results={"docs-deps": "blocked"})
+        self.assertEqual([row["id"] for row in report["ran"]], ["docs-deps"])
+        self.assertEqual(report["not_run"],
+                         [{"id": "docs-build",
+                           "reason": "depends on docs-deps, which did not pass"}])
+        report, _, _ = self._drive(plan, jobs=2, results={"docs-deps": "pass"})
+        self.assertEqual([row["id"] for row in report["ran"]], ["docs-deps", "docs-build"])
+        self.assertEqual(report["not_run"], [])
 
     def test_jobs_default_follows_the_memory_the_tier_can_back(self):
         module = self._module()
