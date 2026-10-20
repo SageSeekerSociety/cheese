@@ -66,6 +66,11 @@ class _Running:
     #: is still being handed to the runner: a refusal naming it is ours, not a
     #: newer registration's (``starting.register``).
     registering: int | None = None
+    #: This process is launching a replacement for a runner that stopped
+    #: answering, and has not registered it yet. The reading still names the
+    #: epoch of the runner being replaced, so a refusal during this window is
+    #: this process's own doing too (``starting.start``, ``_ours``).
+    relaunching: bool = False
 
 
 def keeps_memory(harness: str) -> bool:

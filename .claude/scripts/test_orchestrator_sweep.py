@@ -54,6 +54,10 @@ def _rows(phrase, event_meta, event_minutes=5):
         "title": "巡检",
         "agent_handle": "seat",
         "started_at": at(300),
+        # The platform says the seat's session is not running. The sweep no
+        # longer infers that from the board phrase: a stopped line is judged
+        # at the short threshold only when this field says so.
+        "session_running": False,
         "presentation": {"phrase": phrase},
     }
     answers = {

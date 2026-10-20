@@ -619,10 +619,14 @@ class SessionHost:
         from this process's own registration: one it made since the pass
         began (read again at once, under it), or one it is handing to the
         runner right now (read again once that had a moment). Only a newer
-        registration another process made supersedes the reading."""
+        registration another process made supersedes the reading.
+
+        A runner this process is replacing refuses the old epoch the moment it
+        is launched, before the registration exists to hand it
+        (``relaunching``): that refusal too is this process's own."""
         if running.launched.epoch != asked:
             return True
-        if running.registering is not None:
+        if running.registering is not None or running.relaunching:
             await asyncio.sleep(REGISTERING_WAIT_S)
             return True
         return False
