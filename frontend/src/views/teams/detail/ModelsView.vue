@@ -75,6 +75,7 @@
           <span class="mc-sum__name">{{ c.name || kindLabel(c) }}</span>
           <span v-if="c.owner_name" class="mc-sum__kind">{{ c.owner_name }}</span>
           <span v-if="c.name" class="mc-sum__kind">{{ kindLabel(c) }}</span>
+          <span v-if="c.account_email" class="mc-sum__kind">{{ c.account_email }}</span>
           <span class="mc-sum__where">
             <span class="mc-dot" :class="{ 'mc-dot--on': c.online }" aria-hidden="true" />
             <span class="mc-sum__device">{{ c.device_name }}</span>
@@ -98,6 +99,10 @@
                   <template v-if="c.owner_name"
                     ><dt>{{ t('account.modelConnections.owner') }}</dt>
                     <dd>{{ c.owner_name }}</dd></template
+                  >
+                  <template v-if="c.account_email"
+                    ><dt>{{ t('account.modelConnections.loginAccount') }}</dt>
+                    <dd>{{ [c.account_email, c.account_org].filter(Boolean).join(' · ') }}</dd></template
                   >
                   <dt>{{ t('account.modelConnections.storedOn') }}</dt>
                   <dd>
