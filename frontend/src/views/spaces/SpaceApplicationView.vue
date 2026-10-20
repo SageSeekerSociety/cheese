@@ -207,7 +207,7 @@ function resubmit() {
 }
 
 .space-application__avatar {
-  width: 96px;
+  width: 120px;
   margin-bottom: 8px;
 }
 
