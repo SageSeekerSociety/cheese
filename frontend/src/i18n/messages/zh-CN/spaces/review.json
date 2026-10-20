@@ -8,16 +8,12 @@
   "approve": "通过",
   "dismiss": "关闭这条提示",
   "empty": "暂无申请。",
-  "emptyMine": "暂无空间申请",
-  "enter": "进入空间",
   "loadFailed": "空间申请加载失败",
-  "mine": "我的空间申请",
   "next": "下一页",
   "previous": "上一页",
   "reason": "驳回原因",
   "refresh": "刷新",
   "reject": "驳回",
-  "resubmit": "修改并重新提交",
   "retry": "重试",
   "status": "审核状态"
 }

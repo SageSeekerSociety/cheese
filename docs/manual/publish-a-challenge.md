@@ -16,9 +16,9 @@ slug: publish-a-challenge
 空间是老师发布题目、学生领取和提交作业的地方，一门课开一个。
 
 :::walk
-1. 在首页左侧栏的「空间」下点「全部空间」，再点「探索空间」右侧的「新建空间」。
-2. 填写「空间名称」，在「简介（选填）」中写一句课程介绍，点「提交审核」。
-3. 页面弹出「这是你的邀请码」。记下这个码，点「进入空间」。
+1. 在首页左侧栏的「空间」下点「新建空间」。
+2. 填写「空间名称」，在「简介（选填）」中写一句课程介绍。
+3. 点「提交审核」。页面转到这份申请，显示「待平台管理员审核」。
 
 ```demo-panel
 title: 新建空间「数据结构课程」
@@ -28,64 +28,50 @@ parts:
   - kind: head
     title: 空间
     until: 1
-  - kind: line
-    text: 我的空间申请
-    until: 1
-  - kind: line
-    text: 探索空间
-    button: 新建空间
+  - kind: buttons
+    actions: 用邀请码加入 | 新建空间
+    pressing: 新建空间
     press: 1
     until: 1
   - kind: head
     title: 新建空间
     at: 1
-    until: 2
+    until: 3
   - kind: field
     label: 空间名称
     value: 数据结构课程
-    at: 1
-    until: 2
+    at: 2
+    until: 3
   - kind: field
     label: 简介（选填）
     value: 2026 秋季学期《数据结构》的作业
-    at: 1
-    until: 2
+    at: 2
+    until: 3
   - kind: buttons
     actions: 取消 | 提交审核
     pressing: 提交审核
-    press: 2
-    at: 1
-    until: 2
-  - kind: head
-    title: 这是你的邀请码
-    at: 2
-    until: 3
-  - kind: field
-    label: 邀请码
-    value: RABD2TX652
-    at: 2
-    until: 3
-  - kind: buttons
-    actions: 进入空间
-    pressing: 进入空间
     press: 3
-    at: 2
+    at: 1
     until: 3
   - kind: head
-    title: 题目
-    button: 发布题目
+    title: 数据结构课程
     at: 3
   - kind: line
-    text: 暂无题目
+    text: 待平台管理员审核
+    at: 3
+  - kind: buttons
+    actions: 撤回申请
     at: 3
 ```
 :::
 
-审核期间，空间列在「全部空间」页的「我的空间申请」中，状态为「待审核」。审核通过后，空间出现在「探索空间」中，左侧栏新增一个分类「默认分类」。
+审核期间，这个空间在首页左侧栏的「空间」下标为「待审核」。审核通过后标记消失，点它进入空间，左侧栏新增一个分类「默认分类」。
+
+申请被驳回时，标记变为「已驳回」。点这一行查看「驳回原因」，修改名称或简介后点「重新提交」。
 
 ## 邀请学生加入空间 {#invite}
 
-学生用邀请码加入空间。新建空间时生成的邀请码可供 50 人使用，永不过期。把邀请码发到课程群里，学生加入的步骤见[完成一道题目](/solve-a-challenge#join)。
+学生用邀请码加入空间。新建空间时生成的邀请码可供 50 人使用，永不过期；审核通过后，在空间左侧栏点「设置 → 邀请码」查看。把邀请码发到课程群里，学生加入的步骤见[完成一道题目](/solve-a-challenge#join)。
 
 人数超过 50，或需要为另一个班单独生成邀请码时，在空间左侧栏点「设置 → 邀请码」，再点「新建」。填写「可用人数」和有效期，点「生成」。
 

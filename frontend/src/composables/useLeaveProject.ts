@@ -45,7 +45,7 @@ export function useLeaveProject(projectId: MaybeRefOrGetter<string>) {
     // 失败会挂出「退出失败」，而人其实已经退掉了 —— 他再点一次只会拿到 409。
     void Promise.allSettled([store.refreshMembers(), store.refreshProjects()]).then(() => {
       // replace：退出成功后再按回退键，人不该又落回这个项目 —— 名册里已经没有他了。
-      navigation?.navigate({ name: 'HomeSpaces' }, { replace: true })
+      navigation?.navigate({ name: 'inbox' }, { replace: true })
       leaving.value = false
     })
     return true
