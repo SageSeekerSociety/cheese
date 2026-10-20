@@ -581,3 +581,18 @@ describe('发题页：一份文件拆出几道题', () => {
     await waitFor(() => expect(nameInput(view).value).toBe('Lab 4 矩阵转置'))
   })
 })
+
+describe('发题页：右边的芝士', () => {
+  it('能收起来，顶栏多一个按钮叫回来；收起来这件事记在这台浏览器里', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    await fireEvent.click(view.getByRole('button', { name: '关闭' }))
+    expect(view.queryByRole('region', { name: /芝士/ })).toBeNull()
+    expect(localStorage.getItem('cheesex.agentDocked')).toBe('false')
+
+    await fireEvent.click(view.getByTestId('publish-agent-dock'))
+    await waitFor(() => expect(view.queryByTestId('publish-agent-dock')).toBeNull())
+    expect(localStorage.getItem('cheesex.agentDocked')).toBe('true')
+  })
+})

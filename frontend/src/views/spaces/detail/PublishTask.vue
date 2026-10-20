@@ -16,9 +16,11 @@ import type { StripItem } from './TaskDraftStrip.vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useAgentDock } from '@/composables/useAgentDock'
 import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
@@ -244,6 +246,8 @@ const layer = useAgentPointer({
 })
 
 const agentOpen = ref(false)
+const agentDocked = useAgentDock()
+const { mdAndUp } = useDisplay()
 
 // --- 一份文件拆出的几道题 ------------------------------------------------------------
 //
@@ -474,6 +478,7 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     v-model:teaching="teaching"
     v-model:teaching-own="teachingOwn"
     v-model:agent-open="agentOpen"
+    v-model:agent-docked="agentDocked"
     :ready="ready"
     :list-to="listTo"
     :form-key="formKey"
@@ -542,12 +547,12 @@ const ready = computed(() => spaceReady.value && draftReady.value)
         :placeholder="t('tasks.assistant.draft.placeholder')"
         :hint="t('tasks.assistant.draft.hint')"
         can-attach
-        :closable="agentOpen"
+        closable
         @send="agent.ask"
         @stop="assistant.stop().catch(() => undefined)"
         @new="assistant.startNew"
         @select="assistant.select"
-        @close="agentOpen = false"
+        @close="mdAndUp ? (agentDocked = false) : (agentOpen = false)"
         @undo="agent.undo"
         @undo-all="agent.undoAll"
         @jump="layer.jump"

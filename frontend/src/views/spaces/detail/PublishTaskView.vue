@@ -95,6 +95,8 @@ const teaching = defineModel<SpaceTeaching>('teaching', { required: true })
 const teachingOwn = defineModel<boolean>('teachingOwn', { required: true })
 /** 窄屏上芝士是一张从下面拉起来的面板。 */
 const agentOpen = defineModel<boolean>('agentOpen', { default: false })
+/** 宽屏上芝士停在右边；收起来以后顶栏多一个按钮把它叫回来。 */
+const agentDocked = defineModel<boolean>('agentDocked', { default: true })
 
 const emit = defineEmits<{
   cancel: []
@@ -167,7 +169,7 @@ defineExpose({
 <template>
   <div class="pub">
     <div>
-      <PageHeader show-on-mobile>
+      <PageHeader show-on-mobile class="pub__head">
         <nav class="pub__crumb">
           <NavLink :to="listTo" class="pub__crumb-parent">{{ t('spaces.detail.allContests') }}</NavLink>
           <v-icon size="16" class="pub__crumb-sep">mdi-chevron-right</v-icon>
@@ -191,6 +193,14 @@ defineExpose({
             t('spaces.detail.publishTask.blocking', { n: blocking })
           }}</span>
           <span v-else class="pub__note">{{ t('spaces.detail.publishTask.needsReview') }}</span>
+          <BaseButton
+            v-if="mdAndUp && !agentDocked"
+            kind="secondary"
+            prepend-icon="mdi-creation-outline"
+            data-testid="publish-agent-dock"
+            @click="agentDocked = true"
+            >{{ agentName }}</BaseButton
+          >
           <BaseButton kind="ghost" :disabled="publishing" @click="emit('cancel')">{{ t('global.cancel') }}</BaseButton>
           <BaseButton
             kind="primary"
@@ -296,10 +306,10 @@ defineExpose({
     </div>
 
     <!-- Docked like the task page's 问芝士: the drawer registers with the page frame. -->
-    <v-navigation-drawer v-if="mdAndUp" permanent location="right" width="380" class="pub__agent">
+    <v-navigation-drawer v-if="mdAndUp && agentDocked" permanent location="right" width="380" class="pub__agent">
       <slot name="agent" />
     </v-navigation-drawer>
-    <template v-else>
+    <template v-else-if="!mdAndUp">
       <BaseButton
         class="pub__agent-open"
         kind="secondary"
@@ -321,18 +331,48 @@ defineExpose({
   background: var(--surface);
 }
 
+/* 左边这一栏多宽，取决于两侧的侧栏和芝士：顶栏按自己的宽窄收，不按窗口。 */
+.pub__head {
+  container-type: inline-size;
+}
+
 .pub__crumb {
   display: flex;
+  flex: 0 1 auto;
   gap: 4px;
   align-items: center;
   min-width: 0;
+  overflow: hidden;
   font-size: 14px;
   line-height: var(--lh-14);
+  white-space: nowrap;
 }
 
 .pub__crumb-parent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--muted);
   text-decoration: none;
+}
+
+.pub__crumb-sep,
+.pub__crumb-here {
+  flex: none;
+}
+
+/* 窄的时候先让出说明，再让出上一级。 */
+@container (max-width: 760px) {
+  .pub__note {
+    display: none;
+  }
+}
+
+@container (max-width: 600px) {
+  .pub__crumb-parent,
+  .pub__crumb-sep {
+    display: none;
+  }
 }
 
 .pub__crumb-parent:hover {
