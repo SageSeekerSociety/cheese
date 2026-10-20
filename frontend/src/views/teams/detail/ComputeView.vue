@@ -47,6 +47,8 @@ const renameReady = computed(() => {
   return name !== '' && name !== renaming.value?.name
 })
 function openRename(device: MyDevice) {
+  // The dialog shows the page's error as this rename's own; one left from another action is not.
+  error.value = null
   renameText.value = device.name
   renaming.value = device
 }

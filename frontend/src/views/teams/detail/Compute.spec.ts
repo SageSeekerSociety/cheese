@@ -66,10 +66,21 @@ it('a failed rename says why in the dialog, and a retry that succeeds closes it'
   await fireEvent.update(await screen.findByRole('textbox', { name: '设备名称' }), 'Team computer')
   await fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(screen.getAllByText('Name taken').length).toBeGreaterThan(0))
-  expect(screen.getByRole('textbox', { name: '设备名称' })).toBeTruthy()
+  const dialog = screen.getByRole('textbox', { name: '设备名称' }).closest('.v-overlay__content')
+  expect(dialog?.textContent).toContain('Name taken')
   await fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(screen.queryByRole('textbox', { name: '设备名称' })).toBeNull())
   expect(renameMyDevice).toHaveBeenCalledTimes(2)
+})
+
+it('a rename dialog opened after an earlier failure does not show that old error', async () => {
+  vi.mocked(unbindMyDevice).mockRejectedValueOnce(new Error('Remove failed'))
+  const view = mount()
+  await fireEvent.click(await view.findByRole('button', { name: '移除' }))
+  await waitFor(() => expect(view.getByText('Remove failed')).toBeTruthy())
+  await fireEvent.click(view.getByRole('button', { name: '重命名' }))
+  const dialog = (await screen.findByRole('textbox', { name: '设备名称' })).closest('.v-overlay__content')
+  expect(dialog?.textContent).not.toContain('Remove failed')
 })
 
 it('closing the rename dialog without saving keeps the device name', async () => {
