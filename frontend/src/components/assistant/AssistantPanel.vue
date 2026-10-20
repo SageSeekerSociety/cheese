@@ -130,7 +130,7 @@
     </div>
 
     <footer class="ap__foot" :class="{ 'ap__foot--drop': dragOver }">
-      <!-- The same box as the workbench's: the chip row, the editor, the action row. -->
+      <!-- The same box as the channel composer's: the chip row, the editor, the action row. -->
       <div class="ap__box">
         <ComposerChipRow
           v-if="chips.length"
