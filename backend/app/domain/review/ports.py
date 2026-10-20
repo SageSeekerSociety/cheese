@@ -22,33 +22,14 @@ from app.domain.block.models import Block
 from app.domain.delivery_events import DeliveryEvent
 
 
-class SweepCheckouts(Protocol):
-    """在一台机器上删掉某间房那几个已关任务留下的检出目录。
-
-    本包在「等着收尾那一轮、时间到了由平台替它关掉」这条路上用它
-    （`landing_watch.watch_landings` 里的 `close_overdue`）：一个任务关掉之后，它
-    在那台机器上的工作目录要跟着走，而这件事要过 `agent` 和 `agent_session`，本包
-    够不着。形状和 `room_task.ports.SweepCheckouts` 一样，两边各写一遍是这条规矩
-    本身（上面那句：声明按消费者分开写）；两份由类型检查照着实现对齐。
-
-    答的是机器上那份脚本的答复：``removed`` 是删掉的目录名，``kept`` 是留下没删的
-    目录名到原因。
-    """
-
-    async def __call__(
-        self, device_id: str, project: str, resource: str, tasks: list[str]
-    ) -> dict: ...
-
-
 class Chat(Protocol):
     """跑这个房间的那个服务，本包只认得它身上三样。
 
     形状是 `app.domain.agent.chat.ChatService` 的形状。`session_factory` 是本包自己
     开事务要的那一样；`work_runner` 本包不碰，只跟着 `chat` 一起往下递给合并路径上
-    那几层；`stop_work` 是 `landing_watch` 那边替平台关掉过期任务时要的
-    （`room_task.closing.close_overdue` 的 ``work``，本包把这个对象原样交出去）。
+    那几层。
 
-    三个都写成只读属性或方法，而不是可写的字段：`ChatService` 上前两个本来就是
+    两个都写成只读属性，而不是可写的字段：`ChatService` 上前两个本来就是
     ``@property``，而只读成员比的是返回类型（可以更窄），于是 `work_runner` 真实的
     那个类型（`agent.session_turn_events` 里的 `SessionTurnEvents`）落在 `object`
     里，本包不必为了写它再往 `agent` 伸一条边。
@@ -59,8 +40,6 @@ class Chat(Protocol):
 
     @property
     def work_runner(self) -> object: ...
-
-    async def stop_work(self, conversation_id: uuid.UUID) -> None: ...
 
 
 class Announce(Protocol):

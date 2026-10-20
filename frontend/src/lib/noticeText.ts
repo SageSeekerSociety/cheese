@@ -121,10 +121,9 @@ export function responseText(owner: object, field: string): string {
 
 // The notices whose sentence names someone the same event also woke: the AI
 // teammate a person handed the unread messages to (`pendingHandedTo`, a turn
-// starts for it) and the one reopened to fix checks that failed after a merge
-// (`mainChecksFailedReopened`, it is handed the work). Each maps to the
-// parameter that names it. Every other name in a notice told nobody.
-const WOKEN: Record<string, string> = { pendingHandedTo: 'seat', mainChecksFailedReopened: 'agent' }
+// starts for it). It maps to the parameter that names it. Every other name in
+// a notice told nobody.
+const WOKEN: Record<string, string> = { pendingHandedTo: 'seat' }
 
 /** Which `<@handle>` in `block`'s sentence was notified by the event it records. */
 export function noticeNotified(block: Block): (handle: string) => boolean {

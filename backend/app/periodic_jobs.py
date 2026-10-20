@@ -49,7 +49,6 @@ PERIODIC_JOB_NAMES = (
     "quiet task reminder",
     "pr poll",  # forge_bound: PR status reads
     "task pr poll",  # forge_bound: task branch/PR reads
-    "landing watch",  # forge_bound: merge, checks and deployment reads
     "draft pr sweep",  # forge_bound: branch/compare reads and PR creation
     "orphan sweep",
     "closed task stop",
@@ -166,7 +165,6 @@ def periodic_jobs(
         record_instruction=record_task_instruction,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
-        machines=checkout_sweep.sweep,
     )
     machine_periodic.register_periodic_jobs(
         jobs,

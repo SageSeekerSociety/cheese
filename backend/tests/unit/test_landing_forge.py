@@ -13,7 +13,6 @@ The rules, as stated before the code was written:
 import asyncio
 import json
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -26,7 +25,6 @@ from app.domain.review.landing_forge import (
     _failed_paths,
     gate_run,
 )
-from app.domain.review.landing_watch import Batch, BatchCommit, _search_for_culprit
 from app.domain.review.main_gate import PLATFORM_GATE_NAMES, MainGate, gate_for
 
 #: The name the platform's own repository gives its batch gate.
@@ -480,42 +478,6 @@ def test_only_test_failure_lines_are_used_for_test_probes():
         "tests/unit/test_a.py",
         "src/b.spec.ts",
     ]
-
-
-@pytest.mark.parametrize(
-    "test_failure",
-    ["", "tests/integration/test_app_sign_in.py", "tests/unit/test_a.py"],
-)
-async def test_a_static_failure_in_a_test_file_is_not_bisected_by_running_tests(
-    test_failure,
-):
-    reads = _reads_failed_log(
-        "2026-10-19T02:53:15.7Z   --> tests/integration/test_app_sign_in.py:15:8\n"
-        + (
-            f"2026-10-19T02:53:16.0Z FAILED {test_failure}::test_x - boom\n"
-            if test_failure
-            else ""
-        )
-    )
-    batch = Batch(
-        head="d",
-        total=6,
-        complete=True,
-        commits=tuple(BatchCommit(str(i), "feat: x") for i in range(6)),
-        failed_paths=tuple(await reads.failed_paths("d")),
-        blamed="0",
-    )
-    searches = []
-
-    def sessions():
-        searches.append("started")
-        raise AssertionError("a test rerun cannot judge Ruff")
-
-    result = await _search_for_culprit(
-        SimpleNamespace(session_factory=sessions), reads, "project", batch, memo={}
-    )
-    assert result.blamed == "0"
-    assert searches == []
 
 
 def test_ancestry_is_what_the_compare_says():

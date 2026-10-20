@@ -164,6 +164,9 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: proposed skill, a proposed change to one or a drafted routine, how a person
 #: decided on it, and the work a routine hands its teammate (「芝士提议新增技能」,
 #: 「芝士提议修改技能」, 「芝士起草了」 and 「交给芝士的工作」 stay on old rooms).
+#: The platform no longer watches a merge on the default branch or closes a task
+#: on its own past the write-up deadline (「合并后检查未通过」, 「已部署到」,
+#: 「任务…采纳后还在做的工作过了期限…」 stay on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
         # The room-wide machine choice (#2320): old room lines and proposals
@@ -213,6 +216,12 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "subagentStart",
         "subagentStopEmpty",
         "titleAutoRenamed",
+        "mainChecksFailed",
+        "mainChecksFailedReopened",
+        "deployedTo",
+        "deployFailedTo",
+        "taskClosedUndelivered",
+        "taskClosedUndeliveredDetail",
     }
 )
 

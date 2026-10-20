@@ -5,8 +5,7 @@ last step (``AcceptCard.completes_task``). Any step but the last leaves the
 task open and moves it onto a branch cut from the project's latest code, for
 its AI teammate to carry on from. The last one has the AI teammate write the
 task up, and the task closes when that turn ends (`room_task.closing`). Either
-way the discussion the task came from hears what landed, and a merged PR is
-watched on the default branch for a while (`landing_watch`).
+way the discussion the task came from hears what landed.
 
 A last step lands as a step after all when the task's own AI teammate is
 working in it on something begun after the delivery was handed over, or a
@@ -14,9 +13,10 @@ message to it there is waiting for its turn — someone asked for more after
 the card went up, and accepted it anyway. What it is doing is not in the
 delivery, and closing the task would stop it half done and leave it with
 nowhere to be delivered. So the task stays open on the next step's branch,
-and the AI teammate delivers that work as the next step. The same holds for a
-task already being written up when such work starts in it
-(`go_on_while_working`). Only the task's own teammate's work counts, and only
+and the AI teammate delivers that work as the next step. What a task already
+being written up does when such work starts in it is `room_task.closing`'s:
+the write-up turn ending leaves it open while anything is still running.
+Only the task's own teammate's work counts, and only
 what a person or the teammate itself began: a turn the platform started —
 another seat woken in the task, a conflict or CI fix — is not more work asked
 of it (`room_task.closing.unfinished`).
@@ -29,9 +29,8 @@ a task twice.
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
@@ -43,8 +42,6 @@ from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
-from app.domain.review.landing_models import TaskLanding
-from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.ports import RecordInstruction, TaskTeammate
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
 from app.domain.room_task.models import Task, TaskStatus
@@ -53,12 +50,6 @@ from app.domain.thread.services import open_thread
 from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
-
-#: How long a merge is watched on the default branch: its checks there, and a
-#: deployment that includes it. A repository's CI on main and a deploy after it
-#: take well under this; what has not happened by then is not reported.
-WATCH_FOR = timedelta(hours=2)
-
 
 def handed_in(task_teammate: TaskTeammate | None) -> TaskTeammate:
     """把 `review.ports.TaskTeammate` 要回来；没递进来当场炸掉，不走静默。
@@ -90,15 +81,13 @@ async def delivery_landed(
 
     Says whether the merge landed on the task this time: one that has already
     landed there does not land twice (`_already_landed`)."""
-    if await _already_landed(session, task, pr_number):
+    if _already_landed(task, head):
         return False
     now = datetime.now(UTC)
     task.accepted_at = now
     task.accepted_by = by or task.accepted_by
     if head:
         task.delivered_head = head[:64]
-    if pr_number is not None:
-        await _watch(session, task, pr_number, now)
     still_working = (
         completes
         and task.status == TaskStatus.open
@@ -144,82 +133,6 @@ async def delivery_landed(
     return True
 
 
-async def go_on_while_working(
-    sessions,
-    *,
-    record_instruction: RecordInstruction | None,
-    task_teammate: TaskTeammate | None,
-) -> list[uuid.UUID]:
-    """Every task being written up whose AI teammate has started work in it
-    since its last delivery went up, or has a message waiting there, stops
-    being written up and goes on, like a last step that landed while that
-    work was running (module docstring). Returns the ids of those that did.
-
-    Each task is looked at in transactions of its own: one whose forge cannot
-    be reached is tried again on the next tick and holds up neither the other
-    tasks nor the rest of the watch. Its next branch is read from the forge
-    before its row is locked, and a row someone else holds is left for the
-    next tick."""
-    async with sessions() as session:
-        being_written_up = list(
-            await session.scalars(
-                select(Task.id).where(Task.closing_since.is_not(None))
-            )
-        )
-    gone_on = []
-    for task_id in being_written_up:
-        try:
-            if await _go_on_if_asked(
-                sessions,
-                task_id,
-                record_instruction=record_instruction,
-                task_teammate=task_teammate,
-            ):
-                gone_on.append(task_id)
-        except Exception:  # one task must not stop the rest
-            logger.warning("could not take task %s on", task_id, exc_info=True)
-    return gone_on
-
-
-async def _go_on_if_asked(
-    sessions,
-    task_id: uuid.UUID,
-    *,
-    record_instruction: RecordInstruction | None,
-    task_teammate: TaskTeammate | None,
-) -> bool:
-    # deferred-import: tests replace this name on app.domain.project.forge
-    from app.domain.project.forge import default_branch
-
-    async with sessions() as session:
-        task = await session.get(Task, task_id)
-        if task is None or task.closing_since is None:
-            return False
-        if not await _asked_for_more(
-            session,
-            task,
-            since=await _handed_over(session, task),
-            task_teammate=task_teammate,
-        ):
-            return False
-        base = await default_branch(task.project_id, session)
-        await session.commit()
-    async with sessions() as session:
-        task = await session.scalar(
-            select(Task)
-            .where(Task.id == task_id, Task.closing_since.is_not(None))
-            .with_for_update(skip_locked=True)
-        )
-        if task is None:
-            return False
-        task.closing_since = None
-        await _go_on(
-            session, task, base_branch=base, record_instruction=record_instruction
-        )
-        await session.commit()
-    return True
-
-
 async def _asked_for_more(
     session: AsyncSession,
     task: Task,
@@ -239,32 +152,17 @@ async def _asked_for_more(
     return await unfinished(session, task.id, since=since, by=handle)
 
 
-async def _handed_over(session: AsyncSession, task: Task) -> datetime | None:
-    """When the card of the delivery ``task`` landed last went up: its latest
-    accepted card. None when no card of it was ever accepted."""
-    return await session.scalar(
-        select(AcceptCard.created_at)
-        .where(
-            AcceptCard.task_id == task.id,
-            AcceptCard.status == AcceptStatus.accepted,
-        )
-        .order_by(AcceptCard.created_at.desc())
-        .limit(1)
-    )
-
-
 async def _go_on(
     session: AsyncSession,
     task: Task,
     *,
     record_instruction: RecordInstruction | None,
-    base_branch: str | None = None,
 ) -> None:
     """``task``'s last step landed while its AI teammate was at work on more:
     it goes on to the next step, and its AI teammate hears so once that work's
     turn ends. The write-up instruction, if one was given, is not sent
     (`delivery.agent.dispatch_pending`)."""
-    await TaskService(session).next_step(task, base_branch=base_branch)
+    await TaskService(session).next_step(task)
     await tell_agent(
         session,
         task,
@@ -273,50 +171,22 @@ async def _go_on(
     )
 
 
-async def _already_landed(
-    session: AsyncSession, task: Task, pr_number: int | None
-) -> bool:
-    """Whether this merge has already landed on ``task``: a row in
-    `task_landings`, written by every landing that has a PR.
+def _already_landed(task: Task, head: str | None) -> bool:
+    """Whether this merge has already landed on ``task``: the commit it put on
+    the branch is the one the task's latest delivery delivered.
 
-    A merge nobody has landed leaves no row, and lands as it always did. A
-    merge that did leaves one — and landing it a second time would drag a
-    task that has since gone on from the next step, or been reopened, back
-    into a write-up window it has already been through.
+    Landing a merge a second time would drag a task that has since gone on
+    from the next step, or been reopened, back into a write-up window it has
+    already been through. The task keeps `delivered_head` across both of those
+    (`room_task.services.TaskService.next_step` and `reopen`), so the commit is
+    what tells a second look at the same merge apart from the next delivery.
 
-    Deliveries with no PR of their own (an artifact, a URL out of the task's
-    folder) leave no row and are not held back."""
-    if pr_number is None:
+    A delivery is told the head it landed by every path that sees a merge; one
+    that is not (a discussion with no change, an artifact, a URL) has no commit
+    to compare and is not held back."""
+    if head is None:
         return False
-    return await _landing_exists(session, task.id, pr_number)
-
-
-async def _landing_exists(
-    session: AsyncSession, task_id: uuid.UUID, pr_number: int
-) -> bool:
-    return (
-        await session.scalar(
-            select(TaskLanding.id).where(
-                TaskLanding.task_id == task_id, TaskLanding.pr_number == pr_number
-            )
-        )
-    ) is not None
-
-
-async def _watch(
-    session: AsyncSession, task: Task, pr_number: int, now: datetime
-) -> None:
-    """Start watching the merge of ``pr_number`` on the default branch, once."""
-    if await _landing_exists(session, task.id, pr_number):
-        return
-    session.add(
-        TaskLanding(
-            task_id=task.id,
-            pr_number=pr_number,
-            landed_at=now,
-            watch_until=now + WATCH_FOR,
-        )
-    )
+    return task.delivered_head is not None and task.delivered_head == head[:64]
 
 
 async def tell_origin(

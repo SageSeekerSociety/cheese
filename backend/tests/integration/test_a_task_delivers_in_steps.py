@@ -24,7 +24,7 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     sweeping as _sweeping_fixture,
 )
-from tests.landing import summary_turn_ends, time_passes, watch
+from tests.landing import summary_turn_ends
 from tests.machine_work import machine_commits
 from tests.support import git_store
 
@@ -195,17 +195,6 @@ def test_the_task_closes_when_its_write_up_turn_ends(client, app_world):
     task_id, _ = _accepted_step(client, app_world, completes_task=True)
 
     summary_turn_ends(client, task_id)
-
-    task = client.get(f"/topics/{task_id}/task").json()["data"]
-    assert task["status"] == "closed"
-    assert task["presentation"]["phrase"] == "accepted"
-
-
-def test_the_task_closes_without_a_write_up_that_never_comes(client, app_world):
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
-
-    time_passes(client, task_id, minutes=50)
-    watch(client)
 
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "closed"

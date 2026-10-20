@@ -52,7 +52,6 @@ from app.domain.questions import models as questions  # noqa: F401
 from app.domain.remote_mcp import models as remote_mcp  # noqa: F401
 from app.domain.review import comment_models as review_comments  # noqa: F401
 from app.domain.review import culprit_models as review_culprits  # noqa: F401
-from app.domain.review import landing_models as review_landings  # noqa: F401
 from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401
 from app.domain.routine import models as routine  # noqa: F401

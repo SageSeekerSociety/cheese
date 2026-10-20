@@ -34,7 +34,7 @@ from app.domain.project.forge import (
     quota_serves_background,
 )
 from app.domain.project.models import ProjectForge
-from app.domain.review import archive, landing_watch, pr_publish
+from app.domain.review import archive, pr_publish
 from app.domain.review.github_pr import GitHubPRError, _NO_VERDICT_CONCLUSIONS
 from app.domain.review.github_pr.task_pr_metadata import (
     TaskPrMetadata,
@@ -49,7 +49,6 @@ from app.domain.review.ports import (
     Chat,
     DispatchPending,
     RecordInstruction,
-    SweepCheckouts,
     TaskTeammate,
 )
 from app.domain.review.task_landing import delivery_landed
@@ -576,25 +575,6 @@ async def _remember_checks(
         ):
             _set_checks(task, head, state)
             await session.commit()
-
-
-async def watch_landings(
-    chat: Chat,
-    announce: Announce,
-    *,
-    record_instruction: RecordInstruction,
-    task_teammate: TaskTeammate,
-    machines: SweepCheckouts | None = None,
-) -> dict:
-    """Merged task PRs, watched on the default branch for a while: the checks
-    there and a deployment that includes them (`landing_watch`)."""
-    return await landing_watch.watch_landings(
-        chat,
-        announce,
-        record_instruction=record_instruction,
-        task_teammate=task_teammate,
-        machines=machines,
-    )
 
 
 def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:

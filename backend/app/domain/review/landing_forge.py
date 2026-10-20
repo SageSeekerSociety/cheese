@@ -1,6 +1,6 @@
 """What the forge says about a merge commit on the default branch.
 
-The reads `landing_watch` needs, one object per project: the commit a PR's
+The reads a red main batch is read with, one object per project: the commit a PR's
 merge put on the default branch, the checks that ran on a commit, a commit's
 parent, and the first deployment that included a commit. GitHub and Forgejo
 answer the first three; deployments are GitHub's, read only when the App's
@@ -305,6 +305,73 @@ def _failed_paths(log: str, *, tests_only: bool = False) -> list[str]:
         elif not re.match(r"^\s+\d+:\d+\s+warning\s", line):
             diagnostic_file = None
     return found
+
+
+#: Extensions that name the same kind of code. `test_foo.py` is about
+#: `foo.py` in this monorepo; a `.test.ts` next to a `.py` of the same name is
+#: a coincidence, and matching it would blame the wrong line.
+_FAMILIES = (
+    frozenset({"py", "pyi"}),
+    frozenset({"ts", "tsx", "js", "jsx", "vue"}),
+)
+
+
+def blame(tests: tuple[str, ...], commits: BatchCommits | None) -> str | None:
+    """The one commit the failed tests point at, or None when they point at no
+    commit, at more than one, or at files the forge did not list whole.
+
+    The rule the platform blames a red batch by, next to the reads it is
+    decided from. `.claude/scripts/main-red-owner.py` imports it so that the
+    on-call diagnosis and the platform cannot drift apart.
+    """
+    if not tests or commits is None:
+        return None
+    if not commits.complete or not all(c.complete for c in commits.changes):
+        return None
+    owners: set[str] | None = None
+    for test in tests:
+        matched = {c.sha for c in commits.changes if names(test, c.files)}
+        if len(matched) != 1:
+            return None
+        owners = matched if owners is None else owners & matched
+        if not owners:
+            return None
+    return next(iter(owners)) if owners and len(owners) == 1 else None
+
+
+def names(test_path: str, files: tuple[str, ...]) -> bool:
+    """Whether a failing test file is one this commit's changes are about."""
+    want = test_path.removeprefix("./")
+    for path in files:
+        changed = path.removeprefix("./")
+        if (
+            changed == want
+            or changed.endswith("/" + want)
+            or want.endswith("/" + changed)
+        ):
+            return True
+    stem = stem_of(want)
+    if not stem:
+        return False
+    family = _family(want)
+    return any(_family(path) == family and stem_of(path) == stem for path in files)
+
+
+def _family(path: str) -> frozenset[str]:
+    extension = path.rsplit(".", 1)[-1].lower()
+    for family in _FAMILIES:
+        if extension in family:
+            return family
+    return frozenset({extension})
+
+
+def stem_of(path: str) -> str:
+    """`backend/tests/unit/test_widget.py` and
+    `backend/app/domain/widget.py` share `widget`: a test file failing is about
+    the module it tests."""
+    name = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    name = name.removeprefix("test_").removesuffix("_test")
+    return name.removesuffix(".test")
 
 
 class GitHubLandingReads:

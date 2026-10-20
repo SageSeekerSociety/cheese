@@ -5,30 +5,24 @@ open, with `closing_since` set, while its AI teammate takes one more turn to
 bring the task document up to date and say what came of the task; to everyone
 looking it already reads 已采纳 (`presentation`). It closes when that turn ends
 (`turns_ended`), or when the instruction for it ends without a turn running
-(`delivery.agent.run_attempt`, `delivery.timer.give_up_stale`), or, whatever
-happened to it, `CLOSE_AT_THE_LATEST` after it landed.
+(`delivery.agent.run_attempt`, `delivery.timer.give_up_stale`).
 
 None of those closes a task while something besides the write-up is being
 done or asked for in it (`unfinished`): a turn running there, or a message
-there still waiting for its turn. A close stops the work still running and
-drops the request still waiting, and work begun after the delivery was handed
-over is work that delivery does not contain. Such a task is left as it is, and
-either goes on (`review.task_landing.go_on_while_working`) or closes at the
-first of those moments that finds nothing left: the deadline is checked on
-every tick of the landing watch, so a task still waiting past it closes on the
-first tick after its teammate stops. A turn that has said nothing for the
-orphan sweep's limit does not hold it, and nothing holds it past
-`STOP_WORK_AFTER`: then it closes, stopping that work. Each stopped turn keeps
-a run record under its own number (`_keep_stopped_turns`), and the room hears
-what was not delivered (`review.landing_watch`).
+there still waiting for its turn. Such a task is left as it is, and closes at
+the first of those moments that finds nothing left. The task that delivered it
+keeps the write-up from being announced while its teammate is still working on
+more (`review.task_landing.delivery_landed`); a write-up already announced is
+not closed on work its teammate began afterwards. A turn that has said nothing
+for the orphan sweep's limit does not hold it.
 
 Closing after the turn rather than before keeps every rule about closed tasks
 as it is: a closed task takes no turns and its document is read-only, and
 nothing here needs an exception to either.
 
 Every way a task closes goes through `close_task` — its owner, its own
-session, the summary turn ending, the instruction for it given up on, the
-deadline above — and so every one of them stops the work still running in the
+session, the summary turn ending, the instruction for it given up on, the room
+being archived — and so every one of them stops the work still running in the
 task once the close commits. The summary turn ending leaves nothing running
 that `unfinished` counts; a turn it did not count, gone silent, is stopped by
 the session's holder once the task has been closed for `CLOSING_TAIL`
@@ -48,31 +42,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import background
 from app.core.config import settings
 from app.core.db import after_own_commit
-from app.core.sentences import say
 from app.domain.block.models import Block
 from app.domain.block.queries import queued_messages
-from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.ports import SweepCheckouts
-from app.domain.room_task.services import said_title
-from app.domain.run_record.service import record as keep_record
 
 logger = logging.getLogger("cheesex.room_task")
 
-#: Half an hour is how long an instruction to an AI teammate is retried
-#: (`delivery.agent.GIVE_UP_AFTER`); a summary turn is a few minutes.
-CLOSE_AT_THE_LATEST = timedelta(minutes=45)
-
 #: Marks the instruction whose turn ends the task, in the delivery's payload.
 CLOSES_TASK = "closesTask"
-
-#: How long past `CLOSE_AT_THE_LATEST` a task is left open for work its AI
-#: teammate is still doing in it. A turn that has gone silent for the orphan
-#: sweep's limit no longer counts (`unfinished`), but one that keeps talking
-#: and never ends would hold the task forever; past this the task closes and
-#: that work is stopped, and the room hears what was not delivered.
-STOP_WORK_AFTER = CLOSE_AT_THE_LATEST + timedelta(hours=2)
 
 #: How far back the pending-message scan still starts a waiting message
 #: (`AgentWorkRunner.ORPHAN_STALE_S`, which this module cannot import): one
@@ -402,88 +381,3 @@ async def turns_ended(
     )
     for task_id in waiting:
         await close_after_summary(session, task_id, None, machines=machines)
-
-
-@dataclass(frozen=True)
-class Overdue:
-    """A task `close_overdue` closed, and what was still being done or asked
-    for in it when it did (`unfinished_turns`): empty unless the task was
-    closed on work at `STOP_WORK_AFTER`, which stopped that work undelivered.
-    Each item names the turn it was, so the stopped turn is not lost with the
-    task."""
-
-    task: Task
-    undelivered: list[Unfinished]
-
-
-async def close_overdue(
-    session: AsyncSession, work: StopsWork, *, machines: SweepCheckouts | None = None
-) -> list[Overdue]:
-    """Close every task still waiting for a summary turn it is not getting,
-    unless something else is being done or asked for in it — and, past
-    `STOP_WORK_AFTER`, that one too. ``machines`` is `close_task`'s."""
-    now = datetime.now(UTC)
-    overdue = list(
-        await session.scalars(
-            select(Task.id).where(
-                Task.closing_since.is_not(None),
-                Task.closing_since < now - CLOSE_AT_THE_LATEST,
-            )
-        )
-    )
-    closed = []
-    for task_id in overdue:
-        task = await session.get(Task, task_id, with_for_update=True)
-        if task is None or task.closing_since is None:
-            continue
-        left = await unfinished_turns(session, task.id)
-        if left and task.closing_since >= now - STOP_WORK_AFTER:
-            continue
-        closed.append(
-            Overdue(await close_task(session, task, work, machines=machines), left)
-        )
-        await _keep_stopped_turns(session, task, left)
-    return closed
-
-
-async def _keep_stopped_turns(
-    session: AsyncSession, task: Task, stopped: list[Unfinished]
-) -> None:
-    """Keep a run record under each stopped turn's own number.
-
-    The room hears one line about the task (`review.room_notices`), and one
-    line is right for a room. The turn itself needs a row of its own: it was
-    stopped without being finished, and once the task is closed nothing else
-    in it will say which turn that was. ``turn_id`` is what ties the record to
-    the turn — 现场 and the admin read the turn by it, and the 轮次页 has no
-    other way to see this stop.
-
-    A message still waiting for a turn has no number to keep and gets no
-    record; the room line still names it. Best effort: a record cannot undo
-    the close it is about, so a write that fails is logged and the close
-    stands.
-    """
-    if not any(work.turn_id is not None for work in stopped):
-        return
-    try:
-        async with session.begin_nested():
-            for work in stopped:
-                if work.turn_id is None:
-                    continue
-                await keep_record(
-                    session,
-                    conversation_id=task.id,
-                    content=say("taskClosedUndelivered", title=said_title(task)),
-                    meta=notice(
-                        EVENT_TURN_TIMEOUT,
-                        severity=SEVERITY_WARN,
-                        who=WHO_HUMAN,
-                        detail=say("taskClosedUndeliveredDetail", items=[work.gist]),
-                        detail_label=say("labelDetails"),
-                    ),
-                    turn_id=work.turn_id,
-                )
-    except Exception:  # the close stands; this is its record
-        logger.warning(
-            "could not keep the stopped turns of task %s", task.id, exc_info=True
-        )

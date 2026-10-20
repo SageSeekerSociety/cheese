@@ -9,7 +9,7 @@
 贴进 #1343 的中文：
 
 1. 哪些 job 红了、日志里点了哪些测试用例；
-2. 批内提交对撞后 culprits 是谁 —— 判据直接 import `landing_watch._blame`（#4255），
+2. 批内提交对撞后 culprits 是谁 —— 判据直接 import `landing_forge.blame`（#4255），
    不在这里重写；
 3. culprit 的作者、来源 PR，以及提交里 `Link:` 记的任务；
 4. 作者名下有没有改了同一批文件/同名修复分支的开放 PR；
@@ -35,7 +35,7 @@ import urllib.request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: A completed check that went red. Imported from landing_watch below, so it
+#: A completed check that went red. Imported from `landing_forge` below, so it
 #: cannot drift from the set the platform blames with.
 
 #: Jobs that only restate another job's verdict.
@@ -55,7 +55,7 @@ COMPARE_MAX_COMMITS = 250
 COMMIT_MAX_FILES = 300
 LOOK_BACK = 20
 
-#: How many red jobs have their log read for failing file names. landing_watch reads
+#: How many red jobs have their log read for failing file names. The platform reads
 #: three; a diagnosis wants the shape of the whole failure, so five.
 RED_LOGS = 5
 MAX_CASES = 12
@@ -125,15 +125,13 @@ def _load_attribution():
             _clean_log_line,
         )
         from app.domain.review.landing_forge import (  # noqa: PLC0415
+            _RED_CONCLUSIONS,
             BatchCommits,
             CommitChange,
             _failed_paths,
-        )
-        from app.domain.review.landing_watch import (  # noqa: PLC0415
-            _FAILED,
-            _blame,
-            _names,
-            _stem,
+            blame,
+            names,
+            stem_of,
         )
     except ModuleNotFoundError:
         venv = backend / ".venv" / "bin" / "python"
@@ -151,10 +149,10 @@ def _load_attribution():
         CommitChange,
         _failed_paths,
         _clean_log_line,
-        _FAILED,
-        _blame,
-        _names,
-        _stem,
+        _RED_CONCLUSIONS,
+        blame,
+        names,
+        stem_of,
     )
 
 
@@ -501,7 +499,7 @@ UNIQUE = "唯一 culprit"
 
 def _reason(paths: tuple[str, ...], commits: BatchCommits) -> str:
     """Why `_blame` can or cannot name one commit. The matching itself is
-    `landing_watch._names`; this only names the answer."""
+    `landing_forge.names`; this only names the answer."""
     if not paths:
         return NO_PATHS
     if not commits.complete or any(not c.complete for c in commits.changes):

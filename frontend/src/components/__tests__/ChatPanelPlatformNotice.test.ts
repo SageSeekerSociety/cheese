@@ -192,7 +192,7 @@ describe('agent status messages', () => {
     'pr_conflict',
     'card_filed',
     'accept_done',
-    'deploy_failed',
+    'turn_resume_stopped',
   ])('shows %s with the agent identity while preserving the next responder and full detail', async (eventType) => {
     listTopicMembers.mockResolvedValue({
       data: [{ member_handle: 'agent-test', name: '测试助手', agent: true }],
