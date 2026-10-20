@@ -151,7 +151,13 @@ class InProcessBroker:
         # Idle state changes and persisted blocks are fanned out live but never
         # retained. This is what stops a queue notice or other system event from
         # making a reconnect look like an agent turn is still running.
-        if self._active.get(channel):
+        #
+        # Nor is `done`. It ends the stream of whoever was listening when a
+        # turn's result landed, which comes before the turn is marked over
+        # (`room.sessions.reading._keep`); replayed in between, it would end the
+        # stream of a page that subscribed to follow the next message. A page
+        # that connects late reads the turn's end from `turn_finished`.
+        if self._active.get(channel) and kind != "done":
             buf = self._buffer.setdefault(channel, [])
             buf.append(frame)
             if len(buf) > self._replay_size:
