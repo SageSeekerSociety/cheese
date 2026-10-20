@@ -14,6 +14,7 @@ import uuid
 from sqlalchemy import select
 
 from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.session_host import host as session_host
 from app.domain.block.models import Block
 from app.domain.run_record.models import RunRecord
 from tests.conftest import wait_work_idle
@@ -288,6 +289,10 @@ def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
     """While the device is out of reach nothing the session does can arrive, so
     the 现场 records that it is waiting — once — and the same record says when
     the machine is back."""
+    # The waiting line is written once the runner's lease on the machine has
+    # lapsed (``host.LEASE_S``, two minutes). The behaviour under test is the
+    # record, not that wait: shorten it rather than paying it in the suite.
+    monkeypatch.setattr(session_host, "LEASE_S", 0.05)
     offline = {"now": False}
     reach = stub_hooks.call
 

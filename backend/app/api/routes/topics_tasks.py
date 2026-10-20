@@ -35,7 +35,7 @@ from app.api.deps import get_chat_service, get_work_runner
 from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import (
     _opening,
     room_task_items,
@@ -319,7 +319,11 @@ async def conclude_task(
     return ok(out)
 
 
-@router.put("/{topic_id}/task/progress", dependencies=[ROUTE_DECIDES])
+@router.put(
+    "/{topic_id}/task/progress",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TaskOut),
+)
 async def report_progress(
     topic_id: uuid.UUID,
     body: ProgressIn,
