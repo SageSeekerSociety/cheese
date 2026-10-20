@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 
 from app.domain.agent.models import AgentTurn
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.routine import service as routine_service
 from app.domain.routine.models import Routine, RoutineRun
@@ -127,7 +127,9 @@ def test_a_rule_saved_without_a_trigger_waits_for_one(client):
     """Two boxes left empty: the rule is saved, paused, due at no moment, and
     the list says no moment has been chosen. Giving it one later starts it."""
     room = _room(client, _project(client))
-    made = _weekly(client, room, owner_handle=OWNER, trigger="", spec={})
+    made = _weekly(
+        client, room, headers=PERSON, owner_handle=OWNER, trigger="", spec={}
+    )
     assert made.status_code == 200, made.text
     routine = made.json()["data"]
     assert routine["state"] == "paused"
@@ -437,14 +439,15 @@ def test_an_ai_edit_to_a_live_rule_takes_effect_at_once(client):
 
 def _deliveries(client, recipient: str):
     """Timed deliveries waiting for this recipient."""
-    from app.domain.delivery.models import TimedDelivery
 
-    return _db(
-        client,
-        lambda s: s.scalars(
-            select(TimedDelivery).where(TimedDelivery.recipient_handle == recipient)
-        ).all(),
-    )
+    async def read(session):
+        return list(
+            await session.scalars(
+                select(TimedDelivery).where(TimedDelivery.recipient_handle == recipient)
+            )
+        )
+
+    return _db(client, read)
 
 
 def test_a_rule_that_was_given_no_name_is_named_by_the_teammate(client):
