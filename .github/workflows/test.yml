@@ -325,9 +325,11 @@ jobs:
           # network the machine connects with iproute2 and iptables as root.
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
           # The hosted runner is a throwaway VM with passwordless sudo, so the
-          # tests that start a sandbox may change its iptables rules and
-          # cgroups the way a Cloud machine's are (tests/unit/test_sandbox_network.py).
+          # tests that start a sandbox may change its iptables rules, cgroups
+          # and project quotas the way a Cloud machine's are
+          # (tests/unit/test_sandbox_network.py), on a disk like a host's.
           echo "CHEESE_TEST_SANDBOX_HOST=1" >> "$GITHUB_ENV"
+          "$GITHUB_WORKSPACE"/.github/scripts/sandbox-disk.sh
           # Tests that launch a room's session, or sandbox an executor, need
           # its namespace.
           "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
@@ -675,6 +677,7 @@ jobs:
           export CHEESE_APT_DEBS="$HOME/.cache/cheese-apt-debs"
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
           echo "CHEESE_TEST_SANDBOX_HOST=1" >> "$GITHUB_ENV"
+          "$GITHUB_WORKSPACE"/.github/scripts/sandbox-disk.sh
           "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
 
       - name: Use a fresh virtual environment

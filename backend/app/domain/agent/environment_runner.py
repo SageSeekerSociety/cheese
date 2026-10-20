@@ -66,7 +66,7 @@ def visible_pid(data):
     """The pid a status names, numbered as this process's namespace numbers it,
     or None when nothing alive answers to it.
 
-    A sandboxed room's runner (`bootstrap.sandbox_argv`) has a pid namespace
+    A sandboxed room's runner (`confinement.sandbox_argv`) has a pid namespace
     of its own and records the pid it has there. Outside, that number is some
     other process's, so the process is found by its namespace and the pid it
     has in it."""

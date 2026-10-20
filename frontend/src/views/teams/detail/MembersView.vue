@@ -310,23 +310,21 @@ const getStatusText = (status: string) => {
                   class="mr-3"
                 />
               </template>
-              <v-list-item-title class="font-weight-medium">
-                {{ member.user.nickname }}
-                <v-chip v-if="member.role === 'OWNER'" color="primary" size="small" variant="tonal" class="ml-2">{{
+              <!-- The name truncates on its own; the role badge sits beside it and never
+                   shrinks. Inside the title's one clipped line the badge was cut off with a
+                   long name, leaving an empty grey box. -->
+              <v-list-item-title class="member-item__title font-weight-medium">
+                <span class="member-item__name">{{ member.user.nickname }}</span>
+                <v-chip v-if="member.role === 'OWNER'" color="primary" size="small" variant="tonal">{{
                   t('teams.members.roleOwner')
                 }}</v-chip>
-                <v-chip
-                  v-else-if="member.role === 'ADMIN'"
-                  color="secondary"
-                  size="small"
-                  variant="tonal"
-                  class="ml-2"
-                  >{{ t('teams.members.roleAdmin') }}</v-chip
-                >
+                <v-chip v-else-if="member.role === 'ADMIN'" color="secondary" size="small" variant="tonal">{{
+                  t('teams.members.roleAdmin')
+                }}</v-chip>
               </v-list-item-title>
               <!-- What this role can actually do. A bare 所有者/管理员 label leaves the
                    difference between an admin and a member unstated. -->
-              <v-list-item-subtitle>{{ memberRoleNote(member.role) }}</v-list-item-subtitle>
+              <v-list-item-subtitle class="member-item__note">{{ memberRoleNote(member.role) }}</v-list-item-subtitle>
               <template #append>
                 <div class="d-flex align-center">
                   <v-tooltip v-if="isSelfOwner && member.role === 'MEMBER'" location="bottom">
@@ -556,6 +554,28 @@ const getStatusText = (status: string) => {
   &:hover {
     background-color: var(--fill);
   }
+}
+
+.member-item__title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.member-item__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.member-item__title .v-chip {
+  flex-shrink: 0;
+}
+
+/* The note says what the role can do; it wraps rather than ending in an ellipsis. */
+.member-item .member-item__note {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
 }
 
 .request-item,

@@ -357,7 +357,6 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
             "sandbox_inode_budget": settings.cloud_sandbox_inode_budget,
             "near_cap": NEAR_CAP,
             "check_s": settings.sandbox_disk_check_s,
-            "walk_s": settings.sandbox_disk_walk_s,
             "alert_used": dict(readings.LINES),
             "history_step_s": int(readings.STEP.total_seconds()),
         },

@@ -120,7 +120,7 @@ def payload_for(
     project_id, resource_id, env, known_files=None, *, sandbox, platform_machine
 ):
     """What the executor is installed or prepared from. ``sandbox`` says
-    whether it runs in a sandbox of its own (`bootstrap.sandbox_argv`) or over
+    whether it runs in a sandbox of its own (`confinement.sandbox_argv`) or over
     the whole machine, as the room's access to that machine decides.
     ``platform_machine``: the platform provisioned the machine, so the install
     may add what a sandbox needs there and the sandbox gets a network and
@@ -147,6 +147,8 @@ def payload_for(
                 "swap_mb": settings.cloud_sandbox_swap_mb,
                 "cpus": settings.cloud_sandbox_cpus,
                 "pids": settings.cloud_sandbox_pids,
+                "disk_mib": settings.cloud_sandbox_disk_budget_gb * 10**9 >> 20,
+                "inodes": settings.cloud_sandbox_inode_budget,
             }
             if platform_machine
             else {"limits": None}

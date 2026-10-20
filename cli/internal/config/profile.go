@@ -73,8 +73,14 @@ func Activate(path string) error {
 	if len(enrolled) == 1 {
 		ownerRoot = Root(enrolled[0])
 	}
-	if err := claudecode.MigrateLogins(ownerRoot); err != nil {
-		return err
+	// Moving the logins is housekeeping; it never keeps the connector from
+	// starting. A failed move is retried on the next start.
+	retained, err := claudecode.MigrateLogins(ownerRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: Claude logins not moved yet: %v\n", err)
+	}
+	for _, dir := range retained {
+		fmt.Fprintf(os.Stderr, "warning: %s was left in place because its login already exists in the new store; it is no longer read\n", dir)
 	}
 	return os.Setenv(place.ProfileRootEnv, Root(path))
 }
