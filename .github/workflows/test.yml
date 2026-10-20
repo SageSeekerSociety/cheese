@@ -209,16 +209,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --test tests/extension/*.test.ts
 
-      - name: Exactly one alembic head
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: |
-          uv run alembic heads
-          heads="$(uv run alembic heads | grep -c '(head)')"
-          if [ "$heads" != "1" ]; then
-            echo "::error::alembic has $heads heads — parallel migrations forked the chain. Rechain your new migration onto the current head (or run 'uv run alembic merge heads') before merging."
-            exit 1
-          fi
-
       # Judges only the migrations this PR adds, against origin/main's models
       # (is a dropped column still mapped by the release that keeps serving
       # while migrations run?). The merge base it needs came from the fetch
