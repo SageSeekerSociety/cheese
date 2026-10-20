@@ -23,6 +23,10 @@ from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.input_registration import confirm_receipt
 from app.domain.agent.models import TurnResume
+from app.domain.agent.platform_failures import (
+    RUNNER_REPLACED_CODE,
+    RUNNER_REPLACED_MESSAGE,
+)
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.resumable_failures import (
     POLICIES,
@@ -735,3 +739,46 @@ async def test_spent_subscription_accounts_resume_when_the_first_one_thaws(
     wait = (row.due_at - now).total_seconds()
     # After the first account thaws, not on a short backoff that fails again.
     assert thaw_in <= wait <= thaw_in + 5 * 60
+
+
+@pytest.mark.anyio
+async def test_an_upgrade_does_not_wake_a_seat_before_its_rate_limit_resets(
+    business_db_factory,
+):
+    """The seat waits out a rate limit, and the upgrade then cuts its turn
+    short: the turn is still resumed, but no sooner than the limit allows,
+    and the room still hears it waits for the limit."""
+    factory = business_db_factory
+    project, conversation, _seat, instance = await _room_with_agent(factory)
+    seat = agent_instance_handle(instance)
+    waiting = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=uuid.uuid4(),
+        result=_failed(RATE_LIMITED),
+        route="subscription",
+    )
+    assert waiting is not None and waiting.dropped_at is None
+    replaced_turn = uuid.uuid4()
+
+    resumed = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=replaced_turn,
+        result=AgentResult(
+            text=RUNNER_REPLACED_MESSAGE,
+            session_id="s",
+            is_error=True,
+            failure_code=RUNNER_REPLACED_CODE,
+        ),
+        route="subscription",
+    )
+
+    assert resumed is not None and resumed.dropped_at is None
+    assert resumed.due_at == waiting.due_at
+    assert resumed.reason == RATE_KIND
+    assert resumed.failed_turn_id == replaced_turn

@@ -18,11 +18,15 @@ Why it cannot storm:
 - **One owed resume per seat and conversation.** A partial unique index on the
   table. A second failure while one waits (something woke the seat in the
   meantime) moves that one row onto itself rather than adding another.
-- **A streak has a cap.** Each resume in a row waits longer and the streak stops
-  after `Policy.attempts`; the row that would have exceeded it is written as
-  dropped, so the record says why the seat was left alone. A resumed turn that
-  failed more than `STREAK_WINDOW` after it was handed over made progress, and
-  starts a new streak; so does a person speaking.
+- **A streak of the agent's failures has a cap.** Each resume in a row waits
+  longer and the streak stops after `Policy.attempts`; the row that would have
+  exceeded it is written as dropped, so the record says why the seat was left
+  alone. A resumed turn that failed more than `STREAK_WINDOW` after it was
+  handed over made progress, and starts a new streak; so does a person
+  speaking. A turn the platform itself cut short (`Policy.platform`, an upgrade
+  replacing the runner) is not one of the agent's failures: it is resumed at
+  once, carries the streak as it stands, and never moves a resume the seat was
+  already waiting for earlier.
 - **It stops when it no longer applies.** At its due time a row is dropped, not
   handed over, when a person has spoken in the conversation since the failure,
   when the seat has run another turn since (somebody already woke it), or when
@@ -180,12 +184,20 @@ async def after_failure(
             spoke = await _person_spoke(session, conversation_id, owed.failed_at)
             attempt = (0 if found.policy.platform else 1) if spoke else owed.attempt
             wait, dropped = _wait(found, attempt, now)
+            due = now + timedelta(seconds=wait or 0)
             owed.failed_turn_id = failed_turn_id
-            owed.reason = found.kind
-            owed.said = str(scrub_secrets(result.text or ""))[:_SAID_MAX]
+            if found.policy.platform and owed.due_at > due:
+                # The platform cut short a turn whose seat was already waiting
+                # out something else (a rate limit's reset): that wait still
+                # holds, and so do its reason and words. Only the turn that
+                # resumes is this one.
+                due = owed.due_at
+            else:
+                owed.reason = found.kind
+                owed.said = str(scrub_secrets(result.text or ""))[:_SAID_MAX]
             owed.attempt = attempt
             owed.failed_at = now
-            owed.due_at = now + timedelta(seconds=wait or 0)
+            owed.due_at = due
             if dropped:
                 owed.dropped_at = now
                 owed.dropped_reason = dropped
