@@ -60,12 +60,15 @@ TREE = {
     "tests/integration/test_close.py": "def test_close(client):\n    pass\n",
     "tests/integration/test_get.py": "def test_get(client):\n    pass\n",
     "tests/integration/test_rest.py": "def test_rest(client):\n    pass\n",
+    "tests/forgejo/__init__.py": "",
+    "tests/forgejo/test_live.py": "def test_live(client):\n    pass\n",
 }
 
 MAP = {"commit": "a" * 40, "unmapped": [], "files": {
     "app/rooms.py": {"open_room": ["tests/integration/test_open.py"],
                      "close_room": ["tests/integration/test_close.py"]},
-    "app/routes.py": {"get_room": ["tests/integration/test_get.py"]},
+    "app/routes.py": {"get_room": ["tests/integration/test_get.py",
+                                   "tests/forgejo/test_live.py"]},
     "app/core/config.py": {},
     "app/other.py": {"gone": ["tests/integration/test_rest.py"]},
 }}
@@ -145,6 +148,14 @@ class SelectTest(unittest.TestCase):
         (self.backend / "tests/integration/test_close.py").unlink()
         line = line_of(ROOMS, "return settings.grace")
         self.assertEqual(self.select({"backend/app/rooms.py": ({line}, {line})}), [])
+
+    def test_a_test_the_layer_never_collects_is_not_handed_to_pytest(self):
+        # tests/forgejo is --ignore'd by the layer's collection, and an ignore
+        # does not apply to a file named on the command line.
+        line = line_of(TREE["app/routes.py"], "return rooms.RoomOut()")
+        self.assertEqual(self.select({"backend/app/routes.py": ({line}, {line})}),
+                         ["tests/integration/test_get.py"])
+        self.assertEqual(self.select({"backend/tests/forgejo/test_live.py": ({1}, {1})}), [])
 
     def test_a_change_every_test_shares_runs_the_whole_layer(self):
         self.assertIsNone(self.select({}, changed=["backend/uv.lock"]))

@@ -27,6 +27,10 @@ from pathlib import PurePosixPath
 FOLDERS = ("app", "scripts", "tests")
 #: The contract layer is a layer of its own and always runs whole.
 CONTRACT_PREFIX = "tests/contract/"
+#: Test files the integration layer's collection leaves out (test.yml passes
+#: ``--ignore`` for them). An ignore applies while pytest walks a directory,
+#: not to a file named on its command line, so a selection must never name one.
+NOT_COLLECTED = ("tests/forgejo/",)
 
 #: Backend inputs every integration test depends on without importing them: the
 #: dependencies, the schema the database is built from, and the sandbox scripts

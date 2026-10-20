@@ -324,7 +324,8 @@ def select(cmap, backend, changed, lines, read_base, read_head):
     if unmapped:
         selected |= unmapped
         reasons.append(f"{len(unmapped)} test files the map does not cover run every time")
-    present = {rel for rel in selected if (backend / rel).is_file()}
+    present = {rel for rel in selected
+               if (backend / rel).is_file() and not rel.startswith(backend_imports.NOT_COLLECTED)}
     return sorted(present), reasons
 
 
