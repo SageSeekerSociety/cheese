@@ -22,7 +22,7 @@ from app.domain.agent import environment_runner
 from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-from tests.support import bubblewrap, sandbox_disk, executor_release
+from tests.support import bubblewrap, executor_release, sandbox_disk
 
 RUNTIME = Path(runtime.__file__)
 BACKEND = Path(__file__).resolve().parents[2]
