@@ -1,16 +1,18 @@
 # Session-record views: integration notes
 
+Status: release one shipped in #4448. Release two (archiving and deleting the retired rows, below) is not implemented on main yet.
+
 The overview and raw view derive harness activity from `session_records`. The overview groups tool results and child records under their initiating calls. The raw view retains native identity, timestamps, thinking, complete arguments/output and expandable JSON. The browser remembers the selected view; overview is the default. Existing platform statuses remain in `run_records`, with every transition appended and the overview selecting the latest transition of the same platform status.
 
 The shared reader merges hot database records and verified, permanently published bucket objects by native identity. Sealing uploads and checks the object before publishing its permanent index; only published objects become discoverable after row expiry. Pagination, literal search, author filtering, exact-record reads and channel-wide room/task/thread search use this path. Deleted channels immediately deny records and images. Turns before the launch boundary without native records receive one explanatory line.
 
-Claude Code stores images separately by SHA-256, up to 10 MiB per image (displayed as 10 MB). Images exceeding that limit are omitted with their size retained. Mirror transport carries image sidecars before advancing the durable raw cursor; private-image reads enforce room membership. Runner JSON no longer trims text or strips image metadata before recording. Codex and pi harness-specific work, including the reasoning-summary setting and gateway probe, is outside this change.
+Claude Code stores images separately by SHA-256, up to 10 MiB per image (displayed as 10 MB). Images exceeding that limit are omitted with their size retained. Records read from the runner carry their image sidecars into the raw record, and a page the raw record refuses is read again on the next pass; private-image reads enforce room membership. Runner JSON no longer trims text or strips image metadata before recording. Codex and pi harness-specific work, including the reasoning-summary setting and gateway probe, is outside this change.
 
 ## Removed runtime mechanism
 
-Hidden tool, narration and subagent event-block writes and mutations are removed, along with the event transcript reader, step-output API, capped-output helper, old row components and clamp composable. Memory read counts and the agent CLI's event search now consume native session records. Deliberately published room messages and platform statuses remain. The room red light, liveness hints and transcript-derived control path belong to branch `feat/runner-lifecycle-protocol`.
+Hidden tool, narration and subagent event-block writes and mutations are removed, along with the event transcript reader, step-output API, capped-output helper, old row components and clamp composable. Memory read counts and the agent CLI's event search now consume native session records. Deliberately published room messages and platform statuses remain. #4459 removed the room red light, the liveness hints and the transcript-derived control path.
 
-## Data deletion: confirmation required before integration merges
+## Data deletion: release two
 
 No deployed data was changed. Release two deletes exactly the rows the removed 现场 writers produced, identified by what each one stored, never by visibility alone:
 
@@ -32,7 +34,7 @@ Release one removes readers/writers and adds only the conversation launch bounda
 2. Read each object back and verify it against what was exported.
 3. Only then delete exactly the rows that object holds.
 
-Nothing deletes those archive objects. The database dumps on R2 are not that copy: `db/` has a 30-day lifecycle rule. This PR does not implement the job. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule.
+Nothing deletes those archive objects. The database dumps on R2 are not that copy: `db/` has a 30-day lifecycle rule. Release one does not implement the job. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule.
 
 ## Sources adopted
 

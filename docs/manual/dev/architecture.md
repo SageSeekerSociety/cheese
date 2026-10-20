@@ -108,7 +108,7 @@ app/domain/<包>/
 |---|---|---|
 | `forge`、`notices` | 上面说的两组待定模块，层位先拆依赖再定 | 待定 |
 | `chat`（新，不并进 `conversation`） | `chat.py` 的消息收发、`mentions`、`turn_inputs`、`turn_speakers`、`prompt`、`pending_messages` | 5 |
-| `turns` | `runtime.py` 的 `AgentWorkRunner`、`recovery`、`liveness`、`turn_*`、`turn_adoption` | 5 |
+| `turns` | `runtime.py` 的 `AgentWorkRunner`、`recovery`、`turn_*`、`turn_adoption` | 5 |
 | `live` | `agent/realtime/` 的 broker、`live_frames`、`live_notices`、`room_events` | 5 |
 | `device`（并入现有包） | `device_hub*`、`device_link`、`device_provider`、`device_storage`、`machine_*`、`executor_transport` | 5 |
 | `harness` | `agent/harness/` | 5 |
