@@ -85,9 +85,7 @@ class _Machines:
             status = {"loggedIn": logged_in}
             if logged_in:
                 status |= {"authMethod": "claude.ai", "subscriptionType": "max"}
-                email, org = self.accounts.get(device, {}).get(
-                    local_id, (None, None)
-                )
+                email, org = self.accounts.get(device, {}).get(local_id, (None, None))
                 status |= {"email": email, "orgName": org}
             reports.append({"id": local_id, "status": status})
         return {
