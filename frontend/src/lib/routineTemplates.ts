@@ -27,7 +27,8 @@ export interface RoutineTemplateInput {
   title?: string
   goal: string
   note?: string
-  trigger: RoutineTrigger
+  /** '' 是「还没定什么时候跑」：照它建出来的规则先停着。 */
+  trigger: RoutineTrigger | ''
   spec: Record<string, unknown>
 }
 
