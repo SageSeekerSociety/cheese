@@ -168,9 +168,8 @@ class AccountChannel(CentralChannel):
     The key is opened here, as the session starts, and handed to that one
     process's environment; the execution environment is never given it.
 
-    When the connection is gone, or of a kind or at a model-service host the
-    project does not allow, the session does not start and the room is told why
-    (`own.unusable`).
+    When the connection is gone or its team does not allow the selected model,
+    the session does not start and the room is told why (`own.unusable`).
     """
 
     def __init__(self, executor):
@@ -249,11 +248,11 @@ class AccountChannel(CentralChannel):
 
 
 async def owner_is_away(db, instance_id, hub) -> bool:
-    """Whether ``instance_id`` is a member's own agent whose connection's
-    machine is not online: its turn has nowhere to run until it comes back.
-    Not when the connection is gone or one the project refuses: that turn
-    starts, to be refused with the reason. Never one on a connection its
-    team stores encrypted on the platform, which runs on the session host."""
+    """Whether the connection's credential device is offline.
+
+    Missing connections and disallowed models proceed to report their refusal
+    reason. Platform-held connections do not wait for a credential device.
+    """
     owned = await owned_instance(db, instance_id)
     if owned is None or owned.on_account:
         return False
