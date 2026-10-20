@@ -17,8 +17,8 @@ import pytest
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.agent.compute import ComputePool
 from app.main import app
+from tests.conftest import stub_compute
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
     in_thread,
@@ -30,6 +30,7 @@ from tests.integration.conftest import (
 from tests.integration.test_claude_session_records import _until
 from tests.integration.test_native_batch_ownership import _blocks
 from tests.support.seat_channel import SeatChannel
+from tests.support.session_records import wait_for_record
 from tests.unit.test_claude_runner import Machine, Screen
 
 
@@ -81,7 +82,7 @@ def test_new_full_service_process_reuses_original_native_executor(
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(machine.workspace),
-        compute=ComputePool([before.runtime]),
+        compute=stub_compute(before, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: old
     try:
@@ -103,21 +104,13 @@ def test_new_full_service_process_reuses_original_native_executor(
             post_message(
                 client, str(topic), "alice", {"content": f"<@{recipient}> " + directive}
             )
-            observed = _until(
-                ws,
-                lambda frame: (
-                    frame["type"] == "error"
-                    or (
-                        (
-                            frame["type"] == "event_block"
-                            and "PROCESS_RECOVERY" in str(frame["block"])
-                        )
-                        if busy
-                        else frame["type"] == "done"
-                    )
-                ),
-            )
-            assert observed["type"] != "error", observed
+            if busy:
+                wait_for_record(
+                    client, topic, lambda record: "PROCESS_RECOVERY" in str(record)
+                )
+            else:
+                observed = _until(ws, lambda frame: frame["type"] in ("error", "done"))
+                assert observed["type"] == "done", observed
 
         async def first_work_id():
             records = await asyncio.to_thread(screen.records)

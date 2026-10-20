@@ -522,11 +522,15 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     # The turn's record reaches the 支线 by its own path: the session's records
     # are read back and written after the prompt was handed over, so seeing the
     # prompt does not mean the record is there yet. Wait for it.
-    while not (answer := client.get(f"/topics/{thread}/blocks").json()["data"]["data"]):
+    while not (
+        answer := client.get(f"/topics/{thread}/session-records").json()["data"][
+            "items"
+        ]
+    ):
         assert time.monotonic() < deadline, "the 支线's turn left no record"
         time.sleep(0.2)
-    assert [b["kind"] for b in answer] == ["event"]
-    assert answer[0]["meta"]["in_room"] is False
+    assert any(item["record"].get("type") == "assistant" for item in answer)
+    assert client.get(f"/topics/{thread}/blocks").json()["data"]["data"] == []
 
 
 def test_image_only_message_allowed(client, stub_hooks):
@@ -555,8 +559,12 @@ def test_image_only_message_allowed(client, stub_hooks):
     assert any(block.get("type") == "image" for block in handed["message"]["content"])
 
     # The execution record retains the attachment as its input anchor.
-    assistant = next(f for f in frames if f["type"] == "event_block")["block"]
-    assert assistant["reply_to"] == user_frames[0]["id"]
+    output = client.get(f"/topics/{topic_id}/session-records").json()["data"]["items"]
+    assert any(item["record"].get("type") == "assistant" for item in output)
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    assert {
+        item["turn_id"] for item in output if item["record"].get("type") == "assistant"
+    } == {blocks[0]["meta"]["consumed_turn"]}
 
 
 @pytest.mark.parametrize("midturn", [False, True])

@@ -23,6 +23,7 @@ from app.domain.identity.handles import (
     looks_like_agent_handle,
 )
 from app.domain.identity.services import IdentityService
+from app.domain.session_record.service import read
 from app.domain.thread.models import Thread
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -32,6 +33,7 @@ from tests.integration.conftest import project_service, registered
 from tests.support.hang import HANG_S
 from tests.support.quoted_context import prompt_quote, slide_quote
 from tests.support.run_records import records_of
+from tests.support.session_records import assistant_texts
 from tests.support.threads import thread_in
 
 
@@ -908,7 +910,7 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
         return ChatService(
             work_runner=runner,
             session_factory=factory,
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=factory),
             base_system_prompt="You are Cheese.",
             workspace_root=str(tmp_path / "ws"),
         )
@@ -963,10 +965,8 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
     async with asyncio.timeout(HANG_S):
         while True:
             async with factory() as session:
-                said = {
-                    block.content
-                    for block in await BlockRepository(session).list_for_topic(topic_id)
-                }
+                kept = await read(session, topic_id)
+                said = set(assistant_texts(kept.items))
             if expected <= said:
                 break
             await asyncio.sleep(0.05)
@@ -984,7 +984,7 @@ async def test_execution_notes_are_retained_outside_public_replies(
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=stub_compute(ProcessNotesScreen()),
+        compute=stub_compute(ProcessNotesScreen(), sessions=factory),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -1003,15 +1003,18 @@ async def test_execution_notes_are_retained_outside_public_replies(
     await finish_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
+        kept = await read(session, tid)
     replies = [
         b.content
         for b in rows
         if b.kind == BlockKind.message and looks_like_agent_handle(b.author)
     ]
     assert replies == []
-    notes = [b for b in rows if (b.meta or {}).get("progress")]
-    assert [b.content for b in notes] == ["Read workspace files.", "The plan is ready."]
-    assert all(b.kind == BlockKind.event and b.meta["in_room"] is False for b in notes)
+    assert assistant_texts(kept.items) == [
+        "Read workspace files.",
+        "The plan is ready.",
+    ]
+    assert not [b for b in rows if (b.meta or {}).get("progress")]
 
 
 @pytest.mark.anyio
@@ -1024,7 +1027,7 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=stub_compute(agent),
+        compute=stub_compute(agent, sessions=factory),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -1070,7 +1073,9 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
     await finish_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    assert [b.content for b in rows if looks_like_agent_handle(b.author)] == ["done"]
+        kept = await read(session, topic_id)
+    assert assistant_texts(kept.items) == ["done"]
+    assert not [b for b in rows if looks_like_agent_handle(b.author)]
 
 
 class FailingScreen(StubChannel):
