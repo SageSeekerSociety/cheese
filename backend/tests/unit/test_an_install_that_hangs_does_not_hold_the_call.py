@@ -216,15 +216,10 @@ class _Pool:
 
     ``answered`` is what the pool has to say about the session being placed
     elsewhere: True when it has another host that can run the sandbox.
-
-    ``space_asked`` records the hosts a write was refused for want of space on:
-    that is the mark no new sandbox is placed on until a reading finds room
-    again (``CloudHost.disk_full_since``, ``HostPool.ran_out_of_space``).
     """
 
     answered = True
     asked: list[tuple[uuid.UUID, uuid.UUID]] = []
-    space_asked: list[uuid.UUID] = []
 
     def __init__(self, db, hub=None):
         self.db = db
@@ -232,9 +227,6 @@ class _Pool:
     async def leave_unusable(self, session_id, host_id):
         type(self).asked.append((session_id, host_id))
         return type(self).answered
-
-    async def ran_out_of_space(self, host_id):
-        type(self).space_asked.append(host_id)
 
     async def tell_ready(self, session_id):
         return None
@@ -267,7 +259,6 @@ def _install_case(
     """
     _Pool.answered = answered
     _Pool.asked = []
-    _Pool.space_asked = []
     monkeypatch.setattr(session_work, "AsyncSession", _Db)
     monkeypatch.setattr(session_work, "AgentSessionService", _Sessions)
     monkeypatch.setattr(session_work, "HostPool", _Pool)
@@ -531,14 +522,16 @@ async def test_the_installed_executor_is_asked_to_answer_inside_the_same_budget(
     assert outcome["target"]["state"] == INFO["state"]
 
 
-async def test_a_host_whose_prepare_ran_out_of_space_is_left(monkeypatch):
-    """FB-101. A host's disk was full, so every ``prepare`` of every tool call
-    of the session was refused by the machine — ``ENOSPC`` on the temporary file
-    the room's config was written through, which the machine answered as a
-    failure of the call. That was nobody's 500 to answer: the session stayed on
-    the host because only a connector that went away or an install the connector
-    killed was placed away from, and its tool calls were answered 502 for as
-    long as it stayed there."""
+async def test_a_sandbox_whose_prepare_ran_out_of_space_keeps_its_host_and_is_told(
+    monkeypatch,
+):
+    """FB-101 reported every ``prepare`` of a session refused with ``ENOSPC``
+    on the temporary file the room's config was written through, which the
+    machine answered as a failure of the call, and its tool calls answered 502.
+    A sandbox's home is now held to a quota of its own (``sandbox_host.py``):
+    the space that ran out is the session's, and another host would give it an
+    empty home and none of its work. So it stays, and the room is told that its
+    disk is full, which its agent can do something about."""
     host_id = uuid.uuid4()
 
     outcome = await _install_case(
@@ -546,77 +539,34 @@ async def test_a_host_whose_prepare_ran_out_of_space_is_left(monkeypatch):
         host_id=host_id,
         lease={"device_id": "dev-1", "state": "/executor/state"},
         prepared=True,
-        # What FB-101 reported, verbatim: the temporary file a `prepare` writes
-        # the room's config through, and the errno the machine's own `OSError`
-        # carries.
+        # What FB-101 reported, verbatim.
         call_exc=DeviceCallError(
             "OSError: [Errno 28] No space left on device: "
             "'.cheese-platform-skills.json.next'"
         ),
     )
 
-    assert [asked[1] for asked in _Pool.asked] == [host_id]
-    assert _Pool.space_asked == [host_id], "the host is still offered to new sandboxes"
-    assert outcome.message == SANDBOX_PREPARING
-    assert await outcome.progress() is True, "the caller is not told to try again"
-
-
-async def test_a_host_whose_install_ran_out_of_space_is_left_without_a_sandbox_taken(
-    monkeypatch,
-):
-    """The same ENOSPC arriving as the install's own report (``[Errno 28]`` in
-    its stderr, which ``ExecutorSetupFailed.reason`` reads as ``DISK_FULL``).
-    Recorded the same way, so the host takes no new sandbox until a reading finds
-    room — and this session is placed elsewhere rather than left on it."""
-    host_id = uuid.uuid4()
-
-    outcome = await _install_case(
-        monkeypatch,
-        host_id=host_id,
-        exc=session_work.ExecutorSetupFailed(
-            "OSError: [Errno 28] No space left on device"
-        ),
-    )
-
-    assert [asked[1] for asked in _Pool.asked] == [host_id]
-    assert _Pool.space_asked == [host_id]
-    assert outcome.message == SANDBOX_PREPARING
-
-
-async def test_a_full_host_with_nowhere_else_to_go_says_so(monkeypatch):
-    """No other host has room, so the session stays where it is; the full host
-    is still marked, and the room is told what is wrong instead of waiting out
-    every tool call of the turn on a machine that cannot take a write."""
-    host_id = uuid.uuid4()
-
-    outcome = await _install_case(
-        monkeypatch,
-        host_id=host_id,
-        answered=False,
-        exc=session_work.ExecutorSetupFailed(
-            "OSError: [Errno 28] No space left on device"
-        ),
-    )
-
-    assert _Pool.space_asked == [host_id]
+    assert _Pool.asked == [], "the session was moved off its work"
     assert outcome["unavailable"] == EXECUTOR_SETUP_FAILED.format(reason=DISK_FULL)
 
 
-async def test_a_whole_vm_that_ran_out_of_space_is_not_marked(monkeypatch):
-    """A whole VM is the session's own machine and is not offered to anybody:
-    marking it would say nothing about the pool, and its disk filling up is its
-    session's own business. It is waited for where it is, as before."""
+@pytest.mark.parametrize("whole", [False, True])
+async def test_an_install_that_ran_out_of_space_keeps_its_machine_and_says_so(
+    monkeypatch, whole
+):
+    """The same ENOSPC arriving as the install's own report (``[Errno 28]`` in
+    its stderr, which ``ExecutorSetupFailed.reason`` reads as ``DISK_FULL``),
+    on a shared host or on the session's own whole VM."""
     host_id = uuid.uuid4()
 
     outcome = await _install_case(
         monkeypatch,
         host_id=host_id,
-        whole=True,
+        whole=whole,
         exc=session_work.ExecutorSetupFailed(
             "OSError: [Errno 28] No space left on device"
         ),
     )
 
-    assert _Pool.space_asked == [], "the session's own VM was marked for the pool"
     assert _Pool.asked == []
-    assert "unavailable" in outcome
+    assert outcome["unavailable"] == EXECUTOR_SETUP_FAILED.format(reason=DISK_FULL)

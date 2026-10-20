@@ -4,9 +4,11 @@ code outside its sandbox that reads what the session can write.
 The sandbox's network and limits are set up by root (`sandbox_host.py`
 through `sudo -n`), so the tests that start one need Linux, bubblewrap and a
 passwordless sudo, as CI's runner has; elsewhere they are skipped. They change
-the machine's iptables rules and cgroups the way a Cloud machine's are
-changed, and CI turns them on (`CHEESE_TEST_SANDBOX_HOST`) rather than every
-Linux checkout that happens to allow sudo. The rest holds anywhere.
+the machine's iptables rules, cgroups and project quotas the way a Cloud
+machine's are changed, and CI turns them on (`CHEESE_TEST_SANDBOX_HOST`)
+rather than every Linux checkout that happens to allow sudo. The homes are
+made on an XFS filesystem with project quotas, as a platform host's data disk
+is (`CHEESE_TEST_SANDBOX_DISK`, a directory on it). The rest holds anywhere.
 """
 
 import json
@@ -33,7 +35,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     sandbox_host,
 )
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-from tests.support import bubblewrap
+from tests.support import bubblewrap, sandbox_disk
 
 HELPER = Path(sandbox_host.__file__)
 RUNNER = Path(environment_runner.__file__)
@@ -42,6 +44,8 @@ RUNNER = Path(environment_runner.__file__)
 def _sandbox_host_runs() -> bool:
     if os.environ.get("CHEESE_TEST_SANDBOX_HOST") != "1":
         return False
+    if not sandbox_disk.available():
+        return False
     if not sys.platform.startswith("linux") or shutil.which("bwrap") is None:
         return False
     return subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0
@@ -49,7 +53,8 @@ def _sandbox_host_runs() -> bool:
 
 with_sandbox_host = pytest.mark.skipif(
     not _sandbox_host_runs(),
-    reason="needs Linux, bubblewrap and sudo -n (CHEESE_TEST_SANDBOX_HOST=1)",
+    reason="needs Linux, bubblewrap, sudo -n (CHEESE_TEST_SANDBOX_HOST=1) and a "
+    "directory with project quotas (CHEESE_TEST_SANDBOX_DISK)",
 )
 
 
@@ -128,7 +133,11 @@ class Room:
 
 @pytest.fixture
 def rooms(tmp_path, monkeypatch, capsys):
-    owner = tmp_path / "owner"
+    with sandbox_disk.owner(tmp_path) as owner:
+        yield from _rooms(owner, monkeypatch, capsys)
+
+
+def _rooms(owner, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(owner))
     bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
@@ -260,6 +269,158 @@ def test_the_sandboxes_together_leave_the_machine_memory_of_its_own(
     held = int((sandbox_host.CGROUP / "memory.max").read_text())
 
     assert held <= total - max(1 << 30, total // 4)
+
+
+@pytest.fixture
+def small_disk(monkeypatch):
+    """A sandbox may hold a gigabyte and two thousand files."""
+    monkeypatch.setattr(settings, "cloud_sandbox_disk_budget_gb", 1)
+    monkeypatch.setattr(settings, "cloud_sandbox_inode_budget", 2000)
+
+
+MAKE_FILES = """
+import os
+made = 0
+try:
+    while True:
+        os.mkdir(f"d{made}")
+        made += 1
+except OSError as error:
+    print(made, error.errno)
+"""
+
+
+@with_sandbox_host
+def test_a_sandbox_is_refused_writes_past_its_disk_and_its_neighbour_is_not(
+    rooms, machine_service, small_disk
+):
+    api = f"http://127.0.0.1:{machine_service(b'backend')}"
+    full, neighbour = rooms(api), rooms(api)
+
+    written = full.bash("fallocate -l 1100M big; echo exit=$?; rm -f big")
+    made, error = full.python(MAKE_FILES).split()
+
+    assert "No space left on device" in written["stdout"] + written["stderr"]
+    assert "exit=1" in written["stdout"]
+    assert int(made) < 2000 and int(error) == 28  # ENOSPC
+    assert neighbour.bash("fallocate -l 100M f && echo ok")["stdout"].strip() == "ok"
+    assert neighbour.bash("mkdir d{1..500} && echo ok")["stdout"].strip() == "ok"
+
+
+# Every way a session might take its files out of its quota from inside: set
+# a file's project, take the inheritance off its home, or move or link a file
+# into its project's store, whose project is another.
+ESCAPES = """
+import errno, fcntl, os, struct
+GET, SET, INHERIT = 0x801C581F, 0x401C5820, 0x200
+def change(path, project=None, inherit=True):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        fields = list(struct.unpack("IIIII8s", fcntl.ioctl(fd, GET, bytes(28))))
+        if project is not None:
+            fields[3] = project
+        if not inherit:
+            fields[0] &= ~INHERIT
+        fcntl.ioctl(fd, SET, struct.pack("IIIII8s", *fields))
+        return "changed"
+    except OSError as error:
+        return errno.errorcode[error.errno]
+    finally:
+        os.close(fd)
+def moved(call, *paths):
+    try:
+        call(*paths)
+        return "moved"
+    except OSError as error:
+        return errno.errorcode[error.errno]
+open("mine", "w").write("x")
+store = os.environ["CHEESE_STORE"]
+print(
+    change("mine", project=0),
+    change(os.environ["HOME"], inherit=False),
+    moved(os.link, "mine", os.path.join(store, "linked")),
+    moved(os.rename, "mine", os.path.join(store, "renamed")),
+)
+"""
+
+
+@with_sandbox_host
+def test_a_session_cannot_take_its_files_out_of_its_disk_limit(rooms, machine_service):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+
+    assert room.python(ESCAPES).split() == ["EINVAL", "EINVAL", "EXDEV", "EXDEV"]
+
+
+@with_sandbox_host
+def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
+    rooms, machine_service, small_disk
+):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    # Its limit is 953 MiB: most of it at once, the rest written to the end.
+    room.bash("fallocate -l 900M most; head -c 100M /dev/zero > big")
+
+    result = room.bash("echo more >> big; echo exit=$?")
+
+    assert "No space left on device" in result["stdout"] + result["stderr"]
+    assert "exit=1" in result["stdout"]
+    assert runtime.request(room.state, "ping")
+
+
+@with_sandbox_host
+def test_a_new_sandbox_is_not_charged_for_a_removed_ones_leftovers(
+    rooms, machine_service, small_disk
+):
+    """A sandbox taken down leaves its home until its teardown deletes it,
+    which can wait on whatever still holds it. A sandbox started meanwhile
+    has its whole limit, not what the leftovers leave of it."""
+    api = f"http://127.0.0.1:{machine_service(b'backend')}"
+    gone = rooms(api)
+    gone.bash("fallocate -l 800M left")
+    subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "down", str(gone.resource)], check=True
+    )
+
+    fresh = rooms(api)
+
+    assert fresh.bash("fallocate -l 800M mine && echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_no_sandbox_runs_where_its_home_has_no_disk_limit(
+    tmp_path, monkeypatch, capsys
+):
+    owner = tmp_path / "owner"
+    monkeypatch.setenv("HOME", str(owner))
+    bubblewrap.place(owner)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    payload = payload_for(
+        uuid.uuid4(),
+        uuid.uuid4(),
+        {"CHEESE_API": "http://127.0.0.1:9", "CHEESE_TOKEN": "test"},
+        sandbox=True,
+        platform_machine=True,
+    )
+
+    with pytest.raises(RuntimeError, match="project quotas"):
+        bootstrap.configure(payload)
+
+
+@with_sandbox_host
+def test_an_idle_sandbox_gives_back_its_page_cache(rooms, machine_service):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    room.bash("head -c 300M /dev/urandom > blob && cat blob > /dev/null")
+    group = sandbox_host.CGROUP / str(room.resource)
+    held = int((group / "memory.current").read_text())
+
+    answer = subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "reclaim", str(room.resource)],
+        capture_output=True,
+        text=True,
+    )
+
+    assert answer.returncode == 0, answer.stderr
+    assert int((group / "memory.current").read_text()) < held - (200 << 20)
+    assert room.bash("echo ok")["stdout"].strip() == "ok"
 
 
 @pytest.mark.parametrize(("total_gib", "kept_gib"), [(4, 1), (8, 2), (16, 4), (2, 1)])
@@ -573,6 +734,25 @@ def test_the_sandbox_helper_refuses_what_it_does_not_take(argv):
         [sys.executable, str(HELPER), *argv], capture_output=True, text=True
     )
     assert result.returncode == 2, result.stderr
+
+
+def test_the_sandbox_helper_takes_only_the_home_of_the_sandbox_it_starts():
+    name, project = str(uuid.uuid4()), str(uuid.uuid4())
+    limits = ["--memory-mb", "64", "--swap-mb", "0", "--cpus", "1", "--pids", "16"]
+    limits += ["--disk-mib", "64", "--inodes", "1000"]
+    for home in (
+        f"/h/.cheese/home/{project}/{uuid.uuid4()}",
+        f"/h/.cheese/home/{project}/../{project}/{name}",
+        f"/h/.cheese/home/not-a-project/{name}",
+        f"h/.cheese/home/{project}/{name}",
+        f"/h/.cheese/home/{project}/{name}/",
+    ):
+        result = subprocess.run(
+            [sys.executable, str(HELPER), "up", name, "100", "--home", home, *limits],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 2 and "is not a sandbox's home" in result.stderr
 
 
 def test_the_sandbox_helper_runs_only_for_a_user_through_sudo():

@@ -213,7 +213,10 @@ def _up(case, seat) -> str:
             host.ai_status = AiStatus.disabled
             host.last_seen_at = datetime.now(UTC)
             await repo.mark_enrolled(
-                host, device_id=device.device_id, when=datetime.now(UTC)
+                host,
+                device_id=device.device_id,
+                when=datetime.now(UTC),
+                sandbox_disk_gb=None,
             )
             await db.commit()
             return device.device_id

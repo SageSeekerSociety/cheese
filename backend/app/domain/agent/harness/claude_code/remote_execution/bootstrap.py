@@ -880,7 +880,8 @@ def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds, network=True
     command += ["--tmpfs", str(owner)]
     names = resolv_conf()
     if network and names != "/etc/resolv.conf":
-        command += ["--ro-bind", names, "/etc/resolv.conf"]
+        # Onto the file it leads to: bwrap mounts on no link (systemd-resolved's).
+        command += ["--ro-bind", names, os.path.realpath("/etc/resolv.conf")]
     command += bool(fd := fds.get("hosts")) * ["--ro-bind-data", str(fd), "/etc/hosts"]
     runtime_dir = Path(f"/run/user/{os.getuid()}")
     if runtime_dir.is_dir():
@@ -1038,14 +1039,14 @@ def start_sandbox(
             raise RuntimeError("The sandbox did not start; see executor-bootstrap.log")
         answer = {}
         if connect:
-            command = [SANDBOX_HOST, "up", home.name, str(first)]
-            for name in ("memory_mb", "swap_mb", "cpus", "pids"):
+            command = [SANDBOX_HOST, "up", home.name, str(first), "--home", str(home)]
+            for name in ("memory_mb", "swap_mb", "cpus", "pids", "disk_mib", "inodes"):
                 command += ["--" + name.replace("_", "-"), str(limits[name])]
             for port in loopback_ports(env):
                 command += ["--forward", str(port)]
             command += ["--site", str(site)] * bool(site)
             answer = json.loads(
-                sudo(command, "The sandbox's network could not be set up")
+                sudo(command, "The sandbox's network and limits could not be set up")
             )
         answer["first"] = first
     except BaseException:
@@ -1075,10 +1076,9 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         "PIP_CACHE_DIR": str(store / "pip-cache"),
     }
     if payload.get("sandbox"):
-        # The store and the room's home are two mounts inside the sandbox, and
-        # a hard link cannot cross mounts (EXDEV): uv's default would try one
-        # per file into every venv before copying it anyway.
-        package_env["UV_LINK_MODE"] = "copy"
+        # No hard link crosses mounts or quotas; a reflink does on XFS, else both copy.
+        package_env["UV_LINK_MODE"] = "clone"
+        package_env["npm_config_package_import_method"] = "clone-or-copy"
     variables = (payload.get("environment") or {}).get("variables", {})
     package_env.update({key: variables[key] for key in package_env if key in variables})
     work = home / CHECKOUT_DIR

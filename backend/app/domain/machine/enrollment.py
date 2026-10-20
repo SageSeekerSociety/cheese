@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 from collections.abc import Awaitable, Callable
 
@@ -100,11 +101,81 @@ async def generate_keypair() -> tuple[str, str]:
     return private, public
 
 
-def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
-    """What runs on the machine. Writes the cli's config, then connects.
+# Where the bootstrap reports the size of the data disk it set up for the
+# sandboxes' homes (`DATA_DISK`), in bytes.
+DATA_DISK_LINE = re.compile(r"^CHEESE_SANDBOX_DISK_BYTES=([0-9]+)$", re.MULTILINE)
 
-    Deliberately arch-agnostic: the same script serves an LXC container and a VM
-    on either architecture, because the download target is resolved on the
+# A pool host's data disk: every sandbox's home, its executor's state and its
+# project's package store are on it, each with a project quota of its own
+# (`remote_execution/sandbox_host.py`), so one sandbox cannot fill the host for
+# the others. MicroCloud attaches it as the VM's scsi1, which the guest names
+# by id whatever order the kernel found its disks in. Formatted XFS (reflink on
+# by default, so the package managers clone from the store) the first time,
+# mounted at /data with project quotas and `discard`, which hands what a
+# sandbox deletes back to the thin pool under the VM, and bound over the
+# directories the platform keeps homes and stores in, so no path changes.
+# mkfs.xfs without -f: a disk that carries any signature is refused, not
+# wiped. A host with no such disk is not enrolled: it could not hold a sandbox
+# to a disk limit, and no sandbox runs without one.
+DATA_DISK = """
+disk=""
+for link in /dev/disk/by-id/*drive-scsi1; do
+  [ -e "$link" ] && disk=$(readlink -f "$link")
+done
+if [ -z "$disk" ]; then
+  echo "no data disk (scsi1) for the sandboxes' homes" >&2
+  exit 1
+fi
+for tool in mkfs.xfs xfs_quota; do
+  command -v "$tool" >/dev/null 2>&1 && continue
+  sudo -n apt-get install -y -q xfsprogs >/dev/null 2>&1 \\
+    || {{ sudo -n apt-get update -q >/dev/null 2>&1 \\
+          && sudo -n apt-get install -y -q xfsprogs >/dev/null 2>&1; }} \\
+    || {{ echo "$tool is missing and could not be installed" >&2; exit 1; }}
+done
+kind=$(sudo -n blkid -o value -s TYPE "$disk" || true)
+if [ -z "$kind" ]; then
+  sudo -n mkfs.xfs -q "$disk"
+elif [ "$kind" != xfs ]; then
+  echo "the data disk $disk holds $kind, not XFS" >&2
+  exit 1
+fi
+uuid=$(sudo -n blkid -o value -s UUID "$disk")
+root="$HOME/.cheese"
+mkdir -p "$root/home" "$root/store"
+mount_line() {{
+  grep -qsxF "$1" /etc/fstab || echo "$1" | sudo -n tee -a /etc/fstab >/dev/null
+}}
+mount_line "UUID=$uuid /data xfs discard,prjquota,nofail 0 0"
+mount_line "/data/home $root/home none bind,nofail,x-systemd.requires-mounts-for=/data 0 0"
+mount_line "/data/store $root/store none bind,nofail,x-systemd.requires-mounts-for=/data 0 0"
+sudo -n systemctl daemon-reload
+mountpoint -q /data || {{ sudo -n mkdir -p /data && sudo -n mount /data; }}
+sudo -n install -d -o "$(id -u)" -g "$(id -g)" -m 0700 /data/home /data/store
+mountpoint -q "$root/home" || sudo -n mount "$root/home"
+mountpoint -q "$root/store" || sudo -n mount "$root/store"
+set -- $(stat -f -c '%b %S' /data)
+echo "CHEESE_SANDBOX_DISK_BYTES=$(( $1 * $2 ))"
+"""
+
+
+def sandbox_disk_gb(output: str) -> int:
+    """The data disk's size a bootstrap reported, in GB."""
+    found = DATA_DISK_LINE.findall(output)
+    if not found:
+        # i18n-exempt: an enrollment failure, kept on the host row for operators
+        raise EnrollmentError("the bootstrap reported no data disk")
+    return int(found[-1]) // 10**9
+
+
+def bootstrap_script(
+    *, origin: str, token: str, device_id: str, sandbox_disk: bool
+) -> str:
+    """What runs on the machine. Writes the cli's config, then connects.
+    With ``sandbox_disk``, first sets up the data disk a pool host keeps its
+    sandboxes' homes on (``DATA_DISK``); a whole VM runs none.
+
+    Deliberately arch-agnostic: the download target is resolved on the
     machine rather than guessed from here.
     """
     config = json.dumps(
@@ -137,6 +208,7 @@ def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
     origin_clean = origin.rstrip("/")
     min_version = CLAUDE_MIN_VERSION
     pinned_version = CLAUDE_PINNED_VERSION
+    data_disk = DATA_DISK.format() if sandbox_disk else ""
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in
@@ -190,6 +262,7 @@ for tool in tmux git python3 ip iptables-restore; do
           && sudo -n apt-get install -y -q "$package" >/dev/null 2>&1; }} \
     || {{ echo "$tool is missing and could not be installed" >&2; exit 1; }}
 done
+{data_disk}
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 export PATH="$HOME/.local/bin:$PATH"
 # claude — the agent itself, and the same argument as tmux/git above with one
