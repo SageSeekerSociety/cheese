@@ -1,4 +1,4 @@
-"""The system prompt a room's session starts with (`room/turn.py`)."""
+"""The system prompt a room's session starts with (`turn/intake/preparation/launch.py`)."""
 
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.prompt import build_system_prompt

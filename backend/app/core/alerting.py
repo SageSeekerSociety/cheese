@@ -1,7 +1,7 @@
 """Tell a person, out of band, when something broke that nobody is watching.
 
-Everything the platform notices already lands somewhere queryable — a 现场 event
-block, a log line, a system event in a room. That is enough for whoever is
+Everything the platform notices already lands somewhere queryable — a session
+or run record, a log line, a system event in a room. That is enough for whoever is
 looking, and worth nothing when nobody is. A frontend error sits in the timeline
 of a room that may have no one in it; a user sees 「操作失败」 and moves on.
 

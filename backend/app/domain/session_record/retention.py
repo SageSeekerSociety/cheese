@@ -5,9 +5,9 @@ transcripts permanently (#4398). Nothing here, or anywhere else, deletes a
 sealed run's object from the private bucket.
 
 What goes is the row. A sealed run's row is deleted `RETENTION` (30 days)
-after its last record, so the database holds an index of the last month, and
-`read` no longer finds the run: past that the records are in the bucket, under
-`session-records/<conversation>/`, and nowhere in the app. A run still held in
+after its last record, so the database holds an index of the last month;
+past that `read` finds the run through the bucket's permanent index
+(`service.read`). A run still held in
 its row (no private bucket configured, so never sealed) is not expired: the
 row is its only copy.
 

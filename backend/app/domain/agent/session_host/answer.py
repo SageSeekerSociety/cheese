@@ -6,7 +6,8 @@ What is handed on is always a prefix of the answer: the text of every message
 the session wrote for this prompt, a blank line between two. What the session
 is writing extends it as it streams; a message's record settles what it said,
 and whatever the stream did not show is handed on then. The answer ends on the
-record the journal keeps of the work's result (``Answer``).
+work's result: the runner's report that the session went idle, or the journal's
+result record for a mirrored harness (``Answer``).
 
 Asking is three steps — the session started (``starting``), the prompt said
 (``say``), the answer read (``follow``) — and ``ask`` is the three in a row.

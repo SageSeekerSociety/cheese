@@ -7,8 +7,11 @@ running from another is started again from this one once it is idle. A session
 sits idle for a while and then exits; its conversation stays in its state
 directory, and the next start brings it back on it.
 
-Reading is the runner's journal, mirrored on this backend and handed over one
-item at a time (``read``). The mirror's landing cursor moves only past what the
+Reading is handed over one item at a time (``read``). For a harness whose
+runner reports in the lifecycle protocol (``Reports``, Claude Code) it is what
+the runner reports, acknowledged once applied. For one that keeps a mirror
+(``Mirrors``, pi and Codex) it is the runner's journal, mirrored on this
+backend, and the mirror's landing cursor moves only past what the
 reader took: an item it took is one it asked for the next of, or one it took
 before it stopped reading; an item it failed on is thrown back into the reading
 (``athrow``), re-read on the next pass, and stepped over once it has failed
@@ -16,9 +19,12 @@ often enough (`driven/subscription.py`). So a reader that dies anywhere re-reads
 rather than skips, and the next process to read a session starts where this one
 stopped landing.
 
-Whether a session is gone is decided here, once, for every reader: its runner
-says its harness process exited, or it stays out of reach for longer than the
-spec's ``gone_after_s`` while something said to it is unanswered (``Ended``).
+Whether a session is gone: a reporting runner says its process exited
+(``SessionExited``), and being out of reach for ``LEASE_S`` only tells the
+room. For a mirrored harness it is decided here, once, for every reader: its
+runner says its harness process exited, or it stays out of reach for longer
+than the spec's ``gone_after_s`` while something said to it is unanswered
+(``Ended``).
 
 ``SessionHost`` is what the rest of the platform knows the session core by, and
 this module is that door (``block``, ``room``, ``personal``, ``document``, the

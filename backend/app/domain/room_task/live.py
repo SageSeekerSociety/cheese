@@ -15,7 +15,7 @@ conversation are told when it flushed
 - a change to the task's row (started, closed, accepted, renamed, handed over…);
 - a question asked in the task, or an answer recorded on one: what the task
   reads as (`presentation`, 待回答) turns on its latest question;
-- a turn in the task reaching its session or ending (运行中): the turn's
+- a turn in the task reaching its session or ending: the turn's
   interval is written with a bulk `update(AgentTurn)`, which a flush hook does
   not see, so its writer (`AgentTurnRepository`) queues the frames through
   `turns_moved` in the same session;
