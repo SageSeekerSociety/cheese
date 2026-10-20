@@ -216,7 +216,7 @@
       "sandboxDisk": "磁盘 {used} / {cap} GB",
       "sandboxFiles": "文件 {used} / {cap}",
       "sandboxRead": "内存读数 {memory} · 磁盘读数 {disk}",
-      "foot": "用量每 {check}读一次，沙箱的磁盘每 {walk}读一次；宿主机的磁盘过 {disk}、inode 过 {inodes}、内存过 {memory}，连续两次读数都是，就发到告警群；沙箱用到上限的 {near} 标黄。"
+      "foot": "用量（含每个沙箱的磁盘）每 {check}读一次；宿主机的磁盘过 {disk}、inode 过 {inodes}、内存过 {memory}，连续两次读数都是，就发到告警群；沙箱用到上限的 {near} 标黄。"
     }
   }
 }

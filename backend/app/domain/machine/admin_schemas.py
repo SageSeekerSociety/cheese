@@ -118,7 +118,6 @@ class MachineConfigOut(BaseModel):
     sandbox_inode_budget: int
     near_cap: float
     check_s: int
-    walk_s: int
     alert_used: dict[str, float]
     history_step_s: int
 

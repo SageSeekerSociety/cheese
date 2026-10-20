@@ -216,7 +216,7 @@
       "sandboxDisk": "Disk {used} / {cap} GB",
       "sandboxFiles": "Files {used} / {cap}",
       "sandboxRead": "Memory read {memory} · disk read {disk}",
-      "foot": "Usage is read every {check}, a sandbox's disk every {walk}. A host past {disk} disk, {inodes} inodes or {memory} memory on two readings running is sent to the alert group; a sandbox at {near} of a limit is highlighted."
+      "foot": "Usage, each sandbox's disk among it, is read every {check}. A host past {disk} disk, {inodes} inodes or {memory} memory on two readings running is sent to the alert group; a sandbox at {near} of a limit is highlighted."
     }
   }
 }

@@ -141,7 +141,6 @@ export interface MachinesOverview {
     near_cap: number
     /** 宿主机多久读一次、多久走一次盘（秒）。 */
     check_s: number
-    walk_s: number
     /** 宿主机用过这一份就告警（两次读数都过）。 */
     alert_used: Record<'disk' | 'inodes' | 'memory', number>
     history_step_s: number

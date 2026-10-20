@@ -560,6 +560,10 @@ def run_on_the_machine(target, command):
         with contextlib.suppress(Exception):
             call("forget")
     code = answer["exit"]
+    if answer.get("disk"):
+        # The executor found its disk full as the command failed: most likely
+        # why, and nothing the command's own output says in so many words.
+        sys.stderr.write(answer["disk"] + "\n")
     if code < 0 and sys.platform == "win32":
         # No signal to end with here: the shell's way of saying it, 128 + n.
         return 128 - code

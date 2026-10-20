@@ -23,6 +23,9 @@ from app.domain.machine.models import MAX_ENROLL_ATTEMPTS, AiStatus, MachineStat
 
 pytestmark = pytest.mark.anyio
 
+#: What a pool host's bootstrap says of the 64 GB data disk it set up.
+DATA_DISK_SAID = "CHEESE_SANDBOX_DISK_BYTES=68719476736"
+
 
 class FakeDevices:
     def __init__(self):
@@ -82,9 +85,10 @@ class FakeMachineRepo:
         self.enrolled: list[str] = []
         self.failures: list[str] = []
 
-    async def mark_enrolled(self, machine, *, device_id, when):
+    async def mark_enrolled(self, machine, *, device_id, when, sandbox_disk_gb):
         machine.device_id = device_id
         machine.enrolled_at = when
+        machine.sandbox_disk_gb = sandbox_disk_gb
         machine.enroll_error = None
         machine.bootstrap_key = None
         self.enrolled.append(device_id)
@@ -111,6 +115,8 @@ def make_machine(**overrides):
         enroll_attempts=0,
         bootstrap_key="PRIVATE-KEY",
         machine_id=7,
+        whole_machine=False,
+        sandbox_disk_gb=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -149,7 +155,7 @@ def build_service(
         )
         if bootstrap is not None:
             return bootstrap()
-        return "Connected."
+        return f"{DATA_DISK_SAID}\nConnected."
 
     monkeypatch.setattr(enrollment, "run_bootstrap", _run_bootstrap)
     return service, calls
@@ -265,7 +271,7 @@ async def test_a_retried_host_is_one_machine_not_one_per_attempt(monkeypatch):
         failure = next(outcomes)
         if failure is not None:
             raise failure
-        return "Connected."
+        return f"{DATA_DISK_SAID}\nConnected."
 
     service, calls = build_service(monkeypatch, bootstrap=_bootstrap)
     devices = DeviceService(InMemoryDeviceRepository())
@@ -327,7 +333,7 @@ async def test_the_sweep_keeps_going_when_one_machine_fails(monkeypatch):
 
 def test_the_script_resolves_the_download_target_on_the_machine():
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="T", device_id="D"
+        sandbox_disk=False, origin="https://x.test", token="T", device_id="D"
     )
     # Guessing the architecture from here would break the moment a VM offering
     # lands on arm — the machine is the only thing that knows.
@@ -337,7 +343,7 @@ def test_the_script_resolves_the_download_target_on_the_machine():
 
 def test_the_script_never_puts_the_token_on_a_command_line():
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="TOK", device_id="D"
+        sandbox_disk=False, origin="https://x.test", token="TOK", device_id="D"
     )
     # It lands in the config via a heredoc; an argument would be visible in the
     # machine's own process list.
@@ -399,7 +405,7 @@ def test_the_script_provides_tmux_the_connector_needs():
     this got a service that died on startup — while enrollment recorded success.
     """
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="T", device_id="D"
+        sandbox_disk=False, origin="https://x.test", token="T", device_id="D"
     )
     assert "tmux" in script.split("for tool in")[1].split(";")[0]
     # ...and before the connector is started, or the check buys nothing.
@@ -420,7 +426,7 @@ def test_the_script_confirms_the_service_actually_stayed_up():
     the unit and would answer "inactive" for a connector that is running fine.
     """
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="T", device_id="D"
+        sandbox_disk=False, origin="https://x.test", token="T", device_id="D"
     )
     assert "systemctl --user is-active --quiet cheese" in script
     connect = next(
@@ -443,7 +449,7 @@ def test_the_script_refuses_a_machine_that_will_drop_off_when_ssh_closes():
     fail while somebody is still looking at the output.
     """
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="T", device_id="D"
+        sandbox_disk=False, origin="https://x.test", token="T", device_id="D"
     )
     code = [line for line in script.splitlines() if not line.lstrip().startswith("#")]
     checks = [i for i, line in enumerate(code) if "Linger" in line]
@@ -473,7 +479,7 @@ async def test_a_service_that_dies_is_recorded_as_a_failure(monkeypatch):
 def _tool_check_block() -> str:
     """The generated script's tool loop, ready to run on its own."""
     script = enrollment.bootstrap_script(
-        origin="http://cheese.test", token="tok", device_id="dev"
+        sandbox_disk=False, origin="http://cheese.test", token="tok", device_id="dev"
     )
     start = script.index("for tool in")
     return script[start : script.index("\ndone", start) + len("\ndone")]
@@ -548,7 +554,7 @@ def test_nothing_is_installed_before_cloud_init_has_finished(tmp_path):
     import subprocess
 
     script = enrollment.bootstrap_script(
-        origin="http://cheese.test", token="tok", device_id="dev"
+        sandbox_disk=False, origin="http://cheese.test", token="tok", device_id="dev"
     )
     start = script.index("if command -v cloud-init")
     block = script[start : script.index("\ndone", start) + len("\ndone")]
@@ -568,18 +574,79 @@ sudo() {{ printf 'sudo %s\\n' "$*" >> {calls}; }}
     ]
 
 
-def test_bootstrap_is_valid_shell():
+@pytest.mark.parametrize("sandbox_disk", [False, True])
+def test_bootstrap_is_valid_shell(sandbox_disk):
     """The script is built from an f-string, so a mis-escaped brace turns into a
     syntax error that would only surface on a real machine."""
     import subprocess
 
     script = enrollment.bootstrap_script(
-        origin="http://cheese.test", token="tok", device_id="dev"
+        sandbox_disk=sandbox_disk,
+        origin="http://cheese.test",
+        token="tok",
+        device_id="dev",
     )
     checked = subprocess.run(
         ["bash", "-n"], input=script, text=True, capture_output=True, timeout=30
     )
     assert checked.returncode == 0, checked.stderr
+
+
+async def test_a_pool_host_is_enrolled_with_the_data_disk_it_set_up(monkeypatch):
+    service, calls = build_service(monkeypatch)
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    assert "drive-scsi1" in calls[0]["script"]
+    assert machine.device_id == "dev123"
+    assert machine.sandbox_disk_gb == 68
+
+
+async def test_a_pool_host_with_no_data_disk_is_not_enrolled(monkeypatch):
+    """No sandbox runs without a disk limit, and the limit needs the disk:
+    a host without one could take no sandbox, so it never joins the pool."""
+    service, _ = build_service(monkeypatch, bootstrap=lambda: "Connected.")
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    assert machine.device_id is None
+    assert machine.enroll_attempts == 1
+    assert "no data disk" in machine.enroll_error
+
+
+async def test_a_whole_vm_is_enrolled_without_a_data_disk(monkeypatch):
+    service, calls = build_service(monkeypatch, bootstrap=lambda: "Connected.")
+    machine = make_machine(whole_machine=True)
+
+    await service.enroll(machine)
+
+    assert "drive-scsi1" not in calls[0]["script"]
+    assert machine.device_id == "dev123" and machine.sandbox_disk_gb is None
+
+
+def test_a_machine_whose_data_disk_is_missing_refuses_to_enrol(tmp_path):
+    """The data disk step on a machine with no scsi1 disk: it stops the
+    enrollment and says why, before anything is formatted or mounted."""
+    import subprocess
+
+    calls = tmp_path / "sudo-calls"
+    script = enrollment.bootstrap_script(
+        sandbox_disk=True, origin="http://cheese.test", token="tok", device_id="dev"
+    )
+    start = script.index('disk=""')
+    block = script[start : script.index("CHEESE_SANDBOX_DISK_BYTES", start)]
+    harness = f"""set -eu
+sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
+shopt -s nullglob
+{block}
+"""
+    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+
+    assert done.returncode == 1
+    assert "no data disk" in done.stderr
+    assert not calls.exists(), "nothing may be formatted or mounted"
 
 
 @pytest.mark.parametrize("already_running", [False, True])
@@ -603,7 +670,10 @@ def test_enrollment_runs_with_the_identity_it_just_wrote(tmp_path, already_runni
     )
     connector.chmod(0o755)
     script = enrollment.bootstrap_script(
-        origin="https://cheese.test", token="new-token", device_id="new-device"
+        sandbox_disk=False,
+        origin="https://cheese.test",
+        token="new-token",
+        device_id="new-device",
     )
     start = script.index('cat > "$HOME/.config/cheese/config.json"')
     end = script.index('echo "cheese.service active"')
@@ -636,7 +706,10 @@ def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
 
     monkeypatch.setattr(enrollment.settings, "microcloud_direct_control", direct)
     script = enrollment.bootstrap_script(
-        origin="https://cheese.test/api", token="test-token", device_id="test-device"
+        sandbox_disk=False,
+        origin="https://cheese.test/api",
+        token="test-token",
+        device_id="test-device",
     )
     config = json.loads(script.split("<<'CHEESE_CONFIG_EOF'\n", 1)[1].split("\n", 1)[0])
     assert config["base"] == "https://cheese.test/api/connector"

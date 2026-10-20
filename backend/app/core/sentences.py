@@ -166,6 +166,11 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: 「芝士提议修改技能」, 「芝士起草了」 and 「交给芝士的工作」 stay on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
+        # A sandbox the disk guard stopped for holding the most of a full disk
+        # or more than its budget: each sandbox now has a quota of its own and
+        # is refused writes past it, and old room lines still name the stop.
+        "sandboxReleasedDiskFull",
+        "sandboxReleasedOverBudget",
         # The post-merge watch (checks on the merge commit, a deployment that
         # included it) is gone; old task conversations still hold its lines.
         "deployedTo",

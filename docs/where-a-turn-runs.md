@@ -92,7 +92,9 @@ HOME 必须各自独立（会话的配置、记录和凭证都在它下面）—
 **按项目分，不按机器分。** 同一个项目的房间本来就共用一个仓库、能读彼此的 checkout，
 store 在这条线以内；跨项目则是一条真实存在的线，沙箱里只挂进本项目的 store（§四）。
 **硬链接跨不过 bind mount**（`link(2)` → EXDEV，同一个文件系统内也一样，dev 上实测过）：
-沙箱里会话目录和 store 是两个挂载点，所以那里 uv 直接复制（`UV_LINK_MODE=copy`）。
+沙箱里会话目录和 store 是两个挂载点，平台宿主机上还各是一个 project quota，硬链接两样都跨不过；
+所以那里 uv 和 pnpm 改用克隆（`UV_LINK_MODE=clone`、`npm_config_package_import_method=clone-or-copy`），
+在宿主机的 XFS 数据盘上共享 store 的块，别处退回复制。
 隔离和去重不是同一个开关。
 
 **存量房间会在下一次启动时回收掉自己那份死缓存。** 重定向之后，房间 HOME 里原来那几份

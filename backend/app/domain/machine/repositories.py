@@ -266,10 +266,16 @@ class CloudHostRepository:
         )
 
     async def mark_enrolled(
-        self, host: CloudHost, *, device_id: str, when: datetime
+        self,
+        host: CloudHost,
+        *,
+        device_id: str,
+        when: datetime,
+        sandbox_disk_gb: int | None,
     ) -> CloudHost:
         host.device_id = device_id
         host.enrolled_at = when
+        host.sandbox_disk_gb = sandbox_disk_gb
         host.enroll_error = None
         # The bootstrap key existed for this one setup; keeping it would leave a
         # standing way into the machine that nobody asked for.

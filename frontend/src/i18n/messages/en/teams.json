@@ -12,7 +12,10 @@
     "cliHint": "On another computer, install the connector, run this command, and select this team when approving.",
     "remove": "Remove",
     "removeConfirm": "Remove “{name}”? This enrollment will stop working for the team.",
-    "downloadDesktop": "Download desktop app"
+    "downloadDesktop": "Download desktop app",
+    "rename": "Rename",
+    "renameTitle": "Rename device",
+    "offlineSince": "Offline · last online {time}"
   },
   "members": {
     "invite": "Invite member",
