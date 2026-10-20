@@ -47,7 +47,6 @@
       "rerun": true,
       "action": "重跑失败 job（上限 3 次）；同一个 head 上再红就按真实回归读日志，别当偶发收场。",
       "symptoms": [
-        "backend / integration：tests/integration/test_a_last_step_lands_while_work_goes_on.py::test_a_message_sent_while_the_task_is_written_up_is_not_dropped[turn-waiting] 红在 assert 'closed' == 'open'，重跑就过",
         "backend / integration：tests/integration/test_claude_session_records.py::test_a_message_after_a_dead_runner_gets_a_turn 的 orphaned 断言，--reruns 1 无效，重新采纳进队"
       ]
     },

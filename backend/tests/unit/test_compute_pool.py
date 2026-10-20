@@ -105,6 +105,31 @@ async def test_a_seat_whose_previous_runner_is_gone_is_taken_anyway(gone):
     pi.steer.assert_awaited_once()
 
 
+def test_words_for_a_room_never_go_to_a_guessed_working_seat():
+    """With two teammates at work in one room, words that name neither are for
+    nobody: putting them into one of the two sessions is a guess."""
+    topic = uuid.uuid4()
+    native = _FakeBackend("device")
+    codex = _FakeBackend("device", "codex")
+    native.working_seats = lambda topic_id, agent_handle=None: [
+        (h, a)
+        for h, a in [("cheese", "cheese-a1")]
+        if topic_id == topic and agent_handle in (None, h, a)
+    ]
+    codex.working_seats = lambda topic_id, agent_handle=None: [
+        (h, a)
+        for h, a in [("reviewer", "cheese-b2")]
+        if topic_id == topic and agent_handle in (None, h, a)
+    ]
+    pool = ComputePool([native, codex])
+
+    assert pool.working_seat(topic) is None
+    assert pool.working_seat(topic, "cheese-b2") == ("reviewer", "cheese-b2")
+    assert pool.working_seat(topic, "cheese") == ("cheese", "cheese-a1")
+    assert pool.working_seat(topic, "somebody-else") is None
+    assert pool.working_seat(uuid.uuid4()) is None
+
+
 class _FakeBackend:
     """Minimal backend stand-in for routing tests (v4 会话级选择): what the
     pool asks of a room's sessions on one machine pool."""
