@@ -19,10 +19,9 @@ from app.domain.device.supply import Supply
 
 @dataclass(frozen=True)
 class Login:
-    """One of a person's model connections, and how it reaches a model: one
-    login their own Claude Code has for the platform on one of their machines
-    (a machine may hold several), or one the team stores encrypted on the platform (an API key or a
-    model service). Each is named by its own row."""
+    """A team's model connection: a Claude Code login stored on one of its
+    devices, or an API key or model service stored encrypted on the platform.
+    A device may hold several logins. Each connection has its own row."""
 
     #: What the connection is named by: the login's record id, or the account
     #: connection's.
@@ -37,7 +36,7 @@ class Login:
     #: The machine holding it; None for an encrypted platform-held connection.
     device_id: str | None = None
     device_name: str | None = None
-    #: What its owner named the connection.
+    #: The connection's chosen name.
     name: str | None = None
     allowed_models: tuple[str, ...] = ()
 
@@ -75,9 +74,8 @@ def _held(row: AccountConnection) -> Login:
 
 
 def _usable():
-    """The conditions under which a login on a machine is a connection a session
-    may run on: logged in, on a machine its owner enrolled, and not removed by
-    its owner — whatever a backend that predates removals wrote back into
+    """A usable device login is logged in, on an enrolled device, and not
+    revoked. Whatever a backend that predates removals wrote back into
     ``logged_in``, it never touches ``revoked_at``."""
     return (
         DeviceRow.supply == Supply.self_hosted,
@@ -87,15 +85,15 @@ def _usable():
 
 
 async def logins(db: AsyncSession, team_id: int) -> list[Login]:
-    """This person's model connections: their machines' logins, the most
-    recently confirmed first, then the ones the team stores encrypted on the platform, oldest first."""
+    """The team's device logins, most recently confirmed first, followed by
+    connections stored encrypted on the platform, oldest first."""
     return (await logins_by_teams(db, {team_id}))[team_id]
 
 
 async def logins_by_teams(
     db: AsyncSession, team_ids: set[int]
 ) -> dict[int, list[Login]]:
-    """The same ordered connections for each owner, read in two queries."""
+    """The same ordered connections for each team, read in two queries."""
     result: dict[int, list[Login]] = {owner: [] for owner in team_ids}
     if not team_ids:
         return result
@@ -142,9 +140,8 @@ def _connection_key(
 
 
 def label(login: Login) -> str:
-    """What tells one of a person's own agents from another in its name: the
-    name its owner gave the connection, else a subscription's plan, a model
-    service's model, or that it is an API key."""
+    """Label a teammate with its connection's name, falling back to the
+    subscription plan, service model, or API-key kind."""
     if login.name:
         return login.name
     if login.kind is ConnectionKind.subscription:
