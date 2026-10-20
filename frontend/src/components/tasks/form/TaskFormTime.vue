@@ -46,6 +46,7 @@ const isAllowedDates = (date: unknown) => {
         <div class="tf-inline tf-dates">
           <VDateInput
             v-model="registrationStartAt"
+            data-agent-field="registration_start"
             :placeholder="t('tasks.form.registrationStart')"
             :aria-label="t('tasks.form.registrationStart')"
             :allowed-dates="isAllowedDates"

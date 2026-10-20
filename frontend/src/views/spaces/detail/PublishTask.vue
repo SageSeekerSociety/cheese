@@ -96,10 +96,12 @@ const preselectedCategoryId = computed(() => {
   return activeCategories.value.some((category) => category.id === id) ? id : undefined
 })
 
-/** 芝士换算分类、标签名字用的。 */
+/** 芝士换算分类、标签、邮箱域名组和导师名字用的。 */
 const terms = () => ({
   categories: activeCategories.value.map((c) => ({ id: c.id, name: c.name })),
   topics: classificationTopics.value.map((topic) => ({ id: topic.id, name: topic.name })),
+  domainGroups: domainGroups.value.map((g) => ({ id: g.id, name: g.name })),
+  mentors: mentorChoices.value.map((m) => ({ handle: m.value, name: m.title })),
 })
 
 // --- 草稿 ------------------------------------------------------------------------
@@ -182,6 +184,14 @@ async function openDraft(id: number | null) {
   }
 }
 
+/** 「从文件导入」：打开芝士，把文件交给它，不带话；文件在这一页是导入的意思，芝士知道。 */
+async function importFiles(files: File[]) {
+  if (mdAndUp.value) agentDocked.value = true
+  else agentOpen.value = true
+  await agent.attach(files)
+  await agent.ask('')
+}
+
 function useTemplate(index: number) {
   const template = templates.value[index]
   if (!template) return
@@ -216,7 +226,30 @@ watch(
 // --- 芝士 --------------------------------------------------------------------------
 
 const view = ref<InstanceType<typeof PublishTaskView> | null>(null)
-watch(view, (v) => draft.bind(v ? v.form : null))
+watch(view, (v) =>
+  draft.bind(
+    v
+      ? {
+          values: () => v.form.values(),
+          apply: async (fields: TaskDraftFields) => ({ ...pageApply(fields), ...(await v.form.apply(fields)) }),
+        }
+      : null
+  )
+)
+
+/** 草稿里不在表单上的几格（AI 指导、附件），芝士写到它们时由页面自己填。 */
+function pageApply(fields: TaskDraftFields): TaskDraftFields {
+  const shown: TaskDraftFields = {}
+  if ('teaching' in fields) teaching.value = { ...(fields.teaching ?? {}) }
+  if ('teachingOwn' in fields) teachingOwn.value = !!fields.teachingOwn
+  if ('attachmentFiles' in fields) {
+    const files = fields.attachmentFiles ?? []
+    uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
+    shown.attachmentFiles = files
+    shown.attachmentIds = files.map((f) => f.id)
+  }
+  return shown
+}
 
 const agent = useDraftAgent({
   draft,
@@ -505,10 +538,12 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :outline="outline"
     :marks="marks"
     :selection="layer.selection.value"
+    :agent-writing="draft.writing.value"
     :strip="strip"
     :agent-name="t('work.agentAvatar.defaultName')"
     @cancel="router.push(listTo)"
     @use-template="useTemplate"
+    @import-files="importFiles"
     @add-attachments="uploads.add"
     @remove-attachment="uploads.remove"
     @submit="publish"

@@ -39,7 +39,9 @@
     "yes": "Yes",
     "no": "No",
     "kept": "You changed this; left as is",
-    "ordinal": "No. {n}"
+    "ordinal": "No. {n}",
+    "days": "{n} days",
+    "none": "None"
   },
   "notes": {
     "title": "Needs your check"
@@ -51,7 +53,6 @@
     "open": "View task"
   },
   "files": {
-    "readThese": "Read the attached files",
     "failed": "File upload failed",
     "add": "Add files"
   },

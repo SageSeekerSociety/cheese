@@ -47,6 +47,13 @@ describe('AssistantPanel', () => {
     await waitFor(() => expect(composerText(view.container)).toBe(''))
   })
 
+  it('sends files handed over alone, with nothing typed', async () => {
+    const view = mount({ files: [{ name: '课题.pdf', uploading: false }], canAttach: true })
+    await fireEvent.click(view.getByRole('button', { name: '发送' }))
+
+    expect(view.emitted('send')).toEqual([['']])
+  })
+
   it('does not take a second question, or a switch, while 芝士 is still answering', async () => {
     const view = mount({ busy: true, streaming: '常见起点是' })
     const box = view.getByRole('textbox') as HTMLTextAreaElement

@@ -121,6 +121,7 @@
       "title": "AI guidance"
     },
     "useTemplate": "Use template",
+    "importFile": "Import from file",
     "draftsMenu": {
       "label": "Drafts",
       "heading": "My drafts in this space",

@@ -18,6 +18,7 @@ import {
   DOMAIN_GROUP,
   PANEL_DONE,
   PANEL_LIVE,
+  PANEL_SPLIT,
   PUBLISH_DRAFTS,
   SPACE_CATEGORY,
   SPACE_MATERIALS,
@@ -138,6 +139,16 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         props: PANEL_DONE,
         expect: '待你确认',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s4.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s4.note')
+        },
+        props: PANEL_SPLIT,
+        expectSelector: '.at__card--one',
       },
     ],
   },

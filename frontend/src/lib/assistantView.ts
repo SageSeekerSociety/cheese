@@ -47,6 +47,8 @@ export interface PanelChange {
   canUndo: boolean
   /** 一份文件拆出几道题时，这是第几道（卡头写「第 N 道」）。 */
   ordinal?: number
+  /** 这一轮也写了、但不是眼前这份的草稿：只给一行，点名字切过去。 */
+  collapsed?: boolean
 }
 
 /** 一轮回答写进草稿的样子：眼前这份草稿改了哪几格（一张卡）。 */
@@ -77,6 +79,12 @@ const LABEL_KEYS: Record<string, string> = {
   category: 'tasks.form.category',
   tags: 'tasks.form.topics',
   real_name: 'tasks.form.more.realName',
+  registration_start: 'tasks.form.registrationStart',
+  team_locking: 'tasks.form.teamLocking.label',
+  mentors: 'tasks.form.mentor.label',
+  access: 'tasks.form.more.access',
+  attachments: 'tasks.attachmentPicker.title',
+  ai_guidance: 'spaces.detail.publishTask.teaching.title',
 }
 
 export function fieldLabel(key: string): string {
@@ -140,9 +148,31 @@ const LEVELS: Record<number, string> = {
 }
 
 /** 一格的值，写成卡上那一行。 */
-export function valueText(key: string, value: unknown, terms: DraftTerms): string {
+export function valueText(key: string, value: unknown, terms: DraftTerms, before?: unknown): string {
   if (value === null || value === undefined || value === '') return t('tasks.assistant.changes.empty')
   switch (key) {
+    case 'registration_start':
+      return dayjs(Number(value)).format('YYYY-MM-DD HH:mm')
+    case 'days_to_submit':
+      return t('tasks.assistant.changes.days', { n: Number(value) })
+    case 'team_locking':
+      return value === 'LOCK_ON_APPROVAL' ? t('tasks.form.teamLocking.locked') : t('tasks.form.teamLocking.free')
+    case 'mentors':
+      return (value as string[]).length
+        ? (value as string[]).map((h) => terms.mentors?.find((p) => p.handle === h)?.name ?? h).join('、')
+        : t('tasks.assistant.changes.none')
+    case 'access':
+      return value === true || (Array.isArray(value) && value.length)
+        ? (Array.isArray(value) ? value : [])
+            .map((id) => terms.domainGroups?.find((g) => g.id === id)?.name ?? String(id))
+            .join('、') || t('tasks.form.more.accessDomains')
+        : t('tasks.form.more.accessAll')
+    case 'attachments':
+      return (value as { name: string }[]).map((f) => f.name).join('、') || t('tasks.assistant.changes.none')
+    case 'ai_guidance': {
+      const prompt = (value as { systemPrompt?: string | null }).systemPrompt?.trim()
+      return prompt ? excerpt(prompt) : t('spaces.detail.publishTask.teaching.inherit')
+    }
     case 'form':
       return value === 'TEAM' ? t('tasks.form.team') : t('tasks.form.individual')
     case 'difficulty':
@@ -166,28 +196,70 @@ export function valueText(key: string, value: unknown, terms: DraftTerms): strin
     case 'participant_limit':
       return String(value)
     case 'description':
-      return String(value)
-        .replace(/[#>*_`]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 80)
+      return excerpt(typeof before === 'string' ? changedPart(before, String(value)) : String(value))
     default:
       return String(value)
   }
 }
 
+/** 详情一行里放得下的那一截：去掉 Markdown 的记号。 */
+function excerpt(text: string): string {
+  return text
+    .replace(/[#>*_`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+}
+
+/** 新详情里改了的那一段：去掉和原来相同的开头和结尾。整篇重写时就是整篇。 */
+export function changedPart(before: string, after: string): string {
+  let head = 0
+  while (head < before.length && head < after.length && before[head] === after[head]) head++
+  let tail = 0
+  while (
+    tail < before.length - head &&
+    tail < after.length - head &&
+    before[before.length - 1 - tail] === after[after.length - 1 - tail]
+  )
+    tail++
+  // 说改动所在的整行（几行），读得出上下文。
+  const start = after.lastIndexOf('\n', head - 1) + 1
+  const lineEnd = after.indexOf('\n', after.length - tail)
+  const part = after.slice(start, lineEnd < 0 ? after.length : lineEnd)
+  return part.trim() ? part : after
+}
+
+/** 一格在这次写入里的值：几格并成一项的（访问范围、附件、AI 指导）取说明它的那一格。 */
+function rowValue(key: string, edit: AssistantEdit) {
+  const pick = (field: string) => edit.changed[field]
+  if (key === 'access') {
+    const on = pick('accessControlEnabled')?.after ?? true
+    return { after: on ? pick('accessDomainGroupIds')?.after ?? [] : false }
+  }
+  if (key === 'attachments') return { after: pick('attachmentFiles')?.after ?? [] }
+  if (key === 'ai_guidance') {
+    const own = pick('teachingOwn')?.after ?? true
+    return { after: own ? pick('teaching')?.after ?? {} : {} }
+  }
+  if (key === 'description') return pick('descriptionMarkdown') ?? pick('description')
+  const field = AGENT_FIELDS[key]?.[0]
+  return field ? pick(field) : undefined
+}
+
 export function changeView(edit: AssistantEdit, terms: DraftTerms, canUndo: boolean): PanelChange {
   const rows: PanelChangeRow[] = []
   const seen = new Set<string>()
-  for (const [field, change] of Object.entries(edit.changed)) {
+  for (const field of Object.keys(edit.changed)) {
     const key = agentKeyOf(field)
     if (!key || seen.has(key)) continue
     seen.add(key)
+    const change = rowValue(key, edit)
+    if (!change) continue
     rows.push({
       change: edit.id,
       key,
       label: fieldLabel(key),
-      value: valueText(key, change.after, terms),
+      value: valueText(key, change.after, terms, (change as { before?: unknown }).before),
       undone: edit.undone.includes(key),
     })
   }
@@ -216,8 +288,9 @@ export function changeView(edit: AssistantEdit, terms: DraftTerms, canUndo: bool
  *
  * 眼前这份草稿（`current`）的几次写入并成一张「表单改动」卡：同一格写了几次只留最后一次，
  * 每格记着是哪次写入改的，撤销照旧一格一格来；「待你确认」也只列这一份的。写到的别的草稿
- * （一份文件拆成几道题）不在这里画，在表单上方那一排里；切过去以后，这一轮再画一遍，卡换成
- * 那一份的。没有表单的页面（题目页）`current` 是 null：每份草稿各一张卡，撤销不了。
+ * （一份文件拆成几道题）各收成一行（`collapsed`）：写了几处，点名字切过去，切过去以后这一轮
+ * 再画一遍，展开的换成那一份。没有表单的页面（题目页）`current` 是 null：每份草稿各一张卡，
+ * 撤销不了。
  */
 export function writesView(
   edits: AssistantEdit[],
@@ -228,15 +301,15 @@ export function writesView(
 ): PanelWrites {
   const order: number[] = []
   for (const edit of edits) if (!order.includes(edit.draft)) order.push(edit.draft)
-  const shown = current === null ? order : order.filter((id) => id === current)
-  const changes = shown.map((id) => ({
-    ...merged(
+  const changes = order.map((id) => {
+    const card = merged(
       edits.filter((e) => e.draft === id),
       terms,
       canUndo
-    ),
-    ordinal: ordinal(id),
-  }))
+    )
+    const collapsed = current !== null && id !== current
+    return { ...card, ...(collapsed ? { collapsed, notes: [], canUndo: false } : {}), ordinal: ordinal(id) }
+  })
   return { changes }
 }
 

@@ -105,6 +105,8 @@ defineExpose({
       />
     </BaseField>
 
-    <slot name="attachments" />
+    <div v-if="$slots.attachments" data-agent-field="attachments">
+      <slot name="attachments" />
+    </div>
   </TaskFormSection>
 </template>

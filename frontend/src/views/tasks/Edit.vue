@@ -123,7 +123,12 @@ watch(form, (f) =>
     f
       ? {
           values: () => f.values(),
-          apply: async (fields: TaskDraftFields) => f.apply(fields),
+          apply: async (fields: TaskDraftFields) => {
+            // 不在表单上的 AI 指导由页面自己填。
+            if ('teaching' in fields) teaching.value = { ...(fields.teaching ?? {}) }
+            if ('teachingOwn' in fields) teachingOwn.value = !!fields.teachingOwn
+            return f.apply(fields)
+          },
         }
       : null
   )
@@ -134,6 +139,8 @@ watch(form, (f) =>
 const terms = () => ({
   categories: editCategories.value.map((c) => ({ id: c.id, name: c.name })),
   topics: (taskData.value?.space?.classificationTopics ?? []).map((topic) => ({ id: topic.id, name: topic.name })),
+  domainGroups: domainGroups.value.map((g) => ({ id: g.id, name: g.name })),
+  mentors: mentorChoices.value.map((m) => ({ handle: m.value, name: m.title })),
 })
 
 const agent = useDraftAgent({
@@ -359,6 +366,7 @@ const panelEvents = {
       :domain-groups="domainGroups"
       :teaching-custom="teachingOwn"
       :mentor-options="mentorChoices"
+      :agent-writing="draft.writing.value"
       @invalid="formInvalid = $event"
       @submit="onSubmit"
       @change="draft.changed"
@@ -374,7 +382,7 @@ const panelEvents = {
         />
       </template>
       <template #teaching>
-        <div>
+        <div data-agent-field="ai_guidance">
           <p class="te__label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
           <p class="te__hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
           <v-radio-group v-model="teachingOwn" hide-details density="compact" class="te__choices">

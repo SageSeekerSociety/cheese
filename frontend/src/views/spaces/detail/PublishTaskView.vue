@@ -72,6 +72,8 @@ const props = withDefaults(
       publishing: boolean
       note: { text: string; ok: boolean } | null
     } | null
+    /** 芝士正在写的那一格（它的字段名）。 */
+    agentWriting?: string | null
     /** 芝士那一层。 */
     pointer: AgentPointer | null
     outline: AgentBox | null
@@ -87,6 +89,7 @@ const props = withDefaults(
     publishedHere: false,
     strip: null,
     selection: () => [],
+    agentWriting: null,
   }
 )
 
@@ -101,6 +104,8 @@ const agentDocked = defineModel<boolean>('agentDocked', { default: true })
 const emit = defineEmits<{
   cancel: []
   'use-template': [index: number]
+  /** 「从文件导入」选好了文件：交给芝士去读、去填。 */
+  'import-files': [files: File[]]
   'add-attachments': [files: File[]]
   'remove-attachment': [id: number]
   submit: [data: TaskFormSubmitData]
@@ -124,6 +129,14 @@ const { mdAndUp } = useDisplay()
 type FormHandle = InstanceType<typeof TaskForm>
 const form = ref<FormHandle | null>(null)
 const host = ref<HTMLElement | null>(null)
+const importInput = ref<HTMLInputElement | null>(null)
+
+function onImport(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (files.length) emit('import-files', files)
+}
 
 /** 点过发布之后才标出缺的，打开页面不该满屏红字。 */
 const attempted = ref(false)
@@ -239,13 +252,30 @@ defineExpose({
             :teaching-custom="teachingOwn"
             :mentor-options="mentorOptions"
             :default-mentor="defaultMentor"
+            :agent-writing="agentWriting"
             @invalid="formInvalid = $event"
             @submit="emit('submit', $event)"
             @change="emit('change', $event)"
             @ready="emit('form-ready', $event)"
           >
-            <template v-if="templates.length" #content-actions>
-              <v-menu location="bottom end">
+            <template #content-actions>
+              <BaseButton
+                kind="secondary"
+                size="sm"
+                prepend-icon="mdi-file-import-outline"
+                data-testid="publish-import"
+                @click="importInput?.click()"
+                >{{ t('spaces.detail.publishTask.importFile') }}</BaseButton
+              >
+              <input
+                ref="importInput"
+                type="file"
+                multiple
+                hidden
+                :aria-label="t('spaces.detail.publishTask.importFile')"
+                @change="onImport"
+              />
+              <v-menu v-if="templates.length" location="bottom end">
                 <template #activator="{ props: menu }">
                   <BaseButton v-bind="menu" kind="secondary" size="sm" append-icon="mdi-chevron-down">{{
                     t('spaces.detail.publishTask.useTemplate')
@@ -274,7 +304,7 @@ defineExpose({
             </template>
 
             <template #teaching>
-              <div class="pub__teaching" data-testid="publish-teaching">
+              <div class="pub__teaching" data-testid="publish-teaching" data-agent-field="ai_guidance">
                 <p class="pub__teaching-label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
                 <p class="pub__teaching-hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
                 <v-radio-group v-model="teachingOwn" hide-details density="compact" class="pub__choices">

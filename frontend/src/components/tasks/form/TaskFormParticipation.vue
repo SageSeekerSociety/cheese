@@ -192,7 +192,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
       </BaseField>
     </div>
 
-    <BaseField v-if="isTeam" :label="t('tasks.form.teamLocking.label')">
+    <BaseField v-if="isTeam" data-agent-field="team_locking" :label="t('tasks.form.teamLocking.label')">
       <v-radio-group v-model="teamLockingPolicy" hide-details density="compact" class="tf-choices">
         <v-radio v-for="option in lockOptions" :key="option.value" :value="option.value">
           <template #label>
@@ -205,7 +205,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
       </v-radio-group>
     </BaseField>
 
-    <BaseField :hint="t('tasks.form.mentor.hint')">
+    <BaseField data-agent-field="mentors" :hint="t('tasks.form.mentor.hint')">
       <v-checkbox v-model="mentorsJoin" :label="t('tasks.form.mentor.require')" density="compact" hide-details />
       <v-autocomplete
         v-if="mentorsJoin"

@@ -13,33 +13,48 @@ import dayjs from 'dayjs'
 export const AGENT_FIELDS: Record<string, TaskDraftField[]> = {
   name: ['name'],
   description: ['description', 'descriptionMarkdown'],
+  attachments: ['attachmentIds', 'attachmentFiles'],
   submission: ['submissionSchema'],
   rubric: ['rubric'],
   rubric_public: ['rubricPublic'],
   form: ['submitterType'],
+  difficulty: ['rank'],
   team_min: ['minTeamSize'],
   team_max: ['maxTeamSize'],
-  difficulty: ['rank'],
+  team_locking: ['teamLockingPolicy'],
   participant_limit: ['participantLimit'],
+  mentors: ['mentors'],
+  registration_start: ['registrationStartAt'],
   deadline: ['deadline'],
   days_to_submit: ['defaultDeadline'],
   category: ['categoryId'],
   tags: ['topics'],
+  access: ['accessControlEnabled', 'accessDomainGroupIds'],
   real_name: ['requireRealName'],
+  ai_guidance: ['teaching', 'teachingOwn'],
 }
+
+/** 收在「更多设置」里的几格：芝士写到它们时那一块要展开。 */
+export const MORE_FIELDS = ['access', 'real_name', 'ai_guidance']
 
 // 芝士写的值，按原文比对（后端 `drafts.FORMS` 等同一份）。
 const FORMS: Record<string, 'USER' | 'TEAM'> = { 个人: 'USER', 团队: 'TEAM' }
 const LEVELS: Record<string, number> = { 初级: 1, 中级: 2, 高级: 3 }
 const KINDS: Record<string, TaskSubmissionEntryType> = { 文件: 'FILE', 文字: 'TEXT' }
+const LOCKING: Record<string, 'NO_LOCK' | 'LOCK_ON_APPROVAL'> = {
+  允许变更: 'NO_LOCK',
+  报名通过后锁定: 'LOCK_ON_APPROVAL',
+}
 
 /** 只认写完整的日期：流到一半的「2026-11-0」先不填。 */
 const WHEN = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?$/
 
-/** 换算名字用的：这个空间的分类和标签。 */
+/** 换算名字用的：这个空间的分类、标签、邮箱域名组，和能当导师的人。 */
 export interface DraftTerms {
   categories: { id: number; name: string }[]
   topics: { id: number; name: string }[]
+  domainGroups?: { id: number; name: string }[]
+  mentors?: { handle: string; name: string }[]
 }
 
 export interface Preview {
@@ -104,14 +119,39 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
     const n = count(given.participant_limit)
     if (n !== null) fields.participantLimit = n > 0 ? n : null
   }
-  const deadline = text(given.deadline)
-  if (deadline !== null) {
-    const found = WHEN.exec(deadline.trim())
+  for (const [key, target] of [
+    ['deadline', 'deadline'],
+    ['registration_start', 'registrationStartAt'],
+  ] as const) {
+    const when = text(given[key])
+    if (when === null) continue
+    const found = WHEN.exec(when.trim())
     if (found) {
       const [, y, m, d, hh, mm] = found
       const at = dayjs(`${y}-${m}-${d}T${hh ?? '23'}:${mm ?? '59'}`)
-      if (at.isValid()) fields.deadline = at.valueOf()
-    } else if (!deadline) fields.deadline = null
+      if (at.isValid()) fields[target] = at.valueOf()
+    } else if (!when) fields[target] = null
+  }
+  const locking = text(given.team_locking)
+  if (locking && locking in LOCKING) fields.teamLockingPolicy = LOCKING[locking]
+  if (Array.isArray(given.mentors)) {
+    const people = terms.mentors ?? []
+    fields.mentors = given.mentors
+      .map((word) => String(word).replace(/^@/, '').trim())
+      .map((word) => people.find((p) => p.handle === word || p.name === word)?.handle)
+      .filter((handle): handle is string => handle !== undefined)
+  }
+  if (Array.isArray(given.access)) {
+    const ids = given.access
+      .map((name) => (terms.domainGroups ?? []).find((g) => g.name === name)?.id)
+      .filter((id): id is number => id !== undefined)
+    fields.accessControlEnabled = given.access.length > 0
+    fields.accessDomainGroupIds = ids
+  }
+  const guidance = text(given.ai_guidance)
+  if (guidance !== null) {
+    fields.teaching = guidance.trim() ? { systemPrompt: guidance } : {}
+    fields.teachingOwn = !!guidance.trim()
   }
   const category = text(given.category)
   const found = category ? terms.categories.find((c) => c.name === category) : undefined

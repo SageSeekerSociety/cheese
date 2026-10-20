@@ -6,6 +6,7 @@ act as the person who asked: what they may publish, it may publish; a field
 the person changed after 芝士 read the draft stays as the person left it.
 """
 
+import io
 import uuid
 from datetime import UTC, datetime
 
@@ -211,6 +212,52 @@ def test_cheese_writes_a_new_draft_in_its_own_words(
     ).json()["data"]["text"]
     assert "difficulty: 中级" in read
     assert "deadline: 2026-11-08 23:59" in read
+
+
+def _upload(api_client: TestClient, user, name: str = "课题说明.pdf") -> int:
+    resp = api_client.post(
+        "/attachments",
+        headers=_headers(user),
+        files={"file": (name, io.BytesIO(b"%PDF-1.4 lab topics"), "application/pdf")},
+        data={"type": "file"},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["data"]["id"]
+
+
+def test_cheese_attaches_files_the_person_handed_over_and_sets_mentors(
+    api_client: TestClient, board: dict
+):
+    teacher = board["teacher"]
+    mine = _upload(api_client, teacher)
+    resp = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "space": board["space"]["id"],
+            "name": "课题 A",
+            "attachments": [mine],
+            "mentors": [teacher.username],
+            "team_locking": "报名通过后锁定",
+        },
+        headers=_as_cheese(teacher),
+    )
+    assert resp.status_code == 200, resp.text
+    draft = resp.json()["data"]["draft"]
+    fields = api_client.get(f"/task-drafts/{draft}", headers=_headers(teacher)).json()[
+        "data"
+    ]["fields"]
+    assert fields["attachmentIds"] == [mine]
+    assert fields["attachmentFiles"][0]["name"] == "课题说明.pdf"
+    assert fields["mentors"] == [teacher.username]
+    assert fields["teamLockingPolicy"] == "LOCK_ON_APPROVAL"
+
+    theirs = _upload(api_client, board["stranger"])
+    refused = api_client.post(
+        "/task-drafts/agent/write",
+        json={"draft": draft, "attachments": [theirs]},
+        headers=_as_cheese(teacher),
+    )
+    assert refused.status_code == 403, refused.text
 
 
 def test_a_field_the_person_changed_after_cheese_read_stays_theirs(

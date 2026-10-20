@@ -433,3 +433,70 @@ export const PANEL_DONE = {
     },
   ],
 }
+
+/** 只附一份文件不打字：第一道填进眼前这份，另两道各建一份，各收成一行。 */
+export const PANEL_SPLIT = {
+  messages: [
+    {
+      role: 'user' as const,
+      text: '',
+      at: new Date(NOW).toISOString(),
+      files: ['实验室科研课题-2026秋.pdf'],
+    },
+    {
+      role: 'assistant' as const,
+      text: '文件里有三个课题：课题 A 填进了这份草稿，B、C 各建了一份。报名截止按「11 月 15 日」填写，结题日期写进了描述。',
+      at: new Date(NOW).toISOString(),
+      steps: [
+        { key: 'c1', verb: '读取文件', arg: '1-4', state: 'done' as const },
+        { key: 'c2', verb: '填写题目', arg: '基于 eBPF 的容器网络延迟分析工具', state: 'done' as const },
+        { key: 'c3', verb: '填写题目', arg: '大模型推理服务中 KV Cache 换出策略的评测', state: 'done' as const },
+        { key: 'c4', verb: '填写题目', arg: '校园网 DNS 日志中的异常域名检测', state: 'done' as const },
+      ],
+      changes: [
+        {
+          id: 1,
+          draft: 41,
+          created: false,
+          name: '基于 eBPF 的容器网络延迟分析工具',
+          canUndo: true,
+          ordinal: 1,
+          rows: [
+            { key: 'name', label: '名称', value: '基于 eBPF 的容器网络延迟分析工具', undone: false },
+            { key: 'form', label: '参与方式', value: '团队', undone: false },
+            { key: 'team_max', label: '最多人数', value: '2', undone: false },
+            { key: 'days_to_submit', label: '完成期限', value: '60 天', undone: false },
+            { key: 'attachments', label: '附件', value: '实验室科研课题-2026秋.pdf', undone: false },
+          ],
+          notes: [{ key: 'deadline', label: '截止日期', text: '原文是报名截止，结题日期 2027-01-10 写在描述里' }],
+        },
+        {
+          id: 2,
+          draft: 42,
+          created: true,
+          collapsed: true,
+          name: '大模型推理服务中 KV Cache 换出策略的评测',
+          canUndo: false,
+          ordinal: 2,
+          rows: [
+            { key: 'name', label: '名称', value: '大模型推理服务中 KV Cache 换出策略的评测', undone: false },
+            { key: 'difficulty', label: '难度', value: '高级', undone: false },
+          ],
+          notes: [],
+        },
+        {
+          id: 3,
+          draft: 43,
+          created: true,
+          collapsed: true,
+          name: '校园网 DNS 日志中的异常域名检测',
+          canUndo: false,
+          ordinal: 3,
+          rows: [{ key: 'name', label: '名称', value: '校园网 DNS 日志中的异常域名检测', undone: false }],
+          notes: [],
+        },
+      ],
+      results: [],
+    },
+  ],
+}

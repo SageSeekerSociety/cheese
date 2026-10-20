@@ -1041,6 +1041,47 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     assert last.count("<当前页面>") == 2
 
 
+def test_files_handed_over_alone_are_a_question_the_page_explains(client, gateway):
+    """A file dropped on the publish page with nothing typed is asked as it is:
+    the page tells 芝士 what a file there is for, and that the open draft has
+    nothing in it yet; the conversation keeps the file's name."""
+    me = _auth(client, "asker")
+    user_id, _, _ = _ledger_user(client, "asker")
+    draft = _draft(client, user_id, _task(client))
+
+    async def empty() -> None:
+        async with client.test_factory() as s:
+            row = await s.get(TaskDraft, draft)
+            row.fields = {"submitterType": "USER", "submissionSchema": []}
+            await s.commit()
+
+    asyncio.run(empty())
+    r = client.post(f"/assistant/drafts/{draft}/conversations", headers=me)
+    conversation = r.json()["data"]["id"]
+    page = {"kind": "draft", "id": draft}
+
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "", "page": page},
+        headers=me,
+    )
+    assert r.status_code == 400, r.text
+
+    gateway.script = [("text", "读完了。")]
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"page": page, "files": [{"id": 41, "name": "实验室课题.pdf"}]},
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    told = json.dumps(gateway.requests[0], ensure_ascii=False)
+    assert "<这一页>" in told and "发布题目页" in told
+    assert "尚未填写" in told and "实验室课题.pdf（文件 id 41）" in told
+    kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    asked = kept["data"]["messages"][0]
+    assert asked["text"] == "" and asked["parts"] == {"files": ["实验室课题.pdf"]}
+
+
 def test_a_published_draft_takes_its_conversation_to_the_task(client, gateway):
     me = _auth(client, "asker")
     user_id, _, _ = _ledger_user(client, "asker")
