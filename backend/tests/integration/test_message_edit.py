@@ -475,17 +475,20 @@ class _Screen:
         images=None,
         *,
         register_input=None,
-        expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
     ):
         self.pushed.append(text)
         return True
 
+    def working_seat(self, topic_id, agent_handle=None):
+        """A session at work in the room, whichever seat is asked about."""
+        return "cheese", "cheese"
+
 
 @pytest.fixture
 def running_turn(client):
-    """A turn running in the room ``room``, and the screen it reads from."""
+    """A session at work in the room ``room``, and the screen it reads from."""
 
     def start(room: str) -> _Screen:
         screen = _Screen()
@@ -496,7 +499,7 @@ def running_turn(client):
             workspace_root="/tmp/message-edit-ws",
             compute=stub_compute(),
         )
-        service.live.active_turn_ids[uuid.UUID(room)] = {uuid.uuid4()}
+        service._compute.working_seat = screen.working_seat  # type: ignore[method-assign]
         service._compute.steer = screen.steer  # type: ignore[method-assign]
         app.dependency_overrides[get_chat_service] = lambda: service
         return screen

@@ -444,8 +444,8 @@ async def leave_a_note(
     收件人那条线程在正文里，由平台拿两边的席位比出来（I14②）。同 `tell` 一样，URL
     里的 id 说的是「谁在说话」，从不说「改的是哪个资源」。
 
-    它不落时间线：便条进的是那条线程正在跑的那一轮（`notify_running_turn`），不是
-    房间里的一条消息。那边这一刻没有在跑的轮次就没人接住，如实回 `delivered: false`。
+    它不落时间线：便条进的是那条线程里正在干活的会话（`notify_running_session`），不是
+    房间里的一条消息。那边这一刻没有在干活的会话就没人接住，如实回 `delivered: false`。
     """
 
     place = await place_or_404(db, topic_id)

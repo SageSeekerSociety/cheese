@@ -227,7 +227,7 @@ async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
             },
         )
         if line := persisted_notice(stored.notice):
-            await chat.notify_running_turn(
+            await chat.notify_running_session(
                 conversation, line, blocks=[stored.notice.id]
             )
     if stored.changed:

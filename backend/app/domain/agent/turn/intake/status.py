@@ -86,26 +86,6 @@ class WorkStatus:
             return rec
         return None
 
-    def running_topic_ids(self) -> set[uuid.UUID]:
-        """Every topic with a turn currently in flight — for the board's bulk
-        read, which can't afford one `topic_work()` lookup per row. Same "newest
-        record per topic wins" rule as `topic_work()`, across all topics."""
-        seen: set[str] = set()
-        running: set[uuid.UUID] = set()
-        for channel in self._broker.active_channels():
-            try:
-                running.add(uuid.UUID(channel))
-            except ValueError:
-                continue
-        for rec in reversed(self.state.recent):
-            key = rec["topic_id"]
-            if key in seen:
-                continue
-            seen.add(key)
-            if rec["status"] == "running":
-                running.add(uuid.UUID(key))
-        return running
-
     def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
         """The turn THIS process is actually executing for `topic_id`, with how
         long since it last showed a sign of life — or None if nobody is running

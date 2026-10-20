@@ -344,7 +344,7 @@ def test_a_message_without_live_handoff_still_reaches_the_working_session(
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
         wait_for_record(client, room, lambda record: "make test" in str(record))
         with monkeypatch.context() as hidden:
-            hidden.setattr(chat, "merge_into_running_turn", no_live_handoff)
+            hidden.setattr(chat, "merge_into_running_session", no_live_handoff)
             second = post_message(
                 client, room, "alice", {"content": "@芝士 顺便跑一下 lint"}
             )

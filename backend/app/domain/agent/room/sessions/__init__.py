@@ -465,7 +465,6 @@ class RoomSessions:
         images: list[Image] | None = None,
         *,
         register_input: InputRegistrar,
-        expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
     ) -> bool:
@@ -475,7 +474,6 @@ class RoomSessions:
             text,
             images,
             register_input=register_input,
-            expected_work_id=expected_work_id,
             agent_handle=agent_handle,
             owes_reply=owes_reply,
         )
@@ -498,8 +496,8 @@ class RoomSessions:
             register_input=register_input,
         )
 
-    def _steer_seat(self, topic_id, expected_work_id, agent_handle) -> Seat | None:
-        return _speaking._steer_seat(self, topic_id, expected_work_id, agent_handle)
+    def _steer_seat(self, topic_id, agent_handle) -> Seat | None:
+        return _speaking._steer_seat(self, topic_id, agent_handle)
 
     @contextlib.asynccontextmanager
     async def reading(
@@ -587,6 +585,18 @@ class RoomSessions:
         if agent_handle is not None:
             return (topic_id, agent_handle) in self.live
         return any(seat[0] == topic_id for seat in self.live)
+
+    def working_seats(self, topic_id, agent_handle=None) -> list[tuple[str, str]]:
+        """The seats whose live session in this room is at work, each as its
+        own handle and the handle it acts under; with ``agent_handle``, only
+        the one it names, by either handle."""
+        return [
+            (seat[1], live.acting)
+            for seat, live in self.live.items()
+            if seat[0] == topic_id
+            and seat in self.work
+            and (agent_handle is None or agent_handle in (seat[1], live.acting))
+        ]
 
     def work_in_flight(self, topic_id, agent_handle=None) -> uuid.UUID | None:
         """The work this pool's live seat in the room is running, if one is.

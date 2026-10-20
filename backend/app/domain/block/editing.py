@@ -155,7 +155,7 @@ async def edit_message[Sent: EditedText](
         str(block.conversation_id), {"type": "block_updated", "block": payload}
     )
     if notice is not None:
-        await notify.notify_running_turn(
+        await notify.notify_running_session(
             block.conversation_id, _said(notice), blocks=[notice.id]
         )
     # What somebody else now has to run: a card's line relayed to its task, and

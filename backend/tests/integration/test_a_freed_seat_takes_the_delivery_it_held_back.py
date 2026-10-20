@@ -23,8 +23,8 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.delivery.agent import RETRY_SECONDS, dispatch_pending
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import EVENT_ROUTINE_RUN
 from app.domain.notification.models import NotificationType
-from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, stub_compute
@@ -144,7 +144,7 @@ async def test_the_instruction_goes_in_when_the_work_it_waited_for_ends(
             conversation,
             instance_id,
             "check the open pull requests",
-            **{CLOSES_TASK: True},
+            eventType=EVENT_ROUTINE_RUN,
         )
         assert await dispatch_pending(factory, chat=chat, runner=runner) == 1
         async with asyncio.timeout(HANG_S):

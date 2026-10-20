@@ -417,7 +417,7 @@ async def test_an_unread_joined_resume_is_not_recorded_as_started(business_db_fa
     class AcceptedTransport:
         session_factory = factory
 
-        async def join_running_turn(self, _delivery_id, _attempt_id):
+        async def join_running_session(self, _delivery_id, _attempt_id):
             return True  # Transport accepted; the CLI has not echoed the input.
 
     intake = SimpleNamespace(_wait_to_start=no_op, _wait_for_replay=no_op)

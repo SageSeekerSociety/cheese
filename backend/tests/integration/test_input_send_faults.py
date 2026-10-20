@@ -234,7 +234,6 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
             memory=AsyncMock(),
         )
         monkeypatch.setattr(chat._compute, "_runtimes", lambda: [runtime])
-        chat.live.active_turn_ids[ref.topic_id] = {work}
         injected = []
 
         def fail_commit(session):
@@ -259,7 +258,7 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
             # ChatService commit path is retained, not a fake exception result.
             scope = _UNDER_TEST.set(True)
             try:
-                delivered = await chat.merge_into_running_turn(
+                delivered = await chat.merge_into_running_session(
                     ref.topic_id, [], "new answer", "user-1"
                 )
             finally:
@@ -287,7 +286,7 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
             async def pending(*args, **kwargs):
                 return delivered
 
-            monkeypatch.setattr(chat, "merge_into_running_turn", pending)
+            monkeypatch.setattr(chat, "merge_into_running_session", pending)
             notices = []
 
             async def post_event(*args, **kwargs):
@@ -305,6 +304,5 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
             )
             assert len(notices) == 1
             assert len(channel.admitted) == 1
-        chat.live.active_turn_ids.pop(ref.topic_id, None)
 
     client.portal.call(run)

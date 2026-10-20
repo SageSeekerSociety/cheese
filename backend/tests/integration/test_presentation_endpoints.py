@@ -182,3 +182,37 @@ def test_a_rooms_own_card_reaches_the_room(client):
         "column": "needs_you",
         "phrase": NeedsYou.awaiting_review,
     }
+
+
+def _the_rooms_session_declares(client, room: str, status: str) -> None:
+    """The runner of the room's own line says its session is ``status``."""
+    from app.domain.agent import session_state
+
+    key = session_state.SeatKey(uuid.UUID(room), "cheese", "claude-code")
+
+    async def _declare() -> None:
+        await session_state.register(client.test_factory, key)
+        async with client.test_factory() as s:
+            await session_state.declare(s, key, status, datetime.now(UTC))
+            await s.commit()
+
+    client.portal.call(_declare)
+
+
+def test_a_rooms_board_cell_follows_its_session_as_its_runner_declares_it(client):
+    """「运行中」 is what the runner of the room's own line says of its session,
+    on the room's header and in the room list alike; no turn is in flight in
+    this process for it either way."""
+    ids = _seeded(client)
+
+    def cells() -> tuple[str, str]:
+        header = client.get(f"/topics/{ids['room']}").json()["data"]
+        listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]
+        row = next(t for t in listed["data"] if t["id"] == ids["room"])
+        return header["presentation"]["phrase"], row["presentation"]["phrase"]
+
+    _the_rooms_session_declares(client, ids["room"], "running")
+    assert cells() == (Building.running, Building.running)
+
+    _the_rooms_session_declares(client, ids["room"], "idle")
+    assert cells() == (Building.idle, Building.idle)

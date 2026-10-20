@@ -10,16 +10,17 @@ The close can reach a backend that does not hold the session — the one taking
 over in a deploy — and the backend that does still stops the work.
 
 The owner is not the only one who closes a task: a task whose last step was
-accepted closes on its own when the turn writing it up never ends, and that
-close stops the write-up the same way. Other work running in the task is not
-the write-up, and the deadline does not close the task on it.
+accepted closes on its own at its deadline when its teammate's session read
+the instruction to write it up and is still at work, and that close stops the
+write-up the same way. A session at work that has not read that instruction is
+doing something else, and the deadline does not close the task on it.
 """
 
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
@@ -238,25 +239,19 @@ def _accepted_long_ago(client, task_id: uuid.UUID) -> None:
 
 
 def _is_the_write_up(client, task_id: uuid.UUID) -> None:
-    """The turn running in the task is the one told to write it up."""
+    """The session at work in the task has read the instruction to write it
+    up: its echo settled the instruction as ``received``."""
 
     async def mark() -> None:
         async with client.test_request_factory() as session:
-            turn = await session.scalar(
-                select(AgentTurn.id).where(
-                    AgentTurn.conversation_id == task_id,
-                    AgentTurn.stopped_at.is_(None),
-                )
-            )
-            assert turn is not None
             now = datetime.now(UTC)
             session.add(
                 Delivery(
                     event_id=uuid.uuid4(),
                     recipient_handle="cheese",
                     conversation_id=task_id,
-                    state="sent",
-                    attempt_id=turn,
+                    state="received",
+                    attempt_id=uuid.uuid4(),
                     dedup_key=f"{uuid.uuid4()}:task",
                     type="room_notice",
                     payload={CLOSES_TASK: True, "content": "写总结"},
@@ -281,7 +276,7 @@ def test_a_task_closed_for_a_write_up_that_never_ended_stops_the_turn(client):
     task_id = uuid.UUID(task["id"])
     service = app.dependency_overrides[get_chat_service]()
     try:
-        # The turn writing the task up is still going fifty minutes on.
+        # The session writing the task up is still at work fifty minutes on.
         _is_the_write_up(client, task_id)
         _accepted_long_ago(client, task_id)
         assert _interrupts(channel, task_id) == []

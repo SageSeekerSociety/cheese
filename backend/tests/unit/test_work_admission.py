@@ -111,7 +111,7 @@ class FakeChat(WorkChat):
             )
         return payloads, ids[0], ids, False
 
-    async def merge_into_running_turn(self, *args, **kwargs):
+    async def merge_into_running_session(self, *args, **kwargs):
         return None
 
     def replaying(self, topic_id):
@@ -142,7 +142,7 @@ async def test_slow_agent_subscriber_does_not_block_receive_and_preserves_order(
             self.unblock = asyncio.Event()
             self.delivered = []
 
-        async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):
+        async def merge_into_running_session(self, topic, ids, content, *args, **kwargs):
             if content == "first":
                 self.entered.set()
                 await self.unblock.wait()
@@ -175,7 +175,7 @@ async def test_slow_agent_subscriber_does_not_block_receive_and_preserves_order(
 @pytest.mark.anyio
 async def test_failed_agent_delivery_does_not_stop_next_message():
     class FailedDelivery(FakeChat):
-        async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):
+        async def merge_into_running_session(self, topic, ids, content, *args, **kwargs):
             if content == "first":
                 raise RuntimeError("executor unavailable")
             self.converse_calls.append({"delivered": content})
@@ -229,7 +229,7 @@ async def test_message_to_another_teammate_starts_its_turn_beside_a_live_one(
                 }
             return payloads, anchor, ids, duplicate
 
-        async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):
+        async def merge_into_running_session(self, topic, ids, content, *args, **kwargs):
             # A 的轮次活着之后，点到 A 的并得进去；B 没有活轮次，并不进去。
             return self.a_started.is_set() and kwargs.get("recipient_handle") == (
                 "cheese-a"
@@ -745,7 +745,7 @@ async def test_live_delivery_fallback_is_noted_then_runs_normally(
             # 「这条消息要的一次实时投递」，那正是这条提示以前误报的地方。
             return agent_handle is not None
 
-        async def merge_into_running_turn(self, *args, **kwargs):
+        async def merge_into_running_session(self, *args, **kwargs):
             return delivery_result
 
         async def converse_prepared(self, **kwargs):
@@ -793,7 +793,7 @@ async def test_another_teammates_turn_is_not_a_lost_delivery(db_factory):
             # 房间里有人在跑（不带座位的询问），但收件人自己没在跑（带了座位）。
             return agent_handle is None
 
-        async def merge_into_running_turn(self, *args, **kwargs):
+        async def merge_into_running_session(self, *args, **kwargs):
             # 递给哪一位：收了座位就不许挑别人的会话，没有就是房间级的老路。
             self.merge_seats.append(kwargs.get("recipient_handle"))
             return None
@@ -831,7 +831,7 @@ async def test_receipted_mid_session_message_has_no_second_done():
         async def work_policy(self, topic_id, agent_instance_id=None):
             raise AssertionError("a delivered mid-turn message needs no new turn")
 
-        async def merge_into_running_turn(self, *args, **kwargs):
+        async def merge_into_running_session(self, *args, **kwargs):
             self.merged = args
             return True
 
@@ -882,7 +882,7 @@ async def test_image_only_message_can_merge_into_live_session():
         async def work_policy(self, topic_id, agent_instance_id=None):
             raise AssertionError("a delivered image needs no new work item")
 
-        async def merge_into_running_turn(self, *args, **kwargs):
+        async def merge_into_running_session(self, *args, **kwargs):
             self.merged = args
             return True
 
@@ -932,7 +932,7 @@ async def test_only_a_message_to_the_agent_owes_the_running_turn_an_answer():
         async def work_policy(self, topic_id, agent_instance_id=None):
             raise AssertionError("a delivered mid-turn message needs no new turn")
 
-        async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):
+        async def merge_into_running_session(self, topic, ids, content, *args, **kwargs):
             self.owed[content] = kwargs.get("owes_reply", True)
             return True
 

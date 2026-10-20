@@ -37,6 +37,7 @@ from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.session_state import running_conversations
 from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.agent_instance.adapters import project_team, room_teammate
 from app.domain.agent_session.services import AgentSessionService
@@ -327,7 +328,6 @@ def _topic_out(
 async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
     resolver: ActorResolverDep,
     sort: TopicSortField | None = None,
@@ -371,10 +371,11 @@ async def list_topics(
         db, room_ids, threads=room_threads, tasks_by_room=tasks_by_room
     )
     asks_me = _asks_me(asked, _viewer(actor))
-    # 这一页里哪几个话题**自己那条线**上有一轮在跑 —— `presentation` 那一格读的
-    # 是它：看板一格是房间自己的格子，它名下的活有它们自己的格子
+    # 这一页里哪几个话题**自己那条线**上的会话在干活（runner 报的
+    # `session_state`）—— `presentation` 那一格读的是它：看板一格是房间自己的格
+    # 子，它名下的活有它们自己的格子
     # （`test_a_rooms_board_cell_does_not_follow_a_task_running_under_it`）。
-    running_ids = runner.running_topic_ids()
+    running_ids = await running_conversations(db, room_ids)
     relevance = await service.relevance_for_topics(
         topics,
         _viewer(actor),
@@ -502,7 +503,6 @@ async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
 async def get_topic(
     topic_id: uuid.UUID,
     db: DbSession,
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
     resolver: ActorResolverDep,
 ) -> dict:
@@ -560,7 +560,7 @@ async def get_topic(
         db, broker, [topic.id], threads=room_threads
     )
     # 同 `list_topics`：`running_ids` 是这行自己的线。
-    running_ids = runner.running_topic_ids()
+    running_ids = await running_conversations(db, [topic.id])
     viewer = _viewer(actor)
     unseen = (
         await TaskService(db).unseen_deliveries([topic.id], viewer) if viewer else set()

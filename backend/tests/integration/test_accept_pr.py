@@ -38,7 +38,7 @@ from tests.integration.conftest import (
     room_text,
     session_auth_headers,
 )
-from tests.landing import summary_turn_ends
+from tests.landing import written_up
 from tests.machine_work import machine_commits
 from tests.support import git_store
 from tests.support.review_ports import task_teammate
@@ -2623,7 +2623,7 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     assert card["pr_head_sha"] == rejected["pr_head_sha"]
     assert card["pr_merged_at"] is not None
     # The task closes once its AI teammate has written it up.
-    summary_turn_ends(client, delivery_task_id(client, tid))
+    written_up(client, delivery_task_id(client, tid))
     assert _room_open_tree_branch(client, tid) is None
     assert _branch_of_record(client, tid) == branch
     assert fake.merge_calls == []
@@ -2674,7 +2674,7 @@ def test_the_merge_that_closed_a_task_does_not_close_it_again(client, app_world)
     accepted = _accept(client, resent)
     assert accepted.status_code == 200, accepted.text
     task_id = delivery_task_id(client, tid)
-    summary_turn_ends(client, task_id)
+    written_up(client, task_id)
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "closed"
 

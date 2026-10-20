@@ -1,8 +1,10 @@
 """一次执行是怎么结束的：队友自己交回的结果，和它没交回时的判据。
 
-`report` 是队友那一路，也是唯一能改终态的那一路；`_settle_open_runs` 是平台这一
-路 —— 投递失败、这一轮压根没开始、开始了却没有回音，都由投递台账和轮次记录判
-出来。`_announce_finished` 再把结论说出去：改那条消息，并通知规则的主人。
+`report` 是队友那一路（`cheese_routine_report`），也是唯一能把一次执行判成功的那
+一路；`_settle_open_runs` 是平台这一路 —— 投递失败、会话一直没读到、读到了而读进
+去的那段工作失败了（runner 报的「读了，然后失败」，会话退出也在内）、读到了却一直
+没有回音，都由投递台账、那份输入的回执和平台自己记下的失败判出来，不看轮次的起止。`_announce_finished`
+再把结论说出去：改那条消息，并通知规则的主人。
 
 `RoutineService` 上的同名方法是转发。
 """
@@ -18,10 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import listing, say
 from app.domain.agent.mentions import announce_mentions, project_refs_text
-from app.domain.agent.models import AgentTurn
 from app.domain.agent.turn.intake.rooms import room_roster
 from app.domain.block.models import Block
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
@@ -81,12 +82,13 @@ async def report(
     return run
 
 
-async def _turn_failure(session: AsyncSession, turn_id: uuid.UUID) -> str | None:
-    """What the room was told when this turn failed or timed out, if anything."""
+async def _failure_said(session: AsyncSession, work_id: uuid.UUID) -> str | None:
+    """What the room was told when the work ``work_id`` failed or timed out, if
+    anything: the words a person reads, beside the runner's failure kind."""
     return await session.scalar(
         select(Block.content)
         .where(
-            Block.turn_id == turn_id,
+            Block.turn_id == work_id,
             Block.meta["event_type"]
             .as_string()
             .in_((EVENT_TURN_FAILED, EVENT_TURN_TIMEOUT)),
@@ -120,39 +122,48 @@ async def _settle_open_runs(session: AsyncSession) -> None:
             run.error = f"没能交给 AI 队友：{delivery.last_error or '投递失败'}"
             run.finished_at = stamp
             continue
-        turn = (
-            await session.get(AgentTurn, delivery.attempt_id)
-            if delivery.attempt_id
-            else None
-        )
-        if turn is not None and run.turn_id is None:
-            run.turn_id = turn.id
-        if (
-            turn is not None
-            and turn.delivered_at is None
-            and turn.stopped_at is not None
-        ):
-            run.status = RunStatus.failed.value
-            run.error = "这一轮没能开始：" + (
-                await _turn_failure(session, turn.id)
-                or delivery.last_error
-                or "执行环境没有接住这次工作"
+        # The run's input as its session read it: the echo is when the run
+        # started, and the work it was read into is the run's.
+        read = await session.scalar(
+            select(NativeInput)
+            .where(
+                NativeInput.delivery_id == delivery.id,
+                NativeInput.echoed_at.is_not(None),
             )
-            run.finished_at = turn.stopped_at
-            continue
-        if turn is not None and turn.delivered_at is not None:
+            .order_by(NativeInput.echoed_at.desc())
+            .limit(1)
+        )
+        if read is not None:
+            work = read.execution_work_id or read.work_id
+            if run.turn_id is None:
+                run.turn_id = work
             if run.status == RunStatus.queued.value:
                 run.status = RunStatus.running.value
-                run.started_at = turn.delivered_at
-            failure = await _turn_failure(session, turn.id)
-            if failure:
+                run.started_at = read.echoed_at
+            if read.failed_at is not None:
+                # Read, and the work it was read into failed — the session
+                # exiting included — without a report.
                 run.status = RunStatus.failed.value
-                run.error = "这一轮出错了：" + failure
-                run.finished_at = turn.stopped_at or stamp
-            elif stamp - turn.delivered_at > REPORT_TIMEOUT:
+                run.error = "这一轮出错了：" + (
+                    await _failure_said(session, work) or read.failure or "未知错误"
+                )
+                run.finished_at = read.failed_at
+            elif stamp - read.echoed_at > REPORT_TIMEOUT:
                 run.status = RunStatus.failed.value
                 run.error = NO_REPORT
                 run.finished_at = stamp
+            continue
+        # Never read, and the platform said why it could not hand it over
+        # (the machine was not there): the run fails now, with that reason.
+        refused = (
+            await _failure_said(session, delivery.attempt_id)
+            if delivery.attempt_id
+            else None
+        )
+        if refused:
+            run.status = RunStatus.failed.value
+            run.error = "这一轮没能开始：" + refused
+            run.finished_at = stamp
             continue
         if stamp - run.created_at > START_TIMEOUT:
             run.status = RunStatus.failed.value
