@@ -1,11 +1,12 @@
 """Accepting a task's last delivery lets its write-up finish before it closes.
 
-The last step landing gives the task's AI teammate one turn to bring the task
-document up to date and say what came of the task; the task closes when that
-turn ends. The instruction for it is over as soon as the session takes the
-turn, long before the turn is: the task used to close at that moment, and the
-close stopped the write-up it was waiting for, which the room then read as a
-turn that did not finish (dev, 2026-10-12 on).
+The last step landing tells the task's AI teammate to bring the task document
+up to date, say what came of the task, and close it. The task closes when the
+teammate closes it (`cheese_close_task`): the instruction being handed over is
+not that, and nor is the session stopping afterwards, since neither says the
+write-up was done. A close that came with the instruction stopped the write-up
+it was waiting for, which the room then read as work that did not finish (dev,
+2026-10-12 on).
 """
 
 import uuid
@@ -16,13 +17,14 @@ from app.api.deps import get_chat_service
 from app.domain.delivery.agent import dispatch_pending
 from app.main import app
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import session_auth_headers, task_agent_headers
 from tests.integration.test_a_last_step_lands_while_work_goes_on import _last_step_up
 from tests.integration.test_accept_pr import _accept
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
 from tests.integration.test_closing_a_task_stops_its_work import _interrupts, _until
+from tests.landing import teammate_seat
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
 
@@ -33,7 +35,7 @@ def _status(client, task_id: str) -> str:
     ).json()["data"]["status"]
 
 
-def test_the_task_closes_after_its_write_up_ends_not_while_it_runs(
+def test_the_task_closes_when_its_teammate_closes_it_not_while_it_writes(
     client, app_world, stub_hooks
 ):
     task_id, card, _ = _last_step_up(client, app_world)
@@ -70,10 +72,18 @@ def test_the_task_closes_after_its_write_up_ends_not_while_it_runs(
     assert _status(client, task_id) == "open", "the task closed mid write-up"
     assert _interrupts(stub_hooks, task) == [], "the write-up was cut off"
 
+    # The session stopping says nothing about whether it wrote the task up.
     stub_hooks.stops(task, "任务文档已更新，总结如上。")
+    wait_work_idle()
+    assert _status(client, task_id) == "open", "the task closed on its own"
 
-    _until(
-        lambda: _status(client, task_id) == "closed",
-        "the task stayed open after its write-up ended",
+    # Its teammate closes it from its own session.
+    project_id, seat = teammate_seat(client, task_id)
+    closed = client.post(
+        f"/topics/{task_id}/close",
+        json={"conclusion": "做完了"},
+        headers=task_agent_headers(project_id, task_id, seat),
     )
+    assert closed.status_code == 200, closed.text
+    assert _status(client, task_id) == "closed"
     assert _interrupts(stub_hooks, task) == []

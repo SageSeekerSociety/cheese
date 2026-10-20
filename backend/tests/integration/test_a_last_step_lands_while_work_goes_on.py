@@ -29,7 +29,7 @@ from sqlalchemy import select, text
 from app.core.errors import UpstreamUnavailableError
 from app.domain.agent import session_state
 from app.domain.block.models import Block, BlockKind
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.event_author import AuthorType
 from app.domain.project import forge
 from app.domain.room_task.closing import CLOSES_TASK
@@ -105,30 +105,49 @@ def _message(
     at: datetime | None = None,
     content: str = "顺便把首页也测一下",
     by_platform: bool = False,
+    seat: str | None = None,
 ) -> None:
     """A message to the teammate in the task — its owner's, or a platform
-    instruction. ``read``: its session read it (the echo stamps it consumed);
-    else it waits in the queue."""
+    instruction. ``read``: ``seat``'s session (the teammate's by default) read
+    it now — its echo, which stamps it consumed; else it waits in the queue."""
+    seat = seat or teammate_seat(client, task["id"])[1]
 
     async def write():
         async with client.test_factory() as session:
-            session.add(
-                Block(
-                    project_id=uuid.UUID(task["project_id"]),
-                    conversation_id=uuid.UUID(task["id"]),
-                    author="system" if by_platform else "alice",
-                    author_type=AuthorType.platform
-                    if by_platform
-                    else AuthorType.participant,
-                    kind=BlockKind.message,
-                    content=content,
-                    created_at=at or datetime.now(UTC),
-                    meta={
-                        "consumed_turn": str(uuid.uuid4()) if read else None,
-                        "agent_recipient": {"handle": TEAMMATE, "mentioned": True},
-                    },
-                )
+            block = Block(
+                project_id=uuid.UUID(task["project_id"]),
+                conversation_id=uuid.UUID(task["id"]),
+                author="system" if by_platform else "alice",
+                author_type=AuthorType.platform
+                if by_platform
+                else AuthorType.participant,
+                kind=BlockKind.message,
+                content=content,
+                created_at=at or datetime.now(UTC),
+                meta={
+                    "consumed_turn": str(uuid.uuid4()) if read else None,
+                    "agent_recipient": {"handle": TEAMMATE, "mentioned": True},
+                },
             )
+            session.add(block)
+            await session.flush()
+            if read:
+                now = datetime.now(UTC)
+                session.add(
+                    NativeInput(
+                        project_id=uuid.UUID(task["project_id"]),
+                        conversation_id=uuid.UUID(task["id"]),
+                        recipient_handle=seat,
+                        harness="claude-code",
+                        native_session_id="sess-last-step",
+                        input_id=uuid.uuid4(),
+                        work_id=uuid.uuid4(),
+                        block_ids=[str(block.id)],
+                        registered_at=now,
+                        accepted_at=now,
+                        echoed_at=now,
+                    )
+                )
             await session.commit()
 
     client.portal.call(write)
@@ -179,8 +198,8 @@ def test_a_last_step_accepted_while_its_teammate_works_on_more_keeps_the_task_op
     task_id, card, before = _last_step_up(client, app_world)
     # Its owner asks for more after the card went up; the teammate's session
     # reads it and is at work on it.
-    _message(client, _task(client, task_id), read=True)
     _session(client, task_id, "running")
+    _message(client, _task(client, task_id), read=True)
 
     r = _accept(client, card)
     assert r.status_code == 200, r.text
@@ -232,8 +251,8 @@ def test_work_begun_while_the_task_is_written_up_keeps_it_open(client, app_world
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
 
     # Someone asks for more in the window, and the teammate starts on it.
-    _message(client, _task(client, task_id), read=True)
     _session(client, task_id, "running")
+    _message(client, _task(client, task_id), read=True)
     watch(client)
 
     _goes_on(client, task_id, before)
@@ -307,8 +326,15 @@ def test_a_session_at_work_on_the_write_up_does_not_hold_the_deadline(
 )
 def test_work_the_platform_asked_for_is_not_more_work(client, app_world, seat, why):
     task_id, card, before = _last_step_up(client, app_world)
-    _message(client, _task(client, task_id), read=True, by_platform=True, content=why)
     _session(client, task_id, "running", seat=seat)
+    _message(
+        client,
+        _task(client, task_id),
+        read=True,
+        by_platform=True,
+        content=why,
+        seat=seat,
+    )
 
     r = _accept(client, card)
     assert r.status_code == 200, r.text
@@ -328,6 +354,47 @@ def test_work_the_platform_asked_for_is_not_more_work(client, app_world, seat, w
     assert task["presentation"]["phrase"] == "accepted"
 
 
+def test_a_message_answered_before_the_write_up_is_not_more_work(client, app_world):
+    """Its owner asked something after the card went up, and the teammate
+    answered and stopped. That request is done with: when its session then
+    takes up the write-up, the task is being written up, not worked on more."""
+    task_id, card, _ = _last_step_up(client, app_world)
+    _session(client, task_id, "running")
+    _message(client, _task(client, task_id), read=True)
+    _session(client, task_id, "idle")
+
+    r = _accept(client, card)
+    assert r.status_code == 200, r.text
+    write_up_read(client, task_id)
+    _session(client, task_id, "running")
+    watch(client)
+
+    task = _task(client, task_id)
+    assert task["status"] == "open"
+    assert task["presentation"]["phrase"] == "accepted"
+
+
+def test_another_seats_work_holds_the_deadline_after_the_teammate_wrote_up(
+    client, app_world
+):
+    """The teammate read its write-up; another seat woken in the task is still
+    at work. That seat's work is not the write-up: the deadline waits for it,
+    and past the last deadline stops it with the room told."""
+    task_id, card, _ = _last_step_up(client, app_world)
+    r = _accept(client, card)
+    assert r.status_code == 200, r.text
+    write_up_read(client, task_id)
+    _session(client, task_id, "running", seat="dispatcher")
+
+    time_passes(client, task_id, minutes=50)
+    watch(client)
+    assert _task(client, task_id)["status"] == "open"
+
+    time_passes(client, task_id, minutes=150)
+    watch(client)
+    assert _task(client, task_id)["status"] == "closed"
+
+
 @pytest.mark.parametrize("read", [True, False], ids=["being-worked-on", "queued"])
 def test_a_message_sent_while_the_task_is_written_up_is_not_dropped(
     client, app_world, read
@@ -341,9 +408,9 @@ def test_a_message_sent_while_the_task_is_written_up_is_not_dropped(
     assert r.status_code == 200, r.text
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
 
-    _message(client, _task(client, task_id), read=read)
     if read:
         _session(client, task_id, "running")
+    _message(client, _task(client, task_id), read=read)
 
     write_up_read(client, task_id)
     assert _task(client, task_id)["status"] == "open"
@@ -420,8 +487,8 @@ def test_a_task_the_forge_cannot_take_on_does_not_hold_up_the_rest(
     for each, its_card in ((stuck_id, stuck_card), (task_id, card)):
         r = _accept(client, its_card)
         assert r.status_code == 200, r.text
-        _message(client, _task(client, each), read=True)
         _session(client, each, "running")
+        _message(client, _task(client, each), read=True)
     stuck_project = uuid.UUID(_task(client, stuck_id)["project_id"])
     reachable = forge.default_branch
 
