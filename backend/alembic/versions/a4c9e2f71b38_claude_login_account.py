@@ -1,7 +1,7 @@
 """claude logins name their account
 
 Revision ID: a4c9e2f71b38
-Revises: e3b7a19c4d52
+Revises: b7d2e94a1c05
 Create Date: 2026-10-20
 
 A machine can hold several Claude logins, and the team's Models page could not
@@ -18,7 +18,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "a4c9e2f71b38"
-down_revision: str | Sequence[str] | None = "e3b7a19c4d52"
+down_revision: str | Sequence[str] | None = "b7d2e94a1c05"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

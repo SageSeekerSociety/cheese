@@ -234,6 +234,37 @@ export const DEVICE_TEAMS: MyTeam[] = [
 
 // ---- 模型连接（`ModelConnectionsView`）-------------------------------------
 
+/** A full platform pool: names as the gateway labels them, a few carrying a trailing note. */
+export const PLATFORM_MODELS: { id: string; label: string }[] = [
+  'Claude Opus 4.8',
+  'Claude Sonnet 4.8',
+  'Claude Haiku 4.6',
+  'GPT-5.5',
+  'GPT-5.5 mini',
+  'Gemini 4 Pro',
+  'Gemini 4 Argon',
+  'Gemini 4 Flash',
+  'DeepSeek V4.1',
+  'DeepSeek V4.1 Flash',
+  'GLM-5.2',
+  'GLM-5.2 Air',
+  'Kimi K3',
+  'Kimi K3 Turbo',
+  'MiMo V2.6 Pro',
+  'MiMo V2.6 Flash（免费·限时，请求可能用于训练）',
+  'Qwen 4 Max',
+  'Qwen 4 Coder',
+  'Qwen 4 Coder Flash（免费·限时）',
+  'MiniMax M3',
+  'MiniMax M3 Lightning（免费·限时，请求可能用于训练）',
+  'Doubao Seed 2.5 Pro',
+  'Doubao Seed 2.5 Lite',
+  'Step 4',
+  'Hunyuan T2',
+  'ERNIE 5.5',
+  'Grok 5（免费·限时，请求可能用于训练）',
+].map((label) => ({ id: label.toLowerCase().replace(/[^a-z0-9.]+/g, '-'), label }))
+
 /** Team and personal subscriptions, including an offline storage computer. */
 export const MODEL_CONNECTIONS: ModelConnection[] = [
   {

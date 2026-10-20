@@ -161,6 +161,14 @@ describe('ModelConnectionsView', () => {
     expect(within(row('lab')).queryByRole('button', REMOVE())).toBeNull()
   })
 
+  it('does not call a subscription ready while the computer holding it is offline', () => {
+    mount([connection('desk'), connection('lab', { online: false })])
+
+    expect(summary('desk').textContent).toContain(t('account.modelConnections.ready'))
+    expect(summary('lab').textContent).not.toContain(t('account.modelConnections.ready'))
+    expect(summary('lab').textContent).toContain(t('account.devices.offline'))
+  })
+
   it('says a key failed its check while closed, and why once opened', async () => {
     mount([], [{ ...heldKey('bad'), check_error: 'HTTP 401 invalid x-api-key' }, heldKey('good')])
 
@@ -222,7 +230,8 @@ describe('ModelConnectionsView', () => {
       within(row('personal')).getByRole('button', { name: t('account.modelConnections.removePersonal') })
     )
     expect(view.emitted('removePersonal')).toEqual([['personal']])
-    await fireEvent.click(screen.getByRole('button', { name: t('account.modelConnections.addPersonal') }))
+    // The button that opens this dialog is in the team page's header (Models.vue).
+    await view.rerender({ addingPersonal: true })
     await fireEvent.mouseDown(
       await screen.findByLabelText(t('account.modelConnections.connection'), { selector: 'input' })
     )

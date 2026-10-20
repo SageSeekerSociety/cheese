@@ -28,7 +28,7 @@ from app.domain.machine.models import (
     WarmMachine,
 )
 from app.domain.machine.repositories import CloudHostRepository
-from app.domain.machine.supply import pick_offering
+from app.domain.machine.supply import data_disk_gb, pick_offering
 from app.domain.team.services import team_service
 
 logger = logging.getLogger("cheese.machine.warm")
@@ -132,7 +132,11 @@ class WarmPoolService:
         ).all()
         for warm in candidates:
             assert warm.machine_id is not None  # Ready rows have a provider identity.
-            if not warm.device_id or not device_hub.is_online(warm.device_id):
+            if (
+                not warm.device_id
+                or warm.sandbox_disk_gb is None
+                or not device_hub.is_online(warm.device_id)
+            ):
                 continue
             if any(
                 warm.create_request.get(key) != body.get(key)
@@ -169,6 +173,7 @@ class WarmPoolService:
                 cores=body["cores"],
                 memory_mb=body["memoryMb"],
                 disk_gb=body["diskGb"],
+                sandbox_disk_gb=warm.sandbox_disk_gb,
                 status=MachineStatus.starting,
                 ip=warm.ip,
                 ai_mode=body.get("aiMode", "none"),
@@ -447,6 +452,7 @@ class WarmPoolService:
                 "warm pool requires a reachable connector_public_base"
             )
         offering = await pick_offering(self.client)
+        data_disk = data_disk_gb(offering)
         ref = "cheese-platform-warm-pool"
         customer = await self.client.find_customer(
             ref
@@ -480,7 +486,12 @@ class WarmPoolService:
             body[name] = max(
                 int(offering[f"{name}Min"]), min(int(offering[f"{name}Max"]), value)
             )
-        row = WarmMachine(id=key, create_request=body, bootstrap_key=private)
+        row = WarmMachine(
+            id=key,
+            create_request=body,
+            bootstrap_key=private,
+            sandbox_disk_gb=data_disk,
+        )
         self.session.add(row)
         await self.session.commit()
         logger.info(
@@ -532,13 +543,15 @@ class WarmPoolService:
                 origin=settings.connector_public_base,
                 token=device.token,
                 device_id=device.device_id,
+                sandbox_disk=True,
             )
-            await enrollment.run_bootstrap(
+            output = await enrollment.run_bootstrap(
                 ip=ip,
                 login_user=row.create_request["user"],
                 private_key=row.bootstrap_key,
                 script=script,
             )
+            row.sandbox_disk_gb = enrollment.sandbox_disk_gb(output)
             row.enrolled_at = datetime.now(UTC)
             row.bootstrap_key = None
         if row.device_id and device_hub.is_online(row.device_id):
