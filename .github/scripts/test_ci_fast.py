@@ -1542,6 +1542,32 @@ class SelectionEvidenceTest(unittest.TestCase):
             self.assertIn("fallback", reason)
             self.assertEqual(targets, [], "a whole-selection fallback pinpoints nothing")
 
+    def test_backend_migrations_narrow_instead_of_widening(self):
+        # A migration has no static consumer and needs a database this tier
+        # does not have; it must not run the whole pure suite (measured ~320 s
+        # on #4431). The guards still run, and the migration is recorded as an
+        # omission owned by full CI.
+        from ci_fast_backend import TREE_GUARDS, is_migration_path, select_backend
+        self.put("backend/app/model.py", "VALUE = 1\n")
+        self.put("backend/tests/unit/test_model.py", "from app.model import VALUE\n")
+        self.put("backend/tests/unit/test_other.py", "def test_it(): pass\n")
+        changed = ["backend/app/model.py", "backend/alembic/HEAD",
+                   "backend/alembic/versions/abc_migration.py"]
+        paths, reason, targets, _ = select_backend(self.root, changed)
+        self.assertIn("tests/unit/test_model.py", paths)
+        self.assertNotIn("tests/unit/test_other.py", paths)
+        for name in TREE_GUARDS:
+            self.assertIn(f"tests/unit/{name}", paths)
+        self.assertIn("migrations are judged by full CI", reason)
+        self.assertEqual(targets, ["tests/unit/test_model.py"])
+        # A migration-only change leaves the guards running, not every test.
+        paths, _, targets, _ = select_backend(
+            self.root, ["backend/alembic/versions/abc_migration.py"])
+        guards = {f"tests/unit/{name}" for name in TREE_GUARDS}
+        self.assertEqual(set(paths), guards)
+        self.assertEqual(targets, [])
+        self.assertTrue(is_migration_path("backend/alembic.ini"))
+
     def test_backend_literal_module_import_is_selected(self):
         from ci_fast_backend import select_backend
         self.put("backend/app/special.py", "VALUE = 1\n")
@@ -2035,6 +2061,21 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(deps["evidence"]["strict"])
         plan, _ = test_plan(self.root, ["backend/app/core/config.py"], {}, self.root)
         self.assertFalse(any(p["id"].startswith("docs-") for p in plan))
+
+    def test_a_migration_change_records_the_full_ci_omission(self):
+        # The migration tree is not the pure layer's to judge; the report says
+        # so instead of silently widening the run to every unit test.
+        from ci_fast_checks import test_plan
+        self.put("backend/app/model.py", "VALUE = 1\n")
+        self.put("backend/tests/unit/test_model.py", "from app.model import VALUE\n")
+        self.put("backend/tests/unit/test_other.py", "def test_it(): pass\n")
+        plan, omissions = test_plan(
+            self.root, ["backend/alembic/HEAD", "backend/app/model.py"],
+            {"backend": True}, self.root)
+        self.assertTrue(any(o["id"] == "backend-pure:alembic" for o in omissions))
+        unit = next(p for p in plan if p["id"] == "backend-pure")
+        self.assertIn("tests/unit/test_model.py", unit["evidence"]["files"])
+        self.assertNotIn("tests/unit/test_other.py", unit["evidence"]["files"])
 
     def test_frontend_deleted_spec_is_not_a_dangling_import(self):
         # A deleted spec leaves no importer behind, so the narrow project
