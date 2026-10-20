@@ -31,7 +31,7 @@ def evidence_suites(record: dict) -> list[str]:
     if record["workflow"] == "e2e.yml":
         return ["e2e"]
     if record["workflow"] == "remote-execution.yml":
-        return ["remote-acceptance", "private-chat"]
+        return ["remote-acceptance"]
     if record["workflow"] == "required-ci.yml":
         names = record["executed_job_names"]
         suites = []
@@ -39,10 +39,8 @@ def evidence_suites(record: dict) -> list[str]:
             if match := E2E_JOB.fullmatch(name):
                 index, total = match.groups()
                 suites.append("e2e" if index is None else f"e2e-{index}-of-{total}")
-        if any(
-            name in names for name in ("remote / acceptance", "remote / private-chat")
-        ):
-            suites.extend(["remote-acceptance", "private-chat"])
+        if "remote / acceptance" in names:
+            suites.append("remote-acceptance")
         return suites
     return []
 

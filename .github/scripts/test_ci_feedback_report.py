@@ -165,47 +165,33 @@ class FeedbackReportTest(unittest.TestCase):
         self.assertEqual(summary["cohort_tail_consecutive_first_attempt_successes"], 1)
         self.assertEqual(summary["cohort_tail_consecutive_clean_first_attempts"], 0)
 
-    def test_remote_acceptance_needs_both_job_receipts(self):
+    def test_remote_needs_the_acceptance_receipt(self):
         item = self.evidence_record("remote-execution.yml")
+        self.assertEqual(self.inspect_receipts(item, [])["status"], "unknown")
         self.assertEqual(
             self.inspect_receipts(item, [self.receipt("remote-acceptance")])["status"],
-            "unknown",
-        )
-        self.assertEqual(
-            self.inspect_receipts(
-                item, [self.receipt("remote-acceptance"), self.receipt("private-chat")]
-            )["status"],
             "clean",
         )
 
-    def test_required_remote_jobs_need_both_receipts_even_without_e2e(self):
-        for names in (
-            ("remote / acceptance",),
-            ("remote / private-chat",),
-            ("remote / acceptance", "remote / private-chat"),
+    def test_required_remote_acceptance_needs_its_receipt_even_without_e2e(self):
+        # private-chat carries no evidence of its own: the cases it once ran
+        # twice are Backend Test's.
+        for names, suites in (
+            (("remote / acceptance",), ["remote-acceptance"]),
+            (("remote / private-chat",), []),
+            (("remote / acceptance", "remote / private-chat"), ["remote-acceptance"]),
         ):
             with self.subTest(names=names):
                 item = self.evidence_record()
                 item["executed_job_names"] = list(names)
-                self.assertEqual(
-                    report.evidence_suites(item), ["remote-acceptance", "private-chat"]
-                )
-                self.assertEqual(
-                    self.inspect_receipts(item, [self.receipt("remote-acceptance")])[
-                        "status"
-                    ],
-                    "unknown",
-                )
-                self.assertEqual(
-                    self.inspect_receipts(
-                        item,
-                        [
-                            self.receipt("remote-acceptance"),
-                            self.receipt("private-chat"),
-                        ],
-                    )["status"],
-                    "clean",
-                )
+                self.assertEqual(report.evidence_suites(item), suites)
+        item = self.evidence_record()
+        item["executed_job_names"] = ["remote / acceptance"]
+        self.assertEqual(self.inspect_receipts(item, [])["status"], "unknown")
+        self.assertEqual(
+            self.inspect_receipts(item, [self.receipt("remote-acceptance")])["status"],
+            "clean",
+        )
 
     def test_every_e2e_shard_needs_its_own_receipt(self):
         item = report.analyse_attempt(
@@ -245,12 +231,7 @@ class FeedbackReportTest(unittest.TestCase):
         )
         self.assertEqual(
             self.inspect_receipts(
-                item,
-                [
-                    self.receipt(),
-                    self.receipt("remote-acceptance"),
-                    self.receipt("private-chat"),
-                ],
+                item, [self.receipt(), self.receipt("remote-acceptance")]
             )["status"],
             "clean",
         )

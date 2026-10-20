@@ -447,32 +447,6 @@ jobs:
           echo "::warning::could not move refs/heads/main-green to $GITHUB_SHA (update HTTP ${code:-none}, create HTTP ${post_code:-not tried}); the next main run starts from the older anchor or the full tree, so it covers this batch too."
           echo "Main green anchor not moved: the next run covers this batch as well." >> "$GITHUB_STEP_SUMMARY"
 
-  # Fails `CI required` on the pushed sha as soon as any job of a main push run
-  # fails, instead of after the slowest suite, so main reads red right away.
-  # What it posts, and why it never fails the run, is
-  # .github/scripts/main-fail-fast.py. Not in `required`'s needs: the aggregator
-  # must not wait for it. Not on a pull request: its `CI required` is the merge
-  # gate, and a run there is left to the aggregator. A hosted runner, not the
-  # cheese-ci pool: it is alive for the whole run.
-  fail-fast:
-    name: Fail fast
-    if: ${{ github.event_name == 'push' }}
-    permissions:
-      contents: read
-      actions: read
-      checks: write
-    runs-on: ubuntu-latest
-    timeout-minutes: 130
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          sparse-checkout: .github/scripts
-      - name: Fail CI required on this run's first failed job
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.sha }}
-        run: python3 .github/scripts/main-fail-fast.py
-
   required-draft:
     name: CI required (draft quick)
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.draft }}
