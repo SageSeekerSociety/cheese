@@ -37,7 +37,6 @@ async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
         "follow up",
         images=None,
         register_input=register_input,
-        expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
     )

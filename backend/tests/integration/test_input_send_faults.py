@@ -163,7 +163,6 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
                     await runtime.steer(
                         ref.topic_id,
                         "an input added mid-work",
-                        expected_work_id=work,
                         register_input=register,
                     )
         finally:

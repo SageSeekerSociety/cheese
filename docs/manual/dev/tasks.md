@@ -49,8 +49,8 @@ covers:
 |---|---|---|
 | `accepted_at` | 每次采纳（那次合并成功），记最近一次 | 交付标记，和 `status` 无关；批准被撤销也不抹掉 |
 | `delivered_head` | 同上，记下最近合进去的那一版 | 下一步的工作目录从这里把没合进去的提交带走 |
-| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写总结的那一轮结束就关闭，最晚 45 分钟（`room_task.closing`），但任务里有总结以外的一轮在跑、或有一条消息在等轮次时不关，最晚再等两小时；这期间显示「已采纳」 |
-| `closed_at` | 负责人或任务的会话关闭（`cheese_close_task`），或最后一步采纳后那一轮总结结束时的关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
+| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写完总结用 `cheese_close_task` 关掉它，最晚 45 分钟（`room_task.closing`），但任务里有总结以外的活在做、或有一条消息在等着被读时不关，最晚再等两小时；这期间显示「已采纳」 |
+| `closed_at` | 负责人或任务的会话关闭（`cheese_close_task`，写完总结的那次也是），或最后一步采纳后平台到点的关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
 
 所以有两条容易读错的组合：一条活可以**采纳过前几步却还开着**（分步交付，见[分步交付](#steps)），也可以**关掉却什么都没交付**（显式放弃）。显示状态先看开没开着：关了的才按有没有采纳写「已采纳」或「已关闭」，开着的照常按进度写（`presentation.task_presentation` 的第一条规矩）。唯一的例外是 `closing_since` 那一会儿：任务还开着，已经写「已采纳」。
 
@@ -81,7 +81,7 @@ covers:
 
 私聊里没有任务：新建、转为任务、`cheese_task` 这三条在同一处拒绝（`privateChatHasNoTasks`）。
 
-另开的任务，开场指令标成「开场那一条」（`agent/opening.py`）。读任务（`GET /topics/{task}/task`）时，文档还空着就带一个 `opening`：`drafting`、`waiting` 或 `failed`，从投递账本和它起的那一轮现读，不另存。失败后负责人和协作者用 `POST /topics/{task}/opening` 把同一条指令再发一次。`GET /topics/{task}/related` 交回任务从哪句话来（`source`）、原讨论（支线或频道主线）和讨论里用到的文档、文件，开场指令里也附着同一份清单。
+另开的任务，开场指令标成「开场那一条」（`agent/opening.py`）。读任务（`GET /topics/{task}/task`）时，文档还空着就带一个 `opening`：`drafting`、`waiting` 或 `failed`，从投递账本、会话对这份输入的回执和会话报上来的状态现读，不另存：读到之前和会话还在干活时是 `drafting`，读进去的工作失败了、或会话读到之后停下来却一句话没说是 `failed`。失败后负责人和协作者用 `POST /topics/{task}/opening` 把同一条指令再发一次。`GET /topics/{task}/related` 交回任务从哪句话来（`source`）、原讨论（支线或频道主线）和讨论里用到的文档、文件，开场指令里也附着同一份清单。
 
 交给 AI 队友的指令在投递账本里过了 30 分钟还没开始（`delivery/agent.py` 的 `GIVE_UP_AFTER`），记为失败，不再每五分钟重试；有意在等的（等发问的会话、等回执）不算。
 
@@ -89,7 +89,7 @@ covers:
 
 **转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`，项目里一位队友的座位，`null` 交还频道的队友）。转交前，任务里执行环境落在新负责人不能用的电脑上的队友（原负责人自己的电脑，不进沙箱或那人电脑的规格），先照换环境的流程换到新负责人能用的那个（`environments.usable_by_owner`：任务的默认、房间的默认、项目默认，不能用的跳过，最后是标准沙箱），任务指着这样一台电脑的默认清掉；推送不成功就不转交，说明原因。
 
-**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带不带结论都显示「已关闭」，结论跟在房间里落的那条平台消息后面，说它怎么结束的。任务一关闭——负责人关、写总结的那一轮结束或被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的那一轮就被打断，写下的留着。后三种是平台自己关的，任务里有总结以外的一轮在跑、或有发给 AI 队友的消息还在等轮次时（`closing.unfinished`）一律不关，等它们没了之后的那次再关；一轮超过孤儿清扫的静默上限（`turn_silence_timeout_s`）没有新输出就不再算在跑。写总结的那一轮从它结束时算起，不从会话接手它时算起（`closing.turns_ended`，轮次的区间结束都经过 `agent/repositories.AgentTurnRepository`）：它还开着时任务不关。这样平台自己关任务时通常什么都不用打断，只有采纳 45 分钟还没写完的总结会被打断；另一个例外是采纳 45 分钟再过两小时（`closing.STOP_WORK_AFTER`）还没停的活，到这时任务照关、那一轮照停，房间里落一条平台消息列出没交付的是什么（`review/room_notices.tell_room_undelivered`）。打断的方式：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。关闭后任务对话照样能说话，和支线一样：会话的改动留不下（`Place.keeps_work`），只有被叫到才回答，`task_section(closed=True)` 告诉它只回答、不改；按关闭状态打断和结束轮次的两处（`turn_inputs.stop_work_in_closed_tasks`、`open_turns`）只管关闭之前开始的轮次，关闭之后有人来问的那一轮不受影响。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。负责人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
+**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带不带结论都显示「已关闭」，结论跟在房间里落的那条平台消息后面，说它怎么结束的。任务一关闭——负责人关、任务的会话写完总结自己关、写总结的指令被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的活就被打断，写下的留着。「写完总结」只认会话调了 `cheese_close_task` 这件事：会话读到了总结指令、之后停下来，平台看不出它写没写，任务照旧开着等到点。后两种是平台自己关的，下面几样都是平台核得了的事实，有一样就不关，等它们没了之后的那次再关（`closing.unfinished`）：任务的会话 runner 报着在干活、而它还没读到总结指令（那它在干的就是别的）；有发给 AI 队友的消息还没被读；有消息读进去之后那段工作失败了。这样平台自己关任务时通常什么都不用打断，只有采纳 45 分钟还没写完的总结会被打断；另一个例外是采纳 45 分钟再过两小时（`closing.STOP_WORK_AFTER`）还没停的活，到这时任务照关、会话照停，按会话的座位各记一条运行记录，房间里落一条平台消息列出没交付的是什么（`review/room_notices.tell_room_undelivered`）。打断的方式：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。关闭后任务对话照样能说话，和支线一样：会话的改动留不下（`Place.keeps_work`），只有被叫到才回答，`task_section(closed=True)` 告诉它只回答、不改；按关闭状态打断和结束轮次的两处（`turn_inputs.stop_work_in_closed_tasks`、`open_turns`）只管关闭之前开始的轮次，关闭之后有人来问的那一轮不受影响。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。负责人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
 
 平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。任务里每位队友的执行环境是自己的；它第一次要手时按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目默认 取一份，之后默认再变也不跟着动。负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/sessions/{session}/environment` 换一位、用 `PUT /topics/{task}/environment-default` 改任务的默认；设备页的批量挪走对任务会话走的就是前一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`environment.works_tasks_of`）：选不了，那个人电脑的沙箱也不放在上面。
 

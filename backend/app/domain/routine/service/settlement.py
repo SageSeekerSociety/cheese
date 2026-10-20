@@ -133,7 +133,7 @@ async def _settle_open_runs(session: AsyncSession) -> None:
             .order_by(NativeInput.echoed_at.desc())
             .limit(1)
         )
-        if read is not None:
+        if read is not None and read.echoed_at is not None:
             work = read.execution_work_id or read.work_id
             if run.turn_id is None:
                 run.turn_id = work
