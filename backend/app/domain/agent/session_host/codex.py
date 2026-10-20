@@ -47,9 +47,6 @@ class CodexDriver:
     def conversation(self, status: dict) -> str:
         return str(status.get("thread_id") or "")
 
-    def takes_inputs(self, status: dict) -> bool:
-        return True
-
     async def launch(
         self,
         wire: Wire,

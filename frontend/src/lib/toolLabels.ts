@@ -80,6 +80,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_sync: 'toolLabels.cheeseSync',
   cheese_recover: 'toolLabels.cheeseRecover',
   cheese_close_task: 'toolLabels.cheeseCloseTask',
+  cheese_task_state: 'toolLabels.cheeseTaskState',
   cheese_push_fix: 'toolLabels.cheesePushFix',
   cheese_fetch: 'toolLabels.cheeseFetch',
   cheese_docs_search: 'toolLabels.cheeseDocsSearch',

@@ -17,6 +17,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
+from app.domain.room_task import progress
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -584,6 +585,9 @@ class TaskService:
         task.status = TaskStatus.open
         task.closed_at = None
         task.conclusion = None
+        # Reopened is 开启: what its teammate last reported was about the work
+        # that closed.
+        progress.clear(task)
         if task.branch_name is not None and task.delivered_head is not None:
             await self.next_step(task)
         else:

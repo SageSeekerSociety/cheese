@@ -13,7 +13,7 @@ SAID = "This machine cannot give the channel an isolated environment."
 
 
 def _failed(content: str) -> list:
-    return Assembler({}, "session-1").accept(
+    return Assembler("session-1").accept(
         {
             "type": "user",
             "uuid": "rec_1",

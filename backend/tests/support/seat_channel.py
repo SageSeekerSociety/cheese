@@ -10,7 +10,6 @@ does: opening a seat's runner (``open``), and answering a call to it
 
 import ast
 import atexit
-import hashlib
 import json
 import re
 import shutil
@@ -28,12 +27,23 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.agent import session_state
+from app.domain.agent.session_state import SeatKey
 
 # The driver's read of a launch's ending from its runner log
 # (`ClaudeCodeDriver._ended`): the record's marker is what it searches for.
 _ENDING_READ = re.compile(r'sed -n "/([^/]+)/,')
+
+
+class _Epochs:
+    """The database the running test keeps its rooms' books in, while it has
+    one (the ``db_factory`` and ``client`` fixtures set it)."""
+
+    sessions = None
+
+
+EPOCHS = _Epochs()
 
 
 class _Hub:
@@ -123,6 +133,7 @@ class SeatChannel:
         self.seats: dict[tuple[uuid.UUID, str], tuple[SessionRef, str]] = {}
         #: What each screen was asked to be brought up with, in order.
         self.screens: list[dict] = []
+        self.epochs: dict[SeatKey, int] = {}
         self.policy = policy
         self.root = Path(tempfile.mkdtemp(prefix="test-seats-"))
         # Removed when the test process exits, not when this channel goes: a test
@@ -135,7 +146,10 @@ class SeatChannel:
         session core that has started and read nothing, over the same runners
         and the same mirrors."""
         self.host = SessionHost(
-            _Hub(self), screens=_Screens(self), mirrors=self.root / "mirrors"
+            _Hub(self),
+            screens=_Screens(self),
+            mirrors=self.root / "mirrors",
+            register=self.register,
         )
 
         async def api(host: str) -> str:
@@ -161,6 +175,16 @@ class SeatChannel:
             self.host._mirrors = value / "mirrors"
 
     # --- what a test supplies -----------------------------------------------
+
+    async def register(self, key: SeatKey) -> int:
+        """Issue a seat's runner its worker epoch: where the running test keeps
+        the rooms' books in its database (``EPOCHS``), there, as production
+        issues it (`session_state.register`), so what the runner reports can
+        be applied there; with no database, by a counter per seat."""
+        if EPOCHS.sessions is not None:
+            return await session_state.register(EPOCHS.sessions, key)
+        self.epochs[key] = self.epochs.get(key, 0) + 1
+        return self.epochs[key]
 
     async def open(self, session: SessionRef, agent: str, launch) -> None:
         """Have the seat's runner running; ``launch`` is what it is started
@@ -247,24 +271,3 @@ class SeatChannel:
             )
             for (topic, agent), (session, state) in self.seats.items()
         ]
-
-    def mirror(self, topic_id: uuid.UUID, agent: str) -> Path | None:
-        """Where the backend mirrors the seat's journal: under its place, by
-        the machine (here the room itself) and the agent acting there."""
-        placed = self.seats.get((topic_id, agent))
-        if placed is None:
-            return None
-        return self._mirror_of(placed[0], agent)
-
-    def _mirror_of(self, session: SessionRef, agent: str) -> Path:
-        harness = self.runtime.harness
-        driver = self.host._driver(CoreRef(harness, ""))
-        return (
-            self.root
-            / "mirrors"
-            / str(session.project_id)
-            / str(session.conversation_id)
-            / harness
-            / hashlib.sha256(f"{session.topic_id}{agent}".encode()).hexdigest()
-            / driver.mirror
-        )

@@ -24,11 +24,25 @@ from app.domain.delivery.receipts import (
     terminate_inputs_of_dead_works,
 )
 from app.domain.event_author import AuthorType
+from app.domain.agent.session_state import running_conversations
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import open_task, post_message, post_project
 
 HELD = "这条还挂在一个结果不明的输入上"
+
+
+def _idle(client, conversation: uuid.UUID) -> bool:
+    """Whether the session working this conversation has gone idle, as its
+    runner declared (`session_state`)."""
+
+    async def read() -> bool:
+        async with client.test_request_factory() as session:
+            return conversation not in await running_conversations(
+                session, [conversation]
+            )
+
+    return client.portal.call(read)
 
 
 def _until(predicate, what: str) -> None:
@@ -99,7 +113,10 @@ def test_a_task_turn_sends_without_a_message_held_elsewhere(client):
     _until(lambda: _inputs(client, task_id), "the task's first turn never ran")
     seat = _inputs(client, task_id)[0].recipient_handle
     _until(
-        lambda: all(row.completed_at for row in _inputs(client, task_id)),
+        lambda: (
+            all(row.echoed_at for row in _inputs(client, task_id))
+            and _idle(client, task_id)
+        ),
         "the task's first turn never finished",
     )
 

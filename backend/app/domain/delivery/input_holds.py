@@ -7,11 +7,7 @@ from app.domain.delivery.models import NativeInput
 
 
 def unread_input_with_over_work():
-    """No native receipt can settle this input any more, so it may not hold.
-
-    Only an echoed input is journaled under its execution work, and that
-    journal is the interval completion and termination both read. An input the
-    session never took therefore has no interval a receipt could name.
+    """No runner will report this input any more, so it may not hold.
 
     An input's OWN work is the turn opened to carry it (``input_id`` names the
     same work): a turn that existed only to deliver this batch, ended by the
@@ -32,15 +28,15 @@ def unread_input_with_over_work():
 
 
 async def seat_has_unfinished_input(session, topic_id, recipient_handle):
-    """Missing native start or outstanding holds cannot authorize a new send.
+    """Whether the seat holds an input whose fate is unknown.
 
-    A work interval that is confirmed dead is not an outstanding hold. Its rows
-    stay unfinished — nothing says the answer inside them was taken — but they
-    stop standing between the seat and a NEW input, which is a different input
-    with an identity of its own. An interval nobody confirmed still blocks. So
-    does one whose batch nobody ever read, for as long as its work is alive:
-    that is the interval a receipt is still on its way for. A batch nobody read
-    whose work the platform has already ended cannot get one
+    That is an input written to the session that it has neither read nor been
+    reported never to read: until one of those is known, sending the seat a new
+    input could put two answers to one message in the room. A read input holds
+    nothing — it is delivered, and a session that is working takes whatever it
+    is given next at its next tool boundary. One given up on (its work dead,
+    ``terminated_at``) holds the seat no longer either, though its batch stays
+    held. Nor does an unread batch whose own work the platform already ended
     (:func:`unread_input_with_over_work`).
     """
     return (topic_id, recipient_handle) in await seats_with_unfinished_input(
@@ -53,28 +49,20 @@ async def seats_with_unfinished_input(session, pairs) -> set[tuple]:
 
     One scan asks the same question of every message it is about to answer, and
     the messages come from a handful of conversations: one read of
-    ``native_inputs`` covers them all instead of one per pair. The judgement is
-    the single-pair one, row by row — the same ``unread_input_with_over_work``
-    filter, and a row holds its seat only while neither its completion nor its
-    termination is recorded.
+    ``native_inputs`` covers them all instead of one per pair.
     """
     wanted = {(topic_id, handle) for topic_id, handle in pairs if handle}
     if not wanted:
         return set()
     rows = await session.execute(
-        select(
-            NativeInput.conversation_id,
-            NativeInput.recipient_handle,
-            NativeInput.completed_at,
-            NativeInput.terminated_at,
-        ).where(
+        select(NativeInput.conversation_id, NativeInput.recipient_handle)
+        .where(
             NativeInput.conversation_id.in_({topic_id for topic_id, _ in wanted}),
             NativeInput.recipient_handle.in_({handle for _, handle in wanted}),
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
             ~unread_input_with_over_work(),
         )
+        .distinct()
     )
-    return {
-        (conversation_id, recipient_handle)
-        for conversation_id, recipient_handle, completed_at, terminated_at in rows
-        if completed_at is None and terminated_at is None
-    } & wanted
+    return {tuple(row) for row in rows} & wanted

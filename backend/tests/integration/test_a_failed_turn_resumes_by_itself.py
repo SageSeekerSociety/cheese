@@ -22,7 +22,11 @@ from app.api.deps import get_work_runner
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.input_registration import confirm_receipt
-from app.domain.agent.models import TurnResume
+from app.domain.agent.models import AgentTurn, TurnResume
+from app.domain.agent.platform_failures import (
+    RUNNER_REPLACED_CODE,
+    RUNNER_REPLACED_MESSAGE,
+)
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.resumable_failures import (
     POLICIES,
@@ -735,3 +739,70 @@ async def test_spent_subscription_accounts_resume_when_the_first_one_thaws(
     wait = (row.due_at - now).total_seconds()
     # After the first account thaws, not on a short backoff that fails again.
     assert thaw_in <= wait <= thaw_in + 5 * 60
+
+
+#: A rate limit whose service names a reset hours away.
+LIMITED_FOR_HOURS = (
+    "API Error: Server is temporarily limiting requests (not your usage limit)"
+    " · Rate limited. Please try again in 4 hours"
+)
+
+
+@pytest.mark.anyio
+async def test_an_upgrade_after_a_wake_up_resumes_at_once(business_db_factory):
+    """The seat was waiting out a rate limit when a teammate's delivery woke it,
+    which ends that wait. The upgrade then cuts the woken turn short: that turn
+    is resumed within seconds, not after the limit the wake-up already ended."""
+    factory = business_db_factory
+    project, conversation, _seat, instance = await _room_with_agent(factory)
+    seat = agent_instance_handle(instance)
+    t0 = datetime.now(UTC)
+    waiting = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=uuid.uuid4(),
+        result=_failed(LIMITED_FOR_HOURS),
+        route="subscription",
+        now=t0,
+    )
+    assert waiting is not None and waiting.due_at > t0 + timedelta(hours=1)
+    woken = uuid.uuid4()
+    async with factory() as session:
+        session.add(
+            AgentTurn(
+                id=woken,
+                conversation_id=conversation,
+                continuation_id=woken,
+                author="teammate",
+                agent_handle=seat,
+                content="go on",
+                started_at=t0 + timedelta(seconds=10),
+                delivered_at=t0 + timedelta(seconds=10),
+            )
+        )
+        await session.commit()
+    t1 = t0 + timedelta(seconds=60)
+
+    resumed = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=woken,
+        result=AgentResult(
+            text=RUNNER_REPLACED_MESSAGE,
+            session_id="s",
+            is_error=True,
+            failure_code=RUNNER_REPLACED_CODE,
+        ),
+        route="subscription",
+        now=t1,
+    )
+
+    assert resumed is not None and resumed.dropped_at is None
+    assert resumed.reason == "runner_replaced"
+    assert resumed.failed_turn_id == woken
+    assert resumed.due_at <= t1 + timedelta(seconds=10)
+    assert await hand_due(factory, now=t1 + timedelta(seconds=10)) == 1

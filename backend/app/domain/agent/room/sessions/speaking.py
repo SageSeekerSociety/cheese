@@ -29,7 +29,6 @@ from app.domain.agent.room.stopwatch import timed
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.agent.session_host.contract import (
     Image,
-    InputProtocolUnavailable,
     InputUnconfirmed,
     Prompt,
     SessionError,
@@ -105,8 +104,6 @@ async def send(
         message = svc._with_project_state(
             seat, live, resume_token, session_opening, opening_changes, message
         )
-        if not live.takes_inputs:
-            raise InputProtocolUnavailable()
         pictures = tuple(images or ())
         on_mark(work_id)
         await svc._consume(
@@ -224,8 +221,6 @@ async def steer(
         return False
     if svc.live.get(seat) is not live or svc.work.get(seat) != work:
         return False
-    if not status.takes_inputs:
-        raise InputProtocolUnavailable()
     identity = InputIdentity(
         live.session.project_id,
         topic_id,

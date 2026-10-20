@@ -1,7 +1,7 @@
 """平台自己说的那几句话：标记、提醒，以及它们按谁的语言说。
 
 一组同源的东西凑在一处：那个「【平台】」标记、「用户正文里的标记要中和掉」这条
-规矩、以及三条平台对模型说的话（发布契约、静默提醒、清单提醒）。它们不碰数据库、
+规矩、以及四条平台对模型说的话（发布契约、静默提醒、清单提醒、任务状态提醒）。它们不碰数据库、
 不读配置、也不认识 harness 里任何别的模块——想用就直接 import，`prompt.py` 再把
 它们原样 re-export 出去，既有调用点一个字都不用改。
 
@@ -92,6 +92,38 @@ def stale_checklist_reminder(minutes: int, language: str | None = None) -> str:
         "only place a reader can see how far you have got. Call todo_write now: "
         "mark the steps that are done completed and the one you are on "
         "in_progress. Ignore this only if the turn is already finished.",
+    )
+
+
+def stale_progress_reminder(minutes: int | None, language: str | None = None) -> str:
+    """做任务的会话还在跑，而它报的任务状态已经 `minutes` 分钟没动过（None =
+    从没报过）。
+
+    没有卡在等审阅的时候，看板上这件任务显示的是它自己报的那一句
+    （`cheese_task_state`），平台不替它推断：它在等构建、跑长命令时一轮结束了也照旧
+    是「在做」，而它做完了不说，看板就一直说它在做。所以平台能做的是问；卡在的时候
+    由卡说，也就不问（`StaleProgressReminder`）。
+    """
+    if minutes is None:
+        return _in_the_readers_language(
+            language,
+            "你还没说这件任务做到哪了。现在就用 cheese_task_state 设一次：working "
+            "在做、waiting 在等结果、blocked 卡住了，note 写一句在做什么。做完了就"
+            "递卡，看板会显示等审。",
+            "You have not said where this task stands. Call cheese_task_state now: "
+            "working, waiting (on a build, CI or a long command) or blocked, with a "
+            "one-line note. When the work is done, file a card: the board then "
+            "shows it awaiting review.",
+        )
+    return _in_the_readers_language(
+        language,
+        f"你报的任务状态已经 {minutes} 分钟没动过了，看板上一直显示的是那一句。"
+        "情况变了就用 cheese_task_state 再设一次；还是那样，也再设一次，note "
+        "写清现在在做什么、在等什么。",
+        f"The task state you reported has not changed for {minutes} minutes, and "
+        "the board has shown it all that time. Call cheese_task_state again: with "
+        "the new state if it changed, or the same one with a note saying what you "
+        "are doing or waiting on now.",
     )
 
 

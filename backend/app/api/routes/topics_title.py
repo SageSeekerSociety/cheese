@@ -9,12 +9,10 @@ room is reached through `TopicService.place_or_404`. The module mounts itself:
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.room_task_rows import task_out
@@ -26,7 +24,6 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.agent.chat import ChatService
 from app.domain.agent.staleness import announce_stale
 from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
@@ -43,7 +40,6 @@ async def set_title(
     body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """给这个地方起/改标题: a person renaming a channel or a task, or a task's
     own session naming it (`cheese_title`, only where the platform cannot).
@@ -89,7 +85,7 @@ async def set_title(
         # The task as its page holds it, board line included: the page writes
         # this answer over what it has, and a task without its line drew no
         # header until the next reload.
-        out = await task_out(db, chat, task)
+        out = await task_out(db, task)
         await db.commit()
         return ok(out)
     # A channel's name is one of its settings, like its 说明 and who sees it

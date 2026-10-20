@@ -7,8 +7,9 @@ unchanged except that credentials are taken out. And the record only grows:
 reading the journal again, from a fresh mirror or after the records were moved
 to the bucket, adds nothing twice, and what was there stays as it was.
 
-Each case drives the real mirror and subscription of the harness against a
-runner journal written here, and reads back through the route a viewer uses.
+Each case drives the real reading of the harness (Codex's mirror and
+subscription, Claude Code's lifecycle reading) against a runner journal written
+here, and reads back through the route a viewer uses.
 """
 
 import base64
@@ -27,9 +28,9 @@ from sqlalchemy.exc import DBAPIError
 from app.core.storage import StorageBackend
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, SessionRef
 from app.domain.agent.harness.claude_code import journal as claude_journal
-from app.domain.agent.harness.claude_code import subscription as claude
 from app.domain.agent.harness.codex import journal as codex_journal
 from app.domain.agent.harness.codex import subscription as codex
+from app.domain.agent.harness.driven.reporting import Reading, Whose
 from app.domain.session_record import service
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
@@ -238,9 +239,19 @@ class _Session:
         mirror = self.tmp_path / f"mirror-{self.mirrors}.sqlite"
 
         async def remote(method: str, params: dict) -> dict:
-            assert method == "events"
             journal = self.journal_type(self.runner)
             try:
+                if method == "read":
+                    # A runner that reports in the lifecycle protocol: its
+                    # records past what was taken, from the start for a reader
+                    # that names nothing.
+                    return {
+                        "worker_epoch": 1,
+                        "events": [],
+                        "records": journal.read(params.get("records_after") or 0),
+                        "state": {},
+                    }
+                assert method == "events"
                 return {"events": journal.read(params["after"])}
             finally:
                 journal.close()
@@ -249,20 +260,17 @@ class _Session:
             return None
 
         keep = functools.partial(service.append, self.client.test_request_factory)
+        reading: Reading | codex.Subscription
         if self.harness == CLAUDE_CODE:
-            reading = claude.Subscription(
-                self.ref,
-                mirror,
+            reading = Reading(
+                Whose(self.ref, "cheese", self.ref.topic_id, "cheese", CLAUDE_CODE, ""),
                 remote,
-                nothing,
-                nothing,
-                session_id="s1",
-                recipient_handle="cheese",
-                announce=nothing,
-                receipts=nothing,
-                completions=nothing,
-                terminations=nothing,
+                epoch=lambda: 1,
+                assemble=lambda record: [],
+                show=nothing,
+                hand=nothing,
                 records=keep,
+                controls=nothing,
             )
         else:
             reading = codex.Subscription(

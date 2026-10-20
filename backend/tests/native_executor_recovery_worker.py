@@ -25,7 +25,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
-from tests.support.seat_channel import SeatChannel
+from tests.support.seat_channel import EPOCHS, SeatChannel
 
 
 class SocketChannel(SeatChannel):
@@ -127,6 +127,8 @@ def follow_up_owed(state: str) -> bool:
 async def run(descriptor):
     engine = create_async_engine(descriptor["database"])
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    # The rooms' books are in this database: runners are registered there.
+    EPOCHS.sessions = factory
     channel = SocketChannel(descriptor)
     chat = ChatService(
         work_runner=session_turn_deps.get_work_runner(),

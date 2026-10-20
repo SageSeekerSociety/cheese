@@ -27,7 +27,6 @@ from app.domain.agent.room.sessions.records import Live, _home
 from app.domain.agent.room.stopwatch import Stopwatch
 from app.domain.agent.session_host.contract import (
     Access,
-    InputProtocolUnavailable,
     Owner,
     SessionSpec,
 )
@@ -55,11 +54,6 @@ async def ensure(
     mark = Stopwatch(phases)
     seat = svc._seat_of(session)
     previous = svc.live.get(seat)
-    if previous is not None and not previous.takes_inputs:
-        # An adopted runner from before the receipt protocol owns native
-        # pipes and may still hold the original executor's work; it is not
-        # relaunched to upgrade it.
-        raise InputProtocolUnavailable()
     if previous is not None and acting is not None and acting != previous.acting:
         # A different teammate is taking this seat over; the conversation
         # that belonged to the last one does not carry over to them. Other
@@ -149,7 +143,6 @@ async def ensure(
             ref,
             prepared.agent_handle,
             status.conversation,
-            status.takes_inputs,
         )
     )
     mark("ensure_attach")

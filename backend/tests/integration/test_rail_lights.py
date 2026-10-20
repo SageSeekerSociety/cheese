@@ -5,16 +5,13 @@
 所以这个文件里每条都从两个人的眼里看同一份数据 —— 只有一个人看得见的说法，光看
 一个人的响应是钉不住的。
 
-六条事实：这里在不在往前走（`moving`，频道那一行还含它名下的活）、在跑的那一轮
-上一次有输出是什么时候（`last_output_at`）、有没有事在等我（`awaits_me`，这里只
-当对照）、做完了交付完了而我还没点开看过（`unseen_delivery`）、有人回复了我、
-我还没处理（`replied_to_me`），以及这间房里有没有一轮停在报错上、从什么时候起还没
-恢复（`incomplete_since`，红灯的另一半：不止「在跑却没动静」，也包括「停下报错、
-没人接手」）。
+四条事实：有没有事在等我（`awaits_me`，这里只当对照）、做完了交付完了而我还没
+点开看过（`unseen_delivery`）、有人回复了我、我还没处理（`replied_to_me`），以及这间
+房里有没有一轮停在报错上、从什么时候起还没恢复（`incomplete_since`，红灯）。
 
 活的行由 `_planted` 直接种进库，不走「建任务 → 递卡 → 采纳」那一圈：每一圈自己的
 规矩在别处钉着（`test_accept.py`），而这里要对下来的是「哪几列推出哪盏灯」。判据
-本身在 `room_task/presentation.py` 和 `agent/liveness.py`，各有单测
+本身在 `room_task/presentation.py` 和 `block/waits.py`，各有单测
 （`tests/unit/test_presentation.py`）；这个文件问的是另一个问题 —— 接口把它算出来
 了没有。
 """
@@ -23,15 +20,11 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from app.api.deps import get_work_runner
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.review.notes import NoteCode
+from app.domain.review.models import AcceptCard
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.presentation import Building
-from app.main import app
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -71,7 +64,7 @@ def _planted(
     """往库里种几条活，返回 {名字: 活的 id}。
 
     每条 `spec` 是 `Task` 的那几列，另外两项不是列：`name` 是这条活在断言里的叫法，
-    `card` 是它此刻骑的那张卡、`turn` 说它自己的线上有一轮在跑。
+    `card` 是它此刻骑的那张卡。
     """
 
     async def _run() -> None:
@@ -80,7 +73,6 @@ def _planted(
                 spec = dict(spec)
                 name = spec.pop("name")
                 card = spec.pop("card", None)
-                turn = spec.pop("turn", False)
                 task = Task(
                     project_id=uuid.UUID(project_id),
                     room_id=uuid.UUID(room_id),
@@ -95,19 +87,6 @@ def _planted(
                             task_id=task.id,
                             reviewer_handle="alice",
                             **card,
-                        )
-                    )
-                if turn:
-                    now = datetime.now(UTC)
-                    s.add(
-                        AgentTurn(
-                            id=uuid.uuid4(),
-                            conversation_id=task.id,
-                            continuation_id=uuid.uuid4(),
-                            author="alice",
-                            content="开始吧",
-                            started_at=now,
-                            delivered_at=now,
                         )
                     )
                 ids[name] = str(task.id)
@@ -436,196 +415,6 @@ def test_an_answer_inside_a_task_under_the_channel_does_not_light_that_row(clien
     assert _room_row(client, project, room, "alice")["replied_to_me"] is False
 
 
-# —— 呼吸绿：这里有没有活在往前走 ————————————————————————————————————
-
-
-def test_a_room_breathes_while_a_task_under_it_rides_a_delivery(client):
-    """房间自己那条线闲着，名下的活走在交付链路上 —— 那也在这间房在往前走。
-
-    这一半是侧栏专门为频道补的：一条活在等 CI 时，上面那间房通常是安静的，缺了这
-    一半它就一直不亮。
-    """
-    project = _project(client)
-    riding = _room(client, project, "递出去了")
-    waiting = _room(client, project, "等着我")
-    riding_ids = _planted(
-        client,
-        project,
-        riding,
-        [
-            {
-                "name": "riding",
-                "title": "在等检查的活",
-                "owner_handle": "alice",
-                "card": {
-                    "status": AcceptStatus.pending,
-                    "note_code": NoteCode.waiting_merge_queue,
-                    "pr_number": 42,
-                },
-            }
-        ],
-    )
-    waiting_ids = _planted(
-        client,
-        project,
-        waiting,
-        [
-            {
-                "name": "waiting",
-                "title": "等我采纳的活",
-                "owner_handle": "alice",
-                "card": {"status": AcceptStatus.pending},
-            }
-        ],
-    )
-
-    row = _room_row(client, project, riding, "alice")
-    # 房间自己那条线不在往前走 —— 灯来自它名下的活。
-    assert row["presentation"]["column"] == "building"
-    assert row["moving"] is True
-    assert _task_row(row, riding_ids["riding"])["moving"] is True
-
-    # 反面：一张等我去点的卡是「有事等我」（黄灯），不是「在往前走」（呼吸绿）——
-    # 两者要的下一步正好相反：去点，还是别催。
-    blocked = _room_row(client, project, waiting, "alice")
-    assert blocked["moving"] is False
-    task = _task_row(blocked, waiting_ids["waiting"])
-    assert task["moving"] is False
-    assert task["awaits_me"] is True
-
-
-def test_a_closed_task_does_not_breathe_its_room(client):
-    """活已经关了，它名下的卡停在哪都不该让房间亮绿灯。
-
-    这就是测试频道那一幕：两件 10-12 就关掉的活留着没结算的卡，合并态镜像说
-    dirty，侧栏于是把整间房当成「名下有活在交付链路上」，一直闪绿 —— 而实际
-    没有任何东西在跑。判据只认**还没关的**活名下的卡。
-    """
-    project = _project(client)
-    room = _room(client, project, "关掉的活")
-    _planted(
-        client,
-        project,
-        room,
-        [
-            {
-                "name": "closed",
-                "title": "十月十二就关掉的活",
-                "owner_handle": "alice",
-                "status": TaskStatus.closed,
-                "closed_at": datetime.now(UTC) - timedelta(days=5),
-                "card": {
-                    "status": AcceptStatus.pending,
-                    "pr_number": 3528,
-                    "merge_state": {"state": "dirty", "who": "agent"},
-                },
-            }
-        ],
-    )
-
-    row = _room_row(client, project, room, "alice")
-    # 房间自己那条线闲着；它名下那张卡属于一件关掉的活，不算「在往前走」。
-    assert row["presentation"]["column"] == "building"
-    assert row["moving"] is False
-
-
-def test_a_running_turn_breathes_and_the_room_says_nothing_about_its_clock(client):
-    """有一轮在跑就是呼吸绿；多久没输出这一栏，说不出就是 null。
-
-    这一请求跑的进程没有握着那一轮（`silent_of` 问的是内存里那份当下事实），所以
-    `last_output_at` 是 null。这不是漏了：不知道不当成「很新」，也不当成卡住 ——
-    红灯要有一个时刻才画得出来。
-    """
-    project = _project(client)
-    room = _room(client, project, "在跑")
-    ids = _planted(
-        client,
-        project,
-        room,
-        [
-            {
-                "name": "running",
-                "title": "在跑的活",
-                "owner_handle": "alice",
-                "turn": True,
-            }
-        ],
-    )
-
-    row = _room_row(client, project, room, "alice")
-    # 看板那一格只说房间**自己那条线**（另一条测试钉着：名下的活在跑时它不变）；
-    # 「名下的活在跑」只进那盏呼吸绿。
-    assert row["presentation"]["phrase"] == Building.idle
-    assert row["moving"] is True
-    assert row["last_output_at"] is None
-    task = _task_row(row, ids["running"])
-    assert task["moving"] is True
-    assert task["last_output_at"] is None
-
-
-class _TurnStillPublishing:
-    """一轮还在往外送帧：只有握着它的那个进程说得出「多久没输出了」。
-
-    真的轮次跨不过一次阻塞的 HTTP 调用，所以这里替一个 —— 真 runner 会这样报，
-    在 `tests/unit/test_runtime.py` 里另外钉着。
-    """
-
-    def __init__(self, *, silent_for_s: float) -> None:
-        self._silent_for_s = silent_for_s
-
-    def running_topic_ids(self) -> set[str]:
-        return set()
-
-    def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
-        return {"turn_id": "t-1", "silent_for_s": self._silent_for_s}
-
-    def topic_work(self, topic_id: uuid.UUID) -> dict | None:
-        return None
-
-    def active_work_count(self) -> int:
-        return 1
-
-    async def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
-        return 0
-
-
-def test_the_process_holding_the_turn_says_when_it_last_output(client):
-    """有人说得出那一刻时，行上就带着那个时刻 —— 取整到分钟。
-
-    灯判的是五分钟，而这一栏要能进清单的条件请求（整份 body 的指纹）：一整帧一个
-    时间戳会让「有任何一轮在跑」期间每一次轮询都命中不了 304。取整把它压到一分钟
-    最多变一次。
-    """
-    project = _project(client)
-    room = _room(client, project, "在跑")
-    _planted(
-        client,
-        project,
-        room,
-        [
-            {
-                "name": "running",
-                "title": "在跑的活",
-                "owner_handle": "alice",
-                "turn": True,
-            }
-        ],
-    )
-
-    app.dependency_overrides[get_work_runner] = lambda: _TurnStillPublishing(
-        silent_for_s=13 * 60
-    )
-    try:
-        row = _room_row(client, project, room, "alice")
-    finally:
-        app.dependency_overrides.pop(get_work_runner, None)
-
-    at = datetime.fromisoformat(row["last_output_at"])
-    assert (at.second, at.microsecond) == (0, 0)
-    quiet_for = datetime.now(UTC) - at
-    assert timedelta(minutes=13) <= quiet_for < timedelta(minutes=14)
-
-
 # —— 红灯的另一半：一轮停在报错上、还没恢复 ————————————————————————————————
 #
 # 判据在 `block/waits.MemberWaits.unresolved_failures`：一条平台事件说这一轮坏了，
@@ -915,7 +704,7 @@ def test_an_undelivered_turn_does_not_clear_the_old_failure(client):
     """行落下了、prompt 却没送到会话 —— 没人接手，旧失败继续亮着。
 
     `open_turn` 在传输接受之前就写 `agent_turns`；进程随后死掉时这一行会留着，
-    但会话从没听过它，它不是「又开了一轮在干」：不清掉红灯，也不带来新的红灯。
+    但会话从没听过它，它不是「又开了一轮在干」：不清掉红灯。
     两个列表（侧栏与「全部任务」）读的是同一份事实。
     """
     project = _project(client)
@@ -940,8 +729,6 @@ def test_an_undelivered_turn_does_not_clear_the_old_failure(client):
     task = _task_row(row, ids["task"])
     assert abs(_incomplete(row) - at) < timedelta(seconds=1)
     assert abs(_incomplete(task) - at) < timedelta(seconds=1)
-    # 没送到的一轮不在「在跑」里，也没有输出：没有绿或安静红来顶替。
-    assert task["moving"] is False
 
     listed = client.get(
         f"/projects/{project}/tasks", headers=session_auth_headers("alice")

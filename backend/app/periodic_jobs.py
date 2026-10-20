@@ -56,6 +56,7 @@ PERIODIC_JOB_NAMES = (
     "queued message sweep",
     "chat progress reminder",
     "checklist reminder",
+    "task state reminder",
     "gate sweep",
     "cloud host pool sweep",
     "cloud sandbox lifecycle",

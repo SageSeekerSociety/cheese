@@ -45,18 +45,6 @@ class StartAbandoned(SessionError):
     for it."""
 
 
-class InputProtocolUnavailable(SessionError):
-    """The session's runner predates the receipt protocol, so nothing can be
-    said to it whose reading would be known. Nothing was said; the session,
-    its conversation and its pending inputs stay as they are."""
-
-    def __init__(self):
-        super().__init__(
-            "The original runner needs a receipt protocol upgrade; its "
-            "conversation and pending inputs are retained"
-        )
-
-
 @dataclass(frozen=True)
 class SessionRef:
     """One session: its harness, and where it lives on the session host.
@@ -222,13 +210,15 @@ class SessionStatus:
     conversation: str = ""
     #: The work it is doing, while it works.
     work_id: str | None = None
-    #: Whether its runner can take an input whose receipt will be read.
-    takes_inputs: bool = True
     #: False when the runner answered that its harness process is gone.
     alive: bool = True
     #: The machine answered that this session's runner is not there at all
     #: (``host.attach``). Its process is gone with it.
     runner_gone: bool = False
+    #: The runner speaks an earlier protocol than this release reads: one the
+    #: previous release started (``host.attach``). It is not read; the next
+    #: start replaces it, resuming its conversation.
+    outdated: bool = False
 
 
 class InputUnconfirmed(SessionError):

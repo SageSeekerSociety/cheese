@@ -22,7 +22,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 
 from app.domain.agent.nonce import new_nonce
-from app.domain.agent.reads import Ended, Writing
+from app.domain.agent.reads import (
+    Ended,
+    Report,
+    SessionExited,
+    SessionIdle,
+    Writing,
+)
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 from app.domain.agent.session_host.contract import (
     Access,
@@ -225,20 +231,18 @@ async def follow(
     deadline: float,
     progress: Progress,
     keep: Callable[[Progress], Awaitable[None]] | None = None,
-    recovered: bool = False,
 ) -> AsyncIterator[Words | Tool | Answer]:
     """Read the answer to work ``work_id`` on from ``progress``, handing on
     what more of it is written; ends with one ``Answer``. Past ``deadline``
     (on the monotonic clock) the work is stopped and the answer is what failed
     to arrive. ``keep`` is told what was read after each record and before the
     next is asked for, so a reader taking over after this one goes on from no
-    earlier than that. ``recovered`` reads a session another process started
-    (``host.attach``)."""
+    earlier than that."""
     if progress.result is not None:
         yield progress.result
         return
     work = str(work_id)
-    reading = host.read(ref, recovered=recovered)
+    reading = host.read(ref)
 
     async def ended(answer: Answer) -> Answer:
         progress.result = answer
@@ -269,6 +273,16 @@ async def follow(
                 continue
             event = read.event
             said: list[Words | Tool] = []
+            if isinstance(event, Report):
+                # What a runner reported: of all of it, only the ending of the
+                # work, or of the session, ends an answer.
+                fact = event.fact
+                if isinstance(fact, SessionExited) and event.of_this_registration:
+                    yield await ended(Answer("", "the session ended mid-answer"))
+                    return
+                if not isinstance(fact, SessionIdle) or read.work_id != work:
+                    continue
+                event = fact.result
             if isinstance(event, Ended):
                 yield await ended(Answer("", "the session ended mid-answer"))
                 return

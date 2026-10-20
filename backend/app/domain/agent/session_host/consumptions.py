@@ -327,8 +327,6 @@ class Consumptions:
         consumption: Consumption,
         progress: Progress,
         deadline: float,
-        *,
-        recovered: bool = False,
     ) -> Answer:
         consumer = self._consumers[consumption.kind]
 
@@ -342,7 +340,6 @@ class Consumptions:
             deadline=deadline,
             progress=progress,
             keep=keep,
-            recovered=recovered,
         ):
             if isinstance(event, Answer):
                 return event
@@ -537,7 +534,7 @@ class Consumptions:
                 raise QuestionDropped("the session ended mid-answer")
             due = consumption.deadline or time.time() + _UNKNOWN_CEILING_S
             deadline = time.monotonic() + (due - time.time())
-            answer = await self._follow(consumption, progress, deadline, recovered=True)
+            answer = await self._follow(consumption, progress, deadline)
             failure = None
         except asyncio.CancelledError:
             raise

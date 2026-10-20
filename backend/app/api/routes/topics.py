@@ -33,12 +33,6 @@ from app.core.sentences import say
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.clone import fork_for as fork_transcript
 from app.domain.agent.harness import harness_for
-from app.domain.agent.liveness import (
-    last_output_at,
-    moving_topics,
-    silent_gaps,
-    silent_of,
-)
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
@@ -259,9 +253,7 @@ def _topic_out(
     activity: list[dict] | None = None,
     waits: list[MemberWait] | None = None,
     working_in_threads: set[str] | None = None,
-    silent: Mapping[uuid.UUID, float] | None = None,
     unseen: Collection[uuid.UUID] | None = None,
-    moving: Collection[uuid.UUID] | None = None,
     answered: Collection[uuid.UUID] | None = None,
     incomplete: Mapping[uuid.UUID, datetime] | None = None,
 ) -> dict:
@@ -280,9 +272,6 @@ def _topic_out(
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
-    out.last_output_at = last_output_at(
-        (silent or {}).get(topic.id), now or datetime.now(UTC)
-    )
     # 这个频道名下有没有「交付完了、而这个人还没点开看过」的活（侧栏的长绿）。
     # `unseen` 一次算一整页，这里只查表；没有登录的人拿到的是空集，也就是不亮。
     out.unseen_delivery = topic.id in (unseen or ())
@@ -331,11 +320,6 @@ def _topic_out(
     )
     shown = presentation.room_presentation(facts, now=now or datetime.now(UTC))
     data["presentation"] = shown.as_dict()
-    # 侧栏那盏呼吸绿问的那件事：这一行有没有活在往前走 —— 判据在
-    # `presentation.work_moving`，这里补上「名下的活」那一半（房间名下的活 / 支线
-    # 在跑，或走在交付链路上）。`shown` 只管这一行自己：看板那一格是房间自己的格子，
-    # 就算它名下有一轮在跑，那一格也只说房间自己那条线。
-    data["moving"] = presentation.work_moving(shown, also=topic.id in (moving or ()))
     return data
 
 
@@ -345,7 +329,6 @@ async def list_topics(
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
-    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
@@ -392,11 +375,6 @@ async def list_topics(
     # 是它：看板一格是房间自己的格子，它名下的活有它们自己的格子
     # （`test_a_rooms_board_cell_does_not_follow_a_task_running_under_it`）。
     running_ids = runner.running_topic_ids()
-    # 侧栏那盏呼吸绿问的是**连着名下的活**：一个房间名下任何一段对话上跑的轮次
-    # （它的活、它的支线）都归回这个房间。`running_topic_ids` 只问得到这个进程（连同
-    # 它的 broker）正在跑的那些；一个进程按不住另一个进程手里的轮次，所以还要读一遍
-    # 「哪一行还开着」（`agent.liveness.moving_topics`）。
-    moving_ids = await moving_topics(db, [t.id for t in topics], running=running_ids)
     relevance = await service.relevance_for_topics(
         topics,
         _viewer(actor),
@@ -424,9 +402,6 @@ async def list_topics(
     threads_working = await topics_signals.working_in_threads(
         db, broker, [t.id for t in topics], threads=room_threads
     )
-    # 在跑的那几个各自「多久没有动静了」（帧、或者读它的那一路收到应答）——侧栏的
-    # 红灯靠它（`silent_of`）。
-    silent = silent_gaps(runner, [t.id for t in topics if t.id in moving_ids])
     # 哪几间房里有「交付完了、而这个人还没点开看过」的活——侧栏的长绿靠它。一次
     # 查一整页（`room_task/repositories.unseen_deliveries`），频道行和它下面的活行
     # 都从这一份里查表。
@@ -441,11 +416,6 @@ async def list_topics(
     answered = (
         await service.replied_to_me([t.id for t in topics], viewer) if viewer else set()
     )
-    # 哪几间房名下的活在交付链路上（侧栏呼吸绿的另一半）——同一批卡里读，不再查库。
-    delivering = topics_signals.delivering_rooms(live)
-    # 侧栏呼吸绿要看的那一份：这一行自己、它名下的活、它名下的支线，哪一处有活在
-    # 往前走。
-    moving = moving_ids | delivering
     # 这间房名下的活（开着、还没进收尾窗口）—— 侧栏红灯要汇总它们各自的未恢复失败（`_unresolved_failures`）；用的是上面已经取到的那一份。
     tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
     for task_id, room_id in tasks_by_room.items():
@@ -455,10 +425,8 @@ async def list_topics(
     )
     rails = await rail_tasks(
         db,
-        chat,
         actor,
         [t.id for t in topics],
-        silent_of=partial(silent_of, runner),
         delivered_of=unseen.__contains__,
         incomplete_of=incomplete_tasks.get,
     )
@@ -477,9 +445,7 @@ async def list_topics(
                 activity=broker.activity.snapshot(str(t.id)),
                 waits=waits.get(t.id),
                 working_in_threads=threads_working.get(t.id),
-                silent=silent,
                 unseen=unseen,
-                moving=moving,
                 answered=answered,
                 incomplete=incomplete,
             ),
@@ -538,7 +504,6 @@ async def get_topic(
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
-    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
     """One room's header.
@@ -567,7 +532,7 @@ async def get_topic(
     actor = await _actor_in_place(resolver, place)
     # 这几处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
     # 遍（`_awaiting_an_answer`、`MemberWaits.for_rooms`、
-    # `topics_signals.working_in_threads`、`moving_topics`）。
+    # `topics_signals.working_in_threads`）。
     room_threads = await threads_of_rooms(db, [topic.id])
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics(
@@ -594,18 +559,14 @@ async def get_topic(
     threads_working = await topics_signals.working_in_threads(
         db, broker, [topic.id], threads=room_threads
     )
-    # 同 `list_topics`：`running_ids` 是这行自己的线，`moving_ids` 连着名下的活和支线。
+    # 同 `list_topics`：`running_ids` 是这行自己的线。
     running_ids = runner.running_topic_ids()
-    moving_ids = await moving_topics(db, [topic.id], running_ids, room_threads)
-    silent = silent_gaps(runner, [topic.id]) if topic.id in moving_ids else {}
     viewer = _viewer(actor)
     unseen = (
         await TaskService(db).unseen_deliveries([topic.id], viewer) if viewer else set()
     )
     # 同 `list_topics`：这一间房里有没有人回复了我、而我还没处理（侧栏黄灯）。
     answered = await service.replied_to_me([topic.id], viewer) if viewer else set()
-    # 同 `list_topics`：这一间房名下的活有没有走在交付链路上。
-    delivering = topics_signals.delivering_rooms(live)
     underway = await TaskService(db).tasks_of_rooms([topic.id])
     tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
     for task_id, room_id in underway.items():
@@ -615,10 +576,8 @@ async def get_topic(
     )
     rails = await rail_tasks(
         db,
-        chat,
         actor,
         [topic.id],
-        silent_of=partial(silent_of, runner),
         delivered_of=unseen.__contains__,
         incomplete_of=incomplete_tasks.get,
     )
@@ -636,9 +595,7 @@ async def get_topic(
                 activity=broker.activity.snapshot(str(topic.id)),
                 waits=waits.get(topic.id),
                 working_in_threads=threads_working.get(topic.id),
-                silent=silent,
                 unseen=unseen,
-                moving=moving_ids | delivering,
                 answered=answered,
                 incomplete=incomplete,
             ),
@@ -657,7 +614,6 @@ async def list_topic_blocks(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
     before: uuid.UUID | None = None,
     after: uuid.UUID | None = None,
@@ -798,7 +754,6 @@ async def list_topic_blocks(
     # the page draws their cards without reading the room's whole task list.
     carried = await tasks_under_blocks(
         db,
-        chat,
         actor,
         room_id=place.room_id,
         project_id=place.project_id,

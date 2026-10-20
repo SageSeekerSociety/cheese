@@ -11,6 +11,8 @@
   "taskCreatedByPerson": "只有人可以这样创建任务",
   "taskOpeningNotFailed": "第一轮没有失败，不用重试",
   "taskOwnSessionCloses": "只有任务的负责人，或者这个任务自己的会话，可以关闭它",
+  "taskOwnSessionReportsProgress": "只有这个任务自己的 AI 队友会话可以报它的进度",
+  "taskProgressWhileInReview": "这件任务有一张卡在等审阅，现在由卡说它在哪一步；卡被退回或作废后，任务回到在做，再报你的状态",
   "taskOwnerNotInProject": "只能转交给项目成员",
   "taskOwnerOnly": "只有任务的负责人可以这样做",
   "taskParticipantsOnly": "只有任务的负责人和协作者可以这样做",

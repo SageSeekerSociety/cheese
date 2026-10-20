@@ -12,9 +12,12 @@ The rules, as stated before the code was written:
   turn, and counts as delivered once the session has read it;
 - a platform instruction does not move the turn's foreground work aside; a
   person naming the agent does, as their own message would;
-- a finished task's write-up, a routine's run and a task's opening still wait
-  for a turn of their own;
-- a delivery the running turn did not take is not lost: it is tried again.
+- a finished task's write-up, a routine's run and a task's opening are not
+  merged into the running turn: each goes to the session at once as an input
+  of its own, under its own work, and the session reads it at its next tool
+  boundary — a session that is working takes what it is given;
+- a delivery the running turn did not take is not lost: it goes in as an
+  input of its own.
 """
 
 import asyncio
@@ -22,24 +25,64 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
 from app.api.deps import get_work_runner
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent.chat import ChatService
 from app.domain.agent.opening import OPENING, PURPOSE
 from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.mention import BY_PERSON
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.closing import CLOSES_TASK
-from tests.conftest import stub_compute
-from tests.integration.test_a_freed_seat_takes_the_delivery_it_held_back import (
-    Seat,
-    _room_with_agent,
-    _row,
-)
+from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
+from tests.conftest import StubChannel, stub_compute
+from tests.integration.conftest import project_service, registered
+from tests.support.threads import thread_in
 from tests.support.hang import HANG_S
+
+
+class Seat(StubChannel):
+    """Records each input the agent's session is handed."""
+
+    def __init__(self):
+        super().__init__()
+        self.handed: list[str] = []
+        self.handed_one = asyncio.Event()
+
+    def emit_turn(self, topic_id, prompt, reply, *, agent=None):
+        self.handed.append(prompt)
+        self.starts(topic_id, agent=agent)
+        self.acknowledges(topic_id, prompt, agent=agent)
+        self.handed_one.set()
+
+
+async def _room_with_agent(factory):
+    async with factory() as session:
+        await registered(session, "u")
+        project = await project_service(session).create(name="P", owner_handle="u")
+        room = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        seat = (await TopicMemberService(session).agent_handles(room.id))[0]
+        agent = await AgentInstanceService(session).for_seat_handle(project, seat)
+        conversation = await thread_in(session, room)
+        await session.commit()
+    return conversation, seat, agent.instance_id
+
+
+async def _row(factory, delivery_id):
+    async with factory() as session:
+        return await session.scalar(
+            select(Delivery)
+            .where(Delivery.id == delivery_id)
+            .execution_options(populate_existing=True)
+        )
 
 
 class Working(Seat):
@@ -120,6 +163,17 @@ class _World:
         )
         await asyncio.wait_for(self.screen.handed_one.wait(), HANG_S)
         self.screen.handed_one.clear()
+        # On it means it read the work: until its runner's report of the read
+        # lands, the seat holds an input whose fate is unknown, and a delivery
+        # tried then is (rightly) put back and retried later.
+        async with asyncio.timeout(HANG_S):
+            while True:
+                async with self.factory() as session:
+                    if not await seat_has_unfinished_input(
+                        session, self.conversation, seat
+                    ):
+                        break
+                await asyncio.sleep(0.02)
 
     async def dispatch(self, delivery_id) -> int:
         return await dispatch_pending(
@@ -186,7 +240,9 @@ async def test_a_person_naming_a_busy_agent_moves_its_work_aside(world):
     [{CLOSES_TASK: True}, {"eventType": EVENT_ROUTINE_RUN}, {PURPOSE: OPENING}],
     ids=["task write-up", "routine run", "task opening"],
 )
-async def test_a_delivery_that_is_its_own_turn_still_waits_for_one(world, own_turn):
+async def test_a_delivery_that_is_its_own_work_goes_in_at_once_as_its_own(
+    world, own_turn
+):
     await world.busy()
     delivery_id = await _delivery(
         world.factory,
@@ -198,13 +254,28 @@ async def test_a_delivery_that_is_its_own_turn_still_waits_for_one(world, own_tu
 
     assert await world.dispatch(delivery_id) == 1
 
-    row = await _settled(world.factory, delivery_id, {"pending", "failed"})
-    assert row.state == "pending" and row.sent_at is None
-    assert len(world.screen.handed) == 1, "it was put into another turn"
+    row = await _settled(world.factory, delivery_id, {"received"})
+    assert row.sent_at is not None
+    assert "write the task up" in world.screen.handed[-1]
+    (own,) = await _inputs_of(world.factory, row.attempt_id)
+    # Its own input, under its own work: not one more word said to the work
+    # already running, though that is where the session read it.
+    assert own.work_id == own.input_id == row.attempt_id
+    assert own.execution_work_id != own.work_id
+    assert world.screen.moved_aside(world.conversation) == 0
+
+
+async def _inputs_of(factory, work_id) -> list[NativeInput]:
+    async with factory() as session:
+        return list(
+            await session.scalars(
+                select(NativeInput).where(NativeInput.work_id == work_id)
+            )
+        )
 
 
 @pytest.mark.anyio
-async def test_a_notice_the_running_turn_did_not_take_is_tried_again(
+async def test_a_notice_the_running_turn_did_not_take_goes_in_as_its_own(
     world, monkeypatch
 ):
     await world.busy()
@@ -222,6 +293,6 @@ async def test_a_notice_the_running_turn_did_not_take_is_tried_again(
 
     assert await world.dispatch(delivery_id) == 1
 
-    row = await _settled(world.factory, delivery_id, {"pending", "failed"})
-    assert row.state == "pending" and row.sent_at is None
-    assert row.retry_at is not None
+    row = await _settled(world.factory, delivery_id, {"received"})
+    assert row.sent_at is not None
+    assert "the checks on PR 12 failed" in world.screen.handed[-1]

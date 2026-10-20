@@ -159,6 +159,39 @@ describe('任务页头', () => {
     expect(theirs.getByTestId('task-phrase').textContent).toBe('等人审阅')
   })
 
+  // 队友报的那一句是看板这一格的出处：页头照说，会话走了也不改它，只在旁边说一声。
+  it('队友说在等结果：页头写它报的状态和原话，会话走了也照旧，旁边写已离开', () => {
+    const said = {
+      presentation: { column: 'building', phrase: 'waiting' },
+      progress_state: 'waiting',
+      progress_note: '等 CI 跑完',
+      progress_set_by: 'cheese-01',
+      progress_set_at: '2026-10-05T00:00:00Z',
+    } as Partial<RoomTask>
+    const here = mount(said)
+    expect(here.getByTestId('task-phrase').textContent).toBe('在等结果')
+    expect(here.getByTestId('task-progress-note').textContent).toBe('等 CI 跑完')
+    expect(here.queryByTestId('task-agent-left')).toBeNull()
+    here.unmount()
+
+    const gone = mount({ ...said, agent_left_at: '2026-10-05T01:00:00Z' })
+    expect(gone.getByTestId('task-phrase').textContent).toBe('在等结果')
+    expect(gone.getByTestId('task-progress-note').textContent).toBe('等 CI 跑完')
+    expect(gone.getByTestId('task-agent-left').textContent).toContain('已离开')
+  })
+
+  it('任务关了，就不再摆它报过的状态', () => {
+    const { queryByTestId } = mount({
+      status: 'closed',
+      presentation: { column: 'done', phrase: 'closed' },
+      progress_state: 'waiting',
+      progress_note: '等 CI 跑完',
+      agent_left_at: '2026-10-05T01:00:00Z',
+    })
+    expect(queryByTestId('task-progress-note')).toBeNull()
+    expect(queryByTestId('task-agent-left')).toBeNull()
+  })
+
   it('不做这件事的人：没有更多操作', () => {
     me = 'bob'
     const { container } = mount()

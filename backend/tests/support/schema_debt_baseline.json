@@ -240,6 +240,7 @@
     "add_index memory_dream_states.ix_memory_dream_states_project_id",
     "remove_column conversations.seq_floor",
     "remove_column document_versions.requested_by",
+    "remove_column native_inputs.completed_at",
     "remove_column own_agents.callers",
     "remove_column own_agents.device_id",
     "remove_column routines.confirmed_at",

@@ -50,9 +50,7 @@ class Host:
     steer = send
 
     async def status(self, ref):
-        return SessionStatus(
-            working=True, model="", work_id=str(self.work), takes_inputs=True
-        )
+        return SessionStatus(working=True, model="", work_id=str(self.work))
 
 
 class Runtime(RoomSessions):

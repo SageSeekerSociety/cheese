@@ -5,15 +5,15 @@
 // 空槽也占 16px，否则同层级的标题左缘会参差。
 //
 // 行尾是这一行自己的那盏灯（`light`，父级按 `lib/roomLight.ts` 的判据算好）：画
-// 哪一盏、红灯说的是哪件事（在跑却没动静、停下报错没人接手，或者等一位队友等太久
-// 了）都在那一份里，这里只负责把它画出来。不亮就不画。
+// 哪一盏、红灯说的是哪件事（停下报错没人接手，或者等一位队友等太久了）都在那一份
+// 里，这里只负责把它画出来。不亮就不画。
 //
 // 行右边画的是成员：此刻在这里干活的队友（`TopicRailMembers`），悬停说出是谁、在
-// 做什么。成员和灯是两回事：灯说这个房间的活走到哪了，成员说此刻谁在里面。房间在
+// 做什么。成员和灯是两回事：灯说这个房间有没有要你看的事，成员说此刻谁在里面。房间在
 // 等一位队友、等太久了说的是这一行自己的红灯，不画成头像。
 //
 // 有子话题的行，折叠开关另带一层颜色——收起来的后代里：红 = 有成员卡住了，黄 = 有
-// 事等你，绿 = 有活在走。收起来把后代整行都藏掉了，开关上这一点颜色是替它们说的。
+// 事等你，绿 = 有交付完了还没看过的。收起来把后代整行都藏掉了，开关上这一点颜色是替它们说的。
 // 它不含这一行自己的灯：那一盏就在同一行的行尾，各说各的，不重复画。
 //
 // 「哪些行看得见、收起来的行替谁背着未读和动静、这一行画哪几位成员」都是
@@ -94,7 +94,7 @@ const rowLight = computed(() => props.light ?? null)
 // ——红光最亮，压过其余。这一行自己的那盏灯不并进来：它就在同一行的行尾，已经画过
 // 一遍了。
 const chevronLight = computed<RowLight | null>(() =>
-  brightest([props.row.hiddenLight, props.stalled || props.row.hiddenStalled ? { kind: 'red', breathe: false } : null])
+  brightest([props.row.hiddenLight, props.stalled || props.row.hiddenStalled ? { kind: 'red', why: 'waiting' } : null])
 )
 
 // Status: only show when notable (archived / draft); active is implicit. Shown as a
@@ -174,7 +174,7 @@ function onMenuToggle(open: boolean) {
           'tap-target': page,
           'subtree-toggle--stalled': chevronLight?.kind === 'red',
           'subtree-toggle--awaits': chevronLight?.kind === 'yellow',
-          'subtree-toggle--working': chevronLight?.kind === 'green',
+          'subtree-toggle--delivered': chevronLight?.kind === 'green',
         }"
         :title="toggleTitle"
         :aria-expanded="!row.collapsed"
@@ -427,7 +427,7 @@ function onMenuToggle(open: boolean) {
   color: var(--text);
 }
 /* 收起来的父话题会把子话题整行藏掉——开关自己带聚合色补上：红 = 里面（或这一行
-   自己）有成员卡住了，黄 = 里面有东西等你，绿 = 里面有活在走。颜色由
+   自己）有成员卡住了，黄 = 里面有东西等你，绿 = 里面有交付完了你还没看过的。颜色由
    `chevronLight` 算好（`lib/roomLight.ts` 的 `brightest`），这里只管画。
    hover 不改这三个颜色，状态优先于反馈。 */
 /* !important 是被逼的，不是偷懒：上面 .topic-row.is-active :deep(.v-icon) 为了
@@ -441,12 +441,12 @@ function onMenuToggle(open: boolean) {
 .subtree-toggle--awaits:hover :deep(.v-icon) {
   color: var(--signal-yellow) !important;
 }
-.subtree-toggle--working :deep(.v-icon),
-.subtree-toggle--working:hover :deep(.v-icon) {
+.subtree-toggle--delivered :deep(.v-icon),
+.subtree-toggle--delivered:hover :deep(.v-icon) {
   color: var(--ok) !important;
 }
 
-/* 行尾那盏灯（`TopicRailLight` 自己画颜色和闪不闪）。间距靠这里给：未读数字、静音
+/* 行尾那盏灯（`TopicRailLight` 自己画颜色）。间距靠这里给：未读数字、静音
    记号都自带左边距，它也得有，不然贴在数字上。 */
 .topic-row .row-light {
   margin-left: 6px;

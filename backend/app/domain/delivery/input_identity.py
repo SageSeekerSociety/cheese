@@ -1,7 +1,6 @@
 """Transport identity and evidence; no database or runtime dependencies."""
 
 import uuid
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -22,37 +21,6 @@ class InputReceipt:
     identity: InputIdentity
     evidence: Literal["accepted", "native_echo"]
     execution_work_id: uuid.UUID | None = None
-
-
-@dataclass(frozen=True)
-class WorkCompletion:
-    project_id: uuid.UUID
-    conversation_id: uuid.UUID
-    recipient_handle: str
-    harness: str
-    native_session_id: str
-    work_id: uuid.UUID
-    input_ids: tuple[uuid.UUID, ...]
-
-
-@dataclass(frozen=True)
-class WorkTermination:
-    """A work interval known to have ended without completing.
-
-    Carries the identity and the input interval a :class:`WorkCompletion` does,
-    because that is what proves which inputs this is about. It never asserts
-    those inputs were consumed: an outcome nobody confirmed is not a delivery
-    anyone may repeat.
-    """
-
-    project_id: uuid.UUID
-    conversation_id: uuid.UUID
-    recipient_handle: str
-    harness: str
-    native_session_id: str
-    work_id: uuid.UUID
-    input_ids: tuple[uuid.UUID, ...]
-    reason: Literal["interrupted", "is_error"]
 
 
 @dataclass(frozen=True)
@@ -104,7 +72,3 @@ class InputRegistrar(Protocol):
 
     async def withdraw(self, identity: InputIdentity) -> None: ...
 
-
-ReceiptConsumer = Callable[[InputReceipt], Awaitable[None]]
-CompletionConsumer = Callable[[WorkCompletion], Awaitable[None]]
-TerminationConsumer = Callable[[WorkTermination], Awaitable[None]]
