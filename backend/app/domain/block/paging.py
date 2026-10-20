@@ -22,7 +22,6 @@ from dataclasses import dataclass
 
 from sqlalchemy import (
     Text,
-    and_,
     cast,
     func,
     or_,
@@ -62,22 +61,13 @@ def _narrow(
     to some kinds, to one author, and to what the room shows (`shown=True`) or
     keeps out of it (`False`). `SHOWN_ROWS` goes in as its literal text, so a
     shown read can use `ix_blocks_shown`."""
-    # The rows #4448 retired are read from session_records, never from blocks:
-    # hidden event blocks holding a tool call, a subagent's conclusion, or a
-    # progress line. Hidden event blocks written for other reasons — an
-    # agent's notice, the line beside a message naming nobody — are still live
-    # input (`shown=False` is how they are read), so the filter asks for the
-    # retired writers' shape rather than for `in_room: false` alone.
-    retired_site_row = and_(
-        Block.kind == BlockKind.event,
-        ~Block.meta["in_room"].as_string().is_distinct_from("false"),
+    # Private harness activity is read from session_records, never from blocks.
+    stmt = stmt.where(
         or_(
-            cast(Block.meta, JSONB).has_key("tool"),
-            cast(Block.meta, JSONB).has_key("subagent"),
-            Block.meta["progress"].as_boolean().is_(True),
-        ),
+            Block.kind != BlockKind.event,
+            Block.meta["in_room"].as_string().is_distinct_from("false"),
+        )
     )
-    stmt = stmt.where(~retired_site_row)
     if kinds is not None:
         stmt = stmt.where(Block.kind.in_(list(kinds)))
     if author is not None:

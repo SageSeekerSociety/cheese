@@ -699,9 +699,7 @@ async def list_topic_blocks(
     - `author`: only blocks signed by this handle;
     - `shown=true`: only what the room's conversation shows
       (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only
-      what it keeps out of the room (a notice meant for an agent, the line
-      beside a message that names nothing). Retired harness steps are read from
-      session records, so they appear in neither read.
+      what it keeps out of the room (an agent's steps, notices for an agent).
 
     Cursors still name any block of the conversation, shown or not.
 
