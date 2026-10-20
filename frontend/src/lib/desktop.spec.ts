@@ -52,18 +52,10 @@ afterEach(() => {
 
 it('keeps Claude operations on the selected enrollment', async () => {
   const invoke = desktopHost('device')
-  const w = window as unknown as { __CHEESE_APP__: { can: string[] } }
-  w.__CHEESE_APP__.can.push('modelService')
   const bridge = desktopBridge()!
-  await bridge.claudeLogin(false, 'default', () => {}, 'research')
+  await bridge.claudeLogin('default', () => {}, 'research')
   await bridge.claudeLogout('default', 'research')
-  await bridge.claudeModelService!(
-    { baseUrl: 'https://example.test', token: 'synthetic', model: 'model' },
-    'default',
-    () => {},
-    'research'
-  )
-  for (const command of ['claude_login', 'claude_logout', 'claude_model_service']) {
+  for (const command of ['claude_login', 'claude_logout']) {
     expect(invoke).toHaveBeenCalledWith(command, expect.objectContaining({ profile: 'research', loginId: 'default' }))
   }
 })

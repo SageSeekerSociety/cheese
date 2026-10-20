@@ -14,7 +14,7 @@
   "ownLimitWaiting": "Usage limit reached. It resets in about {minutes} min, and the work continues then",
   "ownLimitResume": "The usage window has reset. Go on with what the usage limit stopped.",
   "ownerMachineAway": "The computer Claude Code runs on is offline. The work continues when it is back",
-  "ownAgentConnectionGone": "{agent}'s model connection was removed, so it won't start work. Call it again once {owner} logs that connection in again, or adds another one in the project settings",
+  "ownAgentConnectionGone": "{agent}'s model connection is unavailable in this team, so it won't start work. Ask {owner} to check the team's model settings and restore or replace the connection before calling it again",
   "cliProviderOverloaded": "The AI service is overloaded right now; this step did not finish",
   "cliProviderOverloadedHint": "This is a problem on the service's side and usually clears up quickly. You can retry later.",
   "cliSubscriptionAccountsCooling": "Every Claude subscription account on the platform is rate-limited; this step did not finish",

@@ -16,8 +16,8 @@ func TestEnrollmentsHaveDisjointLogins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := ModelService{BaseURL: "https://example.test", Token: "first-team", Model: "model"}
-	if err := SaveModelService(first, service); err != nil {
+	fixture := []byte("first-team")
+	if err := os.WriteFile(filepath.Join(first, ".credentials.json"), fixture, 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(place.ProfileRootEnv, ".cheese/profiles/research")
@@ -29,15 +29,15 @@ func TestEnrollmentsHaveDisjointLogins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.Token = "second-team"
-	if err := SaveModelService(second, service); err != nil {
+	fixture = []byte("second-team")
+	if err := os.WriteFile(filepath.Join(second, ".credentials.json"), fixture, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if first == second {
 		t.Fatal("two enrollments use the same credential directory")
 	}
-	stored, err := LoadModelService(first)
-	if err != nil || stored == nil || stored.Token != "first-team" {
+	stored, err := os.ReadFile(filepath.Join(first, ".credentials.json"))
+	if err != nil || string(stored) != "first-team" {
 		t.Fatalf("second enrollment changed the first one's login: %+v, %v", stored, err)
 	}
 }
@@ -46,24 +46,21 @@ func TestLoggingOutOneEnrollmentLeavesTheOther(t *testing.T) {
 	home := ownerHome(t)
 	t.Setenv(place.ProfileRootEnv, place.Root)
 	_, first, _ := NewLogin()
-	service := ModelService{BaseURL: "https://example.test", Token: "first-team", Model: "model"}
-	if err := SaveModelService(first, service); err != nil {
+	fixture := []byte("first-team")
+	if err := os.WriteFile(filepath.Join(first, ".credentials.json"), fixture, 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(place.ProfileRootEnv, ".cheese/profiles/research")
 	_, second, _ := NewLogin()
-	service.Token = "second-team"
-	if err := SaveModelService(second, service); err != nil {
-		t.Fatal(err)
-	}
-	if err := ForgetModelService(second); err != nil {
+	fixture = []byte("second-team")
+	if err := os.WriteFile(filepath.Join(second, ".credentials.json"), fixture, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := RemoveLogin(place.FirstClaudeLogin); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := LoadModelService(first)
-	if err != nil || stored == nil || stored.Token != "first-team" {
+	stored, err := os.ReadFile(filepath.Join(first, ".credentials.json"))
+	if err != nil || string(stored) != "first-team" {
 		t.Fatalf("logout in second enrollment changed first login: %+v, %v", stored, err)
 	}
 	// Removing a later login with the same local id also belongs to this profile.

@@ -310,9 +310,10 @@ async fn connect_steps(
 /// "browser" once the sign-in page is open.
 pub async fn claude_login(
     running: &Running,
-    console: bool,
     login_id: Option<&str>,
     profile: Option<&str>,
+    server: Option<&str>,
+    ticket: Option<&str>,
     on_step: &(dyn Fn(&'static str) + Send + Sync),
 ) -> Result<(), Failure> {
     if !running.begin() {
@@ -320,8 +321,8 @@ pub async fn claude_login(
     }
     let mut cmd = claude_command(profile);
     cmd.args(["claude", "login"]);
-    if console {
-        cmd.arg("--console");
+    if let (Some(server), Some(ticket)) = (server, ticket) {
+        cmd.args(["--server", server, "--ticket", ticket]);
     }
     if let Some(id) = login_id {
         cmd.args(["--login", id]);
@@ -331,39 +332,6 @@ pub async fn claude_login(
             on_step("preparing");
         } else if line.contains("Opening browser") || line.contains("visit:") {
             on_step("browser");
-        }
-    };
-    let result = run(cmd, running, &|_: u8| {}, &mut on_line).await;
-    let cancelled = running.cancelled();
-    running.end();
-    result.map_err(|e| if cancelled { Failure::cancelled() } else { Failure::at("login", e) })
-}
-
-/// Points the platform's Claude Code here at another model service instead of
-/// a Claude account. The key reaches the connector in its environment, so it
-/// is on no command line; `on_step` hears "preparing" while the build
-/// downloads.
-pub async fn claude_model_service(
-    running: &Running,
-    base_url: &str,
-    token: &str,
-    model: &str,
-    login_id: Option<&str>,
-    profile: Option<&str>,
-    on_step: &(dyn Fn(&'static str) + Send + Sync),
-) -> Result<(), Failure> {
-    if !running.begin() {
-        return Err(Failure::at("busy", ""));
-    }
-    let mut cmd = claude_command(profile);
-    cmd.args(["claude", "login", "--base-url", base_url, "--model", model]);
-    if let Some(id) = login_id {
-        cmd.args(["--login", id]);
-    }
-    cmd.env("CHEESE_MODEL_TOKEN", token);
-    let mut on_line = |line: &str| {
-        if line.contains("Downloading Claude Code") {
-            on_step("preparing");
         }
     };
     let result = run(cmd, running, &|_: u8| {}, &mut on_line).await;

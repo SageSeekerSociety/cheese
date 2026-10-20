@@ -25,14 +25,8 @@ from app.domain.agent.owner_provider import AccountChannel, owner_is_away
 from app.domain.agent.place import OWN_MODEL_KEY
 from app.domain.agent_instance import account_connections
 from app.domain.agent_instance.models import AccountConnection, AgentInstance
-from app.domain.project.models import Project
-from app.domain.user.models import User
-from app.domain.device.wiring import sql_device_service
-from app.domain.device.supply import Supply
 from app.domain.agent_session.models import AgentSession
 from tests.integration.conftest import (
-    join_project_team,
-    new_project,
     session_auth_headers,
 )
 
@@ -75,29 +69,11 @@ def service(monkeypatch) -> _Service:
 
 
 def _people(client):
-    """A project alice manages and bob is a member of, open to members' own
-    Claude Code."""
-    project = new_project(client, "Keys", owner="alice")
-    join_project_team(client, project["id"], "bob", admin=True)
+    from tests.integration.test_team_model_connections import setup_team
 
-    async def seed():
-        async with client.test_factory() as db:
-            row = await db.get(Project, uuid.UUID(project["id"]))
-            alice = await db.scalar(select(User).where(User.username == "alice"))
-            devices = sql_device_service(db)
-            code = await devices.start("Executor")
-            device = await devices.approve(
-                code,
-                owner_user_id=alice.id,
-                team_id=row.team_id,
-                supply=Supply.self_hosted,
-            )
-            await db.commit()
-            client.model_team_id = row.team_id
-            client.model_device_id = device.device_id
-
-    client.portal.call(seed)
-    return project["id"]
+    project, team, device, _ = setup_team(client)
+    client.model_team_id, client.model_device_id = team, device
+    return project
 
 
 def _keep(client, who="bob", **body):
@@ -261,7 +237,7 @@ def _add(client, project_id, connection, who="bob"):
     )
 
 
-def test_its_owner_adds_their_claude_code_with_it_and_it_carries_its_name(
+def test_a_team_teammate_uses_the_connection_and_carries_its_name(
     client, service
 ):
     project_id = _people(client)
@@ -285,7 +261,8 @@ def test_its_owner_adds_their_claude_code_with_it_and_it_carries_its_name(
 
     assert added.status_code == 200, added.text
     (agent,) = added.json()["data"]["agents"]
-    assert agent["name"].endswith("的 Claude Code（kimi-k2）")
+    assert agent["name"] == "kimi-k2"
+    assert agent["owner_handle"] is None
     assert agent["connection"]["on_account"] is True
     assert agent["machine"] is None
 
@@ -296,7 +273,7 @@ def test_its_owner_adds_their_claude_code_with_it_and_it_carries_its_name(
     )
     assert renamed.status_code == 200, renamed.text
     (agent,) = _settings(client, project_id, "bob")["agents"]
-    assert agent["name"].endswith("的 Claude Code（Kimi）")
+    assert agent["name"] == "Kimi"
 
 
 # --- its session ------------------------------------------------------------
@@ -407,7 +384,7 @@ def test_a_removed_connection_deletes_its_key_and_starts_nothing(
     assert agent["connection"] is None
     with pytest.raises(ScreenSetupError) as refused:
         _prepare(client, session, "the-session-host")
-    assert "模型连接已解除" in str(refused.value), "the room is told why"
+    assert str(refused.value), "the room receives a reason for refusing to start"
 
 
 def test_a_message_to_it_waits_for_none_of_its_owners_machines(client, service):

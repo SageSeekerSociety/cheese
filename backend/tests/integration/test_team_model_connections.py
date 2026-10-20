@@ -90,6 +90,7 @@ def setup_team(client):
                 supply=Supply.self_hosted,
             )
             login = DeviceClaudeLoginRow(
+                team_id=p.team_id,
                 device_id=device.device_id,
                 local_id="default",
                 installed=True,
@@ -357,44 +358,6 @@ def test_changing_allowed_models_stops_an_existing_teammate_from_using_a_removed
     )
     assert changed.status_code == 200, changed.text
     assert client.portal.call(allowed) is not None
-
-
-def test_subscription_login_opens_the_selected_device_and_returns_its_exact_profile_command(
-    client, monkeypatch
-):
-    from app.domain.agent.device_hub import device_hub
-
-    _, team, device, _ = setup_team(client)
-    calls = []
-
-    async def execute(device_id, argv, **kwargs):
-        calls.append((device_id, argv))
-        return (
-            {"exit": 0, "stdout": "  profile     team-42-3\n"}
-            if argv == ["cheesehost", "status"]
-            else {"exit": 1}
-        )
-
-    monkeypatch.setattr(device_hub, "exec", execute)
-    monkeypatch.setattr(device_hub, "is_online", lambda _: True)
-    monkeypatch.setattr(device_hub, "target", lambda _: "linux-amd64")
-    endpoint = f"/connector/teams/{team}/devices/{device}/claude-login"
-    denied = client.post(
-        endpoint, headers=session_auth_headers("carol"), json={"team_handle": "lab"}
-    )
-    assert denied.status_code == 403, denied.text
-    assert calls == []
-    response = client.post(
-        endpoint, headers=session_auth_headers("bob"), json={"team_handle": "lab"}
-    )
-    assert response.status_code == 200, response.text
-    assert response.json() == {
-        "opened": False,
-        "command": "cheesehost --profile team-42-3 claude login",
-    }
-    assert all(call[0] == device for call in calls)
-    assert calls[-1][1][0] == "xdg-open"
-    assert "loginDevice%3D" + device in calls[-1][1][1]
 
 
 def test_account_closure_keeps_shared_team_connections_and_teammates(client, service):

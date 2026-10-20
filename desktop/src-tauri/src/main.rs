@@ -52,7 +52,6 @@ const SERVER_PERMISSIONS: &[&str] = &[
     "allow-claude-login",
     "allow-cancel-claude-login",
     "allow-claude-logout",
-    "allow-claude-model-service",
     "allow-disconnect-this-machine",
     "allow-set-theme",
     "allow-set-badge",
@@ -170,44 +169,19 @@ struct ClaudeLogin(connect::Running);
 #[tauri::command]
 async fn claude_login(
     running: State<'_, ClaudeLogin>,
-    console: bool,
     login_id: Option<String>,
     profile: Option<String>,
+    server: Option<String>,
+    ticket: Option<String>,
     progress: Channel<Progress>,
 ) -> Result<(), connect::Failure> {
     let step = |id: &'static str| drop(progress.send(Progress::Step { id }));
-    connect::claude_login(&running.0, console, login_id.as_deref(), profile.as_deref(), &step).await
+    connect::claude_login(&running.0, login_id.as_deref(), profile.as_deref(), server.as_deref(), ticket.as_deref(), &step).await
 }
 
 #[tauri::command]
 fn cancel_claude_login(running: State<'_, ClaudeLogin>) {
     connect::cancel(&running.0);
-}
-
-/// Points a login of the platform's Claude Code here at another model service:
-/// the one `login_id` names, or a new one. The channel hears "preparing"
-/// while the build downloads.
-#[tauri::command]
-async fn claude_model_service(
-    running: State<'_, ClaudeLogin>,
-    base_url: String,
-    token: String,
-    model: String,
-    login_id: Option<String>,
-    profile: Option<String>,
-    progress: Channel<Progress>,
-) -> Result<(), connect::Failure> {
-    let step = |id: &'static str| drop(progress.send(Progress::Step { id }));
-    connect::claude_model_service(
-        &running.0,
-        &base_url,
-        &token,
-        &model,
-        login_id.as_deref(),
-        profile.as_deref(),
-        &step,
-    )
-    .await
 }
 
 #[tauri::command]
@@ -326,7 +300,6 @@ fn main() {
             claude_login,
             cancel_claude_login,
             claude_logout,
-            claude_model_service,
             disconnect_this_machine,
             set_theme,
             resident::set_badge,
@@ -394,7 +367,7 @@ fn main() {
             // the title bar lies over the page, the app's own version, and what else
             // the app can do for it.
             let about = format!(
-                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, version: {version:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\", \"updates\", \"device\", \"modelService\", \"teamEnrollment\"] }};",
+                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, version: {version:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\", \"updates\", \"device\", \"teamEnrollment\", \"modelCredentialLogin\"] }};",
                 version = app.package_info().version.to_string(),
                 start = serde_json::to_string(&start).unwrap_or_else(|_| "null".into()),
             );

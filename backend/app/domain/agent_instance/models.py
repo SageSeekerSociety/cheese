@@ -131,6 +131,15 @@ class AccountConnection(UuidPk, Timestamps, Base):
     """
 
     __tablename__ = "account_model_connections"
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "user.id",
+            ondelete="CASCADE",
+            name="fk_account_model_connections_owner_user_id_user",
+        ),
+        nullable=True,
+        index=True,
+    )
     team_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey(
@@ -170,3 +179,49 @@ class AccountConnection(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     check_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PersonalModelResource(UuidPk, Base):
+    """A team's reference to a member's credential; never a copy of its secret."""
+
+    __tablename__ = "personal_model_resources"
+    __table_args__ = (
+        CheckConstraint(
+            "(login_id IS NULL) <> (account_connection_id IS NULL)",
+            name="ck_personal_model_resources_credential",
+        ),
+        UniqueConstraint(
+            "team_id", "login_id", name="uq_personal_model_resources_team_login"
+        ),
+        UniqueConstraint(
+            "team_id",
+            "account_connection_id",
+            name="uq_personal_model_resources_team_account",
+        ),
+    )
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "team.id",
+            ondelete="CASCADE",
+            name="fk_personal_model_resources_team_id_team",
+        ),
+        index=True,
+    )
+    login_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "claude_logins.id",
+            ondelete="CASCADE",
+            name="fk_personal_model_resources_login_id_claude_logins",
+        ),
+        nullable=True,
+        index=True,
+    )
+    account_connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "account_model_connections.id",
+            ondelete="CASCADE",
+            name="fk_personal_model_resources_account_connection",
+        ),
+        nullable=True,
+        index=True,
+    )

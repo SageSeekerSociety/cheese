@@ -61,8 +61,8 @@ covers:
 
 改动留不下的会话（支线、还没开始的任务，`Place.keeps_work`）从同一个接口拿到的是**只读令牌**，响应里 `read_only` 为真：
 
-- GitHub 侧是只要读权限的安装令牌（`GitHubAppTokens.read_token`）：安装的每项授权都按读级别要，没有读级别的 `workflows` 不要，否则整次签发会被拒。`actions: write` 的安装在这里只得到 `actions: read`：能读 CI，不能重跑。
-- Forgejo 侧给内置 OAuth 客户端的令牌加不了范围，所以是项目账号建的带 `read:repository`、`read:issue`、`read:user` 范围的访问令牌（`ForgejoTokens.read_token`）。它在 Forgejo 上永不过期，平台在名字里写上过期时刻，签发新的和定时清理时把过期的删掉（`revoke_expired_read_tokens`），缓存行带 `read_only`。
+- GitHub 侧是只要读权限的安装令牌（`GitHubAppTokens.read_token`）：安装的每项授权都按读级别要，没有读级别的 `workflows` 不要，否则整次签发会被拒。唯一的例外是 `actions`：安装有 `actions: write` 时照样要 `write`，因为重跑、取消一次 workflow 运行不改仓库里的任何东西，而值守部署的例行任务跑在支线里，没有它每次偶发失败都要找人重跑。`contents` 仍是读，推送照样被拒。GitHub 把这些也放在 `actions: write` 下：手动触发（`workflow_dispatch`）任何一条声明了这个触发方式的 workflow、启用或停用一条 workflow、删除运行记录和日志、批准外部 fork 的运行。安装没接受 `actions: write` 的，这里只得到 `actions: read`。
+- Forgejo 侧给内置 OAuth 客户端的令牌加不了范围，所以是项目账号建的带 `read:repository`、`read:issue`、`read:user` 范围的访问令牌（`ForgejoTokens.read_token`）。它在 Forgejo 上永不过期，平台在名字里写上过期时刻，签发新的和定时清理时把过期的删掉（`revoke_expired_read_tokens`），缓存行带 `read_only`。Forgejo 的范围里没有单管 Actions 的一项：`/repos/*` 下的接口（Actions 的在内）都归 `repository`，给 `write:repository` 就连推送一起给了，所以 Forgejo 侧不能重跑 CI。
 
 机器上那两条命令（`gh` / `fj`）由 `domain/agent/forge_cli.py` 包一层：凭据是为**这一次调用**现签的，只对绑定的 host 和 path 有效；`fj` 还会因为 0.6 版把绝对 API 路径拼在一起而起一个本地转发。
 

@@ -17,6 +17,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Column,
     DateTime,
     Enum,
     ForeignKey,
@@ -148,7 +149,7 @@ def _login_record_id(context) -> str:
     given = context.get_current_parameters()
     # ``local_id``'s own default is not applied yet when this one runs.
     if (given.get("local_id") or FIRST_LOGIN) == FIRST_LOGIN:
-        return given["device_id"]
+        return given.get("device_id") or uuid.uuid4().hex
     return uuid.uuid4().hex
 
 
@@ -163,25 +164,50 @@ class DeviceClaudeLoginRow(Base):
     """
 
     __tablename__ = "claude_logins"
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("team.id", ondelete="CASCADE", name="fk_claude_logins_team_id_team"),
+        nullable=True,
+        index=True,
+    )
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "user.id", ondelete="CASCADE", name="fk_claude_logins_owner_user_id_user"
+        ),
+        nullable=True,
+        index=True,
+    )
+    host_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "model_credential_hosts.id",
+            ondelete="CASCADE",
+            name="fk_claude_logins_host_id_model_credential_hosts",
+        ),
+        nullable=True,
+        index=True,
+    )
     allowed_models: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
     __table_args__ = (
+        # Schema metadata only until the cleanup release drops retired service fields.
+        Column("model", String(128), nullable=True),
+        Column("service_host", String(255), nullable=True),
         UniqueConstraint(
             "device_id", "local_id", name="uq_claude_logins_device_id_local_id"
         ),
     )
+    __mapper_args__ = {"exclude_properties": ["model", "service_host"]}
 
     id: Mapped[str] = mapped_column(
         String(64), primary_key=True, default=_login_record_id
     )
-    device_id: Mapped[str] = mapped_column(
+    device_id: Mapped[str | None] = mapped_column(
         ForeignKey(
             "device.device_id",
-            ondelete="CASCADE",
+            ondelete="SET NULL",
             name="fk_claude_logins_device_id_device",
         ),
-        nullable=False,
+        nullable=True,
     )
     # What the machine calls it: the name of its directory there
     # (`login_kind.FIRST_LOGIN` for the first one).
@@ -191,16 +217,9 @@ class DeviceClaudeLoginRow(Base):
     # The pinned build is on the machine. Without it nothing is logged in yet.
     installed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     logged_in: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    # What `claude auth status` names: `claude.ai` for a subscription login, or
-    # the API key kind, and for a subscription its plan (`max`, `pro`, …). A
-    # machine whose owner set another model service is `model_service`
-    # (`login_kind.MODEL_SERVICE`), with the model it calls there.
+    # Subscription status reported by Claude Code, and its plan (`max`, `pro`, …).
     auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subscription_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # The host of that model service (never its key), for its owner to tell
-    # one service from another; None for a Claude account.
-    service_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # What its owner named this connection on 「模型连接」; None until they do.
     # The machine never reports it, so its reports leave it alone, and the own
     # agents on the connection are named after it.
@@ -215,6 +234,19 @@ class DeviceClaudeLoginRow(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    @property
+    def transport_id(self) -> str:
+        return self.host_id or self.device_id or ""
+
+
+class ModelCredentialHost(Base):
+    """A model-process connection, with no execution-device enrollment."""
+
+    __tablename__ = "model_credential_hosts"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
 
 
 class DeviceSandboxRow(Base):

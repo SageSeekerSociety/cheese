@@ -24,7 +24,6 @@
   "executionTimedOut": "The environment didn't answer this execution call in time",
   "machineAllocationInProgress": "An environment is still being allocated. Change it a little later",
   "machineOfflineCannotConfirmStop": "The computer is offline, so there's no way to confirm the old session has stopped. Reconnect and try again",
-  "modelServiceMachineOffline": "This device is offline. Set the custom model service once it is back online",
   "nodeCloudOffline": "This deployment isn't connected to a cloud yet",
   "nodeCloudOnline": "The platform can provide environments",
   "nodeDeviceOffline": "No device is connected",
