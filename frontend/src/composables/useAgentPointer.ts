@@ -14,6 +14,22 @@ import { fieldLabel } from '@/lib/assistantView'
 /** 打字的格子：光标跟着字走。 */
 const TYPED = new Set(['name', 'description'])
 const FOLLOW_MS = 120
+/** 人自己滚过页面之后这么久不跟着滚。 */
+const HANDS_OFF_MS = 2500
+/** 光标离屏幕上下边缘至少留这么多。 */
+const MARGIN = 72
+
+function scroller(el: HTMLElement): HTMLElement {
+  for (let at = el.parentElement; at; at = at.parentElement) {
+    const { overflowY } = getComputedStyle(at)
+    if ((overflowY === 'auto' || overflowY === 'scroll') && at.scrollHeight > at.clientHeight) return at
+  }
+  return (document.scrollingElement as HTMLElement | null) ?? document.documentElement
+}
+
+function smooth(): ScrollBehavior {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+}
 
 let measurer: CanvasRenderingContext2D | null = null
 function textWidth(el: HTMLElement, text: string): number {
@@ -45,6 +61,24 @@ export function useAgentPointer(options: PointerOptions) {
   let timer: ReturnType<typeof setInterval> | null = null
   /** 最后指着的地方：一步做完、下一步还没开始时，指针停在那里，不消失。 */
   let rest: AgentPointer | null = null
+  /** 人最近一次自己滚页面的时间。 */
+  let handled = 0
+  /** 已经滚到过的那一格：每格只在换到它时滚一次。 */
+  let shownKey: string | null = null
+
+  /** 把屏幕上 [top, bottom] 这一段滚进 el 所在滚动区的视野。 */
+  function reveal(el: HTMLElement, top: number, bottom: number) {
+    if (Date.now() - handled < HANDS_OFF_MS) return
+    const box = scroller(el)
+    const view =
+      box === document.scrollingElement || box === document.documentElement
+        ? { top: 0, bottom: window.innerHeight }
+        : box.getBoundingClientRect()
+    let by = 0
+    if (bottom > view.bottom - MARGIN) by = bottom - (view.bottom - MARGIN)
+    if (top - by < view.top + MARGIN) by = top - (view.top + MARGIN)
+    if (Math.abs(by) > 1) box.scrollBy?.({ top: by, behavior: smooth() })
+  }
 
   function field(key: string): HTMLElement | null {
     return options.host.value?.querySelector<HTMLElement>(`[data-agent-field="${key}"]`) ?? null
@@ -71,19 +105,27 @@ export function useAgentPointer(options: PointerOptions) {
     const key = options.writing.value
     const el = key ? field(key) : null
     if (!key || !el) {
+      shownKey = null
       outline.value = null
       pointer.value = options.active.value ? rest : null
       return
     }
     const control =
       el.querySelector<HTMLElement>('.base-field__control') ?? el.querySelector<HTMLElement>('.v-input') ?? el
-    const area = box(control.getBoundingClientRect())
+    const rect = control.getBoundingClientRect()
+    const area = box(rect)
     outline.value = { x: area.x - 4, y: area.y - 4, w: area.w + 8, h: area.h + 8 }
+    if (key !== shownKey) {
+      shownKey = key
+      // 一格比屏幕还高（详情）时先露出它的开头。
+      reveal(control, rect.top, Math.min(rect.bottom, rect.top + window.innerHeight / 2))
+    }
 
     if (TYPED.has(key)) {
       if (key === 'description') {
         const end = options.descriptionEnd()
         if (end) {
+          reveal(control, end.top, end.bottom)
           pointer.value = {
             x: end.left - origin.left,
             y: end.top - origin.top,
@@ -132,10 +174,22 @@ export function useAgentPointer(options: PointerOptions) {
   )
 
   const onResize = () => requestAnimationFrame(measure)
+  const onHands = () => {
+    handled = Date.now()
+  }
+  const onKey = (event: KeyboardEvent) => {
+    if (['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '].includes(event.key)) onHands()
+  }
   window.addEventListener('resize', onResize)
+  window.addEventListener('wheel', onHands, { passive: true })
+  window.addEventListener('touchmove', onHands, { passive: true })
+  window.addEventListener('keydown', onKey)
   onBeforeUnmount(() => {
     follow(false)
     window.removeEventListener('resize', onResize)
+    window.removeEventListener('wheel', onHands)
+    window.removeEventListener('touchmove', onHands)
+    window.removeEventListener('keydown', onKey)
   })
 
   /** 把一格滚进视野，并描一下。 */

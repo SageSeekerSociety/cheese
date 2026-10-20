@@ -122,6 +122,7 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
 import TaskPublish from './PublishTask.vue'
 
 import AccountService from '@/services/account'
+import { typeInComposer } from '@/test/composerInput'
 
 const SPACE_ID = 7
 
@@ -497,12 +498,13 @@ describe('发题页：和芝士一起写', () => {
     ]
     const view = await mount()
 
-    await fireEvent.update(view.getByPlaceholderText('描述题目或输入修改要求'), '出一道缓存实验题')
+    await typeInComposer(view.container, '出一道缓存实验题')
     await fireEvent.click(view.getByRole('button', { name: '发送' }))
 
     // 问之前先有草稿：芝士写的就是它。
     await waitFor(() => expect(startDraft).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(nameInput(view).value).toBe('Lab 3 缓存模拟器'))
+    // 参数按打字的节奏放进表单（lib/typist.ts），要等一会儿。
+    await waitFor(() => expect(nameInput(view).value).toBe('Lab 3 缓存模拟器'), { timeout: 4000 })
     expect(await view.findByText('已填写名称和难度。')).toBeTruthy()
     expect(view.getByText('表单改动')).toBeTruthy()
     expect(view.getByText('待你确认')).toBeTruthy()

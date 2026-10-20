@@ -7,7 +7,7 @@ import type { AssistantEdit, AssistantHome } from '@/composables/useAssistant'
 import type { useTaskDraft } from '@/composables/useTaskDraft'
 import type { DraftTerms } from '@/lib/taskDraftAgent'
 
-import { computed, ref } from 'vue'
+import { computed, onScopeDispose, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { useAssistant } from '@/composables/useAssistant'
@@ -16,6 +16,7 @@ import { AttachmentsApi } from '@/api/attachments'
 import { t } from '@/i18n'
 import { changeView, panelMessages, resultView, stepView } from '@/lib/assistantView'
 import { partialValue } from '@/lib/partialJson'
+import { createTypist } from '@/lib/typist'
 
 type Draft = ReturnType<typeof useTaskDraft>
 
@@ -35,10 +36,23 @@ export interface DraftAgentOptions {
 interface ShownFile {
   id: number | null
   name: string
+  mime: string
 }
 
 export function useDraftAgent(options: DraftAgentOptions) {
   const { draft } = options
+
+  // 芝士写的参数按打字的节奏放进表单（见 lib/typist.ts）；调用结束、写进草稿、发布都排在
+  // 放完之后。
+  const typist = createTypist((_call, raw) => void draft.preview(partialValue(raw), options.terms()))
+  let after: Promise<void> = Promise.resolve()
+  function then(step: () => void) {
+    after = after
+      .then(() => typist.idle())
+      .then(step)
+      .catch(() => undefined)
+  }
+  onScopeDispose(() => typist.stop())
 
   const assistant = useAssistant({
     home: options.home,
@@ -48,23 +62,25 @@ export function useDraftAgent(options: DraftAgentOptions) {
       await draft.ensure()
     },
     on: {
-      toolArgs: (_call, name, raw) => {
-        if (name === 'cheese_task_write') void draft.preview(partialValue(raw), options.terms())
+      toolArgs: (call, name, raw) => {
+        if (name === 'cheese_task_write') typist.feed(call, raw)
       },
       toolEnded: (_call, name, failed) => {
-        if (name === 'cheese_task_write') void draft.ended(failed)
+        if (name === 'cheese_task_write') then(() => void draft.ended(failed))
       },
-      edit: (edit) => {
-        void draft.settle(edit)
-        if (edit.draft !== draft.id.value || edit.created) options.draftsChanged?.()
-      },
-      published: (done) => {
-        if (done.draft === draft.id.value) {
-          draft.gone()
-          options.publishedHere?.(done.task.id)
-        }
-        options.draftsChanged?.()
-      },
+      edit: (edit) =>
+        then(() => {
+          void draft.settle(edit)
+          if (edit.draft !== draft.id.value || edit.created) options.draftsChanged?.()
+        }),
+      published: (done) =>
+        then(() => {
+          if (done.draft === draft.id.value) {
+            draft.gone()
+            options.publishedHere?.(done.task.id)
+          }
+          options.draftsChanged?.()
+        }),
       conversation: (id) => {
         if (draft.draft.value) draft.draft.value = { ...draft.draft.value, conversationId: id }
       },
@@ -76,7 +92,7 @@ export function useDraftAgent(options: DraftAgentOptions) {
 
   async function attach(picked: File[]) {
     for (const file of picked) {
-      const row = ref({ id: null as number | null, name: file.name, uploading: true })
+      const row = ref({ id: null as number | null, name: file.name, mime: file.type, uploading: true })
       files.value = [...files.value, row.value]
       try {
         const done = await AttachmentsApi.upload({ type: 'file', file })
@@ -106,7 +122,7 @@ export function useDraftAgent(options: DraftAgentOptions) {
     steps: assistant.steps.value.map(stepView),
     changes: assistant.edits.value.map((e) => changeView(e, terms(), canUndo() && e.draft === draft.id.value)),
     results: assistant.published.value.map(resultView),
-    files: files.value.map((f): PanelFile => ({ name: f.name, uploading: f.uploading })),
+    files: files.value.map((f): PanelFile => ({ name: f.name, mime: f.mime, uploading: f.uploading })),
   }))
 
   function editById(id: number): AssistantEdit | undefined {

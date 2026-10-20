@@ -1018,6 +1018,8 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     assert any(event == "tool_args" for event, _ in events)
     told = json.dumps(gateway.requests[0], ensure_ascii=False)
     assert "<当前页面>" in told and f"草稿 {draft}" in told
+    # The space is named by its id, which its tools take, with what it offers.
+    assert "空间id=" in told and "这个空间可选的分类" in told
     # What it did is kept with the answer: the conversation shows it again.
     kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
     parts = kept["data"]["messages"][-1]["parts"]

@@ -12,19 +12,20 @@
   "placeholder": "问一个关于这道题的问题…",
   "queued": "正在排队，资源空出后自动开始",
   "reads": "芝士读过这道题的说明、要求和题目信息。",
-  "send": "发送",
   "starters": {
     "basics": "做这道题要先会什么？",
     "hard": "这道题难在哪里？",
     "start": "从哪里入手比较好？"
   },
-  "stop": "停止",
   "stopped": "已停止",
   "today": "今天",
   "steps": {
     "folded": "{first}等 {n} 步",
     "thinking": "思考中",
-    "thought": "思考了 {s} 秒"
+    "thought": "思考了 {s} 秒",
+    "notFound": "内容不存在",
+    "denied": "没有权限",
+    "failed": "调用失败"
   },
   "changes": {
     "title": "表单改动",
@@ -49,9 +50,6 @@
     "open": "查看题目"
   },
   "files": {
-    "uploading": "上传中",
-    "remove": "移除 {name}",
-    "add": "添加文件",
     "readThese": "读取附上的文件",
     "failed": "文件上传失败"
   },
