@@ -40,7 +40,7 @@ steps:
     desc: 骨架是 Claude Code、Codex、Pi 三种之一，会话 id 存在频道上，下一轮续跑同一个会话。同时按频道所处阶段注入那一段操作说明。
     link: /dev/turn#harness
   - label: 芝士怎么说话
-    desc: 普通输出不进房间，要发言必须调用 chat_send。工具调用和施工现场的进度记成活动块，太久不发言平台会投一条内部提醒。
+    desc: 普通输出不进房间，要发言必须调用 chat_send。工具调用和输出留在会话记录里，施工现场从那里读；太久不发言平台会投一条内部提醒。
     link: /dev/turn#publish
   - label: 失败、超时与发版
     desc: 机器的错记在设备上、由人决定怎么处理；带幂等 id 的副作用先记一行，重派时分得清做没做过；发版时旧进程把在跑的轮交给新进程。
@@ -70,7 +70,7 @@ steps:
 
 ## 5. 芝士怎么说话 {#publish}
 
-芝士的普通输出不进房间，要发言必须调用平台工具 `chat_send`。工具调用、施工现场的进度作为活动块记录下来；一轮很久没有发言时，平台会给它投一条内部提醒。平台工具表怎么送到每种骨架手里、机器够不着时哪些工具还在，见[平台工具与会话侧 MCP](/dev/mcp)；只有必须在机器上跑的动作才走 `cheese` 命令行，见[cheese CLI 原理](/dev/cli#sandbox)。
+芝士的普通输出不进房间，要发言必须调用平台工具 `chat_send`。工具调用和它们的输出留在会话的原始记录里（`session_records`，见[会话记录](/dev/session-records)），施工现场从那里读；一轮很久没有发言时，平台会给它投一条内部提醒。平台工具表怎么送到每种骨架手里、机器够不着时哪些工具还在，见[平台工具与会话侧 MCP](/dev/mcp)；只有必须在机器上跑的动作才走 `cheese` 命令行，见[cheese CLI 原理](/dev/cli#sandbox)。
 
 人点名芝士说的话，芝士先在房间里回一句，再做别的：开这一轮的那条消息，和一轮进行中插进来的那条，都一样。从这条消息送进会话起，会话调 `chat_send` 或 `cheese_ask` 之前，除了读这个房间的聊天记录（`cheese_chat_list`、`cheese_chat_get`、`cheese_chat_search`、`cheese_chat_replies`），别的工具一律被拒，拒绝的原因会告诉它先回话。读房间不算回话：拒绝可能先于那条消息送到模型眼前，人的消息也常常只是一个 @、指着上面几条，不让它读，它只能回一句「还没看到你写了什么」。读文件、跑命令、查项目状态都照样被拒，那正是人在等的活。平台自己的通知、巡检、没有点名芝士的消息不算；分身向启动它的会话汇报，不受这条约束。规则写在所有骨架共用的 runner 里（`harness/driven/runner.py`），每种骨架只负责在自己的工具路径上照它拒绝：Claude Code 的函数钩子（`remote_execution/proxy.js`）、Codex 的动态工具（`codex/tools.py`）、pi 的扩展（`pi/platform.ts`）。
 
@@ -88,7 +88,7 @@ steps:
 
 ### 发版时的交接 {#resume}
 
-交接时新旧两个进程同时连着同一个数据库：新进程重新监听活过这个进程的会话，补上没人监听那段时间里它们说过的话；开会头的轮被收掉（`resume_orphans`），消息收了却没开跑的轮补上（`resume_lost_messages`）。谁在跑哪些轮、哪些会话归谁监听由一把数据库锁决定，细节见[会话与轮次](/dev/session#handover)和[部署拓扑](/dev/topology#handover)。
+交接时新旧两个进程同时连着同一个数据库：新进程重新监听活过这个进程的会话，补上没人监听那段时间里它们说过的话；开会头的轮被收掉（`resume_orphans`），消息收了却没开跑的轮补上（`resume_lost_messages`）。Claude Code 的 runner 把没确认的事件留在自己那边，新进程从上一任停下的地方接着读；上一版发布起的 runner 不读，直接换成这一版的，它正在跑的那一轮以 `runner_replaced` 结束、随即接着跑（见[会话与轮次](/dev/session#handover)）。谁在跑哪些轮、哪些会话归谁监听由一把数据库锁决定，细节见[会话与轮次](/dev/session#handover)和[部署拓扑](/dev/topology#handover)。
 
 ## 同一频道里的几个 AI 队友 {#seats}
 

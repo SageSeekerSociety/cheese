@@ -15,7 +15,7 @@
   上判，时限由平台登记 runner 时交给它（`agent_no_progress_s`、`agent_unread_grace_s`）；进程没了
   由 runner 报一个 `exited` 事件；API 拒绝由 runner 归类成带类型的失败，随会话回到空闲的那条
   `status` 报上来。房间不为它保留任何时钟。
-- **不说的（pi）**：后两条由房间的会话账（`agent/room/sessions/`）判，读房间自己的事件词汇
+- **不说的（Codex、pi，仍用房间的旧时钟）**：后两条由房间的会话账（`agent/room/sessions/`）判，读房间自己的事件词汇
   （说了话、调了工具、工具返回、一轮结束）；进程没了由会话核心（`agent/session_host/host.py`）
   判。
 
@@ -23,7 +23,7 @@
 
 | 情况 | 证据是什么 | 什么时候结束 | 房间看到什么 |
 |---|---|---|---|
-| 进程没了 | Claude Code：runner 报 `exited`（它自己没来得及报的，下一个 runner 在同一份状态上替它报）。pi：runner 答读时带 `alive: false`，或连续 `RUNNER_GONE_S`（120 秒）够不着 | 立刻 | 「会话进程已退出」的失败结束；没读过的输入就此结算为「不会再被读到」，可以再递 |
+| 进程没了 | Claude Code：runner 报 `exited`（它自己没来得及报的，下一个 runner 在同一份状态上替它报）。Codex、pi：runner 答读时带 `alive: false`，或连续 `RUNNER_GONE_S`（120 秒）够不着 | 立刻 | 「会话进程已退出」的失败结束；没读过的输入就此结算为「不会再被读到」，可以再递 |
 | 只说话不干活 | 最近 `TALKING_S`（5 分钟）内有输出，但最近一次「动作」（工具调用、工具返回、一轮结束）已经是 `agent_no_progress_s`（30 分钟）以前 | 到点即结束 | 轮次超时事件（`TURN_TIMEOUT`） |
 | 发给它的消息它一直不读 | 写给它的一条消息，`agent_unread_grace_s`（30 分钟）内没有回显 | 到点即结束 | 「没读到你」事件（`PROMPT_UNDELIVERED`） |
 | API 拒绝 | Claude Code 的 `result` 带 `is_error: true`（额度用完、密钥失效、529 都是它），runner 报成 `api_error` / `error` 并带上状态码和构建自己的原话 | 立刻，作为一次失败结束 | Claude Code 自己的那句话原文进房间 |
@@ -42,7 +42,7 @@
 Claude Code 是那条消息被原样回显（`--replay-user-messages` 的 `isReplay` 记录），由 runner
 报成该输入的 `read`；写进 stdin 不算读到。
 
-到点时 runner（pi 是房间）会打断会话（`interrupt`），让它停下手上那一轮；之后那条
+到点时 runner（Codex、pi 是房间）会打断会话（`interrupt`），让它停下手上那一轮；之后那条
 `result` 就是这一轮的结束，失败种类是 `stuck`，不会再结束一次。
 
 额度用完时，我们的计量代理回 429：知道真相的 admission 接口一拒就把平台自己那句额度
@@ -66,8 +66,9 @@ assistant 文本、也没有一次工具调用，就按「环境没起来」结�
 
 ## 结束之后
 
-平台不自动重跑。每种结束各发一次事件（`who=human`），交给人看一眼，修好后在房间里重新 @；
-下一轮接着同一个会话（`agent-principles.md` 第十四条）。
+上面四种结束平台都不自动重跑。每种结束各发一次事件（`who=human`），交给人看一眼，修好后在房间里
+重新 @；下一轮接着同一个会话（`agent-principles.md` 第十四条）。自动续上的只有模型服务的临时故障
+（`agent/turn_resume.py`）和发版替换 runner 打断的那一轮（`runner_replaced`）。
 
 ## 设置一览
 
@@ -77,7 +78,7 @@ assistant 文本、也没有一次工具调用，就按「环境没起来」结�
 | `agent_unread_grace_s` | 1800 | 说给它的消息多久没回执算「不读」 |
 | `agent_turn_hard_ceiling_s` | 10800 | 过线只记录，不结束 |
 | `agent_first_output_timeout_s` | 300 | 一轮多久没有任何输出算「没起来」 |
-| `RUNNER_GONE_S`（常量） | 120 | pi：一轮开着时 runner 够不着多久算没了 |
+| `RUNNER_GONE_S`（常量） | 120 | Codex、pi：一轮开着时 runner 够不着多久算没了 |
 | `LEASE_S`（常量，`session_host/host.py`） | 120 | 说协议的 runner 够不着多久算「够不着」（不结束任何东西） |
 | `TALKING_S`（常量） | 300 | 多近的输出算「正在说话」 |
 
@@ -95,6 +96,6 @@ assistant 文本、也没有一次工具调用，就按「环境没起来」结�
   骨架进程退出或够不着太久时交出 `Ended`。
 - `backend/app/domain/agent/room/sessions/`：`Clock`（`records.py`）、`verdict`
   （`books.py`）、`_died`（`reading.py`），不说协议的骨架的后两条判定所在。
-- `backend/app/domain/agent/runtime.py`：冷启动熔断、外层时限、`ceiling_crossed_s`、结束后的
+- `backend/app/domain/agent/turn/steps/execute.py`：冷启动熔断、外层时限、`ceiling_crossed_s`、结束后的
   事件。
 - `docs/topics/turn活跃度检测.md`：两层机制（疑似卡死→探活、3 小时硬顶）的来历。

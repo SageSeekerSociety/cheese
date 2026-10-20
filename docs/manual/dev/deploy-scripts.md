@@ -92,7 +92,7 @@ covers:
 |---|---|---|---|
 | `cheese-db-backup.timer` | 每小时整点（`RandomizedDelaySec=120`，`Persistent=true`） | `pg_dump -Fc`、校验、清理旧份、传 R2 | `/home/nictheboy/ops/db-backup.sh` |
 | `cheese-uploads-mirror.timer` | 每小时 :30 | `uploads/` 增量镜像到 R2（`UPLOADS_PREFIX=prod-uploads`） | `~/ops/r2-sync-uploads.py` |
-| `cheese-transcripts-mirror.timer` | 每小时 :45 | 同一个脚本，会话记录归档目录（`UPLOADS_PREFIX=transcripts`） | 同上 |
+| `cheese-transcripts-mirror.timer` | 每小时 :45 | 同一个脚本，旧的会话记录归档目录（`UPLOADS_PREFIX=transcripts`）；没有新归档写进这个目录，归档房间的记录由房间清理直接传进私有桶 `transcripts/rooms/` | 同上 |
 | `cheese-etrip-backup.timer` | 每小时 :15 | etrip 的两个 Postgres 容器 dump + 上传卷 tar → R2 | `/root/ops/etrip-backup.sh` |
 | `cheese-room-cleanup.timer` | 每分钟（`AccuracySec=1s`） | 触发一次归档房间的到期清理 | `/usr/local/lib/cheese/trigger-room-cleanup.sh` |
 | `cheese-disk-cleanup.timer` | 每天 04:00（±30 分钟） | 高于脚本自己的标记（75%）才回收可再生缓存 | `/usr/local/lib/cheese/dev-box-disk-cleanup.sh`，先由 `ExecCondition` 跑 `--needed` |
@@ -128,7 +128,8 @@ covers:
 
 | 脚本 | 一句话 |
 |---|---|
-| `db-backup.sh` | 定时逻辑备份：`pg_dump -Fc`、校验可读、保留 30 天 |
+| `db-backup.sh` | 定时逻辑备份：`pg_dump -Fc`、校验可读、保留 30 天；`~/ops/backup.env` 设了 `CHEESE_BACKUP_HOURLY_DAYS` 时再调 `r2-prune-dumps.py` 分层 |
+| `r2-prune-dumps.py` | 分层保留：最近几天每小时一份，之后每天一份到 30 天；本地转储只在 R2 副本大小核对上（或重传回读核对上）之后才删 |
 | `db-restore-test.sh` | 把最新转储恢复进一个用完即弃的 Postgres 容器，抽查 schema 与数据 |
 | `r2-upload.py` | 把校验过的转储传到 Cloudflare R2（异地那一份） |
 | `r2-sync-uploads.py` | 把本地 `uploads/` 增量镜像到 R2，只增不删（远端是超集） |
