@@ -377,7 +377,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/harness/claude_code/remote_execution/runtime_commands.py": 8,
     "app/domain/agent/harness/claude_code/remote_execution/runtime_context.py": 13,
     "app/domain/agent/harness/claude_code/remote_execution/runtime_core.py": 3,
-    "app/domain/agent/harness/claude_code/remote_execution/sandbox_host.py": 14,
+    "app/domain/agent/harness/claude_code/remote_execution/sandbox_host.py": 12,
     "app/domain/agent/harness/claude_code/remote_execution/send_user_file.py": 2,
     "app/domain/agent/harness/claude_code/remote_execution/session_transfer.py": 9,
     "app/domain/agent/harness/claude_code/remote_execution/shell_prefix.py": 1,

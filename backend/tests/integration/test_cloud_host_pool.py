@@ -859,6 +859,31 @@ def test_an_enrolled_host_in_error_is_given_up_and_its_session_placed_again(pool
     assert pool.said("alice") == [LOST_LINE]
 
 
+def test_a_host_with_no_data_disk_is_given_up_and_its_session_placed_again(pool):
+    """No sandbox starts without a disk limit, and the limit needs the host's
+    data disk: a host that has none recorded — one enrolled before hosts had
+    them — runs nothing again, so its session is placed on one that does
+    rather than failing every tool call there."""
+    [alice] = pool.room("alice", 1)
+    host_id = pool.place("alice", alice)
+    pool.works_on(alice, pool.up(host_id))
+
+    async def without_a_data_disk():
+        async with pool.client.test_request_factory() as db:
+            row = await db.get(CloudHost, host_id)
+            row.sandbox_disk_gb = None
+            await db.commit()
+
+    pool.run(without_a_data_disk)
+    pool.pool("maintain")
+
+    host = pool.host(host_id)
+    assert host.released_at is not None
+    assert host.failed_at is None, "the provider did not fail it"
+    assert pool.place("alice", alice) != host_id
+    assert pool.said("alice") == [LOST_LINE]
+
+
 def test_a_session_whose_host_stopped_answering_gets_a_new_sandbox(pool, monkeypatch):
     """On 2026-10-05 sessions waited hours on a host whose connector hung. A
     host gone ten minutes, while another host answers, is given up."""

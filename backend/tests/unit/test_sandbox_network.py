@@ -367,6 +367,25 @@ def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
 
 
 @with_sandbox_host
+def test_a_new_sandbox_is_not_charged_for_a_removed_ones_leftovers(
+    rooms, machine_service, small_disk
+):
+    """A sandbox taken down leaves its home until its teardown deletes it,
+    which can wait on whatever still holds it. A sandbox started meanwhile
+    has its whole limit, not what the leftovers leave of it."""
+    api = f"http://127.0.0.1:{machine_service(b'backend')}"
+    gone = rooms(api)
+    gone.bash("fallocate -l 800M left")
+    subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "down", str(gone.resource)], check=True
+    )
+
+    fresh = rooms(api)
+
+    assert fresh.bash("fallocate -l 800M mine && echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
 def test_no_sandbox_runs_where_its_home_has_no_disk_limit(
     tmp_path, monkeypatch, capsys
 ):

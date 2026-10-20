@@ -17,7 +17,8 @@ filesystem its homes are on, and on a platform host what each home holds by
 its quota, a ``statvfs`` each.
 
 - Below ``sandbox_disk_free_floor`` of its bytes or ``sandbox_inodes_free_floor``
-  of its inodes, a platform host takes no new sandbox
+  of its inodes, on its data disk or on its own disk, where its executor
+  releases are staged, a platform host takes no new sandbox
   (``CloudHost.disk_full_since``, ``reaper.accepting``) until a reading finds
   room again. Nothing on it is stopped: each sandbox is within its own limit,
   and the host's sandboxes end, and free their room, as they go idle.
@@ -181,7 +182,10 @@ class DiskGuard:
                 reading["reclaim_error"],
             )
         filesystem = reading["filesystem"]
-        await self._mark(device_id, below_floor(filesystem), filesystem)
+        system = reading.get("system")
+        full = below_floor(filesystem) or (system is not None and below_floor(system))
+        read = {"homes": filesystem, **({"system": system} if system else {})}
+        await self._mark(device_id, full, read)
         host = await self._repo.by_device(device_id)
         await self._session.commit()
         removed = 0

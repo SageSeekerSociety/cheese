@@ -487,14 +487,43 @@ def open_directory(path, uid):
             os.close(descriptor)
             descriptor = following
         if os.fstat(descriptor).st_uid != uid:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
             raise Refused(f"{path} is not the caller's")
     except OSError as error:
         os.close(descriptor)
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
         raise Refused(f"{path} is not a directory: {error.strerror}") from None
     except BaseException:
         os.close(descriptor)
         raise
     return descriptor
+
+
+def open_beneath(descriptor, relative, uid):
+    """`relative` under the directory open at `descriptor`, opened as
+    `open_directory` opens a path, or None where it is not there."""
+    current = os.dup(descriptor)
+    try:
+        for part in relative.split("/"):
+            following = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current
+            )
+            os.close(current)
+            current = following
+        if os.fstat(current).st_uid != uid:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused(f"{relative} is not the caller's")
+    except FileNotFoundError:
+        os.close(current)
+        return None
+    except OSError as error:
+        os.close(current)
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+        raise Refused(f"{relative} is not a directory: {error.strerror}") from None
+    except BaseException:
+        os.close(current)
+        raise
+    return current
 
 
 def quota_mount(descriptor):
@@ -512,6 +541,7 @@ def quota_mount(descriptor):
             and {"prjquota", "pquota"} & set(rest[2].split(","))
         ):
             return fields[4].replace("\\040", " ")
+    # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
     raise Refused("the sandbox's home is not on a disk with project quotas")
 
 
@@ -630,14 +660,7 @@ def disk(name, uid, home, limits):
         }
         keep_projects(table)
         tag(home_fd, ids["home"])
-        try:
-            state_fd = os.open(
-                STATE_DIR,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                dir_fd=home_fd,
-            )
-        except FileNotFoundError:
-            state_fd = None
+        state_fd = open_beneath(home_fd, STATE_DIR, uid)
         if state_fd is not None:
             opened.append(state_fd)
             tag(state_fd, ids["state"])
@@ -651,18 +674,19 @@ def disk(name, uid, home, limits):
 
 
 def free_disk(name, uid):
-    """Lift the limits of a sandbox's home and state and forget their
-    projects; its home is deleted next. The store keeps its own."""
+    """Lift the limits of a sandbox's home and state; its home is deleted
+    next. Their projects stay taken until it is (`forget_gone`): a project
+    handed to another sandbox while the files are still there would count
+    them against it. The store keeps its own."""
     table = projects()
     for key in ("home:" + name, "state:" + name):
         entry = table.get(key)
         if entry is None:
             continue
         if entry["uid"] != uid:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
             raise Refused("sandbox is another user's")
         limit_project(entry["mount"], entry["id"], 0, 0)
-        del table[key]
-    keep_projects(table)
 
 
 def up(name, pid, home, limits, forward, site=None):
@@ -777,6 +801,7 @@ def home_path(text, name):
         or parts[-1] != name
         or not NAME.fullmatch(parts[-2])
     ):
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
         raise Refused(f"{text!r} is not a sandbox's home")
     return text
 
@@ -792,6 +817,7 @@ def parse(argv):
     ):
         return "reclaim", {"names": argv[1:]}
     if len(argv) < 3 or argv[0] != "up" or not NAME.fullmatch(argv[1]):
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
         raise Refused(
             "usage: up NAME PID --home PATH ... | down NAME | reclaim NAME..."
         )
@@ -815,6 +841,7 @@ def parse(argv):
         else:
             raise Refused(f"unexpected option {option}")
     if len(limits) != len(LIMITS) or home is None:
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
         raise Refused("the home and every limit are required")
     return "up", {
         "name": argv[1],

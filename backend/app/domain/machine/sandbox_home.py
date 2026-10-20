@@ -10,7 +10,8 @@ runs there with nothing of ours importable, like that one.
   the sandbox's temporary directory are removed. A home already gone is not
   an error.
 - ``disk``: how full the filesystem the homes are on is, in bytes and in
-  inodes, and which sandbox homes on this machine are not among ``live`` and
+  inodes, and the machine's own when the homes are on another (``system``),
+  and which sandbox homes on this machine are not among ``live`` and
   were last written before ``grace_s`` — homes whose sandbox no longer exists
   (``disk_guard``). On a platform host each sandbox's home has a project
   quota of its own (``sandbox_host.py``), and the kernel answers a
@@ -189,8 +190,14 @@ def disk(cleanup, live, grace_s, idle=()) -> dict:
             )
             if sandbox and key not in live and time.time() - written > grace_s:
                 left_behind.append({"project": key[0], "resource": key[1]})
+    # The machine's own disk, where its releases, toolchain and Claude are,
+    # when the homes are on another (a platform host's data disk).
+    system = {}
+    if root.is_dir() and root.stat().st_dev != Path.home().stat().st_dev:
+        system = {"system": filesystem(Path.home())}
     return {
         "filesystem": whole,
+        **system,
         "homes": homes,
         "left_behind": left_behind,
         "machine": machine(),

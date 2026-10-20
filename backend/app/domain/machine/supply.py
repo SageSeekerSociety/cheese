@@ -34,6 +34,7 @@ def data_disk_gb(offering: dict[str, Any]) -> int:
     without a disk limit (``sandbox_host.py``), and that limit needs the disk."""
     size = int(offering.get("dataDiskGb") or 0)
     if size <= 0:
+        # i18n-exempt: a provider configuration fault, logged for operators
         raise MicroCloudError(
             f"offering {offering.get('id')} gives its machines no data disk for "
             "the sandboxes' homes"
