@@ -101,9 +101,9 @@ async def admitted_initial(
             pending = seated is not None and await seat_has_unfinished_input(
                 session, topic_id, seated[1]
             )
-            # A member's own Claude Code runs only on its owner's machine: with
-            # none of them online, the message waits for one to come back, and
-            # the periodic scan of waiting messages starts it then.
+            # A device-held connection needs its credential device online.
+            # While it is away, the message waits; the periodic scan starts
+            # waiting messages once the device comes back.
             away = (
                 not pending
                 and instance_id is not None
