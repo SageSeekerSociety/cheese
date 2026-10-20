@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAssistant } from './useAssistant'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 const CONVERSATION = { id: 'c1', title: '', lastActiveAt: '2026-10-01T08:00:00Z', questions: 0 }
 
@@ -96,7 +96,9 @@ describe('题目页上问芝士', () => {
 
     await a.ask('要先会什么？', 'fallback')
 
-    expect(a.notice.value).toBe("Cheese can't answer right now. Try again later.")
+    // The sentence the key names, in English: not the server's Chinese.
+    expect(a.notice.value).toBe(i18n.global.t('apiError.assistantFailed'))
+    expect(a.notice.value).not.toMatch(/[\u4e00-\u9fff]/)
   })
 
   it('an error event with an unknown key shows the server words', async () => {
