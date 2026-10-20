@@ -109,8 +109,19 @@ export function stepView(step: AssistantStep): PanelStep {
     verb: toolLabel(step.name),
     arg: arg.replace(/\s+/g, ' ').trim().slice(0, 60),
     state: step.state,
-    error: step.error,
+    error: step.error === undefined ? undefined : stepError(step.error),
   }
+}
+
+/** 一步为什么没成，写成人读得懂的一句。工具报的是平台原样的回应（`Platform HTTP 404:
+ * {...}`）时只说是哪一类；芝士自己读得到原文，接着会说它怎么办。平台拒绝时说的那句中文
+ * 原样留着。 */
+export function stepError(text: string): string {
+  const status = /^Platform HTTP (\d{3})/.exec(text)?.[1]
+  if (status === '404') return t('tasks.assistant.steps.notFound')
+  if (status === '401' || status === '403') return t('tasks.assistant.steps.denied')
+  if (status || !/\p{Script=Han}/u.test(text) || text.includes('{')) return t('tasks.assistant.steps.failed')
+  return text.length > 80 ? `${text.slice(0, 80)}…` : text
 }
 
 const LEVELS: Record<number, string> = {

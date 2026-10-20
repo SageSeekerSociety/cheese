@@ -489,7 +489,7 @@ def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) 
         else f"草稿 {draft.id}（新题目）"
     )
     return _view(
-        f"<草稿 id={draft.id} version={draft.version} 空间={space.name}>",
+        f"<草稿 id={draft.id} version={draft.version} 空间id={space.id} 空间={space.name}>",
         head,
         draft.fields or {},
         space,
@@ -500,7 +500,7 @@ def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) 
 def published_view(task_id: int, name: str, fields: dict, space: Space) -> str:
     """A published 题目 as 芝士 reads it, in the same words as a draft."""
     return _view(
-        f"<题目 id={task_id} 空间={space.name}>",
+        f"<题目 id={task_id} 空间id={space.id} 空间={space.name}>",
         f"题目 {task_id}（已发布）：{name}",
         fields,
         space,
@@ -553,9 +553,23 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         ),
         "description:",
         markdown_of(fields) or "（空）",
+        f"这个空间可选的分类：{_names(space.categories)}",
+        f"这个空间可选的标签：{_names(space.tags)}",
         close_tag,
     ]
     return "\n".join(lines)
+
+
+#: The most names of a space's categories or tags said with a draft.
+CHOICES_SAID = 80
+
+
+def _names(choices: dict[str, int]) -> str:
+    names = list(choices)
+    if not names:
+        return "（无）"
+    said = "、".join(names[:CHOICES_SAID])
+    return said + (f" 等 {len(names)} 个" if len(names) > CHOICES_SAID else "")
 
 
 def intro_of(fields: dict) -> str:

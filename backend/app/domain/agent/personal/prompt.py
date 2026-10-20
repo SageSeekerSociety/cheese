@@ -91,7 +91,9 @@ def task_brief(
             else "材料（领取获批后才能读取，现在读不到）："
         )
         lines += [f"- {name}（文件 id {file_id}）" for file_id, name in materials]
-    return f"<题目 id={task.id}>\n" + "\n".join(lines) + "\n</题目>"
+    return (
+        f"<题目 id={task.id} 空间id={task.space_id}>\n" + "\n".join(lines) + "\n</题目>"
+    )
 
 
 def system_prompt() -> str:

@@ -12,19 +12,20 @@
   "placeholder": "Ask a question about this task…",
   "queued": "Queued. It starts when resources free up",
   "reads": "Cheese has read this task's description, requirements and details.",
-  "send": "Send",
   "starters": {
     "basics": "What do I need to know first?",
     "hard": "What is hard about this task?",
     "start": "Where should I start?"
   },
-  "stop": "Stop",
   "stopped": "Stopped",
   "today": "Today",
   "steps": {
     "folded": "{first} and {n} steps",
     "thinking": "Thinking",
-    "thought": "Thought for {s}s"
+    "thought": "Thought for {s}s",
+    "notFound": "Not found",
+    "denied": "Not permitted",
+    "failed": "Call failed"
   },
   "changes": {
     "title": "Form changes",
@@ -49,9 +50,6 @@
     "open": "View task"
   },
   "files": {
-    "uploading": "Uploading",
-    "remove": "Remove {name}",
-    "add": "Add files",
     "readThese": "Read the attached files",
     "failed": "File upload failed"
   },

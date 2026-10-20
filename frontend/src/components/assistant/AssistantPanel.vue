@@ -1,5 +1,13 @@
 <template>
-  <section class="ap" :aria-label="t('tasks.assistant.label')">
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drop target for files dragged in; the attach button is the keyboard's way -->
+  <section
+    class="ap"
+    :aria-label="t('tasks.assistant.label')"
+    @dragenter.prevent="onDragOver"
+    @dragover.prevent="onDragOver"
+    @dragleave="onDragLeave"
+    @drop.prevent="onDrop"
+  >
     <header class="ap__head">
       <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" :state="busy ? 'think' : null" /></span>
       <v-menu location="bottom start" :disabled="busy">
@@ -121,77 +129,36 @@
       </p>
     </div>
 
-    <footer class="ap__foot">
-      <ul v-if="files.length" class="ap__files">
-        <li v-for="(file, i) in files" :key="i" class="ap__file">
-          <v-icon size="14">mdi-paperclip</v-icon>
-          <span class="ap__file-n" data-user-content>{{ file.name }}</span>
-          <span v-if="file.uploading" class="ap__file-s">{{ t('tasks.assistant.files.uploading') }}</span>
-          <button
-            type="button"
-            class="ap__file-x"
-            :aria-label="t('tasks.assistant.files.remove', { name: file.name })"
-            :title="t('tasks.assistant.files.remove', { name: file.name })"
-            @click="emit('removeFile', i)"
-          >
-            <v-icon size="14">mdi-close</v-icon>
-          </button>
-        </li>
-      </ul>
-      <div class="ap__box" :class="{ 'ap__box--ready': ready }">
-        <textarea
-          ref="input"
+    <footer class="ap__foot" :class="{ 'ap__foot--drop': dragOver }">
+      <!-- The same box as the channel composer's: the chip row, the editor, the action row. -->
+      <div class="ap__box">
+        <ComposerChipRow
+          v-if="chips.length"
+          :atts="chips"
+          :topic-id="null"
+          @remove-att="(i: number) => emit('removeFile', i)"
+        />
+        <ComposerEditor
           v-model="draft"
           class="ap__input"
-          rows="2"
-          autocomplete="off"
+          :names="NO_NAMES"
           :placeholder="placeholder ?? t('tasks.assistant.placeholder')"
-          :aria-label="placeholder ?? t('tasks.assistant.placeholder')"
+          :label="placeholder ?? t('tasks.assistant.placeholder')"
           @keydown="onKeydown"
-          @input="grow"
+          @compositionstart="composing = true"
+          @compositionend="composing = false"
         />
-        <div class="ap__acts">
-          <template v-if="canAttach">
-            <input
-              ref="picker"
-              type="file"
-              multiple
-              class="ap__picker"
-              :aria-label="t('tasks.assistant.files.add')"
-              @change="onPick"
-            />
-            <BaseButton
-              icon="mdi-paperclip"
-              size="sm"
-              kind="ghost"
-              :disabled="busy"
-              :title="t('tasks.assistant.files.add')"
-              :aria-label="t('tasks.assistant.files.add')"
-              @click="picker?.click()"
-            />
-          </template>
-          <span class="ap__grow" />
-          <BaseButton
-            v-if="busy"
-            class="ap__send"
-            icon="mdi-stop"
-            size="sm"
-            :title="t('tasks.assistant.stop')"
-            :aria-label="t('tasks.assistant.stop')"
-            @click="emit('stop')"
-          />
-          <BaseButton
-            v-else
-            class="ap__send"
-            icon="mdi-send"
-            size="sm"
-            :kind="ready ? 'primary' : 'ghost'"
-            :disabled="!ready"
-            :title="t('tasks.assistant.send')"
-            :aria-label="t('tasks.assistant.send')"
-            @click="submit"
-          />
-        </div>
+        <ComposerActions
+          :uploading="files.some((f) => f.uploading)"
+          :can-send="ready"
+          :show-image-picker="canAttach && !mdAndUp"
+          :enter-sends="true"
+          :no-files="!canAttach || busy"
+          :busy="busy"
+          @files="emit('attach', $event)"
+          @send="submit"
+          @stop="emit('stop')"
+        />
       </div>
       <p class="ap__hint">{{ hint ?? t('tasks.assistant.hint') }}</p>
     </footer>
@@ -203,9 +170,12 @@
 // 发布页、改题页用的都是它；芝士每一轮做的事（调的工具、写进草稿的改动、发布的结果）
 // 由 `AssistantTurn` 画。只拿 props、只发事件：说话、换对话、撤销、交文件都由外面那一层去做。
 import type { PanelChange, PanelResult, PanelStep } from '@/lib/assistantView'
+import type { PendingAttachment } from '@/lib/attachments'
+import type { RefNames } from '@/lib/refChip'
 
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useDisplay } from 'vuetify'
 import dayjs from 'dayjs'
 
 import AssistantTurn from './AssistantTurn.vue'
@@ -214,6 +184,9 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import NavLink from '@/components/common/NavLink.vue'
+import ComposerActions from '@/components/room/ComposerActions.vue'
+import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
+import ComposerEditor from '@/components/room/ComposerEditor.vue'
 
 export interface PanelConversation {
   id: string
@@ -238,6 +211,7 @@ export interface PanelMessage {
 /** 要随下一个问题交给芝士的文件。 */
 export interface PanelFile {
   name: string
+  mime?: string
   uploading?: boolean
 }
 
@@ -309,9 +283,41 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const markdown = new MarkdownRenderer()
 const draft = ref('')
-const input = ref<HTMLTextAreaElement | null>(null)
 const scroller = ref<HTMLElement | null>(null)
-const picker = ref<HTMLInputElement | null>(null)
+const composing = ref(false)
+const { mdAndUp } = useDisplay()
+
+/** 正文里没有 @ 和话题标签可画：编辑器要一份空的名册。 */
+const NO_NAMES: RefNames = { mentionNames: {}, topicTitles: {} }
+
+/** 待交给芝士的文件，画成和工作台一样的一排。 */
+const chips = computed<PendingAttachment[]>(() =>
+  props.files.map((f, i) => ({
+    path: `pending-${i}`,
+    mime: f.mime || 'application/octet-stream',
+    name: f.name,
+    uploading: f.uploading,
+  }))
+)
+
+// 拖文件进面板：整块面板都是落区，亮的是输入框那一圈（和工作台一样）。只认真拖着文件的；
+// 拖一段文字经过不亮。
+const dragOver = ref(false)
+function onDragOver(e: DragEvent) {
+  if (!props.canAttach || props.busy || !e.dataTransfer?.types.includes('Files')) return
+  dragOver.value = true
+}
+function onDragLeave(e: DragEvent) {
+  const entering = e.relatedTarget
+  if (entering instanceof Node && (e.currentTarget as HTMLElement).contains(entering)) return
+  dragOver.value = false
+}
+function onDrop(e: DragEvent) {
+  const was = dragOver.value
+  dragOver.value = false
+  const dropped = Array.from(e.dataTransfer?.files ?? [])
+  if (was && dropped.length) emit('attach', dropped)
+}
 
 const starterList = computed(
   () => props.starters ?? (['basics', 'start', 'hard'] as const).map((k) => t(`tasks.assistant.starters.${k}`))
@@ -340,29 +346,14 @@ function listSubtitle(c: PanelConversation): string {
   return t('tasks.assistant.listed', { day: day(c.lastActiveAt), n: c.questions ?? 0 })
 }
 
-function grow() {
-  const el = input.value
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-}
-
 function submit() {
   if (!ready.value) return
   emit('send', draft.value.trim() || t('tasks.assistant.files.readThese'))
   draft.value = ''
-  nextTick(grow)
-}
-
-function onPick(e: Event) {
-  const input = e.target as HTMLInputElement
-  const picked = Array.from(input.files ?? [])
-  if (picked.length) emit('attach', picked)
-  input.value = ''
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !composing.value) {
     e.preventDefault()
     submit()
   }
@@ -567,89 +558,24 @@ watch(
 }
 
 .ap__box {
-  display: flex;
-  flex-direction: column;
   padding: 4px 6px 4px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
+  transition:
+    border-color var(--dur-quick) var(--ease-standard),
+    box-shadow var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
 }
 
-.ap__box:focus-within,
-.ap__box--ready {
+.ap__box:focus-within {
   border-color: var(--faint);
 }
 
-.ap__input {
-  min-height: 40px;
-  padding: 6px 0 2px;
-  font: inherit;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--ink);
-  resize: none;
-  outline: none;
-  background: transparent;
-  border: 0;
-}
-
-.ap__acts {
-  display: flex;
-  align-items: center;
-  min-height: 28px;
-  margin-top: 2px;
-}
-
-.ap__send {
-  width: 28px;
-  height: 28px;
-}
-
-.ap__picker {
-  display: none;
-}
-
-.ap__files {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.ap__file {
-  display: inline-flex;
-  gap: 4px;
-  align-items: center;
-  max-width: 100%;
-  padding: 2px 4px 2px 8px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--text);
+/* 拖着文件进来：和工作台的输入框一样，那一圈加深、垫一层底色。 */
+.ap__foot--drop .ap__box {
+  border-color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--muted);
   background: var(--fill);
-  border-radius: var(--radius-md);
-}
-
-.ap__file-n {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ap__file-s {
-  color: var(--muted);
-}
-
-.ap__file-x {
-  display: inline-flex;
-  padding: 2px;
-  color: var(--muted);
-  border-radius: var(--radius-sm);
-}
-
-.ap__file-x:hover {
-  color: var(--ink);
-  background: var(--fill-2);
 }
 
 .ap__hint {

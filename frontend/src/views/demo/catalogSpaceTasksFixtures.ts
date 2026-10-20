@@ -380,6 +380,7 @@ export const PANEL_LIVE = {
     },
   ],
   steps: [
+    { key: 't1', verb: '思考了 3 秒', arg: '', state: 'done' as const, thinking: true },
     { key: 'c1', verb: '读取文件', arg: '1-12', state: 'done' as const },
     { key: 'c2', verb: '查看空间题目', arg: 'Lab', state: 'done' as const },
     { key: 'c3', verb: '填写题目', arg: 'Lab 3 缓存模拟器', state: 'run' as const },

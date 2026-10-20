@@ -100,6 +100,12 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       get starters() {
         return [t('tasks.assistant.draft.starters.rubric'), t('tasks.assistant.draft.starters.check')]
       },
+      get placeholder() {
+        return t('tasks.assistant.draft.placeholder')
+      },
+      get hint() {
+        return t('tasks.assistant.draft.hint')
+      },
       canAttach: true,
     },
     states: [
