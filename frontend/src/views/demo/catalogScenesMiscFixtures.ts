@@ -139,11 +139,11 @@ export const DEVICES: MyDevice[] = [
     online: true,
     screens: [],
   }),
-  device({
-    device_id: 'dev-8b1c04',
-    name: '客厅的 NUC',
-    online: false,
-  }),
+  // The API also sends when an offline device was last heard from; `MyDevice` leaves it to `lastSeenOf`.
+  {
+    ...device({ device_id: 'dev-8b1c04', name: '客厅的 NUC', online: false }),
+    last_seen_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+  } as MyDevice,
 ]
 
 // ---- 空间申请（AdminSpacesPageView）----------------------------------------

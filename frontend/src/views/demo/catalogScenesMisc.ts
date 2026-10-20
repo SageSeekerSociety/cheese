@@ -195,7 +195,7 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
       error: null,
     },
     states: [
-      { name: '管理员', note: '团队管理员管理每次接入。', props: {}, expectSelector: 'input' },
+      { name: '管理员', note: '团队管理员改名、移除每次接入。', props: {}, expect: '重命名' },
       { name: '成员', note: '成员只读。', props: { canManage: false }, expect: '书房的 Mac mini' },
       { name: '读取中', note: '正在读取。', props: { loading: true }, expectSelector: '.v-progress-circular' },
       {
