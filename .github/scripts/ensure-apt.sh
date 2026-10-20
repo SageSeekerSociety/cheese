@@ -127,6 +127,9 @@ exec 9>"${CHEESE_APT_LOCK:-/tmp/cheese-ci-apt.lock}"
 flock 9
 keep=()
 if [ -n "$debs" ]; then
+  # As this user first: a `sudo mkdir -p` would create every missing parent as
+  # root too (~/.cache on a fresh runner), and later steps could not write there.
+  mkdir -p "$debs"
   sudo mkdir -p "$debs/partial"
   keep=(-o "Dir::Cache::archives=$debs" -o APT::Keep-Downloaded-Packages=true)
 fi

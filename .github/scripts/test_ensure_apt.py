@@ -66,6 +66,31 @@ if [ "$1" = "-i" ]; then {'touch "$STATE/installed"; exit 0' if dpkg_installs el
         self.assertIn(" update", calls[0])
         self.assertIn("Dir::Cache::archives=", calls[-1])
 
+    def test_a_missing_cache_directory_is_created_without_sudo(self):
+        # `sudo mkdir -p` would leave its missing parents (~/.cache on a fresh
+        # runner) owned by root, and the steps after it could not write there.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin").mkdir()
+            # Records whether the directory existed when sudo created inside it.
+            stubs = {**STUBS, "sudo": '#!/bin/sh\nif [ "$1" = mkdir ]; then '
+                                      '[ -d "$CHEESE_APT_DEBS" ] && echo existed >> "$STATE/sudo" '
+                                      '|| echo absent >> "$STATE/sudo"; fi\nexec "$@"\n',
+                     "id": "#!/bin/sh\necho 0\n", "chown": "#!/bin/sh\nexit 0\n"}
+            for name, body in stubs.items():
+                stub = root / "bin" / name
+                stub.write_text(body)
+                stub.chmod(0o755)
+            debs = root / "home" / ".cache" / "debs"
+            env = {**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}",
+                   "STATE": str(root), "FAILS": "0", "MESSAGE": "",
+                   "CHEESE_APT_STEP_SECONDS": "1", "CHEESE_APT_LOCK": str(root / "lock"),
+                   "CHEESE_APT_DEBS": str(debs)}
+            result = subprocess.run(["bash", str(SCRIPT), "zsh"], env=env,
+                                    capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((root / "sudo").read_text().split(), ["existed"])
+
 
 class EnsureApt(unittest.TestCase):
     def run_script(self, fails, message, hangs=0):

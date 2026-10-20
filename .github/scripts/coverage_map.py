@@ -81,6 +81,8 @@ def build(coverage_file, backend, out):
     """One traced shard's map: ``{file: {function: [test files]}}``."""
     from coverage import CoverageData
 
+    if not Path(coverage_file).is_file():
+        raise SystemExit(f"::error::{coverage_file} does not exist: the traced run left no coverage data")
     data = CoverageData(str(coverage_file))
     data.read()
     root = str(backend.resolve()) + "/"
