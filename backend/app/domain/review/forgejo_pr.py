@@ -404,8 +404,8 @@ class ForgejoPRClient:
 
         `/git/commits/{sha}`, not `/commits/{sha}`: Forgejo routes the single
         commit under `/git` (Gitea's GitHub-compatible alias for it is not in
-        Forgejo), which is the path `landing_forge.py` and `forge_files.py`
-        already read a commit at."""
+        Forgejo), which is the path `forge_files.py` already reads a commit
+        at."""
         return await self._request("GET", f"/git/commits/{quote(sha, safe='')}")
 
     async def commit_subject(self, sha):
@@ -418,8 +418,7 @@ class ForgejoPRClient:
         minus the prefix — the task's own (Chinese) title — which is why the
         reader of this method puts a real title on first."""
         data = await self._commit(sha)
-        # `_data` hands back None for a 200 with an empty body (the sibling
-        # reader in `landing_forge.parent` guards the same way): no message is
+        # `_data` hands back None for a 200 with an empty body: no message is
         # the same answer as an empty one, and neither is a crash.
         message = (((data or {}).get("commit") or {}).get("message") or "").strip()
         return message.splitlines()[0] if message else None

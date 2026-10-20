@@ -13,6 +13,7 @@ from app.domain.review.ports import (
     Chat,
     DispatchPending,
     RecordInstruction,
+    SweepCheckouts,
     TaskTeammate,
 )
 
@@ -43,6 +44,7 @@ def register_periodic_jobs(
     record_instruction: RecordInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
+    machines: SweepCheckouts | None = None,
 ) -> None:
     jobs.register(
         "pr poll",
@@ -64,6 +66,19 @@ def register_periodic_jobs(
             announce,
             record_instruction=record_instruction,
             task_teammate=task_teammate,
+        ),
+        forge_bound=True,
+    )
+    # A task's next branch is read from the forge when its teammate goes on.
+    jobs.register(
+        "task closing",
+        settings.accept_pr_poll_interval_s,
+        lambda: pr_poll.sweep_closings(
+            chat,
+            announce,
+            record_instruction=record_instruction,
+            task_teammate=task_teammate,
+            machines=machines,
         ),
         forge_bound=True,
     )

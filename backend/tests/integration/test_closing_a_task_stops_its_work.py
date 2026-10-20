@@ -10,20 +10,27 @@ The close can reach a backend that does not hold the session — the one taking
 over in a deploy — and the backend that does still stops the work.
 
 The owner is not the only one who closes a task: a task whose last step was
-accepted closes on its own when the turn writing it up ends, and that close
-stops whatever it left running the same way.
+accepted closes on its own when the turn writing it up never ends, and that
+close stops the write-up the same way. Other work running in the task is not
+the write-up, and the deadline does not close the task on it.
 """
 
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
+from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_instance.adapters import task_teammate
+from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.models import Delivery
+from app.domain.review import pr_poll
+from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task
 from app.main import app
 from tests.conftest import StubChannel, retire_topic, stub_compute
@@ -215,10 +222,113 @@ def test_a_turn_that_closed_its_own_task_gets_to_finish_then_stops(client):
         app.dependency_overrides.pop(get_chat_service, None)
 
 
+def _accepted_long_ago(client, task_id: uuid.UUID) -> None:
+    """Its last step was accepted fifty minutes ago."""
+
+    async def accept() -> None:
+        async with client.test_request_factory() as session:
+            await session.execute(
+                update(Task)
+                .where(Task.id == task_id)
+                .values(closing_since=datetime.now(UTC) - timedelta(minutes=50))
+            )
+            await session.commit()
+
+    client.portal.call(accept)
+
+
+def _is_the_write_up(client, task_id: uuid.UUID) -> None:
+    """The turn running in the task is the one told to write it up."""
+
+    async def mark() -> None:
+        async with client.test_request_factory() as session:
+            turn = await session.scalar(
+                select(AgentTurn.id).where(
+                    AgentTurn.conversation_id == task_id,
+                    AgentTurn.stopped_at.is_(None),
+                )
+            )
+            assert turn is not None
+            now = datetime.now(UTC)
+            session.add(
+                Delivery(
+                    event_id=uuid.uuid4(),
+                    recipient_handle="cheese",
+                    conversation_id=task_id,
+                    state="sent",
+                    attempt_id=turn,
+                    dedup_key=f"{uuid.uuid4()}:task",
+                    type="room_notice",
+                    payload={CLOSES_TASK: True, "content": "写总结"},
+                    event_at=now,
+                    recorded_at=now,
+                    sent_at=now,
+                )
+            )
+            await session.commit()
+
+    client.portal.call(mark)
+
+
 def _status(client, task: dict) -> str:
     return client.get(
         f"/topics/{task['id']}/task", headers=session_auth_headers("alice")
     ).json()["data"]["status"]
+
+
+def test_a_task_closed_for_a_write_up_that_never_ended_stops_the_turn(client):
+    channel, task, _ = _working_task(client)
+    task_id = uuid.UUID(task["id"])
+    service = app.dependency_overrides[get_chat_service]()
+    try:
+        # The turn writing the task up is still going fifty minutes on.
+        _is_the_write_up(client, task_id)
+        _accepted_long_ago(client, task_id)
+        assert _interrupts(channel, task_id) == []
+
+        client.portal.call(
+            lambda: pr_poll.sweep_closings(
+                service,
+                announce,
+                record_instruction=record_task_instruction,
+                task_teammate=task_teammate,
+            )
+        )
+
+        assert _status(client, task) == "closed"
+        _until(
+            lambda: _interrupts(channel, task_id),
+            "the task closed at its deadline with its write-up still running",
+        )
+    finally:
+        retire_topic(client, task_id)
+        app.dependency_overrides.pop(get_chat_service, None)
+
+
+def test_the_write_up_deadline_does_not_stop_other_work_in_the_task(client):
+    """Work the teammate is doing in the task besides the write-up is not
+    stopped by the write-up's deadline: the task goes on instead of closing."""
+    channel, task, _ = _working_task(client)
+    task_id = uuid.UUID(task["id"])
+    service = app.dependency_overrides[get_chat_service]()
+    try:
+        _accepted_long_ago(client, task_id)
+
+        client.portal.call(
+            lambda: pr_poll.sweep_closings(
+                service,
+                announce,
+                record_instruction=record_task_instruction,
+                task_teammate=task_teammate,
+            )
+        )
+
+        assert _status(client, task) == "open"
+        client.portal.call(service.stop_work_in_closed_tasks)
+        assert _interrupts(channel, task_id) == []
+    finally:
+        retire_topic(client, task_id)
+        app.dependency_overrides.pop(get_chat_service, None)
 
 
 def test_a_turn_begun_after_the_close_is_left_to_answer(client):

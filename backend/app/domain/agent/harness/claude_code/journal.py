@@ -12,6 +12,8 @@ library and the shared journal.
 import json
 from datetime import UTC, datetime
 
+from app.core.journal_images import extract, import_attached, reference
+from app.core.journal_images import prune as prune_images
 from app.domain.agent.harness.driven import journal
 
 
@@ -32,10 +34,12 @@ class Journal(journal.Journal):
 
     def append(self, record: dict) -> None:
         with self.connection:
-            self.connection.execute(
+            record = extract(record, self.connection)
+            result = self.connection.execute(
                 "INSERT INTO records(recorded_at, record) VALUES (?, ?)",
                 (datetime.now(UTC).isoformat(), json.dumps(record, ensure_ascii=False)),
             )
+            reference(record, self.connection, result.lastrowid)
         self.grew()
 
     def import_records(self, entries: list[dict], facts: dict[str, str]) -> None:
@@ -47,6 +51,7 @@ class Journal(journal.Journal):
         without the other.
         """
         with self.connection:
+            import_attached(entries, self.connection)
             for entry in entries:
                 self.connection.execute(
                     "INSERT OR IGNORE INTO records(sequence, recorded_at, record) "
@@ -57,6 +62,7 @@ class Journal(journal.Journal):
                         json.dumps(entry["record"], ensure_ascii=False),
                     ),
                 )
+                reference(entry["record"], self.connection, entry["sequence"])
             for key, value in facts.items():
                 self.connection.execute(
                     "INSERT INTO state VALUES (?, ?) ON CONFLICT(key) "
@@ -81,6 +87,7 @@ class Journal(journal.Journal):
                 "'$.cheese.work_completed'), 0) != 1",
                 (before,),
             )
+            prune_images(self.connection, self.table)
 
     def facts(self, prefix: str) -> dict[str, str]:
         return {

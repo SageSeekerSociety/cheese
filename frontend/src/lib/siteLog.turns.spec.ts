@@ -57,7 +57,7 @@ describe('groupByTurn', () => {
   it('does not count what 芝士 said as a step', () => {
     const turns = groupByTurn([
       block('1', 't1', '2026-09-15T20:28:00Z'),
-      block('2', 't1', '2026-09-15T20:28:40Z', { progress: true }),
+      block('2', 't1', '2026-09-15T20:28:40Z', { record: { type: 'assistant' } }),
     ])
 
     expect(turns[0].steps).toBe(1)
@@ -100,7 +100,7 @@ describe('groupByTurn', () => {
 
 describe('isNarration', () => {
   it('tells 芝士 speaking apart from a tool call', () => {
-    expect(isNarration({ progress: true })).toBe(true)
+    expect(isNarration({ record: { type: 'assistant' } })).toBe(true)
     expect(isNarration({ tool: 'bash', arg: 'ls' })).toBe(false)
     // 旧数据既没有 tool 也没有 progress —— 按原来的工具行渲染，别改判。
     expect(isNarration(null)).toBe(false)

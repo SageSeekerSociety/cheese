@@ -8,13 +8,10 @@ import uuid
 
 import pytest
 
-from app.domain.agent.tool_preview import (
-    DETAIL_MAX,
-    PREVIEW_MAX,
+from app.domain.session_record.preview import (
     ToolPreview,
     cheese_subcommand,
     command_preview,
-    tool_detail,
     tool_preview,
     work_subpath,
 )
@@ -301,54 +298,6 @@ def test_merging_file_descriptors_is_not_a_redirect_target():
 # ---- 摊开这一行：参数原文 ----
 
 
-def _detail(name: str, args: dict, *, work_dir: str = "") -> str:
-    """按生产路径算：预览先出来，原文再拿它对照。"""
-    return tool_detail(name, args, tool_preview(name, args, work_dir=work_dir))
-
-
-def test_opening_a_rewritten_line_shows_the_command_that_was_run():
-    # 一行显示的是「写文件 · build.py」——那是重写过的说法，heredoc 里的内容和
-    # 重定向都不在上面。摊开的人要的正是这些。
-    command = "cat > /tmp/build.py <<'EOF'\nprint(1)\nEOF"
-    assert tool_preview("bash", {"command": command}).text == "/tmp/build.py"
-    assert _detail("bash", {"command": command}) == command
-
-
-def test_opening_a_long_command_is_not_cut_at_the_one_line_limit():
-    command = "pytest " + " ".join(f"tests/test_{i}.py" for i in range(40))
-    assert len(_detail("Bash", {"command": command})) > PREVIEW_MAX
-
-
-def test_opening_a_shortened_path_shows_where_the_file_actually_is():
-    args = {"path": f"{ABS}/backend/app/main.py"}
-    assert tool_preview("read", args, work_dir=WORK).text == "backend/app/main.py"
-    assert _detail("read", args, work_dir=WORK) == args["path"]
-
-
-def test_a_chinese_description_still_opens_onto_the_command():
-    args = {
-        "command": f"cd {ABS}; docker compose up -d",
-        "description": "把数据库拉起来",
-    }
-    assert _detail("Bash", args, work_dir=WORK) == args["command"]
-
-
-def test_a_line_with_nothing_more_to_say_carries_no_second_copy():
-    # 摊开之后看见同一句话，等于什么也没摊开。
-    assert _detail("Grep", {"pattern": "TODO"}) == ""
-    assert _detail("read", {"path": "notes.md"}) == ""
-    assert _detail("Bash", {"command": "make test"}) == ""
-
-
-def test_an_enormous_argument_is_capped_and_says_so():
-    detail = _detail("Bash", {"command": "echo " + "x" * (DETAIL_MAX * 2)})
-    assert len(detail) == DETAIL_MAX + 1
-    assert detail.endswith("…")
-
-
-# ---- 平台工具和后台任务：它们是工具，不是一行 shell ----
-
-
 def test_a_platform_command_shows_the_argument_that_says_which_one():
     accepted = tool_preview("cheese_accept_request", {"task": "t", "subject": "fix: x"})
     assert accepted.text == "fix: x"
@@ -366,14 +315,6 @@ def test_a_background_job_shows_the_command_and_typing_shows_what_was_typed():
     # 那句话。
     assert tool_preview("bash_start", {"command": "pnpm dev"}).text == "pnpm dev"
     assert tool_preview("bash_write", {"id": "job-1-a", "text": "y"}).text == "y"
-
-
-def test_a_tool_with_no_telling_argument_has_nothing_to_open():
-    assert _detail("FutureTool", {"x": 1}) == ""
-    assert tool_detail("Bash", "not a dict", ToolPreview()) == ""  # type: ignore[arg-type]
-
-
-# ---- 显示哪一段，圆点就判哪一段 ----
 
 
 def test_a_command_substitution_is_part_of_the_value_it_sits_in():
@@ -431,12 +372,6 @@ def test_a_skill_read_through_the_shell_says_the_same_thing():
     )
 
 
-def test_a_skill_line_still_opens_onto_the_command_that_read_it():
-    # 这一行只剩「调用技能 · documents」，读的人点开是要看它到底动了哪个文件。
-    command = "cat skills/documents/SKILL.md"
-    assert _detail("bash", {"command": command}) == command
-
-
 def test_writing_a_skill_is_not_using_one():
     # 写一份说明和照着它干活是两件事。
     preview = tool_preview("write", {"path": "skills/documents/SKILL.md"})
@@ -467,21 +402,3 @@ def test_a_long_assignment_prefix_is_still_dropped():
     command = "TOKEN=" + "x" * 4000 + " cheese sync"
 
     assert cheese_subcommand(command) == "sync"
-
-
-def test_a_script_reads_as_what_it_says_it_does():
-    # pi 的 codemode：模型写一段脚本，现场那一行写它的第一句话，而不是开头那行选项。
-    code = (
-        '// @options: {"timeout_ms": 60000}\n'
-        "// 找出 Linear 里和标注有关的议题\n"
-        "const found = await tools.mcp__linear__search_issues({ query: '标注' })\n"
-    )
-    assert tool_preview("codemode", {"code": code}).text == (
-        "// 找出 Linear 里和标注有关的议题"
-    )
-    assert (
-        tool_detail(
-            "codemode", {"code": code}, tool_preview("codemode", {"code": code})
-        )
-        == code.strip()
-    )

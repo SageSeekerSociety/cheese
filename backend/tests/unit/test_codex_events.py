@@ -7,7 +7,6 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
-    AgentStepOutput,
     AgentToolUse,
 )
 
@@ -217,7 +216,7 @@ def test_a_tool_call_the_platform_answered_as_failed_marks_its_step():
     ``success: false``; that step turns red like any harness's failed step."""
     events = Assembler().accept(_tool_completed(status="completed", success=False))
 
-    assert [type(e) for e in events] == [AgentStepFailed, AgentStepOutput]
+    assert [type(e) for e in events] == [AgentStepFailed]
     assert events[0].call_id == "call-1"
     assert events[0].text == "make: *** Error 2"
 
@@ -231,4 +230,4 @@ def test_an_item_codex_itself_reports_failed_marks_its_step():
 def test_a_tool_call_that_worked_is_not_marked_failed():
     events = Assembler().accept(_tool_completed(status="completed", success=True))
 
-    assert [type(e) for e in events] == [AgentStepOutput]
+    assert events == []

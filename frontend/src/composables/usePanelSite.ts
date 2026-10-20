@@ -10,13 +10,12 @@
 // 外壳（`components/work/PanelSiteHost.vue`）调这一次，整包递给展示组件。
 import type { AgentControlState, Block } from '../cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 
-import { getStepOutput } from '../api'
-import { isNarration } from '../lib/siteLog'
+import { sessionRecordImageUrl } from '../api'
+import { storageGet, storageSet } from '../lib/browserStorage'
 
 import { useSessionInspector } from './useSessionInspector'
-import { useSiteClamp } from './useSiteClamp'
 import { useSiteTranscript } from './useSiteTranscript'
 import { useStickToBottom } from './useStickToBottom'
 
@@ -34,6 +33,11 @@ export interface PanelSiteScope {
 }
 
 export function usePanelSite(scope: PanelSiteScope) {
+  const viewMode = ref<'overview' | 'raw'>(storageGet('cheese.site.view') === 'raw' ? 'raw' : 'overview')
+  function selectView(mode: 'overview' | 'raw') {
+    viewMode.value = mode
+    storageSet('cheese.site.view', mode)
+  }
   // 每一轮从什么时候开始（毫秒），读到的每一页都带着它那几轮的。组头的用时从这里算起。
   const turnStarts = ref<Record<string, number>>({})
 
@@ -49,10 +53,6 @@ export function usePanelSite(scope: PanelSiteScope) {
   // above the thing they came to see.
   const scrollRef = ref<HTMLElement | null>(null)
   useStickToBottom(scrollRef, 48)
-  // Which entries are long enough to clamp. The measurement — together with the
-  // ResizeObserver that re-reads it when the panel's own width changes — lives in
-  // useSiteClamp; 每次渲染之后再读一次的时机在展示组件那一边（它的 onUpdated）。
-  const { overflowing, measured, schedule: measureClamp } = useSiteClamp(scrollRef)
 
   // ---- 按队友看 ----
   // 一个房间可以先后、甚至同时交给几个队友。时间线是他们交错着的，而人来看的往往
@@ -70,7 +70,7 @@ export function usePanelSite(scope: PanelSiteScope) {
     const next = agents.value.slice()
     for (const b of blocks) {
       if (b.author_type !== 'participant' || seen.has(b.author)) continue
-      if (!b.meta?.tool && !isNarration(b.meta)) continue
+      if (!b.meta?.record) continue
       seen.add(b.author)
       next.push(b.author)
       grew = true
@@ -114,6 +114,13 @@ export function usePanelSite(scope: PanelSiteScope) {
     { immediate: true }
   )
 
+  // Journal records are immutable and arrive independently of conversation
+  // messages. Refresh only while this panel is visible.
+  const refresh = setInterval(() => {
+    if (scope.active()) void load()
+  }, 3000)
+  onUnmounted(() => clearInterval(refresh))
+
   // 一轮刚结束：开着的这一栏安静地重读一遍。
   watch(
     () => scope.refreshTick(),
@@ -141,19 +148,15 @@ export function usePanelSite(scope: PanelSiteScope) {
     pushed: scope.agentControl,
   })
 
-  /** 摊开的那一步打印了什么。第一次点开才取（见 `SiteStepOutput.vue`）。 */
-  async function loadStepOutput(blockId: string): Promise<string> {
+  async function loadImage(digest: string): Promise<string> {
     const topicId = scope.topicId()
     if (!topicId) return ''
-    return (await getStepOutput(topicId, blockId)).output
+    return sessionRecordImageUrl(topicId, digest)
   }
 
   return {
     turnStarts,
     scrollRef,
-    overflowing,
-    measured,
-    measureClamp,
     agents,
     viewing,
     transcript,
@@ -165,7 +168,9 @@ export function usePanelSite(scope: PanelSiteScope) {
     receive,
     selectAgent,
     inspector,
-    loadStepOutput,
+    loadImage,
+    viewMode,
+    selectView,
   }
 }
 

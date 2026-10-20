@@ -103,6 +103,11 @@ def _object_is_absent(exc: Exception) -> bool:
 
 
 class StorageBackend(ABC):
+    async def list_keys(self, prefix: str):
+        """Yield object keys in lexical order, fetching one listing page at a time."""
+        raise NotImplementedError
+        yield  # pragma: no cover
+
     @abstractmethod
     async def upload(self, file: BinaryIO, key: str, content_type: str) -> str:
         """Upload file and return the URL/path."""
@@ -125,6 +130,13 @@ class StorageBackend(ABC):
 
 
 class LocalStorageBackend(StorageBackend):
+    async def list_keys(self, prefix: str):
+        paths = await asyncio.to_thread(lambda: sorted(self._base_path.rglob("*")))
+        for path in paths:
+            key = path.relative_to(self._base_path).as_posix()
+            if path.is_file() and key.startswith(prefix):
+                yield key
+
     def __init__(self, base_path: str, base_url: str) -> None:
         self._base_path = Path(base_path)
         self._base_url = base_url.rstrip("/")
@@ -160,6 +172,13 @@ class LocalStorageBackend(StorageBackend):
 
 
 class S3StorageBackend(StorageBackend):
+    async def list_keys(self, prefix: str):
+        async with self._get_client() as client:
+            paginator = client.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+                for item in page.get("Contents", []):
+                    yield item["Key"]
+
     def __init__(
         self,
         bucket: str,

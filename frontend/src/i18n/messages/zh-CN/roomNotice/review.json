@@ -114,5 +114,11 @@
   "taskLanded": "「{title}」已采纳 · PR #{pr}",
   "taskLandedNoPr": "「{title}」已采纳",
   "taskStepLanded": "「{title}」的这次交付已采纳 · PR #{pr}，任务继续进行",
-  "taskStepLandedNoPr": "「{title}」的这次交付已采纳，任务继续进行"
+  "taskStepLandedNoPr": "「{title}」的这次交付已采纳，任务继续进行",
+  "taskClosedUndelivered": "任务「{title}」采纳后还在做的工作过了期限仍没有结束：任务已关闭，这些工作已停下，没有交付",
+  "taskClosedUndeliveredDetail": "没有交付的工作：\n{items}",
+  "mainChecksFailed": "合并后检查未通过：{checks}。{agent} 会在这一步一起修复",
+  "mainChecksFailedReopened": "合并后检查未通过：{checks}。任务已重新打开，由 {agent} 修复",
+  "deployedTo": "已部署到 {environment}",
+  "deployFailedTo": "部署到 {environment} 失败"
 }

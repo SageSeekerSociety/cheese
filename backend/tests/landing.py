@@ -13,12 +13,16 @@ from types import SimpleNamespace
 from sqlalchemy import update
 
 from app.api.deps import get_chat_service
+from app.domain.agent.announce import announce
+from app.domain.agent_instance.adapters import task_teammate
 from app.domain.delivery.agent import (
     begin_send,
     dispatch_pending,
     receive_attempt,
+    record_task_instruction,
     run_attempt,
 )
+from app.domain.review import pr_poll
 from app.domain.room_task.models import Task
 
 
@@ -68,3 +72,16 @@ def time_passes(client, task_id: str, *, minutes: int) -> None:
             await session.commit()
 
     client.portal.call(shift)
+
+
+def watch(client) -> dict:
+    """One tick of the platform's sweep of tasks being written up."""
+    chat = _chat(client)
+    return client.portal.call(
+        lambda: pr_poll.sweep_closings(
+            chat,
+            announce,
+            record_instruction=record_task_instruction,
+            task_teammate=task_teammate,
+        )
+    )

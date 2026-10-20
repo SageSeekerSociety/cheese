@@ -11,9 +11,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.api.deps import get_chat_service, get_work_runner
+from app.domain.agent.announce import announce
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.agent.turn.intake.completion import TurnCompletion
-from app.domain.room_task.closing import close_after_summary
+from app.domain.agent_instance.adapters import task_teammate
+from app.domain.delivery.agent import record_task_instruction
+from app.domain.review.pr_poll import sweep_closings
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import Building, NeedsYou
 from tests.ask_fixtures import active_ask, wait_turn_idle
@@ -87,19 +90,21 @@ def test_the_task_page_hears_the_task_close_once_its_summary_is_done(client):
             await session.commit()
 
     client.portal.call(landed_long_ago)
-
-    async def summary_turn_ends() -> None:
-        async with client.test_factory() as session:
-            await close_after_summary(session, uuid.UUID(task), None)
-            await session.commit()
-
+    chat = client.app.dependency_overrides[get_chat_service]()
     with (
         room_socket(client, task, "alice") as task_page,
         room_socket(client, room, "alice") as channel,
     ):
         _drain(task_page)
         _drain(channel)
-        client.portal.call(summary_turn_ends)
+        client.portal.call(
+            lambda: sweep_closings(
+                chat,
+                announce,
+                record_instruction=record_task_instruction,
+                task_teammate=task_teammate,
+            )
+        )
 
         assert _told(task_page, room)
         assert _told(channel, room)

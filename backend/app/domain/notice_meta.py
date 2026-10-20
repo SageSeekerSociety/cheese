@@ -104,6 +104,13 @@ EVENT_TURN_QUEUED: Final = "turn_queued"
 EVENT_TOOLS_RECOVERED: Final = "tools_recovered"
 #: 话题的运行环境被重建 —— 会话和后台任务都断了，项目文件没事。
 EVENT_SANDBOX_REBUILT: Final = "sandbox_rebuilt"
+#: 任务合并后，包含这次合并的一次部署成功了。合并后的观察已经删掉，只留给旧任务里的行。
+EVENT_DEPLOY_DONE: Final = "deploy_done"
+#: 任务合并后，包含这次合并的一次部署失败了。同上，只留给旧行。
+EVENT_DEPLOY_FAILED: Final = "deploy_failed"
+#: 任务合并到默认分支后，合并提交上的一项检查失败了。合并后的观察已经删掉，
+#: 只留给旧任务里的行。
+EVENT_MAIN_CHECKS_FAILED: Final = "main_checks_failed"
 #: 一件活的提交并进了房间的分支 / 先排队 / 冲突了。
 EVENT_ROOM_MERGE: Final = "room_merge"
 #: 一张采信卡有结果了：被采信 / 要补证据 / 升级等人拍板。
@@ -223,6 +230,9 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ARCHIVE_DEFERRED,
         EVENT_TURN_QUEUED,
         EVENT_SANDBOX_REBUILT,
+        EVENT_DEPLOY_DONE,
+        EVENT_DEPLOY_FAILED,
+        EVENT_MAIN_CHECKS_FAILED,
         EVENT_ROOM_MERGE,
         EVENT_CONCLUSION_SETTLED,
         EVENT_MACHINE_PROVISIONING,

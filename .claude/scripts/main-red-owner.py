@@ -9,8 +9,8 @@
 贴进 #1343 的中文：
 
 1. 哪些 job 红了、日志里点了哪些测试用例；
-2. 批内提交对撞后 culprits 是谁 —— 判据直接 import `landing_forge.blame`（#4255），
-   不在这里重写；
+2. 批内提交对撞后 culprits 是谁 —— 判据在本文件下方的「the attribution rule」
+   一节（`_blame`）；
 3. culprit 的作者、来源 PR，以及提交里 `Link:` 记的任务；
 4. 作者名下有没有改了同一批文件/同名修复分支的开放 PR；
 5. 建议动作：作者在修就等；有任务就叫回任务；分不出或没人修再开热修。
@@ -35,9 +35,6 @@ import urllib.request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: A completed check that went red. Imported from `landing_forge` below, so it
-#: cannot drift from the set the platform blames with.
-
 #: Jobs that only restate another job's verdict.
 AGGREGATORS = frozenset(
     {
@@ -49,14 +46,14 @@ AGGREGATORS = frozenset(
     }
 )
 
-#: `landing_forge`'s bounds for reading a batch. Kept equal on purpose: a
-#: batch read here must be as complete as the one the platform blames from.
+#: Bounds for reading a batch: GitHub lists at most 250 commits in one compare
+#: and 300 files in one commit, and past that nothing is pinned on a commit.
 COMPARE_MAX_COMMITS = 250
 COMMIT_MAX_FILES = 300
 LOOK_BACK = 20
 
-#: How many red jobs have their log read for failing file names. The platform reads
-#: three; a diagnosis wants the shape of the whole failure, so five.
+#: How many red jobs have their log read for failing file names: a diagnosis
+#: wants the shape of the whole failure.
 RED_LOGS = 5
 MAX_CASES = 12
 
@@ -109,63 +106,184 @@ class ReadError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def _load_attribution():
-    """`_blame`, `_names`, `_stem`, `BatchCommits`, `CommitChange` and the
-    log parser, from the modules that own them.
+#: How a CI log line is cleaned before it is read: the runner's timestamp and
+#: ANSI colours go, a token-shaped string is masked, and the line is capped.
+#: The same rules as `backend/app/domain/review/github_pr/failure_logs.py`.
+_LOG_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z ")
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_TOKEN_SHAPE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,})")
+_LOG_LINE_MAX_CHARS = 200
 
-    They live behind the backend package, so run with its virtualenv. `python3`
-    without it re-execs into `backend/.venv/bin/python` when that exists, rather
-    than silently growing a second copy of the rule here.
+
+def clean_log_line(raw: str) -> str:
+    line = _LOG_TIMESTAMP.sub("", raw.rstrip("\r\n"))
+    line = _ANSI.sub("", line)
+    return _TOKEN_SHAPE.sub("<已脱敏>", line)[:_LOG_LINE_MAX_CHARS]
+
+
+# --- the attribution rule -----------------------------------------------------
+#
+# This repository's own triage of a red main batch: which commit of the batch
+# the failing tests and diagnostics point at. It is repository tooling, so the
+# rule lives here (the platform watches nothing after a merge).
+
+@dataclass(frozen=True, slots=True)
+class CommitChange:
+    """One commit a batch covers, and what it changed."""
+
+    sha: str
+    subject: str
+    files: tuple[str, ...]
+    #: False when the forge may have listed only part of what the commit
+    #: changed (GitHub stops at 300 files), so nothing can be pinned on it.
+    complete: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class BatchCommits:
+    """The commits a batch covers, as far as the forge would list them."""
+
+    #: How many commits the batch covers, whether or not each was read.
+    total: int
+    #: The commits whose changes were read: the newest ones, when the forge
+    #: refused to list them all.
+    changes: tuple[CommitChange, ...]
+    #: False when some commits were not read, so no failure can be pinned on
+    #: one commit.
+    complete: bool
+
+#: A failed check-run's log names its failing tests in one of these shapes:
+#: pytest `FAILED tests/x.py::test_y - …`, vitest/jest `FAIL  src/x.test.ts > …`.
+_FAILED_LINE = re.compile(r"\b(?:FAILED|ERROR|FAIL)\b|✕")
+_TEST_PATH = re.compile(
+    r"(?<![\w/.-])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+"
+    r"\.(?:py|pyi|ts|tsx|js|jsx|vue|go|rs|java))"
+)
+
+#: Ruff's full/concise locations, Pyright, tsc/vue-tsc, and Go vet errors.
+_SOURCE_FILE = r"[^\s:()]+\.(?:py|pyi|[cm]?[jt]sx?|vue|css|scss|go)"
+_STATIC_DIAGNOSTIC = re.compile(
+    rf"^\s*(?:-->\s+)?({_SOURCE_FILE})(?:"
+    r":\d+:\d+(?:\s*$|:\s*[A-Z]+\d+\b|\s+-\s+error:)"
+    r"|\(\d+,\d+\):\s*error TS\d+\b"
+    r"|(?<=\.go):\d+:\d+:\s+\S"
+    r"|:\d+:\d+\s{2,}\S|:\d+\s+\S"
+    r"|:\s+(?:[B-Z]|A -> [B-Z])\s*$)"
+)
+#: Grouped diagnostics put the path above location/severity or issue-label rows.
+_DIAGNOSTIC_FILE = re.compile(rf"^\s*({_SOURCE_FILE})\s*$")
+_GROUPED_ERROR = re.compile(r"^\s+(?:\d+:\d+\s+error\s|\d+:\s+\[[^]]+\]\s)")
+_TAGGED_DIAGNOSTIC = re.compile(r"^\s+(?:NEW|BASELINE GREW):\s+(.+)$")
+
+def _failed_paths(log: str, *, tests_only: bool = False) -> list[str]:
+    """Files named by test failures and static diagnostics in a job log.
+
+    Test probes must use ``tests_only``: rerunning a test file cannot judge a
+    lint or type error in it.
     """
-    backend = REPO_ROOT / "backend"
-    if str(backend) not in sys.path:
-        sys.path.insert(0, str(backend))
-    try:
-        from app.domain.review.github_pr.failure_logs import (  # noqa: PLC0415
-            _clean_log_line,
-        )
-        from app.domain.review.landing_forge import (  # noqa: PLC0415
-            _RED_CONCLUSIONS,
-            BatchCommits,
-            CommitChange,
-            _failed_paths,
-            blame,
-            names,
-            stem_of,
-        )
-    except ModuleNotFoundError:
-        venv = backend / ".venv" / "bin" / "python"
-        # Compare prefixes, not resolved paths: a virtualenv's interpreter is
-        # usually a symlink to the system one, and resolving it would call the
-        # venv identical to the interpreter that is missing its packages.
-        if venv.exists() and Path(sys.prefix).resolve() != (backend / ".venv").resolve():
-            os.execv(str(venv), [str(venv), str(Path(__file__).resolve()), *sys.argv[1:]])
-        raise SystemExit(
-            "main-red-owner imports the backend attribution rule; run it with "
-            "backend/.venv/bin/python (backend dependencies are not installed here)"
-        )
-    return (
-        BatchCommits,
-        CommitChange,
-        _failed_paths,
-        _clean_log_line,
-        _RED_CONCLUSIONS,
-        blame,
-        names,
-        stem_of,
-    )
+    found: list[str] = []
+    diagnostic_file: str | None = None
+    failure_report = False
+    for raw in log.splitlines():
+        line = clean_log_line(raw)
+        if _FAILED_LINE.search(line):
+            found += [match.group(1) for match in _TEST_PATH.finditer(line)]
+            failure_report = True
+        elif not line.strip():
+            failure_report = False
+        if tests_only:
+            continue
+        diagnostic = _STATIC_DIAGNOSTIC.match(line)
+        if diagnostic:
+            found.append(diagnostic.group(1))
+        tagged = _TAGGED_DIAGNOSTIC.match(line) if failure_report else None
+        if tagged:
+            found += [match.group(1) for match in _TEST_PATH.finditer(tagged.group(1))]
+        header = _DIAGNOSTIC_FILE.fullmatch(line)
+        if header:
+            diagnostic_file = header.group(1)
+            if diagnostic_file and diagnostic_file.endswith(".go"):
+                # gofmt -l reports an unformatted file as a bare path.
+                found.append(diagnostic_file)
+        elif diagnostic_file and _GROUPED_ERROR.match(line):
+            found.append(diagnostic_file)
+        elif not re.match(r"^\s+\d+:\d+\s+warning\s", line):
+            diagnostic_file = None
+    return found
+
+#: A completed check that went red. `cancelled` is not one: a newer push to
+#: the branch cancels the run it superseded.
+_FAILED = frozenset(
+    {"failure", "timed_out", "startup_failure", "action_required", "stale"}
+)
+
+def _blame(tests: tuple[str, ...], commits: BatchCommits | None) -> str | None:
+    """The one commit the failed tests point at, or None when they point at no
+    commit, at more than one, or at files the forge did not list whole."""
+    if not tests or commits is None:
+        return None
+    if not commits.complete or not all(c.complete for c in commits.changes):
+        return None
+    owners: set[str] | None = None
+    for test in tests:
+        matched = {c.sha for c in commits.changes if _names(test, c.files)}
+        if len(matched) != 1:
+            return None
+        owners = matched if owners is None else owners & matched
+        if not owners:
+            return None
+    return next(iter(owners)) if owners and len(owners) == 1 else None
 
 
-(
-    BatchCommits,
-    CommitChange,
-    failed_paths,
-    clean_log_line,
-    FAILED,
-    blame_of,
-    names_path,
-    stem_of,
-) = _load_attribution()
+#: Extensions that name the same kind of code. `test_foo.py` is about
+#: `foo.py` in this monorepo; a `.test.ts` next to a `.py` of the same name is
+#: a coincidence, and matching it would blame the wrong line.
+_FAMILIES = (
+    frozenset({"py", "pyi"}),
+    frozenset({"ts", "tsx", "js", "jsx", "vue"}),
+)
+
+
+def _names(test_path: str, files: tuple[str, ...]) -> bool:
+    """Whether a failing test file is one this commit's changes are about."""
+    want = test_path.removeprefix("./")
+    for path in files:
+        changed = path.removeprefix("./")
+        if (
+            changed == want
+            or changed.endswith("/" + want)
+            or want.endswith("/" + changed)
+        ):
+            return True
+    stem = _stem(want)
+    if not stem:
+        return False
+    family = _family(want)
+    return any(_family(path) == family and _stem(path) == stem for path in files)
+
+
+def _family(path: str) -> frozenset[str]:
+    extension = path.rsplit(".", 1)[-1].lower()
+    for family in _FAMILIES:
+        if extension in family:
+            return family
+    return frozenset({extension})
+
+
+def _stem(path: str) -> str:
+    """`backend/tests/unit/test_pr_poll.py` and
+    `backend/app/domain/review/pr_poll.py` share `pr_poll`: a test file
+    failing is about the module it tests."""
+    name = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    name = name.removeprefix("test_").removesuffix("_test")
+    return name.removesuffix(".test")
+
+
+failed_paths = _failed_paths
+FAILED = _FAILED
+blame_of = _blame
+names_path = _names
+stem_of = _stem
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +617,7 @@ UNIQUE = "唯一 culprit"
 
 def _reason(paths: tuple[str, ...], commits: BatchCommits) -> str:
     """Why `_blame` can or cannot name one commit. The matching itself is
-    `landing_forge.names`; this only names the answer."""
+    `_names`; this only names the answer."""
     if not paths:
         return NO_PATHS
     if not commits.complete or any(not c.complete for c in commits.changes):
@@ -1330,6 +1448,79 @@ def _collect_from_fixture(fixture: dict) -> Report:
         READ = was
 
 
+#: The log parser's cases: one per tool whose failure names a file.
+_PARSER_CASES = (
+    (
+        "ruff-full",
+        "2026-10-19T02:53:15.7Z F401 [*] `uuid` imported but unused\n"
+        "2026-10-19T02:53:15.8Z   --> tests/integration/test_app_sign_in.py:15:8\n",
+        ["tests/integration/test_app_sign_in.py"],
+    ),
+    (
+        "ruff-concise",
+        "2026-10-19T02:53:25.1Z tests/integration/test_app_sign_in.py:15:24: "
+        "F401 [*] `sqlalchemy.select` imported but unused\n",
+        ["tests/integration/test_app_sign_in.py"],
+    ),
+    (
+        "pyright",
+        "2026-10-19T02:53:25.1Z /w/backend/app/main.py\n"
+        "2026-10-19T02:53:25.2Z   /w/backend/app/main.py:15:24"
+        ' - \x1b[31merror\x1b[0m: "missing" is not defined (reportUndefinedVariable)\n',
+        ["/w/backend/app/main.py"],
+    ),
+    (
+        "vue-tsc",
+        "2026-10-19T02:53:25.1Z src/views/SignIn.vue(28,12): error TS2339: "
+        "Property 'missing' does not exist on type '{}'.\n",
+        ["src/views/SignIn.vue"],
+    ),
+    (
+        "go-vet",
+        "2026-10-19T02:53:25.1Z # command-line-arguments\n"
+        "2026-10-19T02:53:25.2Z ./go-diagnostic.go:5:28: fmt.Printf format %d "
+        'has arg "not a number" of wrong type string\n',
+        ["./go-diagnostic.go"],
+    ),
+    (
+        "gofmt",
+        "2026-10-19T02:53:25.1Z   internal/device/device.go\n"
+        "2026-10-19T02:53:25.2Z ##[error]gofmt -w the files above\n",
+        ["internal/device/device.go"],
+    ),
+    (
+        "eslint-stylish",
+        "2026-10-19T02:53:25.1Z /w/frontend/src/SignIn.vue\n"
+        "2026-10-19T02:53:25.2Z   10:5  error  'unused' is assigned a value but never used"
+        "  @typescript-eslint/no-unused-vars\n"
+        "2026-10-19T02:53:25.4Z \n"
+        "2026-10-19T02:53:25.5Z /w/frontend/src/Warning.vue\n"
+        "2026-10-19T02:53:25.6Z   12:3  warning  Missing prop  vue/require-default-prop\n",
+        ["/w/frontend/src/SignIn.vue"],
+    ),
+    (
+        "i18n-grouped",
+        "2026-10-19T02:53:25.1Z src/views/SignIn.vue\n"
+        "2026-10-19T02:53:25.2Z   2: [Chinese outside the catalog] <span>确定</span>\n"
+        "2026-10-19T02:53:25.3Z \n",
+        ["src/views/SignIn.vue"],
+    ),
+    (
+        "tagged",
+        "2026-10-19T02:53:25.1Z FAIL: new debt cannot be frozen.\n"
+        "2026-10-19T02:53:25.2Z     NEW: src/views/SignIn.vue\n"
+        "2026-10-19T02:53:25.3Z     BASELINE GREW: src/views/SignIn.vue -> src/views/Form.vue\n",
+        ["src/views/Form.vue", "src/views/SignIn.vue"],
+    ),
+    (
+        "warnings-and-commands",
+        "2026-10-19T02:53:25.1Z   /repo/backend/app/main.py:15:24 - warning: unused\n"
+        "2026-10-19T02:53:25.2Z Run ruff check backend/app/main.py\n",
+        [],
+    ),
+)
+
+
 def self_test() -> int:
     failures: list[str] = []
     cases = 0
@@ -1400,6 +1591,55 @@ def self_test() -> int:
         failures.append(f"还在跑：建议是 {report_running.action!r}")
     if "没有要归的责" in report_running.paragraph:
         failures.append("还在跑：段落说成了没有要归的责")
+
+    # The log parser, case by case: what each tool's failure names.
+    for name, log, expected in _PARSER_CASES:
+        cases += 1
+        found = sorted(set(failed_paths(log)))
+        if found != expected:
+            failures.append(f"解析 {name}：得到 {found}，应为 {expected}")
+        if failed_paths(log, tests_only=True):
+            failures.append(f"解析 {name}：静态诊断被当成了测试失败")
+
+    # Attribution: a batch not read whole names nobody, however plain the match.
+    cases += 1
+    partial = BatchCommits(
+        total=30,
+        changes=(CommitChange("b", "feat: b", ("backend/a.py",)),),
+        complete=False,
+    )
+    if blame_of(("backend/tests/test_a.py",), partial) is not None:
+        failures.append("没读全的一批：仍然点了名")
+    cases += 1
+    whole = BatchCommits(
+        total=2,
+        changes=(
+            CommitChange("b", "feat: b", ("backend/a.py",)),
+            CommitChange("c", "feat: c", ("backend/c.py",)),
+        ),
+        complete=True,
+    )
+    if blame_of(("backend/tests/test_a.py",), whole) != "b":
+        failures.append("读全的一批：没点出唯一改了它的提交")
+    cases += 1
+    if not names_path("src/views/SignIn.vue", ("frontend/src/views/SignIn.vue",)):
+        failures.append("前端诊断：仓库相对路径对不上")
+    if not names_path("internal/device/device.go", ("cli/internal/device/device.go",)):
+        failures.append("CLI 诊断：仓库相对路径对不上")
+
+    # Every red conclusion counts, not only `failure`; a cancelled job does not.
+    cases += 1
+    red = _red_leaf_jobs(
+        tuple(
+            Job(i, f"job {conclusion}", conclusion, "")
+            for i, conclusion in enumerate(
+                ("failure", "timed_out", "startup_failure", "cancelled", "success"),
+                start=1,
+            )
+        )
+    )
+    if sorted(job.conclusion for job in red) != ["failure", "startup_failure", "timed_out"]:
+        failures.append(f"红的 job：得到 {[job.conclusion for job in red]}")
 
     # Attribution and its wording must agree: whenever `_blame` names a commit,
     # the stated reason has to say so, and the other way round.

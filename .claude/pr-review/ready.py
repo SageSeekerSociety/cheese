@@ -16,7 +16,8 @@ Two things gate a delivery, and this checks both:
      `origin/main` is the first of those: the original review's conclusion line is used
      as it is, and no prepare runs again.
 
-It reads GitHub for the head and the check run; everything else is the local review. It
+With --pr it reads one PR snapshot and its last stamped conclusion; --dir reads
+the explicitly selected local result. Local cache order never selects a round. It
 does not deliver anything and does not write to the card. Exit 0 for 可递, 1 for 缺, 2 for a
 usage error.
 """
@@ -137,6 +138,8 @@ def author_files(repo, base, since, head):
 def increment(repo, base, since, head):
     """What stands between the reviewed commit and the head: {"needs": bool, "detail": str}.
     `needs` False means the review still covers the head under §4."""
+    if tiers._git(repo, "merge-base", "--is-ancestor", since, head) is None:
+        return {"needs": True, "detail": "审查提交不是当前 head 的祖先"}
     files = author_files(repo, base, since, head)
     if files is None:
         return {"needs": True, "detail": "读不到这两个提交之间改了什么"}
@@ -195,12 +198,34 @@ def review_from(directory):
     file = Path(directory) / "REVIEW-RESULT.md"
     if not file.exists():
         return None
-    m = render.CARD_LINE.search(file.read_text())
-    if not m:
+    return review_line(file.read_text())
+
+
+def review_line(text):
+    """The last stamped conclusion supersedes earlier rounds, including blockers."""
+    matches = [match for line in text.splitlines()
+               if (match := render.CARD_LINE.fullmatch(line.strip()))]
+    if not matches:
         return None
+    m = matches[-1]
     return {"head": m.group("head"), "since": m.group("since"),
             "verdict": m.group("verdict"),
             "serious": int(m.group("serious") or 0), "tier": m.group("tier") or ""}
+
+
+def gather_pr(number, repo, root):
+    """Read one PR snapshot; local prepare directories are not delivery evidence."""
+    raw = gh(f"repos/{repo}/pulls/{number}")
+    if raw is None:
+        return {"error": "GitHub 读不到这个 PR"}
+    pr = json.loads(raw)
+    head, draft = pr["head"]["sha"], pr["draft"]
+    review = review_line(pr.get("body") or "")
+    facts = {"head": head, "draft": draft, "review": review,
+             "ci": ci_on(repo, head, draft), "error": None}
+    if review and not head.startswith(review["head"]):
+        facts["increment"] = increment(root, pr["base"]["ref"], review["head"], head)
+    return facts
 
 
 def meta_of(directory):
@@ -244,7 +269,9 @@ def resolve_root(arg_root, directory):
 
 def main(argv=None):
     p = argparse.ArgumentParser(add_help=True, description=__doc__)
-    p.add_argument("--dir", dest="directory")
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("--dir", dest="directory")
+    source.add_argument("--pr", type=int)
     p.add_argument("--root", default=None, help="the repository the commits live in")
     p.add_argument("--repo", default=DEFAULT_REPO)
     p.add_argument("--head", default=None, help="the head sha /ready answered with")
@@ -252,6 +279,10 @@ def main(argv=None):
     args = p.parse_args(argv)
     if args.self_test:
         return self_test()
+    if args.pr:
+        ready, lines = verdict(gather_pr(args.pr, args.repo, args.root or "."))
+        print("\n".join(lines))
+        return 0 if ready else 1
     if not args.directory:
         p.print_help(sys.stderr)
         return 2
