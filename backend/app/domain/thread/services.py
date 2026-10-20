@@ -218,6 +218,27 @@ async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
     return seat
 
 
+async def files_sent_with(session: AsyncSession, root: Block) -> list[Block]:
+    """The files sent together with a message, in the order they were stored.
+
+    A send with a message stores each file as an attachment block under that
+    message's id (``turn_id``). An image-only send has no message: its first
+    attachment is the root itself, and it has no files of its own.
+    """
+    if root.kind == BlockKind.attachment:
+        return []
+    rows = await session.scalars(
+        select(Block)
+        .where(
+            Block.conversation_id == root.conversation_id,
+            Block.turn_id == root.id,
+            Block.kind == BlockKind.attachment,
+        )
+        .order_by(Block.created_at, Block.id)
+    )
+    return list(rows)
+
+
 async def thread_opening(
     session: AsyncSession, conversation_id: uuid.UUID
 ) -> list[Block]:
@@ -232,16 +253,7 @@ async def thread_opening(
     root = await session.get(Block, root_id)
     if root is None:
         return []
-    files = await session.scalars(
-        select(Block)
-        .where(
-            Block.conversation_id == root.conversation_id,
-            Block.turn_id == root.id,
-            Block.kind == BlockKind.attachment,
-        )
-        .order_by(Block.created_at, Block.id)
-    )
-    return [root, *files]
+    return [root, *await files_sent_with(session, root)]
 
 
 async def conversation_inputs(

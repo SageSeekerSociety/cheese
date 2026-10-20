@@ -32,7 +32,12 @@ from app.domain.room_task.dispatch import say_thread_title
 from app.domain.room_task.place import place_or_404
 from app.domain.thread import reads
 from app.domain.thread.schemas import ThreadOut
-from app.domain.thread.services import open_thread, thread_of, thread_teammate
+from app.domain.thread.services import (
+    files_sent_with,
+    open_thread,
+    thread_of,
+    thread_teammate,
+)
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -158,6 +163,7 @@ async def get_thread(
     if thread is None:
         raise NotFoundError("Thread not found")
     root = await reads.root_of(db, thread)
+    files = await files_sent_with(db, root) if root is not None else []
     return ok(
         {
             # `_thread_out` 定型之后是模型，不是 dict：展开之前先 dump，别直接 `**`。
@@ -165,6 +171,12 @@ async def get_thread(
             "root": BlockOut.model_validate(root).model_dump(mode="json")
             if root is not None
             else None,
+            # The files sent together with the message it hangs under: they stay
+            # in the main line, and the pane showing the 支线 draws them under
+            # that message too.
+            "files": [
+                BlockOut.model_validate(f).model_dump(mode="json") for f in files
+            ],
             "teammate": await thread_teammate(db, thread),
             "task": str(place.task.id) if place.task is not None else None,
         }
@@ -175,6 +187,7 @@ async def _task_as_thread(db, task) -> dict:
     """A task that never was a 支线, in the shape `get_thread` reads one."""
     origin = task.source_block_id or task.upgraded_from_block_id
     root = await BlockRepository(db).get(origin) if origin is not None else None
+    files = await files_sent_with(db, root) if root is not None else []
     said = await BlockRepository(db).count_for_topic(task.id, kinds=[BlockKind.message])
     return {
         "id": str(task.id),
@@ -187,6 +200,7 @@ async def _task_as_thread(db, task) -> dict:
         "root": BlockOut.model_validate(root).model_dump(mode="json")
         if root is not None
         else None,
+        "files": [BlockOut.model_validate(f).model_dump(mode="json") for f in files],
         "teammate": task.agent_handle,
         "task": str(task.id),
     }
