@@ -14,7 +14,9 @@ ORIGIN = "https://cheese.example.com"
 
 
 def script() -> str:
-    return bootstrap_script(origin=ORIGIN, token="TOK", device_id="DEV")
+    return bootstrap_script(
+        origin=ORIGIN, token="TOK", device_id="DEV", sandbox_disk=False
+    )
 
 
 def test_claude_is_installed_at_the_pinned_version():

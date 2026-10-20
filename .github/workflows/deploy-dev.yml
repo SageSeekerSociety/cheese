@@ -435,11 +435,15 @@ jobs:
       # whole cloud VM (#2320). Like the feedback roster above, the value here is
       # the whole truth: a price is a reviewed change, and a hand edit to the
       # box does not survive a deploy. A whole VM is MicroCloud's `standard-vm`
-      # offering at its default size (`cloud_vm_cores` / `cloud_vm_memory_mb`).
+      # offering at its default size (`cloud_vm_cores` / `cloud_vm_memory_mb`),
+      # and so is every host of the pool and every warm machine: a VM gives the
+      # host real root, for the project quota each sandbox's disk is held to
+      # (`sandbox_host.py`), on the data disk the offering gives it.
       - name: Configure cloud compute prices
         if: steps.release.outputs.skip != 'true'
         env:
           CLOUD_SANDBOX_CREDITS_PER_HOUR: "5"
+          MICROCLOUD_OFFERING_ID: "55"
           MICROCLOUD_VM_OFFERING_ID: "55"
           CLOUD_VM_CREDITS_PER_HOUR: '{"4c8g": 20}'
         run: |
@@ -461,6 +465,7 @@ jobs:
               raise ValueError("CLOUD_VM_CREDITS_PER_HOUR must map sizes to prices")
           updates = {
               "CLOUD_SANDBOX_CREDITS_PER_HOUR": str(float(os.environ["CLOUD_SANDBOX_CREDITS_PER_HOUR"])),
+              "MICROCLOUD_OFFERING_ID": str(int(os.environ["MICROCLOUD_OFFERING_ID"])),
               "MICROCLOUD_VM_OFFERING_ID": str(int(os.environ["MICROCLOUD_VM_OFFERING_ID"])),
               "CLOUD_VM_CREDITS_PER_HOUR": json.dumps(prices),
           }

@@ -289,6 +289,7 @@ def _warm_machine_ready(case: Case) -> str:
                     device_id="warm-1",
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.50",
+                    sandbox_disk_gb=64,
                     create_request={
                         "hostname": "warm-1",
                         "offeringId": 1,

@@ -147,6 +147,8 @@ def payload_for(
                 "swap_mb": settings.cloud_sandbox_swap_mb,
                 "cpus": settings.cloud_sandbox_cpus,
                 "pids": settings.cloud_sandbox_pids,
+                "disk_mib": settings.cloud_sandbox_disk_budget_gb * 10**9 >> 20,
+                "inodes": settings.cloud_sandbox_inode_budget,
             }
             if platform_machine
             else {"limits": None}

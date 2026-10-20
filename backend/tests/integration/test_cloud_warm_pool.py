@@ -118,6 +118,7 @@ def warm_case(client, monkeypatch):
                     device_id=device.device_id,
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.1",
+                    sandbox_disk_gb=64,
                     create_request={
                         "hostname": "warm-test",
                         "offeringId": 1,
@@ -150,7 +151,9 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
     monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
     monkeypatch.setattr(settings, "microcloud_direct_control", direct)
     monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
-    bootstrap = AsyncMock(return_value="Connected.")
+    bootstrap = AsyncMock(
+        return_value="CHEESE_SANDBOX_DISK_BYTES=64000000000\nConnected."
+    )
     monkeypatch.setattr("app.domain.machine.warm.enrollment.run_bootstrap", bootstrap)
 
     async def run():

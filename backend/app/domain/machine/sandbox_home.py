@@ -12,14 +12,17 @@ runs there with nothing of ours importable, like that one.
 - ``disk``: how full the filesystem the homes are on is, in bytes and in
   inodes, and which sandbox homes on this machine are not among ``live`` and
   were last written before ``grace_s`` — homes whose sandbox no longer exists
-  (``disk_guard``). With ``walk``, also what each home holds (its /tmp is
-  inside it) and the directory that holds most of it: a walk of every file,
-  which is why the guard asks for it far less often than for the rest. Also
-  what the machine itself uses — its memory, the CPU time its processes have
-  taken, its load — and what each sandbox's cgroup holds in memory now and at
-  most (``machine``, ``sandboxes``), for the admin machines page
-  (``readings``). A reading this machine cannot give, on one with no /proc or
-  no sandbox cgroups, is left out, not guessed.
+  (``disk_guard``). On a platform host each sandbox's home has a project
+  quota of its own (``sandbox_host.py``), and the kernel answers a
+  ``statvfs`` of the home with that quota's limit and use: what each home
+  holds, read without walking it. Also what the machine itself uses — its
+  memory, the CPU time its processes have taken, its load — and what each
+  sandbox's cgroup holds in memory now and at most (``machine``,
+  ``sandboxes``), for the admin machines page (``readings``). A reading this
+  machine cannot give, on one with no /proc, no sandbox cgroups or no
+  quotas, is left out, not guessed. Each sandbox named in ``idle`` is asked to
+  give back its page cache first (``sandbox_host.py reclaim``), where the
+  machine has the helper.
 
 Answers one line of JSON.
 """
@@ -27,16 +30,10 @@ Answers one line of JSON.
 import json
 import os
 import shutil
-import stat
 import sys
 import time
 from pathlib import Path
 
-#: How long one ``disk`` reading may walk the homes. A walk cut short says so
-#: (``partial``); what it counted is still a floor of what is there.
-WALK_S = 60
-#: How deep the directory a home's usage is reported under goes.
-TOP_DEPTH = 4
 #: The machine's cgroup root, and where the sandbox helper puts each sandbox:
 #: a cgroup named after its home (``sandbox_host.CGROUP``, a copy held to this
 #: by test_footprint_root.py). Its files are readable by every user.
@@ -72,65 +69,6 @@ def filesystem(path: Path) -> dict:
         "bytes_free": fs.f_bavail * fs.f_frsize,
         "inodes": fs.f_files,
         "inodes_free": fs.f_favail,
-    }
-
-
-def usage(root: Path, deadline: float) -> dict:
-    """Bytes and inodes under ``root``, never following a link or leaving its
-    filesystem, and the directory holding most of them: the deepest one, down
-    to ``TOP_DEPTH``, that holds over half of its parent's inodes or bytes."""
-    try:
-        device = root.lstat().st_dev
-    except OSError:
-        return {"bytes": 0, "inodes": 0, "top": "", "partial": False}
-    # Per directory up to TOP_DEPTH below root: [bytes, inodes] beneath it.
-    beneath: dict[tuple[str, ...], list[int]] = {(): [0, 0]}
-    stack: list[tuple[Path, tuple[str, ...]]] = [(root, ())]
-    partial = False
-    while stack:
-        if time.monotonic() > deadline:
-            partial = True
-            break
-        directory, parts = stack.pop()
-        try:
-            entries = list(os.scandir(directory))
-        except OSError:
-            continue
-        for entry in entries:
-            try:
-                info = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            size = getattr(info, "st_blocks", 0) * 512 or info.st_size
-            here = parts + (entry.name,) if len(parts) < TOP_DEPTH else parts
-            for depth in range(len(here) + 1):
-                totals = beneath.setdefault(here[:depth], [0, 0])
-                totals[0] += size
-                totals[1] += 1
-            if stat.S_ISDIR(info.st_mode) and info.st_dev == device:
-                stack.append((Path(entry.path), here))
-    total = beneath[()]
-    top: tuple[str, ...] = ()
-    while True:
-        children = [
-            (path, totals)
-            for path, totals in beneath.items()
-            if len(path) == len(top) + 1 and path[: len(top)] == top
-        ]
-        parent = beneath[top]
-        heavy = [
-            (path, totals)
-            for path, totals in children
-            if totals[1] * 2 > parent[1] or totals[0] * 2 > parent[0]
-        ]
-        if not heavy:
-            break
-        top = max(heavy, key=lambda item: (item[1][1], item[1][0]))[0]
-    return {
-        "bytes": total[0],
-        "inodes": total[1],
-        "top": "/".join(top),
-        "partial": partial,
     }
 
 
@@ -193,16 +131,46 @@ def sandboxes() -> list:
     return found
 
 
-def disk(cleanup, live, grace_s, walk=True) -> dict:
+def used(home: Path, whole: dict):
+    """What a home holds by its own quota, or None where it has none: a
+    ``statvfs`` of a directory in an XFS project answers the project's limit
+    as its size, which the filesystem's own size tells apart."""
+    own = filesystem(home)
+    if (own["bytes"], own["inodes"]) == (whole["bytes"], whole["inodes"]):
+        return None
+    return {
+        "bytes": own["bytes"] - own["bytes_free"],
+        "inodes": own["inodes"] - own["inodes_free"],
+        "limit_bytes": own["bytes"],
+        "limit_inodes": own["inodes"],
+    }
+
+
+def reclaim(cleanup, names) -> dict:
+    """Have the sandboxes in ``names`` give back their page cache, and say
+    how much each did. Only the helper can (``sandbox_host.py``), so a machine
+    without it skips this."""
+    if not names or not Path(cleanup["SANDBOX_HOST"]).exists():
+        return {}
+    result = cleanup["run_command"](
+        ["sudo", "-n", cleanup["SANDBOX_HOST"], "reclaim", *names]
+    )
+    if result.returncode:
+        return {"reclaim_error": result.stderr.strip()[-300:]}
+    return json.loads(result.stdout)
+
+
+def disk(cleanup, live, grace_s, idle=()) -> dict:
     """What the homes on this machine hold, and the sandbox homes left behind.
 
     ``live`` is every (project, resource) of a sandbox the platform has on
     this machine. A sandbox home is one with the platform's sandbox marker
     (``cleanup["sandbox_marker"]``); a home without one — a room's own
-    directory on a computer that runs it without a sandbox — is counted but
-    never called left behind."""
+    directory on a computer that runs it without a sandbox — is never called
+    left behind."""
     root = Path.home() / os.environ.get("CHEESE_PROFILE_ROOT", ".cheese") / "home"
-    deadline = time.monotonic() + WALK_S
+    reclaimed = reclaim(cleanup, list(idle))
+    whole = filesystem(root if root.is_dir() else Path.home())
     live = {(str(project), str(resource)) for project, resource in live}
     homes, left_behind = [], []
     for project in sorted(root.iterdir()) if root.is_dir() else []:
@@ -212,11 +180,9 @@ def disk(cleanup, live, grace_s, walk=True) -> dict:
             key = (project.name, home.name)
             marker = cleanup["sandbox_marker"](home)
             sandbox = marker.exists()
-            if walk:
-                used = usage(home, deadline)
-                homes.append(
-                    {"project": key[0], "resource": key[1], "sandbox": sandbox, **used}
-                )
+            held = used(home, whole) if sandbox else None
+            if held is not None:
+                homes.append({"project": key[0], "resource": key[1], **held})
             written = max(
                 (path.stat().st_mtime for path in (home, marker) if path.exists()),
                 default=0,
@@ -224,11 +190,12 @@ def disk(cleanup, live, grace_s, walk=True) -> dict:
             if sandbox and key not in live and time.time() - written > grace_s:
                 left_behind.append({"project": key[0], "resource": key[1]})
     return {
-        "filesystem": filesystem(root if root.is_dir() else Path.home()),
+        "filesystem": whole,
         "homes": homes,
         "left_behind": left_behind,
         "machine": machine(),
         "sandboxes": sandboxes(),
+        **reclaimed,
     }
 
 

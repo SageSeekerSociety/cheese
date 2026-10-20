@@ -1314,41 +1314,32 @@ async def _install(
                 return _Preparing(say("environmentPreparing"), _another_attempt)
             # The host could not bring the session's executor up: its connector
             # went away, the install outlasted the deadline every call into a
-            # machine is given (`_start_executor`), the connector killed the
-            # install at that deadline and reported no exit status for it, or a
-            # write refused for want of space said so (`_out_of_space`). A
+            # machine is given (`_start_executor`), or the connector killed the
+            # install at that deadline and reported no exit status for it. A
             # whole VM is the session's own, waited for where it is; a shared
             # host is left when the pool has another that can run the sandbox,
             # so the next attempt is placed there instead of being pinned to
             # this one for the rest of the tool call.
-            full = _out_of_space(exc)
-            away = (
-                full
-                or isinstance(exc, (DeviceOffline, TimeoutError))
-                or (isinstance(exc, ExecutorSetupFailed) and exc.killed)
+            away = isinstance(exc, (DeviceOffline, TimeoutError)) or (
+                isinstance(exc, ExecutorSetupFailed) and exc.killed
             )
             if away and cloud_host_id is not None:
                 pool = HostPool(db, hub=hub)
-                if full and not cloud_vm:
-                    # What the machine ran out of is its disk, not this
-                    # session's share of it: no new sandbox is placed there
-                    # until a reading finds room again, and the guard reads a
-                    # marked host every minute even with nothing left on it.
-                    await pool.ran_out_of_space(cloud_host_id)
                 moved = not cloud_vm and await pool.leave_unusable(
                     session_id, cloud_host_id
                 )
                 await db.commit()
                 if moved:
                     return _Preparing(SANDBOX_PREPARING, _another_attempt)
-                if full:
-                    # Nowhere else to put it and no room here: say what is
-                    # wrong rather than leave every tool call of the turn
-                    # waiting on a machine that cannot take any of them.
-                    return {
-                        "unavailable": EXECUTOR_SETUP_FAILED.format(reason=DISK_FULL)
-                    }
                 return _CLOUD_PREPARING
+            if _out_of_space(exc):
+                # A write refused for want of space. On a host the sandbox's
+                # home is held to a quota of its own (`sandbox_host.py`), so the
+                # space that ran out is the session's: another host would give
+                # it an empty home and none of its work. The room is told, and
+                # its agent can make room where it is. A host whose disk as a
+                # whole runs short is the disk guard's to mark.
+                return {"unavailable": EXECUTOR_SETUP_FAILED.format(reason=DISK_FULL)}
             if isinstance(exc, ExecutorSetupFailed):
                 logger.warning("executor installation failed: %s", exc)
                 return {

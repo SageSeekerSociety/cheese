@@ -92,6 +92,9 @@ def test_every_side_of_a_sandbox_names_the_same_helper_cgroup_and_resolvers():
     assert sandbox_home.SANDBOX_CGROUPS == sandbox_host.CGROUP
     assert bootstrap.RESOLV_CONFS == sandbox_host.RESOLV_CONFS
     assert confinement.SITE_ADDRESS == sandbox_host.SITE_ADDRESS
+    # The helper gives the executor's state its own quota where the install
+    # makes it; elsewhere a full home would leave the executor no room.
+    assert sandbox_host.STATE_DIR == f"{bootstrap.PLATFORM_DIR}/executor"
 
 
 @pytest.mark.parametrize("total_mb", [2048, 4096, 8192, 16384, 65536])

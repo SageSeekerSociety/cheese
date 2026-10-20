@@ -80,7 +80,7 @@ from app.domain.machine.reaper import (
     free_slots,
 )
 from app.domain.machine.repositories import CloudHostRepository
-from app.domain.machine.supply import pick_offering
+from app.domain.machine.supply import data_disk_gb, pick_offering
 from app.domain.machine.warm import WarmPoolService
 from app.domain.membership.roster import roster
 from app.domain.project.repositories import ProjectRepository
@@ -306,7 +306,7 @@ class HostPool(PoolSweep):
         # admission may have added a host meanwhile, so look again after.
         await self._require_room_to_grow()
         await self._session.commit()
-        body = await self._host_body()
+        body, data_disk = await self._host_body()
         await self._lock_room(topic_id)
         await self._repo.lock_pool()
         if await self._repo.current_home(session_id) is not None:
@@ -315,7 +315,7 @@ class HostPool(PoolSweep):
         if host is not None:
             return host
         await self._require_room_to_grow()
-        return await self._acquire(body, home)
+        return await self._acquire(body, home, data_disk)
 
     async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         return await self._repo.current_home(session_id)
@@ -426,15 +426,18 @@ class HostPool(PoolSweep):
         if sum(_counts_toward_cap(h) for h in hosts) >= settings.cloud_pool_max_hosts:
             raise CloudPoolFull(whole_machine=whole_machine)
 
-    async def _host_body(self) -> dict:
-        """What every new host is asked for. Reads the provider: call it with
-        no lock held."""
-        return await self._body(
-            await pick_offering(self._client),
+    async def _host_body(self) -> tuple[dict, int]:
+        """What every new host is asked for, and the data disk its offering
+        gives it, in GB. Reads the provider: call it with no lock held."""
+        offering = await pick_offering(self._client)
+        disk = data_disk_gb(offering)
+        body = await self._body(
+            offering,
             cores=settings.microcloud_default_cores,
             memory_mb=settings.microcloud_default_memory_mb,
             disk_gb=settings.microcloud_default_disk_gb,
         )
+        return body, disk
 
     async def _vm_body(self) -> dict:
         """What every whole cloud VM is asked for. Reads the provider: call it
@@ -472,14 +475,16 @@ class HostPool(PoolSweep):
             **spec,
         }
 
-    async def _acquire(self, body: dict, home: dict | None) -> CloudHost:
+    async def _acquire(
+        self, body: dict, home: dict | None, data_disk: int
+    ) -> CloudHost:
         """One more host for the pool, holding ``home`` if given: a warm machine
-        when one is ready, else a new one. Called holding the pool; returns
-        with no transaction open."""
+        when one is ready, else a new one with a data disk of ``data_disk`` GB.
+        Called holding the pool; returns with no transaction open."""
         warm = await self._warm_pool.reserve(body=body, home=home)
         if warm is not None:
             return warm
-        return await self._create(body, home)
+        return await self._create(body, home, data_disk=data_disk)
 
     async def _create(
         self,
@@ -487,6 +492,7 @@ class HostPool(PoolSweep):
         home: dict | None,
         *,
         whole_machine: bool = False,
+        data_disk: int | None = None,
     ) -> CloudHost:
         host_id = uuid.uuid4()
         prefix = "vm" if whole_machine else "host"
@@ -517,6 +523,8 @@ class HostPool(PoolSweep):
             cores=body["cores"],
             memory_mb=body["memoryMb"],
             disk_gb=body["diskGb"],
+            # The offering's word until the host enrolls and says what it has.
+            sandbox_disk_gb=data_disk,
             status=MachineStatus.provisioning,
             ai_mode="none",
             ai_status=AiStatus.unknown,
@@ -618,27 +626,6 @@ class HostPool(PoolSweep):
         row.execution_request = {
             key: value for key, value in request.items() if key != LEFT_HOST_KEY
         }
-
-    async def ran_out_of_space(self, host_id: uuid.UUID) -> None:
-        """Record that a write on this host was refused for want of space
-        (``session_work._install``).
-
-        A sandbox's home is on the host's disk, shared with its other
-        sandboxes, and a host with none to spare cannot run one. The mark is
-        the disk guard's own (``CloudHost.disk_full_since``): no new sandbox is
-        placed on a marked host (``accepting``), and the guard's next reading —
-        every minute, and it reads a marked host even with no sandbox left on
-        it — takes the mark off again when the disk has room."""
-        host = await self._repo.get(host_id)
-        if host is None or host.disk_full_since is not None:
-            return
-        host.disk_full_since = datetime.now(UTC)
-        await self._session.commit()
-        logger.warning(
-            "host %s ran out of space: no new sandbox is placed on it until a "
-            "reading finds room",
-            host.id,
-        )
 
     async def leave_unusable(self, session_id: uuid.UUID, host_id: uuid.UUID) -> bool:
         """Move the session off a host that cannot run its sandbox, when
@@ -883,7 +870,10 @@ class HostPool(PoolSweep):
         # `link connect` was answered 403 (unknown device token) on 2026-09-02.
         await self._session.commit()
         script = enrollment.bootstrap_script(
-            origin=origin, token=device.token, device_id=device.device_id
+            origin=origin,
+            token=device.token,
+            device_id=device.device_id,
+            sandbox_disk=not host.whole_machine,
         )
         try:
             output = await enrollment.run_bootstrap(
@@ -892,6 +882,7 @@ class HostPool(PoolSweep):
                 private_key=host.bootstrap_key,
                 script=script,
             )
+            disk_gb = None if host.whole_machine else enrollment.sandbox_disk_gb(output)
         except enrollment.EnrollmentError as exc:
             # Never let the token reach a log line or an API error body.
             reason = enrollment.redact(str(exc), device.token)
@@ -911,7 +902,10 @@ class HostPool(PoolSweep):
             enrollment.redact(output, device.token)[-200:],
         )
         return await self._repo.mark_enrolled(
-            host, device_id=device.device_id, when=datetime.now(UTC)
+            host,
+            device_id=device.device_id,
+            when=datetime.now(UTC),
+            sandbox_disk_gb=disk_gb,
         )
 
     async def enroll_pending(self, limit: int = 5) -> dict[str, int]:
