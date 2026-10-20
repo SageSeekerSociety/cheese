@@ -231,10 +231,6 @@ class InProcessBroker:
             if (channel, turn_id) in self._active_since
         }
 
-    def active_channels(self) -> set[str]:
-        """Channels whose session or request activity is currently live."""
-        return set(self._active)
-
     def active_count(self) -> int:
         """Number of live attributed work ids across all channels."""
         return sum(len(ids) for ids in self._active.values())
