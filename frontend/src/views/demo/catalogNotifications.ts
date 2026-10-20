@@ -82,7 +82,7 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
         expect: '我按你说的把第二节重写了一遍。',
       },
       {
-        name: '题目的提交批改了',
+        name: '题目的提交评审了',
         note: '学生的动态：标题是哪道题、通过没有、几分，下面是空间；点开去「我的提交」。',
         props: { notification: taskNotification('reviewed') },
         expect: '系统与网络实验室',
@@ -171,7 +171,7 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '题目上等你的',
-        note: '你出的题目上有领取要批准、提交要批改：按空间分组，一道题一行，点开去「领取者」页签。',
+        note: '你出的题目上有领取要批准、提交要评审：按空间分组，一道题一行，点开去「领取者」页签。',
         props: {
           items: [
             {
@@ -196,7 +196,7 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
             },
           ],
         },
-        expect: '2 份领取待批准，1 份提交待批改',
+        expect: '2 份领取待批准，1 份提交待评审',
       },
       {
         name: '没有要处理的',
@@ -237,13 +237,13 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
     id: 'render-task-notification',
     title: 'RenderTaskNotification',
     about:
-      '空间里一道题目上的事：领取通过与否、提交批改了、提交要求或个人截止时间改了、截止快到了、有人过了截止没交。标题是后端说的那一句，底下是空间；点开去题目页，批改结果去提交页。',
+      '空间里一道题目上的事：领取通过与否、提交评审了、提交要求或个人截止时间改了、截止快到了、有人过了截止没交。标题是后端说的那一句，底下是空间；点开去题目页，评审结果去「我的提交」。',
     file: 'src/components/common/Notification/renders/RenderTaskNotification.vue',
     component: RenderTaskNotification,
     needs: TEXT,
     states: [
       {
-        name: '提交批改了',
+        name: '提交评审了',
         note: '学生的动态：哪道题、通过没有、几分；点开去「我的提交」。',
         props: { notification: taskNotification('reviewed') },
         expect: '的提交已通过，88 分',

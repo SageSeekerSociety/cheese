@@ -51,10 +51,10 @@ function show(claims: number, reviews: number) {
 }
 
 describe('题目上等你处理的', () => {
-  it('只有提交待批改时也去「领取者」页签', () => {
+  it('只有提交待评审时也去「领取者」页签', () => {
     const view = show(0, 3)
 
-    view.getByText('3 份提交待批改')
+    view.getByText('3 份提交待评审')
     expect(view.getByText('缓存模拟器').closest('a')?.getAttribute('href')).toBe('/spaces/7/tasks/88/participants')
   })
 
