@@ -139,6 +139,8 @@ const { t } = useI18n()
             :title="closedTotal ? t('spaces.detail.tasks.noOpenTasks') : t('spaces.detail.tasks.noTasks')"
           />
         </template>
+        <!-- The folded row below ends this list; an end marker above it would say nothing follows. -->
+        <template v-if="closedTotal" #no-more><span /></template>
         <TaskRow v-for="task in tasks" :key="task.id" :task="task" :to="rowTo(task)" />
       </InfiniteScroll>
 
