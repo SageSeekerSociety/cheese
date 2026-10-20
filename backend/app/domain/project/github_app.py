@@ -146,20 +146,24 @@ class GitHubAppTokens:
 
     async def read_token(self) -> tuple[str, str]:
         """An installation token that reads what the installation may read and
-        writes nothing: what ``/sandbox/forge-token`` hands a session whose
-        work is not kept (a 支线). GitHub enforces it,
-        so a push or a new pull request from such a session is refused there."""
+        writes to nothing in the repository: what ``/sandbox/forge-token`` hands
+        a session whose work is not kept (a 支线, a routine's run there). GitHub
+        enforces it, so a push or a new pull request from such a session is
+        refused there. It may rerun or cancel CI (`read_permissions`)."""
         return await self._mint("read", self.read_permissions)
 
     async def read_permissions(self) -> dict[str, str]:
-        """Every grant of the installation at its read level. A grant GitHub
-        has no read level for (`workflows`) is left out: asking for it would
-        fail the whole mint."""
-        return {
-            key: "read"
-            for key in await self.granted_permissions()
-            if key not in _WRITE_ONLY_PERMISSIONS
-        }
+        """Every grant of the installation at its read level, except `actions`,
+        kept at `write` where the installation holds it: rerunning or
+        cancelling a workflow run changes nothing in the repository, and a
+        routine watching a deployment otherwise hands every flaky job to a
+        person. A grant GitHub has no read level for (`workflows`) is left out:
+        asking for it would fail the whole mint."""
+        grants = await self.granted_permissions()
+        levels = {key: "read" for key in grants if key not in _WRITE_ONLY_PERMISSIONS}
+        if grants.get("actions") == "write":
+            levels["actions"] = "write"
+        return levels
 
     async def write_token(self) -> tuple[str, str]:
         """The named write set, used by PR-based accept.
