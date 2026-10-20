@@ -2,24 +2,12 @@
 // 读不到存储（隐私模式、禁了站点数据）时照常展开，只是不记。
 import { ref, watch } from 'vue'
 
+import { storageGet, storageSet } from '@/lib/browserStorage'
+
 const KEY = 'cheesex.agentDocked'
 
-function read(): boolean {
-  try {
-    return localStorage.getItem(KEY) !== 'false'
-  } catch {
-    return true
-  }
-}
-
 export function useAgentDock() {
-  const docked = ref(read())
-  watch(docked, (value) => {
-    try {
-      localStorage.setItem(KEY, String(value))
-    } catch {
-      // 记不住就算了：这一页里照样收起、展开。
-    }
-  })
+  const docked = ref(storageGet(KEY) !== 'false')
+  watch(docked, (value) => void storageSet(KEY, String(value)))
   return docked
 }
