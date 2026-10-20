@@ -68,8 +68,6 @@ paths:
     label: 改部署脚本
   - path: cli/cheese
     label: 改 CLI 连接器
-  - path: .github/scripts/required-ci.py
-    label: 改这套检查本身
 scenarios:
   - key: docs
     label: 只改文档
@@ -86,9 +84,6 @@ scenarios:
   - key: cli
     label: 改 CLI 连接器
     paths: cli/cheese
-  - key: gate
-    label: 改这套检查本身
-    paths: .github/scripts/required-ci.py
 ```
 
 上面这张表里的套件名、pattern 和勾选结果都是构建时从 `.github/scripts/required-ci-paths.json` 读出来的，而且和真跑一遍 `required-ci.py` 的结果逐条对过：对不上，构建就失败。
