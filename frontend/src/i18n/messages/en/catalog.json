@@ -1534,7 +1534,7 @@
     "about": "The team members screen: members / join requests / sent invitations tabs plus an invite dialog; from here you promote an admin, remove a member, approve or reject a request. Reading the lists, writing, and which tab is open all live in the container `teams/detail/Members.vue`; this half does no fetching at all. The join-link card is a separate piece the page hands in through a named slot, and it has an entry of its own in the catalog.",
     "s1": {
       "name": "The members tab",
-      "note": "Default state: three people, one per row, owner and admin each carrying a role chip, and a plain member's row spelling out in one line what that role can do. Whoever the server says cannot be removed (an admin cannot remove another admin) has no \"Remove member\"."
+      "note": "Default state: four people, one per row, owner and admins each carrying a role chip (the last admin's long nickname truncates while the chip stays whole), and a plain member's row spelling out in one line what that role can do. Whoever the server says cannot be removed (an admin cannot remove another admin) has no \"Remove member\"."
     },
     "s2": {
       "name": "The join requests tab",
