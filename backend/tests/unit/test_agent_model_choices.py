@@ -19,6 +19,7 @@ from app.domain.agent.gateway_usage import launch_env
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESS_SETTING, PI
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.model_catalog import model_choices
+from app.domain.agent.session_host.contract import EFFORT_ENV
 from app.domain.agent_instance.configuration import AgentConfiguration
 from tests.support.stand_in_harness import registered
 
@@ -398,7 +399,7 @@ def test_a_teammates_effort_reaches_claude_code_only_where_the_model_honours_it(
     这次请求的模型。整理阈值和模型无关，设了就发。"""
     chosen = {"effort": "medium", "compact_percent": 70}
     assert launch_env(chosen, ["low", "medium", "high"]) == {
-        "CLAUDE_CODE_EFFORT_LEVEL": "medium",
+        EFFORT_ENV: "medium",
         "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70",
     }
     assert launch_env(chosen, ["low", "high"]) == {

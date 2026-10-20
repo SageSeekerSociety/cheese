@@ -17,6 +17,7 @@ import uuid
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_personal_credential
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import PI
 from app.domain.agent.personal.prompt import system_prompt
 from app.domain.agent.session_host.contract import (
@@ -57,6 +58,19 @@ KEEP_TOKENS = 8_000
 #: failing gateway fail at once.
 RETRY_BASE_DELAY_MS = 2000
 
+#: How hard it reasons, when the model honours it (the gateway's
+#: ``cheese_efforts``): writing a 题目 from a handout is worth the deeper one.
+EFFORT = "high"
+
+
+def effort(model: str) -> str | None:
+    """``EFFORT`` when ``model`` honours it, else the model's own default."""
+    honoured = next(
+        (m.efforts for m in gateway_catalog.snapshot() if m.id == model), ()
+    )
+    return EFFORT if EFFORT in honoured else None
+
+
 #: What a person's 芝士 may do (`sandbox/cheese`), the same wherever it is asked:
 #: what the person may do there, as them. The page they have open is said with
 #: each question (``prompt.page``); it never narrows the tools.
@@ -96,6 +110,7 @@ def session(
         model_settings=ModelSettings(
             # It reasons: reading a handout and writing a 题目 from it needs it.
             thinking=True,
+            effort=effort(settings.assistant_model),
             max_tokens=MAX_TOKENS,
             context_tokens=CONTEXT_TOKENS,
             reserve_tokens=RESERVE_TOKENS,

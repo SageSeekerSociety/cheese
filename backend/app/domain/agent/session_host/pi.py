@@ -51,6 +51,9 @@ def launch(ref: SessionRef, spec: SessionSpec, access: Access, api: str) -> Host
     args = arguments(spec.model)
     if not settings.thinking:
         args = [*args, "--thinking", "off"]
+    elif settings.effort:
+        # pi says it as the request's reasoning effort.
+        args = [*args, "--thinking", settings.effort]
     host: dict = {}
     if spec.footprint is not None:
         host["group_limit"] = spec.footprint.group_limit
@@ -107,6 +110,7 @@ def _models(api: str, model: str, settings: ModelSettings) -> str | None:
     """
     if (
         settings.thinking
+        and not settings.effort
         and settings.max_tokens is None
         and settings.context_tokens is None
     ):
@@ -114,9 +118,11 @@ def _models(api: str, model: str, settings: ModelSettings) -> str | None:
     shape = json.loads(provider(api, model))
     cheese = shape["providers"]["cheese"]
     entry = model_entry(model)
+    if not settings.thinking or settings.effort:
+        # pi says either only to a model it knows reasons.
+        entry["reasoning"] = True
     if not settings.thinking:
         cheese["compat"]["thinkingFormat"] = "deepseek"
-        entry["reasoning"] = True
     if settings.max_tokens is not None:
         entry["maxTokens"] = settings.max_tokens
     if settings.context_tokens is not None:

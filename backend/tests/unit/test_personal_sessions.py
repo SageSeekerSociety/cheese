@@ -445,3 +445,19 @@ async def test_that_it_reasons_is_handed_on_and_what_it_reasons_is_not(host, pla
 
     assert any(isinstance(e, Thinking) for e in events)
     assert "先看提交要求" not in "".join(e.text for e in events if isinstance(e, Words))
+
+
+@pytest.mark.anyio
+async def test_it_reasons_as_hard_as_it_is_set_to(host, platform):
+    _, sessions = host
+    fake = platform([{"text": "好。"}])
+    launch = Started(11)
+    launch.spec = dataclasses.replace(
+        launch.spec,
+        model_settings=dataclasses.replace(launch.spec.model_settings, effort="high"),
+    )
+
+    events = await _ask(sessions, launch, "在吗")
+
+    assert isinstance(events[-1], Answer)
+    assert fake.requests[0].get("reasoning_effort") == "high"

@@ -50,6 +50,7 @@ from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.queries import _model_policy_call, _Proposed, task_credit_context
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
+from app.domain.agent.session_host.contract import EFFORT_ENV
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent_instance.own import owned_instance, unusable
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
@@ -210,16 +211,16 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
 
 def launch_env(configuration: dict, efforts: list[str] | tuple[str, ...]) -> dict:
     """The environment that carries a teammate's thinking effort and compaction
-    share into its Claude Code session.
+    share into its session.
 
     ``efforts`` are the ones the turn's model honours. An effort it does not is
-    left out rather than sent: Claude Code would pass it to a model that either
+    left out rather than sent: the harness would pass it to a model that either
     ignores it or refuses the request.
     """
     env: dict[str, str] = {}
     effort = configuration.get("effort")
     if isinstance(effort, str) and effort in efforts:
-        env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
+        env[EFFORT_ENV] = effort
     percent = configuration.get("compact_percent")
     if isinstance(percent, int) and not isinstance(percent, bool):
         env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(percent)
