@@ -77,5 +77,5 @@ summary: 报告 Bug、提出建议，并跟踪反馈的修复和上线进度。
 
 :::cards
 - [常见问题与排障](/troubleshooting#troubleshooting)：提交前，查看这个问题是否已有处理办法。
-- [AI 队友](/agents#turn-failed)：芝士这一轮没有完成时怎么处理。
+- [AI 队友](/agents#turn-failed)：芝士没有做完就停下时怎么处理。
 :::
