@@ -1,4 +1,4 @@
-"""How long a session's raw records stay readable through the app.
+"""How long a session's raw records keep their database row.
 
 The transcripts themselves are kept for good, by a decision to keep
 transcripts permanently (#4398). Nothing here, or anywhere else, deletes a
