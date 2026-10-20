@@ -108,8 +108,10 @@ def _clean_api_base(value: str | None) -> str | None:
 # - `openai-chat`：上游只有 OpenAI 兼容的 chat/completions。前缀不能是 `openai/` ——
 #   调用方说 Anthropic 协议，LiteLLM 会把 `openai/` 前缀的 Messages 请求翻成
 #   Responses API（`_RESPONSES_API_PROVIDERS = {"openai"}`），而中转站和 OpenCode Go
-#   多半只有 chat/completions。`hosted_vllm/` 是 LiteLLM 里不带厂商私货的 OpenAI 兼容
-#   chat 提供方，Messages 请求走 chat/completions 的翻译。
+#   多半只有 chat/completions。`hosted_vllm/` 让 Messages 请求走 chat/completions 的
+#   翻译，并且保留 reasoning effort、以 LiteLLM 自己的 HTTP 客户端发出；`custom_openai/`
+#   这类走 OpenAI SDK 的提供方丢 effort、改 User-Agent。它会删掉历史 assistant 消息的
+#   `reasoning_content`，网关用 `deploy/gateway/patch_hosted_vllm_reasoning.py` 留住。
 # - `openai-responses`：上游有 Responses API（计量代理的 ChatGPT 入口就是这条）。
 OPENAI_CHAT_PREFIX = "hosted_vllm"
 PROTOCOL_PREFIXES: dict[str, str] = {
