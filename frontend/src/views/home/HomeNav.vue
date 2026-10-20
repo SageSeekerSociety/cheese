@@ -15,7 +15,7 @@
 // 留在这里的是**画面自己的状态**：哪几行摊开、记在这台浏览器上（`OPEN_KEY`），
 // 每一行 ⋯ 里的操作清单长什么样。
 import type { MenuAction } from '@/components/common/menuAction'
-import type { Team, TeamMember } from '@/types'
+import type { SpaceLink, Team, TeamMember } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 
@@ -23,6 +23,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { useRowMenu } from '@/composables/useRowMenu'
 
+import CreateSpaceDialog from './CreateSpaceDialog.vue'
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -64,6 +65,9 @@ const props = defineProps<{
   joinOpen: boolean
   joinBusy?: boolean
   joinError?: string
+  createOpen: boolean
+  createBusy?: boolean
+  createError?: string
 }>()
 
 const emit = defineEmits<{
@@ -87,6 +91,9 @@ const emit = defineEmits<{
   'update:joinOpen': [open: boolean]
   /** 「加入」按下去了：邀请码在里面输好了。 */
   join: [code: string]
+  'update:createOpen': [open: boolean]
+  /** 「提交审核」按下去了：payload 是弹窗里填的那三样。 */
+  createSpace: [payload: { name: string; intro: string; avatarFile?: File }]
 }>()
 
 // 自己名下（只有自己的那个团队，以自己的昵称出现）一组，真团队一组，后一组才有「团队」小标题。
@@ -192,6 +199,15 @@ const rowMenu = useRowMenu<number>()
 // 弹窗自己那一格开合：外面给的是「在编辑哪个团队」，这里翻成 `v-model` 要的布尔。
 // 关掉（点了取消、按了 Esc）就是把那一格交回空。
 const joinModel = computed({ get: () => props.joinOpen, set: (value: boolean) => emit('update:joinOpen', value) })
+const createModel = computed({
+  get: () => props.createOpen,
+  set: (value: boolean) => emit('update:createOpen', value),
+})
+
+/** 过审的空间点进去是它自己的目录；还在审核或被驳回的，点进去是这份申请。 */
+function spaceTo(space: SpaceLink) {
+  return space.review ? { name: 'HomeSpaceApplication', params: { spaceId: String(space.id) } } : spaceEntryRoute(space)
+}
 const editingModel = computed({
   get: () => props.editing !== null,
   set: (value: boolean) => {
@@ -301,7 +317,7 @@ const transferModel = computed({
     />
 
     <v-list-subheader>{{ t('navigation.spaces') }}</v-list-subheader>
-    <v-list-item v-for="space in spaces" :key="space.id" rounded="lg" :to="spaceEntryRoute(space)">
+    <v-list-item v-for="space in spaces" :key="space.id" rounded="lg" :to="spaceTo(space)">
       <template #prepend>
         <!-- 空间头像也走 UserAvatar（org = 圆角方块）：它只拿到 id 和名字，没有头像图，
              所以画的是按 id 派生的彩色首字母，和团队、人的那几格同一套形状规则。 -->
@@ -309,7 +325,10 @@ const transferModel = computed({
       </template>
       <v-list-item-title class="home-nav__name" data-user-content>{{ space.name }}</v-list-item-title>
       <template #append>
-        <v-icon size="16" class="home-nav__meta">mdi-chevron-right</v-icon>
+        <span v-if="space.review" class="home-nav__review" :class="`home-nav__review--${space.review}`">{{
+          t(`home.nav.spaceReview.${space.review}`)
+        }}</span>
+        <v-icon v-else size="16" class="home-nav__meta">mdi-chevron-right</v-icon>
       </template>
     </v-list-item>
     <v-list-item
@@ -322,14 +341,19 @@ const transferModel = computed({
     <v-list-item
       rounded="lg"
       class="home-nav__action"
-      prepend-icon="mdi-view-grid-outline"
-      :to="{ name: 'HomeSpaces' }"
-      exact
-      :title="t('work.allSpaces')"
+      prepend-icon="mdi-plus"
+      :title="t('spaces.create.open')"
+      @click="emit('update:createOpen', true)"
     />
   </v-list>
 
   <JoinSpaceDialog v-model="joinModel" :busy="joinBusy" :error="joinError" @submit="(code) => emit('join', code)" />
+  <CreateSpaceDialog
+    v-model="createModel"
+    :busy="createBusy"
+    :error="createError"
+    @submit="(payload) => emit('createSpace', payload)"
+  />
   <TeamProfileEditDialog
     v-if="editing"
     v-model="editingModel"
@@ -425,6 +449,26 @@ const transferModel = computed({
 .home-nav__meta {
   font-size: 12px;
   color: var(--faint);
+}
+
+/* 还没过审的空间那一行：右边一枚小标签说是哪一种。待审核是在等人，用警示那一组；
+   被驳回要他自己动手，用危险那一组的字色，底是中性的。 */
+.home-nav__review {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.home-nav__review--PENDING {
+  background: var(--warn-wash);
+  color: var(--warn-ink);
+}
+
+.home-nav__review--REJECTED {
+  background: var(--fill-2);
+  color: var(--danger-ink);
 }
 
 .home-nav__more {

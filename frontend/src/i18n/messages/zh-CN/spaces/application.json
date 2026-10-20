@@ -1,0 +1,20 @@
+{
+  "confirmDelete": "删除「{name}」的申请后无法恢复。",
+  "confirmWithdraw": "撤回后，「{name}」的申请会被删除，需要时重新新建。",
+  "dateFormat": "M月D日",
+  "delete": "删除申请",
+  "deleteFailed": "删除失败，稍后重试",
+  "intro": "简介",
+  "loadFailed": "申请加载失败",
+  "notFound": "无法读取这份申请",
+  "pendingState": "待平台管理员审核",
+  "reason": "驳回原因",
+  "rejectedOn": "{date}被平台管理员驳回",
+  "rejectedState": "已被平台管理员驳回",
+  "resubmit": "重新提交",
+  "resubmitFailed": "重新提交失败，稍后重试",
+  "resubmitted": "已重新提交",
+  "title": "空间申请",
+  "withdraw": "撤回申请",
+  "withdrawFailed": "撤回失败，稍后重试"
+}

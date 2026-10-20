@@ -3,8 +3,6 @@
   "confirmRevoke": "Confirm revoke",
   "copy": "Copy",
   "create": "New",
-  "createdBody": "Once the space passes review, send it to whoever you want to invite: they choose \"Join with a code\" on the home page and enter it. The code doesn't work until the space is approved.",
-  "createdTitle": "Here is your invite code",
   "current": "Code in use",
   "edit": "Adjust",
   "empty": "No invite codes",
@@ -20,7 +18,6 @@
   "noneUsable": "No usable code",
   "note": "Note (who it's for, optional)",
   "noteEdit": "Note (blank clears it)",
-  "openSpace": "Open space",
   "revoke": "Revoke",
   "save": "Save",
   "status": {

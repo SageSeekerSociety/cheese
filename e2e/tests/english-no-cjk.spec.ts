@@ -474,7 +474,6 @@ test("teams: shared and personal", async ({ page }) => {
 
 test("spaces and challenges", async ({ page }) => {
   await check(page, [
-    { name: "spaces", path: "/spaces" },
     { name: "challenges in a space", path: "/spaces/1/tasks" },
     { name: "announcements", path: "/spaces/1/announcements" },
     { name: "challenge", path: "/spaces/1/tasks/1" },

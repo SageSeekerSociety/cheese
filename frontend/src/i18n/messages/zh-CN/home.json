@@ -75,6 +75,10 @@
     "disbandTeamFailed": "解散团队失败",
     "disbandTeamTypeName": "输入团队名「{name}」确认",
     "teamDocs": "文档",
-    "teamModels": "模型"
+    "teamModels": "模型",
+    "spaceReview": {
+      "PENDING": "待审核",
+      "REJECTED": "已驳回"
+    }
   }
 }
