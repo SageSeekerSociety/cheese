@@ -252,7 +252,12 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
       {
         name: '已截止的收在末尾',
         note: '「全部」先列还能领的；已截止或名额已满的收成末尾一行，写着有几道，点开才列出来。',
-        props: { closedTasks: [task({ id: 2, name: '上学期的期末项目' })], closedTotal: 1, closedOpen: true },
+        props: {
+          // 截止时间已过：折进这一栏的题目，状态写的是「已截止」。
+          closedTasks: [task({ id: 2, name: '上学期的期末项目', deadline: 1751212800000 })],
+          closedTotal: 1,
+          closedOpen: true,
+        },
         expectSelector: '[data-testid="tasks-closed"]',
       },
     ],
