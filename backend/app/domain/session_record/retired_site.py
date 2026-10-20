@@ -28,8 +28,15 @@ it changes stage or kind; a retry that fails the same way logs a WARNING.
 A deleted row that a kept message replies to leaves that message's `reply_to`
 empty (`ON DELETE SET NULL`); on dev in October 2026 that was five messages.
 
-Once no row matches, the job does nothing more in this process. No writer is
-left, so nothing makes a row match again.
+A conversation's newest block stays while it is the newest, retired or not.
+A new block takes the number after the largest one in its conversation
+(`block_numbered()`), and a read cursor holds the largest number there when
+it was set, hidden rows included; deleting the newest block would hand its
+number to the next one, which a reader past it would never see as unread.
+A later pass takes it once a newer block exists.
+
+Once no row it may delete is left, the job does nothing more in this process.
+No writer is left, so only a new block above a kept newest row makes one again.
 """
 
 from __future__ import annotations
@@ -65,6 +72,16 @@ RETIRED_SITE_ROWS = """
     )
 """
 
+#: What the job may delete: the retired rows, less each conversation's newest
+#: block (the module docstring says why).
+_TAKEN = f"""
+    {RETIRED_SITE_ROWS}
+    AND seq < (
+        SELECT max(newest.seq) FROM blocks AS newest
+        WHERE newest.conversation_id = blocks.conversation_id
+    )
+"""
+
 ARCHIVE_PREFIX = "archive/site-event-blocks"
 #: A batch's rows. Rows averaged 1.4 kB on dev (54 kB the largest), so an object
 #: is a megabyte or two before gzip.
@@ -75,20 +92,18 @@ EVERY_S = 60
 RETRY_FIRST_S = 60
 RETRY_MAX_S = 3600
 
-_NEXT_CONVERSATION = text(
-    f"SELECT conversation_id FROM blocks WHERE {RETIRED_SITE_ROWS} LIMIT 1"
-)
+_NEXT_CONVERSATION = text(f"SELECT conversation_id FROM blocks WHERE {_TAKEN} LIMIT 1")
 _BATCH = text(
     f"""
     SELECT id, row_to_json(blocks)::text AS line FROM blocks
-    WHERE conversation_id = :conversation AND {RETIRED_SITE_ROWS}
+    WHERE conversation_id = :conversation AND {_TAKEN}
     ORDER BY seq, id
     LIMIT :limit
     FOR UPDATE
     """
 )
 _DELETE = text(
-    f"DELETE FROM blocks WHERE id = ANY(:ids) AND {RETIRED_SITE_ROWS} RETURNING id"
+    f"DELETE FROM blocks WHERE id = ANY(:ids) AND {_TAKEN} RETURNING id"
 ).bindparams(bindparam("ids", type_=ARRAY(Uuid)))
 
 

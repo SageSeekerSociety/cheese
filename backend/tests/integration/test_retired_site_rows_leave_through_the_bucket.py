@@ -3,7 +3,9 @@
 Agent traces are kept for good, so a retired row is deleted only after the
 bucket has returned exactly the bytes sent for it; any failure leaves the rows
 where they were. Nothing deletes an archive object. Hidden notices that are
-still written stay. A failure is alerted once, not on every retry.
+still written stay. A failure is alerted once, not on every retry. Someone who
+had read a conversation sees what is said there next as unread, whatever the
+archive took out of it.
 """
 
 import gzip
@@ -21,6 +23,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.event_author import AuthorType
 from app.domain.session_record import retired_site
 from app.domain.session_record.models import SiteEventArchive
+from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
 from tests.integration.test_a_turns_raw_record_keeps_what_it_did import _Bucket
@@ -269,3 +272,50 @@ async def test_without_a_bucket_every_row_stays(business_db_factory):
 
     assert await job.run() == {}
     assert await _ids(factory) == seeded["kept"] | set(seeded["retired"])
+
+
+async def test_what_is_said_after_the_archive_is_unread_for_someone_who_had_read(
+    business_db_factory,
+):
+    factory = business_db_factory
+    async with factory() as session:
+        await registered(session, "alice")
+        await registered(session, "bob")
+        project, room = await _room(session, "Last words were the site's")
+        blocks = BlockRepository(session)
+        await blocks.add(
+            project_id=project.id,
+            conversation_id=room.id,
+            author="bob",
+            author_type=AuthorType.participant,
+            content="hello",
+        )
+        # The conversation's newest blocks are the retired site's.
+        for meta in RETIRED:
+            await blocks.add(
+                project_id=project.id,
+                conversation_id=room.id,
+                author="cheese",
+                author_type=AuthorType.participant,
+                content="retired",
+                kind=BlockKind.event,
+                meta=meta,
+            )
+        await TopicRepository(session).mark_read(room.id, "alice")
+        await session.commit()
+
+    job = _job(factory, _KeepsBucket())
+    while (await job.run()).get("rows"):
+        pass
+
+    async with factory() as session:
+        await BlockRepository(session).add(
+            project_id=project.id,
+            conversation_id=room.id,
+            author="bob",
+            author_type=AuthorType.participant,
+            content="are you there, <@alice>?",
+        )
+        await session.commit()
+        unread = await TopicRepository(session).unread_counts(project.id, "alice")
+    assert room.id in unread, unread
