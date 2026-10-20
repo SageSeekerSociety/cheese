@@ -13,6 +13,7 @@ import type { JSONContent } from '@tiptap/core'
 import type {
   DomainGroup,
   SpaceCategory,
+  TaskDraftFields,
   TaskFormSubmitData,
   TaskRubricLine,
   TaskSubmissionSchemaEntry,
@@ -283,6 +284,64 @@ export function useTaskForm(
     emit('submit', submissionData)
   }
 
+  /** 表单现在的样子，原样存进草稿：人写到哪就是哪，不修整、不校验。 */
+  function snapshot(): TaskDraftFields {
+    const ms = (value: unknown) => (value ? new Date(value as string | number | Date).getTime() : null)
+    return {
+      name: name.value ?? '',
+      submitterType: submitterType.value,
+      rank: rank.value,
+      registrationStartAt: ms(registrationStartAt.value),
+      deadline: ms(deadline.value),
+      defaultDeadline: defaultDeadline.value,
+      topics: topics.value ?? [],
+      categoryId: categoryId.value,
+      minTeamSize: minTeamSize.value,
+      maxTeamSize: maxTeamSize.value,
+      requireRealName: requireRealName.value ?? false,
+      participantLimit: participantLimit.value ?? null,
+      teamLockingPolicy: teamLockingPolicy.value,
+      accessControlEnabled: accessControlEnabled.value ?? false,
+      accessDomainGroupIds: accessDomainGroupIds.value ?? [],
+      mentors: mentorsJoin.value ? mentors.value : [],
+      description: JSON.stringify(description.value),
+      submissionSchema: submissionSchema.value,
+      rubric: rubric.value,
+      rubricPublic: rubricPublic.value,
+    }
+  }
+
+  /** 从外面填进来的几格（草稿里存的、芝士写的）：只动给出的那几格。 */
+  function apply(fields: TaskDraftFields) {
+    const date = (value: number | null | undefined) => (value ? new Date(value) : null)
+    if ('name' in fields) name.value = fields.name ?? ''
+    if ('description' in fields) description.value = descriptionDoc(fields.description ?? '')
+    if (fields.submitterType) submitterType.value = fields.submitterType
+    if ('rank' in fields) rank.value = fields.rank as number
+    if ('registrationStartAt' in fields) registrationStartAt.value = date(fields.registrationStartAt)
+    if ('deadline' in fields) deadline.value = date(fields.deadline)
+    if ('defaultDeadline' in fields) defaultDeadline.value = fields.defaultDeadline as number
+    if ('topics' in fields) topics.value = fields.topics ?? []
+    if ('categoryId' in fields) categoryId.value = fields.categoryId as number
+    if ('minTeamSize' in fields) minTeamSize.value = fields.minTeamSize
+    if ('maxTeamSize' in fields) maxTeamSize.value = fields.maxTeamSize
+    if ('requireRealName' in fields) requireRealName.value = !!fields.requireRealName
+    if ('participantLimit' in fields) {
+      participantLimit.value = fields.participantLimit ?? null
+      participantLimitUnlimited.value = !((fields.participantLimit ?? 0) > 0)
+    }
+    if ('teamLockingPolicy' in fields) teamLockingPolicy.value = fields.teamLockingPolicy
+    if ('accessControlEnabled' in fields) accessControlEnabled.value = !!fields.accessControlEnabled
+    if ('accessDomainGroupIds' in fields) accessDomainGroupIds.value = fields.accessDomainGroupIds ?? []
+    if ('mentors' in fields) {
+      mentors.value = [...(fields.mentors ?? [])]
+      mentorsJoin.value = mentors.value.length > 0
+    }
+    if ('submissionSchema' in fields) submissionSchema.value = (fields.submissionSchema ?? []).map((e) => ({ ...e }))
+    if ('rubric' in fields) rubric.value = (fields.rubric ?? []).map((line) => ({ ...line }))
+    if ('rubricPublic' in fields) rubricPublic.value = fields.rubricPublic ?? true
+  }
+
   const privacyDialogOpen = ref(false)
   // 本来就要求实名的题，改的时候不再问一遍。
   const wasRealNameEnabled = ref(!!props.initialData?.requireRealName)
@@ -342,6 +401,8 @@ export function useTaskForm(
     rubricMissingName,
     isSubmitting,
     submitForm,
+    snapshot,
+    apply,
     privacyDialogOpen,
     cancelSubmitWithRealName,
     confirmSubmitWithRealName,

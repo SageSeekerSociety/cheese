@@ -62,12 +62,21 @@ class SessionRef:
         return f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/{self.home}"
 
 
+#: Carries a teammate's thinking effort through the launch environment to where
+#: its session is started, which hands it to the harness as
+#: ``ModelSettings.effort`` (``room.sessions.starting``).
+EFFORT_ENV = "CHEESE_THINKING_EFFORT"
+
+
 @dataclass(frozen=True)
 class ModelSettings:
     """How the model is called, beyond which model it is. The defaults are the
     provider's own."""
 
     thinking: bool = True
+    #: How hard the model thinks (``gateway.EFFORTS``), one the model honours;
+    #: None leaves it to the model. Each harness says it its own way.
+    effort: str | None = None
     #: The longest answer, in tokens.
     max_tokens: int | None = None
     #: The context the conversation may grow to.

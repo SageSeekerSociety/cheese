@@ -57,7 +57,7 @@ const nameMissing = (line: TaskRubricLine) => props.missingName && !line.item.tr
 
 <template>
   <TaskFormSection :title="t('tasks.form.grading.title')">
-    <BaseField :label="t('tasks.form.grading.items')">
+    <BaseField data-agent-field="submission" :label="t('tasks.form.grading.items')">
       <div class="tfg__items" data-testid="task-form-submission-items">
         <div v-for="(entry, index) in items" :key="index" class="tfg__item">
           <span class="tfg__n t-num">{{ index + 1 }}</span>
@@ -97,6 +97,7 @@ const nameMissing = (line: TaskRubricLine) => props.missingName && !line.item.tr
     </BaseField>
 
     <BaseField
+      data-agent-field="rubric"
       :label="t('tasks.form.grading.rubric')"
       :error="missingName ? t('tasks.form.grading.nameRequired') : undefined"
     >
@@ -169,6 +170,7 @@ const nameMissing = (line: TaskRubricLine) => props.missingName && !line.item.tr
 
     <v-switch
       v-model="rubricPublic"
+      data-agent-field="rubric_public"
       color="primary"
       density="compact"
       hide-details

@@ -109,36 +109,31 @@
     "createSuccess": "题目已发布",
     "createSuccessAndWaitingAudit": "题目已提交，等待审核",
     "drafts": {
-      "content": "第 {n} 道 · 题目内容",
-      "discard": "取消导入",
-      "missingDescription": "缺少描述",
-      "missingName": "缺少名称",
-      "page": "第 {n} 页",
-      "pick": "选中 {name}",
-      "replace": "更换文件",
-      "shared": "以下设置适用于已选的 {n} 道题",
-      "source": "{file} · 识别出 {total} 道题，已选 {picked} 道",
       "untitled": "未命名"
-    },
-    "import": "从文件导入",
-    "importErrors": {
-      "failed": "导入失败：{reason}",
-      "noDrafts": "未能从文件中识别出题目",
-      "notPdf": "只能导入 PDF 文件",
-      "tooLarge": "文件超过 15 MB"
     },
     "initializationFailed": "初始化失败",
     "needsReview": "发布后需管理员审核",
     "publish": "发布",
-    "publishMany": "发布 {n} 道题",
-    "publishedMany": "已发布 {n} 道题",
     "teaching": {
       "inherit": "沿用空间默认",
       "own": "为本题单独设置",
       "subtitle": "用于从本题创建的项目",
       "title": "AI 指导"
     },
-    "useTemplate": "使用模板"
+    "useTemplate": "使用模板",
+    "draftsMenu": {
+      "label": "草稿",
+      "heading": "我在这个空间的草稿",
+      "new": "新建草稿",
+      "edit": "修改"
+    },
+    "save": {
+      "saving": "保存中…",
+      "saved": "草稿已保存",
+      "failed": "保存失败",
+      "published": "已发布"
+    },
+    "draftLoadFailed": "无法读取这份草稿"
   },
   "tasks": {
     "allTopics": "全部标签",

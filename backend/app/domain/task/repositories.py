@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
+from app.domain.task.inputs import APPROVE_APPROVED
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
@@ -83,6 +84,22 @@ class TaskRepository:
             .order_by(Task.updated_at.desc(), Task.id.desc())
             .limit(limit)
         )
+        return (await self._session.execute(stmt)).scalars().all()
+
+    async def search_in_space(
+        self, space_id: int, words: Sequence[str], *, viewer_id: int, limit: int
+    ) -> Sequence[Task]:
+        """The space's 题目 whose name or intro holds every word, latest first:
+        the published ones, and the viewer's own however they were reviewed."""
+        stmt = select(Task).where(
+            Task.space_id == space_id,
+            Task.deleted_at.is_(None),
+            or_(Task.approved == APPROVE_APPROVED, Task.creator_id == viewer_id),
+        )
+        for word in words:
+            like = f"%{word}%"
+            stmt = stmt.where(or_(Task.name.ilike(like), Task.intro.ilike(like)))
+        stmt = stmt.order_by(Task.updated_at.desc(), Task.id.desc()).limit(limit)
         return (await self._session.execute(stmt)).scalars().all()
 
     async def list_tasks(

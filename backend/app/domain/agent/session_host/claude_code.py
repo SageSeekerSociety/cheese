@@ -12,8 +12,8 @@ read by ``driven.reporting``: its events, and its records shown in the room.
 
 import asyncio
 import base64
-import time
 import functools
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -116,7 +116,15 @@ class ClaudeCodeDriver:
             topic_id=owner.place_id,
             seat=owner.seat,
             token=access.credential,
-            env=dict(spec.env),
+            env={
+                **spec.env,
+                # Claude Code reads the effort from its environment.
+                **(
+                    {"CLAUDE_CODE_EFFORT_LEVEL": spec.model_settings.effort}
+                    if spec.model_settings.effort
+                    else {}
+                ),
+            },
             launch=ClaudeLaunch(
                 system_prompt=spec.system_prompt,
                 model=spec.model or None,

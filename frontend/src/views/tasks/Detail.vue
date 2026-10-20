@@ -15,6 +15,7 @@ import dayjs from 'dayjs'
 
 import { taskState as taskStateOf } from '@/utils/tasks'
 
+import { useAssistant } from '@/composables/useAssistant'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import TaskEligibilityAlerts from './components/TaskEligibilityAlerts.vue'
@@ -26,12 +27,12 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { panelMessages } from '@/lib/assistantView'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { myHandle } from '@/me'
 import { splitOrigin } from '@/views/spaces/model'
 import { TaskDialogs } from '@/views/tasks/components'
 import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
-import { useAssistant } from '@/views/tasks/composables/useAssistant'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
@@ -71,12 +72,44 @@ const canManage = computed(() => isTaskCreator.value || isSpaceAdmin.value)
 // 打开面板本身不调用模型，只读这道题上已有的对话。
 
 const { mdAndUp } = useDisplay()
-const assistant = useAssistant(() => taskId.value)
+const assistant = useAssistant({
+  home: () => ({ kind: 'task', id: taskId.value }),
+  page: () => ({ kind: 'task', id: taskId.value }),
+  on: {
+    // 芝士在这里改了这道题并保存了：页面上的题目跟着换。
+    published: (done) => {
+      if (done.task.id === taskId.value) void loadTaskData({ quiet: true })
+    },
+  },
+})
+/** 面板上的那段对话：这一页没有表单，芝士写的改动不给撤销。 */
+const noTerms = { categories: [], topics: [] }
+const assistantMessages = computed(() => panelMessages(assistant.messages.value, noTerms))
+const assistantLive = computed(
+  () =>
+    panelMessages(
+      [
+        {
+          role: 'assistant',
+          text: '',
+          at: '',
+          steps: assistant.steps.value,
+          edits: assistant.edits.value,
+          published: assistant.published.value,
+        },
+      ],
+      noTerms
+    )[0]
+)
 const asking = ref(false)
 
 function openAssistant() {
   asking.value = true
   assistant.load().catch(() => undefined)
+}
+
+function openTask(id: number) {
+  void router.push({ name: 'TasksDetail', params: { spaceId: spaceId.value, taskId: id } })
 }
 
 function askAssistant(text: string) {
@@ -433,14 +466,18 @@ onMounted(() => {
       :conversations="assistant.conversations.value"
       :current-id="assistant.current.value"
       :title="assistant.title.value"
-      :messages="assistant.messages.value"
+      :messages="assistantMessages"
       :streaming="assistant.streaming.value"
       :tool="assistant.tool.value"
       :queued="assistant.queued.value"
       :notice="assistant.notice.value"
       :credit-refused="assistant.creditRefused.value"
       :busy="assistant.busy.value"
+      :steps="assistantLive.steps"
+      :changes="assistantLive.changes"
+      :results="assistantLive.results"
       @send="askAssistant"
+      @open-task="openTask"
       @stop="assistant.stop().catch(() => undefined)"
       @new="assistant.startNew"
       @select="assistant.select"
@@ -454,13 +491,17 @@ onMounted(() => {
         :conversations="assistant.conversations.value"
         :current-id="assistant.current.value"
         :title="assistant.title.value"
-        :messages="assistant.messages.value"
+        :messages="assistantMessages"
         :streaming="assistant.streaming.value"
         :tool="assistant.tool.value"
         :queued="assistant.queued.value"
         :notice="assistant.notice.value"
         :busy="assistant.busy.value"
+        :steps="assistantLive.steps"
+        :changes="assistantLive.changes"
+        :results="assistantLive.results"
         @send="askAssistant"
+        @open-task="openTask"
         @stop="assistant.stop().catch(() => undefined)"
         @new="assistant.startNew"
         @select="assistant.select"

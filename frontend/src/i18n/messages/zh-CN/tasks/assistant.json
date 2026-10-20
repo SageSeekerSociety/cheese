@@ -11,9 +11,7 @@
   "noQuestions": "还没有提问",
   "placeholder": "问一个关于这道题的问题…",
   "queued": "正在排队，资源空出后自动开始",
-  "readingDocs": "正在查文档…",
-  "readingTasks": "正在看你参与的题…",
-  "reads": "芝士读过这道题的说明、要求和题目信息，不读附件。",
+  "reads": "芝士读过这道题的说明、要求和题目信息。",
   "send": "发送",
   "starters": {
     "basics": "做这道题要先会什么？",
@@ -22,6 +20,54 @@
   },
   "stop": "停止",
   "stopped": "已停止",
-  "thinking": "正在想…",
-  "today": "今天"
+  "today": "今天",
+  "steps": {
+    "folded": "{first}等 {n} 步",
+    "thinking": "思考中",
+    "thought": "思考了 {s} 秒"
+  },
+  "changes": {
+    "title": "表单改动",
+    "created": "新建草稿",
+    "untitled": "未命名题目",
+    "undoOne": "撤销{field}",
+    "count": "已填写 {n} 处",
+    "undoAll": "全部撤销",
+    "empty": "已清空",
+    "rubric": "{n} 项，合计 {total} 分",
+    "yes": "是",
+    "no": "否",
+    "kept": "你改过，未修改"
+  },
+  "notes": {
+    "title": "待你确认"
+  },
+  "result": {
+    "saved": "已保存「{name}」的修改",
+    "published": "已发布「{name}」",
+    "pending": "待管理员审核",
+    "open": "查看题目"
+  },
+  "files": {
+    "uploading": "上传中",
+    "remove": "移除 {name}",
+    "add": "添加文件",
+    "readThese": "读取附上的文件",
+    "failed": "文件上传失败"
+  },
+  "draft": {
+    "greeting": "描述想出的题目，或上传实验指导、讲义等文件，我会填写到表单中。",
+    "placeholder": "描述题目或输入修改要求",
+    "hint": "内容由 AI 生成，发布前核对一遍。",
+    "starters": {
+      "rubric": "起草提交内容和评分要点",
+      "harder": "难度提高一档",
+      "check": "以学生视角检查"
+    },
+    "editStarters": {
+      "later": "截止时间延后一周",
+      "rubric": "调整评分要点",
+      "check": "以学生视角检查"
+    }
+  }
 }

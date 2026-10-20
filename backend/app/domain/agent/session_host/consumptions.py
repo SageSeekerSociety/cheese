@@ -40,7 +40,10 @@ from app.domain.agent.admission import Held, Slot, adopt
 from app.domain.agent.session_host.answer import (
     Answer,
     Progress,
+    Thinking,
     Tool,
+    ToolArgs,
+    ToolFailed,
     Waiting,
     Words,
     follow,
@@ -167,7 +170,9 @@ class Consumer(Protocol):
         ...
 
     async def took(
-        self, consumption: Consumption, item: Waiting | Words | Tool
+        self,
+        consumption: Consumption,
+        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
     ) -> None:
         """One step of the answer, as it comes."""
         ...
@@ -407,6 +412,15 @@ class Consumptions:
             )
             pipe.expire(stream, RECORD_S, nx=True)
             await pipe.execute()
+
+    async def told(self, work_id: str) -> list[tuple[str, str, dict]]:
+        """Everything the question's viewers were told so far, in order:
+        (position, event, data); a position starts with when, in ms."""
+        found: list = await self._valkey().xrange(_stream(work_id))  # type: ignore[assignment]
+        return [
+            (_text(position), _text(fields[b"event"]), json.loads(fields[b"data"]))
+            for position, fields in found
+        ]
 
     async def get(self, work_id: str) -> Consumption | None:
         raw = await self._valkey().get(_record(work_id))

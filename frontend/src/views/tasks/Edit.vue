@@ -1,41 +1,56 @@
 <script setup lang="ts">
 // 改题页：和发题页同一张表（`TaskForm`），参与方式改不了，附件直接传到这道题上、从这道
 // 题上摘，AI 指导和发题时一样单独写或沿用空间的默认。没有导入和模板。
-import type { SpaceTeaching, TaskFormSubmitData } from '@/types'
+//
+// 改动先存成这道题的修改草稿（`useTaskDraft`）：边改边存，离开再回来还在，点「保存更改」
+// 才落到题目上，学生在那之前看到的是原来的题目。芝士停在右边，接着的是题目页「问芝士」
+// 的那段对话；它改的也是这份草稿，表单跟着动（`useDraftAgent`）。
+import type { AgentBox, AgentMark, AgentPointer } from '@/components/tasks/AgentLayer.vue'
+import type { SpaceTeaching, TaskDraftFields, TaskFormSubmitData } from '@/types'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
+import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
+import { useTaskDraft } from '@/composables/useTaskDraft'
 
 import { useTaskData } from './composables'
 
 import { TaskBoardApi } from '@/api/taskBoard'
+import { TaskDraftsApi } from '@/api/taskDrafts'
+import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
+import AgentLayer from '@/components/tasks/AgentLayer.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { mentorOptions } from '@/lib/taskMentors'
 import { isTeachingBlank } from '@/lib/teaching'
+import { myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
+import { draftFieldsOf } from '@/types'
 
 const { t } = useI18n()
+const { mdAndUp } = useDisplay()
 
 const router = useRouter()
 const route = useRoute()
 const taskId = Number(route.params.taskId)
 
-const { taskData, editTaskData, loading, error, loadTaskData } = useTaskData()
+const { taskData, loading, error, loadTaskData } = useTaskData()
 
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
@@ -73,7 +88,76 @@ const mentorChoices = computed(() =>
 const teaching = ref<SpaceTeaching>({})
 const teachingOwn = ref(false)
 
-const form = ref<{ submit: () => void } | null>(null)
+// --- 修改草稿 ------------------------------------------------------------------------
+
+const draft = useTaskDraft({ spaceId: () => spaceId.value })
+const initialData = ref<Partial<TaskFormSubmitData>>({})
+const formKey = ref(0)
+const draftReady = ref(false)
+
+async function openChanges() {
+  draftReady.value = false
+  const row = await TaskDraftsApi.forTask(taskId)
+  draft.open(row)
+  initialData.value = row.fields as Partial<TaskFormSubmitData>
+  teaching.value = { ...(row.fields.teaching ?? {}) }
+  teachingOwn.value = !!row.fields.teachingOwn && !isTeachingBlank(teaching.value)
+  draft.baseline({ teaching: teaching.value, teachingOwn: teachingOwn.value })
+  formKey.value++
+  draftReady.value = true
+}
+
+/** 有没有还没保存到题目上的修改。 */
+const unsaved = computed(() => (draft.draft.value?.version ?? 0) > 0)
+
+watch([teaching, teachingOwn], () => draft.changed({ teaching: teaching.value, teachingOwn: teachingOwn.value }), {
+  deep: true,
+})
+
+type FormHandle = InstanceType<typeof TaskForm>
+const form = ref<FormHandle | null>(null)
+const host = ref<HTMLElement | null>(null)
+watch(form, (f) =>
+  draft.bind(
+    f
+      ? {
+          values: () => f.values(),
+          apply: async (fields: TaskDraftFields) => f.apply(fields),
+        }
+      : null
+  )
+)
+
+// --- 芝士 -----------------------------------------------------------------------------
+
+const terms = () => ({
+  categories: editCategories.value.map((c) => ({ id: c.id, name: c.name })),
+  topics: (taskData.value?.space?.classificationTopics ?? []).map((topic) => ({ id: topic.id, name: topic.name })),
+})
+
+const agent = useDraftAgent({
+  draft,
+  terms,
+  // 和题目页「问芝士」同一段对话。
+  home: () => ({ kind: 'task', id: taskId }),
+  publishedHere: () => navigateToDetail(),
+})
+const { assistant } = agent
+
+const layer = useAgentPointer({
+  host,
+  writing: draft.writing,
+  marks: draft.marks,
+  active: computed(() => assistant.busy.value),
+  descriptionEnd: () => form.value?.descriptionEnd() ?? null,
+})
+const pointer = computed<AgentPointer | null>(() => layer.pointer.value)
+const outline = computed<AgentBox | null>(() => layer.outline.value)
+const marks = computed<AgentMark[]>(() => layer.marks.value)
+const agentOpen = ref(false)
+
+// --- 保存 ---------------------------------------------------------------------------
+
 const formInvalid = ref(0)
 const attempted = ref(false)
 const saving = ref(false)
@@ -92,11 +176,21 @@ async function onSubmit(data: TaskFormSubmitData) {
   if (saving.value) return
   saving.value = true
   try {
-    await TaskBoardApi.update(taskId, {
-      ...data,
-      // 整份替换：沿用默认就交一份空的，让空间（或项目集）那一层重新生效。
-      teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
-    })
+    await draft.flush()
+    const row = await draft.ensure()
+    // 表单校验过的样子就是要保存的样子：先存进修改草稿，再把草稿保存到题目上。
+    await TaskDraftsApi.save(
+      row.id,
+      draftFieldsOf({
+        ...data,
+        descriptionMarkdown: form.value?.values().descriptionMarkdown,
+        // 整份替换：沿用默认就交一份空的，让空间（或项目集）那一层重新生效。
+        teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
+        teachingOwn: teachingOwn.value,
+      })
+    )
+    await TaskDraftsApi.publish(row.id)
+    draft.gone()
     if (resubmit.value) {
       await TaskBoardApi.resubmitTask(taskId)
       toast.success(t('tasks.edit.resubmitted'))
@@ -111,21 +205,42 @@ async function onSubmit(data: TaskFormSubmitData) {
   }
 }
 
+/** 放弃修改：删掉这份草稿，表单回到题目现在的样子。 */
+async function discard() {
+  const id = draft.id.value
+  if (!id) return
+  try {
+    draft.gone()
+    await TaskDraftsApi.remove(id)
+    await openChanges()
+  } catch (err) {
+    void errorHandler.handle(err as Error, { defaultMessage: t('global.updateFailed') })
+  }
+}
+
 // 保存 / 取消之后回题目详情。**不是 push**：进来时就是从详情 push 过来的，出去再 push
 // 一次，身后就多一条详情，按 ← 会落回那张刚保存过的表单。去向是定的（详情），所以走
 // closeOverlay：身后正是它就退一格，否则 replace 过去。
 const navigateToDetail = () => closeOverlay(router, detailTo.value)
 
+function openTask(id: number) {
+  void router.push({ name: 'TasksDetail', params: { spaceId: spaceId.value, taskId: id } })
+}
+
 onMounted(async () => {
   await loadTaskData()
   const task = taskData.value
   if (!task) return
-  teaching.value = { ...(task.teaching ?? {}) }
-  teachingOwn.value = !isTeachingBlank(teaching.value)
   if (task.space?.id) {
     spaceStore.setCurrentSpaceId(task.space.id)
     await Promise.all([spaceData.fetchDomainGroups(), spaceData.fetchCategories()])
   }
+  try {
+    await openChanges()
+  } catch (err) {
+    void errorHandler.handle(err as Error, { defaultMessage: t('tasks.edit.loadFailed') })
+  }
+  void assistant.load()
   try {
     const data = await TaskBoardApi.listAttachments(taskId)
     uploads.reset(data.attachments.map(({ id, name, size }) => ({ id, name, size })))
@@ -133,6 +248,50 @@ onMounted(async () => {
     // 读不出来就当没有：增删仍然走得通，只是这一页不列已有的那几份。
   }
 })
+
+onBeforeUnmount(() => void draft.flush())
+
+const panelProps = computed(() => ({
+  personalTeamHandle: myHandle(),
+  conversations: assistant.conversations.value,
+  currentId: assistant.current.value,
+  title: assistant.title.value,
+  messages: agent.panel.value.messages,
+  streaming: assistant.streaming.value,
+  tool: assistant.tool.value,
+  queued: assistant.queued.value,
+  notice: assistant.notice.value,
+  creditRefused: assistant.creditRefused.value,
+  busy: assistant.busy.value,
+  steps: agent.panel.value.steps,
+  changes: agent.panel.value.changes,
+  results: agent.panel.value.results,
+  files: agent.panel.value.files,
+  context: '',
+  starters: [
+    t('tasks.assistant.draft.editStarters.later'),
+    t('tasks.assistant.draft.editStarters.rubric'),
+    t('tasks.assistant.draft.editStarters.check'),
+  ],
+  placeholder: t('tasks.assistant.draft.placeholder'),
+  hint: t('tasks.assistant.draft.hint'),
+  canAttach: true,
+  closable: !mdAndUp.value,
+}))
+
+const panelEvents = {
+  send: (text: string) => void agent.ask(text),
+  stop: () => void assistant.stop().catch(() => undefined),
+  new: () => assistant.startNew(),
+  select: (id: string) => void assistant.select(id),
+  close: () => (agentOpen.value = false),
+  undo: (id: number, key: string) => void agent.undo(id, key),
+  undoAll: (id: number) => void agent.undoAll(id),
+  jump: (key: string) => layer.jump(key),
+  openTask,
+  attach: (files: File[]) => void agent.attach(files),
+  removeFile: (i: number) => agent.removeFile(i),
+}
 </script>
 
 <template>
@@ -148,6 +307,10 @@ onMounted(async () => {
       <span v-if="attempted && formInvalid" class="te__blocking">{{
         t('spaces.detail.publishTask.blocking', { n: formInvalid })
       }}</span>
+      <span v-else-if="unsaved" class="te__unsaved" data-testid="edit-unsaved">{{ t('tasks.edit.unsaved') }}</span>
+      <BaseButton v-if="unsaved" kind="ghost" :disabled="saving" @click="discard">{{
+        t('tasks.edit.discard')
+      }}</BaseButton>
       <BaseButton kind="ghost" :disabled="saving" @click="navigateToDetail">{{ t('global.cancel') }}</BaseButton>
       <BaseButton
         v-if="rejected"
@@ -167,16 +330,17 @@ onMounted(async () => {
     </template>
   </PageHeader>
 
-  <div class="te">
+  <div ref="host" class="te">
     <div v-if="loading" class="py-12 text-center">
       <v-progress-circular indeterminate color="primary" />
     </div>
     <!-- A failed read trades the form for the error (docs/design-system.md §3.10). -->
     <BaseLoadError v-else-if="error" :title="t('tasks.loadError.title')" :error="error" @retry="loadTaskData" />
     <TaskForm
-      v-else-if="taskData"
+      v-else-if="taskData && draftReady"
       ref="form"
-      :initial-data="editTaskData"
+      :key="formKey"
+      :initial-data="initialData"
       is-editing
       :classification-topics="taskData.space?.classificationTopics || []"
       :categories="editCategories"
@@ -185,6 +349,8 @@ onMounted(async () => {
       :mentor-options="mentorChoices"
       @invalid="formInvalid = $event"
       @submit="onSubmit"
+      @change="draft.changed"
+      @ready="draft.baseline"
     >
       <template #attachments>
         <TaskAttachmentPicker
@@ -214,11 +380,31 @@ onMounted(async () => {
         </div>
       </template>
     </TaskForm>
+    <AgentLayer
+      :pointer="pointer"
+      :outline="outline"
+      :marks="marks"
+      :name="t('work.agentAvatar.defaultName')"
+      @undo="agent.undoMark"
+    />
   </div>
+
+  <v-navigation-drawer v-if="mdAndUp" permanent location="right" width="380" class="te__agent">
+    <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
+  </v-navigation-drawer>
+  <template v-else>
+    <BaseButton class="te__agent-open" kind="secondary" @click="agentOpen = true">{{
+      t('tasks.assistant.label')
+    }}</BaseButton>
+    <v-bottom-sheet v-model="agentOpen">
+      <div class="te__sheet"><AssistantPanel v-bind="panelProps" closable v-on="panelEvents" /></div>
+    </v-bottom-sheet>
+  </template>
 </template>
 
 <style scoped>
 .te {
+  position: relative;
   width: min(var(--page-w), 100%);
   margin: 0 auto;
   padding: 8px 16px 64px;
@@ -282,5 +468,29 @@ onMounted(async () => {
 
 .te__teaching {
   margin-top: 12px;
+}
+
+.te__unsaved {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
+}
+
+.te__agent :deep(.v-navigation-drawer__content) {
+  display: flex;
+  flex-direction: column;
+}
+
+.te__agent-open {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 5;
+}
+
+.te__sheet {
+  height: 78vh;
+  background: var(--surface);
 }
 </style>

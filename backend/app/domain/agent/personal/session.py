@@ -17,6 +17,7 @@ import uuid
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_personal_credential
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import PI
 from app.domain.agent.personal.prompt import system_prompt
 from app.domain.agent.session_host.contract import (
@@ -40,24 +41,50 @@ MEMORY_MB = 512
 #: How long its runner may be out of reach mid-answer before the answer is
 #: given up on.
 GONE_AFTER_S = 15.0
-#: The longest answer, in tokens; the model's other limits follow from it.
-MAX_TOKENS = 1500
+#: The longest answer, in tokens; the model's other limits follow from it. Its
+#: reasoning counts, and so do a tool call's arguments: a 题目's whole
+#: description written into a draft is one answer.
+MAX_TOKENS = 16000
 #: The context the session may grow to, and how much of it compaction keeps
 #: free: pi summarises the older part of the conversation once a question's
 #: context passes ``CONTEXT_TOKENS - RESERVE_TOKENS``, keeping the latest
 #: ``KEEP_TOKENS`` verbatim. What a question costs stays bounded however long
 #: the conversation runs.
-CONTEXT_TOKENS = 32_000
+CONTEXT_TOKENS = 64_000
 RESERVE_TOKENS = 16_000
-KEEP_TOKENS = 6_000
+KEEP_TOKENS = 8_000
 #: How long pi waits before retrying a failed model call, doubling for each of
 #: its three retries: pi's own default, written here so that a test can make a
 #: failing gateway fail at once.
 RETRY_BASE_DELAY_MS = 2000
 
-#: What a person's 芝士 may do (`sandbox/cheese`): read their own tasks and the
-#: platform's documentation.
-TOOLS = ("cheese_my_tasks", "cheese_docs_search", "cheese_docs_read")
+#: How hard it reasons, when the model honours it (the gateway's
+#: ``cheese_efforts``): writing a 题目 from a handout is worth the deeper one.
+EFFORT = "high"
+
+
+def effort(model: str) -> str | None:
+    """``EFFORT`` when ``model`` honours it, else the model's own default."""
+    honoured = next(
+        (m.efforts for m in gateway_catalog.snapshot() if m.id == model), ()
+    )
+    return EFFORT if EFFORT in honoured else None
+
+
+#: What a person's 芝士 may do (`sandbox/cheese`), the same wherever it is asked:
+#: what the person may do there, as them. The page they have open is said with
+#: each question (``prompt.page``); it never narrows the tools.
+TOOLS = (
+    "cheese_task_search",
+    "cheese_task_get",
+    "cheese_task_write",
+    "cheese_task_publish",
+    "cheese_file_read",
+    "cheese_space_materials",
+    "cheese_my_tasks",
+    "cheese_docs_search",
+    "cheese_docs_read",
+)
 
 
 def ref(user_id: int, conversation_id: uuid.UUID) -> SessionRef:
@@ -67,13 +94,13 @@ def ref(user_id: int, conversation_id: uuid.UUID) -> SessionRef:
 
 
 def session(
-    user_id: int, conversation_id: uuid.UUID, place: str
+    user_id: int, conversation_id: uuid.UUID
 ) -> tuple[SessionRef, SessionSpec, Access]:
     """The conversation's session, what it is started as, and what it acts
     with: the person's own credential, which reaches the model and nothing
     else (`sandbox_auth.mint_personal_credential`)."""
     spec = SessionSpec(
-        system_prompt=system_prompt(place),
+        system_prompt=system_prompt(),
         model=settings.assistant_model,
         tools=TOOLS,
         footprint=Footprint(memory_mb=MEMORY_MB, group_limit=SESSIONS_PER_PERSON),
@@ -81,7 +108,9 @@ def session(
         gone_after_s=GONE_AFTER_S,
         host_wait_s=HOST_WAIT_S,
         model_settings=ModelSettings(
-            thinking=False,
+            # It reasons: reading a handout and writing a 题目 from it needs it.
+            thinking=True,
+            effort=effort(settings.assistant_model),
             max_tokens=MAX_TOKENS,
             context_tokens=CONTEXT_TOKENS,
             reserve_tokens=RESERVE_TOKENS,

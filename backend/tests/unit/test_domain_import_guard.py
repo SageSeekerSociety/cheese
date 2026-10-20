@@ -336,6 +336,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.spaces", "app.domain.user.repositories"),
         ("app.api.routes.tags", "app.domain.tag.repositories"),
         ("app.api.routes.tasks._common", "app.domain.space.repositories"),
+        # Moved with the body of PATCH /tasks/{id} out of lifecycle, which still
+        # reads them for its other routes: the same debt, a second importer.
+        ("app.api.routes.tasks._writes", "app.domain.space.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.space.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.team.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.user.repositories"),

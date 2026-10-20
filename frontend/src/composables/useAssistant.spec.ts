@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAssistant } from './useAssistant'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 const CONVERSATION = { id: 'c1', title: '', lastActiveAt: '2026-10-01T08:00:00Z', questions: 0 }
 
@@ -49,7 +49,7 @@ describe('题目页上问芝士', () => {
 
   it('sends the question and keeps the streamed answer in the conversation', async () => {
     const asked = serve(() => events(['delta', { text: '先会' }], ['delta', { text: ' gdb。' }], ['done', {}]))
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -71,12 +71,13 @@ describe('题目页上问芝士', () => {
           headers: { 'content-type': 'application/json' },
         })
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
 
-    expect(a.notice.value).toBe('本月的芝士额度已用完，11月1日重置。')
+    // The server's own reason, as it said it: when the credits come back.
+    expect(a.notice.value).toContain('11月1日')
     expect(a.messages.value).toEqual([])
     expect(a.busy.value).toBe(false)
     expect(a.creditRefused.value).toBe(false)
@@ -90,19 +91,21 @@ describe('题目页上问芝士', () => {
         ['done', {}]
       )
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', 'fallback')
 
-    expect(a.notice.value).toBe("Cheese can't answer right now. Try again later.")
+    // The sentence the key names, in English: not the server's Chinese.
+    expect(a.notice.value).toBe(i18n.global.t('apiError.assistantFailed'))
+    expect(a.notice.value).not.toMatch(/[\u4e00-\u9fff]/)
   })
 
   it('an error event with an unknown key shows the server words', async () => {
     serve(() =>
       events(['error', { message: '服务端的原话', i18n: { key: 'noSuchSentence', params: {} } }], ['done', {}])
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', 'fallback')
@@ -128,7 +131,7 @@ describe('题目页上问芝士', () => {
           { status: 401, headers: { 'content-type': 'text/event-stream' } }
         )
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', 'fallback')
@@ -152,7 +155,7 @@ describe('题目页上问芝士', () => {
           { status: 429, headers: { 'content-type': 'application/json' } }
         )
     )
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -195,7 +198,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
       }
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -219,7 +222,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
         return placed(['answering', { id: 'q1' }], ['delta', { text: '先会', at: 0 }, '1-0'])
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -244,7 +247,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
         return placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0'])
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant(() => 7)
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
 
     await a.load()
     await vi.waitFor(() => expect(a.busy.value).toBe(false))
@@ -253,5 +256,71 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
       ['user', '要先会什么？'],
       ['assistant', '先会 gdb。'],
     ])
+  })
+})
+
+describe('芝士这一轮做了什么', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reasoning is one step that knows how long it took; a call is another', async () => {
+    serve(() =>
+      events(
+        ['thinking', {}],
+        ['tool', { name: 'cheese_task_search', call: 'c1' }],
+        ['tool_args', { call: 'c1', text: '{"query":"Lab"}', at: 0 }],
+        ['delta', { text: '有两道。' }],
+        ['done', {}]
+      )
+    )
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    await a.load()
+
+    await a.ask('空间里有哪些实验？', '答不上来')
+
+    const steps = a.messages.value.at(-1)?.steps ?? []
+    expect(steps.map((s) => [s.name, s.state])).toEqual([
+      ['thinking', 'done'],
+      ['cheese_task_search', 'done'],
+    ])
+    expect(typeof steps[0].ms).toBe('number')
+    expect(steps[1].args).toBe('{"query":"Lab"}')
+  })
+
+  it('a conversation opened again shows what was kept of each answer', async () => {
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.endsWith('/assistant/tasks/7/conversations')) return envelope({ conversations: [CONVERSATION] })
+      if (url.endsWith('/assistant/conversations/c1'))
+        return envelope({
+          ...CONVERSATION,
+          answering: null,
+          messages: [
+            { role: 'user', text: '改一下截止时间', at: '2026-10-20T08:00:00Z' },
+            {
+              role: 'assistant',
+              text: '改好了。',
+              at: '2026-10-20T08:00:09Z',
+              parts: {
+                steps: [
+                  { call: 'thinking-0', name: 'thinking', args: '', ms: 3000 },
+                  { call: 'c1', name: 'cheese_task_write', args: '{"task":88}', failed: '草稿还不完整' },
+                ],
+                edits: [{ draft: 41, changed: { deadline: { before: 1, after: 2 } }, kept: [], notes: [] }],
+                published: [],
+              },
+            },
+          ],
+        })
+      return new Response('not found', { status: 404 })
+    })
+    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+
+    await a.load()
+
+    const answer = a.messages.value[1]
+    expect(answer.steps?.map((s) => [s.name, s.state, s.ms ?? null])).toEqual([
+      ['thinking', 'done', 3000],
+      ['cheese_task_write', 'failed', null],
+    ])
+    expect(answer.edits?.[0].changed).toEqual({ deadline: { before: 1, after: 2 } })
   })
 })

@@ -260,12 +260,15 @@ class Runner(runner.Runner[Journal]):
 
     def write(self, update: dict) -> None:
         """Show the assistant message pi is writing, block by block, as its
-        deltas arrive (`message_update`): text, and tool calls with their
-        arguments as raw JSON so far. Reasoning is not shown."""
+        deltas arrive (`message_update`): text, tool calls with their
+        arguments as raw JSON so far, and that the model is reasoning — a
+        `thinking` block, never what it reasons."""
         kind, index = update.get("type"), update.get("contentIndex")
         if not isinstance(index, int):
             return
-        if kind == "text_start":
+        if kind == "thinking_start":
+            self.writing[index] = {"type": "thinking"}
+        elif kind == "text_start":
             self.writing[index] = {"type": "text", "text": ""}
         elif kind == "toolcall_start":
             self.writing[index] = {

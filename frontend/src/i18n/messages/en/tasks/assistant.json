@@ -11,9 +11,7 @@
   "noQuestions": "No questions yet",
   "placeholder": "Ask a question about this task…",
   "queued": "Queued. It starts when resources free up",
-  "readingDocs": "Reading the docs…",
-  "readingTasks": "Looking at your tasks…",
-  "reads": "Cheese has read this task's brief, requirements and details, but not its attachments.",
+  "reads": "Cheese has read this task's description, requirements and details.",
   "send": "Send",
   "starters": {
     "basics": "What do I need to know first?",
@@ -22,6 +20,54 @@
   },
   "stop": "Stop",
   "stopped": "Stopped",
-  "thinking": "Thinking…",
-  "today": "Today"
+  "today": "Today",
+  "steps": {
+    "folded": "{first} and {n} steps",
+    "thinking": "Thinking",
+    "thought": "Thought for {s}s"
+  },
+  "changes": {
+    "title": "Form changes",
+    "created": "New draft",
+    "untitled": "Untitled task",
+    "undoOne": "Undo {field}",
+    "count": "{n} fields filled",
+    "undoAll": "Undo all",
+    "empty": "Cleared",
+    "rubric": "{n} items, {total} points",
+    "yes": "Yes",
+    "no": "No",
+    "kept": "You changed this; left as is"
+  },
+  "notes": {
+    "title": "Needs your check"
+  },
+  "result": {
+    "saved": "Saved changes to “{name}”",
+    "published": "Published “{name}”",
+    "pending": "Waiting for admin review",
+    "open": "View task"
+  },
+  "files": {
+    "uploading": "Uploading",
+    "remove": "Remove {name}",
+    "add": "Add files",
+    "readThese": "Read the attached files",
+    "failed": "File upload failed"
+  },
+  "draft": {
+    "greeting": "Describe the task you have in mind, or upload a lab handout or lecture notes, and I will fill in the form.",
+    "placeholder": "Describe the task or ask for a change",
+    "hint": "Written by AI; check it before publishing.",
+    "starters": {
+      "rubric": "Draft the submission items and rubric",
+      "harder": "Make it one level harder",
+      "check": "Check it as a student would"
+    },
+    "editStarters": {
+      "later": "Move the deadline a week later",
+      "rubric": "Adjust the rubric",
+      "check": "Check it as a student would"
+    }
+  }
 }

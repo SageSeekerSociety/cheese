@@ -503,18 +503,18 @@
     }
   },
   "publishTaskView": {
-    "about": "Publish page: top to bottom one task (content, participants, timing, categories and tags, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
+    "about": "Publish page: the publish form on the left, saved as a draft as it is written; the header's Drafts lists my drafts in this space. Cheese is docked on the right; while it writes this draft, one named pointer on the form follows what it fills in.",
     "s1": {
-      "name": "Publish one",
-      "note": "Default cell: a publish form (task content at the top, 'Import from file' and 'Use a template' at its top-right), the button says 'Publish', and the line beside it says 'Needs admin review after publishing'."
+      "name": "Writing a draft",
+      "note": "Default cell: the form, with 'Drafts 3' and 'Draft saved' in the header, and 'Needs admin review after publishing' beside the publish button."
     },
     "s2": {
-      "name": "Publish several",
-      "note": "Three read from a file (two checked): the task list above says what the file is called and how many were read; the button changes to say how many will publish."
+      "name": "Cheese filling in",
+      "note": "Cheese is writing the name: a named text caret sits after the words and the field is outlined; the description it already filled carries 'Filled by Cheese' and 'Undo' at its top right. The header says 'Saving…'."
     },
     "s3": {
       "name": "Space not ready",
-      "note": "Categories and domain groups still hanging off the space, not yet arrived: no form, only the header line explaining this task needs review — the publish button is disabled meanwhile."
+      "note": "Categories and domain groups are still on their way: no form, and the publish button is disabled."
     }
   },
   "basicInfoView": {
@@ -1609,5 +1609,20 @@
     "name": "Choose a team connection",
     "note": "Choose a connection, an available model, and the device that will execute tasks.",
     "about": "AI teammates in project settings choose a team connection, one of its models, and an execution device."
+  },
+  "assistantPanel": {
+    "about": "The personal Cheese panel, used on the task page, the publish page and the edit page. Each turn lists the tools Cheese called one per line and folds them when done; what it wrote into a draft is a card with an undo per field; what it asks the person to check and what it published are cards of their own.",
+    "s1": {
+      "name": "Publish page, nothing asked yet",
+      "note": "An empty conversation: one line on what it can do, a few starters below, and a button to add files beside the box."
+    },
+    "s2": {
+      "name": "Writing a draft",
+      "note": "Cheese has read the file and looked through the space's tasks, and is filling in the task: the last step spins."
+    },
+    "s3": {
+      "name": "A finished turn",
+      "note": "The steps fold into one line; the deadline in the changes card was undone (struck through); a 'Needs your check' card; the published result offers 'View task'."
+    }
   }
 }
