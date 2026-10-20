@@ -253,7 +253,6 @@ function undoable(change: PanelChange): number {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono);
   font-size: 13px;
   color: var(--muted);
 }
