@@ -304,10 +304,9 @@ async fn connect_steps(
     })
 }
 
-/// Logs in the Claude Code the platform runs here, with a Claude subscription
-/// or, `console`, an Anthropic Console account. It opens in the browser and
-/// finishes there; `on_step` hears "preparing" while the build downloads and
-/// "browser" once the sign-in page is open.
+/// Logs in the Claude Code the platform runs here with a Claude subscription.
+/// Sign-in takes place in the browser; `on_step` hears "preparing" while the build
+/// downloads and "browser" once the sign-in page is open.
 pub async fn claude_login(
     running: &Running,
     login_id: Option<&str>,
