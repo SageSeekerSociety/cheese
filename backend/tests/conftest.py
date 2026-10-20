@@ -244,6 +244,40 @@ def _production_test_engine(url: str) -> AsyncEngine:
 #: session of its still has records nobody has landed.
 _CHANNELS: "weakref.WeakSet[StubChannel]" = weakref.WeakSet()
 
+#: The channels that were already here when the running test began: the earlier
+#: tests' ones. Their readers lived on a portal loop that went away with those
+#: tests, so nothing this test does can land what they left.
+_CHANNELS_BEFORE_TEST: "frozenset[StubChannel]" = frozenset()
+
+
+@pytest.fixture(autouse=True)
+def _stub_channels_scoped_to_this_test() -> Iterator[None]:
+    """`wait_work_idle` waits only for work the running test started.
+
+    A channel outlives its test here. `_CHANNELS` is process-wide, and a
+    channel in a reference cycle is only collected when the garbage collector
+    gets to it — in a loaded shard that can be many tests later. The scan below
+    used to count those, and a session from an earlier test whose reading had
+    ended can never land what it left. Every test after it then paid the whole
+    30 s ceiling for work nobody could drain; several paid it at once under
+    load and went over the layer's own ceiling.
+
+    Scoping loses nothing of the test's own work: fixtures build their channels
+    after this snapshot, and so does a test body.
+    """
+    global _CHANNELS_BEFORE_TEST
+    before = _CHANNELS_BEFORE_TEST
+    _CHANNELS_BEFORE_TEST = frozenset(_CHANNELS)
+    try:
+        yield
+    finally:
+        _CHANNELS_BEFORE_TEST = before
+
+
+def _channels_of_this_test() -> list["StubChannel"]:
+    """The channels this test made, not the ones another test left behind."""
+    return [c for c in _CHANNELS if c not in _CHANNELS_BEFORE_TEST]
+
 
 def _topics_with_pending_records() -> set[str]:
     """Topics whose session said something the room has not landed yet.
@@ -252,9 +286,12 @@ def _topics_with_pending_records() -> set[str]:
     running in this process: a turn the session started for itself stays active
     until a later ``result``, and once everything it said has landed there is
     nothing teardown can wait for.
+
+    Only this test's channels are asked: another test's session has no reader
+    left (`_stub_channels_scoped_to_this_test`).
     """
     pending = set()
-    for channel in list(_CHANNELS):
+    for channel in _channels_of_this_test():
         for (topic_id, _), session in list(channel.sessions.items()):
             if channel.unlanded(topic_id, session):
                 pending.add(str(topic_id))
@@ -288,7 +325,8 @@ def wait_work_idle(runner=None) -> None:
     print(
         f"\n[wait_work_idle] 等满 30 秒还有 {runner.active_work_count()} 份工作没收尾，"
         "本条测试为此付了 30 秒。留下的："
-        f"{dict(runner._broker._active)}",
+        f"{dict(runner._broker._active)}；未落地的会话："
+        f"{sorted(_topics_with_pending_records()) or '无'}",
         file=sys.stderr,
     )
 
