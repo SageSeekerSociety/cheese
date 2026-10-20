@@ -119,8 +119,7 @@ class MicroCloudClient:
     # --- offerings -------------------------------------------------------
 
     async def list_offerings(self) -> list[dict[str, Any]]:
-        data = await self._call("GET", "/machine/offering?page_size=100")
-        return (data or {}).get("items", [])
+        return [offering async for offering in self._list("/machine/offering")]
 
     # --- customers & accounts --------------------------------------------
 
@@ -136,10 +135,7 @@ class MicroCloudClient:
         return await self._call("POST", "/customer", {"externalRef": external_ref})
 
     async def find_account(self, customer_id: int, name: str) -> dict[str, Any] | None:
-        data = await self._call(
-            "GET", f"/account?customer_id={customer_id}&page_size=100"
-        )
-        for item in (data or {}).get("items", []):
+        async for item in self._list("/account", customer_id=customer_id):
             if item.get("name") == name:
                 return item
         return None
@@ -165,10 +161,7 @@ class MicroCloudClient:
         self, customer_id: int, hostname: str
     ) -> dict[str, Any] | None:
         """The customer's machine with this hostname, if the provider has one."""
-        data = await self._call(
-            "GET", f"/machine?customerId={customer_id}&page_size=100"
-        )
-        for item in (data or {}).get("items", []):
+        async for item in self._list("/machine", customer_id=customer_id):
             if item.get("hostname") == hostname:
                 return item
         return None
