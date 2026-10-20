@@ -15,7 +15,7 @@ REF = "cheese-platform-host-pool"
 
 def contract_server(customers):
     """GET /customer as MicroCloud-API.yml has it: ordered by id, a cursor
-    (`page_start`) to the first id of a page, `page_size` defaulting to 20, and
+    (`page_start`) that is the id of a page's first row, `page_size` defaulting to 20, and
     an `external_ref` filter that matches by substring."""
 
     def respond(request):
@@ -26,7 +26,11 @@ def contract_server(customers):
         if query.get("external_ref"):
             rows = [c for c in rows if query["external_ref"] in c["externalRef"]]
         if "page_start" in query:
-            rows = [c for c in rows if c["id"] >= int(query["page_start"])]
+            # The cursor names an existing id; one that names no row reads as
+            # the end of the list, not as "from the next id on".
+            ids = [c["id"] for c in rows]
+            start = int(query["page_start"])
+            rows = rows[ids.index(start) :] if start in ids else []
         size = int(query.get("page_size", 20))
         page, rest = rows[:size], rows[size:]
         return httpx.Response(
@@ -53,7 +57,7 @@ async def test_finds_the_customer_past_the_first_page(monkeypatch):
     # Refs that contain the platform's own ref are not it.
     customers += [
         {"id": i, "externalRef": f"{REF}-archive-{i}", "status": "active"}
-        for i in range(301, 451)
+        for i in range(301, 601, 2)
     ]
     customers.append({"id": 602, "externalRef": REF, "status": "active"})
     real_client = httpx.AsyncClient
