@@ -43,10 +43,16 @@ class _Clock:
 
 
 class _KeepsBucket(_Bucket):
-    """A bucket whose objects nothing may delete."""
+    """A bucket that remembers every delete, so a test can say there was none.
+    (Raising here would be caught by the job and read as a failed batch.)"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.deleted: list[str] = []
 
     async def delete(self, key: str) -> bool:
-        raise AssertionError(f"an archive object was deleted: {key}")
+        self.deleted.append(key)
+        return await super().delete(key)
 
 
 async def _room(session, title: str):
@@ -162,6 +168,11 @@ async def test_retired_rows_move_to_the_bucket_and_nothing_else_moves(
         assert row["meta"] == written["meta"]
         assert row["kind"] == "event"
         assert row["content"] == "retired"
+        # The whole row is kept, not a summary of it.
+        assert row["author"] == "cheese"
+        assert row["author_type"] == "participant"
+        assert isinstance(row["seq"], int)
+        assert row["created_at"] and row["project_id"]
     async with factory() as session:
         ledger = (await session.execute(select(SiteEventArchive))).scalars().all()
     assert {entry.object_key for entry in ledger} == set(bucket.objects)
@@ -175,6 +186,7 @@ async def test_retired_rows_move_to_the_bucket_and_nothing_else_moves(
     assert await job.run() == {}
     assert bucket.objects == before
     assert await _ids(factory) == seeded["kept"]
+    assert bucket.deleted == []
 
 
 async def test_a_readback_that_differs_deletes_nothing_and_is_retried(
@@ -209,6 +221,7 @@ async def test_a_readback_that_differs_deletes_nothing_and_is_retried(
     # The failed attempt's object is kept too; its rows are archived again.
     assert uploaded.items() <= bucket.objects.items()
     assert set(_archived(bucket)) == set(seeded["retired"])
+    assert bucket.deleted == []
 
 
 async def test_an_upload_that_fails_leaves_the_rows(business_db_factory, monkeypatch):
