@@ -393,7 +393,8 @@ def disk_full(path):
     """The sentence for a command that failed where the disk is full, or
     None while it has room. A `statvfs` of the workspace: on a platform host
     that is the room's own quota (`sandbox_host.py`). Full is under 1% of it
-    left, or under 64 MB, in bytes or in files."""
+    left, or under 64 MB, in bytes or in files; a large disk with no quota of
+    the room's is full only under 1 GiB or 10,000 files."""
     if not hasattr(os, "statvfs"):
         return None
     try:
@@ -402,8 +403,8 @@ def disk_full(path):
         return None
     total, free = found.f_blocks * found.f_frsize, found.f_bavail * found.f_frsize
     files = found.f_favail
-    if free >= max(total // 100, 64 << 20) and (
-        not found.f_files or files >= found.f_files // 100
+    if free >= min(max(total // 100, 64 << 20), 1 << 30) and (
+        not found.f_files or files >= min(found.f_files // 100, 10_000)
     ):
         return None
     return f"disk full: {free // 10**6} MB free, {files} files left ({path})"

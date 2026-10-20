@@ -111,17 +111,26 @@ def spared(disk, home, write):
 def kept_on_full_disk(owner, home, payload, anchors, error):
     """No room to stage this payload's release: keep the running executor, as
     a busy one is kept (`UpgradeDeferred`), when it speaks this payload's
-    protocol. Its release is read from the record made outside the room
-    (`record_sandbox`), never from the config a sandboxed room writes, and
-    must be one of the store's. Raises `error` when there is none to keep."""
+    protocol and runs as this payload asks, sandboxed or not and with the
+    same limits. Whether it is sandboxed and its release are read from the
+    record made outside the room (`record_sandbox`), never from the config a
+    sandboxed room writes, and the release must be one of the store's.
+    Raises `error` when there is none to keep."""
     marker = execution_root(owner) / SANDBOXES / home.parent.name / home.name
-    previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
     try:
+        previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
         named = marker.read_text() if marker.exists() else previous["release"]
-    except (OSError, TypeError, KeyError):
+    except (OSError, ValueError, TypeError, KeyError):
         raise error from None
+    sandbox = payload.get("sandbox") or False
+    if marker.exists() != bool(sandbox) or previous.get("sandbox", False) != sandbox:
+        raise error
     release = Path(named.strip())
-    if release.parent != release_store(owner) or not release.is_dir():
+    if (
+        release.name in ("", ".", "..")
+        or release.parent != release_store(owner)
+        or not release.is_dir()
+    ):
         raise error
     state = executor_state(home, anchors, bool(payload.get("sandbox")))
     runtime = runpy.run_path(str(release / "remote-execution/runtime.py"))
@@ -142,7 +151,8 @@ def kept_on_full_disk(owner, home, payload, anchors, error):
         mcp_servers=process_servers({"mcp_servers": previous.get("mcp_servers", {})}),
         upgrade_pending=True,
         desired_release=None,
-        disk_full_mb=free_mb(home),
+        # What ran out is where releases are staged, not the room's own.
+        disk_full_mb=free_mb(release_store(owner)),
     )
     return info
 
@@ -977,7 +987,7 @@ def start_sandbox(
 
 
 @contextlib.contextmanager
-def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
+def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, disk=None):
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
@@ -1014,7 +1024,9 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         # would otherwise be renaming the same `.next` file.
         platform = payload.get("platform_skills") or []
         project = payload.get("project_skills") or []
-        disk = {}
+        # Filled with what is left when a write was skipped for want of
+        # space (`spared`); a caller that tells the room passes its own.
+        disk = {} if disk is None else disk
 
         def skills():
             before = payload.get("skills_before_list") or []
@@ -1242,7 +1254,7 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
             settings = json.dumps(payload["environment"])
             where = Path(".cheese-environment/config.json")
             spared(disk, home, lambda: write_beneath(home, where, settings))
-        yield home, config, state, env, disk
+        yield home, config, state, env
 
 
 def configure(payload):
@@ -1263,12 +1275,12 @@ def configure_idle(payload):
     bwrap = None
     if payload.get("sandbox") and not platform_machine:
         bwrap = sandbox_tools(None, platform_machine=False)
-    with prepared(payload, Path.home(), refresh_runtime=True) as (
+    disk = {}
+    with prepared(payload, Path.home(), refresh_runtime=True, disk=disk) as (
         home,
         config,
         state,
         env,
-        disk,
     ):
         platform_dir = home / PLATFORM_DIR
         # Where the backend and the sandbox find the state; `state` is the

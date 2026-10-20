@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -407,15 +408,39 @@ def test_a_command_that_fails_on_a_full_disk_says_the_disk_is_full(
     fill(room)
 
     result = room.bash("echo more >> big")
+    # The same command through the shell a session's own build runs it in
+    # (`shell_prefix`), which reads the command's end from the executor.
+    shell = {"subtype": "shell", "command_id": "full-disk"}
+    runtime.request(
+        room.state,
+        "control",
+        {
+            **shell,
+            "operation": "start",
+            "kind": "sh",
+            "body": "echo more >> big",
+            "cwd": str(room.home / "room"),
+            "env": {},
+            "merge": True,
+            "stdin": None,
+        },
+    )
+    deadline = time.monotonic() + 30
+    while "exit" not in (
+        read := runtime.request(
+            room.state,
+            "control",
+            {**shell, "operation": "read", "out": 0, "err": 0, "wait": 1},
+        )
+    ):
+        assert time.monotonic() < deadline
 
     assert "disk full:" in result["stdout"] and "MB free" in result["stdout"]
+    assert read["exit"] != 0 and "disk full:" in read["disk"]
 
 
-@with_sandbox_host
-def test_an_upgrade_with_no_room_for_its_release_keeps_the_running_executor(
-    rooms, machine_service
-):
-    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+def full_release_store(room: "Room"):
+    """The machine's release store with no room for another release."""
     store = Path(os.environ["HOME"]) / ".cheese/executor-releases"
     mount = subprocess.run(
         ["findmnt", "-n", "-o", "TARGET", "--target", str(store)],
@@ -430,21 +455,50 @@ def test_an_upgrade_with_no_room_for_its_release_keeps_the_running_executor(
             ["sudo", "-n", "xfs_quota", "-x", "-c", command, mount], check=True
         )
 
-    newer = room.payload()
-    newer["files"]["remote-execution/newer.txt"] = "bmV3ZXI="
-    if "file_names" in newer:
-        newer["file_names"] = [*newer["file_names"], "remote-execution/newer.txt"]
-    # The release store with no room left for another release.
     quota(f"project -s -p {store} {project}")
     quota(f"limit -p bhard=1m {project}")
+    return lambda: quota(f"limit -p bhard=0 {project}")
+
+
+def newer(payload: dict) -> dict:
+    """The same payload from a later release."""
+    payload["files"]["remote-execution/newer.txt"] = "bmV3ZXI="
+    if "file_names" in payload:
+        payload["file_names"] = [*payload["file_names"], "remote-execution/newer.txt"]
+    return payload
+
+
+@with_sandbox_host
+def test_an_upgrade_with_no_room_for_its_release_keeps_the_running_executor(
+    rooms, machine_service
+):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    lift = full_release_store(room)
     try:
-        answer = room.install_again(newer)
+        answer = room.install_again(newer(room.payload()))
     finally:
-        quota(f"limit -p bhard=0 {project}")
+        lift()
 
     assert answer["upgrade_pending"] is True
     assert answer["release"] == str(room.release)
     assert room.bash("echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_no_full_disk_keeps_an_executor_running_otherwise_than_it_is_asked(
+    rooms, machine_service
+):
+    """Sandboxed now, asked to run with other limits: no room to stage the
+    release that would run it so is no reason to keep it as it is."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    payload = newer(room.payload())
+    payload["sandbox"] = {**payload["sandbox"], "memory_mb": 512}
+    lift = full_release_store(room)
+    try:
+        with pytest.raises(OSError):
+            room.install_again(payload)
+    finally:
+        lift()
 
 
 @with_sandbox_host

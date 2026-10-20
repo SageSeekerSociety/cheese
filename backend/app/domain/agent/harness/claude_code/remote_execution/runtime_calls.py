@@ -385,9 +385,11 @@ def prepare(self, payload):
     if home / ".cheese/executor" != self.state:
         raise ValueError("Executor preparation belongs to another room")
     bootstrap = runpy.run_path(str(self.programs / "remote-execution/bootstrap.py"))
+    disk = {}
     with bootstrap["prepared"](
         payload,
         room_owner,
+        disk=disk,
         # Read-only in a sandbox: only the install, outside it, fetches it.
         fetch_toolchain=not self.config.get("sandbox"),
     ) as (
@@ -395,7 +397,6 @@ def prepare(self, payload):
         config,
         _,
         _,
-        disk,
     ):
         # The two keys a configure replaces, and so the two the running
         # room is allowed to differ in: everything else has to match.
