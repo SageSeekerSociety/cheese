@@ -17,12 +17,12 @@ import type {
   SpaceMaterial,
   SpaceTeaching,
   Task,
+  TaskDraftSummary,
   TaskMembership,
   TaskSubmissionReview,
   User,
 } from '@/types'
 import type { DomainGroup } from '@/types/spaces'
-import type { PublishDraft } from '@/views/spaces/detail/publishDrafts'
 import type BriefView from '@/views/tasks/detail/BriefView.vue'
 import type RosterView from '@/views/tasks/detail/RosterView.vue'
 
@@ -205,48 +205,43 @@ export const SPACE_TEMPLATES: { index: number; name: string; description: string
   { index: 1, name: '随堂小测', description: '' },
 ]
 
-/** 发题页上「从文件导入」读出的草稿：一道。 */
-export const PUBLISH_DRAFT_ONE: PublishDraft[] = [
+/** 发题页顶栏「草稿」里的几份：两份新题目，一份已发布题目的修改。 */
+export const PUBLISH_DRAFTS: TaskDraftSummary[] = [
   {
-    key: '0-进程调度',
-    picked: true,
-    name: '实现一个优先级的进程调度器',
-    intro: '【PDF · 第 1 页】用给定的框架写出调度器。',
-    description: {
-      type: 'doc',
-      content: [
-        { type: 'paragraph', content: [{ type: 'text', text: '用给定的框架写出一个优先级调度器，跑通样例。' }] },
-      ],
-    },
-    page: 1,
-  },
-]
-
-/** 发题页上「从文件导入」读出的草稿：好几道，勾着的两道。 */
-export const PUBLISH_DRAFT_MANY: PublishDraft[] = [
-  {
-    key: '0-调度',
-    picked: true,
-    name: '实现优先级调度器',
-    intro: '【PDF · 第 1 页】',
-    description: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '写调度器。' }] }] },
-    page: 1,
+    id: 41,
+    spaceId: 7,
+    taskId: null,
+    taskName: null,
+    name: 'Lab 3 缓存模拟器',
+    source: 'Lab3-缓存模拟器.pdf',
+    conversationId: null,
+    version: 6,
+    updatedAt: new Date(NOW - 2 * 60_000).toISOString(),
+    missing: [],
   },
   {
-    key: '1-死锁',
-    picked: true,
-    name: '死锁检测',
-    intro: '【PDF · 第 2 页】',
-    description: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '实现死锁检测。' }] }] },
-    page: 2,
+    id: 42,
+    spaceId: 7,
+    taskId: null,
+    taskName: null,
+    name: 'Lab 4 矩阵转置优化',
+    source: '第二单元实验与作业.pdf',
+    conversationId: null,
+    version: 2,
+    updatedAt: new Date(NOW - 40 * 60_000).toISOString(),
+    missing: [],
   },
   {
-    key: '2-内存',
-    picked: false,
-    name: '页面置换',
-    intro: '【PDF · 第 3 页】',
-    description: { type: 'doc', content: [] },
-    page: 3,
+    id: 38,
+    spaceId: 7,
+    taskId: 88,
+    taskName: 'Lab 2 二进制炸弹',
+    name: 'Lab 2 二进制炸弹',
+    source: '',
+    conversationId: null,
+    version: 1,
+    updatedAt: new Date(NOW - 3 * DAY).toISOString(),
+    missing: [],
   },
 ]
 
@@ -376,3 +371,65 @@ export const TASK_REVIEWS: Map<number, TaskSubmissionReview | undefined> = new M
   [102, { reviewed: true, detail: { accepted: false, score: 40, comment: '没有处理优先级相同的情况。' } }],
   [104, undefined],
 ])
+
+/** 芝士面板：正在写一份草稿的那一轮。 */
+export const PANEL_LIVE = {
+  messages: [
+    {
+      role: 'user' as const,
+      text: '根据 Lab3-缓存模拟器.pdf 出一道题',
+      at: new Date(NOW).toISOString(),
+      files: ['Lab3-缓存模拟器.pdf'],
+    },
+  ],
+  steps: [
+    { key: 't1', verb: '思考了 3 秒', arg: '', state: 'done' as const, thinking: true },
+    { key: 'c1', verb: '读取文件', arg: '1-12', state: 'done' as const },
+    { key: 'c2', verb: '查看空间题目', arg: 'Lab', state: 'done' as const },
+    { key: 'c3', verb: '填写题目', arg: 'Lab 3 缓存模拟器', state: 'run' as const },
+  ],
+}
+
+/** 芝士面板：答完的一轮，改动卡、待你确认、发布结果都在。 */
+export const PANEL_DONE = {
+  messages: [
+    {
+      role: 'user' as const,
+      text: '根据 Lab3-缓存模拟器.pdf 出一道题',
+      at: new Date(NOW).toISOString(),
+      files: ['Lab3-缓存模拟器.pdf'],
+    },
+    {
+      role: 'assistant' as const,
+      text: '已按文件填写名称、描述、提交内容和评分要点。截止时间按附件中的「第 9 周周日前」换算，需要你确认。',
+      at: new Date(NOW).toISOString(),
+      steps: [
+        { key: 'c1', verb: '读取文件', arg: '1-12', state: 'done' as const },
+        { key: 'c2', verb: '查看空间题目', arg: 'Lab', state: 'done' as const },
+        { key: 'c3', verb: '填写题目', arg: 'Lab 3 缓存模拟器', state: 'done' as const },
+      ],
+      changes: [
+        {
+          id: 1,
+          draft: 41,
+          created: false,
+          name: 'Lab 3 缓存模拟器',
+          canUndo: true,
+          rows: [
+            { key: 'name', label: '名称', value: 'Lab 3 缓存模拟器', undone: false },
+            {
+              key: 'description',
+              label: '描述',
+              value: '用 C 写一个缓存模拟器 csim，读入 valgrind 生成的访存记录',
+              undone: false,
+            },
+            { key: 'rubric', label: '评分要点', value: '3 项，合计 100 分', undone: false },
+            { key: 'deadline', label: '截止日期', value: '2026-11-01 23:59', undone: true },
+          ],
+          notes: [{ key: 'deadline', label: '截止日期', text: '按附件「第 9 周周日前」换算为 11 月 1 日' }],
+        },
+      ],
+      results: [{ taskId: 88, title: '已发布「Lab 3 缓存模拟器」', sub: '待管理员审核' }],
+    },
+  ],
+}

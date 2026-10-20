@@ -86,6 +86,7 @@ async def test_retrying_replay_waits_for_an_existing_reader():
         live={seat: object()},
         tasks={seat: reading},
         caught={seat: caught},
+        outdated={},
         _listen=Mock(),
     )
     replay = asyncio.create_task(lifecycle.replay(svc, session))

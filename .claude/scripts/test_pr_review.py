@@ -12,7 +12,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 import uuid
@@ -149,8 +148,7 @@ class PrReview(unittest.TestCase):
             "\n".join(f"value_{n} = 0" for n in range(20)) + "\n")
         # Every commit in this fixture gets a per-run id in its base tree. Two runs started
         # in the same second otherwise produce identical commit hashes, and a test that
-        # names a round by PR and SHA (the /tmp compatibility link) would race the other
-        # run for the same path.
+        # names a round by PR and SHA would race the other run for the same path.
         (work / ".test-run-id").write_text(uuid.uuid4().hex + "\n")
         git(work, "add", "-A")
         git(work, "commit", "-qm", "base")
@@ -344,19 +342,14 @@ class PrReview(unittest.TestCase):
         self.assertLessEqual(seen.count("<unset>"), 1, seen)
         self.assertEqual(seen[-1], "1")
 
-    def test_the_round_lives_in_the_home_cache_and_survives_post_and_a_lost_tmp_link(self):
+    def test_the_round_lives_in_the_home_cache_and_survives_post(self):
         home = self.tmp / "cache-home"
         home.mkdir(exist_ok=True)
-        link = Path("/tmp") / f"pr-review-{PR}-{self.shas[-1][:12]}.input"
-        self.addCleanup(link.unlink, missing_ok=True)
         env = {"PR_REVIEW_DIR": None, "HOME": str(home)}
         out = self.run_script("prepare", PR, env_extra=env)
         self.assertEqual(out.returncode, 0, out.stderr)
         d = Path(out.stdout.strip()).parent
         self.assertTrue(str(d).startswith(str(home / ".cheese/review-cache")), d)
-        # The old /tmp path still names the round.
-        self.assertTrue(link.is_symlink())
-        self.assertEqual(link.resolve(), d.resolve())
         sha = self.meta_of(Path(out.stdout.strip()))["sha"].strip("'")
         (d / "result.json").write_text(json.dumps(result_json(sha)))
         out = self.run_script("post", str(d))
@@ -365,10 +358,8 @@ class PrReview(unittest.TestCase):
         self.assertFalse(tree.exists(), "post removes the review tree")
         self.assertTrue((d / "REVIEW-RESULT.md").exists())
         self.assertTrue((d / "meta").exists())
-        # ready reads the stamped PR body even after a machine loses its /tmp link.
-        link.unlink()
-        # A newer round from another root must not answer for this PR either: /tmp is
-        # shared with every other seat on the machine, and the cache is this seat's.
+        # A newer round under /tmp must not answer for this PR: /tmp is shared with every
+        # other seat on the machine, and the cache is this seat's.
         other = Path("/tmp") / f"pr-review-{PR}-{uuid.uuid4().hex[:12]}.input"
         other.mkdir()
         self.addCleanup(shutil.rmtree, other, ignore_errors=True)
@@ -379,34 +370,6 @@ class PrReview(unittest.TestCase):
             "独立 review：head ffffffff 结论 无 blocker/major｜档位 B\n")
         out = self.run_script("ready", PR, env_extra={**env, "CI_JSON": self.GREEN})
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertTrue(out.stdout.startswith("可递：head "), out.stdout)
-        self.assertIn(f"review {self.shas[-1][:8]}", out.stdout)
-
-    def test_ready_uses_the_stamp_even_with_only_an_old_tmp_round(self):
-        # Directory discovery does not participate in delivery: the fake forge
-        # supplies the current stamp even when the old round is all this seat has.
-        review_md, _ = self.prepare()
-        d, _ = self.post(review_md)
-        old = Path("/tmp") / f"pr-review-12-{self.shas[-1][:12]}.input"
-        self.addCleanup(shutil.rmtree, old, ignore_errors=True)
-        shutil.rmtree(old, ignore_errors=True)
-        old.mkdir()
-        for name in ("meta", "REVIEW-RESULT.md"):
-            shutil.copy(d / name, old / name)
-        (old / "meta").write_text(
-            (old / "meta").read_text().replace("pr=7", "pr=12"))
-        # A compatibility link whose target is gone is newer than the round. It is not a
-        # round, and picking it would hide the one that is: ready would die on its meta.
-        # The name is unique to this run: a fixed one races another run for the same path.
-        dangling = Path("/tmp") / f"pr-review-12-{uuid.uuid4().hex[:12]}.input"
-        dangling.unlink(missing_ok=True)
-        dangling.symlink_to(self.tmp / "gone")
-        self.addCleanup(dangling.unlink, missing_ok=True)
-        home = self.tmp / "empty-home"
-        home.mkdir()
-        out = self.run_script("ready", "12", env_extra={
-            "PR_REVIEW_DIR": None, "HOME": str(home), "CI_JSON": self.GREEN})
-        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertTrue(out.stdout.startswith("可递：head "), out.stdout)
         self.assertIn(f"review {self.shas[-1][:8]}", out.stdout)
 
@@ -438,119 +401,6 @@ class PrReview(unittest.TestCase):
         # What prepare rebuilds is written fresh; the round's own files are what survive.
         self.assertTrue((d / "meta").exists())
 
-    def test_prepare_migrates_a_round_left_in_tmp(self):
-        # A round made under the old default, for this same commit, is carried into the
-        # cache before the old path becomes the compatibility link. Nothing is lost.
-        home = self.tmp / "migrate-home"
-        home.mkdir()
-        link = Path("/tmp") / f"pr-review-{PR_BASE_MERGE}-{self.base_merge_reviewed[:12]}.input"
-        self.addCleanup(
-            lambda: link.unlink(missing_ok=True) if link.is_symlink()
-            else shutil.rmtree(link, ignore_errors=True))
-        shutil.rmtree(link, ignore_errors=True)
-        link.mkdir()
-        conclusion = (f"独立 review：head {self.base_merge_reviewed[:8]} "
-                      "结论 无 blocker/major｜档位 B\n")
-        (link / "REVIEW-RESULT.md").write_text(conclusion)
-        (link / "result.json").write_text('{"from": "tmp"}\n')
-        (link / "spec.md").write_text("MIGRATED CONTRACT\n")
-        out = self.run_script("prepare", PR_BASE_MERGE, self.base_merge_reviewed,
-                              env_extra={"PR_REVIEW_DIR": None, "HOME": str(home)})
-        self.assertEqual(out.returncode, 0, out.stderr)
-        d = Path(out.stdout.strip()).parent
-        self.assertTrue(str(d).startswith(str(home / ".cheese/review-cache")), d)
-        self.assertEqual((d / "REVIEW-RESULT.md").read_text(), conclusion)
-        self.assertEqual((d / "result.json").read_text(), '{"from": "tmp"}\n')
-        self.assertEqual((d / "spec.md").read_text(), "MIGRATED CONTRACT\n")
-        self.assertIn("MIGRATED CONTRACT", Path(out.stdout.strip()).read_text())
-        self.assertTrue(link.is_symlink())
-        self.assertEqual(link.resolve(), d.resolve())
-
-    def test_prepare_does_not_migrate_another_seats_link(self):
-        # The old /tmp path can be a compatibility symlink into another seat's cache (same
-        # uid, different HOME). That is not this seat's pre-move directory: following it
-        # would copy their conclusion and contract into this round.
-        link = Path("/tmp") / f"pr-review-{PR}-{self.shas[1][:12]}.input"
-        self.addCleanup(link.unlink, missing_ok=True)
-        link.unlink(missing_ok=True)
-        home_a = self.tmp / "seat-a"
-        spec = self.tmp / "seat-a-contract.md"
-        spec.write_text("SEAT A PRIVATE CONTRACT\n")
-        out = self.run_script("prepare", PR, self.shas[1], "--spec", str(spec),
-                              env_extra={"PR_REVIEW_DIR": None, "HOME": str(home_a)})
-        self.assertEqual(out.returncode, 0, out.stderr)
-        da = Path(out.stdout.strip()).parent
-        self.post(Path(out.stdout.strip()))
-        self.assertTrue((da / "spec.md").exists())
-        self.assertTrue(link.is_symlink())
-        home_b = self.tmp / "seat-b"
-        home_b.mkdir()
-        out = self.run_script("prepare", PR, self.shas[1],
-                              env_extra={"PR_REVIEW_DIR": None, "HOME": str(home_b)})
-        self.assertEqual(out.returncode, 0, out.stderr)
-        db = Path(out.stdout.strip()).parent
-        self.assertNotEqual(db, da)
-        self.assertFalse((db / "spec.md").exists())
-        self.assertFalse((db / "REVIEW-RESULT.md").exists())
-        self.assertIn("- Spec: none", Path(out.stdout.strip()).read_text())
-
-    def test_a_delta_round_reads_the_previous_round_from_tmp(self):
-        # --since looks under the default root and then /tmp; a round made before the move
-        # exists only in /tmp and must still seed previous.md.
-        home = self.tmp / "delta-tmp-home"
-        home.mkdir()
-        env = {"PR_REVIEW_DIR": None, "HOME": str(home)}
-        out = self.run_script("prepare", PR, self.shas[1], env_extra=env)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        d = Path(out.stdout.strip()).parent
-        self.post(Path(out.stdout.strip()))
-        old = Path("/tmp") / f"pr-review-{PR}-{self.shas[1][:12]}.input"
-        self.addCleanup(
-            lambda: old.unlink(missing_ok=True) if old.is_symlink()
-            else shutil.rmtree(old, ignore_errors=True))
-        # prepare left its compatibility link here; replace it with the real directory an
-        # old-layout round would be, and take the cache copy away.
-        old.unlink(missing_ok=True)
-        shutil.move(str(d), str(old))  # the round only; the tree was removed by post
-        (old / "spec.md").write_text("TMP ROUND CONTRACT\n")
-        # The new round leaves its own compatibility link; nothing removes it for us.
-        new_link = Path("/tmp") / f"pr-review-{PR}-{self.shas[2][:12]}.input"
-        self.addCleanup(new_link.unlink, missing_ok=True)
-        out = self.run_script("prepare", PR, self.shas[2], "--since", self.shas[1],
-                              env_extra=env)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        d2 = Path(out.stdout.strip()).parent
-        self.assertTrue((d2 / "previous.md").exists())
-        self.assertIn(self.shas[1][:8], (d2 / "previous.md").read_text())
-        self.assertIn("TMP ROUND CONTRACT", Path(out.stdout.strip()).read_text())
-
-    def test_a_prefixed_lookup_prefers_the_cache_over_tmp(self):
-        # The same round can sit in both roots (this seat's cache and a copy in /tmp). A
-        # prefixed lookup (--since) must take the cache copy: /tmp is the shared one.
-        home = self.tmp / "prefixed-home"
-        home.mkdir()
-        env = {"PR_REVIEW_DIR": None, "HOME": str(home)}
-        out = self.run_script("prepare", PR, self.shas[1], env_extra=env)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        d = Path(out.stdout.strip()).parent
-        self.post(Path(out.stdout.strip()))
-        other = Path("/tmp") / f"pr-review-{PR}-{self.shas[1][:12]}.input"
-        self.addCleanup(
-            lambda: other.unlink(missing_ok=True) if other.is_symlink()
-            else shutil.rmtree(other, ignore_errors=True))
-        other.unlink(missing_ok=True)
-        shutil.copytree(d, other)
-        (other / "REVIEW-RESULT.md").write_text(
-            "独立 review：head ffffffff 结论 有 1 条｜档位 B\n")
-        new_link = Path("/tmp") / f"pr-review-{PR}-{self.shas[2][:12]}.input"
-        self.addCleanup(new_link.unlink, missing_ok=True)
-        out = self.run_script("prepare", PR, self.shas[2], "--since", self.shas[1],
-                              env_extra=env)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        prev = (Path(out.stdout.strip()).parent / "previous.md").read_text()
-        self.assertIn(self.shas[1][:8], prev)
-        self.assertNotIn("ffffffff", prev)
-
     def test_prepare_decides_the_tier_and_prints_its_criteria(self):
         _, text = self.prepare()
         self.assertIn("## Review tier", text)
@@ -562,7 +412,7 @@ class PrReview(unittest.TestCase):
 
     def test_the_method_says_what_a_finder_must_not_spend_time_on(self):
         # The prompt is what a finder reads, so the rules this method added have to be in
-        # it: start from the precomputed facts, do not re-run what ci-fast already passed,
+        # it: start from the precomputed facts, do not re-run what CI already checks,
         # do not file an auxiliary case that passes on the baseline, and file only rung-4
         # blocker/major findings. Asserted by phrase, not by line: rewording that keeps the
         # rule stays green, and removing it goes red.
@@ -1126,220 +976,6 @@ class PrReview(unittest.TestCase):
             ("show", "d", "--bogus"),
         ):
             self.assertEqual(self.run_script(*args).returncode, 2, args)
-
-
-class ReviewFindingsTrend(unittest.TestCase):
-    """review-findings-trend.py, over result files written by hand.
-
-    Its cases live in this file rather than in one of their own because this is the file
-    repo-guards.yml runs for the review tooling: a test in a file no check loads is a test
-    nobody runs.
-    """
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="trend-test-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-
-    def finding(self, kind, file, severity, rung=4, title="a thing"):
-        return {"severity": severity, "kind": kind, "file": file, "line": 1, "title": title,
-                "failure": "f", "evidence": "e", "rung": rung, "confirm_with": ""}
-
-    def round(self, pr, sha, findings):
-        d = self.tmp / f"pr-review-{pr}-{sha[:12]}.input"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "result.json").write_text(json.dumps({
-            "reviewed_sha": sha, "summary": "", "candidates_found": len(findings),
-            "candidates_refuted": 0, "findings": findings, "not_covered": [],
-        }))
-        return d
-
-    def trend(self, *args, dirs=None):
-        return subprocess.run(
-            [sys.executable, str(REPO_ROOT / ".claude/scripts/review-findings-trend.py"),
-             *[a for d in (dirs if dirs is not None else [self.tmp]) for a in ("--dir", str(d))],
-             *args],
-            capture_output=True, text=True,
-        )
-
-    def trend_default(self, home):
-        """The board with no --dir and no PR_REVIEW_DIR: the seat's home cache plus /tmp.
-        --top is large because the host's /tmp is read too and must not truncate the test's
-        own cluster."""
-        return subprocess.run(
-            [sys.executable, str(REPO_ROOT / ".claude/scripts/review-findings-trend.py"),
-             "--json", "--top", "10000"],
-            capture_output=True, text=True,
-            env={**os.environ, "HOME": str(home), "PR_REVIEW_DIR": ""})
-
-    def test_it_clusters_by_kind_and_area_and_ranks_the_busiest_first(self):
-        self.round("7", "a" * 40, [
-            self.finding("test", "backend/tests/unit/test_a.py", "minor"),
-            self.finding("test", "backend/tests/unit/test_b.py", "major"),
-            self.finding("runtime", "backend/app/domain/x.py", "blocker"),
-        ])
-        self.round("8", "b" * 40, [
-            self.finding("test", "backend/tests/unit/test_c.py", "minor"),
-        ])
-        out = self.trend()
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn("读了 2 轮审查", out.stdout)
-        # Two findings in one review are one round and one PR, not two of either, and the
-        # busiest cluster is first.
-        first = [l for l in out.stdout.splitlines() if l.startswith("| 1 |")][0]
-        self.assertIn("`test｜backend/tests`", first)
-        self.assertIn("| 3 | 2 | 2 | major |", first)
-        # The same area under another kind is a cluster of its own: what kind it is decides
-        # which check could hold it, so merging them would lose the answer.
-        self.assertIn("`runtime｜backend/app`", out.stdout)
-
-    def test_a_finding_without_a_file_is_placed_rather_than_dropped(self):
-        self.round("7", "a" * 40, [self.finding("rule", "", "major")])
-        out = self.trend("--json")
-        top = json.loads(out.stdout)["top"][0]
-        self.assertEqual(top["cluster"], "rule｜(no file)")
-
-    def test_it_counts_the_rounds_that_found_nothing(self):
-        self.round("7", "a" * 40, [])
-        self.round("8", "b" * 40, [self.finding("ci", ".github/workflows/x.yml", "minor")])
-        out = json.loads(self.trend("--json").stdout)
-        self.assertEqual(out["rounds_read"], 2)
-        self.assertEqual(out["rounds_with_nothing"], 1)
-        self.assertEqual(out["findings"], 1)
-
-    def test_it_counts_what_a_refuter_did_not_confirm(self):
-        self.round("7", "a" * 40, [
-            self.finding("runtime", "backend/app/a.py", "minor", rung=3),
-            self.finding("runtime", "backend/app/b.py", "minor", rung=4),
-        ])
-        out = json.loads(self.trend("--json").stdout)
-        self.assertEqual(out["top"][0]["unverified"], 1)
-
-    def cache_round(self, home, area, sha="a" * 40):
-        d = home / ".cheese/review-cache" / f"pr-review-7-{sha[:12]}.input"
-        d.mkdir(parents=True)
-        (d / "result.json").write_text(json.dumps({
-            "reviewed_sha": sha, "summary": "", "candidates_found": 1,
-            "candidates_refuted": 0, "not_covered": [],
-            "findings": [self.finding("test", f"{area}/t.py", "minor")],
-        }))
-        return d
-
-    def test_with_no_dir_it_reads_the_home_cache(self):
-        # No /tmp link in this one: a script that still reads only /tmp has to fail, or the
-        # new default is not tested at all.
-        home = self.tmp / "home"
-        area = f"backend/tests_{uuid.uuid4().hex[:8]}"
-        self.cache_round(home, area)
-        out = self.trend_default(home)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        rows = [r for r in json.loads(out.stdout)["top"] if r["cluster"] == f"test｜{area}"]
-        self.assertEqual(len(rows), 1)
-
-    def test_with_no_dir_it_counts_the_tmp_link_once(self):
-        # prepare also leaves a /tmp link to each cache round. The link resolves into the
-        # same directory, so the board must count that round once, not twice.
-        home = self.tmp / "home-link"
-        area = f"backend/tests_{uuid.uuid4().hex[:8]}"
-        d = self.cache_round(home, area)
-        link = Path("/tmp") / f"pr-review-7-{uuid.uuid4().hex[:12]}.input"
-        link.symlink_to(d)
-        self.addCleanup(link.unlink, missing_ok=True)
-        out = self.trend_default(home)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        rows = [r for r in json.loads(out.stdout)["top"] if r["cluster"] == f"test｜{area}"]
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["rounds"], 1)
-
-    def test_with_no_dir_it_reads_rounds_left_in_tmp(self):
-        # Rounds made before the default moved are only in /tmp. The board must read them,
-        # or everything reviewed before the move disappears from it.
-        home = self.tmp / "home-empty"
-        home.mkdir()
-        area = f"backend/tests_{uuid.uuid4().hex[:8]}"
-        d = Path("/tmp") / f"pr-review-998-{uuid.uuid4().hex[:12]}.input"
-        d.mkdir()
-        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        (d / "result.json").write_text(json.dumps({
-            "reviewed_sha": "b" * 40, "summary": "", "candidates_found": 1,
-            "candidates_refuted": 0, "not_covered": [],
-            "findings": [self.finding("test", f"{area}/t.py", "minor")],
-        }))
-        out = self.trend_default(home)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        rows = [r for r in json.loads(out.stdout)["top"] if r["cluster"] == f"test｜{area}"]
-        self.assertEqual(len(rows), 1)
-
-    def test_pr_review_dir_isolates_from_tmp(self):
-        # An explicit PR_REVIEW_DIR names one place. A round in /tmp belongs to another
-        # root — the old default or another seat — and must not appear on this board.
-        local_area = f"backend/tests_{uuid.uuid4().hex[:8]}"
-        tmp_area = f"backend/tests_{uuid.uuid4().hex[:8]}"
-        self.round("7", "a" * 40, [self.finding("test", f"{local_area}/t.py", "minor")])
-        d = Path("/tmp") / f"pr-review-997-{uuid.uuid4().hex[:12]}.input"
-        d.mkdir()
-        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        (d / "result.json").write_text(json.dumps({
-            "reviewed_sha": "b" * 40, "summary": "", "candidates_found": 1,
-            "candidates_refuted": 0, "not_covered": [],
-            "findings": [self.finding("test", f"{tmp_area}/t.py", "minor")],
-        }))
-        # No --dir: the default lookup must itself honour PR_REVIEW_DIR.
-        out = subprocess.run(
-            [sys.executable, str(REPO_ROOT / ".claude/scripts/review-findings-trend.py"),
-             "--json", "--top", "10000"],
-            capture_output=True, text=True,
-            env={**os.environ, "PR_REVIEW_DIR": str(self.tmp)})
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn(local_area, out.stdout)
-        self.assertNotIn(tmp_area, out.stdout)
-
-    def test_with_no_dir_it_reads_where_prepare_writes(self):
-        # prepare writes under $PR_REVIEW_DIR. Looking in /tmp regardless would tell a
-        # machine that moved it that its results are gone while they sit on disk.
-        self.round("7", "a" * 40, [self.finding("test", "backend/tests/a.py", "minor")])
-        out = subprocess.run(
-            [sys.executable, str(REPO_ROOT / ".claude/scripts/review-findings-trend.py")],
-            capture_output=True, text=True,
-            env={**os.environ, "PR_REVIEW_DIR": str(self.tmp)},
-        )
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn("backend/tests", out.stdout)
-
-    def test_a_result_it_cannot_read_is_skipped_and_said_so(self):
-        self.round("7", "a" * 40, [self.finding("test", "backend/tests/a.py", "minor")])
-        (self.tmp / "broken.input").mkdir(exist_ok=True)
-        (self.tmp / "broken.input" / "result.json").write_text("{")
-        out = self.trend()
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn("skip", out.stderr)
-        self.assertIn("backend/tests", out.stdout)
-
-    def test_a_result_of_the_wrong_shape_is_skipped_not_this_boards_problem(self):
-        # A seat writes result.json by hand and a round abandoned before `post` leaves one
-        # behind: a file that parses and is not a review result is one unreadable round, not
-        # a reason for the round that is readable to go unreported.
-        self.round("7", "a" * 40, [self.finding("test", "backend/tests/a.py", "minor")])
-        for name, body in (("an-array", "[]"),
-                           ("findings-not-a-list", '{"findings": {"a": 1}}'),
-                           ("a-finding-not-an-object", '{"findings": ["a"]}')):
-            (self.tmp / f"{name}.input").mkdir(exist_ok=True)
-            (self.tmp / f"{name}.input" / "result.json").write_text(body)
-        out = self.trend()
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stderr.count("skip"), 3)
-        self.assertIn("backend/tests", out.stdout)
-
-    def test_top_limits_the_board(self):
-        self.round("7", "a" * 40, [
-            self.finding("test", f"backend/tests{i}/t.py", "minor") for i in range(5)
-        ])
-        out = json.loads(self.trend("--top", "2", "--json").stdout)
-        self.assertEqual(len(out["top"]), 2)
-
-    def test_with_nothing_to_read_it_says_where_results_come_from(self):
-        out = self.trend(dirs=[self.tmp / "not-there"])
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn("没有任何审查结果可读", out.stdout)
 
 
 if __name__ == "__main__":

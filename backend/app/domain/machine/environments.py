@@ -8,6 +8,7 @@ machine it then works on is settled on its next tool call (``session_work``).
 
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -15,18 +16,17 @@ from app.core.errors import ForbiddenError, UnprocessableEntityError
 from app.core.sentences import notice_keys, say
 from app.domain.agent.environment import (
     STANDARD,
+    TEAM_DEVICES,
     VM,
     Sandbox,
     SelfHosted,
     default_environment,
-    TEAM_DEVICES,
     project_default,
     spec_of,
     stored,
     works_tasks_of,
 )
 from app.domain.agent.market import cloud_provisionable, cloud_vm_provisionable
-from sqlalchemy import select
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply

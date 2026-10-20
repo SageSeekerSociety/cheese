@@ -183,7 +183,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   // 「有人回复了我」是频道行单独一样（`replied_to_me`）：活有它自己那一行，那件事
   // 后端只给频道算。
   //
-  // 「点开过就灭」的长绿不在这里判：那由数据决定（服务端按已读位算 `unseen_delivery`，
+  // 「点开过就灭」的绿灯不在这里判：那由数据决定（服务端按已读位算 `unseen_delivery`，
   // 点开时 `stores/workspace` 先把本地那一份灭掉）。
   //
   // 蓝灯（我负责的活）是这一层唯一自己下的判断：它不看状态，只看这条活归谁——而且要
@@ -201,20 +201,18 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
       {
         awaitsMe: topic.awaits_me === true,
         repliedToMe: topic.replied_to_me === true,
-        moving: topic.moving === true,
         unseenDelivery: topic.unseen_delivery === true,
-        // 房间在等一位队友、等太久了：和「在跑却没动静」一样是红灯（`waiting`）。
+        // 房间在等一位队友、等太久了：红灯（`waiting`）。
         waitStalled: stalled.length > 0,
         // 频道自己不是一条活，没有「被退回」这一格：它名下哪条活被退了，走的是
         // `waits`（`waiting`）。
         bounced: false,
-        lastOutputAt: topic.last_output_at,
         incompleteSince: topic.incomplete_since,
       },
       clock.value
     )
     // 红灯说什么，那一句还是「在等谁、为什么」：头像不画了，这句话不能跟着丢。
-    if (light?.why === 'waiting' && stalled[0]) {
+    if (light?.kind === 'red' && light.why === 'waiting' && stalled[0]) {
       const who = memberOf(stalled[0].member)
       return { ...light, title: waitText(stalled[0], who.name, clock.value) }
     }
@@ -229,12 +227,10 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
       {
         awaitsMe: task.awaits_me === true,
         repliedToMe: false,
-        moving: task.moving === true,
         unseenDelivery: task.unseen_delivery === true,
         waitStalled: false,
         // 交付被退回了，还没有人来改：这不是「有事等你」，是一颗红灯。
         bounced: task.presentation?.phrase === 'bounced',
-        lastOutputAt: task.last_output_at,
         incompleteSince: task.incomplete_since,
       },
       clock.value
@@ -418,15 +414,12 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     if (row.hiddenStalled) return t('work.sidebar.expandStalled')
     const hidden = row.hiddenLight
     if (hidden?.kind === 'red') {
-      // 两种红是两件事：收起来的一堆里最亮的那盏红，可能说的是「在跑却没动静」，
-      // 也可能是「停下报错没人接手」。开关说的是**里面**有什么，别把已经停下的说成
-      // 还在跑（`RowLight.why` 记着是哪一件，见 `lib/roomLight.ts`）。
-      return t(hidden.why === 'unfinished' ? 'work.sidebar.expandStopped' : 'work.sidebar.expandQuiet')
+      // 收起来的一堆里最亮的那盏红，可能是「停下报错没人接手」，也可能是「在等一位
+      // 队友等太久了」（`RowLight.why` 记着是哪一件，见 `lib/roomLight.ts`）。
+      return t(hidden.why === 'unfinished' ? 'work.sidebar.expandStopped' : 'work.sidebar.expandStalled')
     }
     if (hidden?.kind === 'yellow') return t('work.sidebar.expandAwaits')
-    if (hidden?.kind === 'green') {
-      return t(hidden.breathe ? 'work.sidebar.expandWorking' : 'work.sidebar.expandDelivered')
-    }
+    if (hidden?.kind === 'green') return t('work.sidebar.expandDelivered')
     return t('work.sidebar.expand')
   }
 

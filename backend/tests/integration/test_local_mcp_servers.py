@@ -23,8 +23,8 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.device.models import DeviceRow
-from app.domain.project.models import Project
 from app.domain.device.supply import Supply
+from app.domain.project.models import Project
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
 from tests.integration.conftest import session_auth_headers

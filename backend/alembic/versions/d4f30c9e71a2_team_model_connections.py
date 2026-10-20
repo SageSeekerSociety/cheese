@@ -4,10 +4,11 @@ Revision ID: d4f30c9e71a2
 Revises: d1f37c8a46b2
 """
 
-from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 from migration_helpers import with_lock_retries
+from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "d4f30c9e71a2"
 down_revision = "d1f37c8a46b2"

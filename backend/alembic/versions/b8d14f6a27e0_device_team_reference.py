@@ -4,9 +4,10 @@ The old backend serves during upgrade. Its inserts get a personal team until
 the new backend takes over; the next release removes that rollout trigger.
 """
 
-from alembic import op
 import sqlalchemy as sa
 from migration_helpers import with_lock_retries
+
+from alembic import op
 
 revision = "b8d14f6a27e0"
 down_revision = "e2600cb40ed8"

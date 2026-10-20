@@ -6,16 +6,16 @@ room): its program is the runner (``device_launch``), and the screen machinery
 runner died or whose credential is expiring, and relaunches one started from a
 different configuration once it is idle. The runner keeps its state where the
 connector derives a socket from, and every call reaches it there. Reading is
-its journal (`harness/claude_code/subscription.py`), where an input counts as
-read when its echo comes back.
+what its runner reports in the lifecycle protocol (`harness/driven/lifecycle.py`),
+read by ``driven.reporting``: its events, and its records shown in the room.
 """
 
 import asyncio
 import base64
+import functools
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from app.domain.agent.device_hub import DeviceOffline
@@ -23,12 +23,12 @@ from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness import SessionRef as Seat
 from app.domain.agent.harness.claude_code import (
     NEVER_STARTED,
+    Assembler,
     ClaudeLaunch,
-    Subscription,
-    accepts_inputs,
-    control_state,
     ended,
 )
+from app.domain.agent.harness.driven import lifecycle
+from app.domain.agent.harness.driven.reporting import Reading, Whose
 from app.domain.agent.session_host.contract import (
     Access,
     Image,
@@ -74,9 +74,8 @@ class ClaudeCodeDriver:
     # said to.
     steer = "steer"
     stop: tuple[str, str] = ("interrupt", "interrupted")
-    # Written is not read: the echo of the input is (`Subscription.receipt`).
+    # Written is not read: its runner reports the echo (`lifecycle`).
     receipt_on_accept = False
-    mirror = "records.sqlite"
 
     def __init__(self, screens: "DeviceChannel"):
         self.screens = screens
@@ -87,8 +86,11 @@ class ClaudeCodeDriver:
     def conversation(self, status: dict) -> str:
         return str(status.get("session_id") or "")
 
-    def takes_inputs(self, status: dict) -> bool:
-        return accepts_inputs(status)
+    def speaks(self, status: dict) -> bool:
+        """Whether the runner that answered ``status`` speaks the lifecycle
+        protocol this release reads; one the previous release started does
+        not, and is replaced rather than read."""
+        return status.get("lifecycle") == lifecycle.PROTOCOL
 
     async def launch(
         self,
@@ -105,7 +107,8 @@ class ClaudeCodeDriver:
         # Names this start of the runner (``runner.LAUNCH``); new every time,
         # so it is never part of what a live session is compared against.
         name = uuid.uuid4().hex
-        screen = await self.screens._ensure_screen(
+        screen_for = functools.partial(
+            self.screens._ensure_screen,
             device_id=host,
             agent_user_id=owner.user_id,
             agent_handle=owner.handle,
@@ -113,7 +116,15 @@ class ClaudeCodeDriver:
             topic_id=owner.place_id,
             seat=owner.seat,
             token=access.credential,
-            env=dict(spec.env),
+            env={
+                **spec.env,
+                # Claude Code reads the effort from its environment.
+                **(
+                    {"CLAUDE_CODE_EFFORT_LEVEL": spec.model_settings.effort}
+                    if spec.model_settings.effort
+                    else {}
+                ),
+            },
             launch=ClaudeLaunch(
                 system_prompt=spec.system_prompt,
                 model=spec.model or None,
@@ -121,19 +132,32 @@ class ClaudeCodeDriver:
                 launch_name=name,
             ),
             environment_before={},
-            runner_alive=known is not None,
         )
+        screen = await screen_for(runner_alive=known is not None)
         if known is not None and known.launch == screen.sid:
             # The runner that answered the last read is the one this screen
             # still runs, so greeting it would say what is already known.
             return known
         status = await self._greet(wire, host, ref, name)
+        if not self.speaks(status):
+            # A runner the previous release started, still on the screen: this
+            # release does not read its protocol. Its screen is closed, which
+            # ends it and its build, and a runner of this release is started in
+            # its place on the same conversation (``resume_session_id``).
+            await self.screens._retire_screen(
+                screen, topic_id=owner.place_id, reason="runner_protocol_outdated"
+            )
+            screen = await screen_for(runner_alive=False)
+            status = await self._greet(wire, host, ref, name)
         return Launched(
             status["session_id"],
             frozenset(status.get("capabilities") or ()),
             screen.sid,
-            status.get("input_protocol"),
-            name,
+            status.get("lifecycle"),
+            # The runner's own name for its launch: a screen that still runs
+            # an earlier runner answers with that one's, not the name chosen
+            # for a runner this start would have started.
+            status.get("launch") or name,
         )
 
     async def _greet(self, wire: Wire, host: str, ref: SessionRef, name: str) -> dict:
@@ -227,30 +251,38 @@ class ClaudeCodeDriver:
             return str(failure)
         return (result.get("stdout") or "").strip() or str(failure)
 
-    def subscription(
+    def reading(
         self,
         seat: Seat,
         acting: str,
-        mirror: Path,
         call: Callable[[str, dict], Awaitable[dict]],
         launched: Launched,
         readers: Readers,
-    ) -> Subscription:
-        return Subscription(
-            seat,
-            mirror,
+    ) -> Reading:
+        key = readers.key
+        assembler = Assembler(launched.conversation)
+
+        async def show(work, event, eid, unsolicited):
+            await readers.consume(
+                seat.project_id, seat.topic_id, work, event, eid, False, unsolicited
+            )
+
+        return Reading(
+            Whose(
+                seat,
+                acting,
+                key.conversation_id,
+                key.agent_handle,
+                key.harness,
+                self.label,
+            ),
             call,
-            readers.consume,
-            readers.activity,
-            session_id=launched.conversation,
-            recipient_handle=acting,
-            announce=readers.announce,
-            receipts=readers.receipts,
-            completions=readers.completions,
-            terminations=readers.terminations,
-            moved=readers.moved,
+            epoch=readers.epoch,
+            assemble=assembler.accept,
+            show=show,
+            hand=readers.report,
             records=readers.records,
-            input_protocol=launched.input_protocol,
+            controls=readers.announce,
         )
 
     async def last_words(
@@ -279,10 +311,6 @@ class ClaudeCodeDriver:
         )
         if scopes:
             await self.screens.restore_screens(scopes)
-
-    async def control_state(self, mirror: Path) -> dict:
-        """What the session's controls show, from its mirror alone."""
-        return await asyncio.to_thread(control_state, mirror)
 
     def images(self, images: tuple[Image, ...]) -> list:
         """Claude Code takes images inline, so the bytes travel with the message.

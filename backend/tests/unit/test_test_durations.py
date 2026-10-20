@@ -8,10 +8,8 @@ hand-built one here is enough to say what the reader makes of them.
 
 from pathlib import Path
 
-import pytest
-
 from scripts import test_durations
-from tests.conftest import _LAYER_CEILING_S, _ceiling_scale
+from tests.conftest import _LAYER_CEILING_S
 
 
 def _artifacts(root: Path, layer: str, entries: list[tuple[str, float]]) -> Path:
@@ -102,69 +100,12 @@ def test_the_ceiling_reader_agrees_with_the_conftest_that_owns_it() -> None:
     assert test_durations._ceilings() == _LAYER_CEILING_S
 
 
-def test_the_layer_ceiling_scale_comes_from_the_environment(monkeypatch) -> None:
-    """Only the fast tier sets it; full CI keeps the strict numbers.
-
-    The ceilings were measured on a machine the run had to itself. The tier
-    that runs two trees at once tells this run how much wall clock it lost, so
-    a test is not failed for the sharing; anything but a finite number >= 1 is
-    a usage error rather than a silently different allowance.
-    """
-    monkeypatch.delenv("CHEESE_TEST_CEILING_SCALE", raising=False)
-    assert _ceiling_scale() == 1
-    monkeypatch.setenv("CHEESE_TEST_CEILING_SCALE", "1.75")
-    assert _ceiling_scale() == 1.75
-    for raw in ("0", "-1", "nan", "inf", "x", ""):
-        monkeypatch.setenv("CHEESE_TEST_CEILING_SCALE", raw)
-        with pytest.raises(pytest.UsageError):
-            _ceiling_scale()
-
-
-def test_the_scale_reaches_the_item_not_only_the_parser(monkeypatch) -> None:
-    """The parsed factor must be applied at collection, not just accepted.
-
-    Without this the multiplication can be deleted and every test still runs
-    on the strict single-process ceiling — the exact loss the scale exists to
-    prevent, with a green self-test.
-    """
-    from tests import conftest
-
-    class Item:
-        nodeid = "tests/unit/test_x.py::test_a"
-        path = Path("tests/unit/test_x.py")
-        fixturenames = ()
-
-        def __init__(self):
-            self.stash = {}
-            self.markers = []
-
-        def iter_markers(self):
-            return iter(())
-
-        def add_marker(self, marker):
-            self.markers.append(marker)
-
-        def get_closest_marker(self, name):
-            return None
-
-    monkeypatch.setattr(conftest, "_slow_baseline", lambda: frozenset())
-    monkeypatch.setattr(conftest, "_quarantine", lambda: {})
-    monkeypatch.setattr(conftest, "_layer_of", lambda item: "pure")
-    monkeypatch.setattr(conftest, "measures_query_counts", lambda path: False)
-    monkeypatch.setenv("CHEESE_TEST_CEILING_SCALE", "2")
-    item = Item()
-    conftest.pytest_collection_modifyitems([item])
-    assert item.stash[conftest._CEILING] == ("pure", 20, 2)
-
-
-def test_the_over_ceiling_text_names_the_effective_allowance() -> None:
+def test_the_over_ceiling_text_names_the_ceiling() -> None:
     from tests.conftest import _over_ceiling
-    scaled = _over_ceiling("pure", 25.0, 20.0, 2)
-    assert "25.0 s with setup" in scaled
-    assert "(10 s x 2 for CHEESE_TEST_CEILING_SCALE)" in scaled
-    strict = _over_ceiling("pure", 25.0, 10.0, 1)
-    assert "10 s" in strict
-    assert "CHEESE_TEST_CEILING_SCALE" not in strict
+
+    text = _over_ceiling("pure", 25.0, 10.0)
+    assert "25.0 s with setup" in text
+    assert "10 s" in text
 
 
 def test_the_report_runs_slowest_first_and_flags_what_a_fix_has_reached() -> None:

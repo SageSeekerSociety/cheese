@@ -192,7 +192,11 @@ def _sources_from(texts: dict[str, str]) -> dict[str, str]:
     # Every alias spelling and every alias declaration contains the name it
     # aliases, so the regex only runs over the files that mention Repository.
     mentioning = {path: text for path, text in texts.items() if "Repository" in text}
-    aliases = {alias for text in mentioning.values() for alias in _REPOSITORY_ALIAS.findall(text)}
+    aliases = {
+        alias
+        for text in mentioning.values()
+        for alias in _REPOSITORY_ALIAS.findall(text)
+    }
     on_base = {"Repository"} | aliases
     headers: dict[str, list[tuple[str, set[str]]]] = {}
     while True:

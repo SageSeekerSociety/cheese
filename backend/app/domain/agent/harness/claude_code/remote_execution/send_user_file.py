@@ -147,12 +147,9 @@ def chat_send_attachments(client, config, args, invoke, payload):
         if size > MAX_SEND_USER_FILE_BYTES:
             # i18n-exempt: the agent reads this tool refusal, not a person's screen
             raise RuntimeError(
-                f"{path} is larger than "
-                f"{MAX_SEND_USER_FILE_BYTES // (1024 * 1024)}MB"
+                f"{path} is larger than {MAX_SEND_USER_FILE_BYTES // (1024 * 1024)}MB"
             )
-        raw = read_file_on_the_machine(
-            invoke, machine, f"{payload['id']}-chat-{index}"
-        )
+        raw = read_file_on_the_machine(invoke, machine, f"{payload['id']}-chat-{index}")
         if not raw:
             # i18n-exempt: the agent reads this tool refusal, not a person's screen
             raise RuntimeError(f"{path} is empty")

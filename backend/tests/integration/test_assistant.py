@@ -42,8 +42,8 @@ from app.api.routes import llm_proxy
 from app.core.config import settings
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.assistant.models import AssistantMessage
-from app.domain.task.models import Task, TaskMembership
+from app.domain.assistant.models import AssistantConversation, AssistantMessage
+from app.domain.task.models import Task, TaskDraft, TaskMembership
 from app.domain.team.models import Team
 from app.domain.usage import pricing
 from app.domain.usage.credits import CREDIT_USD
@@ -480,9 +480,9 @@ def test_a_question_is_answered_from_the_task_kept_and_paid_for(client, gateway)
     deltas = [d["text"] for e, d in events if e == "delta"]
     assert "".join(deltas) == "要先会 PyTorch。"
     assert events[-1] == ("done", {"stopped": False})
-    # The model is asked without thinking, for a bounded answer.
+    # The model reasons (nothing turns it off), within a bounded answer.
     sent = gateway.requests[0]
-    assert sent["thinking"] == {"type": "disabled"}
+    assert sent.get("thinking") != {"type": "disabled"}
     assert "max_completion_tokens" not in sent and sent["max_tokens"] > 0
     # 芝士 was told the task it was asked about.
     told = json.dumps(sent, ensure_ascii=False)
@@ -656,7 +656,10 @@ def test_my_tasks_reports_only_what_the_asker_takes_part_in(client, gateway):
     r = _ask(client, conversation, "我领了哪些题？", me)
 
     assert r.status_code == 200
-    assert ("tool", {"name": "cheese_my_tasks"}) in _events(r.text)
+    assert any(
+        event == "tool" and data["name"] == "cheese_my_tasks"
+        for event, data in _events(r.text)
+    )
     tool_result = json.dumps(gateway.requests[-1]["messages"][-1], ensure_ascii=False)
     assert "我领的那道" in tool_result
     assert "别人的那道" not in tool_result
@@ -959,3 +962,100 @@ def _answering(conversation: str) -> bool:
             f"assistant:busy:{conversation}"
         )
     )
+
+
+def _draft(client, user_id: int, task_id: int) -> int:
+    """A draft of the person's in the space of ``task_id``."""
+
+    async def make() -> int:
+        async with client.test_factory() as s:
+            space_id = (await s.get(Task, task_id)).space_id
+            row = TaskDraft(
+                user_id=user_id,
+                space_id=space_id,
+                fields={
+                    "name": "Lab 3 缓存模拟器",
+                    "descriptionMarkdown": "用 C 写一个缓存模拟器。",
+                    "submitterType": "USER",
+                    "rank": 2,
+                },
+                marks={},
+                version=0,
+            )
+            s.add(row)
+            await s.commit()
+            return row.id
+
+    return asyncio.run(make())
+
+
+def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gateway):
+    """Asked on a draft's page, 芝士 is shown the draft, writes into it with its
+    tool, and the page reads what changed on the question's own stream. The
+    page is said again only when it changed."""
+    me = _auth(client, "asker")
+    user_id, _, _ = _ledger_user(client, "asker")
+    draft = _draft(client, user_id, _task(client))
+    r = client.post(f"/assistant/drafts/{draft}/conversations", headers=me)
+    assert r.status_code == 201, r.text
+    conversation = r.json()["data"]["id"]
+    page = {"kind": "draft", "id": draft}
+
+    gateway.script = [
+        ("tool", "cheese_task_write", {"draft": draft, "difficulty": "高级"}),
+        ("text", "难度改成了高级。"),
+    ]
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "难一点", "page": page},
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    events = _events(r.text)
+    edit = next(data for event, data in events if event == "edit")
+    assert edit["draft"] == draft
+    assert edit["changed"] == {"rank": {"before": 2, "after": 3}}
+    assert any(event == "tool_args" for event, _ in events)
+    told = json.dumps(gateway.requests[0], ensure_ascii=False)
+    assert "<当前页面>" in told and f"草稿 {draft}" in told
+    # The space is named by its id, which its tools take, with what it offers.
+    assert "空间id=" in told and "这个空间可选的分类" in told
+    # What it did is kept with the answer: the conversation shows it again.
+    kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    parts = kept["data"]["messages"][-1]["parts"]
+    assert [step["name"] for step in parts["steps"]] == ["cheese_task_write"]
+    assert '"difficulty"' in parts["steps"][0]["args"]
+    assert parts["edits"][0]["changed"] == {"rank": {"before": 2, "after": 3}}
+
+    for question in ("还有吗", "好的"):
+        gateway.script = [("text", "没有了。")]
+        r = client.post(
+            f"/assistant/conversations/{conversation}/ask",
+            json={"question": question, "page": page},
+            headers=me,
+        )
+        assert r.status_code == 200, r.text
+    # Said with the first question, again with the second (芝士 had changed the
+    # draft), and not with the third.
+    last = json.dumps(gateway.requests[-1]["messages"], ensure_ascii=False)
+    assert last.count("<当前页面>") == 2
+
+
+def test_a_published_draft_takes_its_conversation_to_the_task(client, gateway):
+    me = _auth(client, "asker")
+    user_id, _, _ = _ledger_user(client, "asker")
+    draft = _draft(client, user_id, _task(client))
+    conversation = client.post(
+        f"/assistant/drafts/{draft}/conversations", headers=me
+    ).json()["data"]["id"]
+
+    async def publish() -> None:
+        from app.domain.agent.personal import service
+
+        async with client.test_factory() as s:
+            await service.follow_task(s, uuid.UUID(conversation), 4242)
+            await s.commit()
+            row = await s.get(AssistantConversation, uuid.UUID(conversation))
+            assert (row.place_kind, row.place_id) == ("task", "4242")
+
+    asyncio.run(publish())

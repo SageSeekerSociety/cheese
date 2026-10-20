@@ -27,6 +27,10 @@ const {
   joinBusy,
   joinError,
   joinSpace,
+  createOpen,
+  createBusy,
+  createError,
+  createSpace,
   editing,
   editingBusy,
   editingError,
@@ -56,6 +60,7 @@ const {
     v-model:disbanding="disbanding"
     v-model:transferring="transferring"
     v-model:join-open="joinOpen"
+    v-model:create-open="createOpen"
     :teams="teams"
     :spaces="spaces"
     :awaiting="awaiting"
@@ -71,6 +76,8 @@ const {
     :transfer-error="transferError"
     :join-busy="joinBusy"
     :join-error="joinError"
+    :create-busy="createBusy"
+    :create-error="createError"
     @edit="edit"
     @clear-errors="clearErrors"
     @save-profile="saveProfile"
@@ -80,5 +87,6 @@ const {
     @confirm-transfer="confirmTransfer"
     @leave="leaveTeam"
     @join="joinSpace"
+    @create-space="createSpace"
   />
 </template>

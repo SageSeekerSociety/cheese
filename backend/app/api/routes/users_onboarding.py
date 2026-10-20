@@ -42,7 +42,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BaseError, NotFoundError
 from app.db.session import get_db
-from app.domain.agent.environment import Sandbox, TEAM_DEVICES, dump
+from app.domain.agent.environment import TEAM_DEVICES, Sandbox, dump
 from app.domain.agent_instance.adapters import default_teammate, project_team
 from app.domain.delivery.ledger import deliver, settle
 from app.domain.device.wiring import sql_device_service

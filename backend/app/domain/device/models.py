@@ -17,7 +17,6 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
-    Column,
     DateTime,
     Enum,
     ForeignKey,
@@ -189,14 +188,10 @@ class DeviceClaudeLoginRow(Base):
         JSONB, nullable=False, default=list, server_default="[]"
     )
     __table_args__ = (
-        # Schema metadata only until the cleanup release drops retired service fields.
-        Column("model", String(128), nullable=True),
-        Column("service_host", String(255), nullable=True),
         UniqueConstraint(
             "device_id", "local_id", name="uq_claude_logins_device_id_local_id"
         ),
     )
-    __mapper_args__ = {"exclude_properties": ["model", "service_host"]}
 
     id: Mapped[str] = mapped_column(
         String(64), primary_key=True, default=_login_record_id

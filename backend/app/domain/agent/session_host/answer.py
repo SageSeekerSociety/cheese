@@ -16,14 +16,26 @@ process that read it, and the next reader goes on from it.
 """
 
 import asyncio
+import json
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 
 from app.domain.agent.nonce import new_nonce
-from app.domain.agent.reads import Ended, Writing
-from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
+from app.domain.agent.reads import (
+    Ended,
+    Report,
+    SessionExited,
+    SessionIdle,
+    Writing,
+)
+from app.domain.agent.service import (
+    AgentMessage,
+    AgentResult,
+    AgentStepFailed,
+    AgentToolUse,
+)
 from app.domain.agent.session_host.contract import (
     Access,
     Prompt,
@@ -49,9 +61,36 @@ class Words:
 
 @dataclass(frozen=True)
 class Tool:
-    """The session is calling a tool."""
+    """The session is calling a tool: ``call`` is the harness's own id for the
+    call, when it gives one."""
 
     name: str
+    call: str | None = None
+
+
+@dataclass(frozen=True)
+class Thinking:
+    """The model started reasoning: what it reasons is never handed on, only
+    that it is."""
+
+
+@dataclass(frozen=True)
+class ToolArgs:
+    """More of a call's arguments as the model writes them: raw JSON, from its
+    ``at``-th character. A reader can show what a call is about to do before
+    it is made — a form field filling as the value is written."""
+
+    call: str
+    text: str
+    at: int = 0
+
+
+@dataclass(frozen=True)
+class ToolFailed:
+    """A call came back an error; ``text`` is the tail of what it said."""
+
+    call: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -77,7 +116,7 @@ async def ask(
     work_id: uuid.UUID,
     ceiling_s: float,
     stopped: Callable[[], Awaitable[bool]] | None = None,
-) -> AsyncIterator[Words | Tool | Waiting | Answer]:
+) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Thinking | Waiting | Answer]:
     """Say ``prompt`` and hand on the answer as it is written; ends with one
     ``Answer``. ``prompt`` may be what makes it once the session has started,
     for a prompt whose credential should count from then rather than from
@@ -152,6 +191,10 @@ class Progress:
     parts: list[str] = field(default_factory=list)
     shown: str = ""
     announced: set[str] = field(default_factory=set)
+    #: How much of each call's arguments was handed on.
+    argued: dict[str, int] = field(default_factory=dict)
+    #: The reasoning blocks already told, by message and position.
+    thought: set[str] = field(default_factory=set)
     #: The records of the messages already folded in, so one read again is
     #: not said twice.
     taken: set[str] = field(default_factory=set)
@@ -173,13 +216,32 @@ class Progress:
             return []
         if call:
             self.announced.add(call)
-        return [Tool(name)]
+        return [Tool(name, call)]
 
-    def writing(self, blocks: tuple[dict, ...]) -> list[Words | Tool]:
-        said: list[Words | Tool] = []
-        for block in blocks:
+    def arguments(self, call: str | None, raw: str) -> list[ToolArgs]:
+        """What more of a call's arguments was written since last handed on."""
+        if not call:
+            return []
+        seen = self.argued.get(call, 0)
+        if len(raw) <= seen:
+            return []
+        self.argued[call] = len(raw)
+        return [ToolArgs(call, raw[seen:], seen)]
+
+    def writing(
+        self, blocks: tuple[dict, ...]
+    ) -> list[Words | Tool | ToolArgs | Thinking]:
+        said: list[Words | Tool | ToolArgs | Thinking] = []
+        for index, block in enumerate(blocks):
+            if block.get("type") == "thinking":
+                key = f"{len(self.parts)}:{index}"
+                if key not in self.thought:
+                    self.thought.add(key)
+                    said.append(Thinking())
             if block.get("type") == "tool":
-                said += self.tool(block.get("id"), str(block.get("name") or ""))
+                call = block.get("id")
+                said += self.tool(call, str(block.get("name") or ""))
+                said += self.arguments(call, str(block.get("arguments") or ""))
         written = [str(b.get("text") or "") for b in blocks if b.get("type") == "text"]
         said += self._extend([*self.parts, *written])
         return said
@@ -197,6 +259,8 @@ class Progress:
             "parts": self.parts,
             "shown": self.shown,
             "announced": sorted(self.announced),
+            "argued": self.argued,
+            "thought": sorted(self.thought),
             "taken": sorted(self.taken),
             "result": (
                 None
@@ -212,6 +276,8 @@ class Progress:
             parts=list(data.get("parts") or []),
             shown=str(data.get("shown") or ""),
             announced=set(data.get("announced") or []),
+            argued={str(k): int(v) for k, v in (data.get("argued") or {}).items()},
+            thought=set(data.get("thought") or []),
             taken=set(data.get("taken") or []),
             result=None if result is None else Answer(result["text"], result["error"]),
         )
@@ -225,20 +291,18 @@ async def follow(
     deadline: float,
     progress: Progress,
     keep: Callable[[Progress], Awaitable[None]] | None = None,
-    recovered: bool = False,
-) -> AsyncIterator[Words | Tool | Answer]:
+) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Thinking | Answer]:
     """Read the answer to work ``work_id`` on from ``progress``, handing on
     what more of it is written; ends with one ``Answer``. Past ``deadline``
     (on the monotonic clock) the work is stopped and the answer is what failed
     to arrive. ``keep`` is told what was read after each record and before the
     next is asked for, so a reader taking over after this one goes on from no
-    earlier than that. ``recovered`` reads a session another process started
-    (``host.attach``)."""
+    earlier than that."""
     if progress.result is not None:
         yield progress.result
         return
     work = str(work_id)
-    reading = host.read(ref, recovered=recovered)
+    reading = host.read(ref)
 
     async def ended(answer: Answer) -> Answer:
         progress.result = answer
@@ -268,18 +332,36 @@ async def follow(
             if read.work_id not in (None, work):
                 continue
             event = read.event
-            said: list[Words | Tool] = []
+            said: list[Words | Tool | ToolArgs | ToolFailed | Thinking] = []
+            if isinstance(event, Report):
+                # What a runner reported: of all of it, only the ending of the
+                # work, or of the session, ends an answer.
+                fact = event.fact
+                if isinstance(fact, SessionExited) and event.of_this_registration:
+                    yield await ended(Answer("", "the session ended mid-answer"))
+                    return
+                if not isinstance(fact, SessionIdle) or read.work_id != work:
+                    continue
+                event = fact.result
             if isinstance(event, Ended):
                 yield await ended(Answer("", "the session ended mid-answer"))
                 return
             if isinstance(event, Writing):
-                said = progress.writing(event.blocks)
+                said = [*progress.writing(event.blocks)]
             elif read.work_id != work:
                 continue
             elif isinstance(event, AgentMessage):
                 said = list(progress.message(event.text, read.eid))
             elif isinstance(event, AgentToolUse):
-                said = list(progress.tool(event.call_id, event.name))
+                said = [*progress.tool(event.call_id, event.name)]
+                if event.call_id and not progress.argued.get(event.call_id):
+                    # Written faster than a reader saw any of it: the call's
+                    # whole arguments, once, as it was made.
+                    said += progress.arguments(
+                        event.call_id, json.dumps(event.input, ensure_ascii=False)
+                    )
+            elif isinstance(event, AgentStepFailed):
+                said = [ToolFailed(event.call_id, event.text)]
             elif isinstance(event, AgentResult):
                 error = (
                     (event.text or "the model call failed") if event.is_error else None

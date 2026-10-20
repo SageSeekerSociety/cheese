@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from . import (
     attachments,
     create,
+    drafts,
     lifecycle,
     participation,
     publish_pdf,
@@ -24,6 +25,7 @@ from . import (
 router = APIRouter(tags=["Tasks"])
 
 router.include_router(create.router)
+router.include_router(drafts.router)
 router.include_router(attachments.router)
 router.include_router(publish_pdf.router)
 router.include_router(participation.router)

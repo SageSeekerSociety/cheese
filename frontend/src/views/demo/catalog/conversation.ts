@@ -5,6 +5,7 @@
  * 样例文字来自 `../catalogFixtures.ts`；「改了资料库文档」那一格用的平台事件在
  * `../catalogDocLine.ts`。
  */
+import type { Block } from '@/cx_types'
 import type { CatalogEntry } from './types'
 
 import { LIBRARY_DOC_EDITED } from '../catalogDocLine'
@@ -27,6 +28,60 @@ import {
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import { platformNotice } from '@/lib/platformNotice'
+
+/** 平台升级换掉会话之后，房间里那一行：这一轮约几分钟后自动接着做（`turn_resume_wait`）。 */
+const UPGRADE_RESUME_WAIT: Block = {
+  id: 'catalog-upgrade-resume-wait',
+  conversation_id: 'demo',
+  kind: 'event',
+  author_type: 'platform',
+  author: 'cheese',
+  content: '平台升级重启了会话，约 1 分钟后自动继续',
+  turn_id: 'catalog-turn',
+  created_at: new Date('2026-10-19T14:32:00+08:00').toISOString(),
+  meta: {
+    event_type: 'turn_resume_wait',
+    severity: 'warn',
+    who: 'platform',
+    reason: 'runner_replaced',
+    i18n: { content: { key: 'turnResumeWaitRunnerReplaced', params: { minutes: 1 } } },
+  },
+}
+
+/** 同一件事没排上自动继续时，这一轮的失败那一行（`turn_failed`），升级那句嵌在里面。 */
+const UPGRADE_TURN_FAILED: Block = {
+  id: 'catalog-upgrade-turn-failed',
+  conversation_id: 'demo',
+  kind: 'event',
+  author_type: 'platform',
+  author: 'cheese',
+  content: '本轮未完成：平台升级重启了会话，这一轮被打断了',
+  turn_id: 'catalog-turn',
+  created_at: new Date('2026-10-19T14:32:00+08:00').toISOString(),
+  meta: {
+    event_type: 'turn_failed',
+    severity: 'error',
+    who: 'human',
+    detail: '稍后可以重试。',
+    detail_label: '详细说明',
+    retryable: true,
+    i18n: {
+      content: { key: 'turnFailedWith', params: { reason: { key: 'sessionReplacedForUpgrade', params: {} } } },
+    },
+  },
+}
+
+function upgradeNotice(block: Block): Record<string, unknown> {
+  return {
+    block,
+    notice: platformNotice(block),
+    run: [block],
+    agent: { name: AGENT_NAME, handle: 'cheese' },
+    time: '14:32',
+    agentName: AGENT_NAME,
+    refs: ROOM_REFS,
+  }
+}
 
 export const CONVERSATION_ENTRIES: CatalogEntry[] = [
   {
@@ -167,6 +222,18 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
           refs: ROOM_REFS,
         },
         expect: '3 处',
+      },
+      {
+        name: '平台升级：这一轮自动接着做',
+        note: '升级换掉了上一版本起的会话，新会话接着同一段对话；这一行说约几分钟后自动继续。',
+        props: upgradeNotice(UPGRADE_RESUME_WAIT),
+        expect: '平台升级重启了会话',
+      },
+      {
+        name: '平台升级：没排上自动继续',
+        note: '自动继续没排上时，这一轮按失败写出来，升级那一句嵌在「本轮未完成」后面。',
+        props: upgradeNotice(UPGRADE_TURN_FAILED),
+        expect: '平台升级重启了会话',
       },
     ],
   },

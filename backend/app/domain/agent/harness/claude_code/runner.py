@@ -2,7 +2,7 @@
 
 Claude Code runs as ``claude -p`` with stream-json on both pipes, and this
 process holds the pipes for the whole life of the session: a user message, a
-message said mid-turn and a control are all a line written to its stdin, and
+message said mid-work and a control are all a line written to its stdin, and
 everything it reports is a line read from its stdout. Closing stdin is the
 ending, so it is closed exactly once, on purpose — when the session has sat
 idle (``driven.runner``), or when the screen that supervises this runner goes
@@ -11,14 +11,20 @@ the status the session would have had, and what it still had running is stopped
 for it (``release``) — from 2.1.292 it waits for its background tasks before it
 leaves, which a released session must not do.
 
-Every line read is recorded in the journal under a stable sequence, stamped with
-the room's work it belongs to — except the deltas of the block being written,
-which are only shown while it is written (``stream``). The stamp is decided
-here because only this side sees the order things happened in: the echo of an
-input we wrote (``--replay-user-messages``) is what opens a turn for that
-input's work, a turn that opens without one (a background task finishing woke
-the session) is a turn the session started for itself, and ``result`` closes
-whichever is open.
+What the session does is reported in the lifecycle protocol
+(``driven/lifecycle.py``), because only this side sees it happen: an input
+written to stdin, its echo coming back (``--replay-user-messages``) as the one
+proof the build read it, a ``command_lifecycle`` that settles one unread, the
+session starting work (the echo of an input, or a record nobody asked for when a
+background task woke it) and going idle at ``result`` with how that work ended,
+and the process exiting. The stuck-work clocks run here too, on what the session
+writes as it writes it.
+
+Every line read is also recorded in the journal under a stable sequence, stamped
+with the room's work it belongs to and, on a record that brings a tool's result
+back, with what that call was — except the deltas of the block being written,
+which are only shown while it is written (``stream``). The journal is what the
+room shows and the platform archives; nothing is decided from it.
 
 One thing Claude Code does not put on stdout is read from disk into the same
 journal: the transcripts of agents a subagent or a workflow starts, which only
@@ -43,8 +49,7 @@ from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.journal import Journal
-from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
-from app.domain.agent.harness.driven import runner
+from app.domain.agent.harness.driven import lifecycle, runner
 
 if sys.platform == "win32":
     # Shipped at the archive's root (`driven/bundle.py`).
@@ -101,6 +106,18 @@ LAST_WORDS = 1000
 # up opens with ``ended(launch)``, and a backend waiting on one launch reads
 # only what that launch left.
 LAUNCH = "CHEESE_RUNNER_LAUNCH"
+#: The launch whose agent process has not had its ending reported yet: set when
+#: a process starts, cleared once its ``exited`` is in the outbox. Still set
+#: when a runner starts, it names a process that died with its runner.
+LIVE_LAUNCH = "live_launch"
+#: The epoch that process was registered under (``register``); empty until it
+#: is. Its ending, reported for it by the next runner, carries this epoch.
+LIVE_EPOCH = "live_epoch"
+#: The platform inputs written to the agent and not read yet, in the order they
+#: were written: what is dropped when the process goes.
+UNREAD_INPUTS = "unread_inputs"
+#: How far the platform has taken the journal (``read``'s ``records_after``).
+RECORDS_TAKEN = "records_taken"
 # Where the session's own helpers reach this runner. The same name as
 # `executor_transport.SESSION_SOCKET`, which reads it: that file ships to the
 # session host on its own and cannot import this one.
@@ -399,6 +416,75 @@ def file_entry(entry: dict) -> dict | None:
     }
 
 
+#: How often the runner looks at its stuck-work clocks (``lifecycle.Watchdog``).
+WATCH_S = 5.0
+#: How long a runner whose agent process ended keeps answering, so the
+#: platform can take the events that say so. What it has not taken by then is
+#: still in the journal, and the next runner on this state delivers it.
+LINGER_S = 30.0
+#: How many finished background tasks the snapshot keeps listing.
+TASKS_KEPT = 50
+
+
+def _text_of(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return ""
+
+
+def _count(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def usage_of(record: dict) -> dict | None:
+    """What a ``result`` reports it used: every token it sent, cached or not,
+    and what the build prices it at. The model is the one that did most of it.
+    """
+    usage = record.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    by_model = record.get("modelUsage")
+    model = ""
+    if isinstance(by_model, dict) and by_model:
+        model = max(
+            by_model,
+            key=lambda name: (by_model[name] or {}).get("outputTokens") or 0,
+        )
+    cost = record.get("total_cost_usd")
+    return {
+        "model": model,
+        "input_tokens": _count(usage.get("input_tokens"))
+        + _count(usage.get("cache_creation_input_tokens"))
+        + _count(usage.get("cache_read_input_tokens")),
+        "output_tokens": _count(usage.get("output_tokens")),
+        "cost_usd": float(cost) if isinstance(cost, int | float) else 0.0,
+    }
+
+
+def task_state(record: dict, current: dict) -> dict:
+    """A background task as it stands after one of the build's ``task_*``
+    records: its fields as the build last said them, ``patch`` applied."""
+    update = {
+        name: value
+        for name, value in record.items()
+        if name not in ("cheese", "uuid", "session_id", "type", "patch")
+        and value is not None
+    }
+    update.update(record.get("patch") or {})
+    subtype = record.get("subtype")
+    if subtype == "task_started" and "status" not in update:
+        update["status"] = "running"
+    if subtype == "task_notification":
+        update["status"] = record.get("status") or "completed"
+    return {**current, **update}
+
+
 class Runner(runner.Runner[Journal]):
     def __init__(
         self,
@@ -408,7 +494,9 @@ class Runner(runner.Runner[Journal]):
         launch: str = "",
     ):
         super().__init__(state, Journal, "records.sqlite", idle_exit_s=idle_exit_s)
-        self.launch = launch
+        # Names this process in what it reports of its own ending; a runner
+        # started by hand has none from the platform, and still needs one.
+        self.launch = launch or uuid.uuid4().hex
         self.write_lock = asyncio.Lock()
         self.controls: dict[str, asyncio.Future] = {}
         self.commands: dict[str, asyncio.Future] = {}
@@ -419,8 +507,28 @@ class Runner(runner.Runner[Journal]):
         self.unsolicited = False
         self.last_work: str | None = None
         self.interrupting = False
+        # What the session reports, as ordered events (``lifecycle``).
+        self.outbox = lifecycle.Outbox(self.journal.connection)
+        self.watchdog = lifecycle.Watchdog()
+        # What looks at those clocks, while the session works.
+        self.watcher: asyncio.TimerHandle | None = None
+        # The clock that ended the work under way, once one has.
+        self.stuck: str | None = None
+        # The platform's inputs read since the session last went idle: what a
+        # failure of that work names.
+        self.run_inputs: list[str] = []
+        # What the build said of the work under way that its ``result`` does
+        # not: the API's refusal, and the account's rate-limit window.
+        self.api_error = ""
+        self.rate_limit: dict | None = None
+        # The session as it stands (``state``): its readiness and its tasks.
+        self.ready: dict = {}
+        self.task_states: dict[str, dict] = {}
         # Harness tasks still running, by id → task type.
         self.tasks: dict[str, str] = {}
+        # What each tool call in flight was, by its id, for the records that
+        # bring its result back (``_stamp_calls``).
+        self.calls: dict[str, dict] = {}
         # Tool calls made on the main thread; an agent started by one of them
         # reports on stdout, any other only in its own file.
         self.main_calls: set[str] = set()
@@ -436,17 +544,18 @@ class Runner(runner.Runner[Journal]):
         # build, not the executor client's bootstrap in front of it.
         self.ran = False
         self.settling: asyncio.Future | None = None
+        self.exit_reported = False
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
-        # The last frame read off the child's stdout, for the heartbeat the
-        # backend reads (`heartbeat`). None until a frame, and the work is the
-        # one in flight when THAT frame arrived — never `last_work`, so a
-        # finished turn cannot be reported as a live one.
+        # The last frame read off the child's stdout, for the readout of what
+        # a session is doing (`heartbeat`). None until a frame, and the work is
+        # the one in flight when THAT frame arrived — never `last_work`, so a
+        # finished run cannot be reported as a live one.
         self.last_frame_kind: str | None = None
         #: Wall clock and monotonic clock of that frame. The monotonic one is
         #: this machine's own; the age it yields is advanced by the backend on
-        #: its own clock after receipt (`driven.subscription`).
+        #: its own clock after receipt.
         self.last_frame_at: float | None = None
         self.last_frame_monotonic: float | None = None
         self.last_frame_work: str | None = None
@@ -470,6 +579,7 @@ class Runner(runner.Runner[Journal]):
             end_left_agent(self.state)
         else:
             end(sessions_on(self.config_dir, agent_handle))
+        self._report_left_exit()
         saved = self.journal.recall("session_id")
         failed = self.journal.recall("resume_failed")
         resumed = next(
@@ -505,6 +615,10 @@ class Runner(runner.Runner[Journal]):
         # Earlier starts appended here too; this start's words begin here.
         self.errors_from = self.errors.tell()
         self.launched_at = time.monotonic()
+        # Until this process reports its own ending, the next runner here
+        # reports it for it (`_report_left_exit`).
+        self.journal.remember(LIVE_LAUNCH, self.launch)
+        self.journal.remember(LIVE_EPOCH, str(self.outbox.epoch or ""))
         self.process = await asyncio.create_subprocess_exec(
             # CreateProcess looks in System32 before PATH; Git Bash's sh is on PATH.
             shutil.which("sh") or "sh" if sys.platform == "win32" else "sh",
@@ -554,11 +668,33 @@ class Runner(runner.Runner[Journal]):
             await super().stopped()
 
     async def close(self) -> None:
+        if self.watcher is not None:
+            self.watcher.cancel()
         for helper in self.helpers:
             helper.cancel()
         await asyncio.gather(*self.helpers, return_exceptions=True)
+        if self.process is not None and self.process.returncode is None:
+            # Ended here, as the screen that supervises this runner goes away:
+            # its ending is reported before the journal closes.
+            self.process.terminate()
+            await self.process.wait()
         await self._ending()
         await super().close()
+
+    async def linger(self, within: float = LINGER_S) -> None:
+        """Keep answering after the agent process ended, until the platform
+        has taken every event, or ``within`` runs out. A runner the platform
+        never registered has nobody to wait for: what it reported stays in its
+        journal for the next runner here."""
+        if not self.outbox.epoch:
+            return
+        deadline = time.monotonic() + within
+        while not self.outbox.empty() and time.monotonic() < deadline:
+            news = self.news
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    news.wait(), max(0.0, min(1.0, deadline - time.monotonic()))
+                )
 
     async def _announce_exit(self, process: asyncio.subprocess.Process) -> None:
         # The backend reads why it never came up as soon as it hears the
@@ -585,19 +721,57 @@ class Runner(runner.Runner[Journal]):
             and process.returncode not in (None, 0)
             and not self.proven
         )
-        if failed:
-            # Whether Claude Code wrote anything is known once its output is
-            # read to the end, which an exit does not wait for.
-            await self.stopped()
+        # Whatever the process still wrote is read before its ending is told.
+        await self.stopped()
+        said = ""
         with contextlib.suppress(Exception):
             resuming = self.journal.recall("resuming")
             if failed and resuming and self.ran:
                 self.journal.remember("resume_failed", resuming)
             self.journal.remember("resuming", "")
         if failed and process is not None:
-            self._last_words(process.returncode)
+            said = self._last_words(process.returncode)
+        with contextlib.suppress(Exception):
+            self._report_exit(process.returncode if process else None, said)
 
-    def _last_words(self, status: int | None) -> None:
+    def _report_exit(self, status: int | None, said: str) -> None:
+        """The agent process is gone: what it had not read it never will, the
+        work it was in the middle of failed, and the process exited."""
+        if self.exit_reported:
+            return
+        self.exit_reported = True
+        self._drop_unread("exited")
+        if self.working:
+            self._finish(
+                failure={
+                    "kind": lifecycle.EXITED_MIDWAY,
+                    "status": status,
+                    "said": said,
+                },
+                text="",
+                usage=None,
+            )
+        self._emit(lifecycle.EXITED, launch=self.launch, exit_code=status, said=said)
+        self.journal.remember(LIVE_LAUNCH, "")
+        self.journal.remember(LIVE_EPOCH, "")
+        self.announce()
+
+    def _report_left_exit(self) -> None:
+        """The runner before this one on this state ended without reporting
+        its process's ending (it was killed with it): report it for it, so
+        what that process had not read is settled and its exit is known."""
+        left = self.journal.recall(LIVE_LAUNCH)
+        if not left:
+            return
+        # Under the epoch that process was registered under: these are about
+        # it, and the registration this runner will get is not its.
+        epoch = int(self.journal.recall(LIVE_EPOCH) or lifecycle.NEVER_REGISTERED)
+        self._drop_unread("exited", epoch=epoch)
+        self._emit(lifecycle.EXITED, launch=left, exit_code=None, said="", epoch=epoch)
+        self.journal.remember(LIVE_LAUNCH, "")
+        self.journal.remember(LIVE_EPOCH, "")
+
+    def _last_words(self, status: int | None) -> str:
         """Say why Claude Code never came up, where the backend will look.
 
         Its socket goes with this runner, so a backend still waiting for the
@@ -606,18 +780,114 @@ class Runner(runner.Runner[Journal]):
         front of the binary and fails there, before any model is asked — and
         without this the room was told only that the socket was missing.
         """
+        said = ""
         with contextlib.suppress(OSError):
             with (self.state / "claude.log").open("rb") as log:
                 end = log.seek(0, os.SEEK_END)
                 log.seek(max(self.errors_from, end - LAST_WORDS))
                 said = log.read().decode("utf-8", "replace").strip()
+        record = f"Claude Code exited with status {status} {NEVER_STARTED}" + (
+            f":\n{said}" if said else ", and said nothing"
+        )
+        print(f"{ended(self.launch)}: {record}", file=sys.stderr, flush=True)
+        return record
+
+    # --- what the session reports --------------------------------------------
+
+    def _emit(self, kind: str, *, epoch: int | None = None, **body) -> None:
+        """Report one fact, after every record journaled so far; ``epoch``
+        for a fact about an earlier process (``Outbox.emit``)."""
+        self.outbox.emit(kind, records=self.journal.last(), epoch=epoch, **body)
+
+    def _unread(self) -> list[str]:
+        return json.loads(self.journal.recall(UNREAD_INPUTS) or "[]")
+
+    def _set_unread(self, inputs: list[str]) -> None:
+        self.journal.remember(UNREAD_INPUTS, json.dumps(inputs))
+
+    def _taken(self, identifier: str) -> bool:
+        """Whether ``identifier`` was a platform input still unread; it is not
+        one any more."""
+        self.watchdog.taken(identifier)
+        unread = self._unread()
+        if identifier not in unread:
+            return False
+        self._set_unread([value for value in unread if value != identifier])
+        return True
+
+    def _drop(self, identifier: str, reason: str, *, epoch: int | None = None) -> None:
+        """Report that the agent will never read ``identifier``, under the
+        session and work it was written for."""
+        written = json.loads(self.journal.recall(f"receipt:{identifier}") or "{}")
+        self._emit(
+            lifecycle.INPUT,
+            epoch=epoch,
+            input_id=identifier,
+            status=lifecycle.DROPPED,
+            session_id=written.get("session_id") or self.session_id,
+            work_id=written.get("work_id"),
+            reason=reason,
+        )
+
+    def _drop_unread(self, reason: str, *, epoch: int | None = None) -> None:
+        for identifier in self._unread():
+            self.watchdog.taken(identifier)
+            self._drop(identifier, reason, epoch=epoch)
+        self._set_unread([])
+
+    def standing(self) -> dict:
+        """The session as it stands now: its worker status, what it came up
+        with, and its background tasks — every running one and the last
+        ``TASKS_KEPT`` finished."""
+        running = {
+            key: task
+            for key, task in self.task_states.items()
+            if task.get("status") == "running"
+        }
+        finished = [key for key, task in self.task_states.items() if key not in running]
+        return {
+            "worker_status": lifecycle.RUNNING if self.working else lifecycle.IDLE,
+            "session_id": self.session_id,
+            "ready": self.ready,
+            "tasks": {
+                **running,
+                **{key: self.task_states[key] for key in finished[-TASKS_KEPT:]},
+            },
+            "heartbeat": self.heartbeat(),
+        }
+
+    def has_news(self, after: int) -> bool:
+        return super().has_news(after) or not self.outbox.empty()
+
+    def _watching(self) -> None:
+        """Have the clocks looked at every ``WATCH_S`` while the session
+        works, when one is on: a timer, not a task, so a session that is not
+        working holds nothing open for them."""
+        if self.working and self.watchdog.armed() and self.watcher is None:
+            self.watcher = asyncio.get_running_loop().call_later(WATCH_S, self._look)
+
+    def _look(self) -> None:
+        """End work one of the stuck-work clocks says is stuck: the agent is
+        interrupted, and the ``status`` its ending writes names the clock."""
+        self.watcher = None
+        if not self.working:
+            return
+        fired = None if self.stuck else self.watchdog.fired(time.monotonic())
+        if fired is not None:
+            self.stuck = fired
             print(
-                f"{ended(self.launch)}: "
-                f"Claude Code exited with status {status} {NEVER_STARTED}"
-                + (f":\n{said}" if said else ", and said nothing"),
+                f"work {self.work} stuck ({fired}); interrupting it",
                 file=sys.stderr,
                 flush=True,
             )
+            self.helpers.append(asyncio.ensure_future(self._interrupt_stuck()))
+        self._watching()
+
+    async def _interrupt_stuck(self) -> None:
+        # A control the session did not answer changes nothing it was doing;
+        # the clock looks again, and the work ends when the session does.
+        with contextlib.suppress(Exception):
+            await self.control({"subtype": "interrupt"})
 
     # --- stdout --------------------------------------------------------------
 
@@ -647,7 +917,7 @@ class Runner(runner.Runner[Journal]):
             if kind == "control_request":
                 # Nothing asks the driver anything under its flags: permissions
                 # are bypassed and the question tool is not offered. A request
-                # left unanswered would hold the turn for ever, so it is refused.
+                # left unanswered would hold the work for ever, so it is refused.
                 await self._write(
                     {
                         "type": "control_response",
@@ -677,11 +947,10 @@ class Runner(runner.Runner[Journal]):
         """Remember the last frame read, before any branch decides its fate.
 
         Every legal record counts, including the ones that are never journaled
-        (`keep_alive`, `thinking_tokens`, streamed deltas): a quiet session
-        that only emits keep-alives is still a session that is there. The work
-        is taken from the frame's own moment — a frame read while nothing is
-        in flight says "no work", so it cannot later be attributed to a work
-        that started afterwards.
+        (`keep_alive`, `thinking_tokens`, streamed deltas). The work is taken
+        from the frame's own moment — a frame read while nothing is in flight
+        says "no work", so it cannot later be attributed to a work that
+        started afterwards.
         """
         subtype = record.get("subtype")
         kind = record.get("type")
@@ -695,13 +964,12 @@ class Runner(runner.Runner[Journal]):
         self.last_frame_work = self.work if self.working else None
 
     def heartbeat(self) -> dict:
-        """The last frame read, and how long ago, for the backend's readout.
+        """The last frame read, and how long ago, for the readout of what a
+        session is doing. Says nothing about whether the runner is reachable:
+        that is every answer itself.
 
         `work_id` is the work that frame belonged to, and only while that work
-        is still the one in flight. A frame read for a finished or replaced
-        work reports no work (`None`), rather than borrowing `last_work`: the
-        backend must not read an ended turn as a live one, and a work that has
-        started but produced no frame yet must not inherit the previous one's.
+        is still the one in flight.
         """
         recorded = self.last_frame_work
         work = recorded if self.working and recorded == self.work else None
@@ -760,29 +1028,63 @@ class Runner(runner.Runner[Journal]):
                 block["arguments"] += str(delta.get("partial_json") or "")
                 self.shown()
 
+    def _watch_marks(self, message: dict) -> dict:
+        """What one transcript-shaped record says to the stuck-work clocks,
+        and the calls whose results it brings back (``cheese.calls``)."""
+        now = time.monotonic()
+        content = (message.get("message") or {}).get("content")
+        blocks = content if isinstance(content, list) else []
+        returned: dict = {}
+        if message.get("type") == "assistant" and not message.get("error"):
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text" and str(block.get("text") or "").strip():
+                    self.watchdog.output(now)
+                elif block.get("type") == "tool_use":
+                    call = str(block.get("id"))
+                    given = block.get("input")
+                    arguments = given if isinstance(given, dict) else {}
+                    self.calls[call] = {
+                        "name": str(block.get("name") or ""),
+                        "description": str(arguments.get("description") or ""),
+                    }
+                    self.watchdog.tool_started(call, now)
+        elif message.get("type") == "user" and not message.get("isReplay"):
+            for block in blocks:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    call = str(block.get("tool_use_id"))
+                    self.watchdog.tool_returned(call, now)
+                    if call in self.calls:
+                        returned[call] = self.calls.pop(call)
+        return returned
+
     def observe(self, record: dict, *, from_file: bool = False) -> None:
-        """Stamp one record with the work it belongs to, and journal it."""
+        """Report what one record changes, stamp it with the work it belongs
+        to, and journal it."""
         kind = record.get("type")
         main = not from_file and record.get("parent_tool_use_id") is None
-        stamp: dict = {}
         if kind == "system" and record.get("subtype") == "init":
             self.proven = True
+            self.ready = {
+                key: record.get(key)
+                for key in ("model", "permissionMode", "tools", "mcp_servers")
+            }
         if kind == "command_lifecycle" and record.get("state") == "started":
             # The build takes an input: the one moment that says which input a
-            # turn is for. A message said mid-turn is taken at a tool boundary
-            # inside the turn it was said to; one the session reads only after
-            # that turn ended starts a turn of its own.
+            # piece of work is for. A message said mid-work is taken at a tool
+            # boundary inside the work it was said to; one the session reads
+            # only after that work ended starts work of its own.
             if not self.working:
                 self._open(self._sent_input(str(record.get("command_uuid"))))
-                stamp["turn_start"] = True
         elif kind == "command_lifecycle" and record.get("state") in SETTLED:
-            # An input is on its way in until its echo, but a turn aborted
-            # before its prompt was checked never echoes it. Counted as in
-            # flight it kept the session busy, and so running, for good.
-            # Nor is a reply owed on it any more: what becomes of a message the
-            # session never read is the platform's to decide (``input_holds``).
+            # An input is on its way in until its echo, but work aborted
+            # before its prompt was checked never echoes it: it will never be
+            # read, and the platform may offer it again (``input_holds``).
             identifier = str(record.get("command_uuid"))
             self.sent.pop(identifier, None)
+            if self._taken(identifier):
+                self._drop(identifier, str(record.get("state")))
             if not self.working and self.owed == identifier:
                 self.reply_settled()
         elif main and kind == "user" and record.get("isReplay"):
@@ -791,81 +1093,43 @@ class Runner(runner.Runner[Journal]):
             self.sent.pop(identifier, None)
             if not self.working:
                 self._open(sent)
-                stamp["turn_start"] = True
-            receipt = self.journal.recall(f"receipt:{identifier}")
-            if receipt is not None:
-                identity = json.loads(receipt)
-                if identity["session_id"] == self.session_id:
-                    stamp.update(
-                        receipt=True,
-                        receipt_work_id=identity["work_id"],
-                        receipt_session_id=identity["session_id"],
-                        receipt_execution_work_id=self.work,
-                    )
-                    key = f"execution_inputs:{self.work}"
-                    inputs = set(json.loads(self.journal.recall(key) or "[]"))
-                    inputs.add(identifier)
-                    self.journal.remember(key, json.dumps(sorted(inputs)))
+            if self._taken(identifier):
+                self.run_inputs.append(identifier)
+                self._emit(
+                    lifecycle.INPUT,
+                    input_id=identifier,
+                    status=lifecycle.READ,
+                    session_id=self.session_id,
+                    work_id=sent[1] if sent else None,
+                    execution_work_id=self.work,
+                )
         elif main and not self.working and kind in ("assistant", "user"):
             # Nothing of ours started this. A background task finished and the
             # notification woke the session.
             self._open(None)
-            stamp["turn_start"] = True
-        if main and kind == "assistant":
-            for block in (record.get("message") or {}).get("content") or []:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    self.main_calls.add(str(block.get("id")))
+        if kind == "rate_limit_event" and isinstance(
+            info := record.get("rate_limit_info"), dict
+        ):
+            # Kept for the work's end: a window that refused the account says
+            # when it resets, and that decides what the room is told.
+            self.rate_limit = info
+        message = record.get("entry") if kind == "cheese_file" else record
+        stamp: dict = {}
+        if isinstance(message, dict):
+            if main and message.get("type") == "assistant":
+                if message.get("error"):
+                    # The API refused the work; the result that follows says
+                    # only that it failed, and this is the one record that says
+                    # how.
+                    self.api_error = str(message["error"])
+                for block in (message.get("message") or {}).get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        self.main_calls.add(str(block.get("id")))
+            if returned := self._watch_marks(message):
+                stamp["calls"] = returned
         if kind == "system":
             self._track(record)
         work = self.work if self.working else self.last_work
-        if kind == "result" and self.interrupting:
-            stamp["interrupted"] = True
-        elif (
-            main
-            and kind == "result"
-            and self.working
-            and self.work is not None
-            and not record.get("is_error")
-        ):
-            inputs = json.loads(
-                self.journal.recall(f"execution_inputs:{self.work}") or "[]"
-            )
-            if inputs:
-                stamp["work_completed"] = True
-                stamp["completion_session_id"] = self.session_id
-                stamp["completion_input_ids"] = inputs
-        if (
-            main
-            and kind == "result"
-            and (self.interrupting or record.get("is_error"))
-            and self.working
-            and self.work is not None
-            and self.session_id is not None
-        ):
-            # An error or a Stop ends this work without ever reaching the
-            # completion stamp, and an input row left unfinished blocks the
-            # seat for good. Say so when the exact work identity holds and the
-            # interval of inputs it really owned is known — the same journal
-            # key the completion stamp reads — and say it on this record,
-            # because this is the last one this work can ever be written on:
-            # the next belongs to a new work. A withheld termination is not a
-            # delay, it is a seat that never opens again. A harness background
-            # task still running is no reason to withhold it: that task goes on
-            # in an interval of its own, which is what the completion above
-            # assumes too. What the stamp opens is the seat, not the work: the
-            # rows keep their holds, and a later clean completion still writes
-            # their completed_at.
-            inputs = json.loads(
-                self.journal.recall(f"execution_inputs:{self.work}") or "[]"
-            )
-            if inputs:
-                stamp["work_terminated"] = True
-                stamp["termination"] = (
-                    "interrupted" if self.interrupting else "is_error"
-                )
-                stamp["termination_session_id"] = self.session_id
-                stamp["termination_work_id"] = self.work
-                stamp["termination_input_ids"] = inputs
         owner = json.loads(self.journal.recall("owner") or "{}")
         if work is not None:
             owner["work_id"] = work
@@ -873,9 +1137,10 @@ class Runner(runner.Runner[Journal]):
                 owner["unsolicited"] = True
         self.journal.append({**record, "cheese": {**owner, **stamp}})
         if main and kind in ("assistant", "result"):
-            # The block being shown has landed, or the turn ended without it.
+            # The block being shown has landed, or the work ended without it.
             self.show([], None)
         if kind == "result":
+            self.watchdog.progress(time.monotonic())
             waiting = {str(record.get("user_message_uuid"))} | {
                 str(identifier) for identifier in record.get("user_message_uuids") or []
             }
@@ -883,7 +1148,47 @@ class Runner(runner.Runner[Journal]):
                 future = self.commands.pop(identifier, None)
                 if future is not None and not future.done():
                     future.set_result(record)
-            self._end()
+            self._finish(
+                failure=self._failure(record),
+                text="" if record.get("is_error") else str(record.get("result") or ""),
+                usage=usage_of(record),
+            )
+
+    def _failure(self, record: dict) -> dict | None:
+        """How the work a ``result`` ends failed, typed, or None for a clean
+        ending. The kind and its evidence only: what to make of it — whether
+        to try again, when, at whose cost — is the platform's.
+
+        Failure is ``is_error`` and only that: an API error arrives with
+        subtype "success" and terminal_reason "api_error".
+        """
+        if self.stuck is not None:
+            return {"kind": lifecycle.STUCK, "stuck": self.stuck}
+        if self.interrupting:
+            return {"kind": lifecycle.INTERRUPTED}
+        if not record.get("is_error"):
+            return None
+        status = record.get("api_error_status")
+        status = status if isinstance(status, int) else None
+        told = [str(error) for error in record.get("errors") or [] if str(error)]
+        reset = (self.rate_limit or {}).get("resetsAt")
+        return {
+            "kind": lifecycle.API_ERROR
+            if self.api_error or status is not None
+            else lifecycle.ERROR,
+            "status": status,
+            "code": self.api_error
+            or str(record.get("terminal_reason") or record.get("subtype") or ""),
+            "errors": told,
+            # A run that fails before it asks the model anything (a
+            # conversation it cannot resume) carries no result, only the
+            # build's own words for it.
+            "detail": str(record.get("result") or "").strip() or "\n".join(told),
+            "reset_at": reset
+            if (self.rate_limit or {}).get("status") == "rejected"
+            and isinstance(reset, int | float)
+            else None,
+        }
 
     def _sent_input(self, identifier: str) -> tuple[str, str | None] | None:
         sent = self.sent.get(identifier)
@@ -898,18 +1203,47 @@ class Runner(runner.Runner[Journal]):
         return identity["how"], identity["work_id"]
 
     def _open(self, sent: tuple[str, str | None] | None) -> None:
-        """A turn begins, for the input that started it (None: no input of ours)."""
+        """The session starts working, on the input that woke it (None: no
+        input of ours)."""
         how, work = sent or ("", None)
         if how == "send":
             self.working, self.work, self.unsolicited = True, work, False
         elif how == "internal":
-            # A platform command (`/reload-plugins`): no room turn.
+            # A platform command (`/reload-plugins`): no room's work.
             self.working, self.work, self.unsolicited = True, None, False
         else:
-            # The session's own turn: a background task woke it, a notice the
-            # runner wrote did, or a message it read only after the turn it was
+            # The session's own work: a background task woke it, a notice the
+            # runner wrote did, or a message it read only after the work it was
             # said to had ended.
             self.working, self.work, self.unsolicited = True, str(uuid.uuid4()), True
+        self.run_inputs = []
+        self.watchdog.started(time.monotonic())
+        self._watching()
+        self._emit(
+            lifecycle.STATUS,
+            worker_status=lifecycle.RUNNING,
+            session_id=self.session_id,
+            work_id=self.work,
+            unsolicited=self.unsolicited,
+        )
+
+    def _finish(self, *, failure: dict | None, text: str, usage: dict | None) -> None:
+        """The session went idle: report how the work ended, then forget it."""
+        self._emit(
+            lifecycle.STATUS,
+            worker_status=lifecycle.IDLE,
+            session_id=self.session_id,
+            work_id=self.work,
+            unsolicited=self.unsolicited,
+            result={
+                "text": text,
+                "usage": usage,
+                "failure": failure,
+                "inputs": list(self.run_inputs),
+                "rate_limit": self.rate_limit,
+            },
+        )
+        self._end()
 
     def _end(self) -> None:
         if self.work is not None:
@@ -917,8 +1251,13 @@ class Runner(runner.Runner[Journal]):
             self.journal.remember("last_work", self.work)
         self.working, self.work, self.unsolicited = False, None, False
         self.interrupting = False
-        # A person's message the build has not taken yet opens the next turn,
-        # and it is that turn which owes the answer.
+        self.stuck = None
+        self.api_error = ""
+        self.rate_limit = None
+        self.run_inputs = []
+        self.watchdog.stopped()
+        # A person's message the build has not taken yet starts the next
+        # work, and it is that work which owes the answer.
         if self.owed not in self.sent:
             self.reply_settled()
 
@@ -926,6 +1265,11 @@ class Runner(runner.Runner[Journal]):
         """What is running, and which agents only their own file reports on."""
         task = str(record.get("task_id") or "")
         subtype = record.get("subtype")
+        if task and str(subtype).startswith("task_"):
+            self.task_states[task] = task_state(
+                record, self.task_states.get(task, {"task_id": task})
+            )
+            self.announce()
         if subtype == "task_started" and task:
             self.tasks[task] = str(record.get("task_type") or "")
             # A command that was only starting when a person's message came in
@@ -1200,6 +1544,19 @@ class Runner(runner.Runner[Journal]):
                     {"session_id": self.session_id, "work_id": work, "how": how}
                 ),
             )
+            # Written is said before the write: its echo can be read before
+            # the write returns, and a write that fails half-way may still
+            # have put the input in. Unread it stays until the build says
+            # otherwise — read, settled unread, or gone with the process.
+            self._set_unread([*self._unread(), identifier])
+            self.watchdog.written(identifier, time.monotonic())
+            self._emit(
+                lifecycle.INPUT,
+                input_id=identifier,
+                status=lifecycle.WRITTEN,
+                session_id=self.session_id,
+                work_id=work,
+            )
         self.sent[identifier] = (how, work)
         try:
             await self._write(
@@ -1325,16 +1682,58 @@ class Runner(runner.Runner[Journal]):
     # --- the socket ----------------------------------------------------------
 
     async def dispatch(self, method: str, params: dict) -> dict:
-        if method == "events":
-            after = int(params.get("after", 0))
-            news = await self.news_for(after, params)
-            # Every answer carries the heartbeat, even one that did not wait
-            # (a drain with nothing to wait for) and one that has no news.
+        if method == "register":
+            # The platform names this runner's epoch, and the clocks it ends
+            # stuck work by (``lifecycle``).
+            self.outbox.register(int(params["epoch"]))
+            if self.journal.recall(LIVE_LAUNCH) == self.launch:
+                # The live process is this registration's from now on: its
+                # ending, if the next runner reports it, carries this epoch.
+                self.journal.remember(LIVE_EPOCH, str(self.outbox.epoch))
+            clocks = params.get("watchdog") or {}
+            self.watchdog.configure(
+                no_progress_s=float(clocks.get("no_progress_s") or 0),
+                unread_s=float(clocks.get("unread_s") or 0),
+            )
+            self._watching()
+            self.announce()
+            return {"worker_epoch": self.outbox.epoch, "state": self.standing()}
+        if method == "ping":
             return {
-                "events": self.records(after),
-                "heartbeat": self.heartbeat(),
-                **news,
+                "pid": os.getpid(),
+                "lifecycle": lifecycle.PROTOCOL,
+                "launch": self.launch,
+                "worker_epoch": self.outbox.epoch,
+                "session_id": self.session_id,
+                "working": self.working,
+                "work_id": self.work if self.working else None,
+                "tasks": dict(self.tasks),
+                "alive": self.alive(),
+                "starting": self.starting(),
+                "capabilities": list(self.capabilities),
             }
+        if method == "apply_hooks":
+            # The session's own helper (`executor_transport.register_project_
+            # hooks`), not the platform: it holds no registration.
+            return await self.control(
+                {
+                    "subtype": "apply_flag_settings",
+                    "settings": {"hooks": params["hooks"]},
+                }
+            )
+        if method == "reply_check":
+            # The session's Stop hook (`client.py reply`), as the work is
+            # about to end. A message the build has not read yet starts work
+            # of its own, and is that work's to answer.
+            if self.interrupting or (self.owed is not None and self.owed in self.sent):
+                return {}
+            reason = self.insist()
+            return {"reason": reason} if reason else {}
+        # Everything else is the platform's, and only the registration it
+        # holds now may ask it.
+        self.outbox.check(params.get("epoch"))
+        if method == "read":
+            return await self.read(params)
         if method in ("send", "steer"):
             return await self.send(
                 params["input_id"],
@@ -1356,25 +1755,30 @@ class Runner(runner.Runner[Journal]):
             # 不是 accept 那种一次性输入：对账是幂等的（同样的三方合出同样的结
             # 果），重来一次不会多出一条记忆，所以不需要按 id 去重。
             return self.sync_memory(params)
-        if method == "reply_check":
-            # The session's Stop hook (`client.py reply`), as the turn is about
-            # to end. A message the build has not read yet opens a turn of its
-            # own, and is that turn's to answer.
-            if self.interrupting or (self.owed is not None and self.owed in self.sent):
-                return {}
-            reason = self.insist()
-            return {"reason": reason} if reason else {}
-        if method == "ping":
-            return {
-                "pid": os.getpid(),
-                "input_protocol": INPUT_PROTOCOL,
-                "session_id": self.session_id,
-                "working": self.working,
-                "work_id": self.work if self.working else None,
-                "tasks": dict(self.tasks),
-                "alive": self.alive(),
-                "starting": self.starting(),
-                "capabilities": list(self.capabilities),
-                "heartbeat": self.heartbeat(),
-            }
         raise ValueError(f"Unknown Claude Code session operation: {method}")
+
+    async def read(self, params: dict) -> dict:
+        """One read of the session: the events past what the platform
+        acknowledged (``ack``), the journal past what it took
+        (``records_after``; the last it took when it does not say), and the
+        session as it stands. Asked to wait, it waits for news.
+
+        The journal is the data plane: the session's records, kept for the
+        room to show and the platform to archive. Nothing in it decides
+        anything; the events do.
+        """
+        self.outbox.ack(int(params.get("ack") or 0))
+        after = params.get("records_after")
+        if after is None:
+            after = int(self.journal.recall(RECORDS_TAKEN) or 0)
+        else:
+            after = int(after)
+            self.journal.remember(RECORDS_TAKEN, str(after))
+        news = await self.news_for(after, params)
+        return {
+            "worker_epoch": self.outbox.epoch,
+            "events": self.outbox.pending(),
+            "records": self.records(after),
+            "state": self.standing(),
+            **news,
+        }

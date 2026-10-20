@@ -75,7 +75,6 @@ import { GITHUB_APP_PROVIDER_ID } from '@/lib/githubAccount'
 import { useDialog } from '@/plugins/dialog'
 import AccountService, { currentUserId, currentUserName } from '@/services/account'
 import { oauthProviderName } from '@/views/account/oauthProvider'
-
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 
 const dialogs = useDialog()

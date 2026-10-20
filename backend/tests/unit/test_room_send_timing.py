@@ -34,7 +34,6 @@ def _runtime(host, session: SessionRef) -> tuple[RoomSessions, tuple, Live]:
         CoreRef(CLAUDE_CODE, "home"),
         session.agent_handle,
         "conversation",
-        takes_inputs=True,
     )
     runtime.live[seat] = live
 

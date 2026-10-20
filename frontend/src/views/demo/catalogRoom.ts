@@ -230,10 +230,112 @@ const TASK_ENTRIES: CatalogEntry[] = [
     needs: UI_T,
     states: [
       {
-        name: '在做',
-        note: '一件在做的任务：标题在左，状态在后面；数据都从 props 来，转交、改环境这些动作交给上面。',
+        name: '开启：队友还没报',
+        note: '一件刚开启的任务：标题在左，状态在后面；队友还没报过，写「进行中」。数据都从 props 来，转交、改环境这些动作交给上面。',
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
+      },
+      {
+        name: '队友说在做',
+        note: '没有卡的时候，队友自己报的「在做」照写，后面跟它的原话。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'running' },
+            progress_state: 'working',
+            progress_note: '在改登录表单，加「记住我」那个勾选框',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '队友说在等结果',
+        note: '状态是 AI 队友自己报的（不是从它在不在跑推出来的），后面跟着它的原话；悬停看是谁、什么时候报的。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '队友说卡住了',
+        note: '「卡住了，等人帮忙」落在待处理，进负责人的待办；后面跟它说卡在哪。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'needs_you', phrase: 'blocked' },
+            progress_state: 'blocked',
+            progress_note: '没有预发环境的测试账号，登不进去验证',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '递了卡，等人审阅',
+        note: '卡说在哪一步；队友递卡前报的状态和原话作废，页头不再写。对验收人本人这一句是「待你审阅」。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'needs_you', phrase: 'awaiting_review' },
+            waiting_on: 'bob',
+          },
+        },
+        expect: '等人审阅',
+      },
+      {
+        name: '递了卡，平台在跑检查',
+        note: '卡还在检查这一步：下一步在平台手上，没人被点到。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: { ...TASK_HEADER_PROPS.task, presentation: { column: 'delivering', phrase: 'gate_running' } },
+        },
+        expect: '平台在跑检查',
+      },
+      {
+        name: '卡被退回，回到在做',
+        note: '验收人退回（或卡被作废）后，平台把任务放回「在做」；没有原话，等队友自己再报。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'running' },
+            progress_state: 'working',
+            progress_set_by: null,
+            progress_set_at: '2026-10-05T02:00:00Z',
+          },
+        },
+        expect: '芝士在做',
+      },
+      {
+        name: '报完之后会话结束了',
+        note: '它报的那一句照旧，旁边写「已离开」：会话结束不改它报的状态。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+            agent_left_at: '2026-10-05T01:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-agent-left"]',
       },
     ],
   },

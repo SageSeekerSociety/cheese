@@ -561,9 +561,7 @@ def test_registered_login_refresh_is_visible_on_team_models(client, monkeypatch)
 
     monkeypatch.setattr(device_hub, "is_online", lambda device: device == device_id)
     monkeypatch.setattr(device_hub, "exec", exec_)
-    asked = client.post(
-        "/connector/model-login/refresh", json={"token": token}
-    )
+    asked = client.post("/connector/model-login/refresh", json={"token": token})
     assert asked.status_code == 200, asked.text
     assert client.get(models_path, headers=_bearer(alice)).json()["connections"] == []
 
@@ -581,9 +579,7 @@ def test_registered_login_refresh_is_visible_on_team_models(client, monkeypatch)
     )
     assert registered.status_code == 200, registered.text
     login_id = registered.json()["login_id"]
-    asked = client.post(
-        "/connector/model-login/refresh", json={"token": token}
-    )
+    asked = client.post("/connector/model-login/refresh", json={"token": token})
     assert asked.status_code == 200, asked.text
     connections = client.get(models_path, headers=_bearer(alice)).json()["connections"]
     assert len(connections) == 1

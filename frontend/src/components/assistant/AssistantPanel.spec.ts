@@ -5,12 +5,13 @@ import type { PanelConversation, PanelMessage } from './AssistantPanel.vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import AssistantPanel from './AssistantPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { composerText, typeInComposer } from '@/test/composerInput'
 
 const conversations: PanelConversation[] = [
   { id: 'a', title: '学习率一般设多少？', lastActiveAt: '2026-10-01T08:00:00Z', questions: 2 },
@@ -39,12 +40,11 @@ beforeEach(() => setLocale('zh-CN'))
 describe('AssistantPanel', () => {
   it('hands what was typed to the page and clears the box', async () => {
     const view = mount()
-    const box = view.getByRole('textbox') as HTMLTextAreaElement
-    await fireEvent.update(box, '  验证集怎么划？ ')
+    await typeInComposer(view.container, '  验证集怎么划？ ')
     await fireEvent.click(view.getByRole('button', { name: '发送' }))
 
     expect(view.emitted('send')).toEqual([['验证集怎么划？']])
-    expect(box.value).toBe('')
+    await waitFor(() => expect(composerText(view.container)).toBe(''))
   })
 
   it('does not take a second question, or a switch, while 芝士 is still answering', async () => {

@@ -54,6 +54,7 @@ from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
 
+
 def handed_in(task_teammate: TaskTeammate | None) -> TaskTeammate:
     """把 `review.ports.TaskTeammate` 要回来；没递进来当场炸掉，不走静默。
 

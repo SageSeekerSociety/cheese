@@ -29,9 +29,9 @@ class TaskStatus(enum.StrEnum):
     """Whether this piece of work is still going.
 
     Two values, because two is what is actually observable: work is either being
-    done or it is not. A richer vocabulary (blocked / in review / …) would be a
-    word nothing writes and nothing acts on — see the module docstring on
-    dependencies for the same reasoning.
+    done or it is not. Where the work stands while it is open (working, blocked,
+    in review) is its teammate's own report, `TaskProgress`, kept beside this
+    and never folded into it.
 
     A task may deliver in several steps: accepting the step its card calls the
     last closes the task, accepting an earlier one leaves it open
@@ -42,6 +42,29 @@ class TaskStatus(enum.StrEnum):
 
     open = "open"
     closed = "closed"
+
+
+class TaskProgress(enum.StrEnum):
+    """Where an open task's work stands between the facts the platform can
+    check: its AI teammate says it (`cheese_task_state`), and two of the
+    platform's own actions set it (a card returned or voided puts the task back
+    to ``working``; a card filed clears it).
+
+    A refinement of an open task, never a state of its own beside `TaskStatus`:
+    a task is open or closed, and while a card waits on its review the card says
+    where it stands (等审), whatever was reported before. So the teammate never
+    says 「待审阅」 or 「关闭」 — those are facts, not reports — and while a card
+    is open it cannot report at all (`room_task.progress`). The board reads this
+    in place of a running turn (`presentation.task_presentation`): a teammate
+    waiting on a build is still on it after its turn returns.
+    """
+
+    #: Doing the work.
+    working = "working"
+    #: Waiting on something it started — a build, CI, a long command.
+    waiting = "waiting"
+    #: Cannot go on without a person.
+    blocked = "blocked"
 
 
 #: What an unnamed task is called until it is named. The stored text is for
@@ -262,6 +285,32 @@ class Task(UuidPk, Timestamps, Base):
     )
     # 关闭时留下的一句话：做成了什么，或者为什么不做了。
     conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # What the AI teammate last said about where its work stands
+    # (`TaskProgress`), with its note, when and by whom. Only the teammate
+    # writes these (`TaskService.set_progress`); nothing the platform observes
+    # about its sessions does. NULL until it first says.
+    progress_state: Mapped[TaskProgress | None] = mapped_column(
+        Enum(
+            TaskProgress,
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+            name="ck_tasks_progress_state",
+        ),
+        nullable=True,
+    )
+    progress_note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    progress_set_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    progress_set_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # When the teammate's session ended after its last report: the board says
+    # 「已离开」 beside what it said, and never rewrites it. Cleared when the
+    # teammate reports again.
+    agent_left_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # 交付标记, stamped each time a delivery merges: the latest one. An open
     # task with it set has landed earlier steps and goes on.

@@ -12,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
-from app.domain.project.models import Project
 from app.domain.agent_instance.own.connections import (
     Login,
     _connection_key,
@@ -24,6 +23,7 @@ from app.domain.agent_instance.own.ownership import (
     owned_instance,
     owner_of,
 )
+from app.domain.project.models import Project
 
 
 def own_handle(owner_user_id: int) -> str:

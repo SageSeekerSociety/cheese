@@ -18,6 +18,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,11 +36,12 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
     SessionStatus,
 )
-from app.domain.agent.session_host.driver import Launched
+from app.domain.agent.session_host.driver import Launched, Reports
 from app.domain.agent.session_host.sessions import (
     _mirror,
     _Running,
     _seat,
+    key,
     with_pictures,
 )
 
@@ -84,36 +86,46 @@ async def start(
         if known is None and spec.footprint is not None:
             await svc._wait_for_memory(spec, on_wait, give_up)
         started = time.monotonic()
-        launched = await driver.launch(svc._wire(), host, ref, spec, access, known)
-        if launched is not known:
-            logger.info(
-                "session started on the host harness=%s home=%s in %.2fs",
-                ref.harness,
-                ref.home,
-                time.monotonic() - started,
-            )
-        if LONG_POLL not in launched.capabilities:
-            raise RunnerUnsupported(
-                f"The {driver.label} runner on {host} at {ref.state} cannot "
-                f"hold a read (it announced {sorted(launched.capabilities)}, "
-                f"without {LONG_POLL!r}); it is not supported"
-            )
-        if (
-            running is None
-            or running.host != host
-            # Its reading heard the runner it had go while this one
-            # started, and let it go with it.
-            or svc._running.get(ref) is not running
-        ):
-            seat, acting = _seat(ref, access)
-            running = _Running(
-                host,
-                launched,
-                seat,
-                acting,
-                _mirror(svc._mirrors, ref, access, driver),
-            )
-            svc._running[ref] = running
+        # The runner being replaced, when this start replaces one.
+        replacing = running if running is not None and known is None else None
+        if replacing is not None:
+            replacing.relaunching = True
+        try:
+            launched = await driver.launch(svc._wire(), host, ref, spec, access, known)
+            if launched is not known:
+                logger.info(
+                    "session started on the host harness=%s home=%s in %.2fs",
+                    ref.harness,
+                    ref.home,
+                    time.monotonic() - started,
+                )
+            if LONG_POLL not in launched.capabilities:
+                raise RunnerUnsupported(
+                    f"The {driver.label} runner on {host} at {ref.state} cannot "
+                    f"hold a read (it announced {sorted(launched.capabilities)}, "
+                    f"without {LONG_POLL!r}); it is not supported"
+                )
+            if (
+                running is None
+                or running.host != host
+                # Its reading heard the runner it had go while this one
+                # started, and let it go with it.
+                or svc._running.get(ref) is not running
+            ):
+                seat, acting = _seat(ref, access)
+                running = _Running(
+                    host,
+                    launched,
+                    seat,
+                    acting,
+                    _mirror(svc._mirrors, ref, access, driver),
+                )
+                svc._running[ref] = running
+            if launched.lifecycle is not None and not launched.epoch:
+                launched = await register(svc, host, ref, running, launched)
+        finally:
+            if replacing is not None:
+                replacing.relaunching = False
         running.launched = launched
         running.spec, running.access = spec, access
         running.answering = True
@@ -122,10 +134,40 @@ async def start(
             working=False,
             model=spec.model,
             conversation=launched.conversation,
-            takes_inputs=driver.takes_inputs(
-                {"input_protocol": launched.input_protocol}
-            ),
         )
+
+
+async def register(
+    svc: SessionHost, host: str, ref: SessionRef, running: _Running, launched: Launched
+) -> Launched:
+    """Register a runner that reports in the lifecycle protocol: issue its
+    seat a new worker epoch and hand it to the runner, with the clocks it ends
+    stuck work by. From here on only this registration changes anything.
+
+    The epoch is issued first, so between the two a read under the epoch this
+    replaces is refused. That refusal is this process's own doing, not another
+    registration's (``running.registering``): the reading reads again under
+    the new epoch, and the runner hands the same events over again."""
+    epoch = await svc._register(key(ref, running.seat, running.acting))
+    running.registering = epoch
+    try:
+        await svc._look(
+            host,
+            ref,
+            "register",
+            {
+                "epoch": epoch,
+                "watchdog": {
+                    "no_progress_s": settings.agent_no_progress_s,
+                    "unread_s": settings.agent_unread_grace_s,
+                },
+            },
+        )
+        launched = replace(launched, epoch=epoch)
+        running.launched = launched
+    finally:
+        running.registering = None
+    return launched
 
 
 async def adopt(svc: SessionHost, found: list[tuple[SessionRef, Access]]) -> None:
@@ -183,18 +225,37 @@ async def attach(
         model=str(status.get("model") or ""),
         conversation=driver.conversation(status),
         work_id=status.get("work_id"),
-        takes_inputs=driver.takes_inputs(status),
         # The hub hands the runner's answer through unchecked: only an
         # explicit False says the process is gone.
         alive=alive is not False,
     )
     if alive is not True:
         return found if alive is False else None
+    if isinstance(driver, Reports) and not driver.speaks(status):
+        # A runner the previous release started: it does not report in the
+        # protocol this one reads, and this release keeps nothing that reads
+        # the old one. It is not taken up. Work it is doing is taken away the
+        # way that runner understands; the next start replaces it with one of
+        # this release's on the same conversation (``ClaudeCodeDriver.launch``).
+        if found.working:
+            method, _ = driver.stop
+            try:
+                await svc._look(host, ref, method, {})
+            except (DeviceOffline, DeviceCallError, TimeoutError):
+                logger.warning(
+                    "%s session %s on %s could not be interrupted for the upgrade",
+                    driver.label,
+                    ref.home,
+                    host,
+                    exc_info=True,
+                )
+        return replace(found, outdated=True)
     launched = Launched(
         found.conversation,
         frozenset(status.get("capabilities") or ()),
         "",
-        status.get("input_protocol"),
+        status.get("lifecycle"),
+        status.get("launch"),
     )
     if LONG_POLL not in launched.capabilities:
         raise RunnerUnsupported(
@@ -213,8 +274,9 @@ async def attach(
             _mirror(svc._mirrors, ref, access, driver),
         )
         svc._running[ref] = running
-    else:
-        running.launched = launched
+    if launched.lifecycle is not None:
+        launched = await register(svc, host, ref, running, launched)
+    running.launched = launched
     running.answering = True
     running.stopping = False
     running.owed = found.working

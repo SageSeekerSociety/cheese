@@ -578,12 +578,7 @@ def register_project_hooks(config, hooks):
             "This session cannot take up the project's tool hooks: "
             "it was started without its runner's socket"
         )
-    request = {
-        "method": "control",
-        "params": {
-            "request": {"subtype": "apply_flag_settings", "settings": {"hooks": hooks}}
-        },
-    }
+    request = {"method": "apply_hooks", "params": {"hooks": hooks}}
     with dial_runner(path, 60) as connection:
         connection.sendall(json.dumps(request).encode() + b"\n")
         answer = json.loads(connection.makefile("rb").readline())
@@ -795,9 +790,7 @@ class RemoteClient:
     def _publish_message(self, payload, args):
         content = args.get("content") or ""
         attachments = args.get("attachments") or []
-        if not isinstance(content, str) or (
-            not content.strip() and not attachments
-        ):
+        if not isinstance(content, str) or (not content.strip() and not attachments):
             raise ValueError("Chat content must be a nonempty string")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
         topic = os.environ.get("CHEESE_TOPIC", "")

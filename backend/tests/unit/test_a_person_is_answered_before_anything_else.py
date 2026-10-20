@@ -395,7 +395,17 @@ async def claude_code(tmp_path: Path, steps: list):
         stderr=log,
     )
 
+    registered = False
+
     async def call(method, params):
+        # The platform registers the runner before anything else it asks, and
+        # every later call carries that registration (`lifecycle`).
+        nonlocal registered
+        if method != "ping" and not registered:
+            registered = True
+            await asyncio.to_thread(_ask, socket_path(state), "register", {"epoch": 1})
+        if method != "ping":
+            params = {**params, "epoch": 1}
         return await asyncio.to_thread(_ask, socket_path(state), method, params)
 
     session = Session(machine, model.state["requests"], call)

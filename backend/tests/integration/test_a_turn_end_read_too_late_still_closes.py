@@ -24,7 +24,6 @@ from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.models import Block
 from app.domain.delivery.models import NativeInput
 from app.main import app
-from tests.support.session_records import wait_for_record
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
@@ -33,6 +32,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import wait_for_record
 
 
 class FirstPromptOnly(StubChannel):
@@ -84,11 +84,13 @@ def _rows(client, model, topic: uuid.UUID, *where) -> list:
 
 
 def _age_records_after(stub: StubChannel, topic: uuid.UUID, sequence: int) -> int:
-    """Make what the session recorded after ``sequence`` older than the reader
-    lands: as if the backend had been away, or stuck, that long."""
+    """Make what the session recorded after ``sequence``, and every event its
+    runner has not had taken yet, older than the reader lands: as if the
+    backend had been away, or stuck, that long."""
     journal = stub._session_for(topic).state / "records.sqlite"
     then = (datetime.now(UTC) - timedelta(seconds=STALE_S + 600)).isoformat()
     with sqlite3.connect(journal, timeout=10) as connection:
+        connection.execute("UPDATE lifecycle SET at = ?", (then,))
         return connection.execute(
             "UPDATE records SET recorded_at = ? WHERE sequence > ?", (then, sequence)
         ).rowcount

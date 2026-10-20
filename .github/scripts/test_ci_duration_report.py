@@ -1,17 +1,13 @@
-"""Behavioural checks for the Required CI duration and tree-identity report.
+"""Behavioural checks for the Required CI duration report.
 
-The tool itself calls `gh api` and needs a clone holding the pinned commits;
-these fake the GitHub side and use real git objects for the merge, so the rules
-are asserted without a network:
+The tool itself calls `gh api`; these fake the GitHub side, so the rules are
+asserted without a network:
 
   * a skipped job is not a measurement — neither a skipped caller (whose span is
     its callee's plus queueing) nor a skipped product job;
   * a job whose span is <= 0 (what GitHub reports for a reusable-workflow caller
     of a tier that did not run) fails the run instead of entering a percentile;
-  * the headroom ratio is the job's own `timeout-minutes`, not a guess;
-  * a merge_group run tested the same tree as its pull_request run exactly when
-    it built on the same base — and a pair that does not reconstruct cleanly is
-    excluded rather than counted as a different tree.
+  * the headroom ratio is the job's own `timeout-minutes`, not a guess.
 
 It lives here, not beside the tool, because repo-guards' "CI helper tests" step
 collects every test_*.py in this directory and nothing collects scripts/.
@@ -23,7 +19,6 @@ import argparse
 import importlib.util
 import io
 import json
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -134,143 +129,6 @@ class JobModeTests(unittest.TestCase):
         # e2e's cap is 25 minutes and the run took 10, so 2.5x is left.
         self.assertIn("2.50x", out)
         self.assertIn("max 600s of 1500s", out)
-
-
-class TreeModeTests(unittest.TestCase):
-    """The queue exists to test merge(base, head) — asserted against real git."""
-
-    def setUp(self) -> None:
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.tmp = Path(directory.name)
-        self.repo = self.tmp / "repo"
-        self.repo.mkdir()
-        self.git("init", "-q", "-b", "main")
-        self.git("config", "user.email", "test@cheese.local")
-        self.git("config", "user.name", "test")
-        (self.repo / "shared.txt").write_text("base\n", encoding="utf-8")
-        self.git("add", "shared.txt")
-        self.git("commit", "-qm", "base")
-        self.base = self.git("rev-parse", "HEAD").strip()
-        self.head = self.branch("head", {"added.txt": "head\n"})
-
-    def git(self, *args: str) -> str:
-        return subprocess.run(
-            ["git", *args], cwd=self.repo, capture_output=True, text=True, check=True
-        ).stdout
-
-    def branch(self, name: str, files: dict[str, str], base: str | None = None) -> str:
-        """A branch off `base` that writes `files`; returns its head sha."""
-        self.git("checkout", "-q", "-b", name, base or self.base)
-        for path, content in files.items():
-            (self.repo / path).write_text(content, encoding="utf-8")
-        self.git("add", "-A")
-        self.git("commit", "-qm", name)
-        self.git("checkout", "-q", "main")
-        return self.git("rev-parse", name).strip()
-
-    def merged_tree(self, *revisions: str) -> str:
-        return self.git("merge-tree", "--write-tree", *revisions).split()[0].strip()
-
-    def run_trees(self, rows: list[dict], queue_tree: str) -> tuple[int, str, str]:
-        trees = self.tmp / "trees.json"
-        trees.write_text(json.dumps({"rows": rows}), encoding="utf-8")
-        args = argparse.Namespace(trees=str(trees), repo=str(self.repo))
-        with mock.patch.object(
-            report, "_gh", lambda path: {"commit": {"tree": {"sha": queue_tree}}}
-        ):
-            out, err = io.StringIO(), io.StringIO()
-            with redirect_stdout(out), redirect_stderr(err):
-                code = report.mode_trees(args)
-        return code, out.getvalue(), err.getvalue()
-
-    def row(self, pr: int, base: str, queue_parent: str) -> dict:
-        return {
-            "pr": pr,
-            "base": base,
-            "head": self.head,
-            "mg_head": self.head,
-            "mg_parent": queue_parent,
-        }
-
-    def test_a_queue_run_on_the_same_base_tested_the_same_tree(self):
-        code, out, err = self.run_trees(
-            [self.row(1, self.base, self.base)], self.merged_tree(self.base, self.head)
-        )
-        self.assertEqual(code, 0, out + err)
-        self.assertIn("1/1 merge_group runs tested the SAME tree", out)
-        self.assertNotIn("INVARIANT BROKEN", out)
-
-    def test_a_queue_run_that_tested_another_tree_is_flagged(self):
-        # Same base, different tree: the queue cannot have built merge(base, head).
-        code, out, err = self.run_trees(
-            [self.row(2, self.base, self.base)], self.git("rev-parse", "main^{tree}").strip()
-        )
-        self.assertEqual(code, 0, out + err)
-        self.assertIn("0/1 merge_group runs tested the SAME tree", out)
-        self.assertIn("INVARIANT BROKEN", out)
-
-    def test_a_queue_run_on_a_moved_base_differs_and_is_not_flagged(self):
-        # main advanced before the queue built: a different tree is expected, so
-        # there is nothing broken about it.
-        moved = self.branch("moved", {"moved.txt": "moved\n"})
-        code, out, err = self.run_trees(
-            [self.row(3, self.base, moved)], self.merged_tree(moved, self.head)
-        )
-        self.assertEqual(code, 0, out + err)
-        self.assertIn("0/1 merge_group runs tested the SAME tree", out)
-        self.assertNotIn("INVARIANT BROKEN", out)
-
-    def test_a_pair_that_does_not_reconstruct_is_excluded_not_counted(self):
-        # Two siblings off the same base editing the same line: the queue could
-        # not have built this pair, so it has no tree to compare against.
-        left = self.branch("left", {"shared.txt": "left\n"})
-        right = self.branch("right", {"shared.txt": "right\n"})
-        code, out, err = self.run_trees([self.row(4, left, left) | {"head": right}], "0" * 40)
-        self.assertEqual(code, 1)
-        self.assertIn("does not reconstruct cleanly", out)
-        self.assertIn("Excluded 1 of 1 row(s)", out)
-        self.assertIn("nothing was measured", out)
-        self.assertNotIn("/1 merge_group runs tested the SAME tree", out)
-        # The tree is never fetched for a pair that has none to compare.
-        self.assertNotIn("SAME tree as the PR run", out)
-
-    def test_a_pinned_commit_the_clone_lacks_is_excluded_as_unbuildable(self):
-        # merge-tree fails two different ways: the pair conflicts (a tree oid is
-        # printed), or it never got that far (nothing is printed). Only the first
-        # is about the pinned pair; the second means the clone is incomplete, and
-        # blaming it on a conflict sends the reader after the wrong thing.
-        code, out, err = self.run_trees(
-            [self.row(5, self.base, self.base) | {"head": "1" * 40}], "0" * 40
-        )
-        self.assertEqual(code, 1, out + err)
-        self.assertIn("this clone cannot build the pair", out)
-        self.assertIn("Excluded 1 of 1 row(s) (this clone cannot rebuild", out)
-        self.assertNotIn("conflicts when replayed", out)
-        self.assertNotIn("does not reconstruct cleanly", out)
-
-    def test_a_pair_that_conflicts_and_one_the_clone_lacks_are_reported_apart(self):
-        # Both exclusions in one run, beside a row that did compare: the two counts
-        # are of different things, and a reader who sees one number for both goes
-        # after the wrong cause. The percentage is over what was compared, not over
-        # every row.
-        left = self.branch("left2", {"shared.txt": "left\n"})
-        right = self.branch("right2", {"shared.txt": "right\n"})
-        rows = [
-            self.row(6, self.base, self.base),
-            self.row(7, left, left) | {"head": right},
-            self.row(8, self.base, self.base) | {"head": "1" * 40},
-        ]
-        code, out, err = self.run_trees(rows, self.merged_tree(self.base, self.head))
-        self.assertEqual(code, 0, out + err)
-        self.assertIn("pr     7: the pinned pair does not reconstruct cleanly", out)
-        self.assertIn("pr     8: this clone cannot build the pair", out)
-        self.assertIn("Excluded 1 of 3 row(s) (the pair conflicts when replayed): pr 7.", out)
-        self.assertIn(
-            "Excluded 1 of 3 row(s) (this clone cannot rebuild the pair", out
-        )
-        # The percentage rides on the same denominator as the count beside it.
-        self.assertIn("1/1 merge_group runs tested the SAME tree as the PR run (100.0%)", out)
 
 
 if __name__ == "__main__":

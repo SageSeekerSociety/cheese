@@ -143,43 +143,18 @@ uv run --with playwright python scripts/shots.py
 
 ---
 
-## 6. 开 PR 前：task ci:fast（本地快检）
+## 6. 开 PR 之后：PR 上的 CI 就是结论
 
-Required CI 第一条有用信号约 8 分钟墙钟。`task ci:fast` 在本地按 merge diff 选出命中的检查并真实执行，让 lint 错误、超 cap 文件、被改模块的 pure 测试和窄类型这类问题在开 PR 前就暴露。完整 Required CI 仍是唯一合并门禁，ci:fast 绿不代表完整 CI 通过。
+本地只跑你改到的那几个测试文件，用来比 CI 早一点发现问题，不当作证据。沙箱装不下全树的前端类型检查和整个后端单测，这两样交给 CI。
 
-```bash
-task ci:fast                 # quick 档（按可用 CPU 默认 180–720s）：先跑静态检查，再跑选中的 pure 测试 + 窄类型/前端 related；先把分支跟进 main（fetch + merge/rebase）
-task ci:fast -- --types      # 改动碰组件 props / 共享类型时，追加 pyright / vue-tsc 全量 manual hook
-```
+### PR 的检查、合并与主干完整门禁
 
-三档：`quick`（`task ci:fast` 默认，测试+类型）、`static`（只跑 pre-commit 静态 hook，不跑测试/类型）、`extended`（同样的选中范围，默认预算 900s）。quick/static 默认按可用 CPU 数给 180–720s：1 核 720s、2 核 360s、3 核 240s、4 核及以上 180s。`CI_FAST_BUDGET_SECONDS` 可覆盖默认值，至少 180s；显式 `--budget` 优先且保留原值。`--tier` 决定档位；`--title` 传拟用 PR 标题，不传就按 `gh` 读到的真实 PR 标题判 Conventional——这一次读取顺带取回 `draft` 标志，读到是草稿就整条记未执行（草稿的标题是平台的占位标题，判它没有意义）；两样都拿不到按未验证（unknown）处理并提示传 `--title`，绝不用可能无关的 HEAD 标题顶替已有 PR。
-
-**机器上没有 `task` 时**：本次核查覆盖的平台云执行机样本（cheese-de808b-27）未预装 task，422 作者当时所在执行机同样没有；可按 README 第 13 行的脚本装到 `~/.local/bin`（样本机上实测可装）。Taskfile 只是薄封装，不装 task 时用下面的等价入口——前提是机器上有 python3 和 uv/uvx（pre-commit 由 uvx 解析），装前端依赖还需要 pnpm：
-
-```bash
-python3 .github/scripts/ci-fast.py --tier quick                # ≡ task ci:fast（quick 档）
-python3 .github/scripts/ci-fast.py --tier quick --types        # ≡ task ci:fast -- --types
-(cd backend && uv sync)                          # ≡ task be:deps:sync（备 backend/.venv）
-(cd frontend && pnpm install --frozen-lockfile)  # ≡ task fe:install（备 node_modules）
-```
-
-注意：不带 `--tier` 直接 `python3 .github/scripts/ci-fast.py` 走的是 `static` 档，不等价于 `task ci:fast`。
-
-- **它证明什么**：本次 merge diff 命中的检查真实执行并通过（scope 与 Required CI 同一个 select() + path map，guards 恒跑；测试选择走纯静态反向 import 图 + tree/i18n guard）。报告写在 gitdir 的 `ci-fast-report.json`（记 base/head/脏树内容指纹），**绿以报告落盘为准**。
-- **这些都不是绿**（退出码 2/3，机器可读）：无 merge-base 或自定义 `--base` 时 file-size/migration-fork 判不了、选中了却零执行或选中文件没被真正执行、pytest 空/跳过/无覆盖、前端 related 图为空、报告写失败、hook 或检查超时/超内存/被信号杀、hook 配置漂移、缺 pre-commit / `backend/.venv` / `frontend/node_modules`（按提示先 `task be:deps:sync` / `task fe:install`）。退出码 1 是所选检查真实失败。
-- **边界**：quick/extended 只到 pure 测试 + 窄类型/前端 related；contract / integration / build / e2e / 完整前端消费方类型不在这一层（摘要会列出未跑项和定向建议）。`extended` 不扩大选中范围，只放宽预算，超预算仍是 unknown。前端 related 只在有改动源码根时可信，配置/删文件/未知路径/无 base 一律回退全量 Vitest。详细用法见 `.github/scripts/ci-fast.md`。
-- **推前自检 `.cheese/pre-push`**：项目根下这份可执行文件就是推前入口，由平台给任务工作目录装的 `pre-push` 钩子调用（钩子只在收到的那份检出里有可执行的 `.cheese/pre-push` 时才跑它，没有就一次 `[ -x ]` 走人——同一个安装点服务所有项目，别的项目不替这个项目付代价）。它执行 `ci-fast.py --tier static --pre-push`：选中表以草稿档那张为底，加上只在这里跑的 `openapi-document`（`backend / static` 里建 API 文档、核 untyped 棘轮的那一步，本机能跑而此前没有别的检查覆盖它，见 `.github/scripts/ci-fast.md`），但**不吃 node 工具链的那三个**（eslint、stylelint、boundary-check-frontend）——它们在小机器上会被杀，把被杀掉的检查报成红比不报更糟——这三个写进报告的「未执行」，不静默拿掉；预检跟着这次会起的检查走，选中里没有吃 node 的钩子时，没跑过 `task fe:install` 的检出不会被缺 `frontend/node_modules` 卡成 blocked。**结果不影响推不推得上去**：钩子在这份脚本之后再 `exit 0`，所以检查失败、跑不完、缺工具、脚本自己被信号杀死，推送都照常。推送被拦住就是这次提交没上去，而工作目录活不到重试——该拦的是 CI，不是这里。脚本自己直接跑时——没人要报告的那一次——仍会以 1 退出（复现用），这个码不吞，所以链到自己的钩子上就是一道真的闸门；平台那次要的是报告，末尾自带一个 `exit 0`。另有一道 240s 墙钟兜住卡死（`CI_FAST_PRE_PUSH_TIMEOUT` 可调）。没过的每一项都印出复现命令——就是这次实际跑的那条 pre-commit 命令（默认带 `--python` 把 uvx 钉在本脚本的解释器上：uvx 自己挑的那个会让 `language: system` 的钩子跑在别的 python 上，见 `.github/scripts/ci-fast.md`），被留下的那三个也各印一条，照着能直接跑；不是钩子的检查（`--pre-push` 配非 static 档才会遇到）改印真正跑过的那条命令，不再印一句跑不通的 `pre-commit run <id>`。报告那一行的 JSON 只记检查名、判定、耗时和命令，不记日志：改哪个文件看钩子自己打在上面的输出（复现命令会再打一遍）。**那份报告由平台转给提交的人**：agent 的提交是被 `post-commit` 钩子推上去的，推送时它的终端早没了，报告打到管道上没人接，所以平台自己设 `CI_FAST_PRE_PUSH_REPORT` 让这份脚本把**没通过**的那一次的输出留在那个文件里，再读回来发到任务的对话里（通过的报告不送，那是给手动跑的人看的；推送本身失败也照样送——报告在推送打到远端之前就写好了，而正是那一次最该有人看见；房间收不到时同一份内容落到提交那条命令的 stderr 上，那次 `cheese sync` 就是从那条命令的 `post-commit` 钩子起来的）。`--no-verify` 跳过的只是这份报告，草稿档照样判；外层 shell 里 `SKIP` / `PRE_COMMIT_COLOR` 这类会改判定的变量仍由 `ci-fast.py` 在起子进程前清掉。本地开发想在自己机器上拿到这道推前自检，把 `.cheese/pre-push` 链到自己的 `.git/hooks/pre-push` 就行——那次没被平台设报告变量，退出码就是检查自己的判定，git 会照它拦下没过的推送（`task hooks` 只装 `pre-commit` 那一类钩子，不装推前入口）。
-
-设计取舍（范围、退出码语义、反例清单）写在 `.github/scripts/ci-fast.py` 的文件头注释。
-
-### PR 快检、合并与主干完整门禁
-
-Required CI（`.github/workflows/required-ci.yml`）在每个 PR 上跑 quick 档。草稿的聚合检查名为 `CI required (draft quick)`，正式 PR 的名字为 `CI required`，正式档还检查标题。草稿转正式会触发新的 quick run。预算耗尽或环境缺失会写入步骤摘要，PR 上的绿不代表完整套件已经执行。
+Required CI（`.github/workflows/required-ci.yml`）按档跑：草稿 PR 不跑套件，聚合检查名为 `CI required (draft quick)`；正式 PR 跑路径选中的套件（e2e、remote、mcp、equivalence 留到合并后，后端 integration 只跑改动能到达的测试文件），聚合检查名为 `CI required`，并检查标题；草稿转正式会触发正式 PR 的 run。三档的细节见 [CI 设计](/dev/ci#required)。
 
 main 的规则只有必过状态检查，没有合并队列。用 `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>` 在当前会话的后台监控下跟踪：`--enqueue` 等当前 head 的 `ready` 输出可递，再读一次 head，用 `gh pr merge --squash --match-head-commit <sha>` 合并，不启用 auto-merge。head 变化后重新检查，GitHub 也会拒绝不匹配的 SHA。
 
-提交落入 main 后，`push` 触发完整 Required CI。范围基点是 `refs/heads/main-green`，即上一次主干完整门禁通过的提交；绿了才推进锚点，红了保持原值。并发组 `required-ci-push-main` 的 `cancel-in-progress` 为 `false`，同时保留一跑一排队，新排队替换旧排队，被替换提交的改动由后续批次覆盖。首次没有锚点时选择全部已跟踪路径。工作流仍接受 `merge_group` 事件，但当前规则不会创建队列条目。
+提交落入 main 后，`push` 触发完整 Required CI。范围基点是 `refs/heads/main-green`，即上一次主干完整门禁通过的提交；绿了才推进锚点，红了保持原值。并发组 `required-ci-push-main` 的 `cancel-in-progress` 为 `false`，同时保留一跑一排队，新排队替换旧排队，被替换提交的改动由后续批次覆盖。首次没有锚点时选择全部已跟踪路径。
 
 监控器跟踪包含合入提交的主干 run，任何一个包含它的 run 通过就算主干通过。最新的包含 run 失败时明确报红，并等待包含它的更新批次；一小时内没有更新批次开始，以失败结束。合入在通过的批次或线上版本之前被回滚（`This reverts commit <sha>`、`Reverts <repo>#<PR>`、`Revert "<原标题>`，或本仓 squash 后的 `revert(scope): … (#<PR>)` 标题），也以失败结束并点名回滚提交；这段提交按页读全，读取失败时不下结论，下一轮再查。主干通过后，监控包含合入提交的 dev 部署，并核对线上版本；部署被取消时等待后续发布。部署门禁依据主干完整 CI 和同一提交的镜像构建结果，收敛到最新的可部署提交。
 
-平台递卡会把仍打开的草稿 PR 转正式（`backend/app/domain/review/pr_publish.py`），重新触发 quick 档；采纳等待同一 head 上的 `CI required`。完整的主干验证发生在合并之后。
+平台递卡会把仍打开的草稿 PR 转正式（`backend/app/domain/review/pr_publish.py`），触发正式 PR 的 run；采纳等待同一 head 上的 `CI required`。只在合并后跑的套件和整层的 integration 在主干批次上跑。

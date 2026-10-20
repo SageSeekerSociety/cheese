@@ -151,7 +151,13 @@ class InProcessBroker:
         # Idle state changes and persisted blocks are fanned out live but never
         # retained. This is what stops a queue notice or other system event from
         # making a reconnect look like an agent turn is still running.
-        if self._active.get(channel):
+        #
+        # Nor is `done`. It ends the stream of whoever was listening when a
+        # turn's result landed, which comes before the turn is marked over
+        # (`room.sessions.reading._keep`); replayed in between, it would end the
+        # stream of a page that subscribed to follow the next message. A page
+        # that connects late reads the turn's end from `turn_finished`.
+        if self._active.get(channel) and kind != "done":
             buf = self._buffer.setdefault(channel, [])
             buf.append(frame)
             if len(buf) > self._replay_size:
@@ -241,7 +247,7 @@ class InProcessBroker:
         `publish` 那个戳数的是「房间里落下了新东西」，而思考、一条跑了二十分钟的
         命令、等机器起来的那些分钟里一帧都没有；这期间会话自己一直是活的，读它的
         那一路每 ``READ_WAIT_S`` 就收到 runner 的一声应答（`session_host/host.py`）。
-        把这一声记下来，侧栏的红灯才分得清「安静」和「停了」。
+        把这一声记下来，判停（`TopicService.stall_signal`）才分得清「安静」和「停了」。
 
         只在通道上真有在跑的轮次时记：没有人跑的时候应多少声都不算数。
         """

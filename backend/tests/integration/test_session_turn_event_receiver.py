@@ -310,8 +310,13 @@ async def test_actual_hook_close_failure_preserves_context_and_runner_until_repl
             )
             await session.commit()
             assert list(await session.scalars(usage_query)) == []
-        result = own_turns._result(seat, own_turns._finished(seat, result=""))
-        assert not result.is_error and result.input_work_completed
+        # The runner reports, with the session going idle, the inputs it read
+        # in this work: the one echoed above.
+        result = replace(
+            own_turns._result(seat, own_turns._finished(seat, result="")),
+            inputs_read=True,
+        )
+        assert not result.is_error and result.inputs_read
         assert result.session_id == identity.native_session_id
         assert result.harness == identity.harness == CLAUDE_CODE
         assert result.agent_handle == identity.recipient_handle == state.acting_agent
@@ -327,8 +332,8 @@ async def test_actual_hook_close_failure_preserves_context_and_runner_until_repl
             row = session.scalars(input_query).one()
             usages = list(session.scalars(usage_query))
             # Intake saves the pointer and Stop closes the interval first, in
-            # separate commits. Fail only after the real joint settlement writes.
-            if row.completed_at is None or not usages:
+            # separate commits. Fail only after the real settlement writes.
+            if not usages:
                 return
             assert row.echoed_at is not None
             assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
@@ -367,15 +372,18 @@ async def test_actual_hook_close_failure_preserves_context_and_runner_until_repl
         assert not any(frame["type"] == "done" for _, frame in frames)
         async with factory() as independent:
             row = (await independent.scalars(input_query)).one()
-            assert row.echoed_at is not None and row.completed_at is None
-            assert row.released_block_ids == []
-            assert all(
-                consumed_turn(block) is None
-                for block in await independent.scalars(blocks_query)
+            # Delivered at its echo, whatever became of the Stop after it.
+            assert row.echoed_at is not None
+            assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
+            assert (
+                await held_blocks(
+                    independent,
+                    project_id=project,
+                    topic_id=topic,
+                    recipient_handle=seat,
+                )
+                == set()
             )
-            assert await held_blocks(
-                independent, project_id=project, topic_id=topic, recipient_handle=seat
-            ) == set(ids)
             assert list(await independent.scalars(usage_query)) == []
             (interval,) = list(await independent.scalars(intervals_query))
             assert interval.id == work and interval.stopped_at is not None
@@ -394,7 +402,7 @@ async def test_actual_hook_close_failure_preserves_context_and_runner_until_repl
         ]
         async with factory() as independent:
             row = (await independent.scalars(input_query)).one()
-            assert row.echoed_at is not None and row.completed_at is not None
+            assert row.echoed_at is not None
             assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
             assert {
                 consumed_turn(block)

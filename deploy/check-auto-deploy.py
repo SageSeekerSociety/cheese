@@ -73,8 +73,7 @@ def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
     runs = []
     page = 1
     while True:
-        # No branch filter: a merge-queue run belongs to the queue's temporary
-        # branch, not to main. ci_ready checks each run's branch itself.
+        # No branch filter: ci_ready checks each run's branch itself.
         query = urlencode({"head_sha": candidate, "per_page": 100, "page": page})
         batch = github_json(
             f"https://api.github.com/repos/{repository}/actions/workflows/{workflow}/runs?{query}"
@@ -128,18 +127,14 @@ def covered_by_green(candidate: str, repository: str) -> bool:
 
 
 #: Where one candidate's required evidence comes from, per workflow. A workflow
-#: is satisfied by any one of its routes: Required CI reports the gate on the
-#: push that landed the commit on main, and on a merge-queue entry for the same
-#: commit (the queue squashes onto its base and fast-forwards main to it). The
-#: routes are alternatives, not a list that all must be present: a commit merged
-#: directly has no queue run, and one landed through the queue has no push run.
+#: is satisfied by any one of its routes: the image build on main, and Required
+#: CI's gate on the push that landed the commit on main.
 REQUIRED_RUNS = (
     ("build.yml", (
         ({"push", "workflow_dispatch"}, lambda branch: branch == "main"),
     )),
     ("required-ci.yml", (
         ({"push"}, lambda branch: branch == "main"),
-        ({"merge_group"}, lambda branch: branch.startswith("gh-readonly-queue/main/")),
     )),
 )
 
@@ -163,24 +158,18 @@ def ci_ready(candidate: str, say=print) -> bool:
                 and latest["conclusion"] == "success"):
             continue
         if workflow == "required-ci.yml" and runs:
-            # Nothing here says the gate failed: every run is either a queue
-            # entry that passed (it proves this exact commit) or a batched push
-            # run a later push replaced. A failed run, or one still going, falls
-            # out of this and refuses below.
+            # Nothing here says the gate failed: every run is a batched push run
+            # a later push replaced. A failed run, or one still going, falls out
+            # of this and refuses below.
             settled = all(
-                (run["event"] == "push" and run["status"] == "completed"
-                 and run["conclusion"] in SUPERSEDED_CONCLUSIONS)
-                or (run["event"] == "merge_group" and run["status"] == "completed"
-                    and run["conclusion"] == "success")
+                run["status"] == "completed" and run["conclusion"] in SUPERSEDED_CONCLUSIONS
                 for run in runs
             )
-            # A passing queue run proves the commit by itself. A replaced push
-            # run needs the later batch that covered it — there must be one, so
-            # a commit with no run at all never lands here.
-            if settled and (any(run["event"] == "merge_group" for run in runs)
-                            or covered_by_green(candidate, repository)):
-                say(f"{candidate} has no Required CI result of its own: a queue"
-                    " entry or a later batch run passed and covered it.")
+            # A replaced push run needs the later batch that covered it — there
+            # must be one, so a commit with no run at all never lands here.
+            if settled and covered_by_green(candidate, repository):
+                say(f"{candidate} has no Required CI result of its own: a later"
+                    " batch run passed and covered it.")
                 continue
         seen = ", ".join(f"{run['id']} {run['status']}/{run['conclusion']}" for run in runs) or "none"
         say(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")

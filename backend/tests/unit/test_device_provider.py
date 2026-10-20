@@ -159,6 +159,22 @@ class FakeHub:
             if isinstance(self.ping, BaseException):
                 raise self.ping
             return dict(self.ping)
+        if method == "register":
+            # The runner takes the epoch it is registered under.
+            self.epoch = params["epoch"]
+            return {"worker_epoch": self.epoch}
+        if method == "read":
+            # A runner with nothing to report: it holds a read that asked to
+            # wait for a moment, and answers with how it stands.
+            if params.get("wait"):
+                await asyncio.sleep(0.05)
+            return {
+                "worker_epoch": getattr(self, "epoch", 0),
+                "events": [],
+                "records": [],
+                "state": {"worker_status": "idle", "tasks": {}},
+                "alive": True,
+            }
         if method == "command":
             return {"is_error": False}
         subtype = params["request"]["subtype"]
@@ -1529,13 +1545,17 @@ def test_every_backend_in_the_deployed_pool_gets_the_same_liveness_policy():
     """How long a turn may talk without working, how long an input may sit
     unread, and the ceiling over both are decided once for the deployment. A
     transport that drifted from another would end the same turn at a different
-    moment depending on where it ran."""
+    moment depending on where it ran. A harness whose runner keeps those
+    clocks itself is registered with the same two limits, and the room keeps
+    none for it: two clocks on one turn would end it twice."""
     from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.harness import HARNESSES
 
     pool = build_compute_pool()
     for backend in pool._runtimes():
-        assert backend.no_progress_s == settings.agent_no_progress_s
-        assert backend.unread_grace_s == settings.agent_unread_grace_s
+        own = not HARNESSES[backend.harness].reports_lifecycle
+        assert backend.no_progress_s == (settings.agent_no_progress_s if own else 0)
+        assert backend.unread_grace_s == (settings.agent_unread_grace_s if own else 0)
         assert backend.hard_ceiling_s == settings.agent_turn_hard_ceiling_s
 
 

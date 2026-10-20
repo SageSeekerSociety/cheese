@@ -91,6 +91,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
   <TaskFormSection :title="t('tasks.form.participation')">
     <div class="tf-grid">
       <BaseField
+        data-agent-field="form"
         :label="t('tasks.form.submitterType')"
         required
         :hint="t('tasks.form.submitterTypeFixed')"
@@ -109,7 +110,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
         }}</span>
       </BaseField>
 
-      <BaseField :label="t('tasks.form.rank')" required :error="errorOf(rankControl)">
+      <BaseField data-agent-field="difficulty" :label="t('tasks.form.rank')" required :error="errorOf(rankControl)">
         <SegmentedControl
           v-model="rankValue"
           :options="rankOptions"
@@ -123,6 +124,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
     <div class="tf-grid">
       <BaseField
         v-if="isTeam"
+        data-agent-field="team_min"
         :label="t('tasks.form.teamSize')"
         required
         :error="errorOf(maxTeamSizeControl) ?? errorOf(minTeamSizeControl)"
@@ -157,7 +159,7 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
         </div>
       </BaseField>
 
-      <BaseField :label="limitLabel" :error="errorOf(participantLimitControl)">
+      <BaseField data-agent-field="participant_limit" :label="limitLabel" :error="errorOf(participantLimitControl)">
         <template #default="{ id, describedby, invalid }">
           <div class="tf-inline">
             <v-text-field
@@ -207,8 +209,8 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
       <v-checkbox v-model="mentorsJoin" :label="t('tasks.form.mentor.require')" density="compact" hide-details />
       <v-autocomplete
         v-if="mentorsJoin"
-        autocomplete="off"
         v-model="mentors"
+        autocomplete="off"
         :items="props.mentorOptions ?? []"
         :label="t('tasks.form.mentor.label')"
         multiple

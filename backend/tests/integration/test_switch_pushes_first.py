@@ -8,8 +8,6 @@ loses is held by the snapshot of the session's last turn. A cloud sandbox left
 behind is left to the idle sweep either way.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import ast
 import json
 import re
@@ -50,6 +48,7 @@ from app.main import app
 from tests.delivery import delivery_task
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 

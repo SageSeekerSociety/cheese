@@ -58,15 +58,15 @@ The shell is on the work machine; the session's own files — `~/.cheese/memory/
 
 Coming back from a context compaction, make your next tool call in that same turn, or send one line saying where the work stands and what comes next. Everyone watching the task — the person who asked for it, the seat waiting on it — reads a silent session exactly as a dead one, and pays for the silence twice: with the wait, and with whatever it runs to find out.
 
-## Run `task ci:fast` before you commit
+## The pull request's CI is the verdict
 
-**Never run a whole-tree frontend type check in a sandbox — `pnpm run typecheck`, that same script invoked by hand (`node scripts/typecheck.mjs` from `frontend/`), or `vue-tsc`: the sandbox's memory cap kills it.** The tier's frontend type check covers only the files you changed, and that is the one to run.
+A ready pull request runs every suite its diff selects except the post-merge ones (e2e, remote execution, the MCP suites), with the backend's integration layer narrowed to the test files the diff reaches; a draft runs none, and marking it ready starts that run. `CI required` green on the head is the verdict a hand-off rests on. What runs where: `docs/manual/dev/ci.md`.
 
-**The same goes for the whole backend unit suite.** A sandbox is missing what parts of it need, so a whole `backend/tests/unit` run reddens on the environment rather than on your change, and reading those failures one at a time costs more than the suite does. Run the test files your change touches; the full suite belongs to CI.
+Locally, run the test files your change touches, to find a failure faster than a CI round would — not to stand in for one.
 
-What the tier is, what it selects and its budget: `.github/scripts/ci-fast.md`. Run it on the pending change before creating the commit, not between commit and push: a commit may already trigger a push and a CI round. Fix checks that actually failed and rerun them before publishing the change; an unavailable check stays unverified, not a reason to discard or leave work unpushed. If the Task runner is missing, run `python3 .github/scripts/ci-fast.py --tier quick` directly.
+**Never run a whole-tree frontend type check in a sandbox — `pnpm run typecheck`, that same script invoked by hand (`node scripts/typecheck.mjs` from `frontend/`), or `vue-tsc`: the sandbox's memory cap kills it.** The pull request's CI type-checks the whole tree.
 
-Exit 0 means the selected checks ran and passed, nothing more: an `unknown` or `blocked` result, and any check reported as not run, is not green — the tier ran out of budget, a tool was missing, or a report could not be judged, and none of that may stand in for a pass. On the runner, `CI required` on a PR can end green despite `unknown` or `blocked` results; it writes every unjudged item into the step summary. Its green is not a judgement of the full suites; those run on main after the merge. Required CI remains the merge gate.
+**The same goes for the whole backend unit suite.** A sandbox is missing what parts of it need, so a whole `backend/tests/unit` run reddens on the environment rather than on your change, and reading those failures one at a time costs more than the suite does. The full suite belongs to CI.
 
 ## Report real bugs, not theoretical ones
 

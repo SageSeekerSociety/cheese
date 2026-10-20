@@ -17,27 +17,29 @@ import logging
 import time
 import uuid
 from dataclasses import replace
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import get_consumptions, get_session_host
-from app.api.request_deps import AuthUser, DbSession
 from app.api.refusal import refuse
-from app.api.response import ok
+from app.api.request_deps import AuthUser, DbSession
+from app.api.response import ok, typed_response
+from app.api.space_deps import get_space_service
+from app.api.task_deps import _task_attachment_service
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import (
-    BaseError,
     NotFoundError,
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
+from app.domain.agent.personal import billing
 from app.domain.agent.personal import service as assistant
 from app.domain.agent.personal.keys import person_key
 from app.domain.agent.personal.prompt import task_brief
@@ -49,6 +51,8 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.space.services import SpaceService
+from app.domain.task import drafts
 from app.domain.task.claims import claim_of
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage import pricing
@@ -61,6 +65,7 @@ router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 People = Annotated[SessionHost, Depends(get_session_host)]
 Questions = Annotated[Consumptions, Depends(get_consumptions)]
+Spaces = Annotated[SpaceService, Depends(get_space_service)]
 
 
 def _task_place(task_id: int) -> assistant.Place:
@@ -123,6 +128,36 @@ async def start_task_conversation(
     return ok(_conversation_out(row, 0))
 
 
+class ConversationOut(BaseModel):
+    """A conversation as the panel lists it."""
+
+    id: str
+    title: str
+    lastActiveAt: str
+    questions: int | None = None
+
+
+@router.post(
+    "/drafts/{draftId}/conversations",
+    status_code=201,
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ConversationOut),
+)
+async def start_draft_conversation(
+    draft_id: Annotated[int, Path(ge=1, alias="draftId")], db: DbSession, auth: AuthUser
+) -> dict:
+    """A conversation on a draft's page. The draft remembers it, so the page
+    opens on it again, and when the draft is published the conversation goes
+    with the 题目."""
+    row = await drafts.mine(db, auth.user_id, draft_id)
+    conversation = await assistant.AssistantConversations(db).start(
+        auth.user_id, assistant.Place("draft", str(draft_id))
+    )
+    row.conversation_id = conversation.id
+    await db.commit()
+    return ok(_conversation_out(conversation, 0))
+
+
 @router.get("/conversations/{conversationId}")
 async def read_conversation(
     conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
@@ -141,15 +176,10 @@ async def read_conversation(
     row = await _owned(db, auth.user_id, conversation_id)
     messages = await assistant.AssistantConversations(db).messages(row.id)
     if people.available():
-        try:
-            place = await _place(db, row, auth)
-        except BaseError:
-            place = None
-        if place is not None:
-            spawn(
-                _prestart(people, conversation_session(auth.user_id, row.id, place)),
-                name=f"assistant-prestart-{row.id}",
-            )
+        spawn(
+            _prestart(people, conversation_session(auth.user_id, row.id)),
+            name=f"assistant-prestart-{row.id}",
+        )
     answering = (
         await questions.current(assistant.KIND, str(row.id))
         if get_redis_client() is not None
@@ -165,6 +195,7 @@ async def read_conversation(
                     "text": m.text,
                     "stopped": m.stopped,
                     "at": m.created_at.isoformat(),
+                    **({"parts": m.parts} if m.parts else {}),
                 }
                 for m in messages
             ],
@@ -183,22 +214,54 @@ async def _prestart(
         logger.info("pre-starting a person's session failed", exc_info=True)
 
 
-async def _place(db, row, auth: AuthUserInfo) -> str:
-    """Where the conversation is, written out for 芝士; it takes the same
-    judgment as reading that place."""
-    if row.place_kind == "task":
-        task = await _readable_task(db, int(row.place_id), auth)
+class PageIn(BaseModel):
+    """The page a question is asked from: a 题目's, or a draft's (the publish
+    or edit page)."""
+
+    kind: Literal["task", "draft"]
+    id: int = Field(ge=1)
+
+
+async def _page(db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo) -> str:
+    """The page, written out for 芝士; it takes the same judgment as opening
+    the page."""
+    if page.kind == "draft":
+        row = await drafts.mine(db, auth.user_id, page.id)
         zones = await timezones_by_ids(db, [auth.user_id])
-        return task_brief(
-            task,
-            claim=await claim_of(db, task=task, user_id=auth.user_id),
-            timezone=zones.get(auth.user_id),
-        )
-    return ""
+        return await drafts.context(db, spaces, row, zones.get(auth.user_id))
+    task = await _readable_task(db, page.id, auth)
+    zones = await timezones_by_ids(db, [auth.user_id])
+    files, _, readable = await _task_attachment_service(db).list_for_task(
+        task=task, user_id=auth.user_id
+    )
+    return task_brief(
+        task,
+        claim=await claim_of(db, task=task, user_id=auth.user_id),
+        timezone=zones.get(auth.user_id),
+        materials=[(f.id, (f.meta or {}).get("filename") or str(f.id)) for f in files],
+        materials_readable=readable,
+    )
+
+
+def _page_of(row) -> PageIn | None:
+    """Where a conversation was started, as the page a question defaults to."""
+    if row.place_kind in ("task", "draft") and row.place_id.isdigit():
+        return PageIn(kind=row.place_kind, id=int(row.place_id))
+    return None
+
+
+class FileIn(BaseModel):
+    id: int = Field(ge=1)
+    name: str = Field(min_length=1, max_length=255)
 
 
 class AskIn(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
+    #: The page it is asked from; the conversation's own place when left out.
+    page: PageIn | None = None
+    #: Files handed over with it (uploaded with ``POST /attachments``); 芝士
+    #: reads them with ``cheese_file_read``, as the asker may.
+    files: list[FileIn] = Field(default_factory=list, max_length=10)
 
     @field_validator("question")
     @classmethod
@@ -217,6 +280,7 @@ async def ask(
     auth: AuthUser,
     people: People,
     questions: Questions,
+    spaces: Spaces,
 ):
     """Answer one question, streamed as server-sent events: ``answering`` (the
     question's id, to read on from elsewhere), then ``queued`` (waiting for the
@@ -224,7 +288,8 @@ async def ask(
     ``error``, ``done`` (``stopped``). Each event carries its place in the
     question's stream (``id``)."""
     row = await _owned(db, auth.user_id, conversation_id)
-    place = await _place(db, row, auth)
+    shown = body.page or _page_of(row)
+    context = "" if shown is None else await _page(db, spaces, shown, auth)
 
     rates = Rates.of(settings.assistant_model, await pricing.model_rates())
     key = await person_key(db, auth.user_id, async_session_factory)
@@ -244,6 +309,7 @@ async def ask(
     if redis is None or slot is None:
         return refuse(429, say("assistantStillAnswering"), 5)
     held_at = time.monotonic()
+    said = await assistant.page_to_say(redis, conversation_id, context)
 
     try:
         asked = await assistant.ask(
@@ -251,10 +317,17 @@ async def ask(
             consumptions=questions,
             user_id=auth.user_id,
             conversation_id=conversation_id,
-            started=conversation_session(auth.user_id, conversation_id, place),
+            started=conversation_session(auth.user_id, conversation_id),
             question=body.question,
             held_at=held_at,
             slot=slot,
+            context=said,
+            files=[(f.id, f.name) for f in body.files],
+            kind=(
+                billing.WRITING
+                if shown is not None and shown.kind == "draft"
+                else billing.ASKING
+            ),
         )
     except BaseException:
         await slot.release()

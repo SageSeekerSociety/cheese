@@ -15,14 +15,14 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.model_catalog import model_choices
 from app.domain.agent_instance.configuration import AgentConfiguration
-from app.domain.agent_instance.own.ownership import connection_of
-from app.domain.agent_instance.own.connections import logins
 from app.domain.agent_instance.own import (
     add,
     listing,
     my_connections,
     owned_by_seat,
 )
+from app.domain.agent_instance.own.connections import logins
+from app.domain.agent_instance.own.ownership import connection_of
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import agent_instance_handle

@@ -122,6 +122,7 @@ _REGISTRY = "app/domain/agent/harness/__init__.py"
 #: 抓的正是「名字被写成了字面量」，拿被守的东西当判据等于放弃判据。
 _HARNESS_NAMES = ("claude-code", "codex", "pi")
 
+
 def _docstring_constants(tree: ast.AST) -> set[int]:
     """文档字符串那些节点。写清楚一个骨架长什么样是说明，不是选择。"""
     return {

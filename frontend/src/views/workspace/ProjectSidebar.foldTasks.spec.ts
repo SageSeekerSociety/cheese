@@ -275,8 +275,8 @@ describe('频道下面那一整块任务，收得起来', () => {
         [
           // 这条归我，状态上没别的话可说：画蓝灯。
           task(K1, '任务一', 'topic-a', { owner_handle: 'me' }),
-          // 这条在往前跑，是别人负责的：只画它自己那盏呼吸绿，不画蓝。
-          task(K2, '任务二', 'topic-a', { owner_handle: 'wang', filling_in: true, moving: true }),
+          // 这条交付完了我还没看过，是别人负责的：只画它自己那盏绿灯，不画蓝。
+          task(K2, '任务二', 'topic-a', { owner_handle: 'wang', filling_in: true, unseen_delivery: true }),
           // 没主的算我这边的：也画蓝灯。
           task(K3, '任务三', 'topic-a'),
         ],
@@ -296,11 +296,11 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(unowned).toHaveLength(1)
     expect(unowned[0]!.classList.contains('row-light--blue')).toBe(true)
 
-    // 别人的活不画蓝灯，只按状态画：这条在跑，就是呼吸绿。
+    // 别人的活不画蓝灯，只按状态画：这条交付完了我没看过，就是绿灯。
     const theirs = screen.getByRole('button', { name: /任务二/ })
     const theirsLights = theirs.querySelectorAll('.row-light')
     expect(theirsLights).toHaveLength(1)
-    expect(theirsLights[0]!.classList.contains('row-light--breathe')).toBe(true)
+    expect(theirsLights[0]!.classList.contains('row-light--green')).toBe(true)
     expect(theirsLights[0]!.classList.contains('row-light--blue')).toBe(false)
 
     // 借来的那一条还靠悬浮说明说出它为什么在这儿：这个频道里我自己的不到三条。

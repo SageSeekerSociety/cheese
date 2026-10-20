@@ -44,7 +44,6 @@ from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSessio
 from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
-from app.domain.team.services import team_service
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
@@ -84,6 +83,7 @@ from app.domain.machine.supply import data_disk_gb, pick_offering
 from app.domain.machine.warm import WarmPoolService
 from app.domain.membership.roster import roster
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.services import team_service
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.usage.compute import VM, admit_start, vm_spec
 from app.domain.user.services import user_by_handle

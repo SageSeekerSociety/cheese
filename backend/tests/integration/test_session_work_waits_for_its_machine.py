@@ -5,8 +5,6 @@ and the agent retried it in a loop until the machine was up. A native session
 on that machine would simply have run the command once it could.
 """
 
-from tests.support.devices import enrollment_team
-
 import json
 import time
 import uuid
@@ -36,6 +34,7 @@ from app.domain.team.models import Team
 from app.domain.topic.models import Topic
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 
 @pytest.fixture

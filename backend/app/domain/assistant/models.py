@@ -94,3 +94,8 @@ class AssistantMessage(UuidPk, Timestamps, Base):
     stopped: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
+    #: What 芝士 did while answering, besides what it said: the tools it called
+    #: (``steps``), what it wrote into drafts (``edits``) and what it published
+    #: (``published``), as the question's stream told them. NULL for a question
+    #: asked before it was kept, and for the person's own messages.
+    parts: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

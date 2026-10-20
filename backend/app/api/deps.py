@@ -114,7 +114,8 @@ def _note_alive(conversation: uuid.UUID) -> None:
 
     Not a frame — it may come from a turn that has written nothing for half an
     hour — and that is the point: it is the one sign of life a quiet turn
-    leaves, and the sidebar's red light reads it to tell quiet from stopped.
+    leaves, and the stall verdict (`TopicService.stall_signal`, read by
+    `cheese status`) reads it to tell quiet from stopped.
     """
     get_broker().note_alive(str(conversation))
 

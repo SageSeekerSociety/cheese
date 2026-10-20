@@ -338,6 +338,7 @@ def test_applying_holds_no_room_lock_while_the_machine_is_reset(client, monkeypa
 
 def test_team_devices_form_one_sandbox_pool_regardless_of_enroller(client):
     from sqlalchemy import select
+
     from app.domain.device.supply import Supply
     from app.domain.device.wiring import sql_device_service
     from app.domain.machine import environments

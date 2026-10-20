@@ -20,9 +20,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check monitor behavior
         # Only this workflow's own monitors. The other helper tests in
-        # .github/scripts run in repo-guards on the PR lane (and ci-fast's in
-        # required-ci's cifast job); they must not hitch a ride on the hourly
-        # heartbeat.
+        # .github/scripts run in repo-guards on the PR lane; they must not hitch
+        # a ride on the hourly heartbeat.
         run: |
           python3 -m unittest discover -s .github/scripts -p 'test_box_uptime.py'
           python3 -m unittest discover -s .github/scripts -p 'test_ci_pool_health.py'

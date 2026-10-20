@@ -1,10 +1,10 @@
-// The JSON form ci:fast reads, shared by the checks
+// The JSON form the snapshot collector reads, shared by the checks
 // under frontend/scripts — the ratchets and the plain checks alike.
 //
 //   node scripts/import-boundary-ratchet.mjs --json
 //
 // prints ONE JSON object on stdout and nothing else. The human report is not
-// printed in this mode on purpose: ci:fast parses stdout, and a report
+// printed in this mode on purpose: the collector parses stdout, and a report
 // interleaved with it is not a report. Errors keep going to stderr, where they
 // were already going.
 //

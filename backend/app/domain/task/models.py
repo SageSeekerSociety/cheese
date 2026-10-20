@@ -14,7 +14,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
@@ -84,6 +84,11 @@ class Task(Base):
     team_id: Mapped[int | None] = mapped_column("team_id", BigInteger, nullable=True)
     access_control_enabled: Mapped[bool] = mapped_column(
         "access_control_enabled", Boolean, nullable=False, default=False
+    )
+    # 评分要点（``TaskRubricItem``）给不给领题的人看。批改的人（出题人、空间管理员）
+    # 总能看到；关掉它只是不对学生显示。
+    rubric_public: Mapped[bool] = mapped_column(
+        "rubric_public", Boolean, nullable=False, default=True, server_default="true"
     )
     published_at: Mapped[datetime | None] = mapped_column(
         "published_at", DateTime(timezone=True), nullable=True
@@ -211,6 +216,26 @@ class TaskSubmissionSchemaEntry(Base):
     index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
     description: Mapped[str] = mapped_column("description", String, nullable=False)
     type: Mapped[int] = mapped_column("type", SmallInteger, nullable=False)
+
+
+class TaskRubricItem(Base):
+    """One line of a task's 评分要点: what is scored, how many points, and what
+    earns them. Read by whoever grades the submissions, and by the students when
+    the task's ``rubric_public`` says so. Replaced as a whole, like the
+    submission form above."""
+
+    __tablename__ = "task_rubric_item"
+
+    task_id: Mapped[int] = mapped_column(
+        "task_id",
+        BigInteger,
+        ForeignKey("task.id", name="fk_task_rubric_item_task_id_task"),
+        primary_key=True,
+    )
+    index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
+    item: Mapped[str] = mapped_column("item", String(64), nullable=False)
+    points: Mapped[int] = mapped_column("points", Integer, nullable=False)
+    criteria: Mapped[str] = mapped_column("criteria", Text, nullable=False, default="")
 
 
 class TaskMentor(Base):
@@ -396,4 +421,63 @@ class TaskAttachment(Base):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class TaskDraft(Base):
+    """A 题目 written but not yet published, or the changes to a published one
+    not yet saved (``task_id``). It holds the publish form as the person left
+    it, so the form survives a reload, and it is what their 芝士 writes into:
+    an answer goes on after its page is closed, so what it fills has to be
+    somewhere other than that page (``app.domain.task.drafts``).
+
+    ``fields`` is the form, in the shape ``POST /tasks`` takes. ``version``
+    counts the writes; ``marks`` holds, per field, the version of the person's
+    last write to it, so a write by 芝士 made from an older reading leaves a
+    field the person has since changed as they left it.
+    """
+
+    __tablename__ = "task_draft"
+    __table_args__ = (
+        # A person's drafts in a space, latest first: the draft list.
+        Index("ix_task_draft_user_space", "user_id", "space_id", "updated_at"),
+        Index("ix_task_draft_space_id", "space_id"),
+        Index("ix_task_draft_task_id", "task_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("user.id", ondelete="CASCADE", name="fk_task_draft_user_id_user"),
+        nullable=False,
+    )
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("space.id", ondelete="CASCADE", name="fk_task_draft_space_id_space"),
+        nullable=False,
+    )
+    # The published 题目 these are changes to; NULL for a new one.
+    task_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("task.id", ondelete="CASCADE", name="fk_task_draft_task_id_task"),
+        nullable=True,
+    )
+    # The 芝士 conversation working on it, when there is one. Not a foreign key:
+    # the conversation is the assistant's, and a draft outlives a deleted one.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    # Where it came from, as the list shows it: a file's name, or empty.
+    source: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    fields: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    marks: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )

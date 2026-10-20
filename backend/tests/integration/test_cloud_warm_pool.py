@@ -5,9 +5,6 @@ Taking a warm machine into the host pool is covered with placement
 (``test_cloud_host_pool.py``).
 """
 
-from tests.support.devices import enrollment_team
-
-
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -17,13 +14,14 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.device.models import DeviceRow
-from app.domain.device.wiring import sql_device_service
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import WarmMachine
 from app.domain.machine.warm import WarmPoolService
 from tests.microcloud import FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 
 def test_central_warm_creation_does_not_request_subscription(warm_case, monkeypatch):

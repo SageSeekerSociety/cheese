@@ -78,7 +78,7 @@ dev = [
 
 [tool.uv]
 constraint-dependencies = [
-    "aiohttp==3.14.3",
+    "aiohttp==3.14.4",
     "anyio==4.14.2",
     "cryptography==50.0.0",
     "multidict==6.9.1",
@@ -104,11 +104,12 @@ target-version = "py313"
 # existing sites, and `id`/`type` as a parameter name is idiomatic enough that
 # the rule would cost more attention than it saves.
 #
-# Layout is fixed, never judged: import order (I) is applied by the pre-commit
-# `ruff-format` hook together with `ruff format`, and line length (E501) is left
-# to the formatter. RUF100 reports a `# noqa` that suppresses nothing, so
-# `ruff check --fix` deletes it instead of a test keeping count of them.
-select = ["E", "F", "UP", "B", "DTZ", "A003", "RUF100"]
+# Import order (I) is a rule like the others: the pre-commit `ruff-fix` hook
+# applies it on a commit, and CI fails a tree that does not hold it, together
+# with `ruff format --check`. Line length (E501) is left to the formatter.
+# RUF100 reports a `# noqa` that suppresses nothing, so `ruff check --fix`
+# deletes it instead of a test keeping count of them.
+select = ["E", "F", "UP", "B", "DTZ", "A003", "RUF100", "I"]
 # UP042 wants `class X(str, Enum)` → `class X(StrEnum)`. That is NOT behaviour-
 # preserving: `str(member)` returns "X.MEMBER" for (str, Enum) but the raw value
 # for StrEnum, which silently changes serialization/logging output. The existing

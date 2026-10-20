@@ -72,6 +72,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1030,7 +1031,18 @@ def measure(config_path: Path) -> int:
     return OK
 
 
+#: What git hands a hook about the repository it runs for. With GIT_DIR set and
+#: no GIT_WORK_TREE, git takes the current directory for the top of the work
+#: tree, so from backend/ (where the hook cds) every command that finds the
+#: checkout by path finds the wrong one: in a linked worktree `git archive`
+#: then cannot see app/ at the merge base, and the check could not judge any
+#: commit. This script finds its checkout by the paths it is given.
+_INHERITED_GIT = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+
+
 def main() -> int:
+    for name in _INHERITED_GIT:
+        os.environ.pop(name, None)
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--config", default=None, help="the .importlinter to read")
     parser.add_argument(
@@ -1725,6 +1737,50 @@ def self_test() -> int:
 
     with tempfile.TemporaryDirectory(prefix="boundary-selftest-") as raw:
         sandbox = Path(raw)
+
+        # As a pre-commit hook runs it: git sets GIT_DIR, and the hook runs the
+        # script from backend/, a directory below the checkout's top.
+        repo = sandbox / "hook"
+        hook_backend = repo / "backend"
+        hook_backend.mkdir(parents=True)
+        _write(hook_backend, _SEED)
+        (hook_backend / DEFAULT_CONFIG.name).write_text(seed_config)
+        subprocess.run(
+            [*_FIXTURE_GIT, "init", "-q"], cwd=repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            [*_FIXTURE_GIT, "add", "--", "backend"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [*_FIXTURE_GIT, "commit", "-q", "-m", "base"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(HERE),
+                "--config",
+                DEFAULT_CONFIG.name,
+                "--base",
+                "HEAD",
+            ],
+            cwd=hook_backend,
+            env={**os.environ, "GIT_DIR": str(repo / ".git")},
+            capture_output=True,
+            text=True,
+        )
+        report(
+            "run as a hook, below the top, with GIT_DIR set",
+            result.returncode,
+            result.stdout + result.stderr,
+            OK,
+            None,
+        )
 
         for index, (what, files, expected, needle, _broken) in enumerate(_CASES):
             tmp = sandbox / f"case{index}"

@@ -26,7 +26,8 @@ from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
 )
-from app.domain.room_task.models import TaskStatus
+from app.domain.room_task import progress
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -419,7 +420,8 @@ async def reject(
     # 退回也是结局：等验收人动手的那几句一起收掉。
     await self._settle_the_card(card, "rejected")
     card.decided_by = decided_by
-    card.decided_at = datetime.now(UTC)
+    card.decided_at = decided = datetime.now(UTC)
+    await _back_to_work(self, card, at=decided)
     notes.record(card, None, note)
 
     # Topic stays active on rejection.
@@ -717,6 +719,7 @@ async def void(
     card.status = AcceptStatus.revoked
     # 作废是结局：等验收人动手的那几句一起收掉。
     await self._settle_the_card(card, "voided")
+    await _back_to_work(self, card, at=datetime.now(UTC))
     notes.record(card, notes.NoteCode.voided, archive.prefix_note(card.note, headline))
     # 只在空的时候补：作废人始终写在 note 里，已有的决议痕迹不覆盖。
     if card.decided_by is None:
@@ -754,3 +757,15 @@ async def void(
         },
     )
     return card
+
+
+async def _back_to_work(
+    self: pkg.AcceptService, card: AcceptCard, *, at: datetime
+) -> None:
+    """The card was returned or voided: its task is back in its teammate's
+    hands (`room_task.progress.back_to_work`)."""
+    if card.task_id is None:
+        return
+    task = await self._session.get(Task, card.task_id)
+    if task is not None and task.status == TaskStatus.open:
+        progress.back_to_work(task, at=at)

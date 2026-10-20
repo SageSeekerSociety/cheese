@@ -29,8 +29,8 @@ from app.core.work_context import parse_work_id
 from app.domain.conversation.services import room_of
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
-from app.domain.project.repositories import ProjectRepository
 from app.domain.project.reads import project_or_404
+from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
 
 _DAY_S = 86400

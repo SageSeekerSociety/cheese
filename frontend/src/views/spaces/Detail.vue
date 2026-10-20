@@ -4,17 +4,17 @@
        侧栏一起没了）。ErrorBoundary 把这一块换成一句提示加一颗「重试」，别的部分照旧；
        reset-key 用当前路由，换一页或换一个空间时那层自己活过来。 -->
   <ErrorBoundary :reset-key="route.path">
-    <SpaceReviewNoticeView v-if="underReview" :status="underReview" :reason="space?.reviewReason" />
-    <!-- 页面等这块板的详情回来再挂：没过审的板除详情外一律 404，先挂上去，每一页
-         各自取数、各自弹一条红色的「获取失败」。详情没取到（不存在、不是成员）时
-         照旧挂上，由页面自己说。 -->
-    <router-view v-else-if="settled" />
+    <!-- Pages mount once the space's detail is back: an unreviewed space answers 404 to
+         everything but its detail, and that one is sent to its application page instead
+         (see getSpace). When the detail could not be read at all, the page still mounts
+         and says so itself. -->
+    <router-view v-if="settled && !underReview" />
   </ErrorBoundary>
 </template>
 
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { onBeforeRouteUpdate, useRoute } from 'vue-router'
+import { onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
 import { usePageTitle } from '@/composables/usePageTitle'
@@ -22,9 +22,9 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import { useSpaceStore } from '@/stores/space'
-import SpaceReviewNoticeView from '@/views/spaces/detail/SpaceReviewNoticeView.vue'
 
 const route = useRoute()
+const router = useRouter()
 const { setDynamicTitle } = usePageTitle()
 
 const spaceStore = useSpaceStore()
@@ -46,7 +46,12 @@ const underReview = computed<'PENDING' | 'REJECTED' | null>(() => {
 const getSpace = async (spaceId: number) => {
   await spaceData.fetchSpace(spaceId)
   settledId.value = spaceId
-  if (!underReview.value) spaceData.fetchCategories()
+  // 还没过审的空间只有申请人自己读得到，里面每一页都还打不开：换到这份申请上。
+  if (underReview.value) {
+    void router.replace({ name: 'HomeSpaceApplication', params: { spaceId: String(spaceId) } })
+    return
+  }
+  spaceData.fetchCategories()
   if (space.value?.name) setDynamicTitle(space.value.name, 'SpacesDetail')
 }
 

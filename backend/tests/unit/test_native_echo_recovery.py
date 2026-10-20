@@ -23,8 +23,9 @@ runner = Runner(Path(sys.argv[1]))
 runner.session_id = sys.argv[2]
 runner.working = True
 runner.work = sys.argv[3]
+runner.outbox.register(1)
 runner.observe(json.loads(sys.argv[4]))
-print(json.dumps(runner.journal.read()))
+print(json.dumps({"records": runner.journal.read(), "events": runner.outbox.pending()}))
 runner.journal.close()
 """
 
@@ -78,13 +79,16 @@ def test_replacement_preserves_input_work_even_when_active_work_changed(
         text=True,
         check=True,
     )
-    (row,) = json.loads(observed.stdout)
-    stamp = row["record"]["cheese"]
-    assert stamp["work_id"] == active_work
-    assert stamp["receipt_work_id"] == input_work
-    assert stamp["receipt_session_id"] == native_session
-    assert stamp["receipt"] is True
+    seen = json.loads(observed.stdout)
+    (row,) = seen["records"]
+    assert row["record"]["cheese"]["work_id"] == active_work
     assert row["record"]["uuid"] == input_id
+    # Read under the identity it was written with, into the work running now.
+    (read,) = [e for e in seen["events"] if e["status"] == "read"]
+    assert read["input_id"] == input_id
+    assert read["work_id"] == input_work
+    assert read["session_id"] == native_session
+    assert read["execution_work_id"] == active_work
     assert len(writes) == 1, "Recovery must not resend the input"
 
 
@@ -105,6 +109,7 @@ def test_unrelated_echo_cannot_borrow_a_registered_identity(tmp_path, conflict):
             }
         ),
     )
+    runner.outbox.register(1)
     runner.observe(
         {
             "type": "user",
@@ -115,8 +120,11 @@ def test_unrelated_echo_cannot_borrow_a_registered_identity(tmp_path, conflict):
         }
     )
     try:
-        (row,) = runner.journal.read()
-        assert not row["record"]["cheese"].get("receipt")
+        assert not [
+            e
+            for e in runner.outbox.pending()
+            if e["kind"] == "input" and e["status"] == "read"
+        ]
     finally:
         runner.journal.close()
 

@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.reads import InputRead
 from app.domain.agent.room import reads as room_reads
 from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.delivery.note import NOT_YOUR_OWN_THREAD
@@ -476,16 +477,20 @@ def test_nondefault_timer_reaches_the_named_agent_through_real_turn_assembly(
         receipt_started = asyncio.Event()
         release_receipt = asyncio.Event()
         receipt_committed = asyncio.Event()
-        original_receipt = chat.confirm_prompt_receipt
 
-        async def observe_receipt(receipt):
+        async def observe_report(report):
+            # The runner's report that the input was read: held until the
+            # test lets it be applied.
+            if not isinstance(report.fact, InputRead):
+                return await chat.apply_report(report)
             receipt_started.set()
             await release_receipt.wait()
-            await original_receipt(receipt)
+            applied = await chat.apply_report(report)
             receipt_committed.set()
+            return applied
 
         chat._compute.report_to(
-            room_reader(receipts=observe_receipt, rest=room_reads.reader(chat)),
+            room_reader(reports=observe_report, rest=room_reads.reader(chat)),
             unread=chat.oldest_unread_at,
             memory=chat._memory.sync,
         )
