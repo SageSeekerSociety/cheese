@@ -334,11 +334,11 @@ everything is still allowed to answer unknown.
   change that breaks those types passes this tier and goes red there. A
   config outside the watched list does not widen by
   itself: `frontend/collab/vitest.config.ts` beside a changed source file still
-  stays `related`. The full run must be shown to have
+  runs narrowed. The full run must be shown to have
   executed both i18n guard specs. Everything else stays narrow: a deletion
   beside a surviving source root that nothing surviving still imports, and a
   catalog, stylesheet or prose edit next
-  to a changed source file, still seed `related` from those roots. Only a change
+  to a changed source file, still run the specs that name those roots. Only a change
   that seeds nothing *and* leaves the suite nothing to judge — prose (`.md`), a
   declaration file —
   leaves the tier running the guards alone with `frontend-unit` recorded not-run
@@ -353,11 +353,15 @@ everything is still allowed to answer unknown.
   `docs/site`'s package files is the exception: its install failure is a
   verdict on those files and stays a failure.
 
-  A narrowed run is seeded with the changed source roots **and** every spec that
-  judges a frontend file by reading it off disk rather than importing it
-  (`OFF_DISK_SPECS` in `ci_fast_checks.py`: the specs that assert a
-  component's markup, a stylesheet's rules, a page's scroll container or a whole
-  directory). A read is not an import edge, so `related` would never select one
+  A narrowed run runs the specs that name a changed source file themselves
+  (one layer — a spec importing the changed file directly, or a changed spec),
+  **and** every spec that judges a frontend file by reading it off disk rather
+  than importing it (`OFF_DISK_SPECS` in `ci_fast_checks.py`: the specs that
+  assert a component's markup, a stylesheet's rules, a page's scroll container
+  or a whole directory). The transitive importers are full CI's: following
+  them from a core module selected most of the suite (856 s on PR #4448, near
+  the per-check timeout). A read is not an import edge, so a layer of imports
+  would never select one
   of them for the file it answers for, whatever else the change contains:
   `src/styles/docBlocks.css` is imported by `main.ts` and the doc blocks but not
   by `docBlocks.spec.ts`, which reads it with `readFileSync`; measured, changing

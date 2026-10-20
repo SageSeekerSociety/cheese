@@ -1,11 +1,9 @@
-"""A person's model connections, managed from any browser (#2991).
+"""Personal subscriptions are managed from Models independently of execution devices.
 
-Their own Claude Code is logged in on the machines they enrolled; 「模型连接」
-lists each login and lets its owner remove it, or point a machine at another
-model service, without being at that machine. Only the owner sees or touches
-their connections. A removed connection is out of use at once — nothing starts
-with it — and a machine that was away when it was removed logs it out as it
-next connects. A model service's key goes to the machine and nowhere else.
+Only the owner manages their personal-team connections. Removing a connection
+immediately prevents new sessions from using it; an offline computer logs it out
+when it next connects. A status probe never registers an unknown login or assigns
+its team.
 """
 
 from tests.support.devices import enrollment_team
@@ -173,8 +171,6 @@ def test_only_its_owner_sees_or_changes_a_connection(client, monkeypatch):
     assert client.delete(login, headers=bob).status_code == 403
     assert client.post(f"{login}/check", headers=bob).status_code == 403
     assert client.patch(login, headers=bob, json={"name": "x"}).status_code == 403
-    machine = f"/connector/my/devices/{laptop}/claude-code"
-    assert client.post(machine, headers=bob).status_code == 403
 
     machines.exec.assert_not_awaited()
     (still,) = _connections(client, alice)
@@ -308,7 +304,9 @@ def test_a_removed_connection_starts_no_session(client, monkeypatch):
     )
     assert machines.logins[laptop][FIRST_LOGIN] is True
     # Asking it again from the page changes nothing either.
-    recheck = client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
+    recheck = client.post(
+        f"/connector/teams/{team_id(client)}/claude-logins/{laptop}/check", headers=alice
+    )
     assert recheck.status_code == 200, recheck.text
     (still,) = _connections(client, alice)
     assert still["revoking"] is True and still["logged_in"] is False
@@ -412,12 +410,13 @@ def test_a_probe_does_not_assign_a_team_to_an_unregistered_login(client, monkeyp
     machines.holds(laptop, FIRST_LOGIN, "C2QR")
     monkeypatch.setattr(connections, "device_hub", machines)
 
-    asked = client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
+    path = f"/connector/teams/{team_id(client)}/claude-logins/{laptop}/check"
+    asked = client.post(path, headers=alice)
 
     assert asked.status_code == 200, asked.text
     assert [c["local_id"] for c in _connections(client, alice)] == [FIRST_LOGIN]
 
     # Logged out and removed on the machine itself: it is no connection now.
     del machines.logins[laptop]["C2QR"]
-    client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
+    client.post(path, headers=alice)
     assert [c["local_id"] for c in _connections(client, alice)] == [FIRST_LOGIN]

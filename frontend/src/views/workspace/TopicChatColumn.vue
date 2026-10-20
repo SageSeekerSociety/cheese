@@ -8,12 +8,14 @@ import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
 import { useSkillProposals } from './useSkillProposals'
 
+import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
@@ -22,6 +24,7 @@ import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
+import { artifactName } from '@/lib/blockDisplay'
 import { taskLine } from '@/lib/channelTasks'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -204,6 +207,15 @@ function avatarOf(handle: string): string {
   return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
 }
 
+/** 支线顶部那条原消息带的文件：下载在这里做，画消息的那一层只发一个意图。 */
+async function downloadRootFile(block: Block) {
+  try {
+    await downloadFile(attachmentRawUrl(props.topic.id, block.content), artifactName(block))
+  } catch {
+    toast.error(t('work.room.chat.downloadFailed'))
+  }
+}
+
 // 没加入的频道：输入框的位置是一句话加「加入频道」，加入之后输入框回来。
 const joining = ref(false)
 async function join() {
@@ -292,6 +304,9 @@ defineExpose({
             :name="nameOf(root.author)"
             :avatar="avatarOf(root.author)"
             :refs="refs"
+            :files="thread?.files"
+            :topic-id="topic.id"
+            @download="downloadRootFile($event)"
           />
           <div v-if="madeHere.length" class="made-here">
             <TaskCard
@@ -312,7 +327,15 @@ defineExpose({
           <button type="button" class="from-room t-meta" @click="emit('open-room')">
             {{ t('work.task.fromRoom', { room: topicTitle(topic) }) }}
           </button>
-          <ThreadRoot :root="root" :name="nameOf(root.author)" :avatar="avatarOf(root.author)" :refs="refs" />
+          <ThreadRoot
+            :root="root"
+            :name="nameOf(root.author)"
+            :avatar="avatarOf(root.author)"
+            :refs="refs"
+            :files="thread?.files"
+            :topic-id="topic.id"
+            @download="downloadRootFile($event)"
+          />
           <div class="from-room__rule" aria-hidden="true" />
         </template>
       </template>

@@ -175,6 +175,20 @@ The replacement depends only on the image's bytes, so it is the same on every
 turn and the prompt cache keeps hitting. Images that open pass unchanged, and
 an image given by URL is not fetched.
 
+DeepSeek's Anthropic-compatible API runs thinking on by default and refuses a
+request when an assistant message no longer carries its thinking block
+(`deepseek_thinking.py`, installed from `LITELLM_WORKER_STARTUP_HOOKS`). Claude
+Code resends its whole history on every turn and some of its own paths drop
+those blocks, so one lost block fails every later request of a conversation
+with `The content[].thinking in the thinking mode must be passed back to the
+API`. The repair wraps DeepSeek's own Messages transformation, so it follows
+the provider rather than a model name: an assistant message without a thinking
+block — or with an empty one — gets `(thinking omitted)` and an empty
+signature, which DeepSeek accepts. A message that still has its thinking passes
+untouched, and a request that asked for thinking off gains nothing. The gateway
+logs one `deepseek_thinking filled a missing thinking block` line per repaired
+request.
+
 A deployment that declares `cheese_upstream_headers` or `cheese_session_header`
 under its `model_info` is sent those headers, and no other row of its model group
 is (`upstream_headers.py`, registered the same way). OpenCode Go needs both: its

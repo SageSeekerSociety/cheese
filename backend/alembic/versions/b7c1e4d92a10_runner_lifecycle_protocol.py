@@ -2,7 +2,7 @@
 and an input's failure after it was read
 
 Revision ID: b7c1e4d92a10
-Revises: b6e1d47c2a95
+Revises: b8c24e91a7d0
 Create Date: 2026-10-19
 
 ``session_states`` holds each seat's session as its runner declares it, under
@@ -22,7 +22,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "b7c1e4d92a10"
-down_revision: str | Sequence[str] | None = "b6e1d47c2a95"
+down_revision: str | Sequence[str] | None = "b8c24e91a7d0"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
