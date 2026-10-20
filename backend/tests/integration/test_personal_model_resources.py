@@ -190,6 +190,7 @@ def test_subscription_login_registers_without_any_device_and_keeps_its_own_team(
                         logged_in=True,
                         auth_method="claude.ai",
                         subscription_type="max",
+                        account_email="team-seat@example.com",
                         local_id=login["login_id"],
                     )
                 ],
@@ -203,6 +204,8 @@ def test_subscription_login_registers_without_any_device_and_keeps_its_own_team(
     row = next(c for c in listed if c["id"] == login["login_id"])
     assert row["device_name"] == login["device_id"]
     assert "Private laptop" not in str(row)
+    # Which Claude account the team's own subscription is, the team sees.
+    assert row["account_email"] == "team-seat@example.com"
 
 
 def test_personal_subscription_in_another_team_hides_computer_name_and_keeps_team_when_device_moves(
