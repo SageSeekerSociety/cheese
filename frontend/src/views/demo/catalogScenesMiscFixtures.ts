@@ -72,6 +72,12 @@ export const TEAM_MEMBERS: TeamMember[] = [
   // 管理员读到的另一位管理员：服务端说移不了（`canRemove`），那一行就没有「移除成员」。
   { role: 'ADMIN', user: user({ id: 2, username: 'bob', nickname: '鲍勃' }), canRemove: false },
   { role: 'MEMBER', user: user({ id: 3, username: 'carol', nickname: '卡罗尔' }), canRemove: true },
+  // 昵称长到一行放不下的管理员：窄屏上名字该截断，「管理员」那枚标签照样读得出来。
+  {
+    role: 'ADMIN',
+    user: user({ id: 4, username: 'nova', nickname: '星野 Nova · 一个写不完的超长昵称' }),
+    canRemove: true,
+  },
 ]
 
 /** 「加入申请」和「已发送邀请」两格共用这一种：`TeamMembershipApplication`。 */

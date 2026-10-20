@@ -550,5 +550,18 @@ function save() {
   .conn-row {
     padding: 12px 16px 14px;
   }
+
+  /* The add buttons take a line of their own under the title, starting where it
+     starts: side by side, the title squeezed to a character's width and broke
+     mid-word, and the buttons stacked in a column. */
+  .settings-card__head {
+    flex-wrap: wrap;
+  }
+
+  .conn__add {
+    flex-basis: 100%;
+    margin-top: 0;
+    padding: 0 0 12px 16px;
+  }
 }
 </style>
