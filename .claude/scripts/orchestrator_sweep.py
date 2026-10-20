@@ -28,7 +28,7 @@ For every open, started task in the channel it reads platform facts and the PR's
                 one row instead, unless the parking is a real question (`awaiting_answer`):
                 no other class says "somebody was asked", so that one always gets its row.
                 A parked line is never also 长时间无动静. One fact, one line.
-  红了没人修    CI red / conflict / post-merge checks failed >= 30 min ago, no message since
+  红了没人修    CI red / conflict >= 30 min ago, no message since
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
                 rounds), or for --stopped-min minutes (default 3) when the platform says
@@ -1056,7 +1056,7 @@ def sweep(tok, room, silent, skip, want_facts, adopt=None, only=None, stopped_mi
         # 卡还在「可以合并」上，得是最后一条 accept 事件就是 accept_ready。中间插进来
         # 的改审阅说明（card_redescribed）等于是把这份结论换掉了，不能再当可采纳。
         ready_at = accev[-1]["created_at"] if accev and meta(accev[-1]).get("event_type") == "accept_ready" else None
-        red = [m for m in sysev if meta(m).get("event_type") in ("ci_failed", "pr_conflict", "main_checks_failed")]
+        red = [m for m in sysev if meta(m).get("event_type") in ("ci_failed", "pr_conflict")]
         red_at = red[-1]["created_at"] if red else None
         tail = [m for m in sysev if meta(m).get("event_type")]
 

@@ -1,14 +1,14 @@
 """Remove rollout derivation after independent credential ownership deploys.
 
 Revision ID: b8c24e91a7d0
-Revises: f4b1298ca631
+Revises: b6e1d47c2a95
 """
 
 from alembic import op
 from migration_helpers import with_lock_retries
 
 revision = "b8c24e91a7d0"
-down_revision = "f4b1298ca631"
+down_revision = "b6e1d47c2a95"
 branch_labels = None
 depends_on = None
 

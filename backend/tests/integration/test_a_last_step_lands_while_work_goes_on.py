@@ -452,7 +452,8 @@ def test_a_task_the_forge_cannot_take_on_does_not_hold_up_the_rest(
 
     _goes_on(client, task_id, before)
     assert _task(client, stuck_id)["presentation"]["phrase"] == "accepted"
-    assert "landings_looked_at" in watched
+    # The sweep went on past the task it could not take on.
+    assert watched["gone_on"] == 1
 
 
 def test_a_message_holds_a_task_as_long_as_the_scan_would_still_start_it():

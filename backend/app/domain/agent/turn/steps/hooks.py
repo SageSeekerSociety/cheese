@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.sentences import error_frame
 from app.domain.agent.realtime.broker import get_broker
-from app.domain.agent.service import AgentEvent, AgentResult, AgentToolUse
+from app.domain.agent.service import (
+    AgentEvent,
+    AgentResult,
+    AgentToolUse,
+    proves_output,
+)
 from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.store.intervals import answered_open_turns
@@ -88,10 +93,11 @@ async def execute_event(
     broker = get_broker()
     if landed.frame is not None:
         await broker.publish(str(topic_id), landed.frame)
-        if landed.frame["type"] in ("assistant_block", "event_block"):
-            work_runner.note_session_output(
-                turn_id, tool=isinstance(event, AgentToolUse)
-            )
+    # The session's own output is kept in its raw records, not as a frame, so
+    # the runner is told about the event itself: its first output, its tool
+    # count and the heartbeat the stall and wedge checks read.
+    if proves_output([event]):
+        work_runner.note_session_output(turn_id, tool=isinstance(event, AgentToolUse))
     if not isinstance(event, AgentResult):
         return
     # Stop ends the interval before settling input/usage or clearing its live

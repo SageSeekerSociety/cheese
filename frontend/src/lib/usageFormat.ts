@@ -94,9 +94,6 @@ export function fmtSI(n: number | null | undefined, unit = ''): string {
  * each had their own copy, and two of them stopped at MB, so a 5 GiB file read
  * as `5120.0 MB`.
  *
- * `SiteStepOutput.vue` still formats step output its own way (one decimal to
- * 10 KiB, then none), but that is a log tail length, not a file size.
- *
  * `decimals` is not a free choice: the copies did not agree, and every caller
  * keeps the width it already printed. The attachment surfaces show two
  * (`1.50 KB`); the tree and the artifact page show one (`1.5 KB`). Callers that

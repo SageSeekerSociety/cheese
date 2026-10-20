@@ -41,6 +41,8 @@ _EXPECTED_PORTS = {
 _LIVE_PORTS = {
     "quiet_window_s": lambda: settings.draft_pr_sweep_activity_window_s,
 }
+
+
 _KEYWORD_PORTS = {
     "pr poll": (
         "settle_card",
@@ -48,7 +50,7 @@ _KEYWORD_PORTS = {
         "task_teammate",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
-    "landing watch": ("record_instruction", "task_teammate", "machines"),
+    "task closing": ("record_instruction", "task_teammate", "machines"),
     "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
 }
 
@@ -116,7 +118,7 @@ def _world():
         ("quiet task reminder", "task_quiet.sweep.remind_quiet_tasks", "sessions"),
         ("pr poll", "review.pr_poll.poll_open_prs", ("chat", "announce")),
         ("task pr poll", "review.pr_poll.poll_uncarded_task_prs", ("chat", "announce")),
-        ("landing watch", "review.pr_poll.watch_landings", ("chat", "announce")),
+        ("task closing", "review.pr_poll.sweep_closings", ("chat", "announce")),
         ("draft pr sweep", "review.pr_poll.open_draft_prs", ("chat", "announce")),
         ("cloud warm pool", "machine.warm.sweep_warm_pool", "sessions"),
         ("sandbox disk guard", "machine.disk_guard.sweep", "sessions"),
@@ -451,7 +453,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("quiet task reminder", 3600),
         ("pr poll", 101),
         ("task pr poll", 101),
-        ("landing watch", 101),
+        ("task closing", 101),
         ("draft pr sweep", 119),
         ("orphan sweep", 102),
         ("closed task stop", 103),

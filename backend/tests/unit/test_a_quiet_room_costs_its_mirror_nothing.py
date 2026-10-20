@@ -15,7 +15,7 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code import journal as cc_journal
 from app.domain.agent.harness.claude_code.backlog import control_state
 from app.domain.agent.harness.claude_code.subscription import Subscription
-from app.domain.agent.service import AgentStepOutput, AgentToolResult
+from app.domain.agent.service import AgentToolResult
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 
 
@@ -221,7 +221,6 @@ async def test_a_subagent_reporting_passes_later_still_reports_as_itself(
     assert [(r.name, r.description, r.text) for r in reports] == [
         ("Agent", "Read the CI logs", "The cache key changed.")
     ]
-    assert not any(isinstance(e, AgentStepOutput) for e in landed)
     # Asked from where it got to, not from the start, every time.
     assert asked[-1] == 3
 

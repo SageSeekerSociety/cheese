@@ -15,12 +15,12 @@ drops the request still waiting, and work begun after the delivery was handed
 over is work that delivery does not contain. Such a task is left as it is, and
 either goes on (`review.task_landing.go_on_while_working`) or closes at the
 first of those moments that finds nothing left: the deadline is checked on
-every tick of the landing watch, so a task still waiting past it closes on the
+every tick of the task closing sweep (`review.pr_poll.sweep_closings`), so a task still waiting past it closes on the
 first tick after its teammate stops. A turn that has said nothing for the
 orphan sweep's limit does not hold it, and nothing holds it past
 `STOP_WORK_AFTER`: then it closes, stopping that work. Each stopped turn keeps
 a run record under its own number (`_keep_stopped_turns`), and the room hears
-what was not delivered (`review.landing_watch`).
+what was not delivered (`review.room_notices.tell_room_undelivered`).
 
 Closing after the turn rather than before keeps every rule about closed tasks
 as it is: a closed task takes no turns and its document is read-only, and

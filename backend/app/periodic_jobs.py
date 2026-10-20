@@ -49,7 +49,7 @@ PERIODIC_JOB_NAMES = (
     "quiet task reminder",
     "pr poll",  # forge_bound: PR status reads
     "task pr poll",  # forge_bound: task branch/PR reads
-    "landing watch",  # forge_bound: merge, checks and deployment reads
+    "task closing",  # forge_bound: a task going on reads its next branch
     "draft pr sweep",  # forge_bound: branch/compare reads and PR creation
     "orphan sweep",
     "closed task stop",
