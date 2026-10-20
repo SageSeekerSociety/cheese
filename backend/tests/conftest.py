@@ -1101,6 +1101,17 @@ def _session_tmp_per_test(monkeypatch, tmp_path_factory) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _channels_per_test() -> None:
+    """``wait_work_idle`` asks every stub channel still alive whether a session
+    of its has something unlanded. A channel an earlier test built lives on
+    until the garbage collector breaks its reference cycles, and its rows went
+    with that test's database: a lifecycle event it never had acknowledged
+    would make every later wait in the worker pay the whole ceiling. Only the
+    channels this test builds are its to wait for."""
+    _CHANNELS.clear()
+
+
+@pytest.fixture(autouse=True)
 def _forge_memory_per_test(monkeypatch) -> None:
     """What GitHub said about an installation's quota, and the answers kept for
     conditional reads, are process-wide memory (`core/forge_quota.py`,
