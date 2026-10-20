@@ -38,8 +38,8 @@ REPO = "SageSeekerSociety/cheese"
 
 # Aggregating jobs and reusable-workflow callers: never a per-suite measurement.
 # A tier that did not run leaves its aggregator with a span of nothing, and a
-# caller's span is its callee's plus queueing. `Fail fast` is the merge queue's
-# watcher: it lives as long as the run and measures nothing of its own.
+# caller's span is its callee's plus queueing. `Fail fast` was a watcher job
+# older runs still carry: it lived as long as the run and measured nothing.
 SKIP_NAMES = {
     "CI required", "CI required (draft quick)", "scope", "fast", "Fail fast",
     "backend", "frontend", "e2e", "cli", "guards", "deploy", "harness",

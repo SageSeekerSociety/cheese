@@ -654,14 +654,6 @@ class WorkflowTest(unittest.TestCase):
                               "converted_to_draft"}, {t.strip() for t in types.split(",")})
         self.assertNotIn("merge_group", on)
 
-    def test_fail_fast_watches_a_main_push_and_never_a_pull_request(self):
-        # A pull request's `CI required` is the merge gate and is left to the
-        # aggregator; only a main push gets the early red.
-        job = jobs_of(self.text)["fail-fast"]
-        for event, draft, runs in (("push", None, True), ("pull_request", False, False),
-                                   ("pull_request", True, False)):
-            self.assertEqual(condition_holds(job["if"], event, draft), runs, event)
-
     def test_the_integration_layer_runs_unless_the_plan_is_empty(self):
         # test.yml's integration job, given what scope writes for each plan:
         # json.dumps of the file list, or of "all" for the whole layer.
