@@ -26,7 +26,7 @@
 | 进程没了 | Claude Code：runner 报 `exited`（它自己没来得及报的，下一个 runner 在同一份状态上替它报）。Codex、pi：runner 答读时带 `alive: false`，或连续 `RUNNER_GONE_S`（120 秒）够不着 | 立刻 | 「会话进程已退出」的失败结束；没读过的输入就此结算为「不会再被读到」，可以再递 |
 | 只说话不干活 | 最近 `TALKING_S`（5 分钟）内有输出，但最近一次「动作」（工具调用、工具返回、一轮结束）已经是 `agent_no_progress_s`（30 分钟）以前 | 到点即结束 | 轮次超时事件（`TURN_TIMEOUT`） |
 | 发给它的消息它一直不读 | 写给它的一条消息，`agent_unread_grace_s`（30 分钟）内没有回显 | 到点即结束 | 「没读到你」事件（`PROMPT_UNDELIVERED`） |
-| API 拒绝 | Claude Code 的 `result` 带 `is_error: true`（额度用完、密钥失效、529 都是它），runner 报成 `api_error` / `error` 并带上状态码和构建自己的原话 | 立刻，作为一次失败结束 | Claude Code 自己的那句话原文进房间 |
+| API 拒绝 | Claude Code 的 `result` 带 `is_error: true`（额度用完、密钥失效、529 都是它），runner 报成 `api_error` / `error` 并带上状态码和构建自己的原话 | 立刻，作为一次失败结束 | Claude Code 自己的那句话原文进房间；要退避续上的临时故障（见下面「结束之后」）不发这张失败卡 |
 
 三条「卡住」的判定互不重叠，一条长前台命令（跑 20 分钟的 pytest）一条都不触发：进程在，
 它不输出，也没有人给它发消息。
@@ -66,9 +66,11 @@ assistant 文本、也没有一次工具调用，就按「环境没起来」结�
 
 ## 结束之后
 
-上面四种结束平台都不自动重跑。每种结束各发一次事件（`who=human`），交给人看一眼，修好后在房间里
-重新 @；下一轮接着同一个会话（`agent-principles.md` 第十四条）。自动续上的只有模型服务的临时故障
-（`agent/turn_resume.py`）和发版替换 runner 打断的那一轮（`runner_replaced`）。
+每种结束各发一次事件（`who=human`），交给人看一眼，修好后在房间里重新 @；下一轮接着同一个会话
+（`agent-principles.md` 第十四条）。前三种平台不自动重跑。API 拒绝里属于模型服务临时故障的那些
+（限流、过载、5xx/529、流中断、写明了重置时间的额度）由 `agent/turn_resume.py` 退避后自动续上，
+连续次数有上限；密钥失效这类不会自己过去的不续。另外，发版替换 runner 打断的那一轮
+（`runner_replaced`）立刻续上，不算次数。
 
 ## 设置一览
 

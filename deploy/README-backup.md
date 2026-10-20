@@ -23,7 +23,7 @@ Docker volume. Everything else (R2 upload, verify, off-site) is shared.
 | `r2-upload.py` (off-site DB dump copy to R2) | on the box, `~/ops/r2-upload.py` | each DB backup, right after local verify |
 | `r2-prune-dumps.py` (tiered local retention, R2-verified deletes) | on the box, `~/ops/r2-prune-dumps.py`, only where `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` | each DB backup, at the end |
 | `r2-sync-uploads.py` (incremental mirror of `uploads/` to R2) | on the box, `~/ops/r2-sync-uploads.py` (`cheese-uploads-mirror.timer`) | hourly, :30 |
-| `r2-sync-uploads.py` again, over the old transcript archives (already `.tar.gz`, so mirrored as they are; nothing writes new ones there: archived rooms' transcripts go straight to the private bucket under `transcripts/rooms/`, see [`README-room-cleanup.md`](README-room-cleanup.md)) | on the box, same script (`cheese-transcripts-mirror.timer`, `UPLOADS_PREFIX=transcripts`) | hourly, :45 |
+| `r2-sync-uploads.py` again, over the old transcript archives (already `.tar.gz`, so mirrored as they are; nothing writes new ones there: room cleanup uploads archived rooms' transcripts to the private bucket under `transcripts/rooms/`, see [`README-room-cleanup.md`](README-room-cleanup.md)) | on the box, same script (`cheese-transcripts-mirror.timer`, `UPLOADS_PREFIX=transcripts`) | hourly, :45 |
 | Backup freshness alert | `.github/workflows/backup-freshness.yml`, dev runner | daily; local DB > 26h, R2/ uploads markers and DB/tar objects > 6h fail |
 | Recovery proof | `.github/workflows/backup-restore-test.yml`, dev runner | weekly; local DB, R2 DB, uploads restore + verify |
 | Box-down alert | `.github/workflows/box-uptime.yml`, GitHub-hosted | hourly; fails if the box's runner is offline |

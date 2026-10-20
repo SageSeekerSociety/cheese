@@ -88,7 +88,7 @@ steps:
 
 ### 发版时的交接 {#resume}
 
-交接时新旧两个进程同时连着同一个数据库：新进程重新监听活过这个进程的会话，补上没人监听那段时间里它们说过的话；开会头的轮被收掉（`resume_orphans`），消息收了却没开跑的轮补上（`resume_lost_messages`）。Claude Code 的 runner 把没确认的事件留在自己那边，新进程从上一任停下的地方接着读；上一版发布起的 runner 不读，直接换成这一版的，它正在跑的那一轮以 `runner_replaced` 结束、随即接着跑（见[会话与轮次](/dev/session#handover)）。谁在跑哪些轮、哪些会话归谁监听由一把数据库锁决定，细节见[会话与轮次](/dev/session#handover)和[部署拓扑](/dev/topology#handover)。
+交接时新旧两个进程同时连着同一个数据库：新进程重新监听活过这个进程的会话，补上没人监听那段时间里它们说过的话；开会头的轮被收掉（`resume_orphans`），消息收了却没开跑的轮补上（`resume_lost_messages`）。Claude Code 的 runner 把没确认的事件留在自己那边，新进程从上一任停下的地方接着读；不说这一版协议（`lifecycle.PROTOCOL`）的 runner 不读，直接换成这一版的，它正在跑的那一轮以 `runner_replaced` 结束、随即接着跑（见[会话与轮次](/dev/session#handover)）。谁在跑哪些轮、哪些会话归谁监听由一把数据库锁决定，细节见[会话与轮次](/dev/session#handover)和[部署拓扑](/dev/topology#handover)。
 
 ## 同一频道里的几个 AI 队友 {#seats}
 

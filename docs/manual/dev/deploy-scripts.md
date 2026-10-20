@@ -129,7 +129,7 @@ covers:
 | 脚本 | 一句话 |
 |---|---|
 | `db-backup.sh` | 定时逻辑备份：`pg_dump -Fc`、校验可读、保留 30 天；`~/ops/backup.env` 设了 `CHEESE_BACKUP_HOURLY_DAYS` 时再调 `r2-prune-dumps.py` 分层 |
-| `r2-prune-dumps.py` | 分层保留：最近几天每小时一份，之后每天一份到 30 天；本地转储只在 R2 副本大小核对上（或重传回读核对上）之后才删 |
+| `r2-prune-dumps.py` | 分层保留：最近几天每小时一份，之后每天一份到 30 天；超出部分的本地转储只在 R2 副本大小核对上（或重传后 R2 上的大小核对上）之后才删；超过 30 天的照旧直接删 |
 | `db-restore-test.sh` | 把最新转储恢复进一个用完即弃的 Postgres 容器，抽查 schema 与数据 |
 | `r2-upload.py` | 把校验过的转储传到 Cloudflare R2（异地那一份） |
 | `r2-sync-uploads.py` | 把本地 `uploads/` 增量镜像到 R2，只增不删（远端是超集） |

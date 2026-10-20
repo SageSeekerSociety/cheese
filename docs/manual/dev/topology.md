@@ -143,7 +143,7 @@ resident:
   - label: 计量代理与模型网关
 ```
 
-会话机上的 runner 不跟着主 API 换。新进程读得懂的 runner 把空档里的事按序号报上来；上一版发布的 runner 新进程不读，下次起会话时替换掉：它写进去却没读的输入丢掉、消息重新递，被打断的那一轮以 `runner_replaced` 结束并立刻续上（见[一轮对话](/dev/turn)）。这套协议目前只有 Claude Code 说，Codex 和 pi 还是原来的读法。
+会话机上的 runner 不跟着主 API 换。新进程读得懂的 runner 把空档里的事按序号报上来；不说这一版协议（`lifecycle.PROTOCOL`）的 runner 新进程不读，下次起会话时替换掉：它写进去却没读的输入丢掉、消息重新递，被打断的那一轮以 `runner_replaced` 结束并立刻续上（见[一轮对话](/dev/turn)）。这套协议目前只有 Claude Code 说，Codex 和 pi 还是原来的读法。
 
 上面这一层跟着发版换，下面那条常驻带不动：机器连接服务、隧道入口、计量代理与网关都单独发布，机器上的连接在发版期间一直连着。事件中继跑的是主 API 的镜像，但只在它自己跑的代码（`app.forge_events_app` 和它导入的一切，`deploy/code-digest.py` 算的摘要）变了时才换，各部署连在它上面的事件 WebSocket 平时不断。
 

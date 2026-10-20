@@ -92,4 +92,4 @@ covers:
 
 新主人这边 `ChatService.recover_sessions`（`chat.py`）重新监听活过这个进程的会话，并补上没人听的那段时间里它们说过的话。它分开做两件事：`recover` 确立「我们在听」，`replay` 交回尾巴。房间里已经显示过的是平台这一侧的（`_said()` 拿它避免同一条落两次），骨架自己还有哪些记录没落是骨架那一侧的。一台会话机够不着（`DeviceOffline`）或者回话说不行（`DeviceCallError`）都只记一行日志，下一次连接会做这件事。
 
-Claude Code 的会话不靠后端这一侧记的游标接上：它的 runner 把没确认的事件留在自己的发件箱里，新主人从上一任确认到的地方接着读，已经应用过的事件再到一次什么也不改（见[骨架的驱动层](/dev/harness#driven)）。上一版发布起的 runner 不说这套协议，恢复时不读它，而是把它换掉：写给它却没读到的输入算放掉、消息重新排队，它正在跑的那一轮以 `runner_replaced` 结束（`runner_reports.replaced`）。这算平台打断而不是队友失败，续跑（`turn_resume`，`Policy.platform`）几秒后就接着这段对话跑，不占续跑次数，也不受次数上限挡。Codex 和 pi 仍按上面的游标重放。锁和超时的细节见[部署拓扑](/dev/topology#handover)。
+Claude Code 的会话不靠后端这一侧记的游标接上：它的 runner 把没确认的事件留在自己的发件箱里，新主人从上一任确认到的地方接着读，已经应用过的事件再到一次什么也不改（见[骨架的驱动层](/dev/harness#driven)）。不说这一版协议（`lifecycle.PROTOCOL`）的 runner，恢复时不读它，而是把它换掉：写给它却没读到的输入算放掉、消息重新排队，它正在跑的那一轮以 `runner_replaced` 结束（`runner_reports.replaced`）。这算平台打断而不是队友失败，续跑（`turn_resume`，`Policy.platform`）几秒后就接着这段对话跑，不占续跑次数，也不受次数上限挡。Codex 和 pi 仍按上面的游标重放。锁和超时的细节见[部署拓扑](/dev/topology#handover)。

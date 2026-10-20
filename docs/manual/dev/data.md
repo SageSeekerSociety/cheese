@@ -36,7 +36,7 @@ covers:
 
 | 什么 | 脚本 | 频率 |
 |---|---|---|
-| 数据库转储（`pg_dump -Fc`，校验后保留 30 天；`~/ops/backup.env` 设了 `CHEESE_BACKUP_HOURLY_DAYS` 的盒子（dev 设 7）按 `r2-prune-dumps.py` 分层：这几天内每小时一份，之后每天一份到 30 天，本地那份只在 R2 副本大小核对上之后才删） | `db-backup.sh` | 每小时整点 |
+| 数据库转储（`pg_dump -Fc`，校验后保留 30 天；`~/ops/backup.env` 设了 `CHEESE_BACKUP_HOURLY_DAYS` 的盒子（dev 设 7）按 `r2-prune-dumps.py` 分层：这几天内每小时一份，之后每天一份到 30 天，多出来的本地那份只在 R2 副本大小核对上之后才删；超过 30 天的直接删） | `db-backup.sh` | 每小时整点 |
 | 转储的异地副本（Cloudflare R2） | `r2-upload.py` | 每次转储校验通过后 |
 | 上传文件增量镜像到 R2（远端不删） | `r2-sync-uploads.py` | 每小时 :30 |
 | 会话记录归档镜像到 R2 | 同一个脚本，`UPLOADS_PREFIX=transcripts` | 每小时 :45 |
