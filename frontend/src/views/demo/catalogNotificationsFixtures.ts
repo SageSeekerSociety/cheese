@@ -169,7 +169,8 @@ export function taskNotification(event: 'reviewed' | 'dueSoon'): Notification {
       taskName: task,
       event,
       message: said,
-      content: '',
+      // 后端存下的中文原句：预览站不加载句子目录，按它显示。
+      content: event === 'reviewed' ? `「${task}」的提交已通过，88 分` : `「${task}」距提交截止不到 24 小时，尚未提交`,
     }
   )
 }
