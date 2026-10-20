@@ -710,3 +710,18 @@ def test_a_plan_that_is_not_utf8_fails_closed(tmp_path: Path) -> None:
     planned.write_bytes(b"\xff\xfe\x00")
     with pytest.raises(SuiteDidNotRun, match="not a readable plan"):
         read_plan(planned)
+
+
+def test_a_shard_assigned_nothing_passes_only_when_empty_is_allowed(
+    tmp_path: Path,
+) -> None:
+    """A narrowed integration selection can leave a shard, or the whole layer,
+    with no case; the shard is then empty by plan, not silent by accident."""
+    manifests = selection(tmp_path, [])
+    empty = report(tmp_path, "")
+    with pytest.raises(SuiteDidNotRun):
+        assert_suite_ran(empty, at_least=0, selection_dir=manifests)
+    assert (
+        assert_suite_ran(empty, at_least=0, selection_dir=manifests, allow_empty=True)
+        == 0
+    )

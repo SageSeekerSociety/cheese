@@ -104,7 +104,7 @@ export function formatReport(diagnostics) {
   }
   lines.push('')
   lines.push('Fix each one at that file(line,col). Any error fails the check; there is no')
-  lines.push('baseline. To check only the files you changed: task ci:fast (from the repo root).')
+  lines.push("baseline. The pull request's CI type-checks the whole tree.")
   lines.push('Chapter: docs/manual/dev/frontend.md (质量闸 / gates).')
   lines.push(`total: ${diagnostics.length} error(s)`)
   return lines.join('\n')

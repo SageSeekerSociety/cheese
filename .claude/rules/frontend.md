@@ -15,7 +15,7 @@ change, `frontend-design` walks the checklist for the parts no gate can see.
 
 ## 沙箱里不要跑全树检查
 
-**不要在沙箱里跑全树 `pnpm run typecheck` / `node scripts/typecheck.mjs` / `vue-tsc` / `pnpm run build`，也不要跑不带文件参数的 `pnpm exec vitest run`——会被 3 GiB 内存上限杀掉。只跑你改的单个测试文件，或从仓库根跑 `task ci:fast`。**
+**不要在沙箱里跑全树 `pnpm run typecheck` / `node scripts/typecheck.mjs` / `vue-tsc` / `pnpm run build`，也不要跑不带文件参数的 `pnpm exec vitest run`——会被 3 GiB 内存上限杀掉。只跑你改的单个测试文件，全树的检查交给 PR 的 CI。**
 
 `pnpm run lint` 和 `pnpm run lint:style` 轻量，到哪都能跑；`pnpm exec vitest run
 --dir src` 这类整目录跑法、`pnpm run build` 和 `pnpm run typecheck` 都吃内存，

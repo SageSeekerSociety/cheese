@@ -151,7 +151,7 @@ def test_the_vitest_variable_is_the_one_this_repos_config_reads():
     """The name is a contract, not a choice.
 
     vitest 5 reads `VITEST_MAX_WORKERS` itself, but applies it after the
-    command line, which would undo `ci:fast`'s `--maxWorkers=1`; this repo's
+    command line, which would undo a run's own `--maxWorkers`; this repo's
     config sizes its pool from `VITEST_MAX_FORKS` instead. An emitted name that
     the config does not read caps nothing, so the two are held together here:
     changing the variable without the config (or the other way round) turns

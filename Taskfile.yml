@@ -134,26 +134,9 @@ tasks:
       # them either; over the whole tree they would reformat files nobody touched.
       - SKIP=ruff-format,frontend-format uvx pre-commit run --all-files
 
-  # Fast check before opening a PR: picks pre-commit hook IDs by the
-  # merge-diff scope (same select() and path map as the Required CI gate), then
-  # adds bounded related frontend tests, changed-file types, selected pure
-  # backend tests and their i18n/tree guards. Build, integration, remote and
-  # E2E suites remain owned by full CI.
-  ci:fast:
-    desc: Three-minute scoped fast check (not full CI)
-    cmds:
-      - python3 .github/scripts/ci-fast.py --tier quick {{.CLI_ARGS}}
-
-  # The inner loop, next to the editor: the same selection as ci:fast and no
-  # hooks, so the run is bounded by the tests instead of by the pre-commit
-  # budget. Meant to be run between edits, `task ci:fast` before the push.
-  test:changed:
-    desc: Only the backend/frontend tests this change reaches (no hooks)
-    cmds:
-      - python3 .claude/scripts/test-changed.py {{.CLI_ARGS}}
-
   # Who uses this symbol or module: AST uses (not comments), grouped by file,
-  # tests last, from the same import graph ci:fast selects tests with.
+  # tests last, from the same import graph a pull request's integration tests
+  # are selected with (.github/scripts/backend_imports.py).
   where:
     desc: List the uses of a symbol or the importers of a module (backend)
     cmds:

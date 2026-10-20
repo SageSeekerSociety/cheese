@@ -99,7 +99,7 @@ from pathlib import Path
 VERSIONS_DIR = "backend/alembic/versions"
 MODELS_DIR = "backend/app"
 
-# Exit 2 is this directory's "could not judge" (check-file-sizes.py, test-changed.py
+# Exit 2 is this directory's "could not judge" (check-file-sizes.py
 # and the ratchets all use it). A guard that could not read its comparison base has
 # judged no migration at all, so exiting 0 there is indistinguishable from a run
 # that read the diffs and cleared them. Distinct from 1, which means migrations were

@@ -90,7 +90,7 @@ const scanned = (scan.length ? scan : ROOTS).join(', ')
 
 if (asJson) {
   // Per-file counts accompany the verdict.
-  // The report is not on stdout here — ci:fast parses stdout — but on
+  // The report is not on stdout here — the collector parses stdout — but on
   // failure it goes to stderr, so a --json run still prints the line, the rule
   // and the fix.
   const details = Object.entries(parsed.counts).map(([file, count]) => ({ file, count }))

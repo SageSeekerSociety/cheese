@@ -36,8 +36,8 @@ FILES = {
 
 def build(root: Path) -> None:
     (root / ".github/scripts").mkdir(parents=True)
-    real = REPO / ".github/scripts/ci_fast_backend.py"
-    (root / ".github/scripts/ci_fast_backend.py").write_text(real.read_text())
+    real = REPO / ".github/scripts/backend_imports.py"
+    (root / ".github/scripts/backend_imports.py").write_text(real.read_text())
     for rel, body in FILES.items():
         path = root / "backend" / rel
         path.parent.mkdir(parents=True, exist_ok=True)

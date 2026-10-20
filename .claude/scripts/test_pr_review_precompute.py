@@ -136,16 +136,6 @@ class Precompute(unittest.TestCase):
         out = "\n".join(load().section_symbols(self.repo, base, head))
         self.assertIn("⚠ `helper`（a.py）", out)
 
-    def test_stale_ci_report_not_trusted(self):
-        commit(self.repo, {"a.py": "x = 1\n"}, "b")
-        rep = Path(self.tmp.name) / "rep.json"
-        rep.write_text(json.dumps({"head": "aaaaaaaaaaaa", "ran": [{"id": "ruff", "result": "pass"}], "not_run": []}))
-        out = "\n".join(load().section_ci(self.repo, self.repo, str(rep), "b" * 40))
-        self.assertIn("不采信", out)
-        self.assertNotIn("已 pass", out)
-        ok = "\n".join(load().section_ci(self.repo, self.repo, str(rep), "a" * 40))
-        self.assertIn("已 pass（1 项", ok)
-
     def test_missing_pytest_is_not_a_test_failure(self):
         base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
         head = commit(self.repo, {"tests/test_x.py": "_KNOWN = set()\n"}, "t")
@@ -191,24 +181,6 @@ class Precompute(unittest.TestCase):
         self.assertIn("⚠ `UserId`（a.py）", out)
         self.assertNotIn("⚠ `helper`", out)
 
-    # ---- ci:fast report
-    def test_ci_report_split(self):
-        commit(self.repo, {"a.py": "x = 1\n"}, "b")
-        rep = Path(self.tmp.name) / "rep.json"
-        rep.write_text(json.dumps({"status": "pass", "tier": "quick",
-                                   "ran": [{"id": "ruff", "result": "pass"}, {"id": "mypy", "result": "fail"}],
-                                   "not_run": [{"id": "e2e", "reason": "超时"}]}))
-        out = "\n".join(load().section_ci(self.repo, self.repo, str(rep)))
-        self.assertIn("已 pass（1 项", out)
-        self.assertIn("`ruff`", out)
-        self.assertIn("`mypy` fail", out)
-        self.assertIn("`e2e`（超时）", out)
-
-    def test_ci_report_missing_says_so(self):
-        commit(self.repo, {"a.py": "x = 1\n"}, "b")
-        out = "\n".join(load().section_ci(self.repo, self.repo, None))
-        self.assertIn("没有找到", out)
-
     # ---- whole run writes the file, helpers called
     def test_main_writes_all_sections(self):
         base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
@@ -223,7 +195,7 @@ class Precompute(unittest.TestCase):
         load().main(["--repo", str(self.repo), "--base", base, "--head", head, "--pr", "1", "--pr-body", str(body),
                      "--scripts", str(scripts), "--main-ref", "main", "--out", str(out)])
         text = out.read_text()
-        for needle in ("## 1.", "## 2.", "## 3.", "## 4.", "PROVE-STUB", "CLAIMS-STUB"):
+        for needle in ("## 1.", "## 2.", "## 3.", "PROVE-STUB", "CLAIMS-STUB"):
             self.assertIn(needle, text)
 
 

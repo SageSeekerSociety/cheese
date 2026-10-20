@@ -1047,7 +1047,7 @@ def self_test() -> int:
         check("and gives the fix", "<PageName>View.vue" in result.stdout, True)
         check("and points at the recipe", "scenes.md#make-standalone" in result.stdout, True)
 
-        # --json (what ci:fast calls) stays the one record line on stdout, and
+        # --json stays the one record line on stdout, and
         # carries the same fix on stderr.
         result = run_cli(root, "--json")
         check("--json regressing scene stays one line", len(result.stdout.strip().splitlines()), 1)
@@ -1899,10 +1899,6 @@ def self_test() -> int:
               and files.search("backend/app/main.py") is None, True)
         check("and the ledger is gone",
               (REPO_ROOT / "frontend" / "scene-baseline.json").exists(), False)
-        fast = (REPO_ROOT / ".github" / "scripts" / "ci-fast.py").read_text(encoding="utf-8")
-        merge_base_hooks = re.search(r"MERGE_BASE_HOOKS = \{([^}]*)\}", fast)
-        check("and the quick tier knows not to run it without a merge base",
-              merge_base_hooks is not None and "scene-ratchet" in merge_base_hooks.group(1), True)
 
         # -- 9. a wrong root is a 2, never a pass ---------------------------
         #    The trap this gate exists for: `frontend/` instead of the repo

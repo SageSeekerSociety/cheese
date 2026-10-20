@@ -6,10 +6,10 @@
     python3 .claude/scripts/where.py app/domain/x.py   # same, as a path
     python3 .claude/scripts/where.py app.domain.x.SYMBOL   # a name, in that module's reach only
 
-The graph is ci-fast's own: ``ci_fast_backend.dependencies`` over the same
-``backend/{app,scripts,tests}`` file set that ``select_backend`` walks, so this
-and the test selection agree on who imports whom. Nothing is re-parsed by a
-second rule for imports.
+The graph is the one a pull request's integration tests are selected with:
+``backend_imports.imports_of`` over the same ``backend/{app,scripts,tests}``
+file set, so this and the test selection agree on who imports whom. Nothing is
+re-parsed by a second rule for imports.
 
 What it adds is the half the selector throws away: *where* in each file. A use is
 an AST node — a ``Name``, an attribute access, an imported alias, a definition —
@@ -32,8 +32,8 @@ FOLDERS = ("app", "scripts", "tests")
 
 
 def _load_backend_graph(root):
-    path = root / ".github" / "scripts" / "ci_fast_backend.py"
-    spec = importlib.util.spec_from_file_location("ci_fast_backend", path)
+    path = root / ".github" / "scripts" / "backend_imports.py"
+    spec = importlib.util.spec_from_file_location("backend_imports", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -85,7 +85,7 @@ def find(root, target):
     graph = _load_backend_graph(root)
     backend = root / "backend"
     paths = backend_files(root)
-    by_module = {graph.module_name(p.relative_to(backend)): p for p in paths}
+    by_module = {graph.module_name(p.relative_to(backend).as_posix()): p for p in paths}
     modules = set(by_module)
     kind, scope, name = classify(target, modules)
     needle = name or scope.rpartition(".")[2]
@@ -105,7 +105,8 @@ def find(root, target):
         if needle not in text:
             continue
         try:
-            _, imports, _, _ = graph.dependencies(path, module, modules)
+            imports = graph.imports_of(text, module, path.name == "__init__.py", modules,
+                                       parents=False)
         except (SyntaxError, UnicodeError):
             continue
         seen[module] = (text, imports)

@@ -16,8 +16,8 @@ Inspect `PR title recheck` when a correct title still has an old failure.
 on the new title. Match the head and run attempt before adding another commit
 or restarting unrelated suites.
 
-Tests which invoke real pre-commit need a temporary `PRE_COMMIT_HOME` per test,
-as `scripts/test_ci_fast.py` does. Self-hosted jobs share a home, and otherwise
+Tests which invoke real pre-commit need a temporary `PRE_COMMIT_HOME` per test
+(`backend/tests/conftest.py` gives one to every backend test). Self-hosted jobs share a home, and otherwise
 their pre-commit SQLite/cache writes can lock each other.
 
 Metric artifacts and snapshot-page merges follow

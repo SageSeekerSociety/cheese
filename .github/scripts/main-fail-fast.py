@@ -1,51 +1,29 @@
-"""Fail a Required CI run's `CI required` the moment one of its jobs fails.
+"""Fail a main push's `CI required` the moment one of its jobs fails.
 
-Two events run it: a merge_queue entry and a push to main (the post-submit
-gate). Both hold the red until the slowest suite on their own, so both read the
-same way below; a pull request does not run it, because `CI required` there is
-the merge gate and the aggregator's own report is timely enough.
-
-
-`CI required` aggregates every suite, so GitHub cannot start it before the
-slowest suite has finished. On a merge_group run that meant a job failing at
-minute 9 left the entry looking pending until minute 58, and every entry the
-queue had built on top of it ran its own doomed run in the meantime (measured
-2026-10-17: 3-50 minutes from the first failed job to the red check, 450
-minutes in total over one day). The queue removes an entry, and rebuilds the
-ones behind it, only once the required check reports.
-
-This runs beside the suites in the same merge_group run, reads the run's jobs
-every POLL_SECONDS, and on the first job that concluded `failure` or
-`timed_out` posts a completed `CI required` check run with conclusion
-`failure` on the entry's head sha. The required check is matched by name and
-by the GitHub Actions app, which is the app a check run created with the job's
-token belongs to, so the queue reads this one as the required check failing.
-The aggregating job still runs when the suites finish and reports the same
-failure with every reason; nothing is cancelled, so every suite's result stays
-readable for the author.
+A push to main is the post-submit gate. `CI required` aggregates every suite,
+so GitHub cannot start it before the slowest suite has finished, and main would
+read pending for the length of that suite after one job already failed. This
+runs beside the suites, reads the run's jobs every POLL_SECONDS, and on the
+first job that concluded `failure` or `timed_out` posts a completed `CI
+required` check run with conclusion `failure` on the pushed sha. The aggregating
+job still runs when the suites finish and reports the same failure with every
+reason; nothing is cancelled, so every suite's result stays readable.
 
 A failed job always fails `CI required`: no suite job sets job-level
 `continue-on-error`, and required-ci.py's judge wants every selected suite to
 be `success`. That is what lets one failed job stand for the whole verdict. A
-`cancelled` job is not read as a failure here: a job timeout reports as one,
-but so does a run the queue-dedupe job cancelled as superseded, and those
-entries are no longer in the queue.
+`cancelled` job is not read as a failure: a job timeout reports as one, but so
+does a run cancelled from outside.
 
 The deploy gate (deploy/check-auto-deploy.py) reads the Required CI run's own
 conclusion, so a watcher that went red on a green run would hold the commit
 back from dev. This script therefore turns its own errors into a warning and
-exit 0, bounds every API call, and stops before its job's timeout. What it
-cannot rule out is the job failing outside the script (its checkout, a lost
-runner); that leaves the entry's verdict untouched and holds back only that
-commit's own dev deploy, which the next commit's deploy carries. A missed
-fail-fast costs what the queue cost before this existed.
+exit 0, bounds every API call, and stops before its job's timeout.
 
 It polls every three minutes and gives up on the first rate-limit answer.
 Every workflow in the repository shares the job token's REST budget (1,000
 requests an hour per repository), and the steps that spend the rest of it —
 `CI required`'s own commit-title read among them — turn red when it runs out.
-Up to 16 merge_group runs were in flight at once on 2026-10-17: at a 20-second
-interval that is ~2,900 requests an hour, at three minutes 320.
 """
 
 import json
@@ -89,19 +67,9 @@ def watch_over(jobs):
     )
 
 
-def failure_check(job, head_sha, run_url, event="merge_group"):
+def failure_check(job, head_sha, run_url):
     """The check-run body that fails `CI required` because of ``job``."""
     name = job.get("name", "?")
-    what = (
-        "this merge queue entry's Required CI run"
-        if event == "merge_group"
-        else "this main push batch's Required CI run"
-    )
-    why = (
-        "so the queue removes the entry now instead of after the slowest suite"
-        if event == "merge_group"
-        else "so main reads red now instead of after the slowest suite"
-    )
     return {
         "name": REQUIRED_CHECK,
         "head_sha": head_sha,
@@ -111,9 +79,11 @@ def failure_check(job, head_sha, run_url, event="merge_group"):
         "output": {
             "title": f"{name} failed",
             "summary": (
-                f"`{name}` concluded `{job.get('conclusion')}` in {what} ({run_url})."
-                " The rest of the run keeps going, and its `CI required` job lists"
-                f" every reason when it finishes; this check is posted early {why}."
+                f"`{name}` concluded `{job.get('conclusion')}` in this main push"
+                f" batch's Required CI run ({run_url}). The rest of the run keeps"
+                " going, and its `CI required` job lists every reason when it"
+                " finishes; this check is posted early so main reads red now"
+                " instead of after the slowest suite."
             ),
         },
     }
@@ -151,7 +121,6 @@ def watch(api, env, sleep=time.sleep, clock=time.monotonic):
     run_id = env["GITHUB_RUN_ID"]
     attempt = env.get("GITHUB_RUN_ATTEMPT", "1")
     head_sha = env["HEAD_SHA"]
-    event = env.get("GITHUB_EVENT_NAME", "merge_group")
     run_url = f"{env.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo}/actions/runs/{run_id}"
     started = clock()
     while clock() - started < DEADLINE_SECONDS:
@@ -170,7 +139,7 @@ def watch(api, env, sleep=time.sleep, clock=time.monotonic):
         if job is not None:
             api(
                 "-X", "POST", f"repos/{repo}/check-runs", "--input", "-",
-                payload=failure_check(job, head_sha, run_url, event),
+                payload=failure_check(job, head_sha, run_url),
             )
             return f"{job.get('name')} failed: posted a failed {REQUIRED_CHECK} on {head_sha[:8]}."
         if watch_over(jobs):
