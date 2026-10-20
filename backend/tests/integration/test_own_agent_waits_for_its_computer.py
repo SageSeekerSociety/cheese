@@ -1,9 +1,7 @@
-"""A message to a member's own Claude Code waits while its computer is away.
+"""A message waits while its team connection's credential device is away.
 
-It runs only on its owner's computer (#2991). With none of the owner's
-computers online with their login, there is nowhere to run the turn: the
-message waits — the periodic scan of waiting messages starts it once one comes
-back — and the room is told so once, not once per scan.
+The periodic scan starts the waiting message once the device comes back.
+The room is told once per message, rather than once per scan.
 """
 
 from tests.support.devices import enrollment_team
@@ -78,6 +76,7 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
                 device_id=laptop,
                 installed=True,
                 logged_in=True,
+                allowed_models=["sonnet"],
                 checked_at=datetime.now(UTC),
             )
         )

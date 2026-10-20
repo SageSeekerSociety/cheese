@@ -82,7 +82,12 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 
-from ci_fast_backend import TREE_GUARDS, pinned_harness_gap, select_backend
+from ci_fast_backend import (
+    TREE_GUARDS,
+    is_migration_path,
+    pinned_harness_gap,
+    select_backend,
+)
 
 I18N_SPECS = ("src/i18n/catalog.spec.ts", "src/i18n/english.spec.ts")
 # Specs that judge a frontend file by reading it with `node:fs` — a component's
@@ -509,6 +514,10 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
                               "reason": f"{len(omitted)} test files need the pinned Claude Code/"
                                         f"Codex/pi builds, which this tier does not install: "
                                         + ", ".join(omitted)})
+        if any(is_migration_path(p) for p in changed):
+            omissions.append({"id": "backend-pure:alembic",
+                              "reason": "migration files run in full CI's integration/e2e, "
+                                        "not the pure layer"})
         output = tmp / "pytest.xml"
         nodes = tmp / "pytest-nodes.json"
         # The audit plugin sits beside the runner; pytest imports it by module

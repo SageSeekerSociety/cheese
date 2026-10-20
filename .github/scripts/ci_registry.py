@@ -180,6 +180,10 @@ PLAN_CHECKS = (
     # does not, so it is declared here like the rest.
     _spec("backend-pure:pinned-harness", "plan", (), {"python"}, "quick_only", ("backend/**",),
           report_only=True),
+    # The omission recorded when the change touches the migration tree: those
+    # files run against a database full CI's integration/e2e owns.
+    _spec("backend-pure:alembic", "plan", (), {"python"}, "quick_only",
+          ("backend/alembic/**", "backend/alembic.ini"), report_only=True),
     # The docs site build (links, anchors and the demo scene/fence step
     # titles). `npm ci` is its own row so an install failure is its own
     # finding; the build needs what it installed, but the machine requirement
