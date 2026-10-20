@@ -2,14 +2,6 @@ name: Remote execution acceptance
 
 on:
   workflow_call:
-  push:
-    branches: [experiment/remote-execution]
-    paths:
-      - 'backend/**'
-      - 'cli/**'
-      - 'scripts/remote_execution/**'
-      - '.github/scripts/ci-test-evidence.py'
-      - '.github/workflows/remote-execution.yml'
   workflow_dispatch:
 
 permissions:

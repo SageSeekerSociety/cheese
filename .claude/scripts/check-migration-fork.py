@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """Fail when merging this branch would fork the alembic chain.
 
-WHY THIS EXISTS, given test.yml already checks for one alembic head (the
-`static` job's "Exactly one alembic head" step): that step checks the tree it
-is handed. On a pull request that tree is the branch merged
-with main *as of when CI last ran*. Two branches that each add a migration on
-top of the same parent therefore both pass — each has exactly one head — and
-the fork only appears once the second one lands. That step then reds
-main, `alembic upgrade head` refuses, and the deploy aborts. That happened four
-times on 2026-08-09/10 (see .claude/rules/migrations.md).
+WHY THIS EXISTS. A tree with exactly one head still forks once merged when a
+sibling branch added a migration on the same parent: each branch passes on its
+own, the fork appears when the second one lands, `alembic upgrade head`
+refuses, and the deploy aborts. That happened four times on 2026-08-09/10 (see
+.claude/rules/migrations.md).
 
-This closes the other half: it compares against origin/main *now*, so a branch
-that has gone stale is caught before the merge instead of after. It parses the
-revision graph and touches no database.
+So it reads the branch's revision graph together with origin/main's *now*,
+which covers the tree's own head count too: a stale branch is caught before
+the merge instead of after. It parses the revision graph and touches no
+database. It is CI's only head check (Repo Guards).
 
 `--rechain` reads the same two graphs to repair rather than report: it re-points
 this branch's migrations at the base's current head and moves the sentinel, so

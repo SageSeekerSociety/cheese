@@ -10,8 +10,8 @@ forked it four times on 2026-08-09/10 alone; every fork kills `alembic upgrade
 head`, which reddens CI and aborts the dev deploy.
 
 - After creating or merging any migration, run `uv run alembic heads` — it must
-  print exactly one. CI enforces this (the backend `static` job's "Exactly one alembic head" step), but
-  catch it locally first.
+  print exactly one. CI enforces this (Repo Guards' `migration-fork` hook, against
+  main as it is now), but catch it locally first.
 - New migration: set `down_revision` to the CURRENT head, **and move the
   sentinel**: `echo <your-revision-id> > backend/alembic/HEAD`. That one-line
   file exists so two concurrent migration PRs collide in GIT (same line →
