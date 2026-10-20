@@ -659,9 +659,12 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
        合并后 AI 队友写总结的那一会儿例外，它已经是「已采纳」。
     2. **待回答压过队友说的**：它说过在做，可这一刻它不会自己往下走了，而看板
        显示「在做」正是让人不来看的那一句。
-    3. **队友说它在做、在等、卡住了，压过验收卡**：卡描述的是它可能马上就要顶掉的
-       那一版，而它此刻在做什么只有它自己知道（`TaskProgress`，它自己报，不从轮次
-       推）。它说「做完了，待审阅」时卡说得更准，由卡来说；还没有卡，就是等人审阅。
+    3. **一条活只有一个状态，核得了的事实定它**：开启、在做、在等、卡住、等审、
+       关闭。卡在等审阅（卡说在哪一步：跑检查、等人审、检查没过……）就是等审，
+       验收人被点到；递卡时队友之前报的状态作废，卡在的时候它也报不了
+       （`room_task.progress`）。卡被退回、作废，平台把它放回「在做」。没有卡的
+       时候才轮到队友自己报的：在做、在等、卡住（卡住点负责人）——「待审阅」和
+       「关闭」不是它能报的，那是事实。
 
     `now` 收在签名里是为了和 `room_presentation` 同一个形状。
     """
@@ -674,23 +677,21 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         return _show(Done.completed if facts.has_conclusion else Done.closed)
     if facts.awaiting_answer:
         return _show(NeedsYou.awaiting_answer)
-    if facts.progress is TaskProgress.working:
-        return _show(Building.running)
-    if facts.progress is TaskProgress.waiting:
-        return _show(Building.waiting)
-    if facts.progress is TaskProgress.blocked:
-        return _show(NeedsYou.blocked)
     if facts.card is not None:
         shown = _card_presentation(facts.card)
         if shown is not None:
             return shown
-        # 退回、闸门判红：卡结算了，球交回给芝士去改。队友没说它在改（上面已经
-        # 答过），也没有新卡递上来，这件事就停在了负责人手上 —— 侧栏把它标成没人
-        # 处理，这里不能还说「进行中」。
-        if facts.card.status in _BOUNCED_TO_AGENT:
-            return _show(NeedsYou.bounced)
-    if facts.progress is TaskProgress.review:
-        return _show(NeedsYou.awaiting_review)
+    if facts.progress is TaskProgress.blocked:
+        return _show(NeedsYou.blocked)
+    if facts.progress is TaskProgress.working:
+        return _show(Building.running)
+    if facts.progress is TaskProgress.waiting:
+        return _show(Building.waiting)
+    # 退回、闸门判红：卡结算了，球交回给芝士去改。队友没说它在改（上面已经答过），
+    # 也没有新卡递上来，这件事就停在了负责人手上 —— 侧栏把它标成没人处理，这里不能
+    # 还说「进行中」。
+    if facts.card is not None and facts.card.status in _BOUNCED_TO_AGENT:
+        return _show(NeedsYou.bounced)
     return _show(Building.started)
 
 

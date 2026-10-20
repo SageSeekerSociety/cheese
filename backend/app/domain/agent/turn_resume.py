@@ -144,6 +144,7 @@ async def after_failure(
         return None
     found = classify(
         result.text,
+        failure_code=result.failure_code,
         api_error_status=result.api_error_status,
         reset_wait_s=(reset - now).total_seconds() if reset is not None else None,
     )
@@ -306,6 +307,7 @@ _WAIT_KEYS: Final = {
     "egress_offline": "turnResumeWaitEgressOffline",
     "subscription_cooling": "turnResumeWaitSubscriptionCooling",
     "quota_reset": "turnResumeWaitQuotaReset",
+    "runner_replaced": "turnResumeWaitRunnerReplaced",
 }
 
 
@@ -347,6 +349,32 @@ async def started_on_receipt(
         },
         turn_id=attempt_id,
         seat=row.recipient_handle,
+    )
+    if kept is None:
+        return None
+    return as_payload(kept), await room_of_thread(session, row.conversation_id)
+
+
+async def started_record(
+    session: AsyncSession, delivery_id: uuid.UUID | None, attempt_id: uuid.UUID | None
+) -> tuple[dict, uuid.UUID | None] | None:
+    """The record ``started_on_receipt`` kept for this attempt, as it is told:
+    for telling it again when what followed its commit was not all done."""
+    if delivery_id is None or attempt_id is None:
+        return None
+    row = await session.scalar(
+        select(TurnResume)
+        .join(Delivery, Delivery.event_id == TurnResume.id)
+        .where(Delivery.id == delivery_id, Delivery.attempt_id == attempt_id)
+    )
+    if row is None:
+        return None
+    kept = await session.scalar(
+        select(RunRecord).where(
+            RunRecord.conversation_id == row.conversation_id,
+            RunRecord.kind == EVENT_TURN_RESUME_STARTED,
+            RunRecord.meta["resume_id"].as_string() == str(row.id),
+        )
     )
     if kept is None:
         return None

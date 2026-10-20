@@ -148,17 +148,13 @@ class Driver(Protocol):
     #: Whether the runner taking an input is the session reading it. False for
     #: a harness whose runner reports when an input was read (`lifecycle`).
     receipt_on_accept: bool
+
     def working(self, status: dict) -> bool:
         """Whether a runner's ``ping`` says work is in flight."""
         ...
 
     def conversation(self, status: dict) -> str:
         """The harness's id for the conversation, from a ``ping``."""
-        ...
-
-    def takes_inputs(self, status: dict) -> bool:
-        """Whether the runner can take an input whose receipt the platform
-        will read."""
         ...
 
     async def launch(
@@ -199,6 +195,11 @@ class Driver(Protocol):
 class Reports(Protocol):
     """A driver whose runner reports in the lifecycle protocol: its session is
     read from what the runner reports, and no mirror is kept of it."""
+
+    def speaks(self, status: dict) -> bool:
+        """Whether the runner that answered ``status`` speaks the protocol
+        this release reads."""
+        ...
 
     def reading(
         self,

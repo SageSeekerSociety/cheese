@@ -259,7 +259,6 @@ class _Session:
                 Whose(self.ref, "cheese", self.ref.topic_id, "cheese", CLAUDE_CODE, ""),
                 remote,
                 epoch=lambda: 1,
-                launch=None,
                 assemble=lambda record: [],
                 show=nothing,
                 hand=nothing,

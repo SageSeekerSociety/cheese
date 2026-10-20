@@ -45,14 +45,18 @@ class TaskStatus(enum.StrEnum):
 
 
 class TaskProgress(enum.StrEnum):
-    """Where the AI teammate doing a task says its work stands — its own words,
-    set through `cheese_task_state`, never inferred.
+    """Where an open task's work stands between the facts the platform can
+    check: its AI teammate says it (`cheese_task_state`), and two of the
+    platform's own actions set it (a card returned or voided puts the task back
+    to ``working``; a card filed clears it).
 
-    Orthogonal to `TaskStatus`: a task is open or closed whatever its teammate
-    last said, and closing it does not clear this. The board reads it in place
-    of a running turn (`presentation.task_presentation`), because a turn ending
-    says nothing about the work: a teammate waiting on a build or a background
-    command is still on it after its turn returns.
+    A refinement of an open task, never a state of its own beside `TaskStatus`:
+    a task is open or closed, and while a card waits on its review the card says
+    where it stands (等审), whatever was reported before. So the teammate never
+    says 「待审阅」 or 「关闭」 — those are facts, not reports — and while a card
+    is open it cannot report at all (`room_task.progress`). The board reads this
+    in place of a running turn (`presentation.task_presentation`): a teammate
+    waiting on a build is still on it after its turn returns.
     """
 
     #: Doing the work.
@@ -61,8 +65,6 @@ class TaskProgress(enum.StrEnum):
     waiting = "waiting"
     #: Cannot go on without a person.
     blocked = "blocked"
-    #: Done with this step, waiting for it to be reviewed.
-    review = "review"
 
 
 #: What an unnamed task is called until it is named. The stored text is for

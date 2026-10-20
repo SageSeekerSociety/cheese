@@ -88,7 +88,8 @@ from app.domain.machine import session_work
 from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
 from app.domain.project_permissions import Permission
-from app.domain.review.archive import close_cards_for_closed_task
+from app.domain.review.archive import OPEN_CARD_STATUSES, close_cards_for_closed_task
+from app.domain.review.services import AcceptService
 from app.domain.review.task_landing import tell_origin
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
@@ -327,11 +328,19 @@ async def report_progress(
 ) -> dict:
     """The task's AI teammate says where its work stands (`cheese_task_state`):
     what the board shows for it until it says again. Only the task's own
-    session reports; a person reads it, and says what they need in the task."""
+    session reports; a person reads it, and says what they need in the task.
+
+    Refused while a card waits on the task's review: the card says where the
+    task stands then (等审), and a report would either change nothing on the
+    board while the teammate believes it did, or take the task out of the
+    reviewer's hands. It reports again once the card is returned or voided."""
     _place, actor, task = await task_conversation(db, resolver, topic_id)
     if actor.via != "cheese" or resolver.credential_conversation() != task.id:
         raise ForbiddenError(say("taskOwnSessionReportsProgress"))
     TaskService.require_open(task)
+    card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
+    if card is not None and card.status in OPEN_CARD_STATUSES:
+        raise ConflictError(say("taskProgressWhileInReview"))
     set_progress(
         task,
         body.state,

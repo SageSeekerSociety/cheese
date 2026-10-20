@@ -203,7 +203,6 @@ AWAITING_LEAVES = [
     ("alerts", "app.api.awaiting_deps.ProjectNotificationService.still_open"),
     ("tasks.rows", "app.api.awaiting_deps.TaskRepository.listed_by_ids"),
     ("topics.rows", "app.api.awaiting_deps.TopicRepository.listed_by_ids"),
-    ("running", "app.api.awaiting_deps.running_tasks"),
     ("waiting_items", "app.api.awaiting_deps.waiting_items"),
 ]
 

@@ -22,7 +22,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "b7c1e4d92a10"
-down_revision: str | Sequence[str] | None = 'd4f30c9e71a2'
+down_revision: str | Sequence[str] | None = "d4f30c9e71a2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -57,6 +57,7 @@ def upgrade() -> None:
         sa.Column("harness", sa.String(length=32), nullable=False),
         sa.Column("epoch", sa.BigInteger(), nullable=False),
         sa.Column("applied_seq", sa.BigInteger(), nullable=False),
+        sa.Column("projected_seq", sa.BigInteger(), nullable=False, server_default="0"),
         sa.PrimaryKeyConstraint("conversation_id", "agent_handle", "harness", "epoch"),
     )
     op.add_column(

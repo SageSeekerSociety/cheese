@@ -18,9 +18,11 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.live_frames import publish_live
 from app.domain.agent.reads import (
     Abandoned,
+    Followed,
     Reachable,
     Read,
     Received,
+    Replaced,
     Report,
     Working,
     Writing,
@@ -37,8 +39,9 @@ from app.domain.delivery.input_identity import InputReceipt
 # room decides what each one means for it.
 #
 # A ``Report`` is applied once (``agent.runner_reports``): the reader answers
-# False for one it had applied before, and what follows from it is not done a
-# second time. Every other item answers nothing.
+# False for one it had applied and followed through before, and what follows
+# from it is not done a second time; ``Followed`` says it was followed through.
+# Every other item answers nothing.
 RoomReader = Callable[[SessionRef, Read], Awaitable[bool | None]]
 
 
@@ -63,6 +66,12 @@ class RoomBooks(Protocol):
     async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None: ...
 
     async def apply_report(self, report: Report) -> bool: ...
+
+    async def report_followed(self, report: Report) -> None: ...
+
+    async def inputs_replaced(
+        self, conversation_id: uuid.UUID, agent_handle: str, harness: str, native: str
+    ) -> None: ...
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None: ...
 
@@ -99,6 +108,15 @@ def reader(chat: RoomBooks) -> RoomReader:
             await chat.confirm_prompt_receipt(event.receipt)
         elif isinstance(event, Report):
             return await chat.apply_report(event)
+        elif isinstance(event, Followed):
+            await chat.report_followed(event.report)
+        elif isinstance(event, Replaced):
+            await chat.inputs_replaced(
+                session.conversation_id,
+                session.agent_handle,
+                session.harness,
+                event.conversation,
+            )
         elif isinstance(event, Writing):
             await publish_live(
                 session.conversation_id,

@@ -97,9 +97,6 @@ class _Launching:
     def __init__(self):
         self.launched: list[SessionSpec] = []
 
-    def takes_inputs(self, status):
-        return True
-
     async def launch(self, wire, host, ref, spec, access, known):
         self.launched.append(spec)
         return Launched("conversation", frozenset({LONG_POLL}), "launch")

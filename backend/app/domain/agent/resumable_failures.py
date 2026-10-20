@@ -35,7 +35,7 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
-from app.domain.agent.platform_failures import is_request_refused
+from app.domain.agent.platform_failures import RUNNER_REPLACED_CODE, is_request_refused
 
 #: One kind of transient failure, and how the platform waits it out.
 #:
@@ -61,6 +61,10 @@ UNREACHABLE: Final = "unreachable"
 EGRESS_OFFLINE: Final = "egress_offline"
 SUBSCRIPTION_COOLING: Final = "subscription_cooling"
 QUOTA_RESET: Final = "quota_reset"
+#: The platform's upgrade replaced the runner a turn was running in
+#: (``platform_failures.RUNNER_REPLACED_CODE``): the conversation goes on in
+#: the new one, so the turn is started again at once, and once.
+RUNNER_REPLACED: Final = "runner_replaced"
 
 POLICIES: Final[dict[str, Policy]] = {
     RATE_LIMITED: Policy(base_s=60, cap_s=30 * 60, attempts=6),
@@ -72,6 +76,7 @@ POLICIES: Final[dict[str, Policy]] = {
     # Unreadable snapshot: the accounts' thaw is unknown, so ask rarely.
     SUBSCRIPTION_COOLING: Policy(base_s=15 * 60, cap_s=2 * 3600, attempts=3),
     QUOTA_RESET: Policy(base_s=0, cap_s=0, attempts=2, needs_reset=True),
+    RUNNER_REPLACED: Policy(base_s=5, cap_s=5, attempts=1),
 }
 
 
@@ -185,6 +190,7 @@ def classify(
     *,
     api_error_status: int | None = None,
     reset_wait_s: float | None = None,
+    failure_code: str | None = None,
 ) -> Resumable | None:
     """The transient kind this failure is, or None when the platform must not
     start the turn again by itself.
@@ -192,6 +198,9 @@ def classify(
     ``reset_wait_s`` is a window reset the session reported in structure (the
     seconds until ``rate_limit.resetsAt``); it wins over anything read from the
     text."""
+    if failure_code == RUNNER_REPLACED_CODE:
+        # The platform's own typed failure, not a service's words.
+        return Resumable(RUNNER_REPLACED)
     said = (text or "").strip()
     if not said:
         return None

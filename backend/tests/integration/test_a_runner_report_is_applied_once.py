@@ -89,7 +89,9 @@ class _Seat:
         )
 
     async def apply(self, report: Report) -> None:
-        await runner_reports.apply(self.chat, report)
+        """Apply it and follow it through, as the seat's reading does."""
+        if await runner_reports.apply(self.chat, report):
+            await runner_reports.projected(self.chat, report)
 
     async def input(self, *, work: uuid.UUID | None = None) -> tuple:
         """A message, and the input that carries it, registered as a turn's
@@ -236,6 +238,51 @@ async def test_an_event_delivered_again_after_a_crash_changes_nothing(
         assert await session_state.running_conversations(session) == set()
 
 
+class _RefusesOnce(_Frames):
+    """A broker whose first publish fails, as a broker can after the commit."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refused = False
+
+    async def publish(self, channel: str, frame: dict) -> None:
+        if not self.refused:
+            self.refused = True
+            raise ConnectionError("the broker went away")
+        await super().publish(channel, frame)
+
+
+@pytest.mark.anyio
+async def test_a_frame_the_broker_refused_after_the_commit_is_told_again(
+    db_factory, monkeypatch
+):
+    """The read committed, and telling the room its message was read failed.
+    The event is delivered again: the room is told then, once, and the read is
+    not recorded twice."""
+    frames = _RefusesOnce()
+    monkeypatch.setattr(runner_reports, "get_broker", lambda: frames)
+    seat = await _seat(db_factory)
+    work = uuid.uuid4()
+    identity, block = await seat.input(work=work)
+    async with db_factory() as session:
+        row = await seat_row(session, identity)
+        row.seen_block_ids = [str(block)]
+        row.seen_by = SEAT
+        await session.commit()
+    read = seat.report(InputRead(InputReceipt(identity, "native_echo", work)))
+    with pytest.raises(ConnectionError):
+        await seat.apply(read)
+    first = await seat.row(identity)
+    assert first.echoed_at is not None
+
+    await seat.apply(read)
+    await seat.apply(read)
+
+    told = [frame for frame in frames.sent if frame["type"] == "reaction"]
+    assert len(told) == 1
+    assert (await seat.row(identity)).echoed_at == first.echoed_at
+
+
 async def seat_row(session, identity: InputIdentity) -> NativeInput:
     row = await session.scalar(
         select(NativeInput).where(NativeInput.input_id == identity.input_id)
@@ -273,7 +320,7 @@ async def test_a_session_exit_settles_what_it_never_read(db_factory):
     assert await seat.holds() == (True, {block})
 
     await seat.apply(seat.report(InputDropped(identity, "exited")))
-    await seat.apply(seat.report(SessionExited("launch-1", current=True)))
+    await seat.apply(seat.report(SessionExited("launch-1")))
 
     assert await seat.holds() == (False, set())
     assert consumed_turn(await seat.block(block)) is None
@@ -339,6 +386,6 @@ async def test_an_input_written_and_not_read_holds_until_its_fate_is_reported(
     assert await seat.holds() == (True, {later_block})
 
     await seat.apply(seat.report(InputDropped(later, "exited")))
-    await seat.apply(seat.report(SessionExited("launch-1", current=True)))
+    await seat.apply(seat.report(SessionExited("launch-1")))
     assert await seat.holds() == (False, set())
     assert consumed_turn(await seat.block(later_block)) is None

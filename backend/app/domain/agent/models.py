@@ -277,7 +277,8 @@ class SessionOffset(Base):
     Events of one runner arrive in sequence order and are applied in it, so an
     event at or below ``applied_seq`` for its ``(seat, epoch)`` has been
     applied, and applying it again is a no-op: the unique key of an event is
-    ``(seat, epoch, seq)``, and this row is the high-water mark of it.
+    ``(seat, epoch, seq)``, and this row is the high-water mark of it. An event
+    is acknowledged to the runner only once ``projected_seq`` covers it too.
     """
 
     __tablename__ = "session_offsets"
@@ -287,3 +288,10 @@ class SessionOffset(Base):
     harness: Mapped[str] = mapped_column(String(32), primary_key=True)
     epoch: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     applied_seq: Mapped[int] = mapped_column(BigInteger)
+    #: How far what follows from those events outside this transaction (the
+    #: room's books, what is told) has been done: an event above it and at or
+    #: below ``applied_seq`` was applied, and what follows from it is done again
+    #: when it is delivered again (``session_state.projected``).
+    projected_seq: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0"
+    )

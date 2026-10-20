@@ -22,8 +22,10 @@ from app.domain.room_task.presentation import (
     NeedsYou,
     RoomFacts,
     TaskFacts,
+    owner_acts_on,
     room_presentation,
     task_presentation,
+    waiting_on,
 )
 from app.domain.topic.models import TopicStatus
 
@@ -90,13 +92,6 @@ TASK_CASES = [
         task(progress=TaskProgress.blocked),
         Column.needs_you,
         NeedsYou.blocked,
-    ),
-    # 它说做完了待审阅、却还没有卡：等人看。
-    (
-        "队友说待审阅，还没有卡",
-        task(progress=TaskProgress.review),
-        Column.needs_you,
-        NeedsYou.awaiting_review,
     ),
     # 队友还没说过什么，也还没递出改动。
     ("停着", task(), Column.building, Building.started),
@@ -299,8 +294,6 @@ def test_what_the_teammate_said_is_read_off_the_row():
 
 def test_a_blocked_task_is_its_owners_to_act_on():
     """队友说它卡住了，下一步在负责人手上，和检查红了清不掉、被退回没人改一样。"""
-    from app.domain.room_task.presentation import owner_acts_on
-
     blocked = task_presentation(task(progress=TaskProgress.blocked), now=NOW)
     assert owner_acts_on(blocked) is True
     working = task_presentation(task(progress=TaskProgress.working), now=NOW)
@@ -382,29 +375,18 @@ def test_a_task_that_goes_on_after_an_accepted_step_is_still_in_progress():
     assert asked.phrase == NeedsYou.awaiting_answer
 
 
-def test_what_the_teammate_says_it_is_doing_beats_the_paperwork():
-    """它说在做、在等，压过卡：卡描述的是它可能马上就要顶掉的那一版。"""
-    for state, phrase in (
-        (TaskProgress.working, Building.running),
-        (TaskProgress.waiting, Building.waiting),
-    ):
+def test_a_card_waiting_on_its_reviewer_beats_what_the_teammate_said():
+    """一张在等验收人的卡点的是验收人，不管卡递上来之前队友报过什么：卡在等审，
+    任务就是等审。"""
+    for state in TaskProgress:
         shown = task_presentation(
             task(progress=state, card=card(AcceptStatus.pending)), now=NOW
         )
-        assert (shown.column, shown.phrase) == (Column.building, phrase)
-
-
-def test_done_pending_review_lets_the_card_say_where_the_review_is():
-    """它说做完了待审阅：卡说得更准（在跑检查、等人审阅、检查没过），由卡来说。"""
-    gated = task_presentation(
-        task(progress=TaskProgress.review, card=card(AcceptStatus.pending_gate)),
-        now=NOW,
-    )
-    assert gated.phrase == Delivering.gate_running
-    waiting = task_presentation(
-        task(progress=TaskProgress.review, card=card(AcceptStatus.pending)), now=NOW
-    )
-    assert waiting.phrase == NeedsYou.awaiting_review
+        assert (shown.column, shown.phrase) == (
+            Column.needs_you,
+            NeedsYou.awaiting_review,
+        )
+        assert waiting_on(shown, reviewer="bob", asked=None) == "bob"
 
 
 def test_an_unanswered_question_beats_what_the_teammate_said():
@@ -483,13 +465,9 @@ def test_a_settled_card_stops_answering(status):
 @pytest.mark.parametrize("status", BOUNCED, ids=[str(s) for s in BOUNCED])
 def test_a_returned_task_nobody_is_reworking_waits_on_a_person(status):
     """退回之后芝士说它在改，任务就在做；它没说、也没递新的，就停在人手上
-    —— 不能还说「已开始」，好像有人在推。它上一次说的「待审阅」不算：卡已经被退回了。"""
+    —— 不能还说「已开始」，好像有人在推。"""
     idle = task_presentation(task(card=card(status)), now=NOW)
     assert (idle.column, idle.phrase) == (Column.needs_you, NeedsYou.bounced)
-    stale = task_presentation(
-        task(card=card(status), progress=TaskProgress.review), now=NOW
-    )
-    assert stale.phrase == NeedsYou.bounced
     reworking = task_presentation(
         task(card=card(status), progress=TaskProgress.working), now=NOW
     )

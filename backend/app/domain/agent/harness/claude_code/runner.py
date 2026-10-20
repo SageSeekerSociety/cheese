@@ -111,6 +111,9 @@ LAUNCH = "CHEESE_RUNNER_LAUNCH"
 #: a process starts, cleared once its ``exited`` is in the outbox. Still set
 #: when a runner starts, it names a process that died with its runner.
 LIVE_LAUNCH = "live_launch"
+#: The epoch that process was registered under (``register``); empty until it
+#: is. Its ending, reported for it by the next runner, carries this epoch.
+LIVE_EPOCH = "live_epoch"
 #: The platform inputs written to the agent and not read yet, in the order they
 #: were written: what is dropped when the process goes.
 UNREAD_INPUTS = "unread_inputs"
@@ -674,6 +677,7 @@ class Runner(runner.Runner[Journal]):
         # Until this process reports its own ending, the next runner here
         # reports it for it (`_report_left_exit`).
         self.journal.remember(LIVE_LAUNCH, self.launch)
+        self.journal.remember(LIVE_EPOCH, str(self.outbox.epoch or ""))
         self.process = await asyncio.create_subprocess_exec(
             # CreateProcess looks in System32 before PATH; Git Bash's sh is on PATH.
             shutil.which("sh") or "sh" if sys.platform == "win32" else "sh",
@@ -806,10 +810,9 @@ class Runner(runner.Runner[Journal]):
                 text="",
                 usage=None,
             )
-        self._emit(
-            lifecycle.EXITED, launch=self.launch, exit_code=status, said=said
-        )
+        self._emit(lifecycle.EXITED, launch=self.launch, exit_code=status, said=said)
         self.journal.remember(LIVE_LAUNCH, "")
+        self.journal.remember(LIVE_EPOCH, "")
         self.announce()
 
     def _report_left_exit(self) -> None:
@@ -819,9 +822,13 @@ class Runner(runner.Runner[Journal]):
         left = self.journal.recall(LIVE_LAUNCH)
         if not left:
             return
-        self._drop_unread("exited")
-        self._emit(lifecycle.EXITED, launch=left, exit_code=None, said="")
+        # Under the epoch that process was registered under: these are about
+        # it, and the registration this runner will get is not its.
+        epoch = int(self.journal.recall(LIVE_EPOCH) or lifecycle.NEVER_REGISTERED)
+        self._drop_unread("exited", epoch=epoch)
+        self._emit(lifecycle.EXITED, launch=left, exit_code=None, said="", epoch=epoch)
         self.journal.remember(LIVE_LAUNCH, "")
+        self.journal.remember(LIVE_EPOCH, "")
 
     def _last_words(self, status: int | None) -> str:
         """Say why Claude Code never came up, where the backend will look.
@@ -838,18 +845,18 @@ class Runner(runner.Runner[Journal]):
                 end = log.seek(0, os.SEEK_END)
                 log.seek(max(self.errors_from, end - LAST_WORDS))
                 said = log.read().decode("utf-8", "replace").strip()
-        record = (
-            f"Claude Code exited with status {status} {NEVER_STARTED}"
-            + (f":\n{said}" if said else ", and said nothing")
+        record = f"Claude Code exited with status {status} {NEVER_STARTED}" + (
+            f":\n{said}" if said else ", and said nothing"
         )
         print(f"{ended(self.launch)}: {record}", file=sys.stderr, flush=True)
         return record
 
     # --- what the session reports --------------------------------------------
 
-    def _emit(self, kind: str, **body) -> None:
-        """Report one fact, after every record journaled so far."""
-        self.outbox.emit(kind, records=self.journal.last(), **body)
+    def _emit(self, kind: str, *, epoch: int | None = None, **body) -> None:
+        """Report one fact, after every record journaled so far; ``epoch``
+        for a fact about an earlier process (``Outbox.emit``)."""
+        self.outbox.emit(kind, records=self.journal.last(), epoch=epoch, **body)
 
     def _unread(self) -> list[str]:
         return json.loads(self.journal.recall(UNREAD_INPUTS) or "[]")
@@ -867,12 +874,13 @@ class Runner(runner.Runner[Journal]):
         self._set_unread([value for value in unread if value != identifier])
         return True
 
-    def _drop(self, identifier: str, reason: str) -> None:
+    def _drop(self, identifier: str, reason: str, *, epoch: int | None = None) -> None:
         """Report that the agent will never read ``identifier``, under the
         session and work it was written for."""
         written = json.loads(self.journal.recall(f"receipt:{identifier}") or "{}")
         self._emit(
             lifecycle.INPUT,
+            epoch=epoch,
             input_id=identifier,
             status=lifecycle.DROPPED,
             session_id=written.get("session_id") or self.session_id,
@@ -880,10 +888,10 @@ class Runner(runner.Runner[Journal]):
             reason=reason,
         )
 
-    def _drop_unread(self, reason: str) -> None:
+    def _drop_unread(self, reason: str, *, epoch: int | None = None) -> None:
         for identifier in self._unread():
             self.watchdog.taken(identifier)
-            self._drop(identifier, reason)
+            self._drop(identifier, reason, epoch=epoch)
         self._set_unread([])
 
     def standing(self) -> dict:
@@ -895,9 +903,7 @@ class Runner(runner.Runner[Journal]):
             for key, task in self.task_states.items()
             if task.get("status") == "running"
         }
-        finished = [
-            key for key, task in self.task_states.items() if key not in running
-        ]
+        finished = [key for key, task in self.task_states.items() if key not in running]
         return {
             "worker_status": lifecycle.RUNNING if self.working else lifecycle.IDLE,
             "session_id": self.session_id,
@@ -1739,6 +1745,10 @@ class Runner(runner.Runner[Journal]):
             # The platform names this runner's epoch, and the clocks it ends
             # stuck work by (``lifecycle``).
             self.outbox.register(int(params["epoch"]))
+            if self.journal.recall(LIVE_LAUNCH) == self.launch:
+                # The live process is this registration's from now on: its
+                # ending, if the next runner reports it, carries this epoch.
+                self.journal.remember(LIVE_EPOCH, str(self.outbox.epoch))
             clocks = params.get("watchdog") or {}
             self.watchdog.configure(
                 no_progress_s=float(clocks.get("no_progress_s") or 0),
@@ -1765,7 +1775,10 @@ class Runner(runner.Runner[Journal]):
             # The session's own helper (`executor_transport.register_project_
             # hooks`), not the platform: it holds no registration.
             return await self.control(
-                {"subtype": "apply_flag_settings", "settings": {"hooks": params["hooks"]}}
+                {
+                    "subtype": "apply_flag_settings",
+                    "settings": {"hooks": params["hooks"]},
+                }
             )
         if method == "reply_check":
             # The session's Stop hook (`client.py reply`), as the work is

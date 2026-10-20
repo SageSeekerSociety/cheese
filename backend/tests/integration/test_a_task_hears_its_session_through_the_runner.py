@@ -22,6 +22,7 @@ from sqlalchemy import update
 
 from app.core.config import settings
 from app.domain.agent import runner_reports, session_state
+from app.domain.agent.harness.driven import lifecycle
 from app.domain.agent.reads import Report, SessionExited, SessionRunning
 from app.domain.room_task.models import Task
 from app.periodic_jobs import periodic_jobs
@@ -113,7 +114,7 @@ def test_the_runner_reporting_the_session_gone_marks_the_teammate_left(client):
     runner.reports(chat, SessionRunning(uuid.uuid4()))
     assert _task(client, task_id)["agent_left_at"] is None
 
-    runner.reports(chat, SessionExited("launch-1", current=True))
+    runner.reports(chat, SessionExited("launch-1"))
 
     task = _task(client, task_id)
     assert task["agent_left_at"] is not None
@@ -124,21 +125,17 @@ def test_the_runner_reporting_the_session_gone_marks_the_teammate_left(client):
 
 
 @pytest.mark.parametrize(
-    ("from_backlog", "current"),
+    "registered",
     [
-        # The old runner's own report of its process ending, read after the
-        # seat was registered again.
-        (True, False),
-        # The same, from a reading that does not know which launch it reads.
-        (True, True),
-        # The new runner reporting the ending of the process before it, which
-        # died with its runner.
-        (False, False),
+        # The process before was registered under the epoch the new one
+        # replaced: its exit, reported by its own runner from the backlog or
+        # by the next runner for it, carries that epoch.
+        True,
+        # It died before it was ever registered.
+        False,
     ],
 )
-def test_an_earlier_process_ending_leaves_the_running_session_be(
-    client, from_backlog, current
-):
+def test_an_earlier_process_ending_leaves_the_running_session_be(client, registered):
     """The seat was registered again and its new session is at work when the
     exit of the process before it arrives: the task does not say its teammate
     left, and the seat still reads as running."""
@@ -152,8 +149,8 @@ def test_an_earlier_process_ending_leaves_the_running_session_be(
 
     runner.reports(
         chat,
-        SessionExited("launch-1", current=current),
-        written_under=earlier if from_backlog else None,
+        SessionExited("launch-1"),
+        written_under=earlier if registered else lifecycle.NEVER_REGISTERED,
     )
 
     assert _task(client, task_id)["agent_left_at"] is None
@@ -163,6 +160,30 @@ def test_an_earlier_process_ending_leaves_the_running_session_be(
             return await session_state.running_conversations(session)
 
     assert uuid.UUID(task_id) in client.portal.call(running)
+
+
+def test_a_session_running_again_takes_the_left_mark_away(client):
+    """The task's session ended, its seat was registered again and the new
+    session started working: 「已离开」 goes, and what the teammate said stays."""
+    project_id, task_id, seat = _a_task(client)
+    said = client.put(
+        f"/topics/{task_id}/task/progress",
+        json={"state": "waiting", "note": "等构建"},
+        headers=task_agent_headers(project_id, task_id, seat),
+    )
+    assert said.status_code == 200, said.text
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+    runner.reports(chat, SessionExited("launch-1"))
+    assert _task(client, task_id)["agent_left_at"] is not None
+
+    runner.register()
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+
+    task = _task(client, task_id)
+    assert task["agent_left_at"] is None
+    assert (task["progress_state"], task["progress_note"]) == ("waiting", "等构建")
 
 
 def _reported_long_ago(client, task_id: str) -> None:

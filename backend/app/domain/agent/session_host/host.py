@@ -139,6 +139,10 @@ GIVE_UP_CHECK_S = 1.0
 IDLE_GONE_READ_S = 60.0
 #: How long a reading that failed waits before trying again.
 RETRY_S = 2.0
+#: How long a pass refused under the epoch this process is replacing waits
+#: before it reads again: the registration on its way to the runner lands
+#: within a call's round trip.
+REGISTERING_WAIT_S = 0.05
 #: How long the readings under way may take to finish their pass when this
 #: process stops reading.
 STOP_LISTENING_S = 5.0
@@ -384,9 +388,7 @@ class SessionHost:
     async def control_state(self, ref: SessionRef) -> dict:
         return await control.control_state(self, ref)
 
-    async def read(
-        self, ref: SessionRef
-    ) -> AsyncGenerator[Read]:
+    async def read(self, ref: SessionRef) -> AsyncGenerator[Read]:
         """What the session writes, from where this backend last landed, as it
         is written. The reading goes on until the caller stops it, this process
         stops listening (``stop_listening``), or the session is gone
@@ -420,9 +422,15 @@ class SessionHost:
             await hand(Read(None, ControlsMoved()))
 
         async def report(work, reported: Report):
-            if isinstance(reported.fact, SessionExited) and reported.fact.current:
-                # Its runner says its process is gone: this process holds no
-                # session there any more, whatever its reader does next.
+            if isinstance(reported.fact, SessionExited) and (
+                reported.of_this_registration
+            ):
+                # Its runner says the process this registration holds is gone:
+                # this process holds no session there any more, whatever its
+                # reader does next (a send that follows starts it again). The
+                # reader applies it under this same registration, and one it
+                # refuses as stale means another process holds the seat now,
+                # which ends this process's holding of it either way.
                 self._forget(ref, running)
             await hand(Read(str(work) if work else None, reported))
 
@@ -531,12 +539,12 @@ class SessionHost:
             try:
                 await reading.drain(wait=0 if first else READ_WAIT_S)
             except lifecycle.StaleEpoch as exc:
-                if running.launched.epoch != asked:
+                if await self._ours(running, asked):
                     continue
                 return self._superseded(ref, running, driver, exc)
             except (DeviceOffline, DeviceCallError, httpx.TransportError) as exc:
                 if lifecycle.stale(exc):
-                    if running.launched.epoch != asked:
+                    if await self._ours(running, asked):
                         continue
                     return self._superseded(ref, running, driver, exc)
                 running.answering = False
@@ -604,6 +612,20 @@ class SessionHost:
                 return
             if running.stopping:
                 return
+
+    @staticmethod
+    async def _ours(running: _Running, asked: int) -> bool:
+        """Whether a stale-epoch refusal of a pass read under ``asked`` came
+        from this process's own registration: one it made since the pass
+        began (read again at once, under it), or one it is handing to the
+        runner right now (read again once that had a moment). Only a newer
+        registration another process made supersedes the reading."""
+        if running.launched.epoch != asked:
+            return True
+        if running.registering is not None:
+            await asyncio.sleep(REGISTERING_WAIT_S)
+            return True
+        return False
 
     def _superseded(
         self, ref: SessionRef, running: _Running, driver: Driver, exc: Exception

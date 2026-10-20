@@ -46,6 +46,7 @@ from app.domain.agent.harness.channel import (
 from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
+from app.domain.agent.harness.driven import lifecycle
 from app.domain.agent.harness.driven.runner import LONG_POLL, socket_path
 from app.domain.agent.launch import MachinePlace
 from app.domain.agent.room.sessions import RoomSessions
@@ -150,8 +151,14 @@ def channel(client, monkeypatch):
 
     async def runner(device, state, method, params, **_):
         if method == "ping":
-            # A runner that is up: its session, and that it holds a read.
-            return {"alive": True, "session_id": "s1", "capabilities": [LONG_POLL]}
+            # A runner of this release that is up: its session, that it holds
+            # a read, and the protocol it reports in.
+            return {
+                "alive": True,
+                "session_id": "s1",
+                "capabilities": [LONG_POLL],
+                "lifecycle": lifecycle.PROTOCOL,
+            }
         return {"generation": "fixture", "entries": {}}
 
     hub: Any = SimpleNamespace(

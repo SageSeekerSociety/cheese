@@ -277,7 +277,7 @@ async def follow(
                 # What a runner reported: of all of it, only the ending of the
                 # work, or of the session, ends an answer.
                 fact = event.fact
-                if isinstance(fact, SessionExited) and fact.current:
+                if isinstance(fact, SessionExited) and event.of_this_registration:
                     yield await ended(Answer("", "the session ended mid-answer"))
                     return
                 if not isinstance(fact, SessionIdle) or read.work_id != work:

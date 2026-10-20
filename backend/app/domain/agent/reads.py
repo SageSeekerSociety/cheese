@@ -143,12 +143,13 @@ class SessionIdle:
 
 @dataclass(frozen=True)
 class SessionExited:
-    """The agent process ``launch`` is gone. ``current`` is whether it is the
-    one this reading reads (a runner also reports the ending of the process
-    before it, when that one died with its runner)."""
+    """The agent process ``launch`` is gone. The event carries the epoch that
+    process was registered under (a runner also reports the ending of the
+    process before it, when that one died with its runner, under that one's
+    epoch): only an exit of the seat's current registration ends its session
+    (``Report.of_this_registration``)."""
 
     launch: str
-    current: bool
     exit_code: int | None = None
     #: What it said, when it ended before it ever came up.
     said: str = ""
@@ -175,6 +176,32 @@ class Report:
         | SessionExited
     )
 
+    @property
+    def of_this_registration(self) -> bool:
+        """Whether the event describes the process the delivering registration
+        holds: it was written under that registration's epoch. Applying it
+        checks the delivering epoch is the seat's current one
+        (``session_state.take``), so for an applied report this is whether it
+        is about the seat's current process."""
+        return self.epoch == self.worker_epoch
+
+
+@dataclass(frozen=True)
+class Replaced:
+    """The process holding native session ``conversation`` was replaced by one
+    of this release's (a runner the previous release started): what it was
+    written and never read, it never will read."""
+
+    conversation: str
+
+
+@dataclass(frozen=True)
+class Followed:
+    """Everything that follows from ``report`` was done, the room's books
+    included: delivered again, it asks nothing more (``runner_reports``)."""
+
+    report: Report
+
 
 @dataclass(frozen=True)
 class Read:
@@ -190,6 +217,8 @@ class Read:
         | Working
         | Received
         | Report
+        | Followed
+        | Replaced
         | Reachable
         | Moved
         | CaughtUp

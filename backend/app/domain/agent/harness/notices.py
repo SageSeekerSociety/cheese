@@ -108,11 +108,11 @@ def stale_progress_reminder(minutes: int | None, language: str | None = None) ->
             language,
             "你还没说这件任务做到哪了，看板上它只能显示「进行中」。现在就用 "
             "cheese_task_state 设一次：working 在做、waiting 在等结果、blocked "
-            "卡住了、review 这一步做完待审阅，note 写一句在做什么。",
+            "卡住了，note 写一句在做什么。做完了就递卡，看板会显示等审。",
             "You have not said where this task stands, so the board can only show "
             "it as in progress. Call cheese_task_state now: working, waiting (on a "
-            "build, CI or a long command), blocked, or review (this step is done "
-            "and waits for review), with a one-line note.",
+            "build, CI or a long command) or blocked, with a one-line note. When "
+            "the work is done, file a card: the board then shows it awaiting review.",
         )
     return _in_the_readers_language(
         language,

@@ -32,6 +32,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent.chat import ChatService
 from app.domain.agent.opening import OPENING, PURPOSE
 from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.mention import BY_PERSON
 from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.identity.handles import agent_instance_handle
@@ -162,6 +163,17 @@ class _World:
         )
         await asyncio.wait_for(self.screen.handed_one.wait(), HANG_S)
         self.screen.handed_one.clear()
+        # On it means it read the work: until its runner's report of the read
+        # lands, the seat holds an input whose fate is unknown, and a delivery
+        # tried then is (rightly) put back and retried later.
+        async with asyncio.timeout(HANG_S):
+            while True:
+                async with self.factory() as session:
+                    if not await seat_has_unfinished_input(
+                        session, self.conversation, seat
+                    ):
+                        break
+                await asyncio.sleep(0.02)
 
     async def dispatch(self, delivery_id) -> int:
         return await dispatch_pending(

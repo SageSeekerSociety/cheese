@@ -195,6 +195,10 @@ class RoomSessions:
         # lands here. "Not heard from" never does — that is unknown.
         self.found_conversations: set[tuple[Seat, str]] = set()
         self.terminal_conversations: set[tuple[Seat, str]] = set()
+        # Seats whose runner the previous release started, found by this
+        # round's recovery: not read, and settled at their replay
+        # (``lifecycle._replaced``). The next start replaces the runner.
+        self.outdated: dict[Seat, Live] = {}
         self._owns_sessions_provider = None
         self.tasks: dict[Seat, asyncio.Task] = {}
         # Each seat's reading caught up with what its session had written.
@@ -255,7 +259,7 @@ class RoomSessions:
         must not start what the next one is about to read."""
         seat = self._seat_of(session)
         live = self.live.get(seat)
-        if live is None or not live.takes_inputs or seat in self.work:
+        if live is None or seat in self.work:
             return None
         provider = self._owns_sessions_provider
         if provider is not None and not provider().owns_sessions:
@@ -348,9 +352,7 @@ class RoomSessions:
     def _clock_read_s(self, seat: Seat) -> float:
         return _reading._clock_read_s(self, seat)
 
-    async def _poll(
-        self, seat: Seat, live: Live, caught: asyncio.Event
-    ) -> None:
+    async def _poll(self, seat: Seat, live: Live, caught: asyncio.Event) -> None:
         return await _reading._poll(self, seat, live, caught)
 
     async def _take(

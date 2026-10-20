@@ -125,14 +125,21 @@ def stale(error: object) -> bool:
 
 # --- the outbox --------------------------------------------------------------
 
+#: The epoch of an event about a process that was never registered: no
+#: registration is ever this one, so it is never the seat's current process.
+NEVER_REGISTERED = -1
+
 
 class Outbox:
     """The runner's unacknowledged events, in the journal the runner keeps.
 
     A sequence is never reused (``AUTOINCREMENT``), so ``(epoch, seq)`` names
     one event for good. Events are deleted once acknowledged; until then every
-    read returns them again. An event written before any registration carries
-    epoch 0 and takes the first epoch the runner is registered under.
+    read returns them again. An event carries the epoch of the process it is
+    about: one this runner's process wrote before any registration carries 0
+    and takes the first epoch the runner is registered under; one about an
+    earlier process (its ending, reported for it) carries that process's epoch,
+    or ``NEVER_REGISTERED``, and is never restamped.
     """
 
     SCHEMA = """
@@ -165,15 +172,17 @@ class Outbox:
         if epoch != self.epoch or not self.epoch:
             raise StaleEpoch(epoch, self.epoch)
 
-    def emit(self, kind: str, *, records: int, **body) -> int:
+    def emit(self, kind: str, *, records: int, epoch: int | None = None, **body) -> int:
         """Write an event; ``records`` is how far the runner's journal had got
-        when it happened, so a reader shows what came before it first."""
+        when it happened, so a reader shows what came before it first.
+        ``epoch``, for an event about an earlier process, is the epoch that
+        process was registered under; this runner's own otherwise."""
         body["records"] = records
         with self.connection:
             cursor = self.connection.execute(
                 "INSERT INTO lifecycle(epoch, at, event) VALUES (?, ?, ?)",
                 (
-                    self.epoch,
+                    self.epoch if epoch is None else epoch,
                     datetime.now(UTC).isoformat(),
                     json.dumps({"kind": kind, **body}, ensure_ascii=False),
                 ),
@@ -202,9 +211,10 @@ class Outbox:
         return last or 0
 
     def empty(self) -> bool:
-        return self.connection.execute(
-            "SELECT 1 FROM lifecycle LIMIT 1"
-        ).fetchone() is None
+        return (
+            self.connection.execute("SELECT 1 FROM lifecycle LIMIT 1").fetchone()
+            is None
+        )
 
 
 # --- stuck work --------------------------------------------------------------

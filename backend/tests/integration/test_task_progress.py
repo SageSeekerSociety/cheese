@@ -16,6 +16,7 @@ from sqlalchemy import update
 from app.core.config import settings
 from app.domain.room_task.models import Task
 from app.domain.room_task.progress import note_agent_left
+from tests.delivery import delivery_artifact
 from tests.integration.conftest import (
     open_task,
     post_project,
@@ -23,6 +24,7 @@ from tests.integration.conftest import (
     session_auth_headers,
     task_agent_headers,
 )
+from tests.machine_work import declare_task, machine_commits
 
 
 def _a_task(client) -> tuple[str, str, str]:
@@ -199,3 +201,186 @@ def test_a_teammate_that_never_reported_is_asked_once_its_session_has_run_a_whil
     assert client.portal.call(remind, now) == 0
     assert client.portal.call(remind, now + threshold) == 1
     assert "cheese_task_state" in chat.told[0][1]
+
+
+# —— one task, one state: a card's facts beat what the teammate said ——————————
+
+
+def _file_card(client, project_id: str, task_id: str) -> dict:
+    """The task's work handed over for review, as its teammate files it."""
+    declare_task(uuid.UUID(project_id), uuid.UUID(task_id))
+    machine_commits(
+        uuid.UUID(project_id), uuid.UUID(task_id), {"login.txt": "fixed the login"}
+    )
+    room = _task(client, task_id)["room_id"]
+    filed = client.post(
+        f"/topics/{task_id}/accept-card",
+        json={
+            "change_subject": "修好了登录页",
+            "focus": "最懂",
+            **delivery_artifact(client, room),
+        },
+        headers=session_auth_headers("alice"),
+    )
+    assert filed.status_code == 200, filed.text
+    return filed.json()["data"]
+
+
+def test_a_card_filed_after_the_teammate_said_working_puts_the_task_in_review(
+    client,
+):
+    """Filing a card is the fact the board follows: the task waits on its
+    reviewer, who has it to act on, whatever the teammate said before."""
+    project_id, task_id, seat = _a_task(client)
+    assert _report(client, project_id, task_id, seat, "working").status_code == 200
+
+    _file_card(client, project_id, task_id)
+
+    task = _task(client, task_id)
+    assert task["presentation"] == {"column": "needs_you", "phrase": "awaiting_review"}
+    assert task["progress_state"] is None
+    mine = client.get("/awaiting-me", headers=session_auth_headers("alice"))
+    assert mine.status_code == 200, mine.text
+    assert any(item.get("taskId") == task_id for item in mine.json()["data"]["data"])
+
+
+def test_a_report_while_a_card_waits_on_review_is_refused(client):
+    """While a card waits, the card says where the task stands: the teammate
+    saying it is working is refused, and tells it why, and nothing moves."""
+    project_id, task_id, seat = _a_task(client)
+    _file_card(client, project_id, task_id)
+
+    refused = _report(client, project_id, task_id, seat, "working", "接着改")
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "taskProgressWhileInReview"
+    task = _task(client, task_id)
+    assert task["presentation"]["phrase"] == "awaiting_review"
+    assert task["progress_state"] is None
+
+
+def test_the_teammate_cannot_say_its_task_awaits_review(client):
+    """「待审阅」 is a card's fact, not something the teammate reports."""
+    project_id, task_id, seat = _a_task(client)
+
+    said = _report(client, project_id, task_id, seat, "review")
+
+    assert said.status_code == 400, said.text
+    assert _task(client, task_id)["progress_state"] is None
+
+
+def test_a_returned_card_puts_the_task_back_to_work(client):
+    """The reviewer returns the card: the task is back in its teammate's hands,
+    and its teammate may report again."""
+    project_id, task_id, seat = _a_task(client)
+    card = _file_card(client, project_id, task_id)
+
+    returned = client.post(
+        f"/accept-cards/{card['id']}/reject",
+        json={"decided_by": "alice", "note": "登录后跳转不对"},
+        headers=session_auth_headers("alice"),
+    )
+    assert returned.status_code == 200, returned.text
+
+    task = _task(client, task_id)
+    assert task["progress_state"] == "working"
+    assert task["presentation"]["phrase"] == "running"
+    # Nobody reported it: the reviewer did not say the task is being worked on.
+    assert task["progress_set_by"] is None
+    assert _report(client, project_id, task_id, seat, "waiting").status_code == 200
+
+
+def test_a_reopened_task_starts_from_open(client):
+    """Reopened, a task is 开启 again: what its teammate said about the work
+    that closed is not what it is doing now."""
+    project_id, task_id, seat = _a_task(client)
+    assert (
+        _report(client, project_id, task_id, seat, "working", "改好了").status_code
+        == 200
+    )
+    _close(client, task_id)
+
+    reopened = client.post(
+        f"/topics/{task_id}/reopen", headers=session_auth_headers("alice")
+    )
+    assert reopened.status_code == 200, reopened.text
+
+    task = _task(client, task_id)
+    assert (task["progress_state"], task["progress_note"]) == (None, None)
+    assert task["presentation"]["phrase"] == "started"
+
+
+def _close(client, task_id: str) -> None:
+    closed = client.post(
+        f"/topics/{task_id}/close", json={}, headers=session_auth_headers("alice")
+    )
+    assert closed.status_code == 200, closed.text
+
+
+def test_another_tasks_session_cannot_report_this_tasks_progress(client):
+    """A session reports the task it works on, not one next to it."""
+    project_id, task_id, seat = _a_task(client)
+    room = _task(client, task_id)["room_id"]
+    other = open_task(client, room, "另一件事", owner="alice")["id"]
+
+    refused = client.put(
+        f"/topics/{task_id}/task/progress",
+        json={"state": "blocked"},
+        headers=task_agent_headers(project_id, other, seat),
+    )
+
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "tokenOtherTopic"
+    assert _task(client, task_id)["progress_state"] is None
+
+
+def test_a_closed_task_takes_no_progress_report(client):
+    """A closed task says how it ended; its teammate does not reopen it by
+    saying it is working."""
+    project_id, task_id, seat = _a_task(client)
+    _close(client, task_id)
+
+    refused = _report(client, project_id, task_id, seat, "working")
+
+    assert refused.status_code != 200, refused.text
+    task = _task(client, task_id)
+    assert task["status"] == "closed" and task["progress_state"] is None
+
+
+def test_a_session_leaving_a_closed_task_marks_nothing(client):
+    """「已离开」 is about an open task's work; a closed one says how it ended."""
+    _project_id, task_id, _seat = _a_task(client)
+    _close(client, task_id)
+
+    async def leave() -> bool:
+        async with client.test_factory() as session:
+            marked = await note_agent_left(
+                session, uuid.UUID(task_id), at=datetime.now(UTC)
+            )
+            await session.commit()
+            return marked
+
+    assert client.portal.call(leave) is False
+    assert _task(client, task_id)["agent_left_at"] is None
+
+
+def test_a_closed_task_is_not_asked_for_its_state(client):
+    """A session still running in a task someone closed is not asked where the
+    work stands: there is no work left to stand anywhere."""
+    from app.domain.agent.turn.steps.reminders import StaleProgressReminder
+
+    _project_id, task_id, _seat = _a_task(client)
+    _said_at(client, task_id, datetime.now(UTC) - timedelta(days=1))
+    _close(client, task_id)
+    chat = _Chat(client)
+
+    async def sessions_running(_session):
+        return {uuid.UUID(task_id)}
+
+    remind = StaleProgressReminder(chat, sessions_running)
+    now = datetime.now(UTC)
+    threshold = timedelta(seconds=settings.chat_progress_reminder_after_s)
+
+    assert client.portal.call(remind, now) == 0
+    assert client.portal.call(remind, now + 2 * threshold) == 0
+    assert chat.told == []

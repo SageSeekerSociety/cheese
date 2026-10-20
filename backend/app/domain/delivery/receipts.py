@@ -308,6 +308,37 @@ async def drop_input(
     return row
 
 
+async def drop_unread_of_session(session, *, harness, native_session_id, reason) -> int:
+    """Every input written to this native session that it has neither read
+    nor been reported never to read, dropped as its runner would drop it
+    (``drop_input``): the process that held them was replaced, and nothing
+    will read them. Their blocks are offered again."""
+    unread = list(
+        await session.scalars(
+            select(NativeInput.input_id).where(
+                NativeInput.harness == harness,
+                NativeInput.native_session_id == native_session_id,
+                NativeInput.echoed_at.is_(None),
+                NativeInput.terminated_at.is_(None),
+            )
+        )
+    )
+    dropped = 0
+    for input_id in unread:
+        if (
+            await drop_input(
+                session,
+                harness=harness,
+                native_session_id=native_session_id,
+                input_id=input_id,
+                reason=reason,
+            )
+            is not None
+        ):
+            dropped += 1
+    return dropped
+
+
 async def fail_read_inputs(
     session, *, harness, native_session_id, input_ids, failure
 ) -> int:
@@ -497,4 +528,3 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
             timer.delivered_at = stamp
     row.settled_at = stamp
     return row
-

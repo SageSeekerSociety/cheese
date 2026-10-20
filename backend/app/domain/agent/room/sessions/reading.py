@@ -31,6 +31,7 @@ from app.domain.agent.reads import (
     CaughtUp,
     ControlsMoved,
     Ended,
+    Followed,
     Moved,
     Reachable,
     Read,
@@ -80,7 +81,6 @@ async def _attach(svc: pkg.RoomSessions, live: Live) -> Live:
         live.ref,
         live.acting,
         live.conversation,
-        live.takes_inputs,
         attachment=uuid.uuid4().hex,
     )
     async with attachments.lock(seat):
@@ -236,15 +236,28 @@ async def _take(
     return False
 
 
-async def _report(svc: pkg.RoomSessions, seat: Seat, live: Live, report: Report) -> bool:
+async def _report(
+    svc: pkg.RoomSessions, seat: Seat, live: Live, report: Report
+) -> bool:
     """What a seat's runner reported: applied to the database first, once
-    (``agent.runner_reports``), then kept in the room's books. Never ends the
-    reading itself: a session that is gone ends it once its runner has heard
-    the last event was taken."""
+    (``agent.runner_reports``), then kept in the room's books, and then marked
+    followed through. A failure on the way leaves it unmarked and, the reading
+    not acknowledging it, delivered again: the database half is not applied a
+    second time and the rest is done again. Never ends the reading itself: a
+    session that is gone ends it once its runner has heard the last event was
+    taken."""
     if await svc._hear(live.session, Read(None, report), required=True) is False:
-        # Applied before (a redelivery): everything that follows from it was
-        # done then.
+        # Applied and followed through before (a redelivery): everything that
+        # follows from it was done then.
         return False
+    await _keep(svc, seat, live, report)
+    await svc._hear(live.session, Read(None, Followed(report)), required=True)
+    return False
+
+
+async def _keep(svc: pkg.RoomSessions, seat: Seat, live: Live, report: Report) -> None:
+    """The room's books on what a seat's runner reported. Each part is
+    idempotent: an event delivered again after a failure here is kept again."""
     project, fact = live.session.project_id, report.fact
     if isinstance(fact, SessionRunning) and fact.work_id is not None:
         await svc._activity(project, seat, fact.work_id, True)
@@ -267,14 +280,13 @@ async def _report(svc: pkg.RoomSessions, seat: Seat, live: Live, report: Report)
         # 来就是它写完的时刻。
         await svc.reconcile_memory(live.session)
         svc._went_quiet(live.session)
-    elif isinstance(fact, SessionExited) and fact.current:
+    elif isinstance(fact, SessionExited) and report.of_this_registration:
         if svc.live.get(seat) is live:
             svc.live.pop(seat, None)
             # Its runner said so: the conversation is over on this seat, which
             # is death, not an unknown (FB-56).
             svc.dead.add((seat, live.conversation))
         # The reading ends on its own once it has acknowledged this.
-    return False
 
 
 async def _say_waiting(svc: pkg.RoomSessions, seat: Seat, reason: str) -> None:

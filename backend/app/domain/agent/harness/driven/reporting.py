@@ -188,7 +188,6 @@ class Reading:
         call: Callable[[str, dict], Awaitable[dict]],
         *,
         epoch: Callable[[], int],
-        launch: str | None,
         assemble: Callable[[dict], list[AgentEvent]],
         show: Show,
         hand: Hand,
@@ -200,7 +199,6 @@ class Reading:
         #: The epoch this process registered the runner under, as it stands:
         #: a registration this process makes again is still its own.
         self.epoch = epoch
-        self.launch = launch
         self.assemble = assemble
         self.show = show
         self.hand = hand
@@ -292,7 +290,7 @@ class Reading:
                     )
                     if (
                         isinstance(report.fact, SessionExited)
-                        and report.fact.current
+                        and report.of_this_registration
                     ):
                         self.exited = report.fact
                 self.acked = max(self.acked, int(event["seq"]))
@@ -344,9 +342,10 @@ class Reading:
             if through is not None and sequence > through:
                 return True
             record = row.get("record")
-            if isinstance(record, dict) and (
-                now - datetime.fromisoformat(row["at"])
-            ).total_seconds() < STALE_S:
+            if (
+                isinstance(record, dict)
+                and (now - datetime.fromisoformat(row["at"])).total_seconds() < STALE_S
+            ):
                 try:
                     await self._show(record, sequence)
                 except Exception:
@@ -471,7 +470,6 @@ class Reading:
             launch = str(event.get("launch") or "")
             fact = SessionExited(
                 launch,
-                current=not self.launch or launch == self.launch,
                 exit_code=event.get("exit_code"),
                 said=str(event.get("said") or ""),
             )

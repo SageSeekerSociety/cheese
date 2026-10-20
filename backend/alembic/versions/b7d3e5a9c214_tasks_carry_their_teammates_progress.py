@@ -23,7 +23,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 #: Copied from `room_task.models.TaskProgress` (migrations do not import `app`).
-STATES = ("working", "waiting", "blocked", "review")
+STATES = ("working", "waiting", "blocked")
 
 
 def upgrade() -> None:

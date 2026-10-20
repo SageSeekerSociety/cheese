@@ -13,6 +13,7 @@ read by ``driven.reporting``: its events, and its records shown in the room.
 import asyncio
 import base64
 import time
+import functools
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -85,7 +86,10 @@ class ClaudeCodeDriver:
     def conversation(self, status: dict) -> str:
         return str(status.get("session_id") or "")
 
-    def takes_inputs(self, status: dict) -> bool:
+    def speaks(self, status: dict) -> bool:
+        """Whether the runner that answered ``status`` speaks the lifecycle
+        protocol this release reads; one the previous release started does
+        not, and is replaced rather than read."""
         return status.get("lifecycle") == lifecycle.PROTOCOL
 
     async def launch(
@@ -103,7 +107,8 @@ class ClaudeCodeDriver:
         # Names this start of the runner (``runner.LAUNCH``); new every time,
         # so it is never part of what a live session is compared against.
         name = uuid.uuid4().hex
-        screen = await self.screens._ensure_screen(
+        screen_for = functools.partial(
+            self.screens._ensure_screen,
             device_id=host,
             agent_user_id=owner.user_id,
             agent_handle=owner.handle,
@@ -119,19 +124,32 @@ class ClaudeCodeDriver:
                 launch_name=name,
             ),
             environment_before={},
-            runner_alive=known is not None,
         )
+        screen = await screen_for(runner_alive=known is not None)
         if known is not None and known.launch == screen.sid:
             # The runner that answered the last read is the one this screen
             # still runs, so greeting it would say what is already known.
             return known
         status = await self._greet(wire, host, ref, name)
+        if not self.speaks(status):
+            # A runner the previous release started, still on the screen: this
+            # release does not read its protocol. Its screen is closed, which
+            # ends it and its build, and a runner of this release is started in
+            # its place on the same conversation (``resume_session_id``).
+            await self.screens._retire_screen(
+                screen, topic_id=owner.place_id, reason="runner_protocol_outdated"
+            )
+            screen = await screen_for(runner_alive=False)
+            status = await self._greet(wire, host, ref, name)
         return Launched(
             status["session_id"],
             frozenset(status.get("capabilities") or ()),
             screen.sid,
             status.get("lifecycle"),
-            name,
+            # The runner's own name for its launch: a screen that still runs
+            # an earlier runner answers with that one's, not the name chosen
+            # for a runner this start would have started.
+            status.get("launch") or name,
         )
 
     async def _greet(self, wire: Wire, host: str, ref: SessionRef, name: str) -> dict:
@@ -252,7 +270,6 @@ class ClaudeCodeDriver:
             ),
             call,
             epoch=readers.epoch,
-            launch=launched.name,
             assemble=assembler.accept,
             show=show,
             hand=readers.report,

@@ -350,8 +350,22 @@ class ChatService(
 
     async def apply_report(self, report: Report) -> bool:
         """Apply what a seat's runner reported, once (`runner_reports`): False
-        when it had been applied before."""
+        when it was applied and followed through before."""
         return await runner_reports.apply(self, report)
+
+    async def inputs_replaced(
+        self, conversation_id: uuid.UUID, agent_handle: str, harness: str, native: str
+    ) -> None:
+        """The process holding native session ``native`` was replaced
+        (`runner_reports.replaced`)."""
+        await runner_reports.replaced(
+            self, conversation_id, agent_handle, harness, native
+        )
+
+    async def report_followed(self, report: Report) -> None:
+        """Everything that follows from ``report`` was done
+        (`runner_reports.projected`)."""
+        await runner_reports.projected(self, report)
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None:
         """End the inputs of a work whose session died inside it. See turn_inputs."""

@@ -36,7 +36,7 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
     SessionStatus,
 )
-from app.domain.agent.session_host.driver import Launched
+from app.domain.agent.session_host.driver import Launched, Reports
 from app.domain.agent.session_host.sessions import (
     _mirror,
     _Running,
@@ -126,7 +126,6 @@ async def start(
             working=False,
             model=spec.model,
             conversation=launched.conversation,
-            takes_inputs=driver.takes_inputs({"lifecycle": launched.lifecycle}),
         )
 
 
@@ -135,21 +134,32 @@ async def register(
 ) -> Launched:
     """Register a runner that reports in the lifecycle protocol: issue its
     seat a new worker epoch and hand it to the runner, with the clocks it ends
-    stuck work by. From here on only this registration changes anything."""
+    stuck work by. From here on only this registration changes anything.
+
+    The epoch is issued first, so between the two a read under the epoch this
+    replaces is refused. That refusal is this process's own doing, not another
+    registration's (``running.registering``): the reading reads again under
+    the new epoch, and the runner hands the same events over again."""
     epoch = await svc._register(key(ref, running.seat, running.acting))
-    await svc._look(
-        host,
-        ref,
-        "register",
-        {
-            "epoch": epoch,
-            "watchdog": {
-                "no_progress_s": settings.agent_no_progress_s,
-                "unread_s": settings.agent_unread_grace_s,
+    running.registering = epoch
+    try:
+        await svc._look(
+            host,
+            ref,
+            "register",
+            {
+                "epoch": epoch,
+                "watchdog": {
+                    "no_progress_s": settings.agent_no_progress_s,
+                    "unread_s": settings.agent_unread_grace_s,
+                },
             },
-        },
-    )
-    return replace(launched, epoch=epoch)
+        )
+        launched = replace(launched, epoch=epoch)
+        running.launched = launched
+    finally:
+        running.registering = None
+    return launched
 
 
 async def adopt(svc: SessionHost, found: list[tuple[SessionRef, Access]]) -> None:
@@ -207,13 +217,31 @@ async def attach(
         model=str(status.get("model") or ""),
         conversation=driver.conversation(status),
         work_id=status.get("work_id"),
-        takes_inputs=driver.takes_inputs(status),
         # The hub hands the runner's answer through unchecked: only an
         # explicit False says the process is gone.
         alive=alive is not False,
     )
     if alive is not True:
         return found if alive is False else None
+    if isinstance(driver, Reports) and not driver.speaks(status):
+        # A runner the previous release started: it does not report in the
+        # protocol this one reads, and this release keeps nothing that reads
+        # the old one. It is not taken up. Work it is doing is taken away the
+        # way that runner understands; the next start replaces it with one of
+        # this release's on the same conversation (``ClaudeCodeDriver.launch``).
+        if found.working:
+            method, _ = driver.stop
+            try:
+                await svc._look(host, ref, method, {})
+            except (DeviceOffline, DeviceCallError, TimeoutError):
+                logger.warning(
+                    "%s session %s on %s could not be interrupted for the upgrade",
+                    driver.label,
+                    ref.home,
+                    host,
+                    exc_info=True,
+                )
+        return replace(found, outdated=True)
     launched = Launched(
         found.conversation,
         frozenset(status.get("capabilities") or ()),

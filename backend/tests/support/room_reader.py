@@ -7,8 +7,10 @@ import uuid
 
 from app.domain.agent.reads import (
     Abandoned,
+    Followed,
     Reachable,
     Received,
+    Replaced,
     Report,
     Working,
     Writing,
@@ -54,6 +56,10 @@ def room_reader(
             heard = reachability and reachability(
                 session.project_id, session.topic_id, work, event.yes, event.reason
             )
+        elif isinstance(event, Followed | Replaced):
+            # The room's own bookkeeping on a report or a replaced runner: no
+            # kind of its own here; ``rest`` hears it when there is one.
+            heard = None
         elif isinstance(event, Writing):
             heard = live and live(
                 session.topic_id,

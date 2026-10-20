@@ -8,12 +8,13 @@ that changes because of an event is written in the transaction ``take`` runs
 in, so an event is applied exactly once whatever is redelivered.
 """
 
+import enum
 import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -72,11 +73,25 @@ async def register(sessions: async_sessionmaker[AsyncSession], key: SeatKey) -> 
     return int(epoch)
 
 
+class Claim(enum.Enum):
+    """What delivering an event again asks of the platform."""
+
+    #: Never applied: its effects are written in this transaction, and what
+    #: follows from them is done after it.
+    NEW = "new"
+    #: Applied, and what follows from it outside the transaction (the room's
+    #: books, what is told) was not all done: that is done again.
+    UNPROJECTED = "unprojected"
+    #: Applied and followed through: nothing is done again.
+    DONE = "done"
+
+
 async def take(
     session: AsyncSession, key: SeatKey, *, worker_epoch: int, epoch: int, seq: int
-) -> bool:
-    """Claim one event for this transaction: True when it is new and its
-    effects are to be applied now, False when it was applied before.
+) -> Claim:
+    """Claim one event for this transaction: ``NEW`` when its effects are to
+    be applied now, ``UNPROJECTED`` when they were and what follows from them
+    was not all done, ``DONE`` when both were.
 
     Raises ``StaleEpoch`` when the runner that delivered it is not the one the
     seat is registered to now. The seat's row is locked until the transaction
@@ -103,7 +118,39 @@ async def take(
         )
         .returning(SessionOffset.applied_seq)
     )
-    return claimed is not None
+    if claimed is not None:
+        return Claim.NEW
+    projected = await session.scalar(
+        select(SessionOffset.projected_seq).where(*_offset(key, epoch))
+    )
+    return Claim.UNPROJECTED if (projected or 0) < seq else Claim.DONE
+
+
+async def projected(
+    sessions: async_sessionmaker[AsyncSession],
+    key: SeatKey,
+    *,
+    epoch: int,
+    seq: int,
+) -> None:
+    """What follows from the event ``(epoch, seq)`` outside the transaction
+    that applied it is done: delivered again, it asks nothing more."""
+    async with sessions() as session:
+        await session.execute(
+            update(SessionOffset)
+            .where(*_offset(key, epoch))
+            .values(projected_seq=func.greatest(SessionOffset.projected_seq, seq))
+        )
+        await session.commit()
+
+
+def _offset(key: SeatKey, epoch: int):
+    return (
+        SessionOffset.conversation_id == key.conversation_id,
+        SessionOffset.agent_handle == key.agent_handle,
+        SessionOffset.harness == key.harness,
+        SessionOffset.epoch == epoch,
+    )
 
 
 async def declare(

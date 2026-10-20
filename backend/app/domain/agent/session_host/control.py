@@ -76,7 +76,6 @@ async def status(svc: SessionHost, ref: SessionRef) -> SessionStatus | None:
         model=str(status.get("model") or ""),
         conversation=driver.conversation(status),
         work_id=status.get("work_id"),
-        takes_inputs=driver.takes_inputs(status),
     )
 
 

@@ -333,7 +333,7 @@ export interface RoomTask {
 export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 
 /** 任务的 AI 队友自己报的状态（后端 `TaskProgress`）。 */
-export type TaskProgressState = 'working' | 'waiting' | 'blocked' | 'review'
+export type TaskProgressState = 'working' | 'waiting' | 'blocked'
 
 type BuildingPhrase = 'running' | 'waiting' | 'started' | 'idle' | 'draft'
 type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'

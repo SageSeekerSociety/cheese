@@ -62,6 +62,10 @@ class _Running:
     subscription: Subscription | Reading | None = None
     reading: asyncio.Task | None = None
     stopping: bool = False
+    #: The epoch this process's own registration of the runner was issued and
+    #: is still being handed to the runner: a refusal naming it is ours, not a
+    #: newer registration's (``starting.register``).
+    registering: int | None = None
 
 
 def keeps_memory(harness: str) -> bool:
@@ -109,9 +113,7 @@ def _seat(ref: SessionRef, access: Access) -> tuple[Seat, str]:
     )
 
 
-def _mirror(
-    root: Path, ref: SessionRef, access: Access, driver: Driver
-) -> Path | None:
+def _mirror(root: Path, ref: SessionRef, access: Access, driver: Driver) -> Path | None:
     """Where this backend keeps its copy of the session's journal, under
     ``root``; None for a harness that keeps none. A session with an owner keeps
     it under the owner's place, by the machine and the agent it acts as there,
