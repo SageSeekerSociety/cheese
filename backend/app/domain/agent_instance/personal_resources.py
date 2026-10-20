@@ -77,7 +77,7 @@ async def remove(db, team_id: int, user_id: int, connection_id: str):
     row = await credential(db, connection_id)
     if row.owner_user_id is None:
         raise NotFoundError(say("ownAgentConnectionNotFound"))
-    if row.owner_user_id != user_id and not await TeamRepository(
+    if row.owner_user_id != user_id and not await team_service(
         db
     ).is_team_at_least_admin(team_id, user_id):
         raise ForbiddenError(say("deviceTeamAdminOnly"))

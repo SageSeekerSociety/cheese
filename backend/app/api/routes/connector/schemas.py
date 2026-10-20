@@ -59,11 +59,9 @@ class ClaudeCodeLoginOut(BaseModel):
     local_id: str
     installed: bool
     logged_in: bool
-    #: `claude.ai` for a subscription, the API key kind, or `model_service`.
+    #: `claude.ai` for a subscription login.
     auth_method: str | None
     subscription_type: str | None
-    model: str | None
-    service_host: str | None
     #: What its owner named the connection; None until they do.
     name: str | None
     checked_at: str

@@ -19,10 +19,9 @@ The question travels as a program on stdin (`hub.exec(["python3", "-"])`), the
 way every other one-off question to a machine does, so it runs the same on
 Linux, macOS and Windows, where the connector provides `python3`.
 
-Its owner can also change a login from any browser (「模型连接」): log it out,
-or add one that calls another model service. Those run the connector's own
-`cheesehost claude logout <id>` and `cheesehost claude login --base-url` on the
-machine, through the same `hub.exec`. A logout asked for while the machine is
+Its owner can log a subscription out from any browser (「模型连接」), through
+the connector's `cheesehost claude logout <id>` and the same `hub.exec`.
+A logout asked for while the machine is
 away is recorded (``revoked_at``) and carried out as it next connects; the
 login is out of use from the moment it is asked for.
 """
@@ -41,12 +40,11 @@ from app.domain.agent.place import (
     CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
-    MODEL_SERVICE_FILE,
     footprint_root,
 )
 from app.domain.agent_instance.own import rename_for_connection
 from app.domain.device import claude_login
-from app.domain.device.login_kind import FIRST_LOGIN, LOGIN_ID, MODEL_SERVICE
+from app.domain.device.login_kind import FIRST_LOGIN, LOGIN_ID
 from app.domain.device.models import (
     DeviceClaudeLoginRow,
     DeviceRow,
@@ -90,20 +88,6 @@ if not env.get("USER"):
 
 def report(login):
     local_id, directory = login
-    # Another model service the owner set (`cheesehost claude login --base-url`):
-    # the sessions call it and not the login. Its model and host leave the
-    # machine, for its owner to tell services apart; its key does not.
-    try:
-        service = json.loads((directory / SERVICE).read_text())
-    except (OSError, ValueError):
-        service = None
-    if isinstance(service, dict) and service.get("base_url") and service.get("token"):
-        from urllib.parse import urlsplit
-        try:
-            host = urlsplit(str(service["base_url"])).hostname
-        except ValueError:
-            host = None
-        return {"id": local_id, "service": {"model": service.get("model"), "host": host}}
     result = subprocess.run(
         [str(binary), "auth", "status"],
         env={**env, "CLAUDE_CONFIG_DIR": str(directory),
@@ -138,7 +122,6 @@ def program() -> str:
         f"LOGINS = {CLAUDE_LOGINS_DIR!r}\n"
         f"FIRST = {FIRST_LOGIN!r}\n"
         f"LOGIN_ID = {LOGIN_ID.pattern!r}\n"
-        f"SERVICE = {MODEL_SERVICE_FILE!r}\n"
         f"KEYCHAIN = {CLAUDE_KEYCHAIN_DIR!r}\n"
         f"VERSION = {CLAUDE_PINNED_VERSION!r}\n" + _PROGRAM
     )
@@ -150,30 +133,17 @@ class ClaudeLogin:
     logged_in: bool
     auth_method: str | None = None
     subscription_type: str | None = None
-    #: The model a model service is called with; None for a Claude account.
-    model: str | None = None
-    #: The host of that model service; None for a Claude account.
-    service_host: str | None = None
     #: What the machine calls this login (its directory's name there).
     local_id: str = FIRST_LOGIN
 
 
 def _one(local_id: str, entry: dict) -> ClaudeLogin:
-    service = entry.get("service")
-    if isinstance(service, dict):
-        model, host = service.get("model"), service.get("host")
-        return ClaudeLogin(
-            installed=True,
-            logged_in=True,
-            auth_method=MODEL_SERVICE,
-            model=model[:128] if isinstance(model, str) and model else None,
-            service_host=host[:255] if isinstance(host, str) and host else None,
-            local_id=local_id,
-        )
     status = entry.get("status")
     if not isinstance(status, dict):
         status = {}
-    logged_in = status.get("loggedIn") is True
+    logged_in = (
+        status.get("loggedIn") is True and status.get("authMethod") == "claude.ai"
+    )
 
     def short(name: str) -> str | None:
         value = status.get(name)
@@ -237,8 +207,6 @@ async def remember(
             "logged_in": login.logged_in,
             "auth_method": login.auth_method,
             "subscription_type": login.subscription_type,
-            "model": login.model,
-            "service_host": login.service_host,
             "checked_at": now,
         }
         row = await session.scalar(

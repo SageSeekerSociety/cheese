@@ -56,7 +56,21 @@ def test_shared_assistants_recover_the_original_personal_credentials():
                 owner,
                 credential,
             )
+        for legacy_kind in ("console", "model_service"):
+            legacy_id = uuid.uuid4().hex
+            db.execute(
+                "INSERT INTO claude_logins (id, device_id, local_id, installed, logged_in, auth_method, checked_at) VALUES ($1, $2, $1, true, true, $3, now())",
+                legacy_id,
+                login,
+                legacy_kind,
+            )
         db.upgrade("f4b1298ca631")
+        assert (
+            db.fetchval(
+                "SELECT count(*) FROM claude_logins WHERE auth_method IN ('console', 'model_service')"
+            )
+            == 0
+        )
         assert (
             db.fetchval("SELECT key FROM account_model_connections WHERE id = $1", key)
             == "sealed-original"

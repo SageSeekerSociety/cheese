@@ -76,7 +76,7 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
                 device_id=laptop,
                 installed=True,
                 logged_in=True,
-                allowed_models=["sonnet"],
+                auth_method="claude.ai",
                 checked_at=datetime.now(UTC),
             )
         )

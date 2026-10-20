@@ -24,7 +24,6 @@ from app.domain.agent.harness.claude_code.device_launch import (
 from app.domain.agent.place import (
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
-    MODEL_SERVICE_FILE,
     OWN_LOGIN_ID,
 )
 from app.domain.device.login_kind import FIRST_LOGIN
@@ -98,9 +97,9 @@ def _launch_on_machine(
         )
         command.chmod(0o700)
     if service is not None:
-        (used / MODEL_SERVICE_FILE).write_text(json.dumps(service))
+        (used / "model-service.json").write_text(json.dumps(service))
     if other_service is not None:
-        (unused / MODEL_SERVICE_FILE).write_text(json.dumps(other_service))
+        (unused / "model-service.json").write_text(json.dumps(other_service))
     room = home / "room"
     work = room / "work"
     work.mkdir(parents=True)
@@ -218,28 +217,30 @@ def test_session_uses_only_its_enrollments_login(tmp_path, login_id):
     assert seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"].startswith(
         f"{seen['_home']}/.cheese/profiles/research/logins/"
     )
-    assert seen["ANTHROPIC_AUTH_TOKEN"] == "team-key"
-    assert seen["ANTHROPIC_MODEL"] == "team-model"
-
-
-def test_an_own_session_on_another_login_calls_its_model_service(tmp_path):
-    seen = _launch_on_machine(
-        tmp_path,
-        login_id="B7QX",
-        service={
-            "base_url": "https://kimi.test/anthropic",
-            "token": "k",
-            "model": "k2",
-        },
-    )
-    assert seen["ANTHROPIC_BASE_URL"] == "https://kimi.test/anthropic"
-    assert seen["ANTHROPIC_MODEL"] == "k2"
+    assert "ANTHROPIC_AUTH_TOKEN" not in seen
+    assert seen["ANTHROPIC_MODEL"] == "opus"
 
 
 def test_an_own_session_not_told_its_login_does_not_start(tmp_path):
     """With two logins on the machine, the launch does not pick one itself."""
     seen = _launch_on_machine(tmp_path, login_id=None)
     assert seen["_started"] is False
+
+
+def test_a_legacy_machine_model_service_is_not_used_or_deleted(tmp_path):
+    seen = _launch_on_machine(
+        tmp_path,
+        service={
+            "base_url": "https://legacy.example.test",
+            "token": "legacy-key",
+            "model": "legacy-model",
+        },
+    )
+    assert "ANTHROPIC_AUTH_TOKEN" not in seen
+    assert "ANTHROPIC_BASE_URL" not in seen
+    assert seen["ANTHROPIC_MODEL"] == "opus"
+    legacy = tmp_path / "home/.cheese/logins/claude-login/model-service.json"
+    assert json.loads(legacy.read_text())["token"] == "legacy-key"
 
 
 def test_an_own_session_on_a_mac_finds_its_owners_login_keychain(tmp_path):
@@ -251,37 +252,7 @@ def test_an_own_session_on_a_mac_finds_its_owners_login_keychain(tmp_path):
     assert seen["HOME"] != seen["_home"]
 
 
-def test_an_own_session_calls_the_model_service_its_owner_set(tmp_path):
-    """The owner pointed their Claude Code at another service: the session
-    calls it with the owner's key, and every model it asks for is the one the
-    owner named, since such a service serves none of Claude's."""
-    seen = _launch_on_machine(
-        tmp_path,
-        service={
-            "base_url": "https://open.bigmodel.cn/api/anthropic",
-            "token": "it's-the-owners key",
-            "model": "glm-4.6",
-        },
-    )
-    assert seen["ANTHROPIC_BASE_URL"] == "https://open.bigmodel.cn/api/anthropic"
-    assert seen["ANTHROPIC_AUTH_TOKEN"] == "it's-the-owners key"
-    for name in (
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "CLAUDE_CODE_SUBAGENT_MODEL",
-    ):
-        assert seen[name] == "glm-4.6", name
-
-
-def test_an_unreadable_model_service_leaves_the_session_on_the_login(tmp_path):
-    seen = _launch_on_machine(tmp_path, service={"model": "glm-4.6"})
-    assert "ANTHROPIC_BASE_URL" not in seen
-    assert seen["ANTHROPIC_MODEL"] == "opus"
-
-
-def test_team_selected_model_reaches_the_process_using_a_device_model_service(tmp_path):
+def test_team_selected_model_reaches_the_process_using_a_subscription(tmp_path):
     seen = _launch_on_machine(
         tmp_path,
         service={
@@ -292,7 +263,7 @@ def test_team_selected_model_reaches_the_process_using_a_device_model_service(tm
         chosen_model="selected-model",
     )
     assert seen["ANTHROPIC_MODEL"] == "selected-model"
-    assert seen["CLAUDE_CODE_SUBAGENT_MODEL"] == "selected-model"
+    assert "ANTHROPIC_AUTH_TOKEN" not in seen
     assert "OWN_MODEL" not in seen
 
 

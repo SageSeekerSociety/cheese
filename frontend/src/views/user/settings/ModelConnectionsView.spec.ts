@@ -39,8 +39,6 @@ function connection(deviceId: string, extra: Partial<ModelConnection> = {}): Mod
     logged_in: true,
     auth_method: 'claude.ai',
     subscription_type: 'max',
-    model: null,
-    service_host: null,
     name: null,
     checked_at: new Date().toISOString(),
     last_used_at: null,

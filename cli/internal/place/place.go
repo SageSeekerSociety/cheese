@@ -66,12 +66,6 @@ const ClaudeLogins = "logins/claude-logins"
 // (`FIRST_LOGIN`), held to this one by the same test.
 const FirstClaudeLogin = "default"
 
-// ModelService is the file in a login's directory that holds another model
-// service the owner set instead of the login (`cheesehost claude login
-// --base-url`). The backend's launch and probe name it in `place.py`
-// (`MODEL_SERVICE_FILE`), held to this one by the same test.
-const ModelService = "model-service.json"
-
 // ClaudeKeychain holds a migrated login's security command. It retains the
 // Keychain item shared with sessions started before the files moved.
 const ClaudeKeychain = "keychain"

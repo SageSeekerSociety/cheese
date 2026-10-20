@@ -108,10 +108,6 @@
                   </dd>
                   <dt>{{ t('account.modelConnections.models') }}</dt>
                   <dd>{{ c.allowed_models.join('、') }}</dd>
-                  <template v-if="c.service_host">
-                    <dt>{{ t('account.thisDevice.modelServiceUrl') }}</dt>
-                    <dd>{{ c.service_host }}</dd>
-                  </template>
                   <dt>{{ t('account.modelConnections.checkedAt') }}</dt>
                   <dd>{{ relTime(c.checked_at) }}</dd>
                   <dt>{{ t('account.modelConnections.lastUsed') }}</dt>
@@ -416,7 +412,6 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
-import { connectionKind } from '@/types/modelConnections'
 
 defineOptions({ name: 'ModelsView' })
 
@@ -538,16 +533,8 @@ function saveRename() {
 
 // 订阅档位按厂商的写法首字母大写（max → Max）。
 function kindLabel(c: ModelConnection): string {
-  switch (connectionKind(c)) {
-    case 'modelService':
-      return t('account.modelConnections.modelService', { model: c.model ?? '' })
-    case 'subscription': {
-      const plan = c.subscription_type ?? ''
-      return t('account.modelConnections.subscription', { plan: plan.charAt(0).toUpperCase() + plan.slice(1) })
-    }
-    default:
-      return t('account.modelConnections.apiKey')
-  }
+  const plan = c.subscription_type ?? ''
+  return t('account.modelConnections.subscription', { plan: plan.charAt(0).toUpperCase() + plan.slice(1) })
 }
 
 const removing = ref<ModelConnection | null>(null)

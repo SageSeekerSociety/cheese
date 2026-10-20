@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 
@@ -56,11 +55,6 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			}
 			id, loginDir, made, err := loginDirectory(loginID)
 			if err != nil {
-				return err
-			}
-			// The latest choice wins: logging in with an account stops using a
-			// model service set before.
-			if err := claudecode.ForgetModelService(loginDir); err != nil {
 				return err
 			}
 			cmd := claudecode.Command(ctx, binary, loginDir, "auth", "login", "--claudeai")
@@ -134,8 +128,8 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 	logout := withConfig(&cobra.Command{
 		Use:   "logout [login-id]",
 		Short: "Log out one of the platform's Claude Code logins on this machine",
-		Long: "Logs out one login of the Claude Code the platform runs and forgets its\n" +
-			"model service; `cheesehost claude status` lists them, and a machine with\n" +
+		Long: "Logs out one login of the Claude Code the platform runs;\n" +
+			"`cheesehost claude status` lists them, and a machine with\n" +
 			"only one needs no id. The other logins and your own Claude Code (~/.claude)\n" +
 			"stay logged in.",
 		Args: cobra.MaximumNArgs(1),
@@ -146,9 +140,6 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			}
 			loginDir, err := claudecode.LoginDir(id)
 			if err != nil {
-				return err
-			}
-			if err := claudecode.ForgetModelService(loginDir); err != nil {
 				return err
 			}
 			base, err := serverBase(*cfgPath)
@@ -234,18 +225,6 @@ func loginDirectory(id string) (string, string, bool, error) {
 // that is not logged in is named in the hint: logging that one in again brings
 // back the agents added with it, where a plain `claude login` adds another.
 func printClaudeStatus(ctx context.Context, binary, id, loginDir string) error {
-	service, err := claudecode.LoadModelService(loginDir)
-	if err != nil {
-		return err
-	}
-	if service != nil {
-		host := service.BaseURL
-		if u, err := url.Parse(service.BaseURL); err == nil && u.Host != "" {
-			host = u.Host
-		}
-		ui.OK("Claude Code uses the model service at %s (%s).", host, service.Model)
-		return nil
-	}
 	status, err := claudecode.ReadStatus(ctx, binary, loginDir)
 	if err != nil {
 		return err

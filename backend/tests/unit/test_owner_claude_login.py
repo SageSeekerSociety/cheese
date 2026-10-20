@@ -27,7 +27,6 @@ from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VER
 from app.domain.agent.place import (
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
-    MODEL_SERVICE_FILE,
     footprint_root,
 )
 from app.domain.device.login_kind import FIRST_LOGIN
@@ -124,48 +123,22 @@ def test_an_inherited_token_or_the_owners_own_login_is_not_the_platforms(tmp_pat
     assert not login.logged_in
 
 
-def _with_model_service(env: dict) -> dict:
-    login = Path(env["FIRST_LOGIN_DIR"])
-    login.mkdir(parents=True, exist_ok=True)
-    (login / MODEL_SERVICE_FILE).write_text(
-        json.dumps(
-            {
-                "base_url": "https://open.bigmodel.cn/api/anthropic",
-                "token": "the-owners-key",
-                "model": "glm-4.6",
-            }
-        )
-    )
-    return env
-
-
-def test_a_machine_set_to_another_model_service_can_run_its_owners_agent(tmp_path):
-    """No Claude account is logged in, but the owner pointed it at a model
-    service: sessions can start, and the devices page can name the model."""
-    login = _ask(
-        _with_model_service(_machine(tmp_path, installed=True, logged_in=False))
-    )
-    assert login.logged_in
-    assert login.model == "glm-4.6"
-
-
-def test_a_model_services_key_never_leaves_the_machine(tmp_path):
-    result = subprocess.run(
-        [sys.executable, "-"],
-        input=owner_login.program(),
-        env=_with_model_service(_machine(tmp_path, installed=True, logged_in=False)),
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=True,
-    )
-    assert "the-owners-key" not in result.stdout + result.stderr
-
-
 def test_a_machine_without_the_build_is_not_logged_in(tmp_path):
     login = _ask(_machine(tmp_path, installed=False, logged_in=True))
     assert not login.installed
     assert not login.logged_in
+
+
+def test_a_console_login_is_not_a_subscription_resource():
+    answer = json.dumps(
+        {
+            "installed": True,
+            "logins": [
+                {"id": "default", "status": {"loggedIn": True, "authMethod": "console"}}
+            ],
+        }
+    )
+    assert not owner_login.read_answer(answer)[0].logged_in
 
 
 def test_each_login_on_one_machine_answers_for_itself(tmp_path):
@@ -226,7 +199,7 @@ def test_probe_uses_the_moved_logins_keychain_command(tmp_path):
     login = Path(env["FIRST_LOGIN_DIR"])
     command = login / "keychain/security"
     command.parent.mkdir()
-    command.write_text("#!/bin/sh\necho '{\"loggedIn\":true}'\n")
+    command.write_text("#!/bin/sh\necho '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'\n")
     command.chmod(0o700)
     other = tmp_path / "other-bin"
     other.mkdir()

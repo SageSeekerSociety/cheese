@@ -28,6 +28,8 @@ def _log_in_claude_code(client, handle: str, machine: str = "", **login) -> str:
     """``handle`` has logged in their own Claude Code on a machine of theirs:
     one model connection, named by the machine."""
 
+    login.setdefault("auth_method", "claude.ai")
+
     async def run():
         async with client.test_factory() as db:
             user = await db.scalar(select(User).where(User.username == handle))
@@ -412,15 +414,15 @@ def test_a_person_brings_one_per_connection_each_named_after_it(client):
         auth_method="claude.ai",
         subscription_type="max",
     )
-    kimi = _log_in_claude_code(
+    pro_plan = _log_in_claude_code(
         client,
         "alice",
         "alice-desk",
-        auth_method="model_service",
-        model="kimi-k2",
+        auth_method="claude.ai",
+        subscription_type="pro",
     )
 
-    for connection in (max_plan, kimi):
+    for connection in (max_plan, pro_plan):
         added = _add(client, project_id, "alice", connection)
         assert added.status_code == 200, added.text
 
@@ -429,7 +431,7 @@ def test_a_person_brings_one_per_connection_each_named_after_it(client):
         for row in _members(client, project_id, "bob")
         if row.get("owner_handle") == "alice"
     )
-    assert names == ["alice的 Claude Code（Max）", "alice的 Claude Code（kimi-k2）"]
+    assert names == ["alice的 Claude Code（Max）", "alice的 Claude Code（Pro）"]
 
 
 def test_another_member_can_remove_the_team_teammate(client):

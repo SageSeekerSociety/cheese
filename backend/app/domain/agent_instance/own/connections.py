@@ -11,7 +11,6 @@ from app.domain.agent_instance.models import AccountConnection, PersonalModelRes
 from app.domain.device.login_kind import (
     FIRST_LOGIN,
     ConnectionKind,
-    connection_kind,
 )
 from app.domain.device.models import (
     DeviceClaudeLoginRow,
@@ -62,16 +61,13 @@ def _login(
     row: DeviceClaudeLoginRow,
     storage_team_id: int | None = None,
 ) -> Login:
-    kind = connection_kind(row.auth_method, row.subscription_type)
-    service = kind is ConnectionKind.model_service
     return Login(
         id=row.id,
         device_id=device_id,
         device_name=name,
-        kind=kind,
-        plan=row.subscription_type if kind is ConnectionKind.subscription else None,
-        model=row.model if service else None,
-        service_host=row.service_host if service else None,
+        kind=ConnectionKind.subscription,
+        plan=row.subscription_type,
+        model=None,
         name=row.name,
         allowed_models=tuple(row.allowed_models),
         owner_user_id=row.owner_user_id,
@@ -96,6 +92,7 @@ def _usable():
     """A login is usable while logged in and not revoked."""
     return (
         DeviceClaudeLoginRow.logged_in.is_(True),
+        DeviceClaudeLoginRow.auth_method == "claude.ai",
         DeviceClaudeLoginRow.revoked_at.is_(None),
     )
 

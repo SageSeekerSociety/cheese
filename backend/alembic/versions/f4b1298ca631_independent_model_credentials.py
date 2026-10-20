@@ -217,6 +217,12 @@ def upgrade():
                 ON CONFLICT (team_id, {column}) DO NOTHING
             """)
 
+        # Legacy service secrets stay on their computers. Owners re-add keys
+        # through Models; dev had zero legacy rows at the read-only preflight.
+        op.execute(
+            "DELETE FROM claude_logins WHERE auth_method IN ('console', 'model_service')"
+        )
+
 
 def downgrade():
     raise RuntimeError("Member credential references must be retained")

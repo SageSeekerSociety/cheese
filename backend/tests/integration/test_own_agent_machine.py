@@ -154,6 +154,7 @@ async def _own_session(client, *, environment_on):
                     device_id=machine,
                     installed=True,
                     logged_in=True,
+                    auth_method="claude.ai",
                     checked_at=datetime.now(UTC),
                     allowed_models=["sonnet", "opus"],
                 )
@@ -289,8 +290,8 @@ async def _bobs_desk(client, own) -> str:
                 team_id=(await db.get(Project, own.project_id)).team_id,
                 installed=True,
                 logged_in=True,
-                auth_method="model_service",
-                model="kimi-k2",
+                auth_method="claude.ai",
+                subscription_type="pro",
                 checked_at=datetime.now(UTC),
                 allowed_models=["sonnet", "opus"],
             )
