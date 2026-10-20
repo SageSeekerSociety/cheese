@@ -119,6 +119,8 @@ def kept_on_full_disk(owner, home, payload, anchors, error):
     marker = execution_root(owner) / SANDBOXES / home.parent.name / home.name
     try:
         previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
+        if previous is None:
+            raise error
         named = marker.read_text() if marker.exists() else previous["release"]
     except (OSError, ValueError, TypeError, KeyError):
         raise error from None
