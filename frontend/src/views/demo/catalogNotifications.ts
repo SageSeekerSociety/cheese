@@ -171,7 +171,7 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '题目上等你的',
-        note: '你出的题目上有领取要批准、提交要批改：按空间分组，一道题一行，点开去领取名单或提交页。',
+        note: '你出的题目上有领取要批准、提交要批改：按空间分组，一道题一行，点开去「领取者」页签。',
         props: {
           items: [
             {

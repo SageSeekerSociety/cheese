@@ -334,10 +334,9 @@ function taskQueueAsk(item: WaitingTask): string {
   return parts.join(t('home.inbox.task.and'))
 }
 
-/** 有领取要批准就去领取名单，只剩提交要批改就去提交页。 */
+/** 批准领取和批改提交都在「领取者」页签：「我的提交」只有自己的那一份。 */
 function taskQueueTo(item: WaitingTask) {
-  const params = { spaceId: String(item.spaceId), taskId: String(item.taskId) }
-  return item.claims ? { name: 'TasksParticipants', params } : { name: 'TasksSubmissions', params }
+  return { name: 'TasksParticipants', params: { spaceId: String(item.spaceId), taskId: String(item.taskId) } }
 }
 
 interface Group {
