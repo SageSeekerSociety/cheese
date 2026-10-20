@@ -84,20 +84,30 @@ STOP_WORK_AFTER = CLOSE_AT_THE_LATEST + timedelta(hours=2)
 QUEUED_FOR = timedelta(hours=2)
 
 # The facts `unfinished` reads, as bare tables: the sessions' declared state
-# belongs to the agent domain and the instructions to the delivery domain, and
-# both of those import this module.
+# belongs to the agent domain, the instructions and the inputs to the delivery
+# domain, and both of those import this module.
 _sessions = table(
     "session_states",
     column("conversation_id", Uuid),
     column("agent_handle"),
     column("worker_status"),
+    column("changed_at"),
 )
 _instructions = table(
     "deliveries",
     column("conversation_id", Uuid),
+    column("recipient_handle"),
     column("payload", JSONB),
     column("state"),
     column("recorded_at"),
+)
+_inputs = table(
+    "native_inputs",
+    column("conversation_id", Uuid),
+    column("recipient_handle"),
+    column("echoed_at"),
+    column("block_ids", JSONB),
+    column("held_block_ids", JSONB),
 )
 
 #: What a session's runner declares while its session is at work
@@ -151,13 +161,15 @@ async def unfinished_work(
     write-up, each item with the seat whose session is doing it.
 
     Work: a seat whose session its runner declares at work in the task
-    (`session_states`). Without ``since``, that is work besides the write-up
-    unless the session has read the write-up instruction given since the task
-    began closing: before it has, it is still doing something else. With
-    ``since``, it counts only when the session has read a message for ``by``
+    (`session_states`), each seat on its own. Without ``since``, that is work
+    besides the write-up unless that seat is the one that read the write-up
+    instruction given since the task began closing: before it has, and for
+    every other seat, it is doing something else. With ``since``, it counts
+    only when that session, while at work this time, read a message for ``by``
     sent after ``since`` — a request a person, or the teammate itself, made
     after the delivery went up, which the delivery does not contain. A message
-    the platform wrote is not such a request.
+    the platform wrote is not such a request, nor is one the session read and
+    answered before it last stopped.
 
     Asked for: a message for ``by`` (any agent's when None) the pending-message
     scan would still start (`block.queries.queued_messages`), and one that was
@@ -195,59 +207,95 @@ async def _at_work(
     seat: str | None,
 ) -> list[Unfinished]:
     """The seats whose session is at work in ``task_id`` on something besides
-    its write-up (`unfinished_work`)."""
-    query = select(_sessions.c.agent_handle).where(
+    its write-up (`unfinished_work`), each judged on its own: one seat having
+    read the write-up says nothing about what another is doing."""
+    query = select(_sessions.c.agent_handle, _sessions.c.changed_at).where(
         _sessions.c.conversation_id == task_id,
         _sessions.c.worker_status == _RUNNING,
     )
     if seat is not None:
         query = query.where(_sessions.c.agent_handle == seat)
-    seats = list(await session.scalars(query.distinct()))
-    if not seats:
+    running = (await session.execute(query)).all()
+    if not running:
         return []
     if since is None:
-        if await _write_up_read(session, task_id):
-            return []
+        wrote_up = await _write_up_readers(session, task_id)
         prompt = await _last_read(session, task_id)
-        return [Unfinished(prompt, seat) for seat in seats]
+        return [
+            Unfinished(prompt, handle)
+            for handle, _running_since in running
+            if handle not in wrote_up
+        ]
+    left = []
+    for handle, running_since in running:
+        asked = await _asked_since(
+            session, task_id, handle, by, since=since, read_since=running_since
+        )
+        if asked is not None:
+            left.append(Unfinished(asked, handle))
+    return left
+
+
+async def _asked_since(
+    session: AsyncSession,
+    task_id: uuid.UUID,
+    seat: str,
+    by: str | None,
+    *,
+    since: datetime,
+    read_since: datetime,
+) -> str | None:
+    """The newest message for ``by`` that a person (or the teammate itself)
+    sent after ``since`` and that ``seat``'s session read while it has been at
+    work this time (since its runner last declared it running): what it is
+    working on that the delivery does not contain. None when there is none —
+    a message it read and answered before it last stopped is done with."""
+    batches = (
+        await session.execute(
+            select(_inputs.c.block_ids, _inputs.c.held_block_ids).where(
+                _inputs.c.conversation_id == task_id,
+                _inputs.c.recipient_handle == seat,
+                _inputs.c.echoed_at >= read_since,
+            )
+        )
+    ).all()
+    ids = {uuid.UUID(block) for batch in batches for part in batch for block in part}
+    if not ids:
+        return None
     asked = [
         message
         for message in await session.scalars(
             select(Block)
             .where(
-                Block.conversation_id == task_id,
+                Block.id.in_(ids),
                 Block.kind == BlockKind.message,
                 Block.created_at > since,
                 participant_blocks(),
-                Block.meta[CONSUMED_TURN_META_KEY].as_string().is_not(None),
             )
             .order_by(Block.created_at)
         )
         if _for(message, by)
     ]
-    if not asked:
-        return []
-    return [Unfinished(asked[-1].content, seat) for seat in seats]
+    return asked[-1].content if asked else None
 
 
-async def _write_up_read(session: AsyncSession, task_id: uuid.UUID) -> bool:
-    """Whether a session has read the write-up instruction given since the task
-    began closing: the session's echo of it settled its delivery
+async def _write_up_readers(session: AsyncSession, task_id: uuid.UUID) -> set[str]:
+    """The seats that read the write-up instruction given since the task began
+    closing: each one's echo settled its delivery
     (`delivery.receipts.record_receipt`)."""
     task = await session.get(Task, task_id)
     if task is None or task.closing_since is None:
-        return False
-    read = await session.scalar(
-        select(_instructions.c.state)
-        .where(
-            _instructions.c.conversation_id == task_id,
-            _instructions.c.payload[CLOSES_TASK].as_boolean().is_(True),
-            _instructions.c.recorded_at >= task.closing_since,
-            _instructions.c.state == "received",
+        return set()
+    return set(
+        await session.scalars(
+            select(_instructions.c.recipient_handle).where(
+                _instructions.c.conversation_id == task_id,
+                _instructions.c.payload[CLOSES_TASK].as_boolean().is_(True),
+                _instructions.c.recorded_at >= task.closing_since,
+                _instructions.c.state == "received",
+            )
         )
-        .limit(1)
     )
-    return read is not None
 
 
 async def _last_read(session: AsyncSession, task_id: uuid.UUID) -> str:

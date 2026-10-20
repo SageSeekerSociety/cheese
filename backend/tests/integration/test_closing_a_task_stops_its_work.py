@@ -20,13 +20,13 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
-from app.domain.agent.models import AgentTurn
+from app.domain.agent.models import AgentTurn, SessionState
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.delivery.agent import record_task_instruction
 from app.domain.delivery.models import Delivery
@@ -244,11 +244,19 @@ def _is_the_write_up(client, task_id: uuid.UUID) -> None:
 
     async def mark() -> None:
         async with client.test_request_factory() as session:
+            # Addressed to the seat at work there, as its runner registered it.
+            seat = await session.scalar(
+                select(SessionState.agent_handle).where(
+                    SessionState.conversation_id == task_id,
+                    SessionState.worker_status == "running",
+                )
+            )
+            assert seat is not None
             now = datetime.now(UTC)
             session.add(
                 Delivery(
                     event_id=uuid.uuid4(),
-                    recipient_handle="cheese",
+                    recipient_handle=seat,
                     conversation_id=task_id,
                     state="received",
                     attempt_id=uuid.uuid4(),
