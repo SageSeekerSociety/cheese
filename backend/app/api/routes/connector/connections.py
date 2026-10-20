@@ -11,7 +11,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel, RootModel
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -45,7 +45,6 @@ from app.domain.user.services import faces_by_handle, usernames_by_ids
 from app.domain.agent_instance.own import rename_for_connection
 from app.domain.device import sandbox
 from app.domain.device.repository import Device
-from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
 from app.domain.machine.session_work import screen_agent_name
 from app.domain.team.repositories import TeamRepository
@@ -53,10 +52,6 @@ from app.domain.usage.services import UsageService
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
-
-
-class LoginRefreshOut(RootModel[None]):
-    """Refreshing credentials returns no device-level model summary."""
 
 
 async def _require_user(resolver: ActorResolverDep) -> int:
@@ -157,18 +152,6 @@ async def accessible_devices(
     for team in await TeamRepository(db).list_teams_of_user(user_id):
         devices.extend(await service.list_devices_for_team(team.id))
     return {"devices": [await _device_view(db, d, []) for d in devices]}
-
-
-async def _my_self_hosted(
-    device_id: str, resolver: ActorResolverDep, service: DeviceService
-) -> None:
-    """Only administrators of the device's current team may manage it."""
-    user_id = await _require_user(resolver)
-    device = await service.get_device(device_id)
-    if device is None or device.supply != Supply.self_hosted:
-        raise NotFoundError(say("deviceNotFound"))
-    if not await service.may_manage(device, user_id):
-        raise ForbiddenError(say("deviceTeamAdminOnly"))
 
 
 async def _team_access(db, resolver, team_id: int, *, manage: bool = False) -> int:
@@ -390,16 +373,6 @@ async def remove_account_connection(
     await db.delete(row)
     await db.commit()
     return removed
-
-
-@router.post("/my/devices/{device_id}/claude-code", dependencies=[ROUTE_DECIDES])
-async def check_my_claude_code(
-    device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
-) -> LoginRefreshOut:
-    """Refresh device credentials for the team Models page without a device summary."""
-    await _my_self_hosted(device_id, resolver, service)
-    await _ask_again(db, device_id)
-    return LoginRefreshOut(None)
 
 
 async def _ask_again(db: DbSession, device_id: str) -> None:

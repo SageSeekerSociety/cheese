@@ -11,14 +11,12 @@ const mocks = vi.hoisted(() => ({
   devices: vi.fn(),
   login: vi.fn(),
   profiles: vi.fn(),
-  check: vi.fn(),
   remote: vi.fn(),
   personal: vi.fn(),
   native: true,
   toast: vi.fn(),
 }))
 vi.mock('@/api', () => ({ listTeamDevices: mocks.devices }))
-vi.mock('@/api/ownAgents', () => ({ checkClaudeCode: mocks.check }))
 vi.mock('@/api/modelConnections', () => ({
   listModelConnections: mocks.list,
   startTeamClaudeLogin: mocks.remote,

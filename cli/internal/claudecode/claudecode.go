@@ -2,11 +2,10 @@
 // keeps its own logins under its root's logins/ directory, apart from the
 // machine owner's ~/.claude and every other enrollment.
 //
-// The owner adds one with `cheesehost claude login`. Every session of the
-// owner's Claude Code on this machine keeps its own config directory and reads
-// the directory of the login it was added with as its credential store, so a
-// login here is the only one those sessions need and the owner's own Claude
-// Code never sees it.
+// The owner adds one with the subscription command from the team's Models page.
+// Every session of the owner's Claude Code on this machine keeps its own config
+// directory and uses its login's directory as the credential store. The owner's
+// own Claude Code never sees these logins.
 package claudecode
 
 import (
