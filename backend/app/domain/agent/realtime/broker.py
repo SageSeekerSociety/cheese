@@ -180,7 +180,6 @@ class InProcessBroker:
                     self._active.pop(channel, None)
                     self._buffer.pop(channel, None)
                     self._last_activity_at.pop(channel, None)
-                    self._last_alive_at.pop(channel, None)
                     self._busy_changed(channel)
 
         self._fan_out(channel, frame)
@@ -241,18 +240,22 @@ class InProcessBroker:
         return sum(len(ids) for ids in self._active.values())
 
     def note_alive(self, channel: str) -> None:
-        """这个通道上在跑的那一轮，它的会话刚刚应了一声。
+        """这个通道上的会话，它的 runner 刚刚应了一声。
 
         不是一帧：什么都不往外发、什么都不记进缓冲 —— 它记的是另一件事。
         `publish` 那个戳数的是「房间里落下了新东西」，而思考、一条跑了二十分钟的
         命令、等机器起来的那些分钟里一帧都没有；这期间会话自己一直是活的，读它的
         那一路每 ``READ_WAIT_S`` 就收到 runner 的一声应答（`session_host/host.py`）。
         把这一声记下来，判停（`TopicService.stall_signal`）才分得清「安静」和「停了」。
-
-        只在通道上真有在跑的轮次时记：没有人跑的时候应多少声都不算数。
+        记的是 runner 应没应，和这时候有没有哪一轮开着无关。
         """
-        if self._active.get(channel):
-            self._last_alive_at[channel] = time.monotonic()
+        self._last_alive_at[channel] = time.monotonic()
+
+    def alive_for_s(self, channel: str) -> float | None:
+        """多久以前这个通道上的会话的 runner 应过一声；这台进程没在读它就是
+        None。"""
+        alive_at = self._last_alive_at.get(channel)
+        return None if alive_at is None else time.monotonic() - alive_at
 
     def activity_snapshot(self, channel: str) -> dict | None:
         """Current attribution and activity time for one channel.

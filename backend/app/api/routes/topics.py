@@ -971,6 +971,7 @@ async def topic_status(
     topic_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+    broker: Annotated[InProcessBroker, Depends(get_broker)],
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
@@ -980,10 +981,11 @@ async def topic_status(
     status`) or a debugging human doesn't have to poll several endpoints and
     guess. Read path, open like the rest of the MVP read surface.
 
-    ``stall`` answers the question nothing here could answer before: did a turn
-    die on this topic? ``turn`` cannot — it is a ring buffer of what turns did,
-    so it is empty after a restart and says `running` about a turn killed with
-    the process. See ``TopicService.stall_signal``."""
+    ``stall`` answers the question nothing here could answer before: is a
+    session here stopped in the middle of a call? ``turn`` cannot — it is a
+    ring buffer of what turns did, so it is empty after a restart and says
+    `running` about a turn killed with the process. See
+    ``TopicService.stall_signal``."""
     topics = TopicService(db)
     place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
@@ -994,8 +996,7 @@ async def topic_status(
     credits = await UsageService(db).project_credits(place.project_id)
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
-        place.room_id,
-        live_turn=runner.live_work_for_topic(topic_id),
+        place.room_id, alive_for_s=broker.alive_for_s(str(place.room_id))
     )
     return ok(
         {
