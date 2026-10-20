@@ -106,34 +106,19 @@ class ReadError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def _load_log_cleaner():
-    """The CI log line cleaner (timestamps, ANSI, secrets) from the backend.
-
-    It lives behind the backend package, so run with its virtualenv. `python3`
-    without it re-execs into `backend/.venv/bin/python` when that exists.
-    """
-    backend = REPO_ROOT / "backend"
-    if str(backend) not in sys.path:
-        sys.path.insert(0, str(backend))
-    try:
-        from app.domain.review.github_pr.failure_logs import (  # noqa: PLC0415
-            _clean_log_line,
-        )
-    except ModuleNotFoundError:
-        venv = backend / ".venv" / "bin" / "python"
-        # Compare prefixes, not resolved paths: a virtualenv's interpreter is
-        # usually a symlink to the system one, and resolving it would call the
-        # venv identical to the interpreter that is missing its packages.
-        if venv.exists() and Path(sys.prefix).resolve() != (backend / ".venv").resolve():
-            os.execv(str(venv), [str(venv), str(Path(__file__).resolve()), *sys.argv[1:]])
-        raise SystemExit(
-            "main-red-owner reads CI logs with the backend's cleaner; run it with "
-            "backend/.venv/bin/python (backend dependencies are not installed here)"
-        )
-    return _clean_log_line
+#: How a CI log line is cleaned before it is read: the runner's timestamp and
+#: ANSI colours go, a token-shaped string is masked, and the line is capped.
+#: The same rules as `backend/app/domain/review/github_pr/failure_logs.py`.
+_LOG_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z ")
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_TOKEN_SHAPE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,})")
+_LOG_LINE_MAX_CHARS = 200
 
 
-clean_log_line = _load_log_cleaner()
+def clean_log_line(raw: str) -> str:
+    line = _LOG_TIMESTAMP.sub("", raw.rstrip("\r\n"))
+    line = _ANSI.sub("", line)
+    return _TOKEN_SHAPE.sub("<已脱敏>", line)[:_LOG_LINE_MAX_CHARS]
 
 
 # --- the attribution rule -----------------------------------------------------
@@ -1463,6 +1448,79 @@ def _collect_from_fixture(fixture: dict) -> Report:
         READ = was
 
 
+#: The log parser's cases: one per tool whose failure names a file.
+_PARSER_CASES = (
+    (
+        "ruff-full",
+        "2026-10-19T02:53:15.7Z F401 [*] `uuid` imported but unused\n"
+        "2026-10-19T02:53:15.8Z   --> tests/integration/test_app_sign_in.py:15:8\n",
+        ["tests/integration/test_app_sign_in.py"],
+    ),
+    (
+        "ruff-concise",
+        "2026-10-19T02:53:25.1Z tests/integration/test_app_sign_in.py:15:24: "
+        "F401 [*] `sqlalchemy.select` imported but unused\n",
+        ["tests/integration/test_app_sign_in.py"],
+    ),
+    (
+        "pyright",
+        "2026-10-19T02:53:25.1Z /w/backend/app/main.py\n"
+        "2026-10-19T02:53:25.2Z   /w/backend/app/main.py:15:24"
+        ' - \x1b[31merror\x1b[0m: "missing" is not defined (reportUndefinedVariable)\n',
+        ["/w/backend/app/main.py"],
+    ),
+    (
+        "vue-tsc",
+        "2026-10-19T02:53:25.1Z src/views/SignIn.vue(28,12): error TS2339: "
+        "Property 'missing' does not exist on type '{}'.\n",
+        ["src/views/SignIn.vue"],
+    ),
+    (
+        "go-vet",
+        "2026-10-19T02:53:25.1Z # command-line-arguments\n"
+        "2026-10-19T02:53:25.2Z ./go-diagnostic.go:5:28: fmt.Printf format %d "
+        'has arg "not a number" of wrong type string\n',
+        ["./go-diagnostic.go"],
+    ),
+    (
+        "gofmt",
+        "2026-10-19T02:53:25.1Z   internal/device/device.go\n"
+        "2026-10-19T02:53:25.2Z ##[error]gofmt -w the files above\n",
+        ["internal/device/device.go"],
+    ),
+    (
+        "eslint-stylish",
+        "2026-10-19T02:53:25.1Z /w/frontend/src/SignIn.vue\n"
+        "2026-10-19T02:53:25.2Z   10:5  error  'unused' is assigned a value but never used"
+        "  @typescript-eslint/no-unused-vars\n"
+        "2026-10-19T02:53:25.4Z \n"
+        "2026-10-19T02:53:25.5Z /w/frontend/src/Warning.vue\n"
+        "2026-10-19T02:53:25.6Z   12:3  warning  Missing prop  vue/require-default-prop\n",
+        ["/w/frontend/src/SignIn.vue"],
+    ),
+    (
+        "i18n-grouped",
+        "2026-10-19T02:53:25.1Z src/views/SignIn.vue\n"
+        "2026-10-19T02:53:25.2Z   2: [Chinese outside the catalog] <span>确定</span>\n"
+        "2026-10-19T02:53:25.3Z \n",
+        ["src/views/SignIn.vue"],
+    ),
+    (
+        "tagged",
+        "2026-10-19T02:53:25.1Z FAIL: new debt cannot be frozen.\n"
+        "2026-10-19T02:53:25.2Z     NEW: src/views/SignIn.vue\n"
+        "2026-10-19T02:53:25.3Z     BASELINE GREW: src/views/SignIn.vue -> src/views/Form.vue\n",
+        ["src/views/Form.vue", "src/views/SignIn.vue"],
+    ),
+    (
+        "warnings-and-commands",
+        "2026-10-19T02:53:25.1Z   /repo/backend/app/main.py:15:24 - warning: unused\n"
+        "2026-10-19T02:53:25.2Z Run ruff check backend/app/main.py\n",
+        [],
+    ),
+)
+
+
 def self_test() -> int:
     failures: list[str] = []
     cases = 0
@@ -1533,6 +1591,55 @@ def self_test() -> int:
         failures.append(f"还在跑：建议是 {report_running.action!r}")
     if "没有要归的责" in report_running.paragraph:
         failures.append("还在跑：段落说成了没有要归的责")
+
+    # The log parser, case by case: what each tool's failure names.
+    for name, log, expected in _PARSER_CASES:
+        cases += 1
+        found = sorted(set(failed_paths(log)))
+        if found != expected:
+            failures.append(f"解析 {name}：得到 {found}，应为 {expected}")
+        if failed_paths(log, tests_only=True):
+            failures.append(f"解析 {name}：静态诊断被当成了测试失败")
+
+    # Attribution: a batch not read whole names nobody, however plain the match.
+    cases += 1
+    partial = BatchCommits(
+        total=30,
+        changes=(CommitChange("b", "feat: b", ("backend/a.py",)),),
+        complete=False,
+    )
+    if blame_of(("backend/tests/test_a.py",), partial) is not None:
+        failures.append("没读全的一批：仍然点了名")
+    cases += 1
+    whole = BatchCommits(
+        total=2,
+        changes=(
+            CommitChange("b", "feat: b", ("backend/a.py",)),
+            CommitChange("c", "feat: c", ("backend/c.py",)),
+        ),
+        complete=True,
+    )
+    if blame_of(("backend/tests/test_a.py",), whole) != "b":
+        failures.append("读全的一批：没点出唯一改了它的提交")
+    cases += 1
+    if not names_path("src/views/SignIn.vue", ("frontend/src/views/SignIn.vue",)):
+        failures.append("前端诊断：仓库相对路径对不上")
+    if not names_path("internal/device/device.go", ("cli/internal/device/device.go",)):
+        failures.append("CLI 诊断：仓库相对路径对不上")
+
+    # Every red conclusion counts, not only `failure`; a cancelled job does not.
+    cases += 1
+    red = _red_leaf_jobs(
+        tuple(
+            Job(i, f"job {conclusion}", conclusion, "")
+            for i, conclusion in enumerate(
+                ("failure", "timed_out", "startup_failure", "cancelled", "success"),
+                start=1,
+            )
+        )
+    )
+    if sorted(job.conclusion for job in red) != ["failure", "startup_failure", "timed_out"]:
+        failures.append(f"红的 job：得到 {[job.conclusion for job in red]}")
 
     # Attribution and its wording must agree: whenever `_blame` names a commit,
     # the stated reason has to say so, and the other way round.
