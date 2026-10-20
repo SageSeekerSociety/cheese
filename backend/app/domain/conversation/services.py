@@ -35,7 +35,7 @@ _inside = union_all(
 ).subquery("inside")
 
 #: 一间房的支线，房间以**一个数组参数**进来。一次频道详情要问三趟同一批房间的支线
-#: （`topics_signals.working_in_threads`、`topics._awaiting_an_answer`、
+#: （`topics_signals.at_work`、`topics._awaiting_an_answer`、
 #: `waits.MemberWaits.for_rooms`），三趟问的是同一件事。语句的形状与调用无关，于是
 #: 建一次、处处复用；语句是只读的（执行不往它上面挂编译期状态），一份拿给并发用安全
 #: —— `block/repositories.py` 的 `_awaiting_statements` 是同一个写法。
