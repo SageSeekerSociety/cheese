@@ -232,7 +232,7 @@ esac
 #     The connector is Go and comes up fine without python3, so the machine
 #     reports healthy and every room on it dies at environment preparation.
 #   ip, iptables-restore — every session's executor on a Cloud machine runs
-#     in a bubblewrap sandbox (`remote_execution/bootstrap.sandbox_argv`) with a
+#     in a bubblewrap sandbox (`remote_execution/confinement.sandbox_argv`) with a
 #     network of its own that the machine connects and filters
 #     (`remote_execution/sandbox_host.py`), and a session that cannot have one
 #     does not start. Both are root's, in sbin. bwrap itself is not here:

@@ -128,7 +128,7 @@ def addresses(index):
 # Where a sandbox's name servers are listed: the machine's own resolv.conf,
 # or, when that names only a loopback stub such as systemd-resolved's, the
 # upstream list the stub reads. The sandbox reads the same file
-# (`bootstrap.sandbox_argv`), held to this by test_footprint_root.py.
+# (`confinement.sandbox_argv`), held to this by test_footprint_root.py.
 RESOLV_CONFS = ("/etc/resolv.conf", "/run/systemd/resolve/resolv.conf")
 
 

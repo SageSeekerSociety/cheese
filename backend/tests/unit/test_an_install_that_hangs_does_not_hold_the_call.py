@@ -522,6 +522,27 @@ async def test_the_installed_executor_is_asked_to_answer_inside_the_same_budget(
     assert outcome["target"]["state"] == INFO["state"]
 
 
+async def test_an_executor_ready_on_a_full_disk_is_told_to_the_tool_call(monkeypatch):
+    """The executor came up, but its disk is full: what it could do without
+    was skipped. The tool call goes ahead, and its agent is told how much is
+    left, so it can make room before the next write fails."""
+
+    async def call(_target, method, _params, **kwargs):
+        return {}
+
+    monkeypatch.setattr(execution, "call", call)
+    full = {**INFO, "disk_full_mb": 3}
+
+    outcome = await _install_case(
+        monkeypatch,
+        host_id=uuid.uuid4(),
+        result={"exit": 0, "stdout": json.dumps(full), "stderr": ""},
+    )
+
+    assert outcome["target"]["state"] == INFO["state"]
+    assert "3 MB" in outcome["notice"]
+
+
 async def test_a_sandbox_whose_prepare_ran_out_of_space_keeps_its_host_and_is_told(
     monkeypatch,
 ):

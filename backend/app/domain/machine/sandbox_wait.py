@@ -19,6 +19,12 @@ EXECUTOR_SETUP_FAILED = "执行环境里的执行器没能装好：{reason}；�
 # error names a path and an errno, which tells a reader nothing to act on;
 # inodes run out with space still free, so both are named.
 DISK_FULL = "这个环境的磁盘满了，空间或文件数用完了，删掉不要的文件再试"
+# What a tool call is told when its executor came up, or stayed up, in an
+# environment whose disk is full: what it could not write is skipped
+# (`bootstrap.spared`), an upgrade waits (`bootstrap.kept_on_full_disk`).
+DISK_FULL_NOTICE = (
+    "这个环境的磁盘满了（还剩 {mb} MB），平台有些文件没写下；删掉不要的文件腾出空间。"
+)
 VM_PREPARING = "虚拟机沙箱正在准备，要几分钟；对话和平台工具仍可用。"
 VM_ERROR = "虚拟机沙箱出错：供应方报告错误。对话和平台工具仍可用。"
 # What a session is told, once, with the first tool call that succeeds in a

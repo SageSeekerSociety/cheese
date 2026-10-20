@@ -61,6 +61,13 @@ crosses neither the sandbox's mounts nor two projects; uv and pnpm clone from th
 instead (`UV_LINK_MODE=clone`, `npm_config_package_import_method=clone-or-copy`), which on
 XFS shares the store's blocks. A sandbox whose home is not on such a disk does not start.
 
+A sandbox that filled its own disk keeps its executor (`bootstrap.py`): a prepare that changes
+nothing writes nothing, what the executor can do without (skills, the preview token, the
+environment's config) is skipped and the tool call told how much is left, an upgrade whose
+release cannot be staged waits as it waits for a busy executor, and a command that fails there
+says `disk full: N MB free, M files left`. The session stays on its host and its room is told
+the disk is full; another host would give it an empty home and none of its work.
+
 ### The disk as a whole, and idle memory
 
 `backend/app/domain/machine/disk_guard.py`; the host side is `sandbox_home.py`'s `disk`. The
