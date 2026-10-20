@@ -320,6 +320,48 @@ def _candidates(target):
         yield target / f"index{suffix}"
 
 
+SPEC_SUFFIXES = (".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx",
+                 ".test.ts", ".test.tsx", ".test.js", ".test.jsx")
+
+
+def _direct_specs(root, roots):
+    """The specs that name a changed module themselves.
+
+    The quick tier used Vitest's ``related``, which follows the import graph
+    transitively: a change to a core module selected most of the suite
+    (measured 856 s on PR #4448, near the per-check timeout, and the report
+    came back empty). One layer is what a fast first judgment needs — the
+    specs that name the changed file directly, plus a changed spec itself.
+    Deeper consumers are left to full CI, and the off-disk specs still run
+    with them.
+    """
+    frontend = root / "frontend"
+    seeds = set()
+    for path in roots:
+        seeds.update(_candidates((root / "frontend" / path).resolve()))
+    selected = set()
+    for directory, dirnames, filenames in os.walk(frontend):
+        dirnames[:] = [d for d in dirnames if d != "node_modules"]
+        for name in filenames:
+            if not name.endswith(SPEC_SUFFIXES):
+                continue
+            spec = Path(directory) / name
+            rel = spec.relative_to(frontend).as_posix()
+            if rel in roots:
+                selected.add(rel)
+                continue
+            try:
+                text = spec.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for specifier in SPECIFIER.findall(text):
+                target = _resolves_to(specifier, spec, frontend)
+                if target and any(candidate in seeds for candidate in _candidates(target)):
+                    selected.add(rel)
+                    break
+    return sorted(selected)
+
+
 def _imports_a_deleted_path(root, deleted):
     """Whether a file that survived still imports one of the ``deleted`` paths.
 
@@ -446,17 +488,17 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
                          "evidence": {"kind": "vitest", "path": str(output), "mode": "full",
                                       "required_files": list(I18N_SPECS)}})
         else:
-            # A deletion, a locale/style edit or a prose change does not widen
-            # the graph: a changed src root still seeds the related run, and
-            # whatever cannot seed it runs nothing (frontend-unit is reported as
-            # an omission) instead of the whole suite. Filesystem scans are not
-            # edges in that graph, so the specs that judge a file by reading it
-            # (OFF_DISK_SPECS) and the i18n guards run explicitly alongside the
-            # related selection rather than being assumed into it.
+            # One layer, not the transitive graph: the specs that name a
+            # changed file themselves, plus a changed spec. Following imports
+            # all the way from a core module selected most of the suite
+            # (856 s on PR #4448); full CI owns the deeper consumers. A file a
+            # spec reads off disk has no import edge at all, so those specs
+            # (OFF_DISK_SPECS) and the i18n guards run explicitly beside it.
             off_disk = [p for p in OFF_DISK_SPECS if (root / "frontend" / p).is_file()]
             if roots:
+                specs = sorted(set(_direct_specs(root, roots)) | set(off_disk))
                 plan.append({"id": "frontend-unit", "cwd": root / "frontend",
-                             "command": ["pnpm", "exec", "vitest", "related", "--run", *roots, *off_disk, *flags,
+                             "command": ["pnpm", "exec", "vitest", "run", *specs, *flags,
                                          "--reporter=json", "--outputFile", str(output)],
                              "evidence": {"kind": "vitest", "path": str(output), "mode": "related",
                                           "required_files": off_disk,
