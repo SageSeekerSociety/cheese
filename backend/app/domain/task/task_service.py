@@ -11,13 +11,15 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.tag.models import Tag
-from app.domain.task.models import Task, TaskSubmissionSchemaEntry
+from app.domain.task.models import Task, TaskRubricItem, TaskSubmissionSchemaEntry
 from app.domain.task.repositories import (
     TaskAccessDomainRepository,
     TaskRepository,
+    TaskRubricRepository,
     TaskSubmissionSchemaRepository,
     TopicRepository,
 )
+from app.domain.task.rubric import RubricLine
 
 
 class TaskService:
@@ -209,6 +211,16 @@ class TaskService:
         await TaskSubmissionSchemaRepository(
             session=self._require_session()
         ).replace_schema(task_id, entries)
+
+    async def list_rubric(self, task_id: int) -> list[TaskRubricItem]:
+        return await TaskRubricRepository(
+            session=self._require_session()
+        ).list_by_task_id(task_id)
+
+    async def replace_rubric(self, task_id: int, lines: Sequence[RubricLine]) -> None:
+        await TaskRubricRepository(session=self._require_session()).replace(
+            task_id, lines
+        )
 
     async def replace_access_domains(
         self, *, task_id: int, domains: Sequence[str]
