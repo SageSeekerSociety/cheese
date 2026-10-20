@@ -135,6 +135,9 @@ def test_a_rule_saved_without_a_trigger_waits_for_one(client):
     assert routine["trigger"] == ""
     assert routine["trigger_text"]
 
+    asked = _deliveries(client, routine["agent_handle"])
+    assert len(asked) == 1 and routine["id"] in asked[0].content
+
     # 恢复它没有意义：没有触发方式就没有「下一次」。
     refused = client.post(f"/routines/{routine['id']}/resume", headers=PERSON)
     assert refused.status_code == 422, refused.text
@@ -432,7 +435,21 @@ def test_an_ai_edit_to_a_live_rule_takes_effect_at_once(client):
     assert "顺手把周报发给所有人" in runner.submitted[0][1]["content"]
 
 
-def test_a_rule_that_was_given_no_name_is_named_by_its_goal(client):
+def _deliveries(client, recipient: str):
+    """Timed deliveries waiting for this recipient."""
+    from app.domain.delivery.models import TimedDelivery
+
+    return _db(
+        client,
+        lambda s: s.scalars(
+            select(TimedDelivery).where(TimedDelivery.recipient_handle == recipient)
+        ).all(),
+    )
+
+
+def test_a_rule_that_was_given_no_name_is_named_by_the_teammate(client):
+    """A name is a blank like any other: the rule is saved without one and the
+    room's teammate is handed a turn to name it, the way task titles are made."""
     room = _room(client, _project(client))
     made = client.post(
         f"/topics/{room}/routines",
@@ -444,7 +461,10 @@ def test_a_rule_that_was_given_no_name_is_named_by_its_goal(client):
         headers=PERSON,
     )
     assert made.status_code == 200, made.text
-    assert made.json()["data"]["title"] == "每周一汇总各频道进展"
+    routine = made.json()["data"]
+    assert routine["title"] == ""
+    asked = _deliveries(client, routine["agent_handle"])
+    assert len(asked) == 1 and routine["id"] in asked[0].content
 
 
 def test_a_rule_has_to_say_what_it_should_do(client):
