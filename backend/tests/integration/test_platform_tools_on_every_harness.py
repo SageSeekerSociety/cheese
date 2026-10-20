@@ -48,7 +48,7 @@ from tests.integration.conftest import (
     room_socket,
 )
 from tests.support.room_machine import NO_MACHINE
-from tests.support.session_records import wait_for_record
+from tests.support.session_records import wait_for_read, wait_for_record
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 HARNESSES = ["claude-code", "codex", "pi"]
@@ -321,6 +321,7 @@ def test_a_message_through_any_harness_silences_the_reminder(
     with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         wait_for_record(client, topic, lambda record: "Internal output" in str(record))
+        wait_for_read(client, topic)
         clock = datetime.now(UTC)
         clock += timedelta(seconds=threshold)
         assert client.portal.call(quiet.silence, clock) == 1

@@ -271,14 +271,18 @@ class InProcessBroker:
         if not ids:
             return None
         newest = max(ids, key=lambda work_id: self._active_since[(channel, work_id)])
+        started_at = self._active_since[(channel, newest)]
         now = time.monotonic()
         last_at = self._last_activity_at.get(channel)
-        alive_at = self._last_alive_at.get(channel)
+        alive_for_s = self.alive_for_s(channel)
+        # An answer the runner gave before this turn began is not this turn's.
+        if alive_for_s is not None and time.time() - alive_for_s < started_at:
+            alive_for_s = None
         return {
             "turn_id": newest,
-            "started_at": self._active_since[(channel, newest)],
+            "started_at": started_at,
             "idle_for_s": (now - last_at if last_at is not None else None),
-            "alive_for_s": (now - alive_at if alive_at is not None else None),
+            "alive_for_s": alive_for_s,
         }
 
     @contextlib.asynccontextmanager

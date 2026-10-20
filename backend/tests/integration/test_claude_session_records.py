@@ -37,7 +37,12 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.support.room_reader import room_reader
-from tests.support.session_records import assistant_texts, records, wait_for_record
+from tests.support.session_records import (
+    assistant_texts,
+    records,
+    wait_for_read,
+    wait_for_record,
+)
 
 
 def _room(client, owner: str = "alice") -> str:
@@ -227,6 +232,7 @@ def test_a_long_command_gets_the_progress_reminder_written_to_the_session(
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
         wait_for_record(client, room, lambda record: "make test" in str(record))
+        wait_for_read(client, room)
         before = len(_written(stub_hooks, room))
         monkeypatch.setattr(settings, "chat_progress_reminder_after_s", 0)
         assert (

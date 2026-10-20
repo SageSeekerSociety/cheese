@@ -8,7 +8,7 @@
 
 判据都是平台核得了的事，不看轮次：会话此刻在不在干活（这台进程持有的座位、它的
 runner 说在干活，`ComputePool.working_conversations`），它读进去的那份输入
-（`native_inputs.echoed_at`）带着谁的话，它之后说没说过话（房间里它署名的消息），清单
+（`native_inputs` 的回执，`_read_at`）带着谁的话，它之后说没说过话（房间里它署名的消息），清单
 是不是它这一段工作写的（`TopicProgress.turn_id` 是会话手上那段工作）。
 
 放进去的路和人的中途消息是同一条（`notify_running_session`）：会话开工时取的那份
@@ -27,10 +27,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from sqlalchemy import Uuid, column, exists, func, select, table
+from sqlalchemy import Uuid, case, column, exists, func, select, table
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.domain.agent.harness import HARNESSES
 from app.domain.agent.harness.prompt import (
     silence_reminder,
     stale_checklist_reminder,
@@ -86,15 +87,29 @@ class _Asked:
 _READS_LOOKED_AT = 20
 
 
+def _read_at():
+    """When the session read an input: its echo for a harness whose runner
+    reports reads (`Harness.reports_lifecycle`), and the runner taking it for
+    one whose acceptance is the read (`Driver.receipt_on_accept`)."""
+    reporting = [
+        name for name, harness in HARNESSES.items() if harness.reports_lifecycle
+    ]
+    return case(
+        (NativeInput.harness.in_(reporting), NativeInput.echoed_at),
+        else_=NativeInput.accepted_at,
+    )
+
+
 async def _asked(
     session: AsyncSession, conversation: uuid.UUID, acting: str
 ) -> _Asked | None:
     """``acting`` 那一席的会话在这里读进去的最近一句人话，没有就是 None：读进去
     的是平台的提示、别的队友的话，就没有谁在等它回话。"""
+    read_at = _read_at()
     reads = (
         await session.execute(
             select(
-                NativeInput.echoed_at,
+                read_at,
                 NativeInput.block_ids,
                 NativeInput.held_block_ids,
                 NativeInput.seen_block_ids,
@@ -102,13 +117,13 @@ async def _asked(
             .where(
                 NativeInput.conversation_id == conversation,
                 NativeInput.recipient_handle == acting,
-                NativeInput.echoed_at.is_not(None),
+                read_at.is_not(None),
             )
-            .order_by(NativeInput.echoed_at.desc())
+            .order_by(read_at.desc())
             .limit(_READS_LOOKED_AT)
         )
     ).all()
-    for read_at, *batches in reads:
+    for read, *batches in reads:
         ids = {uuid.UUID(block) for batch in batches for block in batch or []}
         if not ids:
             continue
@@ -121,7 +136,7 @@ async def _asked(
         )
         person = next((a for a in authors if names_a_person(a)), None)
         if person is not None:
-            return _Asked(person, read_at)
+            return _Asked(person, read)
     return None
 
 
