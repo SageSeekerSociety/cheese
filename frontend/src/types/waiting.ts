@@ -4,7 +4,7 @@ import type { BoardPhrase } from '../cx_types'
  *  邀请、申请。两种按 `kind` 分。 */
 export type WaitingItem = WaitingWork | WaitingAsk | WaitingRun | WaitingTask
 
-/** 我出的（或我管的空间里的）一道题目上等我的事（后端 `task/queue.py`）：几份领取
+/** 我出的（或我管的空间里的）一道题目上等我的事（后端 `space/teaching_queue.py`）：几份领取
  *  等我批准、几份提交等我批改。批完就不在清单上了。 */
 export interface WaitingTask {
   kind: 'task_queue'

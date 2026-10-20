@@ -25,7 +25,7 @@ from app.domain.membership.services import (
 )
 from app.domain.project.services import ProjectService
 from app.domain.remote_mcp import local as mcp_local
-from app.domain.task.queue import teaching_queue
+from app.domain.space.teaching_queue import teaching_queue
 from app.domain.team import membership_services as team_applications
 from app.domain.team.models import TeamMembershipApplication
 from app.domain.team.services import team_service
@@ -81,7 +81,7 @@ class MembershipAsk:
 @dataclass(frozen=True, slots=True)
 class TaskAsk:
     """A 题目 this person teaches with claims to approve or submissions to
-    review (`task.queue.teaching_queue`)."""
+    review (`space.teaching_queue.teaching_queue`)."""
 
     task_id: int
     task_name: str
