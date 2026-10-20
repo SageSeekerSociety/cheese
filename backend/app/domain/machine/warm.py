@@ -16,7 +16,6 @@ from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
-from app.domain.team.services import team_service
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
@@ -30,6 +29,7 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.supply import pick_offering
+from app.domain.team.services import team_service
 
 logger = logging.getLogger("cheese.machine.warm")
 POOL_LOCK = 728104913

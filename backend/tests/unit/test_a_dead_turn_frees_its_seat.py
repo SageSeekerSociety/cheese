@@ -138,9 +138,12 @@ async def test_a_work_abandoned_where_the_room_saw_it_frees_its_seat(db_factory)
     async with db_factory() as session:
         assert not await seat_has_unfinished_input(session, topic, SEAT)
         # What was read was delivered at its reading; nothing is held for it.
-        assert await held_blocks(
-            session, project_id=project, topic_id=topic, recipient_handle=SEAT
-        ) == set()
+        assert (
+            await held_blocks(
+                session, project_id=project, topic_id=topic, recipient_handle=SEAT
+            )
+            == set()
+        )
     _only_the_unread_one_ended(await _rows(db_factory, topic), "orphaned")
 
 
@@ -166,9 +169,12 @@ async def test_the_sweep_ends_a_dead_turns_inputs_and_frees_its_seat(db_factory)
     assert row is not None and row.stopped_at is not None
     async with db_factory() as session:
         assert not await seat_has_unfinished_input(session, topic, SEAT)
-        assert await held_blocks(
-            session, project_id=project, topic_id=topic, recipient_handle=SEAT
-        ) == set()
+        assert (
+            await held_blocks(
+                session, project_id=project, topic_id=topic, recipient_handle=SEAT
+            )
+            == set()
+        )
     _only_the_unread_one_ended(await _rows(db_factory, topic), "orphaned")
 
 

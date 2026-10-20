@@ -101,9 +101,10 @@ class Room:
             self.reports.append(evidence)
             fact = evidence.fact
             if isinstance(fact, InputRead):
-                assert fact.receipt.identity == self.identities[
-                    fact.receipt.identity.input_id
-                ]
+                assert (
+                    fact.receipt.identity
+                    == self.identities[fact.receipt.identity.input_id]
+                )
                 text = self.inputs[fact.receipt.identity.input_id]
                 self.receipts.append(text)
                 self.unread.pop(text, None)

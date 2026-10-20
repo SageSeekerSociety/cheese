@@ -42,7 +42,9 @@ def _after_cursor(
     if after is None:
         return ()
     at, block_id = after
-    return ((Block.created_at > at) | ((Block.created_at == at) & (Block.id > block_id)),)
+    return (
+        (Block.created_at > at) | ((Block.created_at == at) & (Block.id > block_id)),
+    )
 
 
 class HistoryQueries:

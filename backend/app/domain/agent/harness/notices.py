@@ -195,9 +195,7 @@ def stale_progress_reminder(minutes: int | None, language: str | None = None) ->
     由卡说，也就不问（`StaleProgressReminder`）。
     """
     if minutes is None:
-        return _in_the_readers_language(
-            language, _PROGRESS_NONE_ZH, _PROGRESS_NONE_EN
-        )
+        return _in_the_readers_language(language, _PROGRESS_NONE_ZH, _PROGRESS_NONE_EN)
     return _in_the_readers_language(
         language,
         _PROGRESS_ZH.format(minutes=minutes),

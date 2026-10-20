@@ -104,9 +104,7 @@ async def notices_after(
     after: tuple[datetime, uuid.UUID] | None,
 ) -> list[Block]:
     """The platform notices a seat has not read, oldest first."""
-    return await BlockRepository(session).notices_after(
-        conversation_id, after=after
-    )
+    return await BlockRepository(session).notices_after(conversation_id, after=after)
 
 
 async def client_delivery_bundle(

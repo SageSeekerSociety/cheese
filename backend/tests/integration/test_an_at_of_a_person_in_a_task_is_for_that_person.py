@@ -18,8 +18,8 @@ from sqlalchemy import select
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.delivery.models import NativeInput
 from app.domain.agent.session_state import running_conversations
+from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
 from tests.integration.conftest import (

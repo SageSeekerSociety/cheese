@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { plainResult } from './ratchet-report.mjs'
 import {
   DESIGN_RULES,
   formatReport,
@@ -8,7 +9,6 @@ import {
   syntaxErrors,
   violationDetails,
 } from './stylelint-ratchet-core.mjs'
-import { plainResult } from './ratchet-report.mjs'
 
 const ROOT = '/repo/frontend'
 const toRelativePath = (source) => source.replace(`${ROOT}/`, '')

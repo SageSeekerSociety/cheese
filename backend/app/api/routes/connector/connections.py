@@ -22,8 +22,8 @@ from app.api.routes.connector.schemas import (
     AccountConnectionIn,
     AccountConnectionOut,
     ClaudeCodeLoginOut,
-    ConnectionRename,
     ConnectionModels,
+    ConnectionRename,
     ModelConnectionsOut,
     RenameDeviceRequest,
 )
@@ -35,20 +35,19 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent import model_connections
-from app.domain.agent.model_catalog import model_choices
 from app.domain.agent.device_hub import HubScreen, device_hub
 from app.domain.agent.harness.claude_code import executor_launch, owner_login
-from app.domain.agent_instance import account_connections
-from app.domain.agent_instance import personal_resources
-from app.domain.agent_instance.own.connections import logins_by_teams
-from app.domain.user.services import faces_by_handle, usernames_by_ids
+from app.domain.agent.model_catalog import model_choices
+from app.domain.agent_instance import account_connections, personal_resources
 from app.domain.agent_instance.own import rename_for_connection
+from app.domain.agent_instance.own.connections import logins_by_teams
 from app.domain.device import sandbox
 from app.domain.device.repository import Device
 from app.domain.device.supply import Supply
 from app.domain.machine.session_work import screen_agent_name
 from app.domain.team.repositories import TeamRepository
 from app.domain.usage.services import UsageService
+from app.domain.user.services import faces_by_handle, usernames_by_ids
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)

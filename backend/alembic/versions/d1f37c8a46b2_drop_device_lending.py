@@ -1,7 +1,8 @@
 """Retire device lending after the team-owned runtime has deployed."""
 
-from alembic import op
 from migration_helpers import with_lock_retries
+
+from alembic import op
 
 revision = "d1f37c8a46b2"
 down_revision = "c9e25a7b38f1"

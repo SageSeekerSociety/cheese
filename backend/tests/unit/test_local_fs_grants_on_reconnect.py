@@ -12,10 +12,6 @@ snapshot) and in-process (the single-process deployment, where the socket
 lands in the same process).
 """
 
-from app.domain.device.wiring import sql_device_service
-from tests.support.devices import enrollment_team
-
-
 import asyncio
 import logging
 import uuid
@@ -33,12 +29,14 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 from app.domain.agent.harness.claude_code import owner_login
 from app.domain.device.models import DeviceRow, HostedDeviceRow
+from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import PushOutcome, push_grants
 from app.domain.local_fs.paths import Platform
 from app.domain.local_fs.records import GrantMode, GrantScope
 from app.domain.local_fs.wiring import sql_local_directory_service
 from app.domain.user.models import User
 from tests.support import wire
+from tests.support.devices import enrollment_team
 from tests.support.hang import HANG_S
 
 SECRET = "test-owner-secret"

@@ -790,9 +790,7 @@ class RemoteClient:
     def _publish_message(self, payload, args):
         content = args.get("content") or ""
         attachments = args.get("attachments") or []
-        if not isinstance(content, str) or (
-            not content.strip() and not attachments
-        ):
+        if not isinstance(content, str) or (not content.strip() and not attachments):
             raise ValueError("Chat content must be a nonempty string")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
         topic = os.environ.get("CHEESE_TOPIC", "")

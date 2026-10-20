@@ -6,8 +6,6 @@ machine said is settled when it connects, by the very check its install runs;
 the placement does not ask it again.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import json
 import subprocess
 import sys
@@ -22,6 +20,7 @@ from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
 from app.domain.machine import environments
 from app.domain.machine.environments import device_for_spec
+from tests.support.devices import enrollment_team, place_in_project_team
 
 OWNER = 1
 

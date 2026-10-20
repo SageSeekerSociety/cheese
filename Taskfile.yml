@@ -130,9 +130,10 @@ tasks:
   guards:
     desc: Run the pre-commit checks over the whole tree (what CI runs)
     cmds:
-      # The two fixers rewrite files rather than judge them, and CI does not run
-      # them either; over the whole tree they would reformat files nobody touched.
-      - SKIP=ruff-format,frontend-format uvx pre-commit run --all-files
+      # The commit's hooks, then the whole-tree ones CI runs (stage manual). The
+      # two fixers are skipped: they rewrite files rather than judge them.
+      - SKIP=ruff-fix,frontend-fix uvx pre-commit run --all-files
+      - uvx pre-commit run --all-files --hook-stage manual
 
   # Who uses this symbol or module: AST uses (not comments), grouped by file,
   # tests last, from the same import graph a pull request's integration tests

@@ -122,9 +122,9 @@ def test_backend_lint_is_a_separate_hosted_job():
             "static job 没跑 pre-commit run --all-files"
         )
         assert hook in lint_commands, _rule(f"static job 没跑 {hook}")
-    # Layout is fixed on a developer's commit, never judged in CI.
-    assert "ruff-format" not in lint_commands, _rule(
-        "static job 又在判格式——ruff-format 只在 pre-commit 里自动修"
+    # The fixer is a commit's; CI only judges.
+    assert "ruff-fix" not in lint_commands, _rule(
+        "static job 跑了会改文件的 ruff-fix——CI 只判，不改"
     )
 
     test_commands = "\n".join(

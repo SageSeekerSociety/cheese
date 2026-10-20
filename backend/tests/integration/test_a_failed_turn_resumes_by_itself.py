@@ -30,8 +30,10 @@ from app.domain.agent.platform_failures import (
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.resumable_failures import (
     POLICIES,
-    RATE_LIMITED as RATE_KIND,
     Policy,
+)
+from app.domain.agent.resumable_failures import (
+    RATE_LIMITED as RATE_KIND,
 )
 from app.domain.agent.run_records import for_site
 from app.domain.agent.service import AgentResult
@@ -46,8 +48,8 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending
-from app.domain.delivery.models import Delivery
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
+from app.domain.delivery.models import Delivery
 from app.domain.delivery.receipts import register_input
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType

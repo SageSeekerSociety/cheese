@@ -21,7 +21,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from app.domain.agent import gateway_catalog
-from app.domain.agent.session_state import SeatKey
 from app.domain.agent.harness import HARNESSES
 from app.domain.agent.harness import SessionRef as Seat
 from app.domain.agent.harness.driven.reporting import Reading
@@ -32,6 +31,7 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.driver import Driver, Launched, Mirrors
+from app.domain.agent.session_state import SeatKey
 
 
 @dataclass

@@ -54,12 +54,12 @@ from app.domain.review.services._shared import (
     WHO_CHEESE,
     WHO_HUMAN,
     WHO_PLATFORM,
+    _deliverable_revision,
     _GitHubCredentials,
+    _hold_deliverable,
     approvals_required_of,
     logger,
     notice,
-    _deliverable_revision,
-    _hold_deliverable,
 )
 
 

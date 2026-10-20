@@ -11,8 +11,6 @@ at it. The bucket is a small HTTP server speaking the part of S3 a single PUT,
 HEAD, GET and DELETE use, reached through the platform's own S3 client.
 """
 
-from tests.support.devices import enrollment_team
-
 import asyncio
 import hashlib
 import io
@@ -49,6 +47,7 @@ from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import KeptRoomFiles, RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered, session_auth_headers
+from tests.support.devices import enrollment_team
 
 pytestmark = pytest.mark.anyio
 

@@ -16,8 +16,6 @@ The rules, as a person would state them before any of this was built:
 - nobody is shown the platform's machines.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -45,6 +43,7 @@ from tests.integration.test_switch_pushes_first import (
     _machines,
     _room,
 )
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 

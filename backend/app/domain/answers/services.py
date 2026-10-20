@@ -7,7 +7,6 @@ from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.author_dto import profile_to_author
 from app.domain.user.repositories import UserProfileRepository
 
-
 #: What a row shows when the stats query returned nothing for it. The query
 #: covers every requested id, so this is only a guard, never a normal path.
 _EMPTY_ANSWER_STATS: AnswerStats = {

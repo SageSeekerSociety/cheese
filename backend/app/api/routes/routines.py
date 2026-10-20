@@ -626,4 +626,3 @@ async def delete_routine_template(
     await RoutineTemplateService(db).delete(row)
     await db.commit()
     return ok({"deleted": str(template_id)})
-

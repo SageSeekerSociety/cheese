@@ -8,10 +8,6 @@ session home is released after the idle hold, never while a session left work
 on it that it did not push.
 """
 
-from tests.support.devices import enrollment_team
-from app.domain.device.wiring import sql_device_service
-
-
 import asyncio
 import logging
 import uuid
@@ -28,6 +24,7 @@ from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import owner_reads, reaper, services
@@ -49,6 +46,7 @@ from app.domain.run_record.models import RunRecord
 from app.domain.user.repositories import UserRepository
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 
 class Case:

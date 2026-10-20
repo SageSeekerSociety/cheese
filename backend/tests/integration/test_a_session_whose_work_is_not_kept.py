@@ -13,8 +13,6 @@ became a task (``place="became"``) the session works like any task's
 (``place="task"``).
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -42,6 +40,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 

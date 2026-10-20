@@ -101,9 +101,9 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn
 from app.domain.delivery.agent import dispatch_pending
-from app.domain.library import service as library
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.delivery.note import send_note
+from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_MENTION_FUSED,
     SEVERITY_WARN,
@@ -219,9 +219,7 @@ def _read_agent_attachments(items: list[ChatAttachmentIn]) -> list[dict]:
     for item in items[:ATTACHMENTS_PER_MESSAGE]:
         if not item.content_b64:
             # i18n-exempt: the agent reads this tool refusal, not a person's screen
-            raise ValidationError(
-                "An agent sends a file by its bytes, not by a path"
-            )
+            raise ValidationError("An agent sends a file by its bytes, not by a path")
         try:
             raw = base64.b64decode(item.content_b64, validate=True)
         except (ValueError, binascii.Error) as exc:
@@ -261,9 +259,7 @@ async def _write_agent_attachments(place, prepared: list[dict]) -> list[dict]:
     """
     written: list[dict] = []
     for item in prepared:
-        path = (
-            f"{library.MESSAGE_ATTACHMENT_PREFIX}/{uuid.uuid4().hex}/{item['name']}"
-        )
+        path = f"{library.MESSAGE_ATTACHMENT_PREFIX}/{uuid.uuid4().hex}/{item['name']}"
         await asyncio.to_thread(
             library.write_room_file,
             place.project_id,
@@ -271,9 +267,7 @@ async def _write_agent_attachments(place, prepared: list[dict]) -> list[dict]:
             path,
             item["raw"],
         )
-        written.append(
-            {"path": path, "mime": item["mime"], "digest": item["digest"]}
-        )
+        written.append({"path": path, "mime": item["mime"], "digest": item["digest"]})
     return written
 
 
@@ -287,11 +281,7 @@ def _publication_input(text: str, reply_to, prepared: list[dict]) -> dict:
     return {
         "text": text,
         "reply_to": str(reply_to) if reply_to else None,
-        **(
-            {"attachments": [item["digest"] for item in prepared]}
-            if prepared
-            else {}
-        ),
+        **({"attachments": [item["digest"] for item in prepared]} if prepared else {}),
     }
 
 
@@ -347,23 +337,24 @@ async def _publish_as_agent(
             await _summon_the_named(chat, runner, place, block, author)
         return block
     attachments = await _write_agent_attachments(place, prepared)
-    payload, attachment_payloads = (
-        await chat.messages.persist_assistant_message_with_attachments(
-            attachments=attachments,
-            project_id=place.project_id,
-            topic_id=place.room_id,
-            inner_id=place.inner_id,
-            text=content,
-            turn_id=turn_id,
-            reply_to=body.reply_to,
-            roster=None,
-            topic_refs=[],
-            author=author,
-            publication_id=publication_id,
-            extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
-            if body.quoted_context
-            else None,
-        )
+    (
+        payload,
+        attachment_payloads,
+    ) = await chat.messages.persist_assistant_message_with_attachments(
+        attachments=attachments,
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        inner_id=place.inner_id,
+        text=content,
+        turn_id=turn_id,
+        reply_to=body.reply_to,
+        roster=None,
+        topic_refs=[],
+        author=author,
+        publication_id=publication_id,
+        extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
+        if body.quoted_context
+        else None,
     )
     await get_broker().publish(
         str(place.conversation_id), {"type": "assistant_block", "block": payload}

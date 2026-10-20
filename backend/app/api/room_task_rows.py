@@ -45,9 +45,9 @@ from app.domain.review.queries import latest_cards_by_task
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
+from app.domain.room_task.adapters import task_row_json
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import hand_of
-from app.domain.room_task.adapters import task_row_json
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.thread.models import Thread

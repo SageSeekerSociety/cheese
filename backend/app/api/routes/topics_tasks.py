@@ -94,8 +94,8 @@ from app.domain.review.task_landing import tell_origin
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task.closing import close_task
-from app.domain.room_task.progress import set_progress
 from app.domain.room_task.place import place_or_404
+from app.domain.room_task.progress import set_progress
 from app.domain.room_task.schemas import ProgressIn, TaskOut
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width

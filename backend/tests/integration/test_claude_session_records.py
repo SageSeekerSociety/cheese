@@ -25,7 +25,6 @@ from app.domain.block.models import Block
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.main import app
-from tests.support.session_records import assistant_texts, records, wait_for_record
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import (
@@ -36,6 +35,7 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.support.room_reader import room_reader
+from tests.support.session_records import assistant_texts, records, wait_for_record
 
 
 def _room(client, owner: str = "alice") -> str:

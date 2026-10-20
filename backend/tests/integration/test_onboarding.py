@@ -2,8 +2,6 @@
 teammate knows about them; the guide in the project reads what has really
 happened."""
 
-from tests.support.devices import enrollment_team
-
 import re
 import uuid
 from datetime import UTC, datetime
@@ -15,6 +13,7 @@ from app.domain.agent.turn.intake.rooms import room_roster
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.topic.models import Topic
+from tests.support.devices import enrollment_team
 
 
 def _headers(token: str) -> dict:

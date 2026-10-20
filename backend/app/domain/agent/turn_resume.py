@@ -48,18 +48,19 @@ from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.models import AgentTurn, TurnResume
-from app.domain.agent.run_records import publish
 from app.domain.agent.own_limit import refused_until
 from app.domain.agent.resumable_failures import (
     SUBSCRIPTION_COOLING,
     Resumable,
     classify,
 )
+from app.domain.agent.run_records import publish
 from app.domain.agent.service import AgentResult
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import room_of, room_of_thread, rooms_of
 from app.domain.delivery.agent import instance_for_seat, record_agent
+from app.domain.delivery.models import Delivery
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column
@@ -76,7 +77,6 @@ from app.domain.notice_meta import (
     notice,
 )
 from app.domain.notification.models import NotificationType
-from app.domain.delivery.models import Delivery
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.run_record.models import RunRecord
 from app.domain.run_record.service import as_payload, record

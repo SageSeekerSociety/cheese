@@ -4,8 +4,6 @@
 出来的那台机器上；换机器是整个房间一起换。
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -30,6 +28,7 @@ from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio

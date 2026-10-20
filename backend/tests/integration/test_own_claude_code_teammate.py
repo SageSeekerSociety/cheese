@@ -1,7 +1,5 @@
 """A personal assistant is addressable by the team and opens tasks on its owner's word."""
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import asyncio
 import uuid
 from datetime import UTC, datetime
@@ -22,6 +20,7 @@ from tests.integration.conftest import (
     post_message,
     session_auth_headers,
 )
+from tests.support.devices import enrollment_team, place_in_project_team
 
 
 def _log_in_claude_code(client, handle: str, machine: str = "", **login) -> str:

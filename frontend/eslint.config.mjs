@@ -197,14 +197,14 @@ export default [
       ],
     },
   },
-  // Layout (prettier, import order) is fixed, never judged: these two report as
-  // warnings, which no gate fails on, and the pre-commit `frontend-format` hook
-  // applies them with `eslint --fix --fix-type layout`.
+  // Layout (prettier, import order) is judged like any other rule: CI's
+  // `pnpm run lint` fails a tree that does not hold it, and the pre-commit
+  // `frontend-fix` hook applies it to the staged files with `eslint --fix`.
   prettier,
   {
     rules: {
       'prettier/prettier': [
-        'warn',
+        'error',
         {},
         {
           usePrettierrc: true,
@@ -218,7 +218,7 @@ export default [
     },
     rules: {
       'simple-import-sort/imports': [
-        'warn',
+        'error',
         {
           groups: [
             // Bare builtin names only. Node 23.5+ also lists prefix-only modules
@@ -242,7 +242,7 @@ export default [
           ],
         },
       ],
-      'simple-import-sort/exports': 'warn',
+      'simple-import-sort/exports': 'error',
     },
   },
   // The accessibility rules (eslint-plugin-vuejs-accessibility), as plain

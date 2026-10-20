@@ -21,9 +21,7 @@ from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
 from app.main import app
-from tests.support.session_records import wait_for_record
-from tests.conftest import stub_compute
-from tests.conftest import settle_turn
+from tests.conftest import settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -32,6 +30,7 @@ from tests.integration.conftest import (
 )
 from tests.integration.test_native_batch_ownership import _blocks
 from tests.support.seat_channel import SeatChannel
+from tests.support.session_records import wait_for_record
 from tests.unit.test_claude_runner import Machine
 
 

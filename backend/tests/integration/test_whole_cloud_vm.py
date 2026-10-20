@@ -9,8 +9,6 @@ session has been idle, but never before its work is pushed. Users see the
 environment, never the machine.
 """
 
-from tests.support.devices import enrollment_team
-
 import ast
 import json
 import re
@@ -49,6 +47,7 @@ from app.domain.usage.models import ComputeRun, ResourceUsage
 from tests.executor_release import running
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.microcloud import OFFERING, FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 LXC = {**OFFERING, "id": 1, "machineTypeName": "standard-lxc"}
 VM = {

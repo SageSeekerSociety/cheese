@@ -102,10 +102,7 @@ async function openPhoneWithPage(width = 390) {
   // 真机上手机这一层同时有路由的 sidebar 视图和 WorkspaceEntry 里整页的那一份。
   const Root = defineComponent({
     setup: () => () =>
-      h(VApp, null, () => [
-        h(RouterView, { name: 'sidebar' }),
-        h(ProjectSidebar, { projectId: 'p1', page: true }),
-      ]),
+      h(VApp, null, () => [h(RouterView, { name: 'sidebar' }), h(ProjectSidebar, { projectId: 'p1', page: true })]),
   })
   render(Root, { global: { plugins: [router, createVuetify({ components, directives })] } })
   await router.push('/projects/p1')

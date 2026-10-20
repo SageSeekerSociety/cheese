@@ -21,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app.core.sandbox_auth import token_agent_handle
+from app.domain.agent import session_state
 from app.domain.agent.central_provider import Placed, PreparedSession
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
@@ -28,7 +29,6 @@ from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.agent import session_state
 from app.domain.agent.session_state import SeatKey
 
 # The driver's read of a launch's ending from its runner log

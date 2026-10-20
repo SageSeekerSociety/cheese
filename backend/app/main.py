@@ -33,11 +33,11 @@ from app.api.deps import get_consumptions, get_llm_gateway, get_ownership
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
-from app.core.health import set_periodic_health
 from app.core.db import async_session_factory
 from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
 from app.core.forge_http import reuse_forge_connections
+from app.core.health import set_periodic_health
 from app.core.job_runs import JobRuns
 from app.core.loop_lag import watch_loop_lag
 from app.core.metrics import active_requests, registry

@@ -17,8 +17,8 @@ from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.services import AgentSessionService
-from tests.turn_log import a_topic
 from tests.support.machine_path import resolved
+from tests.turn_log import a_topic
 
 DEVICE = "dev-outcomes"
 CHANNEL = "test-pi-outcomes"

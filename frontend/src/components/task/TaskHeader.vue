@@ -72,7 +72,7 @@ const taskAgentName = computed(() => {
 })
 // 做这件事的队友报的那一句：看板那一格已经照它画了，页头再把它的原话、谁什么时候报的
 // 摆出来。它报完之后会话结束了，旁边写「已离开」，不改它报的。任务关了就不再说。
-const progressNote = computed(() => (isOpen.value ? (props.task?.progress_note ?? '') : ''))
+const progressNote = computed(() => (isOpen.value ? props.task?.progress_note ?? '' : ''))
 const agentLeft = computed(() => isOpen.value && !!props.task?.progress_state && !!props.task?.agent_left_at)
 const progressTitle = computed(() => {
   const by = props.task?.progress_set_by

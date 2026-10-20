@@ -375,9 +375,15 @@ async def test_actual_hook_close_failure_preserves_context_and_runner_until_repl
             # Delivered at its echo, whatever became of the Stop after it.
             assert row.echoed_at is not None
             assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
-            assert await held_blocks(
-                independent, project_id=project, topic_id=topic, recipient_handle=seat
-            ) == set()
+            assert (
+                await held_blocks(
+                    independent,
+                    project_id=project,
+                    topic_id=topic,
+                    recipient_handle=seat,
+                )
+                == set()
+            )
             assert list(await independent.scalars(usage_query)) == []
             (interval,) = list(await independent.scalars(intervals_query))
             assert interval.id == work and interval.stopped_at is not None
