@@ -9,6 +9,7 @@
       "reporter": "Your request has been delivered",
       "asked": "Waiting for your answer",
       "checksFailed": "Checks failed",
+      "blocked": "Stuck",
       "bounced": "Returned",
       "decide": "Awaiting your decision",
       "read": "Change alert",
