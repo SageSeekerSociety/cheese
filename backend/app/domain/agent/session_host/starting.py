@@ -86,10 +86,10 @@ async def start(
         if known is None and spec.footprint is not None:
             await svc._wait_for_memory(spec, on_wait, give_up)
         started = time.monotonic()
-        previous = running
-        replacing = previous is not None and known is None
-        if replacing:
-            previous.relaunching = True
+        # The runner being replaced, when this start replaces one.
+        replacing = running if running is not None and known is None else None
+        if replacing is not None:
+            replacing.relaunching = True
         try:
             launched = await driver.launch(svc._wire(), host, ref, spec, access, known)
             if launched is not known:
@@ -124,8 +124,8 @@ async def start(
             if launched.lifecycle is not None and not launched.epoch:
                 launched = await register(svc, host, ref, running, launched)
         finally:
-            if replacing:
-                previous.relaunching = False
+            if replacing is not None:
+                replacing.relaunching = False
         running.launched = launched
         running.spec, running.access = spec, access
         running.answering = True
