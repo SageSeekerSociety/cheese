@@ -23,7 +23,6 @@ from app.domain.delivery.agent import (
     run_attempt,
 )
 from app.domain.review import pr_poll
-from app.domain.review.landing_models import TaskLanding
 from app.domain.room_task.models import Task
 
 
@@ -69,11 +68,6 @@ def time_passes(client, task_id: str, *, minutes: int) -> None:
                     Task.id == uuid.UUID(str(task_id)), Task.closing_since.is_not(None)
                 )
                 .values(closing_since=Task.closing_since - earlier)
-            )
-            await session.execute(
-                update(TaskLanding)
-                .where(TaskLanding.task_id == uuid.UUID(str(task_id)))
-                .values(landed_at=TaskLanding.landed_at - earlier)
             )
             await session.commit()
 
