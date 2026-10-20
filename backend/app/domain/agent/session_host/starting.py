@@ -86,38 +86,46 @@ async def start(
         if known is None and spec.footprint is not None:
             await svc._wait_for_memory(spec, on_wait, give_up)
         started = time.monotonic()
-        launched = await driver.launch(svc._wire(), host, ref, spec, access, known)
-        if launched is not known:
-            logger.info(
-                "session started on the host harness=%s home=%s in %.2fs",
-                ref.harness,
-                ref.home,
-                time.monotonic() - started,
-            )
-        if LONG_POLL not in launched.capabilities:
-            raise RunnerUnsupported(
-                f"The {driver.label} runner on {host} at {ref.state} cannot "
-                f"hold a read (it announced {sorted(launched.capabilities)}, "
-                f"without {LONG_POLL!r}); it is not supported"
-            )
-        if (
-            running is None
-            or running.host != host
-            # Its reading heard the runner it had go while this one
-            # started, and let it go with it.
-            or svc._running.get(ref) is not running
-        ):
-            seat, acting = _seat(ref, access)
-            running = _Running(
-                host,
-                launched,
-                seat,
-                acting,
-                _mirror(svc._mirrors, ref, access, driver),
-            )
-            svc._running[ref] = running
-        if launched.lifecycle is not None and not launched.epoch:
-            launched = await register(svc, host, ref, running, launched)
+        previous = running
+        replacing = previous is not None and known is None
+        if replacing:
+            previous.relaunching = True
+        try:
+            launched = await driver.launch(svc._wire(), host, ref, spec, access, known)
+            if launched is not known:
+                logger.info(
+                    "session started on the host harness=%s home=%s in %.2fs",
+                    ref.harness,
+                    ref.home,
+                    time.monotonic() - started,
+                )
+            if LONG_POLL not in launched.capabilities:
+                raise RunnerUnsupported(
+                    f"The {driver.label} runner on {host} at {ref.state} cannot "
+                    f"hold a read (it announced {sorted(launched.capabilities)}, "
+                    f"without {LONG_POLL!r}); it is not supported"
+                )
+            if (
+                running is None
+                or running.host != host
+                # Its reading heard the runner it had go while this one
+                # started, and let it go with it.
+                or svc._running.get(ref) is not running
+            ):
+                seat, acting = _seat(ref, access)
+                running = _Running(
+                    host,
+                    launched,
+                    seat,
+                    acting,
+                    _mirror(svc._mirrors, ref, access, driver),
+                )
+                svc._running[ref] = running
+            if launched.lifecycle is not None and not launched.epoch:
+                launched = await register(svc, host, ref, running, launched)
+        finally:
+            if replacing:
+                previous.relaunching = False
         running.launched = launched
         running.spec, running.access = spec, access
         running.answering = True
