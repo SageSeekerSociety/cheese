@@ -298,8 +298,9 @@ class PoolSweep:
 
     def _lost(self, hosts: list[CloudHost], now: datetime) -> list[CloudHost]:
         """Enrolled pool hosts whose sandboxes will not run again: one the
-        provider reports in error, and one whose connector has been away for
-        ``LOST_AFTER``. A sandbox is disposable — what counts is what was pushed
+        provider reports in error, one with no data disk recorded, where no
+        sandbox starts without a disk limit (``sandbox_host.py``), and one
+        whose connector has been away for ``LOST_AFTER``. A sandbox is disposable — what counts is what was pushed
         — so its session is not left waiting on such a host.
 
         A connector away is only believed while another host of the pool is
@@ -321,6 +322,7 @@ class PoolSweep:
             host
             for host in pool
             if host.status == MachineStatus.error
+            or host.sandbox_disk_gb is None
             or (
                 answering
                 and host.offline_since is not None
@@ -351,8 +353,9 @@ class PoolSweep:
         await self._repo.lock_pool()
         await self._session.refresh(host)
         error = host.status == MachineStatus.error
+        unusable = error or host.sandbox_disk_gb is None
         if host.released_at is not None or (
-            not error and self._hub.is_online(device_id)
+            not unusable and self._hub.is_online(device_id)
         ):
             await self._session.commit()
             return

@@ -187,6 +187,28 @@ def test_a_nearly_full_disk_stops_none_of_its_sandboxes(
     assert full_since(cloud, host_of(cloud, light).id) is not None
 
 
+def test_a_host_whose_own_disk_is_nearly_full_takes_no_new_sandbox(cloud):  # noqa: F811
+    """Its executor releases are staged on the host's own disk, apart from
+    the data disk the homes are on: either one short, and no sandbox more."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-1")
+    real = cloud.hosts.exec
+
+    async def exec_(device_id, argv, *, stdin=None, **kwargs):
+        result = await real(device_id, argv, stdin=stdin, **kwargs)
+        if stdin and '"action": "disk"' in stdin and not result["exit"]:
+            answer = json.loads(result["stdout"].strip().splitlines()[-1])
+            answer["filesystem"] = ROOM
+            answer["system"] = {**ROOM, "bytes_free": ROOM["bytes"] // 100}
+            result = {**result, "stdout": json.dumps(answer)}
+        return result
+
+    cloud.hosts.exec = exec_
+    guard(cloud)
+
+    assert full_since(cloud, host_of(cloud, seat).id) is not None
+
+
 def test_a_home_its_sandbox_left_behind_is_deleted(cloud):  # noqa: F811
     seat = cloud.seats[0]
     kept = working_on(cloud, seat, "host-1")

@@ -163,6 +163,7 @@ def sandbox_disk_gb(output: str) -> int:
     """The data disk's size a bootstrap reported, in GB."""
     found = DATA_DISK_LINE.findall(output)
     if not found:
+        # i18n-exempt: an enrollment failure, kept on the host row for operators
         raise EnrollmentError("the bootstrap reported no data disk")
     return int(found[-1]) // 10**9
 
