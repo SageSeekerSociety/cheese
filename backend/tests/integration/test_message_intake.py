@@ -40,8 +40,6 @@ def _chat(factory, tmp_path, runner, channel=None):
     return ChatService(
         work_runner=runner,
         session_factory=factory,
-        # The harness's own records are where its output is read from now, so
-        # the stub must write them into this test's database (#4448).
         compute=stub_compute(channel or StubChannel(), sessions=factory),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "workspace"),
@@ -173,16 +171,21 @@ async def test_disconnect_during_work_does_not_lose_output_or_leave_the_turn_ope
         await runner.drain(timeout_s=60)
         await finish_turn(chat, topic)
         async with factory() as independent:
-            # The session's own records are where its output is durable now
-            # (#4448 retired the room blocks harness output used to leave).
-            records = await session_records.read(independent, topic, limit=500)
+            history = await BlockRepository(independent).list_for_topic(topic)
+            output = await session_records.read(independent, topic)
             turns = list(
                 await independent.scalars(
                     select(AgentTurn).where(AgentTurn.conversation_id == topic)
                 )
             )
-        assert "Completed after the browser left" in assistant_texts(records.items)
+        assert assistant_texts(output.items) == ["Completed after the browser left"]
+        assert all(block.author == "alice" for block in history)
         assert turns
+        assert {
+            item["turn_id"]
+            for item in output.items
+            if item["record"].get("type") == "assistant"
+        } == {str(turn.id) for turn in turns}
         assert all(turn.delivered_at is not None for turn in turns)
         assert all(turn.stopped_at is not None for turn in turns)
     finally:
