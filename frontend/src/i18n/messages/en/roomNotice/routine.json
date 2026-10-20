@@ -7,6 +7,7 @@
   "routineTriggerMonthly": "Every month on day {day} at {time} ({timezone})",
   "routineTriggerFeedback": "{when}, with up to {count} untriaged feedback reports per run",
   "routineTriggerEvent": "{label} ({scope})",
+  "routineTriggerUnset": "No trigger chosen yet",
   "routineTriggerLibraryFile": "Library file added",
   "routineTriggerTaskClosed": "Task closed",
   "routineTriggerCardAccepted": "Result accepted",

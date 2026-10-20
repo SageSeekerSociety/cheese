@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 
 from app.domain.agent.models import AgentTurn
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.routine import service as routine_service
 from app.domain.routine.models import Routine, RoutineRun
@@ -121,6 +121,41 @@ def test_a_teammates_rule_runs_from_the_moment_it_is_saved(client):
     _make_due(client, routine["id"])
     (_, runner) = _sweep(client)
     assert len(runner.submitted) == 1
+
+
+def test_a_rule_saved_without_a_trigger_waits_for_one(client):
+    """Two boxes left empty: the rule is saved, paused, due at no moment, and
+    the list says no moment has been chosen. Giving it one later starts it."""
+    room = _room(client, _project(client))
+    made = _weekly(
+        client, room, headers=PERSON, owner_handle=OWNER, trigger="", spec={}
+    )
+    assert made.status_code == 200, made.text
+    routine = made.json()["data"]
+    assert routine["state"] == "paused"
+    assert routine["next_run_at"] is None
+    assert routine["trigger"] == ""
+    assert routine["trigger_text"]
+
+    asked = _deliveries(client, routine["agent_handle"])
+    assert len(asked) == 1 and routine["id"] in asked[0].content
+
+    # 恢复它没有意义：没有触发方式就没有「下一次」。
+    refused = client.post(f"/routines/{routine['id']}/resume", headers=PERSON)
+    assert refused.status_code == 422, refused.text
+
+    patched = client.patch(
+        f"/routines/{routine['id']}",
+        headers=PERSON,
+        json={
+            "trigger": "schedule",
+            "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    after = patched.json()["data"]
+    assert after["state"] == "active"
+    assert after["next_run_at"] is not None
 
 
 def test_a_teammates_rule_leaves_no_line_of_the_platforms_own_in_the_room(client):
@@ -402,7 +437,22 @@ def test_an_ai_edit_to_a_live_rule_takes_effect_at_once(client):
     assert "顺手把周报发给所有人" in runner.submitted[0][1]["content"]
 
 
-def test_a_rule_that_was_given_no_name_is_named_by_its_goal(client):
+def _deliveries(client, recipient: str):
+    """Timed deliveries waiting for this recipient."""
+
+    async def read(session):
+        return list(
+            await session.scalars(
+                select(TimedDelivery).where(TimedDelivery.recipient_handle == recipient)
+            )
+        )
+
+    return _db(client, read)
+
+
+def test_a_rule_that_was_given_no_name_is_named_by_the_teammate(client):
+    """A name is a blank like any other: the rule is saved without one and the
+    room's teammate is handed a turn to name it, the way task titles are made."""
     room = _room(client, _project(client))
     made = client.post(
         f"/topics/{room}/routines",
@@ -414,7 +464,10 @@ def test_a_rule_that_was_given_no_name_is_named_by_its_goal(client):
         headers=PERSON,
     )
     assert made.status_code == 200, made.text
-    assert made.json()["data"]["title"] == "每周一汇总各频道进展"
+    routine = made.json()["data"]
+    assert routine["title"] == ""
+    asked = _deliveries(client, routine["agent_handle"])
+    assert len(asked) == 1 and routine["id"] in asked[0].content
 
 
 def test_a_rule_has_to_say_what_it_should_do(client):

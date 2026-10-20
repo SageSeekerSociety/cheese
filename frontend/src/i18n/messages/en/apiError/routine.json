@@ -28,5 +28,6 @@
   "scheduleMonthlyDay": "A monthly routine needs the day of the month (1–31)",
   "scheduleTimeFormat": "Write the time as HH:MM, e.g. 09:00",
   "scheduleWeeklyDays": "A weekly routine needs the days of the week (0 = Monday … 6 = Sunday)",
-  "timezoneUnknown": "Unknown time zone: {name}"
+  "timezoneUnknown": "Unknown time zone: {name}",
+  "routineResumeNeedsTrigger": "Give it a trigger first — only then does it know when to run"
 }

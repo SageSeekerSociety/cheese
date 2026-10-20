@@ -47,6 +47,7 @@ from tests.integration.conftest import (
     room_socket,
 )
 from tests.support.room_machine import NO_MACHINE
+from tests.support.session_records import wait_for_record
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 HARNESSES = ["claude-code", "codex", "pi"]
@@ -332,12 +333,7 @@ def test_a_message_through_any_harness_silences_the_reminder(
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
     with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
-        while True:
-            frame = ws.receive_json()
-            if frame["type"] == "event_block" and (
-                frame["block"]["content"] == "Internal output"
-            ):
-                break
+        wait_for_record(client, topic, lambda record: "Internal output" in str(record))
         clock += timedelta(seconds=threshold)
         assert client.portal.call(chat.remind_silent_turns) == 1
         assert "chat_send" in notices[0] and "todo_write" in notices[0]

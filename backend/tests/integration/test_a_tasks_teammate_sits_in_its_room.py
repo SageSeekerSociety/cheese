@@ -74,7 +74,7 @@ def _turn(client, tmp_path, task: str, reply: str) -> None:
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
-        compute=stub_compute(screen),
+        compute=stub_compute(screen, sessions=client.test_request_factory),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -91,7 +91,7 @@ def _turn(client, tmp_path, task: str, reply: str) -> None:
 
 
 def _author_of(client, task: str, content: str) -> str:
-    r = client.get(f"/topics/{task}/blocks", headers=session_auth_headers("alice"))
+    r = client.get(f"/topics/{task}/transcript", headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
     authors = [b["author"] for b in r.json()["data"]["data"] if content in b["content"]]
     assert authors, r.json()["data"]["data"]

@@ -24,6 +24,7 @@ from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.models import Block
 from app.domain.delivery.models import NativeInput
 from app.main import app
+from tests.support.session_records import wait_for_record
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
@@ -117,7 +118,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/late-turn-end-ws",
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=client.test_request_factory),
         )
 
     before = FirstPromptOnly()
@@ -136,10 +137,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
         # is read inside that work.
         before.starts(topic)
         before.uses(topic, "Bash", command="sleep 600")
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "sleep 600" in str(record))
         seat = next(
             turn.agent_handle
             for turn in _rows(client, AgentTurn, topic)

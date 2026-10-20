@@ -44,7 +44,6 @@ from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
-from app.domain.review.landing_models import TaskLanding
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.ports import RecordInstruction, TaskTeammate
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
@@ -85,15 +84,13 @@ async def delivery_landed(
 
     Says whether the merge landed on the task this time: one that has already
     landed there does not land twice (`_already_landed`)."""
-    if await _already_landed(session, task, pr_number):
+    if _already_landed(task, head):
         return False
     now = datetime.now(UTC)
     task.accepted_at = now
     task.accepted_by = by or task.accepted_by
     if head:
         task.delivered_head = head[:64]
-    if pr_number is not None:
-        await _record_landing(session, task, pr_number, now)
     still_working = (
         completes
         and task.status == TaskStatus.open
@@ -268,43 +265,22 @@ async def _go_on(
     )
 
 
-async def _already_landed(
-    session: AsyncSession, task: Task, pr_number: int | None
-) -> bool:
-    """Whether this merge has already landed on ``task``: a row in
-    `task_landings`, written by every landing that has a PR.
+def _already_landed(task: Task, head: str | None) -> bool:
+    """Whether this merge has already landed on ``task``: the commit it put on
+    the branch is the one the task's latest delivery delivered.
 
-    A merge nobody has landed leaves no row, and lands as it always did. A
-    merge that did leaves one — and landing it a second time would drag a
-    task that has since gone on from the next step, or been reopened, back
-    into a write-up window it has already been through.
+    Landing a merge a second time would drag a task that has since gone on
+    from the next step, or been reopened, back into a write-up window it has
+    already been through. The task keeps `delivered_head` across both of those
+    (`room_task.services.TaskService.next_step` and `reopen`), so the commit is
+    what tells a second look at the same merge apart from the next delivery.
 
-    Deliveries with no PR of their own (an artifact, a URL out of the task's
-    folder) leave no row and are not held back."""
-    if pr_number is None:
+    A delivery is told the head it landed by every path that sees a merge; one
+    that is not (a discussion with no change, an artifact, a URL) has no commit
+    to compare and is not held back."""
+    if head is None:
         return False
-    return await _landing_exists(session, task.id, pr_number)
-
-
-async def _landing_exists(
-    session: AsyncSession, task_id: uuid.UUID, pr_number: int
-) -> bool:
-    return (
-        await session.scalar(
-            select(TaskLanding.id).where(
-                TaskLanding.task_id == task_id, TaskLanding.pr_number == pr_number
-            )
-        )
-    ) is not None
-
-
-async def _record_landing(
-    session: AsyncSession, task: Task, pr_number: int, now: datetime
-) -> None:
-    """Record that the merge of ``pr_number`` landed on ``task``, once."""
-    if await _landing_exists(session, task.id, pr_number):
-        return
-    session.add(TaskLanding(task_id=task.id, pr_number=pr_number, landed_at=now))
+    return task.delivered_head is not None and task.delivered_head == head[:64]
 
 
 async def tell_origin(
