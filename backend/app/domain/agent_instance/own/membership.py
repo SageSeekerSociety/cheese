@@ -37,6 +37,8 @@ async def add(
     )
     if login is None:
         raise NotFoundError(say("ownAgentConnectionNotFound"))
+    if login.owner_user_id is not None and login.owner_user_id != owner_user_id:
+        raise ForbiddenError(say("ownAgentConnectionNotFound"))
     if model not in login.allowed_models:
         raise ForbiddenError(say("teamConnectionModelRefused"))
     account_id = uuid.UUID(login.id) if login.on_account else None
@@ -46,7 +48,9 @@ async def add(
         handle=own_handle(owner_user_id),
         type_name=None,
         configuration={"model": model, "execution_device_id": device_id},
-        display_name=own_name(nickname, label(login)),
+        display_name=own_name(nickname, label(login))
+        if login.owner_user_id is not None
+        else label(login),
         name_source=NameSource.human,
     )
     db.add(instance)

@@ -113,12 +113,8 @@ class OwnerChannel(CentralChannel):
             # launch: this session signs in with its owner's login on the
             # machine, and none of the metering proxy's environment is set.
             prepared.env["CHEESE_OWN_LOGIN"] = "1"
-            # Which of the machine's logins it signs in with, and what that
-            # login calls a model with, are read once, as the session starts.
-            # The second is folded into what the session was started with, so
-            # the next turn after its owner switches account or model service
-            # starts a new session instead of keeping the old one; the login
-            # itself never changes under an agent.
+            # The session uses its registered subscription directory and the
+            # model selected for the teammate, independently of its computer.
             login = await self._login(kwargs["session"])
             prepared.env[OWN_LOGIN_ID] = login.local_id
             async with (self._session_factory or async_session_factory)() as db:
@@ -131,14 +127,8 @@ class OwnerChannel(CentralChannel):
                 if instance is None:
                     raise ScreenSetupError(say("screenAgentIdentityMissing"))
                 prepared.env[OWN_MODEL] = (
-                    (instance.configuration or {}).get("model")
-                    or login.model
-                    or "sonnet"
+                    (instance.configuration or {}).get("model") or "sonnet"
                 )
-            calls = f"{login.auth_method or ''}:{login.model or ''}"
-            prepared.env["CHEESE_AGENT_CONFIG"] = hashlib.sha256(
-                f"{prepared.env.get('CHEESE_AGENT_CONFIG', '')}:{calls}".encode()
-            ).hexdigest()
             yield prepared
 
     async def _login(self, session: SessionRef) -> DeviceClaudeLoginRow:

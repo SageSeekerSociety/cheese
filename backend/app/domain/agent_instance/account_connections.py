@@ -6,13 +6,14 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
-from app.domain.agent_instance.models import AccountConnection
+from app.domain.agent_instance.models import AccountConnection, PersonalModelResource
+from app.domain.team.models import Team
 from app.domain.device.login_kind import ConnectionKind
 from app.domain.integration.service import refuse_internal_host
 
@@ -116,7 +117,16 @@ async def of_team(db: AsyncSession, team_id: int) -> list[AccountConnection]:
     """The connections this team stores encrypted on the platform, oldest first."""
     rows = await db.scalars(
         select(AccountConnection)
-        .where(AccountConnection.team_id == team_id)
+        .where(
+            or_(
+                AccountConnection.team_id == team_id,
+                AccountConnection.id.in_(
+                    select(PersonalModelResource.account_connection_id).where(
+                        PersonalModelResource.team_id == team_id
+                    )
+                ),
+            )
+        )
         .order_by(AccountConnection.created_at)
     )
     return list(rows)
@@ -126,7 +136,16 @@ async def owned(
     db: AsyncSession, team_id: int, connection_id: uuid.UUID
 ) -> AccountConnection | None:
     row = await db.get(AccountConnection, connection_id)
-    return row if row is not None and row.team_id == team_id else None
+    if row is None:
+        return None
+    if row.team_id == team_id or await db.scalar(
+        select(PersonalModelResource.id).where(
+            PersonalModelResource.team_id == team_id,
+            PersonalModelResource.account_connection_id == row.id,
+        )
+    ):
+        return row
+    return None
 
 
 async def create(
@@ -154,6 +173,9 @@ async def create(
     row = AccountConnection(
         id=uuid.uuid4(),
         team_id=team_id,
+        owner_user_id=await db.scalar(
+            select(Team.personal_owner_user_id).where(Team.id == team_id)
+        ),
         kind=kind.value,
         allowed_models=allowed_models,
         name=name or None,
@@ -181,6 +203,7 @@ def view(row: AccountConnection) -> dict:
     """The connection as its owner reads it. Never the key."""
     return {
         "id": str(row.id),
+        "owner_user_id": row.owner_user_id,
         "kind": row.kind,
         "allowed_models": row.allowed_models,
         "name": row.name,

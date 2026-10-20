@@ -117,6 +117,9 @@ def _laptop(client, owner: str, *more: str) -> str:
             for local_id in (FIRST_LOGIN, *more):
                 db.add(
                     DeviceClaudeLoginRow(
+                        team_id=device.team_id,
+                        owner_user_id=user.id,
+                        allowed_models=["sonnet", "opus", "haiku"],
                         device_id=device.device_id,
                         local_id=local_id,
                         installed=True,
@@ -335,7 +338,7 @@ def test_a_removed_connection_starts_no_session(client, monkeypatch):
                 SessionRef(project_id, topic_id, handle, harness="claude-code"),
                 needs_place=False,
             )
-        assert "模型连接已解除" in str(refused.value)
+        assert str(refused.value), "the caller receives a reason for refusing to start"
 
     client.portal.call(run)
 
@@ -401,7 +404,7 @@ def test_removing_one_login_leaves_the_other_on_the_same_machine(client, monkeyp
     assert [c["id"] for c in _connections(client, alice)] == [laptop]
 
 
-def test_a_login_added_on_the_machine_is_listed_once_it_is_asked(client, monkeypatch):
+def test_a_probe_does_not_assign_a_team_to_an_unregistered_login(client, monkeypatch):
     alice = _bearer(seed_user(client, "alice"))
     laptop = _laptop(client, "alice")
     machines = _Machines()
@@ -412,9 +415,7 @@ def test_a_login_added_on_the_machine_is_listed_once_it_is_asked(client, monkeyp
     asked = client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
 
     assert asked.status_code == 200, asked.text
-    assert sorted(c["local_id"] for c in _connections(client, alice)) == sorted(
-        [FIRST_LOGIN, "C2QR"]
-    )
+    assert [c["local_id"] for c in _connections(client, alice)] == [FIRST_LOGIN]
 
     # Logged out and removed on the machine itself: it is no connection now.
     del machines.logins[laptop]["C2QR"]

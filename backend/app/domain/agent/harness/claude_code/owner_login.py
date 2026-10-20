@@ -1,12 +1,14 @@
-"""Claude Code logins belonging to one device enrollment and its team.
+"""Status and logout for credentials with their own team and member ownership.
 
 The owner logs it in on the machine with `cheesehost claude login`, with the
 build the platform pins. Each run adds a login of its own, in a directory of
 the platform's: the first one a machine had in `place.CLAUDE_LOGIN_DIR`, the
 rest under `place.CLAUDE_LOGINS_DIR`, one directory each, named by the login's
 id within the enrollment. Each is a model connection of its own
-(`DeviceClaudeLoginRow` keys it by device and local id). Two enrollments of
-one computer can both name a login `default` without sharing credentials.
+(`DeviceClaudeLoginRow` records its team separately from its storage transport).
+An existing enrollment profile can carry the transport; a model-only host can
+carry it without enrolling an execution device. Each profile has separate login
+directories.
 
 The machine is the only one that knows whether a login is still good, so the
 backend asks it — `claude auth status` for each, which answers without calling
@@ -17,10 +19,9 @@ The question travels as a program on stdin (`hub.exec(["python3", "-"])`), the
 way every other one-off question to a machine does, so it runs the same on
 Linux, macOS and Windows, where the connector provides `python3`.
 
-Its owner can also change a login from any browser (「模型连接」): log it out,
-or add one that calls another model service. Those run the connector's own
-`cheesehost claude logout <id>` and `cheesehost claude login --base-url` on the
-machine, through the same `hub.exec`. A logout asked for while the machine is
+Its owner can log a subscription out from any browser (「模型连接」), through
+the connector's `cheesehost claude logout <id>` and the same `hub.exec`.
+A logout asked for while the machine is
 away is recorded (``revoked_at``) and carried out as it next connects; the
 login is out of use from the moment it is asked for.
 """
@@ -31,8 +32,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import case, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
@@ -40,13 +40,16 @@ from app.domain.agent.place import (
     CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
-    MODEL_SERVICE_FILE,
     footprint_root,
 )
 from app.domain.agent_instance.own import rename_for_connection
 from app.domain.device import claude_login
-from app.domain.device.login_kind import FIRST_LOGIN, LOGIN_ID, MODEL_SERVICE
-from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
+from app.domain.device.login_kind import FIRST_LOGIN, LOGIN_ID
+from app.domain.device.models import (
+    DeviceClaudeLoginRow,
+    DeviceRow,
+    ModelCredentialHost,
+)
 from app.domain.device.supply import Supply
 
 logger = logging.getLogger(__name__)
@@ -85,20 +88,6 @@ if not env.get("USER"):
 
 def report(login):
     local_id, directory = login
-    # Another model service the owner set (`cheesehost claude login --base-url`):
-    # the sessions call it and not the login. Its model and host leave the
-    # machine, for its owner to tell services apart; its key does not.
-    try:
-        service = json.loads((directory / SERVICE).read_text())
-    except (OSError, ValueError):
-        service = None
-    if isinstance(service, dict) and service.get("base_url") and service.get("token"):
-        from urllib.parse import urlsplit
-        try:
-            host = urlsplit(str(service["base_url"])).hostname
-        except ValueError:
-            host = None
-        return {"id": local_id, "service": {"model": service.get("model"), "host": host}}
     result = subprocess.run(
         [str(binary), "auth", "status"],
         env={**env, "CLAUDE_CONFIG_DIR": str(directory),
@@ -133,7 +122,6 @@ def program() -> str:
         f"LOGINS = {CLAUDE_LOGINS_DIR!r}\n"
         f"FIRST = {FIRST_LOGIN!r}\n"
         f"LOGIN_ID = {LOGIN_ID.pattern!r}\n"
-        f"SERVICE = {MODEL_SERVICE_FILE!r}\n"
         f"KEYCHAIN = {CLAUDE_KEYCHAIN_DIR!r}\n"
         f"VERSION = {CLAUDE_PINNED_VERSION!r}\n" + _PROGRAM
     )
@@ -145,30 +133,17 @@ class ClaudeLogin:
     logged_in: bool
     auth_method: str | None = None
     subscription_type: str | None = None
-    #: The model a model service is called with; None for a Claude account.
-    model: str | None = None
-    #: The host of that model service; None for a Claude account.
-    service_host: str | None = None
     #: What the machine calls this login (its directory's name there).
     local_id: str = FIRST_LOGIN
 
 
 def _one(local_id: str, entry: dict) -> ClaudeLogin:
-    service = entry.get("service")
-    if isinstance(service, dict):
-        model, host = service.get("model"), service.get("host")
-        return ClaudeLogin(
-            installed=True,
-            logged_in=True,
-            auth_method=MODEL_SERVICE,
-            model=model[:128] if isinstance(model, str) and model else None,
-            service_host=host[:255] if isinstance(host, str) and host else None,
-            local_id=local_id,
-        )
     status = entry.get("status")
     if not isinstance(status, dict):
         status = {}
-    logged_in = status.get("loggedIn") is True
+    logged_in = (
+        status.get("loggedIn") is True and status.get("authMethod") == "claude.ai"
+    )
 
     def short(name: str) -> str | None:
         value = status.get(name)
@@ -232,35 +207,26 @@ async def remember(
             "logged_in": login.logged_in,
             "auth_method": login.auth_method,
             "subscription_type": login.subscription_type,
-            "model": login.model,
-            "service_host": login.service_host,
             "checked_at": now,
         }
-        statement = insert(DeviceClaudeLoginRow).values(
-            device_id=device_id,
-            local_id=login.local_id,
-            allowed_models=[login.model]
-            if login.model
-            else ["opus", "sonnet", "haiku"],
-            **values,
+        row = await session.scalar(
+            select(DeviceClaudeLoginRow).where(
+                or_(
+                    DeviceClaudeLoginRow.device_id == device_id,
+                    DeviceClaudeLoginRow.host_id == device_id,
+                ),
+                DeviceClaudeLoginRow.local_id == login.local_id,
+            )
         )
-        login_id = await session.scalar(
-            statement.on_conflict_do_update(
-                index_elements=["device_id", "local_id"],
-                set_={
-                    **values,
-                    # A login its owner removed stays out of use until the
-                    # machine has logged it out, whatever it says before then.
-                    "logged_in": case(
-                        (
-                            DeviceClaudeLoginRow.revoked_at.is_(None),
-                            statement.excluded.logged_in,
-                        ),
-                        else_=False,
-                    ),
-                },
-            ).returning(DeviceClaudeLoginRow.id)
-        )
+        # Only an explicitly registered credential has a team. A probe reports
+        # status; it cannot turn an execution device into a model credential.
+        if row is None:
+            continue
+        for key, value in values.items():
+            setattr(row, key, value)
+        if row.revoked_at is not None:
+            row.logged_in = False
+        login_id = row.id
         if login.logged_in:
             # The own agents on this connection are named after it (its plan
             # or model), which the owner may just have switched.
@@ -268,7 +234,10 @@ async def remember(
     await session.execute(
         update(DeviceClaudeLoginRow)
         .where(
-            DeviceClaudeLoginRow.device_id == device_id,
+            or_(
+                DeviceClaudeLoginRow.device_id == device_id,
+                DeviceClaudeLoginRow.host_id == device_id,
+            ),
             DeviceClaudeLoginRow.local_id.not_in([login.local_id for login in logins]),
             DeviceClaudeLoginRow.logged_in.is_(True),
         )
@@ -301,9 +270,9 @@ async def status(session: AsyncSession, login_id: str) -> dict | None:
 async def machine_of(session: AsyncSession, login_id: str) -> str | None:
     """The machine holding a login; None when there is no such login."""
     return await session.scalar(
-        select(DeviceClaudeLoginRow.device_id).where(
-            DeviceClaudeLoginRow.id == login_id
-        )
+        select(
+            func.coalesce(DeviceClaudeLoginRow.host_id, DeviceClaudeLoginRow.device_id)
+        ).where(DeviceClaudeLoginRow.id == login_id)
     )
 
 
@@ -344,7 +313,10 @@ async def settle(session: AsyncSession, hub, device_id: str) -> None:
     pending = (
         await session.scalars(
             select(DeviceClaudeLoginRow).where(
-                DeviceClaudeLoginRow.device_id == device_id,
+                or_(
+                    DeviceClaudeLoginRow.device_id == device_id,
+                    DeviceClaudeLoginRow.host_id == device_id,
+                ),
                 DeviceClaudeLoginRow.revoked_at.is_not(None),
             )
         )
@@ -365,7 +337,7 @@ async def revoke(session: AsyncSession, hub, login_id: str) -> None:
     row = await session.get(DeviceClaudeLoginRow, login_id)
     if row is None:
         return
-    device_id = row.device_id
+    device_id = row.transport_id
     row.revoked_at, row.logged_in, row.name = datetime.now(UTC), False, None
     await session.commit()
     if not hub.is_online(device_id):
@@ -401,7 +373,8 @@ async def refresh_on_connect(session_factory, hub, device_id: str) -> None:
     again before it answers is asked on its next connection."""
     async with session_factory() as session:
         device = await session.get(DeviceRow, device_id)
-        if device is None or device.supply != Supply.self_hosted:
+        host = await session.get(ModelCredentialHost, device_id)
+        if host is None and (device is None or device.supply != Supply.self_hosted):
             return
     try:
         await refresh(session_factory, hub, device_id)

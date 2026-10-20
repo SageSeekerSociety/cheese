@@ -76,6 +76,7 @@ export interface ConnectOptions {
 }
 
 export interface DesktopBridge {
+  modelCredentialLogin: boolean
   connectThisMachine: (options: ConnectOptions) => Promise<void>
   cancelConnect: () => Promise<void>
   thisDevice: () => Promise<string | null>
@@ -84,24 +85,14 @@ export interface DesktopBridge {
   enrollmentProfiles: () => Promise<Record<string, string>>
   /** Logs in the login this computer calls `loginId` again, or adds one when it is null. */
   claudeLogin: (
-    console: boolean,
     loginId: string | null,
     onStep: (step: ClaudeLoginStep) => void,
-    profile?: string
+    profile?: string,
+    authorization?: { server: string; ticket: string }
   ) => Promise<void>
   cancelClaudeLogin: () => Promise<void>
   /** Logs out the login this computer calls `loginId`; its other logins stay. */
   claudeLogout: (loginId: string, profile?: string) => Promise<void>
-  /** Points the login this computer calls `loginId` (a new one when null) at another
-   *  model service; null in an app that predates it. */
-  claudeModelService:
-    | ((
-        service: { baseUrl: string; token: string; model: string },
-        loginId: string | null,
-        onStep: (step: ClaudeLoginStep) => void,
-        profile?: string
-      ) => Promise<void>)
-    | null
   disconnectThisMachine: () => Promise<void>
 }
 
@@ -117,6 +108,7 @@ export function desktopBridge(): DesktopBridge | null {
   if (!tauri?.core || !desktopCan('teamEnrollment')) return null
   const { invoke, Channel } = tauri.core
   return {
+    modelCredentialLogin: desktopCan('modelCredentialLogin'),
     async connectThisMachine({ knownDeviceIds, teamId, approve, onStep, onPercent }) {
       let approveError: ConnectFailure | null = null
       const progress = new Channel<Progress>()
@@ -150,13 +142,19 @@ export function desktopBridge(): DesktopBridge | null {
     async enrollmentProfiles() {
       return (await invoke('enrollment_profiles')) as Record<string, string>
     },
-    async claudeLogin(console, loginId, onStep, profile = 'default') {
+    async claudeLogin(loginId, onStep, profile = 'default', authorization) {
       const progress = new Channel<Progress>()
       progress.onmessage = (message) => {
         if (message.kind === 'step' && (message.id === 'preparing' || message.id === 'browser')) onStep(message.id)
       }
       try {
-        await invoke('claude_login', { console, loginId, progress, profile })
+        await invoke('claude_login', {
+          loginId,
+          progress,
+          profile,
+          server: authorization?.server ?? null,
+          ticket: authorization?.ticket ?? null,
+        })
       } catch (err) {
         throw failure(err)
       }
@@ -167,19 +165,6 @@ export function desktopBridge(): DesktopBridge | null {
     async claudeLogout(loginId, profile = 'default') {
       await invoke('claude_logout', { loginId, profile })
     },
-    claudeModelService: desktopCan('modelService')
-      ? async ({ baseUrl, token, model }, loginId, onStep, profile = 'default') => {
-          const progress = new Channel<Progress>()
-          progress.onmessage = (message) => {
-            if (message.kind === 'step' && message.id === 'preparing') onStep(message.id)
-          }
-          try {
-            await invoke('claude_model_service', { baseUrl, token, model, loginId, progress, profile })
-          } catch (err) {
-            throw failure(err)
-          }
-        }
-      : null,
     async disconnectThisMachine() {
       await invoke('disconnect_this_machine')
     },

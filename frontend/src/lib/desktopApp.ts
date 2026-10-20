@@ -15,8 +15,8 @@ export type DesktopAbility =
   | 'links'
   | 'updates'
   | 'device'
-  | 'modelService'
   | 'teamEnrollment'
+  | 'modelCredentialLogin'
 
 interface CheeseApp {
   /** 'overlay': the title bar is drawn over the page (macOS), so the page leaves room for its buttons. */

@@ -58,6 +58,7 @@ async def test_rename_reads_each_owners_nickname_and_logins_once(monkeypatch):
                 model=None,
                 device_id="device-1",
                 device_name="工作机",
+                owner_user_id=7,
             )
         ]
 

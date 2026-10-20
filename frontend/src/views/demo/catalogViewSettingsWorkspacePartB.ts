@@ -11,7 +11,6 @@ import {
   DEVICE_TEAMS,
   MODEL_CONNECTIONS,
   MODEL_HELD,
-  MODEL_SERVICE_DEVICES,
   SECURITY_DIALOGS,
   SECURITY_PROPS,
 } from './catalogViewSettingsWorkspaceFixtures'
@@ -220,7 +219,9 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
       connections: MODEL_CONNECTIONS,
       platformModels: [{ id: 'sonnet', label: 'Claude Sonnet' }],
       held: MODEL_HELD,
-      devices: MODEL_SERVICE_DEVICES,
+      personalChoices: [
+        { id: 'personal-key', name: '我的 Kimi', kind: 'model_service', allowed_models: ['kimi-k2'], added: false },
+      ],
       busy: '',
       saved: 0,
     },
@@ -233,7 +234,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.modelConnectionsView.s1.note')
         },
         props: { connections: [], held: [] },
-        expect: '暂无设备上的登录',
+        expect: '暂无电脑上的登录',
         expectSelector: '.settings-empty',
       },
       {
