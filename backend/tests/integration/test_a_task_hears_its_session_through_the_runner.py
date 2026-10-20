@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from sqlalchemy import update
 
 from app.core.config import settings
@@ -55,24 +56,29 @@ class _Chat:
 
 
 class _Runner:
-    """The seat's runner: registered once, numbering its events."""
+    """The seat's runner: registered, numbering its events. ``written_under``
+    is the epoch an event was written under, when it is older than the
+    registration delivering it: a backlog the runner before this one left."""
 
     def __init__(self, client, task_id: str, seat: str) -> None:
         self.client = client
         self.key = session_state.SeatKey(uuid.UUID(task_id), seat, HARNESS)
-        self.epoch = client.portal.call(
-            session_state.register, client.test_factory, self.key
-        )
         self.seq = 0
+        self.register()
 
-    def reports(self, chat: _Chat, fact) -> None:
+    def register(self) -> None:
+        self.epoch = self.client.portal.call(
+            session_state.register, self.client.test_factory, self.key
+        )
+
+    def reports(self, chat: _Chat, fact, *, written_under: int | None = None) -> None:
         self.seq += 1
         report = Report(
             self.key.conversation_id,
             self.key.agent_handle,
             HARNESS,
             self.epoch,
-            self.epoch,
+            self.epoch if written_under is None else written_under,
             self.seq,
             datetime.now(UTC),
             fact,
@@ -115,6 +121,48 @@ def test_the_runner_reporting_the_session_gone_marks_the_teammate_left(client):
     assert task["progress_note"] == "等构建"
     assert task["progress_set_by"] == seat
     assert task["presentation"]["phrase"] == "waiting"
+
+
+@pytest.mark.parametrize(
+    ("from_backlog", "current"),
+    [
+        # The old runner's own report of its process ending, read after the
+        # seat was registered again.
+        (True, False),
+        # The same, from a reading that does not know which launch it reads.
+        (True, True),
+        # The new runner reporting the ending of the process before it, which
+        # died with its runner.
+        (False, False),
+    ],
+)
+def test_an_earlier_process_ending_leaves_the_running_session_be(
+    client, from_backlog, current
+):
+    """The seat was registered again and its new session is at work when the
+    exit of the process before it arrives: the task does not say its teammate
+    left, and the seat still reads as running."""
+    _project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+    earlier = runner.epoch
+    runner.register()
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+
+    runner.reports(
+        chat,
+        SessionExited("launch-1", current=current),
+        written_under=earlier if from_backlog else None,
+    )
+
+    assert _task(client, task_id)["agent_left_at"] is None
+
+    async def running() -> set[uuid.UUID]:
+        async with client.test_factory() as session:
+            return await session_state.running_conversations(session)
+
+    assert uuid.UUID(task_id) in client.portal.call(running)
 
 
 def _reported_long_ago(client, task_id: str) -> None:

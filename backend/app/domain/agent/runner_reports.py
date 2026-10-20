@@ -93,15 +93,24 @@ async def apply(chat, report: Report) -> bool:
                     failure=fact.failure,
                 )
         elif isinstance(fact, SessionExited):
-            await session_state.declare(db, key, IDLE, report.at, exited=True)
-            # A task's session ending is noted beside its teammate's last report.
-            await note_agent_left(db, report.conversation_id, at=report.at)
+            # Only the exit of the process this reading reads (`current`),
+            # written under the seat's current registration, ends its session.
+            # An earlier process's exit leaves the session that replaced it as
+            # it is.
+            if fact.current and await session_state.exited(
+                db, key, report.at, epoch=report.epoch
+            ):
+                # A task's session ending is noted beside its teammate's last
+                # report.
+                await note_agent_left(db, report.conversation_id, at=report.at)
         await db.commit()
     if started is not None:
         payload, room = started
         await publish(payload, room=room)
     if isinstance(fact, InputRead | InputDropped):
-        identity = fact.receipt.identity if isinstance(fact, InputRead) else fact.identity
+        identity = (
+            fact.receipt.identity if isinstance(fact, InputRead) else fact.identity
+        )
         pending = chat.live.unread_inputs.get(identity.conversation_id)
         if pending is not None:
             pending.pop(identity.input_id, None)

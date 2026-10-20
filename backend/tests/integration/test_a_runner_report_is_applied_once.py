@@ -193,10 +193,13 @@ class _Frames:
 async def test_an_event_delivered_again_after_a_crash_changes_nothing(
     db_factory, monkeypatch
 ):
-    """The platform applied a read and the session's going idle, and crashed
-    before the runner heard it had: both come again. Nothing changes the
-    second time — the seat stays idle, and the room is not told a second time
-    that its message was read."""
+    """The platform applied an input's read and the failed work it was read
+    into, and crashed before the runner heard it had: the runner hands over
+    everything since its last acknowledgement again, in order. Each effect
+    happened once. The room is told once that its message was read, the
+    failure is stamped once, and while the backlog comes again the seat does
+    not go back to running: a redelivered event does not put back what a later
+    one changed."""
     frames = _Frames()
     monkeypatch.setattr(runner_reports, "get_broker", lambda: frames)
     seat = await _seat(db_factory)
@@ -207,19 +210,28 @@ async def test_an_event_delivered_again_after_a_crash_changes_nothing(
         row.seen_block_ids = [str(block)]
         row.seen_by = SEAT
         await session.commit()
-    running = seat.report(SessionRunning(work))
-    read = seat.report(InputRead(InputReceipt(identity, "native_echo", work)))
-    idle = seat.report(_idle(work, identity.input_id))
-    for report in (running, read, idle):
+    backlog = [
+        seat.report(InputWritten(identity)),
+        seat.report(SessionRunning(work)),
+        seat.report(InputRead(InputReceipt(identity, "native_echo", work))),
+        seat.report(_idle(work, identity.input_id, failure="api_error")),
+    ]
+    for report in backlog:
         await seat.apply(report)
+    first = await seat.row(identity)
+    assert first.echoed_at is not None and first.failed_at is not None
+
+    for report in backlog[:2]:
+        await seat.apply(report)
+        assert (await seat.status()).worker_status == "idle"
+    for report in backlog[2:]:
+        await seat.apply(report)
+
     told = [frame for frame in frames.sent if frame["type"] == "reaction"]
     assert len(told) == 1
-
-    for report in (running, read, idle):
-        await seat.apply(report)
-
-    assert [frame for frame in frames.sent if frame["type"] == "reaction"] == told
-    assert (await seat.status()).worker_status == "idle"
+    again = await seat.row(identity)
+    assert (again.echoed_at, again.failed_at) == (first.echoed_at, first.failed_at)
+    assert read_failed(await seat.block(block)) == "api_error"
     async with db_factory() as session:
         assert await session_state.running_conversations(session) == set()
 
@@ -304,8 +316,10 @@ async def test_an_input_written_and_not_read_holds_until_its_fate_is_reported(
     db_factory,
 ):
     """Work failed with a second input written mid-work and not read yet:
-    the session may still read it, so it keeps its seat and its batch — the
-    failure is attached to what was read, not to it."""
+    the session may still read it, so it keeps its seat and its batch through
+    the failure and through the session going idle again. Only what the runner
+    says of that input lets it go: here, that its process ended with it
+    unread."""
     seat = await _seat(db_factory)
     work = uuid.uuid4()
     first, _ = await seat.input(work=work)
@@ -316,6 +330,15 @@ async def test_an_input_written_and_not_read_holds_until_its_fate_is_reported(
     await seat.apply(seat.report(InputRead(InputReceipt(first, "native_echo", work))))
 
     await seat.apply(seat.report(_idle(work, first.input_id, failure="api_error")))
-
     assert await seat.holds() == (True, {later_block})
     assert (await seat.row(later)).failed_at is None
+
+    other = uuid.uuid4()
+    await seat.apply(seat.report(SessionRunning(other)))
+    await seat.apply(seat.report(_idle(other)))
+    assert await seat.holds() == (True, {later_block})
+
+    await seat.apply(seat.report(InputDropped(later, "exited")))
+    await seat.apply(seat.report(SessionExited("launch-1", current=True)))
+    assert await seat.holds() == (False, set())
+    assert consumed_turn(await seat.block(later_block)) is None

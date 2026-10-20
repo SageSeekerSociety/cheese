@@ -107,12 +107,7 @@ async def take(
 
 
 async def declare(
-    session: AsyncSession,
-    key: SeatKey,
-    status: str,
-    at: datetime,
-    *,
-    exited: bool = False,
+    session: AsyncSession, key: SeatKey, status: str, at: datetime
 ) -> None:
     """What the runner declared the session to be doing, as of ``at``."""
     state = await session.scalar(
@@ -123,8 +118,28 @@ async def declare(
     if state.worker_status != status:
         state.worker_status = status
         state.changed_at = at
-    if exited:
-        state.exited_at = at
+
+
+async def exited(
+    session: AsyncSession, key: SeatKey, at: datetime, *, epoch: int
+) -> bool:
+    """The process the runner registered under ``epoch`` ended, as of ``at``.
+
+    Only the seat's current registration's exit ends its session: idle, and
+    exited. An exit written under an earlier epoch is of a process a newer
+    registration has replaced, whose session may be running now, so it changes
+    nothing here; that process's unread inputs are settled by the drops its
+    runner reports beside it. Says whether this was the current session's."""
+    state = await session.scalar(
+        select(SessionState).where(*_key(key)).with_for_update()
+    )
+    if state is None or state.worker_epoch != epoch:
+        return False
+    if state.worker_status != IDLE:
+        state.worker_status = IDLE
+        state.changed_at = at
+    state.exited_at = at
+    return True
 
 
 async def running_conversations(
