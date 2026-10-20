@@ -228,8 +228,14 @@ async def _asked_for_more(
     if teammate is None:
         # 项目和房间都不在了：这个任务无处落脚，也就没有队友的活要认。
         return []
-    _instance_id, handle = teammate
-    return await unfinished(session, task.id, since=since, by=handle)
+    instance_id, handle = teammate
+    return await unfinished(
+        session,
+        task.id,
+        since=since,
+        by=handle,
+        seat=agent_instance_handle(instance_id),
+    )
 
 
 async def _handed_over(session: AsyncSession, task: Task) -> datetime | None:

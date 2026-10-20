@@ -1,6 +1,13 @@
 # Retire the turn
 
-Status: design. Supersedes `2026-08-16-topic-event-subscription-design.md`, which proposed
+Status: not carried out as written. For Claude Code, #4459 moved session lifecycle off the
+turn by a different route: the runner reports typed, epoch-fenced events (input written, read,
+dropped; worker idle or running; session exit), stuck-work clocks run in the runner, and an
+input counts as delivered once it is read. Codex and pi still use the room's turn clocks, and
+turn-keyed code remains (`notify_running_turn`, `running_topic_ids`, `block/waits.unresolved_failures`,
+`delivery/input_holds.unread_input_with_over_work`).
+
+Original status: design. Supersedes `2026-08-16-topic-event-subscription-design.md`, which proposed
 demoting the turn to a marker. Demoting is a half-measure: it leaves an object with a
 lifetime that the platform must keep defending. This retires it.
 

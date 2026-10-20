@@ -127,12 +127,15 @@ async def unfinished(
     *,
     since: datetime | None = None,
     by: str | None = None,
+    seat: str | None = None,
 ) -> list[str]:
     """What is still being done or asked for in ``task_id`` besides its
     write-up: the prompts of `unfinished_work`. Empty when there is none."""
     return [
         left.prompt
-        for left in await unfinished_work(session, task_id, since=since, by=by)
+        for left in await unfinished_work(
+            session, task_id, since=since, by=by, seat=seat
+        )
     ]
 
 
@@ -142,6 +145,7 @@ async def unfinished_work(
     *,
     since: datetime | None = None,
     by: str | None = None,
+    seat: str | None = None,
 ) -> list[Unfinished]:
     """What is still being done or asked for in ``task_id`` besides its
     write-up, each item with the seat whose session is doing it.
@@ -160,9 +164,13 @@ async def unfinished_work(
     read into work that then failed (`block.queries.read_failed_messages`):
     read is not answered.
 
-    ``by``: only that agent's (`ResolvedAgent.handle`) seat and messages."""
+    ``by``: only messages for that agent (`ResolvedAgent.handle`, the handle a
+    message names its recipient by); ``seat``: only that agent's session, by
+    the handle it acts under (the one its runner registers,
+    `agent_instance_handle`). The two are the same agent in the two spellings
+    the two facts are kept in."""
     now = datetime.now(UTC)
-    left = await _at_work(session, task_id, since=since, by=by)
+    left = await _at_work(session, task_id, since=since, by=by, seat=seat)
     left += [
         Unfinished(message.content, None)
         for message in await session.scalars(queued_messages(now - QUEUED_FOR, task_id))
@@ -184,6 +192,7 @@ async def _at_work(
     *,
     since: datetime | None,
     by: str | None,
+    seat: str | None,
 ) -> list[Unfinished]:
     """The seats whose session is at work in ``task_id`` on something besides
     its write-up (`unfinished_work`)."""
@@ -191,8 +200,8 @@ async def _at_work(
         _sessions.c.conversation_id == task_id,
         _sessions.c.worker_status == _RUNNING,
     )
-    if by is not None:
-        query = query.where(_sessions.c.agent_handle == by)
+    if seat is not None:
+        query = query.where(_sessions.c.agent_handle == seat)
     seats = list(await session.scalars(query.distinct()))
     if not seats:
         return []

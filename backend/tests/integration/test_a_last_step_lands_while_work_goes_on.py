@@ -44,7 +44,13 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
-from tests.landing import time_passes, watch, write_up_read, written_up
+from tests.landing import (
+    teammate_seat,
+    time_passes,
+    watch,
+    write_up_read,
+    written_up,
+)
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
 
@@ -76,8 +82,10 @@ def _last_step_up(client, app_world, pr: int = 7) -> tuple[str, str, dict]:
 TEAMMATE = "cheese"
 
 
-def _session(client, task_id: str, status: str, *, seat: str = TEAMMATE) -> None:
-    """What the runner of ``seat``'s session in the task declares it doing."""
+def _session(client, task_id: str, status: str, *, seat: str | None = None) -> None:
+    """What the runner of ``seat``'s session in the task declares it doing;
+    by default the task's own teammate's, under the seat it acts as."""
+    seat = seat or teammate_seat(client, task_id)[1]
     key = session_state.SeatKey(uuid.UUID(str(task_id)), seat, "claude-code")
 
     async def declare():
@@ -294,7 +302,7 @@ def test_a_session_at_work_on_the_write_up_does_not_hold_the_deadline(
     ("seat", "why"),
     [
         ("dispatcher", "another seat woken in the task by a platform notice"),
-        (TEAMMATE, "a fix the platform told the teammate to make"),
+        (None, "a fix the platform told the teammate to make"),
     ],
 )
 def test_work_the_platform_asked_for_is_not_more_work(client, app_world, seat, why):
@@ -400,7 +408,7 @@ def test_work_that_never_ends_is_stopped_at_the_last_deadline(client, app_world)
             )
 
     [record] = client.portal.call(records)
-    assert record.seat == TEAMMATE
+    assert record.seat == teammate_seat(client, task_id)[1]
     assert "把慢的几处都改掉" in record.meta["detail"]
 
 

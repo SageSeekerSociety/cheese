@@ -59,10 +59,9 @@ def write_up_read(client, task_id: str) -> None:
     client.portal.call(run)
 
 
-def written_up(client, task_id: str) -> None:
-    """The task's AI teammate reads its write-up instruction, writes it up, and
-    closes the task from its own session (`cheese_close_task`)."""
-    write_up_read(client, task_id)
+def teammate_seat(client, task_id: str) -> tuple[uuid.UUID, str]:
+    """The task's project, and the seat its AI teammate acts under: the handle
+    its session's runner registers and its credential carries."""
 
     async def seat():
         async with client.test_factory() as session:
@@ -72,10 +71,16 @@ def written_up(client, task_id: str) -> None:
                 session, task.project_id, task.room_id, task.agent_handle
             )
             assert teammate is not None
-            # The seat the task's session acts under: its teammate's own.
             return task.project_id, agent_instance_handle(teammate[0])
 
-    project_id, handle = client.portal.call(seat)
+    return client.portal.call(seat)
+
+
+def written_up(client, task_id: str) -> None:
+    """The task's AI teammate reads its write-up instruction, writes it up, and
+    closes the task from its own session (`cheese_close_task`)."""
+    write_up_read(client, task_id)
+    project_id, handle = teammate_seat(client, task_id)
     closed = client.post(
         f"/topics/{task_id}/close",
         json={"conclusion": "做完了"},

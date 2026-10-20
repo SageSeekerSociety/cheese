@@ -22,7 +22,7 @@
 |---|---|
 | [`product-impl.md`](product-impl.md) | 当前真实落地的产品行为与实现方式 |
 | [`infrastructure.md`](infrastructure.md) | 这个应用跑在哪、怎么发布、数据在哪 |
-| [`agent-liveness.md`](agent-liveness.md) | 一轮什么时候算卡住、什么会结束它、结束后房间看到什么；时限只记不闸，失败不自动重跑 |
+| [`agent-liveness.md`](agent-liveness.md) | 一轮什么时候算卡住、谁来判（Claude Code 的 runner，或 Codex、pi 的房间时钟）、什么会结束它、结束后房间看到什么；时限只记不闸 |
 | [`where-a-turn-runs.md`](where-a-turn-runs.md) | 一轮活落在哪台机器上：两条执行路，一台机器都没有时会怎样，以及归档后机器上的东西什么时候退、怎么退 |
 | [`microcloud.md`](microcloud.md) | 云主机池：会话的沙箱放在哪台宿主机上、池子何时扩容和释放；芝士向 MicroCloud 要什么、两个机器状态各自意味着什么，以及改 MicroCloud 的代码怎么合并、交给运维 agent 部署、发版 |
 | [`what-the-agent-perceives.md`](what-the-agent-perceives.md) | 芝士收得到什么、收不到什么：平台的三十种事件里有多少回流给它（答案是零） |
