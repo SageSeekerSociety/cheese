@@ -5,6 +5,7 @@
 """
 
 import uuid
+from functools import partial
 
 import pytest
 from sqlalchemy import select
@@ -16,12 +17,16 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.adapters import named_teammate
-from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.session_record import service as session_records
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
-from tests.integration.conftest import project_service, registered
+from tests.integration.conftest import (
+    project_service,
+    registered,
+    session_auth_headers,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -70,6 +75,8 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
     async def run():
         factory = client.test_request_factory
         screen = PrivateScreen("device")
+        # Where production keeps each session's records (`get_session_host`).
+        screen.host._records = partial(session_records.append, factory)
         svc = ChatService(
             work_runner=session_turn_deps.get_work_runner(),
             session_factory=factory,
@@ -116,7 +123,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         assert turns[0].reply_to is not None
         assert turns[0].delivered_at is not None
         # 一条发布路径 (结论 19): the private chat is told what a room is told, and
-        # its terminal reply lands in activity exactly as a room's does.
+        # its terminal reply stays in activity exactly as a room's does.
         # 这个人没选过界面语言：平台说存下来的中文（和 sentences.render 一个口径）。
         assert "不会发到聊天里，要用 chat_send 工具发" in screen.prompts[0]
         # 私聊是名册两席的房间（结论 19）: it is told how to publish in its system
@@ -127,19 +134,22 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         assert ("\n# 私聊\n" in screen.last_system_prompt) is private
         async with factory() as session:
             blocks = await BlockRepository(session).list_for_topic(topic_id)
-        assert any(
-            looks_like_agent_handle(b.author)
-            and b.kind == BlockKind.event
-            and b.content == "Draft saved."
-            for b in blocks
-        )
-        assert not any(
-            looks_like_agent_handle(b.author) and b.kind == BlockKind.message
-            for b in blocks
-        )
-        return screen, project.id, blocks
+        # Nothing the session printed is said in the chat: a reply reaches it
+        # only through chat_send, which this turn never called.
+        assert not any(looks_like_agent_handle(b.author) for b in blocks), [
+            (b.author, b.kind, b.content) for b in blocks
+        ]
+        return screen, project.id, topic_id
 
-    screen, project_id, blocks = client.portal.call(run)
+    screen, project_id, topic_id = client.portal.call(run)
+    # …and what it printed is in the conversation's activity, for its person.
+    activity = client.get(
+        f"/topics/{topic_id}/session-records",
+        params={"q": "Draft saved."},
+        headers=session_auth_headers("u"),
+    )
+    assert activity.status_code == 200, activity.text
+    assert activity.json()["data"]["items"], "the terminal reply is not in activity"
     if private:
         # Exercise the same scoped credential given to Cheese CLI, against the
         # real document API and database rather than the shell HTTP fixture: a

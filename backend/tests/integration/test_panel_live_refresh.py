@@ -11,6 +11,7 @@ never received refreshes nothing.
 import asyncio
 import time
 import uuid
+from functools import partial
 
 import pytest
 from sqlalchemy import select
@@ -22,6 +23,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.models import Block
+from app.domain.session_record import service as session_records
 from app.main import app
 from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
@@ -246,8 +248,10 @@ class _CallsATool(StubChannel):
         self.stops(topic_id, reply)
 
 
-def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
-    """One summoned turn on `channel`, as the room sees it."""
+def _turn_frames(client, tmp_path, channel: StubChannel) -> tuple[str, list[dict]]:
+    """One summoned turn on `channel`: where it ran, and the room's frames."""
+    # Where production keeps each session's records (`get_session_host`).
+    channel.host._records = partial(session_records.append, client.test_request_factory)
     service = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
@@ -267,7 +271,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
             seen.append(frame)
             if frame["type"] in ("done", "error"):
                 break
-    return seen
+    return topic_id, seen
 
 
 @pytest.mark.parametrize(
@@ -285,10 +289,14 @@ def test_a_call_the_backend_never_received_refreshes_nothing(
         pass
 
     _Calls.tool, _Calls.arguments = tool, arguments
-    seen = _turn_frames(client, tmp_path, _Calls())
-    # The turn ran and its step reached the room — otherwise this asserts
-    # nothing at all.
-    assert any(f["type"] == "event_block" for f in seen)
+    topic_id, seen = _turn_frames(client, tmp_path, _Calls())
+    # The turn ran to its end and made the call — otherwise this asserts
+    # nothing at all. The call is in the session's own records.
+    assert seen[-1]["type"] == "done", seen[-1]
+    calls = client.get(
+        f"/topics/{topic_id}/session-records", params={"q": tool}
+    ).json()["data"]["items"]
+    assert calls, f"the session never called {tool}"
     assert [f for f in seen if f.get("type") == "state"] == []
 
 
@@ -299,7 +307,7 @@ def test_the_turn_still_files_its_action_card(client, tmp_path):
         tool = "mcp__native__cheese_notify"
         arguments = {"title": "中期汇报"}
 
-    seen = _turn_frames(client, tmp_path, _Pins())
+    _, seen = _turn_frames(client, tmp_path, _Pins())
     assert any(
         f["type"] == "event_block"
         and (f["block"].get("meta") or {}).get("action") == "notify"
@@ -379,5 +387,5 @@ def test_a_turn_announces_each_kind_of_action_once(client, tmp_path):
             )
             self.stops(topic_id, reply)
 
-    seen = _turn_frames(client, tmp_path, _PinsTwice())
+    _, seen = _turn_frames(client, tmp_path, _PinsTwice())
     assert len([f for f in seen if _is_notify_card(f)]) == 1

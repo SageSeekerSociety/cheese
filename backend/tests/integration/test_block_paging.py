@@ -397,8 +397,13 @@ def test_one_cursor_at_a_time_and_only_with_a_limit(client):
 
 
 def _room_with_steps(client) -> tuple[str, list[str]]:
-    """A room where an agent's steps (kept out of the room) far outnumber what
-    it says. Returns the room and its shown messages' texts, oldest first."""
+    """A room where rows its conversation keeps out far outnumber what it
+    shows. Returns the room and its shown messages' texts, oldest first.
+
+    The kept-out rows are weekly reports, which live in the conversation but
+    are read on the project's document page. An agent's steps used to be the
+    example, but those are no longer blocks at all: activity reads them from
+    the session's raw record."""
     tid = _topic(client)
     pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
     stamp = datetime.now(UTC)
@@ -415,11 +420,11 @@ def _room_with_steps(client) -> tuple[str, list[str]]:
                         id=uuid.uuid4(),
                         project_id=uuid.UUID(pid),
                         conversation_id=uuid.UUID(tid),
-                        author="cheese" if shown else "cheese-steps",
+                        author="cheese" if shown else "cheese-weekly",
                         author_type=AuthorType.participant,
-                        content=f"said {i}" if shown else f"step {i}",
-                        kind=BlockKind.message if shown else BlockKind.event,
-                        meta=None if shown else {"in_room": False, "tool": "Bash"},
+                        content=f"said {i}" if shown else f"week {i}",
+                        kind=BlockKind.message if shown else BlockKind.weekly,
+                        meta=None,
                         created_at=stamp + timedelta(seconds=i),
                         updated_at=stamp,
                     )
@@ -453,7 +458,7 @@ def test_what_the_room_keeps_out_can_be_read_on_its_own(client):
     tid, said = _room_with_steps(client)
 
     hidden = _blocks(client, tid, shown="false")["data"]
-    steps = _blocks(client, tid, kind="event", author="cheese-steps")["data"]
+    steps = _blocks(client, tid, kind="weekly", author="cheese-weekly")["data"]
 
     assert len(hidden) == 60 - len(said)
     assert [b["id"] for b in steps] == [b["id"] for b in hidden]

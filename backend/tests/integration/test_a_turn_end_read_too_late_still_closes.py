@@ -11,6 +11,7 @@ import asyncio
 import sqlite3
 import time
 import uuid
+from functools import partial
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -23,6 +24,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.models import Block
 from app.domain.delivery.models import NativeInput
+from app.domain.session_record import service as session_records
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
@@ -32,6 +34,8 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.integration.test_chat_flow import _drain_until_done
+from tests.support.hang import HANG_S
 
 
 class FirstPromptOnly(StubChannel):
@@ -46,11 +50,21 @@ class FirstPromptOnly(StubChannel):
             self.acknowledges(topic_id, prompt)
 
 
-def _until(ws, predicate) -> dict:
-    while True:
-        frame = ws.receive_json()
-        if predicate(frame):
-            return frame
+def _until_recorded(client, room: str, text: str) -> None:
+    """The session has got as far as printing ``text``: its raw records show it."""
+    deadline = time.monotonic() + HANG_S
+    while not client.get(f"/topics/{room}/session-records", params={"q": text}).json()[
+        "data"
+    ]["items"]:
+        assert time.monotonic() < deadline, f"the session never recorded {text!r}"
+        time.sleep(0.05)
+
+
+def _recording(client, channel: StubChannel) -> StubChannel:
+    """Kept as production keeps them (`get_session_host`): the session's records
+    are what shows it mid-call."""
+    channel.host._records = partial(session_records.append, client.test_request_factory)
+    return channel
 
 
 def _wait_for(client, room: str, fn, *, tries: int = 300):
@@ -120,7 +134,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
             compute=stub_compute(channel),
         )
 
-    before = FirstPromptOnly()
+    before = _recording(client, FirstPromptOnly())
     old_backend = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old_backend
     with room_socket(client, room, "alice") as ws:
@@ -130,16 +144,13 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
         )
         before.says(topic, "CI 是绿的")
         before.stops(topic, "CI 是绿的")
-        _until(ws, lambda f: f["type"] == "done")
+        assert _drain_until_done(ws)[-1]["type"] == "done"
 
         # The session goes to work on its own, and a check-in sent meanwhile
         # is read inside that work.
         before.starts(topic)
         before.uses(topic, "Bash", command="sleep 600")
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+        _until_recorded(client, room, "sleep 600")
         seat = next(
             turn.agent_handle
             for turn in _rows(client, AgentTurn, topic)
@@ -180,7 +191,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
     before.stops(topic, "进度正常")
     assert _age_records_after(before, topic, unread_from) == 3
 
-    after = StubChannel()
+    after = _recording(client, StubChannel())
     after.root = before.root
     after.sessions = before.sessions
     after.calls = before.calls

@@ -10,7 +10,9 @@ These tests drive real turns through the WS against a provider whose result is
 an error, and assert what a person sitting in the room would see.
 """
 
+import time
 import uuid
+from functools import partial
 
 import pytest
 from sqlalchemy import select
@@ -23,6 +25,7 @@ from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.session_host import claude_code
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
+from app.domain.session_record import service as session_records
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
 from tests.integration.conftest import (
@@ -224,6 +227,28 @@ def test_the_notice_throttles_instead_of_burying_the_conversation(client, monkey
     assert "第 3 次" in notices[0]
 
 
+def _records_to_the_database(client, screen: StubChannel) -> None:
+    """The durable record path production wires in `get_session_host`, so what
+    the session did can be read back from `/topics/{id}/session-records`."""
+    screen.host._records = partial(session_records.append, client.test_request_factory)
+
+
+def _until_the_session_runs(client, topic_id: str, command: str) -> None:
+    """Wait until the session's raw record holds the call running ``command``:
+    the turn was delivered and the session is at work on it."""
+    deadline = time.monotonic() + 10
+    while not any(
+        part.get("type") == "tool_use" and part["input"].get("command") == command
+        for item in client.get(f"/topics/{topic_id}/session-records").json()["data"][
+            "items"
+        ]
+        if item["record"].get("type") == "assistant"
+        for part in item["record"]["message"]["content"]
+    ):
+        assert time.monotonic() < deadline, f"the session never ran {command!r}"
+        time.sleep(0.05)
+
+
 class WorkingScreen(StubChannel):
     """A session that takes the prompt, starts on it, and is still working."""
 
@@ -265,12 +290,9 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
         workspace_root="/tmp/replay-ws",
         compute=stub_compute(before),
     )
-    with room_socket(client, topic_id, "user-1") as ws:
-        post_message(client, topic_id, "user-1", {"content": f"{first} @芝士"})
-        while True:
-            frame = ws.receive_json()
-            if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):
-                break
+    _records_to_the_database(client, before)
+    post_message(client, topic_id, "user-1", {"content": f"{first} @芝士"})
+    _until_the_session_runs(client, topic_id, "sleep 600")
 
     # The old process stops reading, as a replaced backend does. `_detach` takes
     # a seat, not a room, so `_detach(room)` removed nothing and the old reader
@@ -505,12 +527,9 @@ def test_a_batch_a_failed_turn_never_echoed_is_sent_again(client, monkeypatch):
     )
     app.dependency_overrides[get_chat_service] = lambda: service
 
-    with room_socket(client, topic_id, "user-1") as ws:
-        post_message(client, topic_id, "user-1", {"content": "第一句 @芝士"})
-        while True:
-            frame = ws.receive_json()
-            if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):
-                break
+    _records_to_the_database(client, screen)
+    post_message(client, topic_id, "user-1", {"content": "第一句 @芝士"})
+    _until_the_session_runs(client, topic_id, "sleep 600")
 
     # 会话正在干活，provider 先断了：这一轮以错误结果结束。
     screen.says(room, "API Error: Rate limit reached", error="rate_limit")

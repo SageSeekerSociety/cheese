@@ -1,6 +1,8 @@
 """End-to-end Phase 0 flow over HTTP + WebSocket (with the stub agent)."""
 
 import asyncio
+import queue
+import threading
 import uuid
 
 from app.core.config import settings
@@ -16,6 +18,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.hang import HANG_S
 from tests.support.living_doc import document_of
 
 
@@ -89,8 +92,8 @@ def test_blocks_empty_then_populated_after_chat(client):
         post_message(client, topic_id, "user-1", {"content": "@芝士 你好芝士"})
         frames = _drain_until_done(ws)
 
-    # Slack-style: no token deltas — the turn announces itself and terminal
-    # output is retained in activity.
+    # Slack-style: no token deltas — the turn announces itself, and what the
+    # session prints stays in its raw record (`/session-records`), not the room.
     #
     # One `turn_started`, not two: the platform emits its own only while no
     # session has claimed the lifecycle (`session_lifecycle` → `session_owned`),
@@ -105,17 +108,12 @@ def test_blocks_empty_then_populated_after_chat(client):
     assert types == [
         "user_block",
         "turn_started",
-        "event_block",
         "done",
     ]
 
     ack = next(f for f in frames if f["type"] == "reaction")
     agent = room_agent_seat(client, topic_id)
     assert ack["reactions"] == [{"emoji": "👀", "count": 1, "authors": [agent]}]
-
-    assistant = next(f for f in frames if f["type"] == "event_block")["block"]
-    assert assistant["content"] == "Hello world"
-    assert assistant["author"] == agent
 
     user = next(f for f in frames if f["type"] == "user_block")["block"]
     # 正文里的 @ 在落库前被规范成席位 token，和 @ 一个人完全一样 —— 时间线上那条
@@ -126,13 +124,11 @@ def test_blocks_empty_then_populated_after_chat(client):
     # block. A later exact receipt replaces it with the consuming turn id.
     assert user["meta"]["consumed_turn"] is None
 
-    # Neither displayed text nor Stop publishes a chat message.
+    # Neither displayed text nor Stop publishes a chat message: the room holds
+    # the person's message alone, now stamped with the turn that read it.
     r = client.get(f"/topics/{topic_id}/blocks")
     blocks = r.json()["data"]["data"]
-    assert [b["author"] for b in blocks] == ["user-1", agent]
-    assert blocks[1]["meta"]["progress"] is True
-    assert blocks[1]["meta"]["in_room"] is False
-    assert not any(b["author"] == agent and b["kind"] == "message" for b in blocks)
+    assert [b["author"] for b in blocks] == ["user-1"]
     assert blocks[0]["meta"]["consumed_turn"]
 
 
@@ -333,13 +329,38 @@ def test_a_reply_brings_the_message_it_answers(stub_hooks, client):
     assert "B 组第 7 行录错了，应该是 0.42" in prompt
 
 
-def _drain_until_done(ws) -> list[dict]:
+def _drain_until_done(ws, within_s: float = HANG_S) -> list[dict]:
+    """Every frame up to and including the turn's `done` (or `error`).
+
+    `receive_json` blocks until a frame comes, so the socket is read on a
+    thread of its own and the test waits on it with a deadline: a turn that
+    never ends fails here, naming what did arrive, instead of hanging the
+    worker."""
+    arrived: queue.Queue[dict | BaseException] = queue.Queue()
+
+    def read() -> None:
+        while True:
+            try:
+                frame = ws.receive_json()
+            except BaseException as exc:  # the socket closed; the test hears why
+                arrived.put(exc)
+                return
+            arrived.put(frame)
+            if frame["type"] in ("done", "error"):
+                return
+
+    threading.Thread(target=read, daemon=True).start()
     frames: list[dict] = []
-    while True:
-        frame = ws.receive_json()
-        frames.append(frame)
-        if frame["type"] in ("done", "error"):
-            break
+    while not frames or frames[-1]["type"] not in ("done", "error"):
+        try:
+            item = arrived.get(timeout=within_s)
+        except queue.Empty:
+            raise AssertionError(
+                f"no done frame within {within_s}s: {[f['type'] for f in frames]}"
+            ) from None
+        if isinstance(item, BaseException):
+            raise item
+        frames.append(item)
     return frames
 
 

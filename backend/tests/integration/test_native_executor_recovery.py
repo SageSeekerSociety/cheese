@@ -7,7 +7,9 @@ same Python process; this does not prove a new backend interpreter or upgrade.
 
 import asyncio
 import sys
+import time
 import uuid
+from functools import partial
 from pathlib import Path
 
 from sqlalchemy import select
@@ -20,16 +22,16 @@ from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
+from app.domain.session_record import service as session_records
 from app.main import app
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
     in_thread,
     post_message,
     post_project,
-    room_socket,
 )
-from tests.integration.test_claude_session_records import _until
 from tests.integration.test_native_batch_ownership import _blocks
+from tests.support.hang import HANG_S
 from tests.support.seat_channel import SeatChannel
 from tests.unit.test_claude_runner import Machine
 
@@ -82,6 +84,9 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
         )
 
     before = Channel()
+    # Kept as production keeps them (`get_session_host`): the session's records
+    # are what shows it mid-call.
+    before.host._records = partial(session_records.append, client.test_request_factory)
     old = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old
     try:
@@ -94,17 +99,18 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
             ),
             description="wait for recovery",
         )
-        with room_socket(client, str(topic), "alice") as ws:
-            # 这个 socket 只推不收（`test_chat_ws_auth` 钉的就是那条拒绝）；
-            # 说话走 POST。
-            post_message(client, str(topic), "alice", {"content": "@芝士 " + directive})
-            _until(
-                ws,
-                lambda frame: (
-                    frame["type"] == "event_block"
-                    and "NATIVE_RECOVERY" in str(frame["block"])
-                ),
-            )
+        post_message(client, str(topic), "alice", {"content": "@芝士 " + directive})
+        # The session is mid-call once its records show the command it started
+        # (an assistant record: the prompt that asked for it names it too).
+        deadline = time.monotonic() + HANG_S
+        while not any(
+            item["record"].get("type") == "assistant"
+            for item in client.get(
+                f"/topics/{topic}/session-records", params={"q": "NATIVE_RECOVERY"}
+            ).json()["data"]["items"]
+        ):
+            assert time.monotonic() < deadline, "the session never started its call"
+            time.sleep(0.05)
         native, work, process = (
             runner.session_id,
             uuid.UUID(runner.work),

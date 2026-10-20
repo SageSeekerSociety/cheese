@@ -1,31 +1,34 @@
-"""What a headless Claude Code session prints, as the room ends up seeing it.
+"""What a headless Claude Code session prints, and what the platform makes of it.
 
 Each test scripts the stream-json records one situation produces and follows
-them through the real runner, journal mirror, translation and chat service: a
-tool that failed, an input the build has not echoed yet, a long command while
-somebody waits, a runner that died, and a backend replaced
-while its session went on working.
+them through the real runner, journal mirror, translation and chat service: an
+input the build has not echoed yet, a long command while somebody waits, a
+runner that died, and a backend replaced while its session went on working.
+What the session prints stays in its raw records (`/session-records`); a reply
+reaches the room only when the session publishes it (chat_send).
 """
 
 import asyncio
 import time
 import uuid
+from functools import partial
 
 from sqlalchemy import select
 
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.core.config import settings
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.room import reads as room_reads
-from app.domain.block.models import Block
+from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
+from app.domain.session_record import service as session_records
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
-from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -33,6 +36,8 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.integration.test_chat_flow import _drain_until_done as _until_done
+from tests.support.hang import HANG_S
 from tests.support.room_reader import room_reader
 
 
@@ -42,19 +47,14 @@ def _room(client, owner: str = "alice") -> str:
     return in_thread(client, project["root_topic_id"], owner)
 
 
-def _until_done(ws) -> list[dict]:
-    frames = []
-    while True:
-        frames.append(ws.receive_json())
-        if frames[-1]["type"] in ("done", "error"):
-            return frames
-
-
-def _until(ws, predicate) -> dict:
-    while True:
-        frame = ws.receive_json()
-        if predicate(frame):
-            return frame
+def _until_recorded(client, room: str, text: str) -> None:
+    """The session has got as far as printing ``text``: its raw records show it."""
+    deadline = time.monotonic() + HANG_S
+    while not client.get(f"/topics/{room}/session-records", params={"q": text}).json()[
+        "data"
+    ]["items"]:
+        assert time.monotonic() < deadline, f"the session never recorded {text!r}"
+        time.sleep(0.05)
 
 
 def _wait_for(client, room: str, fn, *, tries: int = 300):
@@ -83,41 +83,6 @@ def _written(stub: StubChannel, room: str) -> list[dict]:
         for message in stub._session_for(uuid.UUID(room)).written
         if message.get("type") == "user"
     ]
-
-
-def test_a_tool_that_failed_marks_its_step_with_what_it_said(client, stub_hooks):
-    """A command that exited non-zero is a red step with the command's own words,
-    not the build's ``Exit code`` header over them."""
-
-    def turn(topic, prompt, reply, agent=None):
-        stub_hooks.starts(topic)
-        stub_hooks.acknowledges(topic, prompt)
-        stub_hooks.uses(topic, "Bash", eid="toolu_pandoc", command="pandoc a.md")
-        stub_hooks.returns(
-            topic,
-            "Bash",
-            "Exit code 127\nbash: pandoc: command not found",
-            error=True,
-        )
-        stub_hooks.says(topic, "机器上没有 pandoc")
-        stub_hooks.stops(topic, "机器上没有 pandoc")
-
-    stub_hooks.emit_turn = turn
-    room = _room(client)
-    with room_socket(client, room, "alice") as ws:
-        post_message(client, room, "alice", {"content": "@芝士 转一下文档"})
-        frames = _until_done(ws)
-    assert frames[-1]["type"] == "done", frames[-1]
-    _wait_work_idle()
-
-    steps = [
-        block
-        for block in _blocks(client, conversation_id=uuid.UUID(room))
-        if (block.meta or {}).get("tool") == "Bash"
-    ]
-    assert len(steps) == 1
-    assert steps[0].meta.get("failed") is True
-    assert steps[0].meta.get("error") == "bash: pandoc: command not found"
 
 
 def test_an_input_counts_as_received_only_once_the_session_echoes_it(
@@ -170,10 +135,7 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
     topic = uuid.UUID(room)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 看一下"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and f["block"]["content"] == "在看",
-        )
+        _until_recorded(client, room, "在看")
         assert receipts == [], "a queue record was taken for the receipt"
 
         stub_hooks.record(
@@ -208,10 +170,7 @@ def test_a_long_command_gets_the_progress_reminder_written_to_the_session(
     topic = uuid.UUID(room)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
-        )
+        _until_recorded(client, room, "make test")
         before = len(_written(stub_hooks, room))
         monkeypatch.setattr(settings, "chat_progress_reminder_after_s", 0)
         assert client.portal.call(chat.remind_silent_turns) == 1
@@ -246,10 +205,7 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
     topic = uuid.UUID(room)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
-        )
+        _until_recorded(client, room, "make test")
 
         # Use the running session's actual injection path. Hiding that path
         # exercises durable deferral, not a message read inside this work.
@@ -330,30 +286,26 @@ def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
     async def no_live_handoff(*args, **kwargs):
         return None
 
-    with room_socket(client, room, "alice") as ws:
-        post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
+    post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
+    _until_recorded(client, room, "make test")
+    before = len(_written(stub_hooks, room))
+    with monkeypatch.context() as hidden:
+        hidden.setattr(chat, "merge_into_running_turn", no_live_handoff)
+        second = post_message(
+            client, room, "alice", {"content": "@芝士 顺便跑一下 lint"}
         )
-        before = len(_written(stub_hooks, room))
-        with monkeypatch.context() as hidden:
-            hidden.setattr(chat, "merge_into_running_turn", no_live_handoff)
-            second = post_message(
-                client, room, "alice", {"content": "@芝士 顺便跑一下 lint"}
-            )
 
-            def deferred():
-                blocks = _blocks(client, id=uuid.UUID(second["id"]))
-                return blocks and (blocks[0].meta or {}).get("deferred_native_input")
+        def deferred():
+            blocks = _blocks(client, id=uuid.UUID(second["id"]))
+            return blocks and (blocks[0].meta or {}).get("deferred_native_input")
 
-            assert _wait_for(client, room, deferred)
-            assert len(prompts) == 1
-            assert len(_written(stub_hooks, room)) == before
+        assert _wait_for(client, room, deferred)
+        assert len(prompts) == 1
+        assert len(_written(stub_hooks, room)) == before
 
-        stub_hooks.returns(topic, "Bash", "42 passed")
-        stub_hooks.stops(topic, "测试过了")
-        assert _wait_for(client, room, lambda: len(prompts) == 2)
+    stub_hooks.returns(topic, "Bash", "42 passed")
+    stub_hooks.stops(topic, "测试过了")
+    assert _wait_for(client, room, lambda: len(prompts) == 2)
 
     client.portal.call(settle_turn, chat, topic)
     assert "顺便跑一下 lint" in prompts[1]
@@ -394,10 +346,7 @@ def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
     room = _room(client)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 编一下"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make build" in str(f["block"]),
-        )
+        _until_recorded(client, room, "make build")
         stub_hooks.alive = False
         frames = _until_done(ws)
     assert frames[-1]["type"] == "error", frames[-1]
@@ -420,10 +369,7 @@ def test_a_message_after_a_dead_runner_gets_a_turn(client, stub_hooks):
     topic = uuid.UUID(room)
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 编一下"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "make build" in str(f["block"]),
-        )
+        _until_recorded(client, room, "make build")
         stub_hooks.alive = False
         assert _until_done(ws)[-1]["type"] == "error"
 
@@ -487,8 +433,8 @@ class StillWorking(StubChannel):
 
 def test_a_turn_survives_the_backend_being_replaced_under_it(client):
     """dev redeploys on every merge. A turn running on the machine at that moment
-    is found again by the new process, and what it prints after lands in the
-    room and ends the turn there."""
+    is found again by the new process: what the session publishes after lands
+    in the room as that turn's, and the session's end ends the turn there."""
     project = post_project(client, {"name": "Restart"}, owner="alice").json()["data"]
     room = client.post(
         "/topics",
@@ -499,6 +445,11 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
     topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:
+        # Kept as production keeps them (`get_session_host`): the session's
+        # records are what shows it mid-call.
+        channel.host._records = partial(
+            session_records.append, client.test_request_factory
+        )
         return ChatService(
             work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
@@ -509,12 +460,8 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
 
     before = StillWorking()
     app.dependency_overrides[get_chat_service] = lambda: service(before)
-    with room_socket(client, room, "alice") as ws:
-        post_message(client, room, "alice", {"content": "@芝士 睡一会"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+    post_message(client, room, "alice", {"content": "@芝士 睡一会"})
+    _until_recorded(client, room, "sleep 600")
     # The old process stops reading, as a replaced backend does. `_detach` takes
     # a seat, not a room, so `_detach(room)` removed nothing and the old reader
     # went on handling the session's records next to the new one.
@@ -531,18 +478,44 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
     assert client.portal.call(replaced.recover_sessions) == 1
 
     after.returns(topic, "Bash", "done", call=before.calls["Bash"])
-    after.says(topic, "睡醒了")
+    said = _publish(client, project["id"], room, "睡醒了")
     after.stops(topic, "睡醒了")
     client.portal.call(settle_turn, replaced, topic)
 
-    said = [block.content for block in _blocks(client, conversation_id=topic)]
-    assert "睡醒了" in said
-    assert (
-        _blocks(client, conversation_id=topic, content="睡醒了")[0].turn_id is not None
+    assert said["turn_id"] is not None
+    assert not _open_turns(client, topic)
+
+
+def _publish(client, project_id: str, room: str, content: str) -> dict:
+    """The session says ``content`` in the room the one way it can: chat_send,
+    with the credential scoped to its room."""
+    response = client.post(
+        f"/topics/{room}/messages",
+        json={"content": content, "request_id": str(uuid.uuid4())},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(project_id=project_id, topic_id=room)
+        },
     )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
-def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
+def _open_turns(client, topic: uuid.UUID) -> list[str | None]:
+    async def read() -> list[str | None]:
+        async with client.test_factory() as session:
+            return list(
+                await session.scalars(
+                    select(AgentTurn.content).where(
+                        AgentTurn.conversation_id == topic,
+                        AgentTurn.stopped_at.is_(None),
+                    )
+                )
+            )
+
+    return asyncio.run(read())
+
+
+def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, str, StubChannel]:
     """A room whose turn is running when its backend is replaced: the old
     process has let go of the session, and a new one has picked it up."""
     project = post_project(client, {"name": "Handover"}, owner="alice").json()["data"]
@@ -555,6 +528,11 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
     topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:
+        # Kept as production keeps them (`get_session_host`): the session's
+        # records are what shows it mid-call.
+        channel.host._records = partial(
+            session_records.append, client.test_request_factory
+        )
         return ChatService(
             work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
@@ -565,12 +543,8 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
 
     before = StillWorking()
     app.dependency_overrides[get_chat_service] = lambda: service(before)
-    with room_socket(client, room, "alice") as ws:
-        post_message(client, room, "alice", {"content": "@芝士 睡一会"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+    post_message(client, room, "alice", {"content": "@芝士 睡一会"})
+    _until_recorded(client, room, "sleep 600")
     client.portal.call(before.runtime.stop_listening)
 
     after = StubChannel()
@@ -582,25 +556,27 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
     replaced = service(after)
     app.dependency_overrides[get_chat_service] = lambda: replaced
     assert client.portal.call(replaced.recover_sessions) == 1
-    return topic, room, after
+    return topic, room, project["id"], after
 
 
 def test_a_turn_the_next_backend_picks_up_still_answers_its_message(client):
-    topic, _, after = _picked_up_by_a_new_backend(client)
-    (asked,) = _blocks(client, conversation_id=topic, author="alice")
+    """What the session publishes after the handover is the answer of the turn
+    that read the person's message, not of a turn the new backend made up."""
+    topic, room, project_id, after = _picked_up_by_a_new_backend(client)
 
     after.returns(topic, "Bash", "done", call=after.calls["Bash"])
-    after.says(topic, "睡醒了")
+    answer = _publish(client, project_id, room, "睡醒了")
     after.stops(topic, "睡醒了")
     client.portal.call(settle_turn, app.dependency_overrides[get_chat_service](), topic)
 
-    (answer,) = _blocks(client, conversation_id=topic, content="睡醒了")
-    assert answer.reply_to == asked.id
+    (asked,) = _blocks(client, conversation_id=topic, author="alice")
+    assert consumed_turn(asked) is not None
+    assert answer["turn_id"] == consumed_turn(asked)
 
 
 def test_a_message_joins_the_turn_the_next_backend_picked_up(client):
     """Not a second turn started beside the one still running."""
-    topic, room, _ = _picked_up_by_a_new_backend(client)
+    topic, room, _, _ = _picked_up_by_a_new_backend(client)
 
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 顺便把闹钟关了"})
@@ -661,6 +637,11 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:
+        # Kept as production keeps them (`get_session_host`): the session's
+        # records are what shows it mid-call.
+        channel.host._records = partial(
+            session_records.append, client.test_request_factory
+        )
         return ChatService(
             work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
@@ -674,10 +655,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     app.dependency_overrides[get_chat_service] = lambda: old
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@Opus 睡一会"})
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+        _until_recorded(client, room, "sleep 600")
     (running,) = old.live.hook_work.values()
     assert running.agent_instance_handle == "opus"
     client.portal.call(before.runtime.stop_listening)

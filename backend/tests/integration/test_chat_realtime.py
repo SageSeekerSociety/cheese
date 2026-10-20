@@ -4,7 +4,9 @@ the AI part of a turn. Pre-fix, the second converse() below deadlocks until the
 slow agent finishes; the wait_for(2s) would blow up."""
 
 import asyncio
+import json
 import uuid
+from functools import partial
 
 import pytest
 from sqlalchemy import select
@@ -23,6 +25,7 @@ from app.domain.identity.handles import (
     looks_like_agent_handle,
 )
 from app.domain.identity.services import IdentityService
+from app.domain.session_record import service as session_records
 from app.domain.thread.models import Thread
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -946,6 +949,9 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
     # The old process stops reading; both sessions go on working on the machine.
     await before.runtime.stop_listening()
     after = StubChannel()
+    # Production keeps every journaled row the new process reads as the
+    # session's raw record (`get_session_host`); wired the same way here.
+    after.host._records = partial(session_records.append, factory)
     after.root = before.root
     after.sessions = before.sessions
     for session_runner in after.sessions.values():
@@ -957,16 +963,19 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
     for seat in seats:
         after.says(topic_id, f"still here: {seat}", agent=seat)
 
-    # Nothing here drains a reader by hand: what lands is what the recovered
-    # process reads on its own.
+    # Nothing here drains a reader by hand: what lands in the record is what
+    # the recovered process reads on its own.
     expected = {f"still here: {seat}" for seat in seats}
     async with asyncio.timeout(HANG_S):
         while True:
             async with factory() as session:
-                said = {
-                    block.content
-                    for block in await BlockRepository(session).list_for_topic(topic_id)
-                }
+                page = await session_records.read(session, topic_id, limit=500)
+            said = {
+                text
+                for item in page.items
+                for text in expected
+                if text in json.dumps(item["record"])
+            }
             if expected <= said:
                 break
             await asyncio.sleep(0.05)
@@ -981,10 +990,14 @@ async def test_execution_notes_are_retained_outside_public_replies(
     business_db_factory, tmp_path
 ):
     factory = business_db_factory
+    screen = ProcessNotesScreen()
+    # Production keeps every journaled row as the session's raw record
+    # (`get_session_host`); a hand-built pool is wired the same way.
+    screen.host._records = partial(session_records.append, factory)
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=stub_compute(ProcessNotesScreen()),
+        compute=stub_compute(screen),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -1009,9 +1022,15 @@ async def test_execution_notes_are_retained_outside_public_replies(
         if b.kind == BlockKind.message and looks_like_agent_handle(b.author)
     ]
     assert replies == []
-    notes = [b for b in rows if (b.meta or {}).get("progress")]
-    assert [b.content for b in notes] == ["Read workspace files.", "The plan is ready."]
-    assert all(b.kind == BlockKind.event and b.meta["in_room"] is False for b in notes)
+    notes = ["Read workspace files.", "The plan is ready."]
+    assert not [b for b in rows if b.content in notes]
+    # Retained: each note is in the session's raw record, in the order said.
+    async with factory() as session:
+        kept = (await session_records.read(session, tid)).items
+    said = [
+        note for item in kept for note in notes if note in json.dumps(item["record"])
+    ]
+    assert said[: len(notes)] == notes
 
 
 @pytest.mark.anyio
@@ -1065,12 +1084,15 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
     assert frames[0]["block"]["author"] == "user-2"
 
     # The parked turn finishes normally afterwards.
+    # The parked turn finishes normally afterwards: it closes (`finish_turn`
+    # fails on a turn that never does), and the room holds the two people's
+    # messages and no failure notice.
     agent.release.set()
     await asyncio.wait_for(turn, 5)
     await finish_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    assert [b.content for b in rows if looks_like_agent_handle(b.author)] == ["done"]
+    assert [b.author for b in rows] == ["user-1", "user-2"]
 
 
 class FailingScreen(StubChannel):

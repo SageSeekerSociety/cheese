@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,6 +47,7 @@ from tests.integration.conftest import (
     post_project,
     room_socket,
 )
+from tests.support.hang import HANG_S
 from tests.support.room_machine import NO_MACHINE
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
@@ -256,6 +258,16 @@ def harness(request, client, room, tmp_path, monkeypatch):
         close()
 
 
+def _recorded(client, topic: str, text: str) -> None:
+    """Wait until the session's own records in ``topic`` hold ``text``."""
+    deadline = time.monotonic() + HANG_S
+    while not client.get(f"/topics/{topic}/session-records", params={"q": text}).json()[
+        "data"
+    ]["items"]:
+        assert time.monotonic() < deadline, f"no session record says {text!r}"
+        time.sleep(0.05)
+
+
 def _next(ws, kind: str) -> dict:
     frame = ws.receive_json()
     while frame["type"] != kind:
@@ -332,12 +344,9 @@ def test_a_message_through_any_harness_silences_the_reminder(
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
     with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
-        while True:
-            frame = ws.receive_json()
-            if frame["type"] == "event_block" and (
-                frame["block"]["content"] == "Internal output"
-            ):
-                break
+        # The turn is under way once its session has said something; what it
+        # said stays in its records, not in the room.
+        _recorded(client, topic, "Internal output")
         clock += timedelta(seconds=threshold)
         assert client.portal.call(chat.remind_silent_turns) == 1
         assert "chat_send" in notices[0] and "todo_write" in notices[0]

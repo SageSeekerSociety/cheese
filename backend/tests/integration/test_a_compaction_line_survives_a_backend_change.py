@@ -41,7 +41,12 @@ class Compacts(StubChannel):
 
 
 def _compaction_lines(client, topic: uuid.UUID) -> list[RunRecord]:
-    """The compaction's records in the 现场; it is never said in the room."""
+    """The compaction's lines in the 现场, each as it reads now; it is never
+    said in the room.
+
+    A line is a series of records: restating it appends the next state rather
+    than rewriting the first, so the line reads as the latest record of its
+    series."""
 
     async def read() -> list[RunRecord]:
         async with client.test_factory() as session:
@@ -51,7 +56,11 @@ def _compaction_lines(client, topic: uuid.UUID) -> list[RunRecord]:
             assert not [
                 b for b in said if (b.meta or {}).get("event_type") == "context_compact"
             ]
-            return await records_of(session, topic, "context_compact")
+            records = await records_of(session, topic, "context_compact")
+        latest: dict[str, RunRecord] = {}
+        for record in records:  # oldest first, so the last one stands
+            latest[(record.meta or {}).get("series_id") or str(record.id)] = record
+        return list(latest.values())
 
     return asyncio.run(read())
 

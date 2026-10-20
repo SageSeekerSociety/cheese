@@ -19,6 +19,7 @@ from tests.integration.conftest import (
     post_project,
     room_socket,
 )
+from tests.support.hang import HANG_S
 
 
 def _room_with_two_teammates(client) -> tuple[str, str, str]:
@@ -71,9 +72,14 @@ def _reply(client, room: str, seat: str, text: str) -> None:
     assert response.status_code == 200, response.text
 
 
-def _said(client, room: str) -> str:
-    blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
-    return "\n".join(str(block.get("content") or "") for block in blocks)
+def _answered(client, room: str, text: str) -> bool:
+    """The room's session said ``text``: its own records hold it. A session's
+    output stays in its records; only chat_send puts words in the room."""
+    return bool(
+        client.get(f"/topics/{room}/session-records", params={"q": text}).json()[
+            "data"
+        ]["items"]
+    )
 
 
 def _prompt_of(stub_hooks, room: str, seat: str) -> str:
@@ -87,7 +93,7 @@ def _prompt_of(stub_hooks, room: str, seat: str) -> str:
     return ""
 
 
-def _until(predicate, what: str, timeout: float = 15.0) -> None:
+def _until(predicate, what: str, timeout: float = HANG_S) -> None:
     deadline = time.monotonic() + timeout
     while not predicate():
         assert time.monotonic() < deadline, what
@@ -97,7 +103,7 @@ def _until(predicate, what: str, timeout: float = 15.0) -> None:
 def test_the_second_teammate_reads_the_first_one_s_reply(client, stub_hooks):
     room, first, second = _room_with_two_teammates(client)
     _say(client, room, "alice", f"<@{first}> 先说一句")
-    _until(lambda: "Hello world" in _said(client, room), "第一位队友没有回话")
+    _until(lambda: _answered(client, room, "Hello world"), "第一位队友没有回话")
     wait_work_idle()
     _reply(client, room, first, "第一位队友的结论")
 
@@ -116,7 +122,7 @@ def test_the_second_teammate_reads_the_first_one_s_reply(client, stub_hooks):
 def test_a_teammate_is_not_handed_its_own_reply(client, stub_hooks):
     room, first, _ = _room_with_two_teammates(client)
     _say(client, room, "alice", f"<@{first}> 先说一句")
-    _until(lambda: "Hello world" in _said(client, room), "第一位队友没有回话")
+    _until(lambda: _answered(client, room, "Hello world"), "第一位队友没有回话")
     wait_work_idle()
     _reply(client, room, first, "我自己的结论")
 

@@ -17,6 +17,7 @@ posted as 芝士 and shared 芝士's machine and credential.
 """
 
 import uuid
+from functools import partial
 
 import pytest
 from sqlalchemy import text
@@ -24,6 +25,7 @@ from sqlalchemy import text
 from app.api import deps as session_turn_deps
 from app.core.errors import UnprocessableEntityError
 from app.domain.agent.chat import ChatService
+from app.domain.session_record import service as session_records
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     join_project_team,
@@ -71,6 +73,8 @@ def _give(client, task: str, seat: str, handle: str = "alice"):
 def _turn(client, tmp_path, task: str, reply: str) -> None:
     screen = StubChannel()
     screen.reply = reply
+    # Where production keeps each session's records (`get_session_host`).
+    screen.host._records = partial(session_records.append, client.test_request_factory)
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
@@ -91,11 +95,17 @@ def _turn(client, tmp_path, task: str, reply: str) -> None:
 
 
 def _author_of(client, task: str, content: str) -> str:
-    r = client.get(f"/topics/{task}/blocks", headers=session_auth_headers("alice"))
+    """Who the task's 现场 says wrote ``content``: a session's output stays in
+    its records, which the 现场 shows under the teammate whose session it was."""
+    r = client.get(f"/topics/{task}/transcript", headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
-    authors = [b["author"] for b in r.json()["data"]["data"] if content in b["content"]]
-    assert authors, r.json()["data"]["data"]
-    return authors[0]
+    authors = {
+        b["author"]
+        for b in r.json()["data"]["data"]
+        if "record" in (b.get("meta") or {}) and content in b["content"]
+    }
+    assert len(authors) == 1, r.json()["data"]["data"]
+    return authors.pop()
 
 
 def test_a_teammate_given_a_task_takes_a_seat_in_its_room(client):

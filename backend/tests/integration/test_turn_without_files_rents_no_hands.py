@@ -13,6 +13,7 @@
 
 import json
 import uuid
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -30,9 +31,9 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent_instance.adapters import named_teammate
-from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.session_record import service as session_records
 from app.domain.topic.services import TopicService
 from tests.ask_fixtures import question_row
 from tests.conftest import StubChannel, finish_turn, settle_turn
@@ -241,6 +242,8 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     """I2：工作机全部离线，私聊里问一句「刚才那个结论是什么」，照样有回复。"""
     factory = business_db_factory
     channel = HandsRefused()
+    # Where production keeps each session's records (`get_session_host`).
+    channel.host._records = partial(session_records.append, factory)
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
@@ -267,14 +270,10 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     await finish_turn(svc, topic_id)
 
     assert channel.asked == [False], "私聊这一轮不该去要手"
+    # 会话开了口：它说的留在它自己的记录里（回复要进聊天得走 chat_send）。
     async with factory() as session:
-        blocks = await BlockRepository(session).list_for_topic(topic_id)
-    assert any(
-        looks_like_agent_handle(b.author)
-        and b.kind == BlockKind.event
-        and b.content == channel.reply
-        for b in blocks
-    ), [(b.author, b.kind, b.content) for b in blocks]
+        said = await session_records.read(session, topic_id, search=channel.reply)
+    assert said.items, "工作机全部离线时，私聊的会话没有开口"
 
 
 async def test_a_room_turn_still_waits_for_its_hands(business_db_factory, tmp_path):

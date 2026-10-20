@@ -40,13 +40,15 @@ def _open(client, block_id: str, handle: str = "alice") -> dict:
     return r.json()["data"]
 
 
-def _answer(blocks: list[dict], question: dict) -> list[dict]:
-    """What 芝士 did and said answering ``question``: the blocks of its turn."""
-    return [
-        b
-        for b in blocks
-        if b["turn_id"] == question["id"] and b["id"] != question["id"]
-    ]
+def _session_said(client, conversation: str, text: str) -> bool:
+    """Whether a session working in ``conversation`` printed ``text``: its raw
+    record, which is where a turn's output is kept."""
+    r = client.get(
+        f"/topics/{conversation}/session-records",
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    return any(text in str(item["record"]) for item in r.json()["data"]["items"])
 
 
 def _wait_for(predicate, timeout: float = 30.0):
@@ -60,18 +62,21 @@ def _wait_for(predicate, timeout: float = 30.0):
 
 
 def test_calling_cheese_in_the_main_line_is_answered_in_that_messages_thread(
-    client,
+    client, stub_hooks
 ):
     _project, room = _channel(client)
     asked = post_message(client, room, "alice", {"content": "@芝士 首页要改哪些地方？"})
 
-    # The question has a 支线, and the answer is in it.
+    # The question has a 支线, and 芝士's turn runs in it: that is the
+    # conversation its session works in, and where its replies are published.
     thread = _open(client, asked["id"])
-    _wait_for(lambda: _answer(_blocks(client, thread["id"]), asked))
+    _wait_for(lambda: _session_said(client, thread["id"], stub_hooks.reply))
 
-    # The main line carries the question, not the answer.
+    # The main line carries the question, not the answer, and no session ran
+    # there.
     main = _blocks(client, room)
     assert [b["id"] for b in main] == [asked["id"]]
+    assert not _session_said(client, room, stub_hooks.reply)
 
 
 def test_the_main_line_shows_how_a_thread_grew(client):

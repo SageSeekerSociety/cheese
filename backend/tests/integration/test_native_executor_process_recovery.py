@@ -8,7 +8,9 @@ import asyncio
 import json
 import os
 import sys
+import time
 import uuid
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +20,7 @@ from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.session_record import service as session_records
 from app.main import app
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
@@ -25,10 +28,9 @@ from tests.integration.conftest import (
     post_message,
     post_project,
     room_agent_seat,
-    room_socket,
 )
-from tests.integration.test_claude_session_records import _until
 from tests.integration.test_native_batch_ownership import _blocks
+from tests.support.hang import HANG_S
 from tests.support.seat_channel import SeatChannel
 from tests.unit.test_claude_runner import Machine, Screen
 
@@ -76,6 +78,9 @@ def test_new_full_service_process_reuses_original_native_executor(
             return await asyncio.to_thread(screen.call, method, params)
 
     before = Channel()
+    # Kept as production keeps them (`get_session_host`): the session's records
+    # are what shows where it is.
+    before.host._records = partial(session_records.append, client.test_request_factory)
     old = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
@@ -97,27 +102,25 @@ def test_new_full_service_process_reuses_original_native_executor(
             if busy
             else "初始回答"
         )
-        with room_socket(client, str(topic), "alice") as ws:
-            # 这个 socket 只把房间里的东西推过来，不收发言（`test_chat_ws_auth`
-            # 钉的就是那条拒绝）；说话走 POST，和别的用例一样。
-            post_message(
-                client, str(topic), "alice", {"content": f"<@{recipient}> " + directive}
-            )
-            observed = _until(
-                ws,
-                lambda frame: (
-                    frame["type"] == "error"
-                    or (
-                        (
-                            frame["type"] == "event_block"
-                            and "PROCESS_RECOVERY" in str(frame["block"])
-                        )
-                        if busy
-                        else frame["type"] == "done"
-                    )
-                ),
-            )
-            assert observed["type"] != "error", observed
+        post_message(
+            client, str(topic), "alice", {"content": f"<@{recipient}> " + directive}
+        )
+        # Busy: mid-call once the session's records show the command it started
+        # (an assistant record: the prompt that asked for it names it too).
+        # Idle: its turn has ended once they hold its result.
+        deadline = time.monotonic() + HANG_S
+        while True:
+            items = client.get(
+                f"/topics/{topic}/session-records",
+                params={"q": "PROCESS_RECOVERY"} if busy else {},
+            ).json()["data"]["items"]
+            kind = "assistant" if busy else "result"
+            observed = [i["record"] for i in items if i["record"].get("type") == kind]
+            if observed:
+                break
+            assert time.monotonic() < deadline, f"no {kind} record from the session"
+            time.sleep(0.05)
+        assert not observed[0].get("is_error"), observed
 
         async def first_work_id():
             records = await asyncio.to_thread(screen.records)

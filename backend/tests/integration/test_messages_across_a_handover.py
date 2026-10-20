@@ -10,6 +10,7 @@ it, and the backend taking over has to start what it dropped — and only that.
 import asyncio
 import time
 import uuid
+from functools import partial
 
 from sqlalchemy import select
 
@@ -20,6 +21,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block
+from app.domain.session_record import service as session_records
 from app.main import app
 from app.periodic_jobs import periodic_jobs
 from tests.conftest import StubChannel, settle_turn, stub_compute
@@ -37,6 +39,9 @@ def _room(client) -> tuple[str, StubChannel, ChatService]:
     project = post_project(client, {"name": "Handover"}, owner="alice")
     room = project.json()["data"]["root_topic_id"]
     channel = StubChannel()
+    # The durable record path production wires in `get_session_host`: what the
+    # session says is read back from it (`_said_by_the_session`).
+    channel.host._records = partial(session_records.append, client.test_request_factory)
     service = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
@@ -97,9 +102,24 @@ def _handed_over(client, service: ChatService) -> int:
     return client.portal.call(runner.resume_lost_messages, service)
 
 
+def _said_by_the_session(client, room: str) -> list[str]:
+    """The text the room's session answered with, from its raw record: a reply
+    is the session's output, which the room's 现场 reads there."""
+    items = client.get(
+        f"/topics/{room}/session-records", headers=session_auth_headers("alice")
+    ).json()["data"]["items"]
+    return [
+        part["text"]
+        for item in items
+        if item["record"].get("type") == "assistant"
+        for part in item["record"]["message"]["content"]
+        if part.get("type") == "text"
+    ]
+
+
 def _until_answered(client, service, channel: StubChannel, room: str) -> None:
     deadline = time.monotonic() + 10
-    while channel.reply not in [block.content for block in _blocks(client, room)]:
+    while channel.reply not in _said_by_the_session(client, room):
         assert time.monotonic() < deadline, "the message was never answered"
         time.sleep(0.05)
     client.portal.call(settle_turn, service, uuid.UUID(room))

@@ -4,7 +4,9 @@ The channel substitutes native stdout, not receipt/transaction/runtime logic.
 This is same-process service replacement, not a native/new-interpreter proof.
 """
 
+import time
 import uuid
+from functools import partial
 
 from sqlalchemy import select
 
@@ -15,16 +17,17 @@ from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
+from app.domain.session_record import service as session_records
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
     post_message,
     post_project,
-    room_socket,
 )
-from tests.integration.test_claude_session_records import StillWorking, _until
+from tests.integration.test_claude_session_records import StillWorking
 from tests.integration.test_native_batch_ownership import _blocks
+from tests.support.hang import HANG_S
 
 
 def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(client):
@@ -45,18 +48,19 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
         )
 
     before = StillWorking()
+    # Kept as production keeps them (`get_session_host`): the session's records
+    # are what shows it mid-call.
+    before.host._records = partial(session_records.append, client.test_request_factory)
     old = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old
-    with room_socket(client, str(topic), "alice") as ws:
-        # 这个 socket 只推不收（`test_chat_ws_auth` 钉的就是那条拒绝）；
-        # 说话走 POST。
-        post_message(client, str(topic), "alice", {"content": "@芝士 等待回答"})
-        _until(
-            ws,
-            lambda frame: (
-                frame["type"] == "event_block" and "sleep 600" in str(frame["block"])
-            ),
-        )
+    post_message(client, str(topic), "alice", {"content": "@芝士 等待回答"})
+    # The session is mid-call once its records show the command it started.
+    deadline = time.monotonic() + HANG_S
+    while not client.get(
+        f"/topics/{topic}/session-records", params={"q": "sleep 600"}
+    ).json()["data"]["items"]:
+        assert time.monotonic() < deadline, "the session never started its call"
+        time.sleep(0.05)
     runner = before._session_for(topic)
     native = runner.session_id
     work = uuid.UUID(runner.work)

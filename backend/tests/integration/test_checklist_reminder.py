@@ -10,6 +10,7 @@
 的**（上一轮留下的那版，平台叫不动它）、而且它得真的停够久。
 """
 
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -26,6 +27,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.hang import HANG_S
 
 PLAN = [
     {"content": "核实 issue 论断", "status": "completed"},
@@ -111,16 +113,17 @@ def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):
     )
 
 
-def _start(client, ws, topic_id: str, *, handle: str = "user-1") -> uuid.UUID:
+def _start(client, topic_id: str, *, handle: str = "user-1") -> uuid.UUID:
     """Start a turn on ``topic_id`` and leave it running; return its work_id."""
     post_message(client, topic_id, handle, {"content": "@芝士 做一件事"})
-    while True:
-        frame = ws.receive_json()
-        if (
-            frame["type"] == "event_block"
-            and frame["block"]["content"] == "Internal output"
-        ):
-            break
+    # Under way once its session has said something; what it said stays in its
+    # records, not in the room.
+    deadline = time.monotonic() + HANG_S
+    while not client.get(
+        f"/topics/{topic_id}/session-records", params={"q": "Internal output"}
+    ).json()["data"]["items"]:
+        assert time.monotonic() < deadline, "这一轮的会话一直没开口"
+        time.sleep(0.05)
     live = client.portal.call(
         chat_of(client).live.active_turn_ids.get, uuid.UUID(topic_id)
     )
@@ -195,47 +198,46 @@ def test_a_running_turns_stalled_checklist_is_asked_for_again(
     正是报上来的那一种。
     """
     topic, headers = _room(client)
-    with room_socket(client, topic, "user-1") as ws:
-        _start(client, ws, topic)
-        _its_own_checklist(client, topic, headers, clock)
-        # 刚写完，一动不动，数出来是正的几毫秒——远在阈值左边。
-        assert client.portal.call(chat.remind_stale_checklists) == 0
-        # 还没到窗口：不叫。
-        clock[0] += timedelta(seconds=THRESHOLD - 60)
-        assert client.portal.call(chat.remind_stale_checklists) == 0
-        assert notices == []
-        # 到点，叫一次。
-        clock[0] += timedelta(seconds=60)
-        assert client.portal.call(chat.remind_stale_checklists) == 1
-        assert len(notices) == 1
-        assert "todo_write" in notices[0]
-        assert "10 分钟" in notices[0]
-        # 叫过就等下一次窗口，别在同一次停歇里反复说。
-        clock[0] += timedelta(seconds=THRESHOLD - 1)
-        assert client.portal.call(chat.remind_stale_checklists) == 0
-        clock[0] += timedelta(seconds=1)
-        assert client.portal.call(chat.remind_stale_checklists) == 1
-        assert len(notices) == 2
-        # 那一轮听话写了下一步：清单又动了，时刻从写下的那一刻重新算。
-        _write(
-            client,
-            topic,
-            headers,
-            [
-                {**PLAN[0], "status": "completed"},
-                {**PLAN[1], "status": "completed"},
-                {**PLAN[2], "status": "in_progress"},
-            ],
-        )
-        # 时刻往前推一个窗口（上面那次提醒把 `last_checklist_reminder_at` 停在
-        # 这里，两样一起看才不会提前开口）。
-        clock[0] += timedelta(seconds=THRESHOLD - 1)
-        assert client.portal.call(chat.remind_stale_checklists) == 0
-        assert len(notices) == 2
-        # 再停够一个窗口，就再叫一次——不是「叫过这一轮就再也不叫」。
-        clock[0] += timedelta(seconds=1)
-        assert client.portal.call(chat.remind_stale_checklists) == 1
-        assert len(notices) == 3
+    _start(client, topic)
+    _its_own_checklist(client, topic, headers, clock)
+    # 刚写完，一动不动，数出来是正的几毫秒——远在阈值左边。
+    assert client.portal.call(chat.remind_stale_checklists) == 0
+    # 还没到窗口：不叫。
+    clock[0] += timedelta(seconds=THRESHOLD - 60)
+    assert client.portal.call(chat.remind_stale_checklists) == 0
+    assert notices == []
+    # 到点，叫一次。
+    clock[0] += timedelta(seconds=60)
+    assert client.portal.call(chat.remind_stale_checklists) == 1
+    assert len(notices) == 1
+    assert "todo_write" in notices[0]
+    assert "10 分钟" in notices[0]
+    # 叫过就等下一次窗口，别在同一次停歇里反复说。
+    clock[0] += timedelta(seconds=THRESHOLD - 1)
+    assert client.portal.call(chat.remind_stale_checklists) == 0
+    clock[0] += timedelta(seconds=1)
+    assert client.portal.call(chat.remind_stale_checklists) == 1
+    assert len(notices) == 2
+    # 那一轮听话写了下一步：清单又动了，时刻从写下的那一刻重新算。
+    _write(
+        client,
+        topic,
+        headers,
+        [
+            {**PLAN[0], "status": "completed"},
+            {**PLAN[1], "status": "completed"},
+            {**PLAN[2], "status": "in_progress"},
+        ],
+    )
+    # 时刻往前推一个窗口（上面那次提醒把 `last_checklist_reminder_at` 停在
+    # 这里，两样一起看才不会提前开口）。
+    clock[0] += timedelta(seconds=THRESHOLD - 1)
+    assert client.portal.call(chat.remind_stale_checklists) == 0
+    assert len(notices) == 2
+    # 再停够一个窗口，就再叫一次——不是「叫过这一轮就再也不叫」。
+    clock[0] += timedelta(seconds=1)
+    assert client.portal.call(chat.remind_stale_checklists) == 1
+    assert len(notices) == 3
 
 
 def test_a_checklist_left_by_an_earlier_turn_is_not_this_turns_problem(
@@ -248,14 +250,13 @@ def test_a_checklist_left_by_an_earlier_turn_is_not_this_turns_problem(
     只会让它对着别人的计划打勾。
     """
     topic, headers = _room(client)
-    with room_socket(client, topic, "user-1") as ws:
-        _start(client, ws, topic)
-        # 这一轮还没写自己那一版，存着的是上一轮的：`turn_id` 对不上，越久越该不管。
-        assert _write(client, topic, headers, PLAN).status_code == 200
-        _restamp(client, topic, uuid.uuid4())
-        clock[0] += timedelta(seconds=3600)
-        assert client.portal.call(chat.remind_stale_checklists) == 0
-        assert notices == []
+    _start(client, topic)
+    # 这一轮还没写自己那一版，存着的是上一轮的：`turn_id` 对不上，越久越该不管。
+    assert _write(client, topic, headers, PLAN).status_code == 200
+    _restamp(client, topic, uuid.uuid4())
+    clock[0] += timedelta(seconds=3600)
+    assert client.portal.call(chat.remind_stale_checklists) == 0
+    assert notices == []
 
 
 def test_a_finished_turn_is_not_reminded(
@@ -264,7 +265,7 @@ def test_a_finished_turn_is_not_reminded(
     """这一轮已经收工，就不用再叫了——清单留在那儿，下一轮接着写它自己的。"""
     topic, headers = _room(client)
     with room_socket(client, topic, "user-1") as ws:
-        _start(client, ws, topic)
+        _start(client, topic)
         _its_own_checklist(client, topic, headers, clock)
         stub_hooks.stops(uuid.UUID(topic), "Done")
         while ws.receive_json()["type"] != "done":
@@ -287,10 +288,9 @@ def test_a_tasks_own_checklist_is_reminded_the_same_way(
     task_id = str(task["id"])
     token = mint_scoped_token(project_id=task["project_id"], topic_id=task_id)
     headers = {"X-Cheese-Token": token}
-    with room_socket(client, task_id, "user-1") as ws:
-        _start(client, ws, task_id)
-        _its_own_checklist(client, task_id, headers, clock)
-        clock[0] += timedelta(seconds=THRESHOLD)
-        assert client.portal.call(chat.remind_stale_checklists) == 1
-        assert len(notices) == 1
-        assert "todo_write" in notices[0]
+    _start(client, task_id)
+    _its_own_checklist(client, task_id, headers, clock)
+    clock[0] += timedelta(seconds=THRESHOLD)
+    assert client.portal.call(chat.remind_stale_checklists) == 1
+    assert len(notices) == 1
+    assert "todo_write" in notices[0]

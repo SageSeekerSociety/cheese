@@ -11,11 +11,14 @@ and its re-send share (``AgentWorkRunner.continuation_for``). That is what makes
 "the re-sent 芝士 re-doing it" and "someone legitimately doing the same thing
 next week" distinguishable at all; see ``domain.idempotency.keys``.
 
-Three actions, three tests:
+Two actions, two tests:
 
-  1. 发消息      — the resumed turn re-narrating must not post a second copy
   2. 记周报      — must not stack a second 周报 row
   3. 开 PR       — must not open a second PR / file a second card
+
+(Action 1, a resumed turn's narration posted twice, has no room path left: a
+session's narration stays in its raw record, and the room hears an agent only
+through `chat_send`, whose retry key is the request's own id.)
 
 Action 3 needs no new mechanism: 开 PR was ALREADY protected, by two guards that
 predate this work (one non-terminal accept card per topic, and GitHub-side
@@ -28,12 +31,9 @@ import uuid
 import pytest
 from sqlalchemy import func, select
 
-from app.api import deps as session_turn_deps
 from app.api.deps import get_work_runner
-from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block, BlockKind
 from app.domain.idempotency.keys import action_key
-from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import join_project_team, post_project
 
@@ -73,128 +73,6 @@ def _topic(client, project_id: str, title: str = "母话题") -> str:
 async def _count(factory, stmt) -> int:
     async with factory() as s:
         return (await s.execute(stmt)).scalar_one()
-
-
-# --- 1. 发消息 ---------------------------------------------------------------
-
-
-class _SameMessageTwice(StubChannel):
-    """A 芝士 that says the exact same thing on both attempts — which is what a
-    resumed session with no memory of the first attempt does."""
-
-    new_session_id = "s1"
-
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self._text = text
-
-    def emit_turn(
-        self,
-        topic_id: uuid.UUID,
-        prompt: str,
-        reply: str,
-        *,
-        agent: str | None = None,
-    ) -> None:
-        del reply
-        self.starts(topic_id, session_id="s1")
-        self.acknowledges(topic_id, prompt)
-        self.says(topic_id, self._text)
-        self.stops(topic_id, self._text, session_id="s1")
-
-
-def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
-    pid = _project(client)
-    tid = _topic(client, pid)
-    text = "我先把这五条落到代码上逐一自查，不动手改。"
-    chat = ChatService(
-        work_runner=session_turn_deps.get_work_runner(),
-        session_factory=client.test_request_factory,
-        compute=stub_compute(_SameMessageTwice(text)),
-        base_system_prompt="你是芝士。",
-        workspace_root=str(tmp_path / "ws"),
-    )
-
-    async def _turn() -> None:
-        async for _ in chat.converse(
-            topic_id=uuid.UUID(tid),
-            author="u",
-            content="做事",
-            summon=True,
-            continuation_id=CONTINUATION,
-        ):
-            pass
-        await settle_turn(chat, uuid.UUID(tid))
-
-    async def _both() -> None:
-        await _turn()  # the attempt that got interrupted
-        await _turn()  # the auto-resume, saying the same thing again
-
-    client.portal.call(lambda: _both())
-
-    said = client.portal.call(
-        lambda: _count(
-            client.test_request_factory,
-            select(func.count())
-            .select_from(Block)
-            .where(
-                Block.conversation_id == uuid.UUID(tid),
-                Block.kind == BlockKind.event,
-                Block.meta["progress"].as_boolean().is_(True),
-                Block.content == text,
-            ),
-        )
-    )
-    assert said == 1, "重发把同一句话又说了一遍"
-
-
-def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
-    """The complement, and the reason the key is not just a content hash: the
-    SAME text in a LATER, unrelated unit of work is a second message, not a
-    duplicate. A dedup that swallowed it would silence 芝士 for saying "好的"
-    twice in one topic."""
-    pid = _project(client)
-    tid = _topic(client, pid)
-    text = "好的"
-    chat = ChatService(
-        work_runner=session_turn_deps.get_work_runner(),
-        session_factory=client.test_request_factory,
-        compute=stub_compute(_SameMessageTwice(text)),
-        base_system_prompt="你是芝士。",
-        workspace_root=str(tmp_path / "ws"),
-    )
-
-    async def _turn(cont: uuid.UUID) -> None:
-        async for _ in chat.converse(
-            topic_id=uuid.UUID(tid),
-            author="u",
-            content="做事",
-            summon=True,
-            continuation_id=cont,
-        ):
-            pass
-        await settle_turn(chat, uuid.UUID(tid))
-
-    async def _both() -> None:
-        await _turn(uuid.uuid4())
-        await _turn(uuid.uuid4())
-
-    client.portal.call(lambda: _both())
-
-    said = client.portal.call(
-        lambda: _count(
-            client.test_request_factory,
-            select(func.count())
-            .select_from(Block)
-            .where(
-                Block.conversation_id == uuid.UUID(tid),
-                Block.kind == BlockKind.event,
-                Block.meta["progress"].as_boolean().is_(True),
-                Block.content == text,
-            ),
-        )
-    )
-    assert said == 2
 
 
 # --- 2. 记周报 ---------------------------------------------------------------

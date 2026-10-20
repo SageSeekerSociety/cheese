@@ -21,6 +21,7 @@ from app.domain.library import service as library
 from app.main import app
 from tests.ask_fixtures import wait_turn_idle
 from tests.conftest import StubChannel
+from tests.integration.test_chat_flow import _drain_until_done
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -62,16 +63,6 @@ def _upload(client, topic_id: str) -> dict:
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]
-
-
-def _drain_until_done(ws) -> list[dict]:
-    frames: list[dict] = []
-    while True:
-        frame = ws.receive_json()
-        frames.append(frame)
-        if frame["type"] in ("done", "error"):
-            break
-    return frames
 
 
 def test_upload_then_raw_roundtrip(client):
@@ -515,18 +506,23 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
 
     # The session hearing the prompt is not its answer having landed: what it
     # says comes back through the reader afterwards. Wait for the 支线's turn
-    # to close before reading what it left there.
+    # to close before reading what it left.
     wait_turn_idle(client, thread)
     main = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     assert [b["kind"] for b in main] == ["message", "attachment"]
-    # The turn's record reaches the 支线 by its own path: the session's records
-    # are read back and written after the prompt was handed over, so seeing the
-    # prompt does not mean the record is there yet. Wait for it.
-    while not (answer := client.get(f"/topics/{thread}/blocks").json()["data"]["data"]):
+
+    # The turn's raw record is the 支线's: the session's records are read back
+    # after the prompt was handed over, so seeing the prompt does not mean the
+    # record is there yet. Wait for it.
+    def answered() -> bool:
+        records = client.get(f"/topics/{thread}/session-records").json()["data"]
+        return any(stub_hooks.reply in str(i["record"]) for i in records["items"])
+
+    while not answered():
         assert time.monotonic() < deadline, "the 支线's turn left no record"
         time.sleep(0.2)
-    assert [b["kind"] for b in answer] == ["event"]
-    assert answer[0]["meta"]["in_room"] is False
+    # Nothing the session printed was published: the 支线 holds no reply.
+    assert client.get(f"/topics/{thread}/blocks").json()["data"]["data"] == []
 
 
 def test_image_only_message_allowed(client, stub_hooks):
@@ -553,10 +549,6 @@ def test_image_only_message_allowed(client, stub_hooks):
     session = stub_hooks._session_for(uuid.UUID(topic_id))
     handed = [m for m in session.written if m.get("type") == "user"][-1]
     assert any(block.get("type") == "image" for block in handed["message"]["content"])
-
-    # The execution record retains the attachment as its input anchor.
-    assistant = next(f for f in frames if f["type"] == "event_block")["block"]
-    assert assistant["reply_to"] == user_frames[0]["id"]
 
 
 @pytest.mark.parametrize("midturn", [False, True])
