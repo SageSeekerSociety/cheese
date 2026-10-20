@@ -154,8 +154,10 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
     # the root the project creates). Every statement here is one a sidebar poll
     # pays on every tick, so adding one is a deliberate act, not a rounding
     # error — the relative check below would let a constant cost slip through.
-    assert small_count == 30, (
-        f"the topic list cost 30 statements; it now costs {small_count}.\n"
+    # One of them reads which rooms' sessions their runners declare running
+    # (`session_states`), the board cell's 运行中.
+    assert small_count == 31, (
+        f"the topic list cost 31 statements; it now costs {small_count}.\n"
         + "\n".join(small)
     )
 

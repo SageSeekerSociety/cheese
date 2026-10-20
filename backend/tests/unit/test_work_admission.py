@@ -737,22 +737,13 @@ async def test_the_wait_before_a_turn_assembles_is_accounted_for(db_factory, cap
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("delivery_result", [False, None])
-async def test_live_delivery_fallback_is_noted_then_runs_normally(
-    db_factory,
-    delivery_result,
-):
-    class FailedLiveDelivery(FakeChat):
-        async def has_running_turn(
-            self, topic_id: uuid.UUID, agent_handle: str | None = None
-        ) -> bool:
-            # 收件人自己那一轮在跑 —— 有人正面问「这个席位在跑吗」时才是真的
-            # 递进正在跑的会话。房间级的询问（``agent_handle`` 为空）不该被当成
-            # 「这条消息要的一次实时投递」，那正是这条提示以前误报的地方。
-            return agent_handle is not None
+async def test_live_delivery_fallback_is_noted_then_runs_normally(db_factory):
+    """The recipient's session was at work and the message did not reach it
+    (``False``): the room is told it went the ordinary way instead."""
 
+    class FailedLiveDelivery(FakeChat):
         async def merge_into_running_session(self, *args, **kwargs):
-            return delivery_result
+            return False
 
         async def converse_prepared(self, **kwargs):
             yield {"type": "done"}
@@ -778,6 +769,46 @@ async def test_live_delivery_fallback_is_noted_then_runs_normally(
     # The platform took the message on itself: nobody has to do anything.
     assert frames[1]["block"]["meta"]["severity"] == "warn"
     assert frames[1]["block"]["meta"]["who"] == "platform"
+    assert len(chat.converse_calls) == 1
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
+async def test_a_recipient_whose_session_is_not_at_work_is_not_a_lost_delivery(
+    db_factory,
+):
+    """No session of the recipient's seat is at work here (``None``): queueing
+    is the message's ordinary way, and the room is told nothing went wrong —
+    whatever turn rows say is open."""
+
+    class NotAtWork(FakeChat):
+        async def has_running_turn(
+            self, topic_id: uuid.UUID, agent_handle: str | None = None
+        ) -> bool:
+            return True
+
+        async def merge_into_running_session(self, *args, **kwargs):
+            return None
+
+        async def converse_prepared(self, **kwargs):
+            yield {"type": "done"}
+
+    chat = NotAtWork(None, db_factory)
+    runner, broker = _runner()
+    topic = await a_topic(db_factory)
+
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.receive_message(
+            chat, topic, author="u", content="<@cheese-seat> 补充一条"
+        )
+        frames = await _frames_through(queue, "turn_finished")
+
+    assert [frame["type"] for frame in frames] == [
+        "user_block",
+        "turn_started",
+        "done",
+        "turn_finished",
+    ]
     assert len(chat.converse_calls) == 1
     await _until(lambda: runner.active_work_count() == 0)
 
