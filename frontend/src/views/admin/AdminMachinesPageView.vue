@@ -575,7 +575,6 @@ const failureNote = computed(() =>
         {{
           t('admin.machines.usage.foot', {
             check: duration(overview.config.check_s),
-            walk: duration(overview.config.walk_s),
             disk: fmtPercent(overview.config.alert_used.disk, 0),
             inodes: fmtPercent(overview.config.alert_used.inodes, 0),
             memory: fmtPercent(overview.config.alert_used.memory, 0),

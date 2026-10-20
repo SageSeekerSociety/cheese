@@ -385,9 +385,11 @@ def prepare(self, payload):
     if home / ".cheese/executor" != self.state:
         raise ValueError("Executor preparation belongs to another room")
     bootstrap = runpy.run_path(str(self.programs / "remote-execution/bootstrap.py"))
+    disk = {}
     with bootstrap["prepared"](
         payload,
         room_owner,
+        disk=disk,
         # Read-only in a sandbox: only the install, outside it, fetches it.
         fetch_toolchain=not self.config.get("sandbox"),
     ) as (
@@ -409,6 +411,7 @@ def prepare(self, payload):
             **self.dispatch("configure", configure),
             "mcp_servers": bootstrap["process_servers"](config),
             "context_tree": self.context_fs({"operation": "tree"}),
+            **disk,
         }
         if payload.get("environment"):
             runner = runpy.run_path(str(self.programs / "cheese-environment.py"))

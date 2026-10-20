@@ -1,33 +1,25 @@
 <template>
-  <div class="settings-page">
-    <header>
-      <h1 class="t-page-title">{{ t('account.modelConnections.title') }}</h1>
-      <BaseButton kind="ghost" size="sm" :loading="loading" @click="emit('refresh')">{{
-        t('account.modelConnections.recheck')
-      }}</BaseButton>
-      <p class="settings-page__lede">{{ t('account.modelConnections.lede') }}</p>
-    </header>
+  <!-- The team page frame (AppPage) draws the title and this page's header actions
+       (refresh, add my connection: registered as commands in Models.vue), so the
+       page starts with its lede. -->
+  <div class="mc-page">
+    <div class="mc-lede">
+      <p>{{ t('account.modelConnections.lede') }}</p>
+      <p v-if="!canManage">{{ t('account.modelConnections.readOnly') }}</p>
+    </div>
 
     <p v-if="error" role="alert" class="mc__notice c-danger">{{ error }}</p>
 
     <section class="settings-card" :aria-label="t('account.modelConnections.platformTitle')">
-      <div class="settings-card__head">
-        <div class="settings-card__title">{{ t('account.modelConnections.platformTitle') }}</div>
-      </div>
-      <p class="mc-platform mc-note">{{ t('account.modelConnections.platformHint') }}</p>
+      <div class="settings-card__title">{{ t('account.modelConnections.platformTitle') }}</div>
+      <p class="settings-card__desc">{{ t('account.modelConnections.platformHint') }}</p>
       <ul class="mc-platform">
-        <li v-for="model in platformModels" :key="model.id">{{ model.label }}</li>
+        <li v-for="model in platformList" :key="model.id">
+          <span class="mc-platform__name">{{ model.name }}</span>
+          <span v-if="model.note" class="mc-platform__note">{{ model.note }}</span>
+        </li>
       </ul>
     </section>
-    <div class="mc-actions">
-      <BaseButton kind="secondary" @click="addingPersonal = true">{{
-        t('account.modelConnections.addPersonal')
-      }}</BaseButton>
-    </div>
-    <p v-if="!canManage" class="mc-note">{{ t('account.modelConnections.readOnly') }}</p>
-    <p v-if="loginCommand" class="mc-note">
-      {{ t('account.modelConnections.loginTerminal') }}<br /><code>{{ loginCommand }}</code>
-    </p>
     <section class="settings-card" :aria-label="t('account.modelConnections.devicesTitle')">
       <div class="settings-card__head mc-head">
         <div class="settings-card__title">{{ t('account.modelConnections.devicesTitle') }}</div>
@@ -45,7 +37,10 @@
         </div>
       </div>
 
-      <p class="mc-platform mc-note">{{ t('account.modelConnections.loginHint') }}</p>
+      <p class="settings-card__desc">{{ t('account.modelConnections.loginHint') }}</p>
+      <p v-if="loginCommand" class="settings-card__desc mc-command">
+        {{ t('account.modelConnections.loginTerminal') }}<code>{{ loginCommand }}</code>
+      </p>
 
       <div v-if="firstLoad" class="d-flex justify-center py-6">
         <v-progress-circular indeterminate size="24" />
@@ -78,12 +73,14 @@
           <span class="mc-sum__where">
             <span class="mc-dot" :class="{ 'mc-dot--on': c.online }" aria-hidden="true" />
             <span class="mc-sum__device">{{ c.device_name }}</span>
-            <span class="visually-hidden">{{
-              c.online ? t('account.devices.online') : t('account.devices.offline')
-            }}</span>
           </span>
-          <span class="mc-state" :class="c.revoking ? 'mc-state--pending' : 'mc-state--ok'">{{
-            c.revoking ? t('account.modelConnections.revoking') : t('account.modelConnections.ready')
+          <!-- A subscription is used on the computer that holds it, so it is ready only while that computer is online. -->
+          <span class="mc-state" :class="c.revoking || !c.online ? 'mc-state--pending' : 'mc-state--ok'">{{
+            c.revoking
+              ? t('account.modelConnections.revoking')
+              : c.online
+                ? t('account.modelConnections.ready')
+                : t('account.devices.offline')
           }}</span>
         </button>
         <Transition name="mc-body">
@@ -91,9 +88,6 @@
             <div class="mc-body__inner">
               <div class="mc-body__pad">
                 <p v-if="c.owner_name" class="mc-note">{{ t('account.modelConnections.personalHint') }}</p>
-                <BaseButton v-if="c.can_remove" kind="ghost" size="sm" @click="emit('removePersonal', c.id)">{{
-                  t('account.modelConnections.removePersonal')
-                }}</BaseButton>
                 <dl class="mc-spec">
                   <template v-if="c.owner_name"
                     ><dt>{{ t('account.modelConnections.owner') }}</dt>
@@ -106,8 +100,11 @@
                       c.online ? t('account.devices.online') : t('account.devices.offline')
                     }}</span>
                   </dd>
-                  <dt>{{ t('account.modelConnections.models') }}</dt>
-                  <dd>{{ c.allowed_models.join('、') }}</dd>
+                  <!-- Whoever can edit the models reads them in the field below instead. -->
+                  <template v-if="!(c.can_manage && !c.revoking)"
+                    ><dt>{{ t('account.modelConnections.models') }}</dt>
+                    <dd>{{ c.allowed_models.join('、') }}</dd></template
+                  >
                   <dt>{{ t('account.modelConnections.checkedAt') }}</dt>
                   <dd>{{ relTime(c.checked_at) }}</dd>
                   <dt>{{ t('account.modelConnections.lastUsed') }}</dt>
@@ -123,6 +120,8 @@
                     :items="c.allowed_models"
                     multiple
                     chips
+                    density="compact"
+                    hide-details
                     :label="t('account.modelConnections.models')"
                   />
                   <BaseButton
@@ -133,8 +132,9 @@
                     >{{ t('account.modelConnections.saveModels') }}</BaseButton
                   >
                 </div>
-                <div v-if="c.can_manage && !c.revoking" class="mc-actions">
+                <div v-if="(c.can_manage && !c.revoking) || c.can_remove" class="mc-actions">
                   <BaseButton
+                    v-if="c.can_manage && !c.revoking"
                     kind="secondary"
                     size="sm"
                     :disabled="!c.online"
@@ -144,12 +144,17 @@
                   >
                     {{ t('account.modelConnections.recheck') }}
                   </BaseButton>
-                  <BaseButton kind="ghost" size="sm" @click="openRename(c.id, c.name, true)">
-                    {{ t('account.modelConnections.rename') }}
-                  </BaseButton>
-                  <BaseButton kind="ghost" size="sm" :loading="busy === `${c.id}:revoke`" @click="removing = c">
-                    {{ t('account.modelConnections.remove') }}
-                  </BaseButton>
+                  <template v-if="c.can_manage && !c.revoking">
+                    <BaseButton kind="ghost" size="sm" @click="openRename(c.id, c.name, true)">
+                      {{ t('account.modelConnections.rename') }}
+                    </BaseButton>
+                    <BaseButton kind="ghost" size="sm" :loading="busy === `${c.id}:revoke`" @click="removing = c">
+                      {{ t('account.modelConnections.remove') }}
+                    </BaseButton>
+                  </template>
+                  <BaseButton v-if="c.can_remove" kind="ghost" size="sm" @click="emit('removePersonal', c.id)">{{
+                    t('account.modelConnections.removePersonal')
+                  }}</BaseButton>
                 </div>
               </div>
             </div>
@@ -209,9 +214,6 @@
             <div class="mc-body__inner">
               <div class="mc-body__pad">
                 <p v-if="h.owner_name" class="mc-note">{{ t('account.modelConnections.personalHint') }}</p>
-                <BaseButton v-if="h.can_remove" kind="ghost" size="sm" @click="emit('removePersonal', h.id)">{{
-                  t('account.modelConnections.removePersonal')
-                }}</BaseButton>
                 <p v-if="h.check_error" class="mc-note mc-note--failed">
                   {{ t('account.modelConnections.checkFailed', { reason: h.check_error }) }}
                 </p>
@@ -242,6 +244,8 @@
                     :items="h.allowed_models"
                     multiple
                     chips
+                    density="compact"
+                    hide-details
                     :label="t('account.modelConnections.models')"
                   />
                   <BaseButton
@@ -252,21 +256,26 @@
                     >{{ t('account.modelConnections.saveModels') }}</BaseButton
                   >
                 </div>
-                <div v-if="h.can_manage" class="mc-actions">
-                  <BaseButton
-                    kind="secondary"
-                    size="sm"
-                    :loading="busy === `${h.id}:check`"
-                    @click="emit('checkHeld', h.id)"
-                  >
-                    {{ t('account.modelConnections.check') }}
-                  </BaseButton>
-                  <BaseButton kind="ghost" size="sm" @click="openRename(h.id, h.name, false)">
-                    {{ t('account.modelConnections.rename') }}
-                  </BaseButton>
-                  <BaseButton kind="ghost" size="sm" :loading="busy === `${h.id}:revoke`" @click="removingHeld = h">
-                    {{ t('account.modelConnections.remove') }}
-                  </BaseButton>
+                <div v-if="h.can_manage || h.can_remove" class="mc-actions">
+                  <template v-if="h.can_manage">
+                    <BaseButton
+                      kind="secondary"
+                      size="sm"
+                      :loading="busy === `${h.id}:check`"
+                      @click="emit('checkHeld', h.id)"
+                    >
+                      {{ t('account.modelConnections.check') }}
+                    </BaseButton>
+                    <BaseButton kind="ghost" size="sm" @click="openRename(h.id, h.name, false)">
+                      {{ t('account.modelConnections.rename') }}
+                    </BaseButton>
+                    <BaseButton kind="ghost" size="sm" :loading="busy === `${h.id}:revoke`" @click="removingHeld = h">
+                      {{ t('account.modelConnections.remove') }}
+                    </BaseButton>
+                  </template>
+                  <BaseButton v-if="h.can_remove" kind="ghost" size="sm" @click="emit('removePersonal', h.id)">{{
+                    t('account.modelConnections.removePersonal')
+                  }}</BaseButton>
                 </div>
               </div>
             </div>
@@ -460,9 +469,17 @@ watch(
   },
   { immediate: true }
 )
-const addingPersonal = ref(false)
+/** 「添加我的连接」的对话框开没开；打开它的按钮在页头（Models.vue 登记的命令）。 */
+const addingPersonal = defineModel<boolean>('addingPersonal', { default: false })
 const personalId = ref('')
 const availablePersonal = computed(() => props.personalChoices.filter((c) => !c.added))
+// 网关给的名字可以在末尾括号里带一句备注（「免费·限时」这类），列表里把它画成名字下面的一行灰字。
+const platformList = computed(() =>
+  props.platformModels.map((m) => {
+    const found = /^(.*\S)\s*[（(]([^（）()]+)[）)]$/.exec(m.label)
+    return { id: m.id, name: found ? found[1] : m.label, note: found ? found[2] : '' }
+  })
+)
 // 第一次取数还没回来：两张卡里先转圈，不先说「暂无」。
 const firstLoad = computed(() => props.loading && !props.connections.length && !props.held.length)
 
@@ -557,13 +574,71 @@ watch(
 
 <style scoped src="@/styles/settings-card.css"></style>
 <style scoped>
-.mc-platform {
+.mc-page {
+  display: grid;
+  gap: 20px;
+}
+
+.mc-lede {
+  display: grid;
+  gap: 4px;
+  max-width: 65ch;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
+}
+
+.mc-lede p {
   margin: 0;
-  padding: 12px 24px;
+}
+
+/* The platform pool is a long list of short names: read across in columns, a
+   note the gateway gave a model sits under its name in --muted. */
+.mc-platform {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px 24px;
+  padding: 4px 24px 20px;
+  margin: 0;
   list-style: none;
 }
+
+.mc-platform li {
+  display: grid;
+  min-width: 0;
+}
+
+.mc-platform__name {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mc-platform__note {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.mc-command code {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* The editable model list and its save button share one line. */
 .mc-models {
-  padding-top: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-top: 8px;
+}
+
+.mc-models .v-combobox {
+  flex: 1;
+  min-width: 0;
 }
 .mc__notice {
   margin: 0;
@@ -780,6 +855,15 @@ watch(
 
   .mc-body__pad {
     padding: 0 16px 16px 42px;
+  }
+
+  .mc-platform {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    padding: 4px 16px 16px;
+  }
+
+  .mc-models {
+    flex-wrap: wrap;
   }
 
   /* The title keeps its line; add buttons that do not fit beside it go under it. */

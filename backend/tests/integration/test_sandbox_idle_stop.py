@@ -263,7 +263,12 @@ def host_comes_up(case, seat, device_id):
             host.status = MachineStatus.running
             host.ai_status = AiStatus.disabled
             host.last_seen_at = datetime.now(UTC)
-            await repo.mark_enrolled(host, device_id=device_id, when=datetime.now(UTC))
+            await repo.mark_enrolled(
+                host,
+                device_id=device_id,
+                when=datetime.now(UTC),
+                sandbox_disk_gb=host.sandbox_disk_gb,
+            )
             await db.commit()
 
     run(case, enrol)

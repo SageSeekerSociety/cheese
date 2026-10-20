@@ -188,7 +188,7 @@ def socket_path(state):
 
 def socket_directory(state):
     """The directory this state's service binds its sockets in. A sandboxed
-    executor (`bootstrap.sandbox_argv`) is shown this one directory of the
+    executor (`confinement.sandbox_argv`) is shown this one directory of the
     machine's /tmp and nothing else there, so its sockets cannot sit beside
     every other room's."""
     digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]

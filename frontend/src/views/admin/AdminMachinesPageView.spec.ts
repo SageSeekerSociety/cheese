@@ -121,7 +121,6 @@ function overview(
       sandbox_inode_budget: 600000,
       near_cap: 0.8,
       check_s: 60,
-      walk_s: 300,
       alert_used: { disk: 0.85, inodes: 0.9, memory: 0.9 },
       history_step_s: 300,
     },
