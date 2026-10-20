@@ -22,7 +22,7 @@ from app.domain.delivery.agent import (
     record_task_instruction,
     run_attempt,
 )
-from app.domain.review import landing_watch
+from app.domain.review import pr_poll
 from app.domain.review.landing_models import TaskLanding
 from app.domain.room_task.models import Task
 
@@ -73,10 +73,7 @@ def time_passes(client, task_id: str, *, minutes: int) -> None:
             await session.execute(
                 update(TaskLanding)
                 .where(TaskLanding.task_id == uuid.UUID(str(task_id)))
-                .values(
-                    landed_at=TaskLanding.landed_at - earlier,
-                    watch_until=TaskLanding.watch_until - earlier,
-                )
+                .values(landed_at=TaskLanding.landed_at - earlier)
             )
             await session.commit()
 
@@ -84,10 +81,10 @@ def time_passes(client, task_id: str, *, minutes: int) -> None:
 
 
 def watch(client) -> dict:
-    """One tick of the platform's watch on merges."""
+    """One tick of the platform's sweep of tasks being written up."""
     chat = _chat(client)
     return client.portal.call(
-        lambda: landing_watch.watch_landings(
+        lambda: pr_poll.sweep_closings(
             chat,
             announce,
             record_instruction=record_task_instruction,

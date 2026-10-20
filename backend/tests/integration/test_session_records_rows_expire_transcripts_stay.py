@@ -1,14 +1,4 @@
-"""A session's transcript stays in the bucket for good; the app can read it for
-thirty days, and no longer once its conversation is deleted and its last
-records are sealed.
-
-The rules, stated without the code (a decision to keep transcripts
-permanently, #4398): a sealed transcript object is never deleted, neither when
-it is older than thirty days nor when its conversation is deleted; what goes is
-the database's copy of the index, so the app stops returning those records. A
-record that only exists in the database (no bucket configured) is its only
-copy, so age does not remove it.
-"""
+"""Permanent archives stay readable after database expiry, behind room access."""
 
 import gzip
 import json
@@ -91,8 +81,8 @@ def test_past_thirty_days_the_transcript_stays_in_the_bucket(
 
     # The transcript is still there, byte for byte...
     assert bucket.objects == sealed
-    # ...and the app no longer serves it.
-    assert session.read(turn_id=work) == []
+    # Database expiry must not make a permanent transcript disappear.
+    assert session.read(turn_id=work)
     assert _rows(client, session.ref.topic_id) == 0
 
 
@@ -129,6 +119,43 @@ def test_a_deleted_conversations_transcript_stays_in_the_bucket(
     assert sealed.items() <= bucket.objects.items()
     assert _works_in(bucket) == {first, last}
     assert _rows(client, room) == 0
+
+
+def test_deleted_channel_records_are_hidden_before_sealing(client, tmp_path, bucket):
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    work = str(uuid.uuid4())
+    session.write(_turn(work))
+    session.drain()
+    assert session.read(turn_id=work)
+    _delete_room(client, session.ref.topic_id)
+
+    response = client.get(f"/topics/{session.ref.topic_id}/session-records")
+    assert response.status_code == 404
+    assert _rows(client, session.ref.topic_id) > 0
+    _seal(client, bucket)
+    assert work in _works_in(bucket)
+
+
+def test_sealing_keeps_database_copy_when_bucket_readback_differs(
+    client, tmp_path, bucket, monkeypatch
+):
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    work = str(uuid.uuid4())
+    session.write(_turn(work))
+    session.drain()
+    before = session.read(turn_id=work)
+    download = bucket.download
+
+    async def corrupt_readback(key):
+        return b"truncated upload"
+
+    monkeypatch.setattr(bucket, "download", corrupt_readback)
+    with pytest.raises(RuntimeError, match="verification failed"):
+        _seal(client, bucket)
+    assert session.read(turn_id=work) == before
+    monkeypatch.setattr(bucket, "download", download)
+    _seal(client, bucket)
+    assert session.read(turn_id=work) == before
 
 
 def test_a_conversation_whose_row_is_gone_keeps_its_transcript(
@@ -198,7 +225,8 @@ def _works_in(bucket: _Bucket) -> set[str]:
     """The turns whose records the bucket's objects hold."""
     return {
         json.loads(line)["record"]["cheese"]["work_id"]
-        for body in bucket.objects.values()
+        for key, body in bucket.objects.items()
+        if key.startswith("session-records/")
         for line in gzip.decompress(body).decode().splitlines()
     }
 

@@ -44,11 +44,8 @@ task machine.
    minutes plus two hours it closes regardless, stopping that work, and its
    room is told what was not delivered.
    The room remains active for further work.
-7. For two hours after the merge the platform watches the merge commit on the
-   default branch (`review.landing_watch`): a check that fails there and passed
-   on the commit before it reopens the task for its AI teammate to fix and
-   tells the owner; a deployment the forge records that includes the commit
-   is said in the task. Nothing is said while either is still running.
+7. Nothing is watched after the merge. The repository's CI and deployment on
+   its default branch are its own.
 
 The pull request belongs to `Task.pr_number`. Cards refer to that task's request;
 revising a card does not create another request. `cheese push-fix` lets the

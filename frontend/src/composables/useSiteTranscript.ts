@@ -44,6 +44,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   // 回到末尾时重读一页最新的，窗口就重新连上了。
   const hasNewer = ref(false)
   const loadingOlder = ref(false)
+  let olderCursor: string | null = null
 
   // 手上这一窗是给哪个视角读的（null = 全部）。换视角时它和这一栏现在要读的东西就
   // 不是一回事了，重读时不能再和它合。
@@ -81,14 +82,13 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
 
   async function loadOlder() {
     const tid = hooks.topicId()
-    const oldest = transcript.value[0]
-    if (!tid || !oldest || loadingOlder.value || !hasOlder.value) return
+    if (!tid || !olderCursor || loadingOlder.value || !hasOlder.value) return
     const author = hooks.viewing()
     loadingOlder.value = true
     try {
       const page = await getTranscript(tid, {
         limit: SITE_PAGE_SIZE,
-        before: oldest.id,
+        before: olderCursor,
         author,
       })
       // 读的人可能已经换了视角：这一页是上一位的，丢掉——合进来就是把别人的行塞进
@@ -105,6 +105,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
       transcript.value = [...page.data, ...transcript.value]
       hasOlder.value = page.has_more === true
+      olderCursor = page.oldest_id ?? null
       // Prepending grows the content ABOVE the viewport; without this the reader
       // is thrown backwards by exactly that much (same fix as the chat's pager).
       await nextTick()
@@ -185,7 +186,10 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       if (!(hasNewer.value && !follow)) {
         transcript.value = mergeSite(tx.data, transcript.value, switched)
         hasNewer.value = false
-        if (switched || !quiet) hasOlder.value = tx.has_more === true
+        if (switched || !quiet) {
+          hasOlder.value = tx.has_more === true
+          olderCursor = tx.oldest_id ?? null
+        }
       }
       // Follow the tail on every open of a topic's 现场 — that is what "open on
       // the newest" means. 换视角也是「打开这个人的现场」，同样停在最新的那一条。
@@ -230,6 +234,11 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   function receive(block: Block): void {
     // 一行属于哪段对话：任务里的带着任务的 id，房间自己的没有。
     if (block.conversation_id !== hooks.topicId() || block.kind !== 'event') return
+    // Native activity is read from the journal projection, never from blocks.
+    if (!('run_record' in block)) {
+      void load()
+      return
+    }
     // 名册先记上：别的队友在干活，tab 得出现（切过去时才读得到它的记录）。
     hooks.noteAgents([block])
     const viewing = hooks.viewing()

@@ -100,32 +100,12 @@ def _blocks(client, topic_id: str) -> list[dict]:
     return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
-def test_a_subagents_conclusion_lands_in_the_room(client):
+def test_subagent_output_is_not_copied_into_a_room_event(client):
     topic_id = _topic(client)
     _chat(client, topic_id)
-    blocks = _transcript(client, topic_id)
-
-    # The call was already visible before this change…
-    calls = [b for b in blocks if (b.get("meta") or {}).get("tool") == "Task"]
-    assert len(calls) == 1
-    assert calls[0]["content"].endswith("\n查分页接口现状")
-
-    # …and now so is the answer.
-    results = [b for b in blocks if (b.get("meta") or {}).get("subagent")]
-    assert len(results) == 1
-    result = results[0]
-    assert result["kind"] == "event"
-    assert result["content"] == (
-        "分身查完了：查分页接口现状\n结论：分页用的是 offset， 改动点在路由层"
-    )
-    assert result["meta"]["subagent"] == {
-        "tool": "Task",
-        "description": "查分页接口现状",
-        "summary": "结论：分页用的是 offset， 改动点在路由层",
-        "truncated": False,
-    }
-    # It comes after the call it answers.
-    assert blocks.index(result) > blocks.index(calls[0])
+    assert not [
+        b for b in _blocks(client, topic_id) if (b.get("meta") or {}).get("subagent")
+    ]
 
 
 def test_the_turn_ends_with_a_change_summary(client, monkeypatch):
@@ -156,7 +136,7 @@ def test_the_turn_ends_with_a_change_summary(client, monkeypatch):
 
     topic_id = _topic(client)
     _chat(client, topic_id)
-    blocks = _transcript(client, topic_id)
+    blocks = _blocks(client, topic_id)
 
     summaries = [b for b in blocks if (b.get("meta") or {}).get("changeset")]
     assert len(summaries) == 1
@@ -198,7 +178,7 @@ def test_what_shows_in_the_room_is_its_own_field(client, monkeypatch):
 
     topic_id = _topic(client)
     _chat(client, topic_id)
-    events = _transcript(client, topic_id)
+    events = _blocks(client, topic_id)
 
     def in_room(block: dict) -> bool:
         return (block.get("meta") or {}).get("in_room") is not False
@@ -206,15 +186,7 @@ def test_what_shows_in_the_room_is_its_own_field(client, monkeypatch):
     summary = next(b for b in events if (b.get("meta") or {}).get("changeset"))
     assert in_room(summary)
 
-    work = [b for b in events if (b.get("meta") or {}).get("tool")]
-    conclusions = [b for b in events if (b.get("meta") or {}).get("subagent")]
-    assert work and conclusions
-    assert not [b for b in work + conclusions if in_room(b)]
-
-    # …并且是那一格说了算：现场里藏起来的事件，作者写的是真作者 —— 分身交回的
-    # 结论是芝士自己的话，署名是它的座位，不是平台的。
-    assert all(b["author"].startswith("cheese") for b in conclusions)
-    assert {b["author_type"] for b in conclusions} == {"participant"}
+    assert not [b for b in events if (b.get("meta") or {}).get("in_room") is False]
 
 
 def test_a_turn_that_changed_nothing_says_nothing(client, monkeypatch):
@@ -241,7 +213,7 @@ def test_a_turn_that_changed_nothing_says_nothing(client, monkeypatch):
 
     topic_id = _topic(client)
     _chat(client, topic_id)
-    blocks = _transcript(client, topic_id)
+    blocks = _blocks(client, topic_id)
     assert not [b for b in blocks if (b.get("meta") or {}).get("changeset")]
 
 
@@ -283,9 +255,5 @@ def test_a_broken_workspace_never_fails_the_turn(client, monkeypatch):
         if (b.get("meta") or {}).get("changeset")
     ]
     # The turn still records terminal output even when the workspace is broken.
-    assert any(
-        b["kind"] == "event"
-        and b["author"].startswith("cheese")
-        and (b.get("meta") or {}).get("progress")
-        for b in _blocks(client, topic_id)
-    )
+    records = client.get(f"/topics/{topic_id}/session-records").json()["data"]["items"]
+    assert any(item["record"].get("type") == "result" for item in records)

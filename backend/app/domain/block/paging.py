@@ -61,6 +61,13 @@ def _narrow(
     to some kinds, to one author, and to what the room shows (`shown=True`) or
     keeps out of it (`False`). `SHOWN_ROWS` goes in as its literal text, so a
     shown read can use `ix_blocks_shown`."""
+    # Private harness activity is read from session_records, never from blocks.
+    stmt = stmt.where(
+        or_(
+            Block.kind != BlockKind.event,
+            Block.meta["in_room"].as_string().is_distinct_from("false"),
+        )
+    )
     if kinds is not None:
         stmt = stmt.where(Block.kind.in_(list(kinds)))
     if author is not None:

@@ -137,7 +137,7 @@ async def transcripts_kept(key: str, sent: dict) -> bool:
     bucket = _private_bucket()
     stored = await bucket.stat(key) if bucket is not None else None
     if stored != (sent["size"], sent["md5"]):
-        logger.error(
+        logger.debug(
             "retained transcripts not kept: the bucket holds %s for %s, the "
             "machine sent %s",
             stored,

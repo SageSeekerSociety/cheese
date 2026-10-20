@@ -87,7 +87,6 @@ RETENTION_EVERY_S = 3600
 # A tool result read from a transcript file is not capped the way stdout is.
 # The room reads the tail of a failure and a subagent's conclusion; neither is
 # worth more than stdout would have carried.
-FILE_TEXT_MAX = 30_000
 FINISHED = frozenset({"completed", "failed", "killed", "stopped"})
 # What the build says of an input it will never echo now (``command_lifecycle``):
 # each is the one terminal state that input gets in this session.
@@ -389,73 +388,15 @@ def _write_memory(root: Path, path: str, content: str) -> None:
         raise
 
 
-def _trim(content: object) -> object:
-    """A tool result's text, cut to what stdout would have carried."""
-    if isinstance(content, str):
-        return content[-FILE_TEXT_MAX:]
-    if isinstance(content, list):
-        return [
-            {**part, "text": part["text"][-FILE_TEXT_MAX:]}
-            if isinstance(part, dict) and isinstance(part.get("text"), str)
-            else part
-            for part in content
-        ]
-    return content
-
-
-def _without_pixels(content: object) -> object:
-    """Content with the bytes of every image taken out.
-
-    An image rides in the echo of the message that carried it, and in the
-    result of a Read that opened one, as base64 — megabytes a page of the
-    journal would carry to the backend for a room that shows neither.
-    """
-    if not isinstance(content, list):
-        return content
-    kept = []
-    for block in content:
-        if isinstance(block, dict) and block.get("type") == "image":
-            block = {**block, "source": {"type": "omitted"}}
-        elif isinstance(block, dict) and block.get("type") == "tool_result":
-            block = {**block, "content": _without_pixels(block.get("content"))}
-        kept.append(block)
-    return kept
-
-
-def lighter(record: dict) -> dict:
-    message = record.get("message")
-    if not isinstance(message, dict) or not isinstance(message.get("content"), list):
-        return record
-    return {
-        **record,
-        "message": {**message, "content": _without_pixels(message["content"])},
-    }
-
-
 def file_entry(entry: dict) -> dict | None:
-    """The part of a transcript line the journal keeps, or None to skip it.
-
-    Only what a person said and what the agent did: a transcript also holds the
-    attachments the build feeds its own model (skill listings, the environment),
-    and those are the bulk of a file and none of the room's business.
-    """
+    """Keep native messages, including complete subagent tool results and images."""
     if entry.get("type") not in ("user", "assistant"):
         return None
-    message = entry.get("message") or {}
-    content = message.get("content")
-    if isinstance(content, list):
-        content = [
-            {**block, "content": _trim(block.get("content"))}
-            if isinstance(block, dict) and block.get("type") == "tool_result"
-            else block
-            for block in content
-        ]
-    kept = {
+    return {
         key: entry[key]
-        for key in ("type", "uuid", "timestamp", "agentId", "isSidechain")
+        for key in ("type", "uuid", "timestamp", "agentId", "isSidechain", "message")
         if key in entry
     }
-    return lighter({**kept, "message": {**message, "content": content}})
 
 
 class Runner(runner.Runner[Journal]):
@@ -930,7 +871,7 @@ class Runner(runner.Runner[Journal]):
             owner["work_id"] = work
             if self.working and self.unsolicited:
                 owner["unsolicited"] = True
-        self.journal.append({**lighter(record), "cheese": {**owner, **stamp}})
+        self.journal.append({**record, "cheese": {**owner, **stamp}})
         if main and kind in ("assistant", "result"):
             # The block being shown has landed, or the turn ended without it.
             self.show([], None)

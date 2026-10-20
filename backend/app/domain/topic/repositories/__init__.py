@@ -9,7 +9,6 @@
 - `writes` —— 建、锁、私聊房间的取得；
 - `replied` —— 侧栏那盏黄灯（有人回复了我、我还没处理）；
 - `unread` —— 角标未读、通知级别、已读游标；
-- `latest` —— 一间房时间线上最后一条（`last_word`），停滞判据的原料；
 - `statements` —— 共用的裸表与 SQL 判据（`readable_by`、`_mentions`、
   `_last_activity`、`seen_by`…），几个读点都从这里取，才不会有第二份定义；
 - `vocabulary` —— 路由、前端和这里共用的封闭词表（`TopicSortField`、`SortOrder`）；
@@ -18,9 +17,7 @@
 拆的规矩是「一个决定只写一遍」：每一条判据、每一次读、每一次写都只有一处实现，
 类只转发。转发的方法不拿决定 —— 那正是两份实现不会漂移的原因。
 
-2026-10-16，`topic -> block` 那几条向上的边收掉时这里多了两样：`latest.py`
-（房间最后一条改读裸表）和三个码（`KIND_ARTIFACT`、`KIND_EVENT` —— 停滞判据要拿
-它们跟 `blocks.kind` 比，`KIND_MESSAGE` 只在包内用）。同一天晚些时候，`author_type`
+2026-10-16，`topic -> block` 那几条向上的边收掉时，`author_type`
 那一档不再逐字抄成字符串：它 import 第 1 层的 `app.domain.event_author`，因为判这一
 列的守卫要求按枚举成员读，而抄下来的字符串正是它要防的东西。
 
@@ -37,8 +34,6 @@ import 会在 C3（`sibling domains are acyclic`）上多出环，而包里的�
 
 from __future__ import annotations
 
-from app.domain.topic.repositories.latest import LastWord as LastWord
-from app.domain.topic.repositories.latest import last_word as last_word
 from app.domain.topic.repositories.progress import (
     TopicProgressRepository as TopicProgressRepository,
 )
@@ -48,10 +43,6 @@ from app.domain.topic.repositories.replied import (
 from app.domain.topic.repositories.repository import (
     TopicRepository as TopicRepository,
 )
-from app.domain.topic.repositories.statements import (
-    KIND_ARTIFACT as KIND_ARTIFACT,
-)
-from app.domain.topic.repositories.statements import KIND_EVENT as KIND_EVENT
 from app.domain.topic.repositories.statements import readable_by as readable_by
 from app.domain.topic.repositories.statements import seen_by as seen_by
 from app.domain.topic.repositories.vocabulary import ListedRoom as ListedRoom

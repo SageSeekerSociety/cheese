@@ -847,8 +847,12 @@ async def _history_block(
     also: Collection[uuid.UUID] = (),
 ) -> Block:
     block = await repo.get(block_id)
-    if block is None or (
-        block.conversation_id != conversation_id and block.id not in also
+    if (
+        block is None
+        or (
+            block.kind == BlockKind.event and (block.meta or {}).get("in_room") is False
+        )
+        or (block.conversation_id != conversation_id and block.id not in also)
     ):
         raise NotFoundError("Message not found in this conversation")
     return block
@@ -1236,7 +1240,6 @@ async def write_topic_progress(
         reply_to=None,
         roster=None,
         topic_refs=[],
-        publish=True,
         author=actor.handle,
         # An agent's list is its own output; a person's is said to the room and
         # waits to be read like anything else they post.

@@ -9,15 +9,17 @@ import type { Block, Topic } from '@/cx_types'
 import type { TaskLine } from '@/lib/channelTasks'
 import type { Frame, PanelKey, Scene, SplitLine } from './demoScene'
 
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { provideAcceptCard } from '@/composables/useAcceptCard'
 
+import { siteBundle } from './catalogPanelsFixtures'
 import { answer } from './demoBackend'
 import DemoBackstage from './DemoBackstage.vue'
 import { DEMO_PROJECT, DEMO_TOPIC, demoTaskId, installPanelAnswers } from './demoPanels'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import PanelSite from '@/components/panels/PanelSite.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
@@ -28,7 +30,6 @@ import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import PanelChangesHost from '@/components/work/PanelChangesHost.vue'
 import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
-import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { t } from '@/i18n'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
 
@@ -93,37 +94,8 @@ function runStart(index: number): boolean {
 const working = computed(() => Object.keys(props.frame.running).length > 0)
 const workingNames = computed(() => props.frame.runningWho.map((h) => names.value[h] ?? h).join('、'))
 
-// ---- 把现场喂给真的 PanelSite ----
-// PanelSite（经它的接线外壳 PanelSiteHost）平时从接口拉一页、再从 socket 一行行收
-// （receive）。演示不连后端：往前放时把新出来的几行 receive 进去；往回跳（或者哪一行
-// 变了样）就换一个新的，从头喂一遍 —— 它手上的记录只增不减，这是让它回到过去的唯一办法。
-const site = ref<InstanceType<typeof PanelSiteHost> | null>(null)
-const siteKey = ref(0)
-let fed: Block[] = []
-
-function feed(rows: Block[]): void {
-  for (const b of rows) site.value?.receive(b)
-}
-
-watch(
-  () => props.frame.site,
-  async (rows) => {
-    const extends_ = fed.length <= rows.length && fed.every((b, i) => rows[i].id === b.id)
-    if (extends_) {
-      feed(rows.slice(fed.length))
-    } else {
-      siteKey.value += 1
-      await nextTick()
-      feed(rows)
-    }
-    fed = rows
-  }
-)
-
-onMounted(() => {
-  fed = props.frame.site
-  feed(fed)
-})
+// The demo supplies native-record projections to the product's display component.
+const site = siteBundle({ transcript: computed(() => props.frame.site) })
 
 // ---- 右侧那几格：页签条是产品的那条，格子里是产品的那四件 ----
 // 哪几格、什么名字、挂哪个图标，来自产品那张表（panelTabs）——桌面上的工作面板就是
@@ -340,13 +312,11 @@ function splitTask(split: SplitLine): TaskLine {
             :task-id="DEMO_TOPIC"
             :activity-tick="frame.step"
           />
-          <PanelSiteHost
+          <PanelSite
             v-if="mounted.has('site')"
             v-show="frame.panel === 'site'"
-            :key="siteKey"
-            ref="site"
+            :site="site"
             :topic-id="topic.id"
-            :project-id="DEMO_PROJECT"
             :active="false"
             :member-names="names"
             :working="working"
