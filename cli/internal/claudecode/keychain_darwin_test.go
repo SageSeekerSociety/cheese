@@ -23,7 +23,7 @@ func TestMovingAFileBackedLoginKeepsItsCredential(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, ".credentials.json"), []byte("synthetic-file-credential"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateLogins(place.Root); err != nil {
+	if _, err := MigrateLogins(place.Root); err != nil {
 		t.Fatal(err)
 	}
 	reader := filepath.Join(home, "read-file-login")
@@ -79,7 +79,7 @@ fi
 			t.Fatal(err)
 		}
 	}
-	if err := MigrateLogins(place.Root); err != nil {
+	if _, err := MigrateLogins(place.Root); err != nil {
 		t.Fatal(err)
 	}
 	reader := filepath.Join(home, "read-login")
