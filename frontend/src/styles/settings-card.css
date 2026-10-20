@@ -98,6 +98,17 @@
   color: var(--text);
 }
 
+/* A row with no label — a note and the one action on it, as in a card whose
+   title already names the action. Without this the note lands in the 180px
+   label column and wraps a few characters a line; it takes the label's column
+   as well, so the action stays at the row's end where every other row has it.
+   Placed explicitly because the phone layout below moves `.srow__v` to a row
+   of its own, which would put the action above the note it is about. */
+.srow > .srow__v:first-child {
+  grid-row: 1;
+  grid-column: 1 / -2;
+}
+
 /* The last row of a card that holds a FORM: its one main action, at the end of
    the thing it submits. A card of a LIST page has no foot — its actions belong
    to a row, or to the toolbar above. */
