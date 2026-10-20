@@ -14,6 +14,7 @@ polling, so a slow Proxmox task can't hold an HTTP request open.
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -98,6 +99,18 @@ class MicroCloudClient:
             return None
         return response.json()
 
+    async def _list(self, path: str, **filters: Any) -> AsyncIterator[dict[str, Any]]:
+        """Every item of a cursor-paginated list: one page is only the start."""
+        query: dict[str, Any] = {**filters, "page_size": 100}
+        while True:
+            data = await self._call("GET", f"{path}?{urlencode(query)}") or {}
+            for item in data.get("items", []):
+                yield item
+            page = data.get("page") or {}
+            if not page.get("hasMore"):
+                return
+            query["page_start"] = page["nextStart"]
+
     async def claim_warm_machine(
         self, machine_id: int, body: dict[str, Any]
     ) -> dict[str, Any]:
@@ -112,8 +125,9 @@ class MicroCloudClient:
     # --- customers & accounts --------------------------------------------
 
     async def find_customer(self, external_ref: str) -> dict[str, Any] | None:
-        data = await self._call("GET", "/customer?page_size=100")
-        for item in (data or {}).get("items", []):
+        # The server's `external_ref` filter matches substrings, so the exact
+        # match is still ours to make, across every page it returns.
+        async for item in self._list("/customer", external_ref=external_ref):
             if item.get("externalRef") == external_ref:
                 return item
         return None
