@@ -16,6 +16,7 @@ process that read it, and the next reader goes on from it.
 """
 
 import asyncio
+import json
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -352,7 +353,13 @@ async def follow(
             elif isinstance(event, AgentMessage):
                 said = list(progress.message(event.text, read.eid))
             elif isinstance(event, AgentToolUse):
-                said = list(progress.tool(event.call_id, event.name))
+                said = [*progress.tool(event.call_id, event.name)]
+                if event.call_id and not progress.argued.get(event.call_id):
+                    # Written faster than a reader saw any of it: the call's
+                    # whole arguments, once, as it was made.
+                    said += progress.arguments(
+                        event.call_id, json.dumps(event.input, ensure_ascii=False)
+                    )
             elif isinstance(event, AgentStepFailed):
                 said = [ToolFailed(event.call_id, event.text)]
             elif isinstance(event, AgentResult):
