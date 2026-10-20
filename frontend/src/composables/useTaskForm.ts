@@ -240,6 +240,9 @@ export function useTaskForm(
     submitFormData(values)
   })
 
+  /** 只校验、标出缺的格子，不提交（一次发几道时，切到没发出去的那道上用）。 */
+  const check = handleSubmit(() => undefined)
+
   const submitFormData = (values: any) => {
     const lines = rubric.value.filter((line) => !blankLine(line))
     if (lines.some((line) => !line.item.trim())) {
@@ -401,6 +404,7 @@ export function useTaskForm(
     rubricMissingName,
     isSubmitting,
     submitForm,
+    check,
     snapshot,
     apply,
     privacyDialogOpen,

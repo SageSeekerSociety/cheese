@@ -150,6 +150,8 @@ const layer = useAgentPointer({
   marks: draft.marks,
   active: computed(() => assistant.busy.value),
   descriptionEnd: () => form.value?.descriptionEnd() ?? null,
+  passage: draft.passage,
+  holding: draft.holding,
 })
 const pointer = computed<AgentPointer | null>(() => layer.pointer.value)
 const outline = computed<AgentBox | null>(() => layer.outline.value)
@@ -286,7 +288,7 @@ const panelEvents = {
   select: (id: string) => void assistant.select(id),
   close: () => (agentOpen.value = false),
   undo: (id: number, key: string) => void agent.undo(id, key),
-  undoAll: (id: number) => void agent.undoAll(id),
+  undoAll: (rows: { change: number; key: string }[]) => void agent.undoAll(rows),
   jump: (key: string) => layer.jump(key),
   openTask,
   attach: (files: File[]) => void agent.attach(files),
@@ -384,6 +386,7 @@ const panelEvents = {
       :pointer="pointer"
       :outline="outline"
       :marks="marks"
+      :selection="layer.selection.value"
       :name="t('work.agentAvatar.defaultName')"
       @undo="agent.undoMark"
     />

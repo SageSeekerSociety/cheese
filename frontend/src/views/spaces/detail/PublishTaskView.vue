@@ -19,12 +19,14 @@ import type {
   Topic,
 } from '@/types'
 import type { SpaceMaterial, SpaceMaterialsState } from '@/types/spaces'
+import type { StripItem } from './TaskDraftStrip.vue'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
 import TaskDraftMenu from './TaskDraftMenu.vue'
+import TaskDraftStrip from './TaskDraftStrip.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
@@ -62,10 +64,20 @@ const props = withDefaults(
     saveState: SaveState
     /** 芝士已经把眼前这份草稿发布了。 */
     publishedHere?: boolean
+    /** 一份文件拆出的几道题：表单上方那一排；不是这种情况时是 null。 */
+    strip?: {
+      items: StripItem[]
+      source: string
+      flagged: boolean
+      publishing: boolean
+      note: { text: string; ok: boolean } | null
+    } | null
     /** 芝士那一层。 */
     pointer: AgentPointer | null
     outline: AgentBox | null
     marks: AgentMark[]
+    /** 芝士选中、要换掉的那段字。 */
+    selection?: AgentBox[]
     agentName: string
   }>(),
   {
@@ -73,6 +85,8 @@ const props = withDefaults(
     mentorOptions: () => [],
     defaultMentor: undefined,
     publishedHere: false,
+    strip: null,
+    selection: () => [],
   }
 )
 
@@ -92,6 +106,8 @@ const emit = defineEmits<{
   'form-ready': [fields: TaskDraftFields]
   'open-draft': [id: number]
   'new-draft': []
+  'remove-draft': [id: number]
+  'publish-all': []
   undo: [key: string]
 }>()
 
@@ -138,6 +154,11 @@ defineExpose({
     apply: async (fields: TaskDraftFields) => (await form.value?.apply(fields)) ?? {},
   },
   descriptionEnd: () => form.value?.descriptionEnd() ?? null,
+  /** 标出这一道缺的格子（一次发几道、这道没发出去时）。 */
+  check: () => {
+    attempted.value = true
+    void form.value?.check()
+  },
   /** 芝士那一层量位置用的外框。 */
   host,
 })
@@ -184,6 +205,18 @@ defineExpose({
 
       <div>
         <div ref="host" class="pub__page">
+          <TaskDraftStrip
+            v-if="strip"
+            :items="strip.items"
+            :current-id="currentDraftId"
+            :source="strip.source"
+            :flagged="strip.flagged"
+            :publishing="strip.publishing"
+            :note="strip.note"
+            @open="emit('open-draft', $event)"
+            @remove="emit('remove-draft', $event)"
+            @publish-all="emit('publish-all')"
+          />
           <TaskForm
             v-if="ready"
             ref="form"
@@ -254,6 +287,7 @@ defineExpose({
             :pointer="pointer"
             :outline="outline"
             :marks="marks"
+            :selection="selection"
             :name="agentName"
             @undo="emit('undo', $event)"
           />

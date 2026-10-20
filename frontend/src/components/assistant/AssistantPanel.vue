@@ -84,7 +84,7 @@
             :changes="m.changes ?? []"
             :results="m.results ?? []"
             @undo="(id, key) => emit('undo', id, key)"
-            @undo-all="(id) => emit('undoAll', id)"
+            @undo-all="(rows) => emit('undoAll', rows)"
             @jump="(key) => emit('jump', key)"
             @open-draft="(id) => emit('openDraft', id)"
             @open-task="(id) => emit('openTask', id)"
@@ -107,7 +107,7 @@
           :changes="changes"
           :results="results"
           @undo="(id, key) => emit('undo', id, key)"
-          @undo-all="(id) => emit('undoAll', id)"
+          @undo-all="(rows) => emit('undoAll', rows)"
           @jump="(key) => emit('jump', key)"
           @open-draft="(id) => emit('openDraft', id)"
           @open-task="(id) => emit('openTask', id)"
@@ -154,6 +154,7 @@
           :show-image-picker="canAttach && !mdAndUp"
           :enter-sends="true"
           :no-files="!canAttach || busy"
+          :files-label="t('tasks.assistant.files.add')"
           :busy="busy"
           @files="emit('attach', $event)"
           @send="submit"
@@ -272,7 +273,7 @@ const emit = defineEmits<{
   stop: []
   close: []
   undo: [changeId: number, key: string]
-  undoAll: [changeId: number]
+  undoAll: [rows: { change: number; key: string }[]]
   jump: [key: string]
   openDraft: [draftId: number]
   openTask: [taskId: number]

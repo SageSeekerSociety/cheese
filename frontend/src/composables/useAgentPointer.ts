@@ -52,12 +52,69 @@ export interface PointerOptions {
   active: Ref<boolean>
   /** 详情末尾在屏幕上的位置。 */
   descriptionEnd: () => { left: number; top: number; bottom: number } | null
+  /** 芝士正在改的详情里那一段（`useTaskDraft` 的 passage）。 */
+  passage?: Ref<{ find: string; replace: string | null } | null>
+  /** 芝士停在一格前面、还没开始写：原来有字就先整格选中。 */
+  holding?: Ref<boolean>
+}
+
+/** Markdown 写的一段在页面上读出来的字：去掉标记符号，空白并成一个。 */
+function shownText(md: string): string {
+  return md
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.)\s+/gm, '')
+    .replace(/[*_`~]/g, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** `root` 里头一处读出来是 `text` 的地方（跨过几个文字节点也找得到）；找不到是 null。 */
+function findText(root: HTMLElement, text: string, after?: Range | null): Range | null {
+  if (!text) return null
+  const nodes: Text[] = []
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) nodes.push(n as Text)
+  // 把文字节点首尾相接，空白并成一个，记着每个字在哪个节点的第几位。
+  let joined = ''
+  const at: [Text, number][] = []
+  let space = false
+  for (const node of nodes) {
+    for (let i = 0; i < node.data.length; i++) {
+      const c = node.data[i]
+      if (/\s/.test(c)) {
+        if (space) continue
+        space = true
+        joined += ' '
+      } else {
+        space = false
+        joined += c
+      }
+      at.push([node, i])
+    }
+  }
+  let from = 0
+  if (after) {
+    const start = at.findIndex(([node, i]) => node === after.startContainer && i >= after.startOffset)
+    if (start > 0) from = start
+  }
+  const index = joined.indexOf(text, from)
+  if (index < 0) return null
+  const [startNode, startOffset] = at[index]
+  const [endNode, endOffset] = at[index + text.length - 1]
+  const range = document.createRange()
+  range.setStart(startNode, startOffset)
+  range.setEnd(endNode, endOffset + 1)
+  return range
 }
 
 export function useAgentPointer(options: PointerOptions) {
   const pointer = ref<AgentPointer | null>(null)
   const outline = ref<AgentBox | null>(null)
   const marks = ref<AgentMark[]>([])
+  /** 芝士选中、要换掉的那段字。 */
+  const selection = ref<AgentBox[]>([])
+  /** 改的那一段原文在哪（新文字从这里往后找）。 */
+  let anchor: Range | null = null
   let timer: ReturnType<typeof setInterval> | null = null
   /** 最后指着的地方：一步做完、下一步还没开始时，指针停在那里，不消失。 */
   let rest: AgentPointer | null = null
@@ -104,8 +161,10 @@ export function useAgentPointer(options: PointerOptions) {
 
     const key = options.writing.value
     const el = key ? field(key) : null
+    selection.value = []
     if (!key || !el) {
       shownKey = null
+      anchor = null
       outline.value = null
       pointer.value = options.active.value ? rest : null
       return
@@ -122,6 +181,49 @@ export function useAgentPointer(options: PointerOptions) {
     }
 
     if (TYPED.has(key)) {
+      const editor = el.querySelector<HTMLElement>('.ProseMirror')
+      const passage = options.passage?.value
+      if (key === 'description' && editor && passage) {
+        // 改详情里的一段：先选中原文，光标在它前面；开始写了，光标跟着新文字走。
+        if (passage.replace === null) {
+          anchor = findText(editor, shownText(passage.find))
+          if (anchor) {
+            selection.value = [...anchor.getClientRects()].map((r) => box(r))
+            const r = anchor.getClientRects()[0]
+            reveal(control, r.top, r.bottom)
+            pointer.value = { x: r.left - origin.left, y: r.top - origin.top, mode: 'caret', height: r.height }
+            rest = pointer.value
+            return
+          }
+        } else {
+          const typed = findText(editor, shownText(passage.replace), anchor)
+          if (typed) {
+            const rects = typed.getClientRects()
+            const r = rects[rects.length - 1]
+            reveal(control, r.top, r.bottom)
+            pointer.value = { x: r.right - origin.left, y: r.top - origin.top, mode: 'caret', height: r.height }
+            rest = pointer.value
+            return
+          }
+        }
+      }
+      if (options.holding?.value) {
+        // 要整格重写、原来有字：先把原来的字选中一下。
+        const input = el.querySelector<HTMLInputElement>('input')
+        if (input?.value) {
+          const r = input.getBoundingClientRect()
+          const pad = parseFloat(getComputedStyle(input).paddingLeft) || 0
+          const line = parseFloat(getComputedStyle(input).lineHeight) || 20
+          const width = Math.min(textWidth(input, input.value), r.width - pad * 2)
+          selection.value = [
+            { x: r.left - origin.left + pad, y: r.top - origin.top + (r.height - line) / 2, w: width, h: line },
+          ]
+        } else if (editor?.textContent?.trim()) {
+          const all = document.createRange()
+          all.selectNodeContents(editor)
+          selection.value = [...all.getClientRects()].slice(0, 40).map((r) => box(r))
+        }
+      }
       if (key === 'description') {
         const end = options.descriptionEnd()
         if (end) {
@@ -164,7 +266,13 @@ export function useAgentPointer(options: PointerOptions) {
   }
 
   watch(
-    () => [options.writing.value, options.active.value, Object.keys(options.marks.value).join()],
+    () => [
+      options.writing.value,
+      options.active.value,
+      Object.keys(options.marks.value).join(),
+      options.holding?.value,
+      options.passage?.value?.replace === null,
+    ],
     () => {
       if (!options.active.value) rest = null
       follow(options.active.value)
@@ -209,5 +317,5 @@ export function useAgentPointer(options: PointerOptions) {
     }, 350)
   }
 
-  return { pointer, outline, marks, measure, jump }
+  return { pointer, outline, marks, selection, measure, jump }
 }

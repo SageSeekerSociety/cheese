@@ -122,6 +122,7 @@ const {
   rubricMissingName,
   isSubmitting,
   submitForm,
+  check,
   snapshot,
   apply,
   privacyDialogOpen,
@@ -146,6 +147,8 @@ onMounted(() => nextTick(() => emit('ready', current())))
 defineExpose({
   /** 校验并提交；没过就标红，什么都不发。 */
   submit: () => submitForm(),
+  /** 只校验、标出缺的格子，不提交。 */
+  check: () => check(),
   isSubmitting,
   /** 表单现在的样子。 */
   values: current,

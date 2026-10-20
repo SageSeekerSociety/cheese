@@ -88,6 +88,8 @@ def test_a_draft_is_saved_as_written_and_published_as_a_task(
 ):
     draft = _start(api_client, board)
     teacher = board["teacher"]
+    # A blank draft lists what it still needs before it can be published.
+    assert draft["missing"] == ["name", "description", "form", "difficulty"]
 
     saved = api_client.patch(
         f"/task-drafts/{draft['id']}",
@@ -100,6 +102,7 @@ def test_a_draft_is_saved_as_written_and_published_as_a_task(
         f"/task-drafts?space={board['space']['id']}", headers=_headers(teacher)
     ).json()["data"]["drafts"]
     assert [d["name"] for d in listed] == ["Lab 3 缓存模拟器"]
+    assert listed[0]["missing"] == []
 
     # Somebody else's draft reads as missing.
     other = api_client.get(

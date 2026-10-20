@@ -8,6 +8,14 @@
       :style="{ left: `${outline.x}px`, top: `${outline.y}px`, width: `${outline.w}px`, height: `${outline.h}px` }"
     />
 
+    <!-- What 芝士 is about to write over: the text it selected, before it types the new. -->
+    <div
+      v-for="(box, i) in selection"
+      :key="`sel-${i}`"
+      class="al__sel"
+      :style="{ left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` }"
+    />
+
     <div
       v-for="mark in marks"
       :key="mark.key"
@@ -46,7 +54,8 @@
 <script setup lang="ts">
 // 芝士在表单上的那一层（发布页、改题页）：整张表单只有一个指针。去点选项时是箭头，
 // 滑过去；点进要打字的格子后变成带名字的文字光标，跟着字走。正在写的那一格描一圈，
-// 写过的格子标「芝士已填写」，旁边能撤销。
+// 写过的格子标「芝士已填写」，旁边能撤销。要覆盖原来的字时，先把那段字选中一下（同一个
+// 颜色），再换上新的。
 //
 // 位置都由外面量好交进来（相对这一层的左上角）；这里只画、只往上报撤销。
 import { useI18n } from 'vue-i18n'
@@ -76,13 +85,18 @@ export interface AgentMark {
   y: number
 }
 
-defineProps<{
-  pointer: AgentPointer | null
-  outline: AgentBox | null
-  marks: AgentMark[]
-  /** 光标旁边写的名字。 */
-  name: string
-}>()
+withDefaults(
+  defineProps<{
+    pointer: AgentPointer | null
+    outline: AgentBox | null
+    marks: AgentMark[]
+    /** 芝士选中、要换掉的那段字（每行一块）。 */
+    selection?: AgentBox[]
+    /** 光标旁边写的名字。 */
+    name: string
+  }>(),
+  { selection: () => [] }
+)
 
 const emit = defineEmits<{ undo: [key: string] }>()
 
@@ -107,6 +121,12 @@ const { t } = useI18n()
     top var(--dur-base) var(--ease-standard),
     width var(--dur-base) var(--ease-standard),
     height var(--dur-base) var(--ease-standard);
+}
+
+.al__sel {
+  position: absolute;
+  background: color-mix(in srgb, var(--agent-tone-0) 22%, transparent);
+  border-radius: 2px;
 }
 
 .al__mark {

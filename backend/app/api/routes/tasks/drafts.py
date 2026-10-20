@@ -76,6 +76,9 @@ class TaskDraftSummaryOut(BaseModel):
     conversationId: str | None
     version: int
     updatedAt: str
+    #: What still has to be written before it can be published, in 芝士's
+    #: field words (name, description, form, difficulty).
+    missing: list[str]
 
 
 class TaskDraftOut(TaskDraftSummaryOut):
@@ -134,6 +137,7 @@ def _summary(row, task_names: dict[int, str]) -> dict:
         "conversationId": str(row.conversation_id) if row.conversation_id else None,
         "version": row.version,
         "updatedAt": row.updated_at.isoformat(),
+        "missing": drafts.missing(row),
     }
 
 
@@ -522,6 +526,12 @@ async def agent_write(
             "changed": sorted(written.changed),
             "kept": written.kept,
             "missing": drafts.missing(row),
+            # A template's skeleton, for 芝士 to fill under its headings.
+            **(
+                {"description": drafts.markdown_of(row.fields or {})}
+                if "template" in args
+                else {}
+            ),
         }
     )
 

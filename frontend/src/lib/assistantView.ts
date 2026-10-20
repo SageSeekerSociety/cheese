@@ -25,6 +25,8 @@ export interface PanelStep {
 }
 
 export interface PanelChangeRow {
+  /** 改这一格的那次写入（撤销时用）。 */
+  change: number
   /** 芝士的字段名（`AGENT_FIELDS` 的键）。 */
   key: string
   label: string
@@ -43,6 +45,13 @@ export interface PanelChange {
   rows: PanelChangeRow[]
   notes: { key: string; label: string; text: string }[]
   canUndo: boolean
+  /** 一份文件拆出几道题时，这是第几道（卡头写「第 N 道」）。 */
+  ordinal?: number
+}
+
+/** 一轮回答写进草稿的样子：眼前这份草稿改了哪几格（一张卡）。 */
+export interface PanelWrites {
+  changes: PanelChange[]
 }
 
 export interface PanelResult {
@@ -175,6 +184,7 @@ export function changeView(edit: AssistantEdit, terms: DraftTerms, canUndo: bool
     if (!key || seen.has(key)) continue
     seen.add(key)
     rows.push({
+      change: edit.id,
       key,
       label: fieldLabel(key),
       value: valueText(key, change.after, terms),
@@ -182,7 +192,14 @@ export function changeView(edit: AssistantEdit, terms: DraftTerms, canUndo: bool
     })
   }
   for (const key of edit.kept)
-    rows.push({ key, label: fieldLabel(key), value: t('tasks.assistant.changes.kept'), undone: false, kept: true })
+    rows.push({
+      change: edit.id,
+      key,
+      label: fieldLabel(key),
+      value: t('tasks.assistant.changes.kept'),
+      undone: false,
+      kept: true,
+    })
   return {
     id: edit.id,
     draft: edit.draft,
@@ -191,6 +208,54 @@ export function changeView(edit: AssistantEdit, terms: DraftTerms, canUndo: bool
     rows,
     notes: edit.notes.map((note) => ({ key: note.field, label: fieldLabel(note.field), text: note.text })),
     canUndo,
+  }
+}
+
+/**
+ * 一轮里的几次写入画成面板上的样子（原型：发布页芝士）。
+ *
+ * 眼前这份草稿（`current`）的几次写入并成一张「表单改动」卡：同一格写了几次只留最后一次，
+ * 每格记着是哪次写入改的，撤销照旧一格一格来；「待你确认」也只列这一份的。写到的别的草稿
+ * （一份文件拆成几道题）不在这里画，在表单上方那一排里；切过去以后，这一轮再画一遍，卡换成
+ * 那一份的。没有表单的页面（题目页）`current` 是 null：每份草稿各一张卡，撤销不了。
+ */
+export function writesView(
+  edits: AssistantEdit[],
+  terms: DraftTerms,
+  current: number | null,
+  canUndo: (edit: AssistantEdit) => boolean = () => false,
+  ordinal: (draft: number) => number | undefined = () => undefined
+): PanelWrites {
+  const order: number[] = []
+  for (const edit of edits) if (!order.includes(edit.draft)) order.push(edit.draft)
+  const shown = current === null ? order : order.filter((id) => id === current)
+  const changes = shown.map((id) => ({
+    ...merged(
+      edits.filter((e) => e.draft === id),
+      terms,
+      canUndo
+    ),
+    ordinal: ordinal(id),
+  }))
+  return { changes }
+}
+
+/** 同一份草稿的几次写入并成一张卡：一格只留最后一次写的。 */
+function merged(edits: AssistantEdit[], terms: DraftTerms, canUndo: (edit: AssistantEdit) => boolean): PanelChange {
+  const views = edits.map((e) => changeView(e, terms, canUndo(e)))
+  const rows = new Map<string, PanelChangeRow>()
+  for (const view of views)
+    for (const row of view.rows) {
+      rows.delete(row.key)
+      rows.set(row.key, row)
+    }
+  const last = views[views.length - 1]
+  return {
+    ...last,
+    created: views.some((v) => v.created),
+    rows: [...rows.values()],
+    notes: views.flatMap((v) => v.notes),
+    canUndo: views.some((v) => v.canUndo),
   }
 }
 
@@ -204,11 +269,14 @@ export function resultView(done: AssistantPublished): PanelResult {
   }
 }
 
-/** 一段对话画成面板上的样子。`canUndo` 说这次写入眼前有没有表单可以撤销。 */
+/** 一段对话画成面板上的样子。`current` 是页面上开着的草稿（见 `writesView`）；`canUndo` 说这次
+ * 写入眼前有没有表单可以撤销。 */
 export function panelMessages(
   messages: AssistantMessage[],
   terms: DraftTerms,
-  canUndo: (edit: AssistantEdit) => boolean = () => false
+  canUndo: (edit: AssistantEdit) => boolean = () => false,
+  current: number | null = null,
+  ordinal?: (draft: number) => number | undefined
 ) {
   return messages.map((m) => ({
     role: m.role,
@@ -217,7 +285,7 @@ export function panelMessages(
     at: m.at,
     files: m.files,
     steps: (m.steps ?? []).map(stepView),
-    changes: (m.edits ?? []).map((e) => changeView(e, terms, canUndo(e))),
+    ...writesView(m.edits ?? [], terms, current, canUndo, ordinal),
     results: (m.published ?? []).map(resultView),
   }))
 }

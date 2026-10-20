@@ -1222,6 +1222,11 @@ TASK_WRITE_DESCRIPTION = (
     "days_to_submit 领取后几天内提交；category 分类名称；tags 标签名称；"
     "real_name 是否要求实名。分类和标签只能用空间里已有的名称。\n"
     "\n"
+    "template 是空间里的一份模板名称（当前页面列着）：先按模板填好名称、详情和几项"
+    "设置，再写同一次给出的其他字段，和用户点「使用模板」一样。用户要按模板出题时，"
+    "先只给 template 写一次，看返回的详情骨架，再在骨架的小标题下面填内容；草稿里"
+    "已经有模板的骨架时，也在小标题下面填，不要整篇换掉。\n"
+    "\n"
     "notes 是写给用户、要他确认的地方，挂在对应的格子上，比如原文没写清、你推断"
     "出来的截止时间。\n"
     "\n"
@@ -1240,6 +1245,7 @@ TASK_WRITE_DESCRIPTION = (
 
 TASK_WRITE_FIELDS = {
     "draft": {"type": "integer", "description": "要改的草稿 id"},
+    "template": {"type": "string", "description": "先套用的空间模板名称"},
     "task": {"type": "integer", "description": "要改的已发布题目 id"},
     "space": {"type": "integer", "description": "新建草稿所在的空间 id"},
     "version": {"type": "integer", "description": "读到草稿时的 version"},
@@ -3608,6 +3614,11 @@ def _task_step(tool: str, args: dict, host) -> str:
         )
     if data.get("missing"):
         said += f"发布前还缺：{'、'.join(data['missing'])}。"
+    if data.get("description"):
+        said += (
+            "套用模板后的详情如下，按它的小标题往下填（用 description_edits 或"
+            "保留小标题整篇写入）：\n" + str(data["description"])
+        )
     return said
 
 

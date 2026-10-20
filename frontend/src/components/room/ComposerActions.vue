@@ -46,6 +46,8 @@ const props = defineProps<{
   voiceSwap?: 'raw' | 'polished' | null
   /** 这里不收文件（题目页问芝士）：「+」不画。 */
   noFiles?: boolean
+  /** 「+」里传文件那一项的字（芝士面板走的是另一条上传，限额不同）；不给就是频道的那句。 */
+  filesLabel?: string
   /** 对方正在答（芝士面板）：发送键换成停止。 */
   busy?: boolean
 }>()
@@ -89,7 +91,7 @@ const plusActions = computed<MenuAction[]>(() => {
   const list: MenuAction[] = [
     {
       key: 'files',
-      label: t('work.room.composer.attachFiles'),
+      label: props.filesLabel ?? t('work.room.composer.attachFiles'),
       icon: 'mdi-paperclip',
       onSelect: () => fileInput.value?.click(),
     },

@@ -216,6 +216,29 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         props: { ready: false },
         expectSelector: '[data-testid="publish-submit"].v-btn--disabled',
       },
+      {
+        get name() {
+          return t('catalog.publishTaskView.s4.name')
+        },
+        get note() {
+          return t('catalog.publishTaskView.s4.note')
+        },
+        props: {
+          currentDraftId: 41,
+          strip: {
+            source: '第二单元实验与作业.pdf',
+            flagged: true,
+            publishing: false,
+            note: null,
+            items: [
+              { id: 41, name: 'Lab 3 缓存模拟器', writing: false, missing: [], published: true },
+              { id: 42, name: 'Lab 4 矩阵转置优化', writing: false, missing: ['难度'], published: false },
+              { id: 43, name: '作业 6 虚拟内存', writing: true, missing: [], published: false },
+            ],
+          },
+        },
+        expectSelector: '[data-testid="draft-strip"]',
+      },
     ],
   },
   {

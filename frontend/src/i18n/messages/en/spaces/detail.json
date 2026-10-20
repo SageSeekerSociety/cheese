@@ -133,7 +133,25 @@
       "failed": "Could not save",
       "published": "Published"
     },
-    "draftLoadFailed": "Could not load this draft"
+    "draftLoadFailed": "Could not load this draft",
+    "strip": {
+      "label": "Tasks split from this file",
+      "from": "From {file}",
+      "untitled": "Untitled task",
+      "writing": "Being filled in",
+      "published": "Published",
+      "missing": "{n} missing",
+      "joiner": ", ",
+      "remove": "Delete",
+      "removeOne": "Delete \"{name}\"",
+      "removeAsk": "Delete this task?",
+      "publishAll": "Publish all ({n})",
+      "publishedSome": "Published {n}",
+      "lacks": "\"{name}\" is missing {fields}",
+      "failed": "\"{name}\" could not be published",
+      "separator": "; ",
+      "removeFailed": "Could not delete"
+    }
   },
   "tasks": {
     "allTopics": "All tags",
