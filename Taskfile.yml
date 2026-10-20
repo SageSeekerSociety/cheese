@@ -58,6 +58,8 @@ tasks:
       # default for many people through their global config.
       - git config --local merge.autoStash false
       - git config --local rebase.autoStash false
+      # `git blame` skips the whole-tree reformats listed there, as GitHub does.
+      - git config --local blame.ignoreRevsFile .git-blame-ignore-revs
 
   lark:setup:
     desc: Connect this machine to the team's Feishu (lark-cli, --profile cheese)
