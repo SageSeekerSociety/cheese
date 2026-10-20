@@ -6,9 +6,8 @@ document up to date, say what came of the task, and close it with the close a
 task's own session has (`cheese_close_task`); to everyone looking it already
 reads 已采纳 (`presentation`). It closes when that close is called — the one
 fact here that says the write-up was done — or, without it, when the instruction
-for it was given up on (`delivery.agent.run_attempt`,
-`delivery.timer.give_up_stale`), or, whatever happened to it,
-`CLOSE_AT_THE_LATEST` after it landed.
+for it was given up on (`delivery.timer.give_up_stale`), or, whatever
+happened to it, `CLOSE_AT_THE_LATEST` after it landed.
 
 Neither of the platform's own closes — the instruction given up on, the
 deadline — closes a task while something besides the write-up is being done or
