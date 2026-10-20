@@ -7,7 +7,7 @@ asking: ``<tool_use_error>[{"type":"text","text":"..."}]</tool_use_error>``.
 """
 
 from app.domain.agent.harness.claude_code.events import Assembler
-from app.domain.agent.service import AgentStepFailed, AgentStepOutput
+from app.domain.agent.service import AgentStepFailed
 
 SAID = "This machine cannot give the channel an isolated environment."
 
@@ -36,9 +36,8 @@ def _failed(content: str) -> list:
 def test_the_room_is_shown_the_refusal_without_the_models_tag():
     events = _failed(f"<tool_use_error>{SAID}</tool_use_error>")
 
-    assert [type(event) for event in events] == [AgentStepFailed, AgentStepOutput]
+    assert [type(event) for event in events] == [AgentStepFailed]
     assert events[0].text == SAID
-    assert events[1].text == SAID
 
 
 def test_a_failure_that_only_mentions_the_tag_is_left_as_it_is():
@@ -46,4 +45,4 @@ def test_a_failure_that_only_mentions_the_tag_is_left_as_it_is():
 
     events = _failed(said)
 
-    assert events[1].text == said
+    assert events[0].text == said

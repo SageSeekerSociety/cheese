@@ -83,7 +83,9 @@ def test_the_room_hears_one_sentence_and_the_site_keeps_the_log(client):
 
     # 现场 has the same row, failed, with every line the session printed.
     site = client.get(f"/topics/{room}/transcript").json()["data"]["data"]
-    row = next(b for b in site if b["id"] == notice["id"])
+    row = next(b for b in site if b.get("run_record") and b["content"] == SENTENCE)
+    assert row["id"] != notice["id"]
+    assert "error" not in notice["meta"]
     assert row["meta"]["failed"] is True
     for line in _raw_lines():
         assert line in row["meta"]["error"]

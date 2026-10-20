@@ -5,8 +5,9 @@ last step (``AcceptCard.completes_task``). Any step but the last leaves the
 task open and moves it onto a branch cut from the project's latest code, for
 its AI teammate to carry on from. The last one has the AI teammate write the
 task up, and the task closes when that turn ends (`room_task.closing`). Either
-way the discussion the task came from hears what landed, and a merged PR is
-watched on the default branch for a while (`landing_watch`).
+way the discussion the task came from hears what landed. Nothing is watched
+after the merge: the repository's CI and deploy on its default branch are
+its own.
 
 A last step lands as a step after all when the task's own AI teammate is
 working in it on something begun after the delivery was handed over, or a
@@ -29,7 +30,7 @@ a task twice.
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,7 +44,6 @@ from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
-from app.domain.review.landing_models import TaskLanding
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.ports import RecordInstruction, TaskTeammate
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
@@ -53,12 +53,6 @@ from app.domain.thread.services import open_thread
 from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
-
-#: How long a merge is watched on the default branch: its checks there, and a
-#: deployment that includes it. A repository's CI on main and a deploy after it
-#: take well under this; what has not happened by then is not reported.
-WATCH_FOR = timedelta(hours=2)
-
 
 def handed_in(task_teammate: TaskTeammate | None) -> TaskTeammate:
     """把 `review.ports.TaskTeammate` 要回来；没递进来当场炸掉，不走静默。
@@ -90,15 +84,13 @@ async def delivery_landed(
 
     Says whether the merge landed on the task this time: one that has already
     landed there does not land twice (`_already_landed`)."""
-    if await _already_landed(session, task, pr_number):
+    if _already_landed(task, head):
         return False
     now = datetime.now(UTC)
     task.accepted_at = now
     task.accepted_by = by or task.accepted_by
     if head:
         task.delivered_head = head[:64]
-    if pr_number is not None:
-        await _watch(session, task, pr_number, now)
     still_working = (
         completes
         and task.status == TaskStatus.open
@@ -273,50 +265,22 @@ async def _go_on(
     )
 
 
-async def _already_landed(
-    session: AsyncSession, task: Task, pr_number: int | None
-) -> bool:
-    """Whether this merge has already landed on ``task``: a row in
-    `task_landings`, written by every landing that has a PR.
+def _already_landed(task: Task, head: str | None) -> bool:
+    """Whether this merge has already landed on ``task``: the commit it put on
+    the branch is the one the task's latest delivery delivered.
 
-    A merge nobody has landed leaves no row, and lands as it always did. A
-    merge that did leaves one — and landing it a second time would drag a
-    task that has since gone on from the next step, or been reopened, back
-    into a write-up window it has already been through.
+    Landing a merge a second time would drag a task that has since gone on
+    from the next step, or been reopened, back into a write-up window it has
+    already been through. The task keeps `delivered_head` across both of those
+    (`room_task.services.TaskService.next_step` and `reopen`), so the commit is
+    what tells a second look at the same merge apart from the next delivery.
 
-    Deliveries with no PR of their own (an artifact, a URL out of the task's
-    folder) leave no row and are not held back."""
-    if pr_number is None:
+    A delivery is told the head it landed by every path that sees a merge; one
+    that is not (a discussion with no change, an artifact, a URL) has no commit
+    to compare and is not held back."""
+    if head is None:
         return False
-    return await _landing_exists(session, task.id, pr_number)
-
-
-async def _landing_exists(
-    session: AsyncSession, task_id: uuid.UUID, pr_number: int
-) -> bool:
-    return (
-        await session.scalar(
-            select(TaskLanding.id).where(
-                TaskLanding.task_id == task_id, TaskLanding.pr_number == pr_number
-            )
-        )
-    ) is not None
-
-
-async def _watch(
-    session: AsyncSession, task: Task, pr_number: int, now: datetime
-) -> None:
-    """Start watching the merge of ``pr_number`` on the default branch, once."""
-    if await _landing_exists(session, task.id, pr_number):
-        return
-    session.add(
-        TaskLanding(
-            task_id=task.id,
-            pr_number=pr_number,
-            landed_at=now,
-            watch_until=now + WATCH_FOR,
-        )
-    )
+    return task.delivered_head is not None and task.delivered_head == head[:64]
 
 
 async def tell_origin(

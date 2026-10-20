@@ -11,10 +11,10 @@ What a call was (its name and description) is a ``fact``: worked out once, in
 journal order, when a page is mirrored (``bind``), and read back by every later
 pass.
 
-A tool's return is written onto the step it belongs to (``AgentStepOutput``),
-and a failed one also marks that step. A subagent's return is its conclusion,
-which otherwise reaches only the thread that spawned it, so it becomes an event
-of its own instead.
+A tool's return stays in the raw journal; a failed one marks its call as
+failed (``AgentStepFailed``). A subagent's return is its conclusion, which
+otherwise reaches only the thread that spawned it, so it becomes an event of
+its own.
 """
 
 import json
@@ -31,7 +31,6 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
-    AgentStepOutput,
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
@@ -285,8 +284,6 @@ class Assembler:
                     )
                 )
             if made.get("name") not in SUBAGENT_TOOLS or block.get("is_error"):
-                if said.strip():
-                    events.append(AgentStepOutput(call_id=call, text=said))
                 continue
             result = message.get("tool_use_result")
             report = (

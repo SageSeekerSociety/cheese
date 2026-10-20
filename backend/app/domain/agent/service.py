@@ -6,7 +6,7 @@ after the room has selected another teammate or harness.
 """
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -107,13 +107,12 @@ class AgentStepFailed:
     """A tool call came back an error.
 
     NOT the tool's return value — only that it failed, and the tail of what it
-    said. The room shows one line per step, and a failed step that looks
-    exactly like a successful one is the reason a reader has to open the
-    transcript to find out whether anything worked.
+    said; the whole return stays in the raw journal. It tells the session's
+    watcher the call came back (`driven.subscription.marks_of`), so a session
+    waiting on nothing is not read as one still inside a call.
 
     Deliberately not an AgentToolResult: that event means "a subagent reported
-    its conclusion" and is persisted as its own block. This one has no block of
-    its own — it marks the step that is already on the timeline.
+    its conclusion".
 
     The tail rather than the head: a command that failed says why at the end.
     """
@@ -123,45 +122,15 @@ class AgentStepFailed:
 
 
 @dataclass
-class AgentStepOutput:
-    """What a tool call handed back, for the step already on the timeline.
-
-    Like ``AgentStepFailed`` it has no block of its own: it is written onto the
-    step it belongs to, where a reader who opens that line finds what the
-    command printed. The room persists only a capped, redacted tail of it
-    (``step_output``); the harness hands over what it has.
-    """
-
-    call_id: str
-    text: str = ""
-
-
-@dataclass
-class AgentStepCalls:
-    """The tools a step called on its own, in order: a script the model wrote
-    (pi's codemode) calls them without the model calling each, so the step
-    is the only place they show. Each is ``{"tool", "arg", "failed"}``: the
-    tool's name, its argument as one short line, and whether it failed.
-
-    Written onto the step like its output; no block of its own."""
-
-    call_id: str
-    calls: list[dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
 class AgentToolResult:
     """What a tool handed BACK to 芝士 — carried for the subagent tools only.
 
-    Every other tool's return is written onto its own step
-    (``AgentStepOutput``), for whoever opens that line. A subagent's is more
-    than that: it goes straight into the spawner's context and dies with the
-    container's transcript, so the room sees "派了一个分身去查 X" and never what
-    the answer was. That is the one return worth an event of its own.
+    Every other tool's return stays in the raw journal and nowhere else. A
+    subagent's conclusion is the session producing output for its turn
+    (`proves_output`), so it is an event of its own.
 
     ``description`` is the spawning call's own one-liner, repeated here so the
-    conclusion can be labelled with the question it answers without the UI
-    having to pair two blocks up.
+    conclusion carries the question it answers.
     """
 
     name: str
@@ -288,8 +257,6 @@ AgentEvent = (
     AgentMessage
     | AgentToolUse
     | AgentStepFailed
-    | AgentStepOutput
-    | AgentStepCalls
     | AgentToolResult
     | AgentSessionInfo
     | AgentResult

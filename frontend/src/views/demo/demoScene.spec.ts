@@ -42,13 +42,6 @@ describe('frameAt', () => {
     expect(Object.keys(mid.running).sort()).toEqual(['t1', 't2'])
     expect(mid.runningWho).toEqual(['cheese', 'cheese-k'])
   })
-
-  it('files narration as a progress event so the site shows it as speech', () => {
-    const f = frameAt(scene, 2, 900)
-    const note = f.site.find((b) => b.meta?.progress === true)
-    expect(note?.author).toBe('cheese')
-    expect(note?.turn_id).toBe('t1')
-  })
 })
 
 // 右侧停在哪一格由剧本一步一句地说，格子里的东西写一次就留在那儿。

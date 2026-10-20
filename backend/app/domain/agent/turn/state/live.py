@@ -11,7 +11,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -169,7 +169,6 @@ class HookWorkState:
     #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。结果回来时要
     #: 写上输出、挂了要标红的就是那一块。只在内存里、只活这一轮：重启丢掉的只是几
     #: 截输出和几个红点，不是记录。
-    steps: dict[str, uuid.UUID] = field(default_factory=dict)
 
     # The topic branch's commits as of turn start — what makes "this turn's
     # changes" answerable at turn end. A task rather than a value, because the

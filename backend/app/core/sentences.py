@@ -171,6 +171,12 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         # is refused writes past it, and old room lines still name the stop.
         "sandboxReleasedDiskFull",
         "sandboxReleasedOverBudget",
+        # The post-merge watch (checks on the merge commit, a deployment that
+        # included it) is gone; old task conversations still hold its lines.
+        "deployedTo",
+        "deployFailedTo",
+        "mainChecksFailed",
+        "mainChecksFailedReopened",
         # The room-wide machine choice (#2320): old room lines and proposals
         # still name it.
         "computeAnyDevice",

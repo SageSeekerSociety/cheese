@@ -1,7 +1,7 @@
 """The data disk a pool host keeps its sandboxes' homes on, found at enrollment.
 
 Revision ID: b7d2e94a1c05
-Revises: f4b1298ca631
+Revises: c3f7a1e9d204
 """
 
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from migration_helpers import with_lock_retries
 
 revision = "b7d2e94a1c05"
-down_revision = "f4b1298ca631"
+down_revision = "c3f7a1e9d204"
 branch_labels = None
 depends_on = None
 

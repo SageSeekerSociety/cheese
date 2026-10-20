@@ -4,6 +4,9 @@ Revision ID: f4b1298ca631
 Revises: e7a4913c62bf
 """
 
+import logging
+import time
+
 from alembic import op
 import sqlalchemy as sa
 from migration_helpers import with_lock_retries
@@ -14,7 +17,7 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade():
+def _create_schema():
     with_lock_retries('claude_logins, account_model_connections, device, team, "user"')
     op.create_table(
         "model_credential_hosts",
@@ -154,6 +157,47 @@ def upgrade():
     op.execute(
         "CREATE TRIGGER credential_account_rollout BEFORE INSERT ON account_model_connections FOR EACH ROW EXECUTE FUNCTION credential_account_rollout()"
     )
+
+
+def _ensure_index(table, column):
+    name = f"ix_{table}_{column}"
+    # Same invalid-index guard as c7e2a91f4d3b. Concurrent builds can wait for
+    # old serving-backend snapshots; retain lock_timeout and retry lock failures
+    # with the bounded attempts/backoff used by with_lock_retries.
+    for attempt in range(100):
+        try:
+            invalid = (
+                op.get_bind()
+                .execute(
+                    sa.text(
+                        "SELECT NOT i.indisvalid FROM pg_index i JOIN pg_class c "
+                        "ON c.oid = i.indexrelid WHERE c.relname = :name"
+                    ),
+                    {"name": name},
+                )
+                .scalar()
+            )
+            if invalid:
+                op.drop_index(name, table_name=table, postgresql_concurrently=True)
+            op.create_index(
+                name, table, [column], postgresql_concurrently=True, if_not_exists=True
+            )
+            return
+        except sa.exc.DBAPIError as error:
+            if getattr(error.orig, "sqlstate", None) != "55P03" or attempt == 99:
+                raise
+            logging.getLogger("alembic.runtime.migration").warning(
+                "Concurrent index %s hit lock_timeout; retry %s/100", name, attempt + 1
+            )
+            time.sleep(0.2)
+
+
+def upgrade():
+    # Schema DDL commits atomically when the autocommit block starts. A failed
+    # concurrent index can leave that whole phase committed without a revision
+    # stamp; retry the remaining idempotent work without recreating its tables.
+    if not sa.inspect(op.get_bind()).has_table("model_credential_hosts"):
+        _create_schema()
     # Release DDL locks before backfill; triggers already cover old inserts.
     with op.get_context().autocommit_block():
         op.execute(
@@ -177,9 +221,7 @@ def upgrade():
             ("claude_logins", "host_id"),
             ("account_model_connections", "owner_user_id"),
         ]:
-            name = f"ix_{table}_{column}"
-            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
-            op.create_index(name, table, [column], postgresql_concurrently=True)
+            _ensure_index(table, column)
         op.execute("""
             INSERT INTO model_credential_hosts (id, token, name)
             SELECT device_id, token, name FROM device d WHERE EXISTS

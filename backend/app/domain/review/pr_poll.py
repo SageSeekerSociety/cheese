@@ -34,8 +34,8 @@ from app.domain.project.forge import (
     quota_serves_background,
 )
 from app.domain.project.models import ProjectForge
-from app.domain.review import archive, landing_watch, pr_publish
-from app.domain.review.github_pr import GitHubPRError, _NO_VERDICT_CONCLUSIONS
+from app.domain.review import archive, pr_publish
+from app.domain.review.github_pr import _NO_VERDICT_CONCLUSIONS, GitHubPRError
 from app.domain.review.github_pr.task_pr_metadata import (
     TaskPrMetadata,
     TaskPrMetadataFailure,
@@ -52,7 +52,9 @@ from app.domain.review.ports import (
     SweepCheckouts,
     TaskTeammate,
 )
-from app.domain.review.task_landing import delivery_landed
+from app.domain.review.room_notices import tell_room_undelivered
+from app.domain.review.task_landing import delivery_landed, go_on_while_working
+from app.domain.room_task.closing import close_overdue
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -578,7 +580,7 @@ async def _remember_checks(
             await session.commit()
 
 
-async def watch_landings(
+async def sweep_closings(
     chat: Chat,
     announce: Announce,
     *,
@@ -586,15 +588,23 @@ async def watch_landings(
     task_teammate: TaskTeammate,
     machines: SweepCheckouts | None = None,
 ) -> dict:
-    """Merged task PRs, watched on the default branch for a while: the checks
-    there and a deployment that includes them (`landing_watch`)."""
-    return await landing_watch.watch_landings(
-        chat,
-        announce,
+    """The tasks being written up: one whose AI teammate has gone on working
+    goes on to its next step (`task_landing.go_on_while_working`), and one
+    past its write-up deadline is closed and its room told what was left
+    undone (`room_task.closing.close_overdue`). ``machines`` removes a closed
+    task's checkouts on the machines holding it."""
+    sessions = chat.session_factory
+    gone_on = await go_on_while_working(
+        sessions,
         record_instruction=record_instruction,
         task_teammate=task_teammate,
-        machines=machines,
     )
+    async with sessions() as session:
+        closed = await close_overdue(session, chat, machines=machines)
+        for overdue in closed:
+            await tell_room_undelivered(session, overdue, announce=announce)
+        await session.commit()
+    return {"gone_on": len(gone_on), "closed": len(closed)}
 
 
 def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:

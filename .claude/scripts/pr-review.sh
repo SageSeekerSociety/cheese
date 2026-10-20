@@ -54,7 +54,7 @@
 #       increment since it is one §4 does not re-review (a merge of the base
 #       branch, or changes that are only tests, docs or copy); otherwise it
 #       says to run an incremental review first. DIR is a prepare directory;
-#       PR picks the newest prepare directory for that PR on this machine.
+#       PR reads the last stamped conclusion in the current PR body.
 #       Prints 可递 or 还不能递 and the reasons. Exit 0 ready, 1 not ready.
 #   .claude/scripts/pr-review.sh stamp DIR BODY|- [--out FILE]
 #       Put the review conclusion on the last line of the card body, so nobody
@@ -97,26 +97,18 @@ fi
 usage() { sed -n '/^#   \.claude/,/^# Exit status/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "pr-review: $*" >&2; exit 1; }
 
-# The round for PR $1 at $2 (a 12-char prefix; empty for the newest one). The current root
+# The round for PR $1 at $2 (a pinned 12-char prefix). The current root
 # is searched first and /tmp only when it has nothing: /tmp is shared with every other seat
 # on the machine (same uid, different HOME), and a newer round of theirs must not answer
 # for this seat's. With a prefix the same order applies: the first root holding that round
-# wins. Newest first within a root, skipping a path that is not a directory — a
+# wins. A path that is not a directory is skipped — a
 # compatibility symlink whose target is gone is not a round. Prints the .input directory;
 # fails when there is none.
 round_input() {
-  local pr=$1 want=${2:-} root d
-  if [ -n "$want" ]; then
-    for root in "${REVIEW_ROOTS[@]}"; do
-      d=$root/pr-review-$pr-${want:0:12}.input
-      [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
-    done
-    return 1
-  fi
+  local pr=$1 want=$2 root d
   for root in "${REVIEW_ROOTS[@]}"; do
-    while IFS= read -r d; do
-      [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
-    done < <(ls -dt "$root"/pr-review-"$pr"-*.input 2>/dev/null)
+    d=$root/pr-review-$pr-${want:0:12}.input
+    [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
   done
   return 1
 }
@@ -519,7 +511,8 @@ show() {
 ready() {
   local arg=$1 dir
   if [[ $arg =~ ^[0-9]+$ ]]; then
-    dir=$(round_input "$arg") || die "no prepare directory for #$arg on this machine; run prepare first"
+    python3 "${READY:-$ROOT/$METHOD/ready.py}" --pr "$arg" --root "$ROOT" --repo "$REPO"
+    return $?
   else
     dir=$arg
   fi

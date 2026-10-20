@@ -56,56 +56,27 @@ def _chat(client, topic_id: str) -> None:
             pass
 
 
-def test_event_blocks_persist_structured_meta(client):
+def test_native_tools_are_no_longer_written_to_event_blocks(client):
     p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
-    t = client.post(
-        "/topics",
-        json={"project_id": p["id"], "title": "话题"},
-    ).json()["data"]
-    # 芝士 answers in a 支线: that is the conversation its turn runs in.
-    t = {"id": in_thread(client, t["id"], "user-1")}
-    _chat(client, t["id"])
+    t = client.post("/topics", json={"project_id": p["id"], "title": "Tools"}).json()[
+        "data"
+    ]
+    topic = in_thread(client, t["id"], "user-1")
+    _chat(client, topic)
+    from sqlalchemy import select
 
-    tr = client.get(f"/topics/{t['id']}/transcript").json()["data"]["data"]
-    by_tool = {b["meta"]["tool"]: b for b in tr if (b.get("meta") or {}).get("tool")}
-    # Each event also carries the harness's own id for it (its dedup key); the
-    # display fields are what this test is about.
-    assert all(b["meta"].get("eid") for b in by_tool.values())
-    shown = {name: _display(b["meta"]) for name, b in by_tool.items()}
+    from app.domain.block.models import Block
 
-    # Plain work → neutral dot; verb/arg live in meta for display-time labels.
-    # in_room=False keeps 芝士's working detail out of the conversation (§14.1).
-    grep = by_tool["Grep"]
-    assert shown["Grep"] == {
-        "tool": "Grep",
-        "arg": "TODO",
-        "platform": False,
-        "in_room": False,
-    }
-    # human-readable fallback text: a verb in words, then the argument
-    verb, arg = grep["content"].split("\n", 1)
-    assert verb != "Grep" and arg == "TODO"
+    async def read():
+        async with client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(Block).where(Block.conversation_id == uuid.UUID(topic))
+                )
+            )
 
-    # cheese MCP tool → platform (amber dot); name stored mcp-prefix-stripped.
-    doc = by_tool["update_doc"]
-    assert doc["meta"]["platform"] is True
-    assert doc["meta"]["arg"] == "# 文档"
-
-    # Bash running the cheese CLI → platform; plain Bash → not.
-    bash_events = [b for b in tr if (b.get("meta") or {}).get("tool") == "Bash"]
-    platforms = {b["meta"]["arg"]: b["meta"]["platform"] for b in bash_events}
-    assert platforms["cheese sync --all"] is True
-    assert platforms["ls -la"] is False
-
-    # A tool missing from the verb table: content bakes the raw name (legacy
-    # fallback), but meta still lets a NEWER frontend table translate it.
-    fut = by_tool["FutureTool"]
-    assert fut["content"] == "FutureTool"
-    assert shown["FutureTool"] == {
-        "tool": "FutureTool",
-        "platform": False,
-        "in_room": False,
-    }
+    rows = client.portal.call(read)
+    assert not [row for row in rows if (row.meta or {}).get("tool")]
 
 
 def test_transcript_pages_back_instead_of_serving_everything(client):

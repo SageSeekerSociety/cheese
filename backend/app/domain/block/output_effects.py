@@ -74,24 +74,3 @@ async def consume_prompt(
 ) -> None:
     """Consume a non-native prompt in the encompassing stop transaction."""
     await BlockRepository(session).mark_consumed(block_ids, turn_id)
-
-
-async def fail_step(
-    session: AsyncSession, block_id: uuid.UUID, error: str
-) -> Block | None:
-    """Mark the timeline step failed in the caller's current transaction."""
-    return await BlockRepository(session).mark_step_failed(block_id, error)
-
-
-async def retain_step_output(
-    session: AsyncSession, block_id: uuid.UUID, tail: str, total: int
-) -> Block | None:
-    """Attach the already bounded output tail and its original length."""
-    return await BlockRepository(session).record_step_output(block_id, tail, total)
-
-
-async def retain_step_calls(
-    session: AsyncSession, block_id: uuid.UUID, calls: list[dict]
-) -> Block | None:
-    """Attach the tools the step called on its own."""
-    return await BlockRepository(session).record_step_calls(block_id, calls)

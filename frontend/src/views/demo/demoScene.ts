@@ -464,10 +464,21 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
             content: e.arg ? `${e.tool}\n${e.arg}` : e.tool,
             turn_id: e.turn,
             meta: {
+              record: {
+                type: 'assistant',
+                message: { content: [{ type: 'tool_use', id, name: e.tool, input: { arguments: e.arg ?? '' } }] },
+              },
+              parts: [
+                {
+                  kind: 'tool',
+                  name: e.tool,
+                  call_id: id,
+                  input: { arguments: e.arg ?? '' },
+                  preview: e.arg ?? '',
+                  failed: e.failed ?? false,
+                },
+              ],
               tool: e.tool,
-              arg: e.arg ?? '',
-              ...(e.platform ? { platform: true } : {}),
-              ...(e.failed ? { failed: true, error: e.error ?? '' } : {}),
             },
             created_at,
           })
@@ -481,7 +492,10 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
             author: e.who,
             content: e.text,
             turn_id: e.turn,
-            meta: { progress: true },
+            meta: {
+              record: { type: 'assistant', message: { content: [{ type: 'text', text: e.text }] } },
+              parts: [{ kind: 'text', text: e.text }],
+            },
             created_at,
           })
           break

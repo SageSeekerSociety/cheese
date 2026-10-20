@@ -41,10 +41,9 @@ async def _note_retry(
 ) -> None:
     """Say the turn is retrying a failed request, on one line per streak.
 
-    The first retry of a streak lands a notice; every later one restates
-    that same line with the new count, so ten retries read as one line that
-    says 10 rather than ten lines. Not session output (`note_session_output`
-    is not told): nothing the session produced crossed here."""
+    Each retry appends a status transition. The overview groups the streak
+    into its latest status, while the raw view retains every transition.
+    This does not count as session output (`note_session_output` is not told)."""
     count = (
         f"{event.attempt}/{event.max_attempts}"
         if event.attempt and event.max_attempts
@@ -141,8 +140,7 @@ async def _note_reachability(
     reachable: bool,
     reason: str,
 ) -> None:
-    """Say the turn is waiting for its machine, and later that the wait is
-    over — the same line both times."""
+    """Append the waiting and reconnected transitions to one status series."""
     del project_id
     if reachable:
         block_id = live.waiting_notes.pop(work_id, None)

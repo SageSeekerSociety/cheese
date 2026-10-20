@@ -5,8 +5,8 @@ stream-json lines, Codex's app-server notifications, pi's entries) and the
 backend mirrors that journal (`agent.harness.driven`). This table keeps those
 records the way they came, so that what the agent did can be read after the
 mirror has forgotten it. A sealed run's object is kept in the bucket for good;
-its row, and with it the app's way to read the run, for `retention.RETENTION`
-(30 days, `retention.expire`).
+its row for `retention.RETENTION` (30 days, `retention.expire`). A permanent
+bucket index keeps sealed runs readable after their database rows expire.
 
 A row is a run of consecutive records of one session's journal, all of one
 turn. A record arrives as a run of one, with the record in the row
