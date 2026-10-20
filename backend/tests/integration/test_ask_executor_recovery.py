@@ -16,7 +16,6 @@ from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
 from app.main import app
-from tests.support.session_records import wait_for_record
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
@@ -26,6 +25,7 @@ from tests.integration.conftest import (
 )
 from tests.integration.test_claude_session_records import StillWorking
 from tests.integration.test_native_batch_ownership import _blocks
+from tests.support.session_records import wait_for_record
 
 
 def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(client):

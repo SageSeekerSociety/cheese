@@ -50,7 +50,7 @@ export default {
   },
   meta: {
     isFullPage: true,
-    backTo: 'HomeSpaces',
+    backTo: 'HomeHub',
     // 手机上 SpaceSidebar 是抽屉，所以顶栏给汉堡。
     drawer: true,
   },

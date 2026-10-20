@@ -383,8 +383,6 @@ def _gates(run: dict) -> str | None:
     """
     if run.get("path") != WORKFLOW:
         return f"run {run.get('id')} is {run.get('path')!r}, not {WORKFLOW}"
-    # A failed merge_group run has already taken its PR out of the queue; a
-    # rerun would turn nothing green. The queue's own retry is --reruns.
     event = run.get("event")
     if not (event == "pull_request" or _is_push_to_main(run)):
         if event == "push":

@@ -11,14 +11,15 @@
 //
 // 它不是场景，按 `frontend_grade.py` 的口径是 A 级：只吃 props、只往上发事件。拆出来的
 // 那几件都各自在预览站里有位置（`views/demo/catalogTaskForm.ts`）。
-import type { DomainGroup, SpaceCategory, TaskFormSubmitData, Topic } from '@/types'
+import type { DomainGroup, SpaceCategory, TaskDraftFields, TaskFormSubmitData, Topic } from '@/types'
 
-import { ref } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 
 import { useTaskForm } from '@/composables/useTaskForm'
 
 import TaskFormClassify from './form/TaskFormClassify.vue'
 import TaskFormContent from './form/TaskFormContent.vue'
+import TaskFormGrading from './form/TaskFormGrading.vue'
 import TaskFormMore from './form/TaskFormMore.vue'
 import TaskFormParticipation from './form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from './form/TaskFormPrivacyDialog.vue'
@@ -58,6 +59,10 @@ const emit = defineEmits<{
   submit: [data: TaskFormSubmitData]
   /** 点过发布之后还拦着的项数，0 = 没有。 */
   invalid: [count: number]
+  /** 表单变了（人改的，或者 `apply` 填进来的）：现在的样子，存草稿用。 */
+  change: [fields: TaskDraftFields]
+  /** 表单挂好了：这是它的起点。 */
+  ready: [fields: TaskDraftFields]
 }>()
 
 defineSlots<{
@@ -72,7 +77,11 @@ defineSlots<{
 }>()
 
 // 「题目内容」那一节把编辑器里的正文念出来用一次（提交那一刻 / 弹确认框那一刻）。
-const content = ref<{ readText: () => string | undefined } | null>(null)
+const content = ref<{
+  readText: () => string | undefined
+  readMarkdown: () => string | undefined
+  endRect: () => { left: number; top: number; bottom: number } | null
+} | null>(null)
 
 const {
   topicItems,
@@ -107,17 +116,50 @@ const {
   mentorsJoin,
   mentors,
   description,
+  submissionSchema,
+  rubric,
+  rubricPublic,
+  rubricMissingName,
   isSubmitting,
   submitForm,
+  check,
+  snapshot,
+  apply,
   privacyDialogOpen,
   cancelSubmitWithRealName,
   confirmSubmitWithRealName,
 } = useTaskForm(props, emit, () => content.value?.readText())
 
+/** 表单现在的样子，连同详情的 Markdown（芝士读写详情用它）。 */
+function current(): TaskDraftFields {
+  const fields = snapshot()
+  const markdown = content.value?.readMarkdown()
+  return markdown === undefined ? fields : { ...fields, descriptionMarkdown: markdown }
+}
+
+watch(
+  () => JSON.stringify(snapshot()),
+  () => nextTick(() => emit('change', current()))
+)
+
+onMounted(() => nextTick(() => emit('ready', current())))
+
 defineExpose({
   /** 校验并提交；没过就标红，什么都不发。 */
   submit: () => submitForm(),
+  /** 只校验、标出缺的格子，不提交。 */
+  check: () => check(),
   isSubmitting,
+  /** 表单现在的样子。 */
+  values: current,
+  /** 把这几格填进表单；填完（编辑器也装好了）以后，交回表单现在的样子。 */
+  apply: async (fields: TaskDraftFields): Promise<TaskDraftFields> => {
+    apply(fields)
+    await nextTick()
+    return current()
+  },
+  /** 详情末尾在屏幕上的位置。 */
+  descriptionEnd: () => content.value?.endRect() ?? null,
 })
 </script>
 
@@ -135,6 +177,13 @@ defineExpose({
     </TaskFormContent>
 
     <slot name="shared" />
+
+    <TaskFormGrading
+      v-model:submission-schema="submissionSchema"
+      v-model:rubric="rubric"
+      v-model:rubric-public="rubricPublic"
+      :missing-name="rubricMissingName"
+    />
 
     <TaskFormParticipation
       v-model:submitter-type="submitterType"

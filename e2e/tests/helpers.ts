@@ -104,7 +104,7 @@ export async function apiLogin(page: Page, language: "zh-CN" | "en" = "zh-CN") {
     },
     { accessToken: loginData.accessToken, user: loginData.user, language },
   );
-  await page.goto("/spaces");
+  await page.goto("/inbox");
   await page
     .locator(".app-rail-item:not(.app-rail-item--add)")
     .first()
@@ -156,7 +156,7 @@ export async function projectIdOf(page: Page): Promise<string> {
 export async function openFirstProject(page: Page) {
   // Project tiles carry `--tile` (they render an avatar image); the bare
   // `.app-rail-item:not(--add)` also matches the 首页/cheese home icon, which
-  // sits first in the rail — clicking it lands on /spaces, not a project.
+  // sits first in the rail — clicking it lands on the inbox, not a project.
   await page.locator(".app-rail-item--tile").first().click();
   const rows = page.locator(".topic-row");
   // Wait for the rows themselves: a caller that counts before the seeded ones

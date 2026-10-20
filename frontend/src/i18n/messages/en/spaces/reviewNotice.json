@@ -1,8 +1,0 @@
-{
-  "backToSpaces": "Back to spaces",
-  "pendingBody": "Once a platform admin approves it, you can publish challenges here and its invite code starts working. The result shows up under \"My space applications\" on the Spaces page.",
-  "pendingTitle": "This space is still under review",
-  "rejectedBody": "You can edit and resubmit it under \"My space applications\" on the Spaces page.",
-  "rejectedBodyReason": "Reason: {reason}. You can edit and resubmit it under \"My space applications\" on the Spaces page.",
-  "rejectedTitle": "This space application was rejected"
-}

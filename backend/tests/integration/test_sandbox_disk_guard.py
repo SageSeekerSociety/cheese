@@ -35,7 +35,6 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.machine.disk_guard import DiskGuard
 from app.domain.machine.models import CloudHost
 from app.domain.machine.repositories import CloudHostRepository
-from tests.microcloud import OFFERING
 from tests.integration.test_cloud_host_pool import pool  # noqa: F401 — fixture
 from tests.integration.test_sandbox_idle_stop import (  # noqa: F401 — fixture
     cloud,
@@ -47,6 +46,7 @@ from tests.integration.test_sandbox_idle_stop import (  # noqa: F401 — fixture
     tool_call,
     working_on,
 )
+from tests.microcloud import OFFERING
 
 
 def disk_of(case, filesystem: dict) -> list[list[str]]:

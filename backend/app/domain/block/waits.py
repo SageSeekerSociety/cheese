@@ -71,8 +71,7 @@ MACHINE_RECORDS = ("device_waiting",)
 
 # 「这个对话里有没有新一轮开始了」：取 conversation_id、started_at 和 delivered_at
 # 三列，一张裸表。整张 `AgentTurn` 属于 agent 域，这里要的只是它的那个瞬间 —— 用
-# 裸表是为了不去 import 那个模型（`agent/liveness.py` 读 `threads` 也是这个形状），
-# block 域不必因此多一条跨域依赖。
+# 裸表是为了不去 import 那个模型，block 域不必因此多一条跨域依赖。
 _TURNS = table(
     "agent_turns",
     column("conversation_id", Uuid),
@@ -270,8 +269,7 @@ class MemberWaits:
 
         `delivered_at` 为空的那一行不算：`open_turn` 在传输接受之前就把行落下了，
         传输没接住、进程随后死掉（清扫只 close/warn，不删行）时，这一行会一直留着
-        —— 但会话从没听过那个 prompt，它没在干活，也就没盖过任何失败。别的「在跑」
-        判据（`liveness.running_tasks`、`moving_topics`）同样要求 delivered_at。"""
+        —— 但会话从没听过那个 prompt，它没在干活，也就没盖过任何失败。"""
         stmt = (
             select(
                 _TURNS.c.conversation_id,

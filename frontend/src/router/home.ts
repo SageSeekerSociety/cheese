@@ -136,12 +136,21 @@ export default {
       },
     },
     {
+      // 原来的「全部空间」页。空间只靠邀请码加入、没有公开浏览，它能做的事首页侧栏都在
+      // 做（加入的空间、用邀请码加入、新建空间、还没过审的申请），于是拿掉了；旧链接
+      // 回首页。
       path: 'spaces',
-      name: 'HomeSpaces',
-      component: () => import('@/views/spaces/Index.vue'),
+      redirect: { name: 'inbox' },
+    },
+    {
+      // 我建的空间还没过审时，侧栏那一行点进来是这份申请。
+      path: 'space-applications/:spaceId',
+      name: 'HomeSpaceApplication',
+      component: () => import('@/views/spaces/SpaceApplication.vue'),
       meta: {
-        titleKey: 'navigation.spaces',
+        titleKey: 'spaces.application.title',
         isFullPage: true,
+        backTo: 'HomeHub',
       },
     },
     {

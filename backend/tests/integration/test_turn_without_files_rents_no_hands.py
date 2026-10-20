@@ -34,8 +34,7 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.session_record.service import read
 from app.domain.topic.services import TopicService
 from tests.ask_fixtures import question_row
-from tests.conftest import stub_compute
-from tests.conftest import StubChannel, finish_turn, settle_turn
+from tests.conftest import StubChannel, finish_turn, settle_turn, stub_compute
 from tests.integration.conftest import (
     post_project,
     project_service,

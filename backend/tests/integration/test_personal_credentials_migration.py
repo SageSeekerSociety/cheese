@@ -121,3 +121,15 @@ def test_shared_assistants_recover_the_original_personal_credentials():
             db.fetchval("SELECT team_id FROM claude_logins WHERE id = $1", other)
             == home
         )
+        db.upgrade("head")
+        assert (
+            db.fetchval("SELECT key FROM account_model_connections WHERE id = $1", key)
+            == "sealed-original"
+        )
+        assert {
+            (r["login_id"], r["account_connection_id"])
+            for r in db.fetch(
+                "SELECT login_id, account_connection_id FROM personal_model_resources WHERE team_id = $1",
+                shared,
+            )
+        } == {(login, None), (None, key)}

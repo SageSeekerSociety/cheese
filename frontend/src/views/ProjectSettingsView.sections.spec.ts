@@ -28,10 +28,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
-import { UserAuthApi } from '@/api/userAuth'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
 
 const me = vi.hoisted(() => ({ id: null as string | null }))

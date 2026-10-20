@@ -113,10 +113,45 @@ async def main():
         stop = [e["delta"]["stop_reason"] for e in got if e["type"] == "message_delta"]
         assert stop == ["tool_use"], (name, stop)
 
+        # The next turn sends the answer back as Claude Code keeps it: the
+        # thinking block it was given, the tool call, then the tool's result.
+        # A thinking model (DeepSeek: 400 "content[].thinking ... must be
+        # passed back") needs that reasoning on the assistant message.
+        signature = "".join(
+            e["delta"]["signature"] for e in got
+            if e["type"] == "content_block_delta" and e["delta"]["type"] == "signature_delta"
+        )
+        thinking = {"type": "thinking", "thinking": "Look at it first.", **({"signature": signature} if signature else {})}
+        SEEN.clear()
+        response = await router.aanthropic_messages(
+            model=name,
+            max_tokens=4096,
+            stream=True,
+            messages=[
+                *copy.deepcopy(MESSAGES),
+                {"role": "assistant", "content": [
+                    thinking,
+                    {"type": "text", "text": "Reading."},
+                    {"type": "tool_use", "id": "call-1", "name": "Read", "input": {"file_path": "b.png"}},
+                ]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call-1", "content": "done"}]},
+            ],
+            tools=copy.deepcopy(TOOLS),
+            thinking={"type": "adaptive"},
+            output_config={"effort": "high"},
+        )
+        await events(response)
+        (_, body), = SEEN
+        replied = [m for m in body["messages"] if m["role"] == "assistant" and m.get("tool_calls")
+                   and m["tool_calls"][0]["id"] == "call-1"]
+        assert len(replied) == 1, (name, body["messages"])
+        assert replied[0].get("reasoning_content") == "Look at it first.", (name, replied[0])
+
     server.shutdown()
     print(
         "PASS: a hosted_vllm/ row gets thinking, tools, tool history and images on "
-        "chat/completions, and returns thinking, text and tool calls"
+        "chat/completions, returns thinking, text and tool calls, and gets its "
+        "reasoning back on the next turn"
     )
 
 

@@ -1,38 +1,30 @@
 name: Required CI
 
-# A push to main is the POST-SUBMIT gate. Commits reach main directly (a squash
-# merge, no queue in between), so this workflow is what tests landed code: one
-# push run covers everything since `refs/heads/main-green`, the last commit the
-# gate passed (see `main-green` at the bottom and required-ci.py:
-# effective_base). Deployment gates read that push run. The merge_group trigger
-# stays for an entry that still goes through a queue.
+# Three tiers, decided by the event (.github/scripts/required-ci.py: tier_for):
 #
-# Two tiers, decided by the event (.github/scripts/required-ci.py: tier_for):
-#
-# - Every pull request (draft or ready) runs `ci-fast.py --tier quick` only;
-#   all full suites are skipped. Drafts aggregate as `CI required (draft quick)`;
-#   ready PRs aggregate as `CI required` and check the commit title.
-# - A push to main or merge_group entry runs the full tier: every suite the
-#   cumulative diff selects, aggregated as `CI required` before deployment.
+# - A draft pull request runs no suite. It aggregates as `CI required (draft
+#   quick)`, which the merge gate does not read; the platform marks the PR ready
+#   when it hands the work over, and `ready_for_review` starts the next tier.
+# - A ready pull request runs every suite its diff selects, except the
+#   post-merge suites (e2e, remote, mcp, equivalence), with the backend's
+#   integration layer narrowed to the test files that executed what the
+#   diff changed (the coverage map, coverage-map.yml). It
+#   aggregates as `CI required`, the merge gate, and checks the commit title.
+# - A push to main is the post-submit gate: every suite the cumulative diff
+#   since `refs/heads/main-green` selects, all of each (see `main-green` at the
+#   bottom and required-ci.py: effective_base). Deployment gates read that run.
 #
 # The two aggregating jobs are separate jobs with literal names (`required` and
 # `required-draft`), each gated by an `if` on the event. Not one job with a
 # computed name: an expression-named job renders as its own source text on a
 # cancelled run, which reads as a red check named
 # `github.event_name == 'pull_request' && ...`.
-#
-# On a draft PR `CI required` is skipped, not absent; drafts cannot merge and
-# the platform treats skipped as "did not run". `ready_for_review` starts a new
-# quick run under `CI required`, including the title check. Branch green allows
-# merging, not deployment: only the full landed-code gate can authorize that.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-  merge_group:
-    types: [checks_requested]
 
 permissions:
   contents: read
@@ -41,20 +33,24 @@ permissions:
 # keeps one run executing and at most one pending, and a newer pending run
 # replaces the older one. That is the batching: the run that starts covers
 # everything since `main-green`, so the commits of a superseded pending run are
-# not dropped. Pull requests still cancel their superseded runs, and a
-# merge-queue entry keeps its own group per commit.
+# not dropped. Pull requests cancel their superseded runs.
 concurrency:
-  group: required-ci-${{ github.event_name }}-${{ github.event_name == 'push' && 'main' || github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: required-ci-${{ github.event_name }}-${{ github.event_name == 'push' && 'main' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scope:
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
-    # runner queue behind the big jobs. A main push, same-repo PRs and the merge
-    # queue use the cheese-ci pool (docs/infrastructure.md); fork PRs and a
+    # runner queue behind the big jobs. A main push and same-repo PRs
+    # use the cheese-ci pool (docs/infrastructure.md); fork PRs and a
     # deleted fork stay on GitHub's machines.
-    runs-on: ${{ fromJSON((github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
+    # actions: read is for the integration coverage map (coverage-map.yml's
+    # newest artifact), which a ready pull request's selection reads.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       backend: ${{ steps.scope.outputs.backend }}
       frontend: ${{ steps.scope.outputs.frontend }}
@@ -66,33 +62,32 @@ jobs:
       mcp: ${{ steps.scope.outputs.mcp }}
       equivalence: ${{ steps.scope.outputs.equivalence }}
       remote: ${{ steps.scope.outputs.remote }}
-      cifast: ${{ steps.scope.outputs.cifast }}
       tier: ${{ steps.scope.outputs.tier }}
-      branch_heavy: ${{ steps.scope.outputs.branch_heavy }}
       base: ${{ steps.scope.outputs.base }}
+      integration_files: ${{ steps.scope.outputs.integration_files }}
+      integration_shards: ${{ steps.scope.outputs.integration_shards }}
+      integration_floor: ${{ steps.scope.outputs.integration_floor }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Only the cheap selection/aggregation self-test runs here: every product
       # suite waits on this job, so anything slow on it is serial time for the
-      # whole workflow. ci-fast's black-box tests have their own job below.
+      # whole workflow.
       - name: Test scope and result handling
         run: python3 -m unittest discover -s .github/scripts -p 'test_required_ci.py'
-      # The shadow registry declares every check once. This keeps that
-      # declaration equal to the tables that still select work, and it is here
-      # rather than in the black-box suite because that suite only runs on the
-      # full tier: a drift has to be visible on the pull request that causes it.
-      - name: Test the check registry against the tables it shadows
-        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_registry.py'
       - name: Select suites for the complete merge diff
         id: scope
         env:
-          # A pull request and a merge-queue entry name their base in the event.
-          # A main push has no base worth passing here (github.event.before is
-          # only the previous tip), so the script resolves its own from the
-          # `main-green` ref in the step below.
-          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          # A pull request names its base in the event. A main push has no
+          # base worth passing here (github.event.before is only the previous
+          # tip), so the script resolves its own from the `main-green` ref.
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -n "$EVENT_BASE" ]; then
+            # The base the checked-out merge ref was built on, not the payload's:
+            # main moves between the two, and diffing against the payload counts
+            # unrelated main commits as part of this PR.
+            EVENT_BASE=$(python3 .github/scripts/required-ci.py pr-base "$EVENT_BASE")
             # Every selected suite waits on this fetch, so one transient network
             # error here reddens the whole run. Retry it; the selection below is
             # unchanged.
@@ -107,228 +102,15 @@ jobs:
           fi
           python3 .github/scripts/required-ci.py scope "$EVENT_BASE"
 
-  # The branch tier: draft and ready PRs run the same bounded local-evidence
-  # tool developers run before pushing — `ci-fast.py --tier quick`. Full suites
-  # all require tier == 'full', so none runs here. Readiness changes only the
-  # aggregator's name and enables its title check, not the selected suites.
-  #
-  # What this tier does NOT have, it must not judge. Two things follow from
-  # that, and both are the difference between a draft that reports a verdict on
-  # its change and a draft that is red for the platform's own bookkeeping:
-  #
-  # - A draft's title is the platform's placeholder ("WIP: <task title>"), so
-  #   the title is not checked here (ci-fast reads the draft flag from the PR
-  #   JSON). The `required` job checks it, and pr-title.yml re-runs that job
-  #   when the PR is marked ready.
-  # - Redis is here (a service, like every full-tier job) and the pinned Claude
-  #   Code/Codex/pi builds are NOT: installing three binaries into every draft
-  #   run is the full CI's job, and a test that reaches for one fails rather
-  #   than skips. ci-fast names those tests not run instead of running them.
-  #
-  # Both were read off the runs they broke: the draft job's commit-title step
-  # failing on "WIP: <task title>", and backend-pure reporting 138 failed / 121
-  # errors whose text is "CHEESE_TEST_CLAUDE/CHEESE_TEST_PI must point to the
-  # pinned build". Symptoms a change's author cannot act on are symptoms that
-  # make the check worth less than it costs.
-  fast:
-    needs: scope
-    if: needs.scope.outputs.tier == 'quick'
-    runs-on: ubuntu-latest
-    # The draft tier keeps the quick tier's SELECTION but not the work machine's
-    # bounds: ci-fast's 180s / 3072 MiB defaults describe the developer's box
-    # (3072 MiB is literally its session cap). A runner that inherits them can
-    # never judge a frontend change: of the 12 completed draft runs in the
-    # 10-12 03:56–06:30 window, all 12 died in frontend-unit — peaks 2771–3079
-    # MiB against that 3072 cap — with every later check left at 0s. This box is
-    # the public-repo standard runner (4 vCPU / 16 GiB), which is the machine
-    # frontend/vite.config.ts sizes its own pool for: it gets a ceiling that
-    # backs that pool (9216 MiB) and a budget from the full-CI step times.
-    # Measured on the first real draft run of this tier (2026-10-12, the widest
-    # plan — unknown paths widen scope to the full suite plus the full type
-    # check): the unit suite passed in 584s on 3 forks at a 3580 MiB peak, the
-    # type check in 123s, and backend-pure then hit the 1200s budget. So 1200s
-    # covers the targeted plan (change-related tests, changed-file types) with
-    # room, and a draft that widens to everything may still report unknown.
-    # This job timeout is only the outer backstop; install + pre-commit env prep
-    # happen around the budget and are bounded separately.
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      pull-requests: read
-    # The same valkey every full-tier job runs, on the same port, so a pure test
-    # that touches Redis judges the change instead of reporting a connection
-    # refused. Without it a draft's backend-pure was red on
-    # tests/unit/test_login_attempt_budget.py connecting to localhost:6379 — a
-    # service this job simply had not been given.
-    env:
-      REDIS_URL: redis://localhost:6389/0
-    services:
-      valkey:
-        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
-        ports:
-          - 6389:6379
-        options: >-
-          --health-cmd "valkey-cli ping" --health-interval 1s
-          --health-timeout 5s --health-retries 60
-    steps:
-      # fetch-depth 0: ci-fast.py resolves the merge base with `git merge-base
-      # origin/main HEAD`, and a shallow clone would put that base out of reach
-      # (no common ancestor → the file-size/migration-fork hooks go unknown).
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      # Pin origin/main WITHOUT passing a custom --base: ci-fast.py treats any
-      # `--base` other than "origin/main" as unable to be honored by the
-      # merge-base hooks and records it unknown. Pointing the remote-tracking
-      # ref itself keeps the default and the hooks intact.
-      #
-      # The ref to pin is the base the checked-out merge ref was built on — its
-      # first parent — not the event payload's base sha. Main moves between the
-      # payload and the merge ref, and diffing against the payload then counts
-      # unrelated main commits as part of this PR: measured 2026-10-19, a
-      # backend-only PR selected the frontend suite and spent 333 s running it.
-      - name: Point origin/main at the merge ref's base
-        env:
-          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          BASE_SHA=$(python3 .github/scripts/required-ci.py pr-base "$EVENT_BASE")
-          git fetch --no-tags origin "+$BASE_SHA:refs/remotes/origin/main"
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version: "0.12.1"
-          enable-cache: true
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-      - name: Enable corepack
-        run: corepack enable
-      # Install BOTH dependency sets, unconditionally. ci-fast widens its OWN
-      # effective scope beyond the raw select() flags this workflow sees — an
-      # unmapped/unknown changed path (e.g. a new file, or a README edit) makes
-      # it run both the backend and frontend checks, and an i18n catalog edit
-      # widens it to backend — so any scope-gated install here could leave a
-      # dependency ci-fast needs absent and report the draft blocked (a false
-      # red on a change that touched nothing). Installing both removes the
-      # coupling instead of re-deriving ci-fast's rules here and drifting.
-      # This prep runs before ci-fast's budget starts: it is outside that
-      # budget, bounded only by this job's timeout.
-      # The frontend type check this job can select needs the backend set as
-      # well now, for the same reason — it builds the OpenAPI document out of
-      # the app. That widens who needs the two sets, not why they are
-      # unconditional.
-      - name: Install dependencies
-        run: |
-          (cd backend && uv sync --frozen --all-extras)
-          (cd frontend && pnpm install --frozen-lockfile)
-      # `--tier quick` picks the checks; the bounds are the runner's (see the
-      # job comment). The exit code decides, and its outcomes are not the same
-      # thing:
-      #
-      #   0  every check the tier selected passed.
-      #   1  a check failed. Both draft and ready PRs go red.
-      #   2  unknown, 3 blocked: the tier could not judge — the budget ran out,
-      #      a check had no input, or this job lacked something a check needs.
-      #      Keep the quick tier's warning-only handling for unjudged evidence;
-      #      the full post-submit gate remains responsible for deployment.
-      #      Every unjudged item is written into the step summary and warning
-      #      annotation; branch green does not mean "this was fully judged".
-      #   any other exit: no verdict at all — ci-fast never got to judge. A red,
-      #      since an `unknown` green would be indistinguishable from the case
-      #      above. What separates the two is the report ci-fast writes on every
-      #      verdict path, not the number on the shell's exit.
-      #
-      # GitHub has no third conclusion to report; the honest one is available
-      # only to a human reading the summary, which is why the summary is not
-      # optional here.
-      - name: ci:fast quick tier
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          CI_FAST_PRECOMMIT: uvx pre-commit
-        run: |
-          # Read the PR live from the API — NOT `gh pr view`, which needs a
-          # branch and is unreliable on this detached merge ref, and not the
-          # event payload, whose title an edit since then would make stale. The
-          # JSON goes to a FILE, never into a workflow expression, a shell
-          # variable or $GITHUB_OUTPUT: a title containing quotes, `$(...)` or a
-          # newline stays data, and ci-fast.py reads both the title and the
-          # draft flag from it.
-          #
-          # A failed read is not a verdict on the change either: this shell runs
-          # with errexit, so an unguarded `gh` would abort the step and redden
-          # the draft for the runner's own network. Hand ci-fast an unreadable
-          # file instead — it reports the title it could not read as unknown,
-          # which is what the summary below then lists.
-          if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"; then
-            echo "gh api could not read PR #$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
-          fi
-          report="$RUNNER_TEMP/ci-fast-report.json"
-          status=0
-          python3 .github/scripts/ci-fast.py --tier quick --budget 1200 --memory-mib 9216 \
-            --pull-request "$RUNNER_TEMP/pull.json" --report "$report" || status=$?
-          if [ "$status" -eq 0 ]; then
-            exit 0
-          fi
-          if [ "$status" -eq 1 ]; then
-            echo "::error::ci:fast quick tier found a failure: this PR's change is red."
-            exit 1
-          fi
-          # Any other exit counts as "could not judge" only if ci-fast's own
-          # report says so: it writes that report on every verdict path, unknown
-          # and blocked (and interrupted) included. An exit with no such report
-          # is a run that never reached a verdict — a bad argument (argparse
-          # leaves the shell with 2, the same code UNKNOWN uses), a python3 that
-          # never started, a process killed before its handler ran — and those
-          # go red, because the alternative is dressing a tier that judged
-          # nothing as the one thing this step says when it works.
-          verdict="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report" || true)"
-          case "$verdict" in
-            unknown | blocked) ;;
-            *)
-              echo "::error::ci:fast quick tier exited $status without a verdict of its own (report status: ${verdict:-none}) — nothing in it judged this change."
-              exit 1
-              ;;
-          esac
-          {
-            echo "### Branch quick tier: what it could not judge"
-            echo
-            echo "ci:fast exited $status (2 = unknown, 3 = blocked) and said which parts of"
-            echo "this change it did not judge: the list below is what this green does NOT"
-            echo "cover. This branch result permits merging, not deployment. The full"
-            echo "Required CI on main must pass before landed code can be deployed."
-            echo
-            if [ -f "$report" ]; then
-              # Rendering the report is not allowed to fail the step: this shell
-              # runs with errexit, and jq rejecting the file (or not being there)
-              # would redden a draft the verdict above already let through.
-              jq -r '.reasons[]? | "- \(.)"' "$report" || echo "- the report at $report could not be rendered here."
-              jq -r '.ran[] | select(.result != "pass") | "- `\(.id)`: \(.result) \(.reason // "")"' "$report" || true
-              jq -r '.not_run[]? | "- not run `\(.id)`: \(.reason)"' "$report" || true
-            else
-              echo "ci:fast wrote no report at $report: nothing in this tier was judged."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::ci:fast quick tier could not judge everything (exit $status). See this run's step summary; branch green is not deployment approval."
-          exit 0
-
   backend:
     needs: scope
-    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.backend == 'true'
+    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.backend == 'true'
     uses: ./.github/workflows/test.yml
     with:
-      integration: ${{ needs.scope.outputs.branch_heavy == 'true' }}
+      integration-files: ${{ needs.scope.outputs.integration_files }}
+      integration-shards: ${{ needs.scope.outputs.integration_shards }}
+      integration-floor: ${{ fromJSON(needs.scope.outputs.integration_floor) }}
       coverage-job: false
-
-  # ci-fast's black-box tests are their own suite: they used to run inside
-  # scope, which put their ~65–121s on the serial path of every Required run.
-  # A reusable workflow like every other suite — the docs site names the
-  # workflow behind a suite by reading this job's `uses:`.
-  cifast:
-    needs: scope
-    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.cifast == 'true'
-    uses: ./.github/workflows/ci-fast.yml
 
   # Whether a backend change moved the API surface the frontend compiles
   # against: the OpenAPI document printed at the diff's base and at this commit,
@@ -348,7 +130,7 @@ jobs:
   # prints each document with its own dependencies.
   api:
     needs: scope
-    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.backend == 'true' && needs.scope.outputs.frontend != 'true'
+    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.backend == 'true' && needs.scope.outputs.frontend != 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     outputs:
@@ -392,7 +174,7 @@ jobs:
   # otherwise skips every job after it.
   frontend:
     needs: [scope, api]
-    if: ${{ !cancelled() && needs.scope.outputs.tier == 'full' && (needs.scope.outputs.frontend == 'true' || needs.api.outputs.moved == 'true') }}
+    if: ${{ !cancelled() && needs.scope.outputs.tier != 'draft' && (needs.scope.outputs.frontend == 'true' || needs.api.outputs.moved == 'true') }}
     uses: ./.github/workflows/frontend.yml
 
   e2e:
@@ -406,22 +188,22 @@ jobs:
 
   cli:
     needs: scope
-    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.cli == 'true'
+    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.cli == 'true'
     uses: ./.github/workflows/cli.yml
 
   guards:
     needs: scope
-    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.guards == 'true'
+    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.guards == 'true'
     uses: ./.github/workflows/repo-guards.yml
 
   deploy:
     needs: scope
-    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.deploy == 'true'
+    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.deploy == 'true'
     uses: ./.github/workflows/deploy-scripts-test.yml
 
   harness:
     needs: scope
-    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.harness == 'true'
+    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.harness == 'true'
     uses: ./.github/workflows/harness-contract.yml
 
   mcp:
@@ -441,9 +223,9 @@ jobs:
   # shows the expression's own text, which reads as a red check on the PR page.
   #
   # The pair is also what keeps the tiers apart. `CI required` is the name branch
-  # protection and the merge gate read; only a merge_queue entry or a non-draft
+  # protection and the merge gate read; only a main push or a non-draft
   # pull_request can produce it. A draft run gets `CI required (draft quick)`, so
-  # its partial green can never satisfy the required check.
+  # its green, which judged no suite, can never satisfy the required check.
   #
   # Which job runs is keyed off the EVENT's own `draft` flag, not the scope
   # output: if `scope` fails its `tier` output is empty, and keying off that
@@ -454,7 +236,7 @@ jobs:
   # failures/tier_for), so a wrong tier is red, never a mislabelled pass.
   #
   # Both jobs need the whole `needs` list: the judge requires every suite to
-  # report `skipped` in the quick tier, and a job absent from `needs` is not
+  # report `skipped` in the draft tier, and a job absent from `needs` is not
   # `skipped` — it is `missing`, which the judge fails.
   required:
     name: CI required
@@ -463,12 +245,12 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    needs: [scope, api, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
+    needs: [scope, api, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote]
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
-    # runner queue behind the big jobs. A main push, same-repo PRs and the merge
-    # queue use the cheese-ci pool (docs/infrastructure.md); fork PRs and a
+    # runner queue behind the big jobs. A main push and same-repo PRs
+    # use the cheese-ci pool (docs/infrastructure.md); fork PRs and a
     # deleted fork stay on GitHub's machines.
-    runs-on: ${{ fromJSON((github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -505,29 +287,24 @@ jobs:
         working-directory: backend
         run: python3 -m scripts.assert_shards_complete "$RUNNER_TEMP/backend-artifacts" --plan backend-expected
       # This repo's own commit convention (docs/workflows.md §5); the platform
-      # leaves a hosted repo's titles to that repo. In the merge queue and on a
-      # main push it reads the squash commits that landed (or are about to),
-      # which is what main will say. On a PR it fetches the PR live rather than
-      # from the event payload, so re-running this job after editing the title
-      # sees the new one, and it passes a draft, whose title is still a
-      # placeholder. pr-title.yml re-runs this job when a PR is marked ready or
-      # retitled — which is why the draft job below has no title step: a draft's
-      # title is the platform's placeholder, nothing to check, and
-      # `ready_for_review` starts this job.
+      # leaves a hosted repo's titles to that repo. On a main push it reads the
+      # squash commits that landed, which is what main says. On a PR it fetches
+      # the PR live rather than from the event payload, so re-running this job
+      # after editing the title sees the new one; pr-title.yml re-runs it when a
+      # PR is retitled. The draft job below has no title step: a draft's title
+      # is the platform's placeholder, and `ready_for_review` starts this job.
       - name: Commit titles follow the convention
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           # A main push's batch base: the anchor scope resolved, empty when there
           # is none yet.
           PUSH_BASE_SHA: ${{ needs.scope.outputs.base }}
         # curl + python3, not gh + jq: the cheese-ci boxes have neither gh nor jq
         # (python3, git and curl only), and both calls are plain GETs.
         #
-        # A TLS reset on one of those GETs reddened a merge-queue entry (#4144:
+        # A TLS reset on one of those GETs reddened a run (#4144:
         # curl 35 and a JSONDecodeError), so retry transient network errors and,
         # when the read really fails, name the status instead of handing python
         # an empty string to parse. -f is what makes an HTTP error a failed
@@ -557,9 +334,7 @@ jobs:
               < "$RUNNER_TEMP/compare.json" \
               | python3 .github/scripts/check-commit-title.py ${3:-}
           }
-          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
-            check_compare "$BASE_SHA" "$HEAD_SHA"
-          elif [ "$GITHUB_EVENT_NAME" = push ] && [ -n "$PUSH_BASE_SHA" ]; then
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ -n "$PUSH_BASE_SHA" ]; then
             # The whole batch: every commit since the last green anchor,
             # including those whose own run was superseded while pending.
             # --warn-only: these titles are already on main, and a red gate would
@@ -592,7 +367,7 @@ jobs:
     # Seconds-long job on the same pool as the aggregators. Hosted runners'
     # queue wait would hold the run's concurrency group — and with it the next
     # batch — behind a machine this does not need.
-    runs-on: ${{ fromJSON((github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -672,48 +447,16 @@ jobs:
           echo "::warning::could not move refs/heads/main-green to $GITHUB_SHA (update HTTP ${code:-none}, create HTTP ${post_code:-not tried}); the next main run starts from the older anchor or the full tree, so it covers this batch too."
           echo "Main green anchor not moved: the next run covers this batch as well." >> "$GITHUB_STEP_SUMMARY"
 
-  # Merge queue only: fails `CI required` on the entry's sha as soon as any job
-  # of this run fails, instead of after the slowest suite, so the queue drops
-  # the entry and rebuilds the ones behind it right away (2026-10-17: 3-50
-  # minutes saved per failed entry). What it posts, and why it never fails the
-  # run, is .github/scripts/merge-group-fail-fast.py. Not in `required`'s
-  # needs: the aggregator must not wait for it. A hosted runner, not the
-  # cheese-ci pool: it is alive for the whole run, and four queue entries would
-  # hold four of the pool's six slots the aggregators need.
-  fail-fast:
-    name: Fail fast
-    # A main push is the post-submit gate; failing it early costs the same as
-    # the merge queue did, and holding the red until the slowest suite is over
-    # delays the next batch's view of main for no benefit. Not on a pull
-    # request: its `CI required` is the merge gate, and a run there is cheap to
-    # leave to the aggregator.
-    if: ${{ github.event_name == 'merge_group' || github.event_name == 'push' }}
-    permissions:
-      contents: read
-      actions: read
-      checks: write
-    runs-on: ubuntu-latest
-    timeout-minutes: 130
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          sparse-checkout: .github/scripts
-      - name: Fail CI required on this run's first failed job
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
-        run: python3 .github/scripts/merge-group-fail-fast.py
-
   required-draft:
     name: CI required (draft quick)
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.draft }}
     permissions:
       contents: read
-    needs: [scope, api, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
+    needs: [scope, api, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote]
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
-    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # runner queue behind the big jobs. Same-repo PRs use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

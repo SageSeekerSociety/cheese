@@ -25,7 +25,7 @@ def build() -> bytes:
         "app.domain.agent.harness.claude_code.entry",
         (
             "domain/agent/harness/claude_code/journal.py",
-            "domain/agent/harness/claude_code/protocol.py",
+            "domain/agent/harness/driven/lifecycle.py",
             "domain/agent/harness/claude_code/runner.py",
             "domain/agent/harness/claude_code/entry.py",
         ),

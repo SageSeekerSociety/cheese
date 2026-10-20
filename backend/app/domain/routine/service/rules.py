@@ -19,9 +19,9 @@ from sqlalchemy import func, select
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import settle_proposal
+from app.domain.agent_instance.adapters import project_team
 from app.domain.delivery.agent import instance_for_seat
 from app.domain.delivery.timer import deliver_at
-from app.domain.agent_instance.adapters import project_team
 from app.domain.feedback import claims as feedback_claims
 from app.domain.notice_meta import EVENT_ROUTINE_PROPOSED
 from app.domain.routine import schedule

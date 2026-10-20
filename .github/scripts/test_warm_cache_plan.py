@@ -538,7 +538,7 @@ class WorkflowTests(unittest.TestCase):
         # the hit is always empty, the unpack runs every time, and the rule
         # this job exists to keep would be broken while the step still looks
         # conditional.
-        self.assertEqual(cache_step_ids(job), ["harness-bins"])
+        self.assertIn("harness-bins", cache_step_ids(job))
         unpack = step_named(job, "Unpack the pinned harness binaries")
         self.assertEqual(
             step_field(unpack, "if"),

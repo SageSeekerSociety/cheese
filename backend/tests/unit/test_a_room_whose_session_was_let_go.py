@@ -24,7 +24,7 @@ class Counting(StubChannel):
         self.reads = 0
 
     async def call(self, handle, method, params):
-        if method == "events":
+        if method == "read":
             self.reads += 1
         return await super().call(handle, method, params)
 

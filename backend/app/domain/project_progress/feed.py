@@ -148,9 +148,7 @@ async def recent(
             now=now,
         )
         quiet = presentation.quiet_since(
-            shown,
-            running=False,
-            last_activity=last_said.get(task.id) or task.created_at,
+            shown, last_activity=last_said.get(task.id) or task.created_at
         )
         if quiet is not None and quiet + presentation.STALLED_AFTER <= now:
             about(task, STALLED, quiet + presentation.STALLED_AFTER, None)

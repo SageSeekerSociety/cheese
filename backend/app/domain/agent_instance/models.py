@@ -12,8 +12,8 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger,
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,

@@ -271,6 +271,7 @@ def _own_session(env) -> str:
         raise ValueError("This credential names no session")
     return str(session)
 
+
 _CONTRIBUTOR = {
     "type": "array",
     "items": {"type": "string"},
@@ -302,6 +303,12 @@ _ROUTINE_SPEC = (
     "只有做平台本身的项目里的频道能用"
 )
 _ROUTINE_TIMEZONE = _text("时区，默认 Asia/Shanghai")
+
+#: `cheese_task_state` 能说的状态和那句话的长度。后端 `room_task.models.TaskProgress`
+#: 与 `room_task.progress.NOTE_MAX_CHARS` 的副本：这个文件单独发到机器上，读不到后端。
+#: tests/contract/test_platform_tools.py 在它和后端对不上时红。
+TASK_PROGRESS_STATES = ("working", "waiting", "blocked")
+TASK_PROGRESS_NOTE_CHARS = 200
 
 #: `todo_write` 的上限。拒收的是后端 `PUT /topics/{id}/progress`（同样的两个数）；
 #: 这里写进工具说明，模型在调用之前就看得到。schema 只用表上别的工具已经在用的
@@ -614,7 +621,9 @@ PLATFORM_TOOLS = ToolTable(
                 "owner": _text(
                     "负责人 handle，就是说要做这件事的人；省略是你这一轮回应的那个人"
                 ),
-                "source_message_id": _text("任务所依据的消息 id；成员自己的 AI 必须引用主人发送的消息"),
+                "source_message_id": _text(
+                    "任务所依据的消息 id；成员自己的 AI 必须引用主人发送的消息"
+                ),
                 "here": {
                     "type": "boolean",
                     "description": "这条支线原地转为任务填 true；另开任务不填",
@@ -633,6 +642,26 @@ PLATFORM_TOOLS = ToolTable(
                 "contributor": _CONTRIBUTOR,
             },
             [],
+        ),
+        _tool(
+            "cheese_task_state",
+            "在任务里说你的活此刻在哪一步。看板上这件任务就显示你说的这一句，"
+            "直到你再说一次；平台不替你推断，你的一轮结束了它也照旧显示。"
+            "开工时设 working；起了构建、CI、长命令在等结果时设 waiting；"
+            "没有人帮忙走不下去时设 blocked（负责人会看到要他处理），要人回答的"
+            "问题照样用 cheese_ask 问。做完交给人审阅不用设：递卡"
+            "（cheese_accept_request）之后看板显示等审，卡在等审阅的时候这里报不了；"
+            "卡被退回或作废，任务回到在做，你再接着报。"
+            "情况变了就再设一次。note 用一句话说在做什么、在等什么或卡在哪。",
+            {
+                "state": {
+                    "type": "string",
+                    "enum": list(TASK_PROGRESS_STATES),
+                    "description": "working 在做；waiting 在等结果；blocked 卡住了",
+                },
+                "note": _text(f"一句话，{TASK_PROGRESS_NOTE_CHARS} 字以内；可以不填"),
+            },
+            ["state"],
         ),
         _tool(
             "cheese_accept_request",
@@ -666,7 +695,9 @@ PLATFORM_TOOLS = ToolTable(
                     "一行一条。只写需要人判断的地方（取舍、可能出乎意料的行为），"
                     "测试结果和验证过程写进 body，不在这里重复"
                 ),
-                "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"),
+                "body": _text(
+                    "改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"
+                ),
                 "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
                 "new_artifact": _text("清单上还没有的东西的真名"),
                 "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
@@ -706,7 +737,9 @@ PLATFORM_TOOLS = ToolTable(
                     "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例（新仓库、没有几条提交）就用提这件事的人在任务里说话的语言。"
                     "末尾的 (#N) 平台会加，不要写"
                 ),
-                "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"),
+                "body": _text(
+                    "改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"
+                ),
             },
             [],
         ),
@@ -875,7 +908,9 @@ PLATFORM_TOOLS = ToolTable(
                     "description": "private 只有管理员、提交者和提出它时"
                     "对话里的人看得见",
                 },
-                "user_said": _text("引用用户原话；用户没说过就不填，改填 user_said_absent"),
+                "user_said": _text(
+                    "引用用户原话；用户没说过就不填，改填 user_said_absent"
+                ),
                 "user_said_absent": {
                     "type": "boolean",
                     "description": "用户没有就这个问题说过话时填 true，"
@@ -1169,6 +1204,113 @@ PLATFORM_TOOLS = ToolTable(
 #: 替人答题的芝士（文档里的、个人的）才有的几样：它们以提问人的身份查东西，
 #: 凭的是这一问签出来的代行凭证（`sandbox_auth.DelegatedClaims`）。房间里的芝士
 #: 是自己在干活，没有「提问人」可代，所以不在 `PLATFORM_TOOLS` 里给它。
+TASK_WRITE_DESCRIPTION = (
+    "写一道题：写进草稿，用户在页面上同时看到每一格被填上。只改你给出的字段，"
+    "没给的保持原样。三种写法：给 draft 改那份草稿；给 task 改已发布的题目"
+    "（写进它的修改草稿，cheese_task_publish 之后才生效）；都不给就在 space 里"
+    "新建一份草稿（一份文件里有几道题，就分别新建几份，source 写文件名）。\n"
+    "\n"
+    "改草稿时带上读到的 version（当前页面或 cheese_task_get 里有）：用户在那之后"
+    "改过的格子保持用户的版本，返回里会列出来。\n"
+    "\n"
+    "字段：name 名称；description 题目详情（Markdown，整篇写入）；"
+    "description_edits 只改详情里的几处（每项 find 是原文里恰好出现一次的一段，"
+    "replace 是换成的文字），不要为了改一句重写整篇；submission 学生要交的东西；"
+    "rubric 评分要点；rubric_public 评分要点是否对学生可见；form 个人或团队；"
+    "team_min、team_max 团队人数；difficulty 初级、中级或高级；participant_limit "
+    "人数上限（0 是不限）；deadline 截止时间，写用户时区的「YYYY-MM-DD HH:MM」；"
+    "days_to_submit 领取后几天内提交；category 分类名称；tags 标签名称；"
+    "real_name 是否要求实名。分类和标签只能用空间里已有的名称。\n"
+    "\n"
+    "template 是空间里的一份模板名称（当前页面列着）：先按模板填好名称、详情和几项"
+    "设置，再写同一次给出的其他字段，和用户点「使用模板」一样。用户要按模板出题时，"
+    "先只给 template 写一次，看返回的详情骨架，再在骨架的小标题下面填内容；草稿里"
+    "已经有模板的骨架时，也在小标题下面填，不要整篇换掉。\n"
+    "\n"
+    "notes 是写给用户、要他确认的地方，挂在对应的格子上，比如原文没写清、你推断"
+    "出来的截止时间。\n"
+    "\n"
+    '例：新建 {"space": 12, "source": "Lab3.pdf", "name": "Lab 3 缓存模拟器", '
+    '"description": "用 C 写一个缓存模拟器……", "difficulty": "中级", '
+    '"deadline": "2026-11-08 23:59", "category": "实验", '
+    '"submission": [{"name": "csim.c", "kind": "文件"}], '
+    '"rubric": [{"item": "正确性", "points": 60, '
+    '"criteria": "8 组访存记录全部正确"}]}\n'
+    '例：改一处 {"draft": 41, "version": 7, "description_edits": '
+    '[{"find": "替换策略为 LRU", "replace": "替换策略为 LRU，并统计脏块写回次数"}], '
+    '"difficulty": "高级"}\n'
+    '例：改已发布的题 {"task": 88, "deadline": "2026-11-01 23:59", '
+    '"notes": [{"field": "deadline", "text": "按附件「第 9 周周日前」换算"}]}'
+)
+
+TASK_WRITE_FIELDS = {
+    "draft": {"type": "integer", "description": "要改的草稿 id"},
+    "template": {"type": "string", "description": "先套用的空间模板名称"},
+    "task": {"type": "integer", "description": "要改的已发布题目 id"},
+    "space": {"type": "integer", "description": "新建草稿所在的空间 id"},
+    "version": {"type": "integer", "description": "读到草稿时的 version"},
+    "source": _text("新建草稿时，它来自的文件名"),
+    "name": _text("名称，不超过 100 字"),
+    "description": _text("题目详情，Markdown"),
+    "description_edits": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"find": {"type": "string"}, "replace": {"type": "string"}},
+            "required": ["find", "replace"],
+        },
+    },
+    "submission": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "要交的东西"},
+                "kind": {"type": "string", "enum": ["文件", "文字"]},
+            },
+            "required": ["name", "kind"],
+        },
+    },
+    "rubric": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "评什么，不超过 64 字"},
+                "points": {"type": "integer"},
+                "criteria": {"type": "string", "description": "怎样算做到"},
+            },
+            "required": ["item", "points"],
+        },
+    },
+    "rubric_public": {"type": "boolean"},
+    "form": {"type": "string", "enum": ["个人", "团队"]},
+    "team_min": {"type": "integer"},
+    "team_max": {"type": "integer"},
+    "difficulty": {"type": "string", "enum": ["初级", "中级", "高级"]},
+    "participant_limit": {"type": "integer", "description": "0 是不限"},
+    "deadline": _text("YYYY-MM-DD HH:MM，用户时区；空字符串是不设截止时间"),
+    "days_to_submit": {"type": "integer"},
+    "category": _text("分类名称"),
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "real_name": {"type": "boolean"},
+    "notes": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "description": "挂在哪一格，用上面的字段名",
+                },
+                "text": {"type": "string"},
+            },
+            "required": ["field", "text"],
+        },
+    },
+}
+
+
 DELEGATED_TOOLS = ToolTable(
     (
         _tool(
@@ -1198,6 +1340,62 @@ DELEGATED_TOOLS = ToolTable(
             "列出提问人参加的题目：标题、简介、题目截止时间（deadline）、提问人自己的"
             "提交截止时间（myDeadline，领取被批准时定下，还没批准时为空）、"
             "是否已结束。时间都带着提问人所在时区的偏移。",
+        ),
+        _tool(
+            "cheese_task_search",
+            "在一个空间里搜题目：已发布的题目（名称或简介含所有关键词），以及提问人在"
+            "这个空间的草稿。出题前用它查有没有重复、参考已有题目的编号和写法。"
+            "query 留空列出最近的题目。",
+            {
+                "space": {"type": "integer", "description": "空间 id（见当前页面）"},
+                "query": _text("关键词，空格分开"),
+            },
+            ["space"],
+        ),
+        _tool(
+            "cheese_task_get",
+            "读一道题的全部字段：草稿（draft）或已发布的题目（task），二选一。字段名和 "
+            "cheese_task_write 写入时用的一样。草稿带 version：写入时原样带上，"
+            "用户在那之后改过的格子不会被覆盖。",
+            {
+                "draft": {"type": "integer", "description": "草稿 id"},
+                "task": {"type": "integer", "description": "已发布题目的 id"},
+            },
+        ),
+        _tool(
+            "cheese_task_write",
+            TASK_WRITE_DESCRIPTION,
+            TASK_WRITE_FIELDS,
+        ),
+        _tool(
+            "cheese_task_publish",
+            "发布一份草稿：新题目发布出去（空间需要审核时进入待审核），已发布题目的草稿"
+            "则把修改保存到题目上。和用户点「发布」「保存」是同一个操作。草稿发布后就"
+            "没有了，对话跟着题目走。用户说发布、保存时再调用。",
+            {"draft": {"type": "integer", "description": "草稿 id"}},
+            ["draft"],
+        ),
+        _tool(
+            "cheese_file_read",
+            "读用户交给你的文件（问题里写着「文件 id」），或题目上的附件。文本文件读全文；"
+            'PDF 一次读一段页（pages，如 "1-20"），返回总页数，没读完就接着读后面的页。'
+            "扫描页没有文字层，模型能看图时附上页面图片。",
+            {
+                "file": {"type": "integer", "description": "文件 id"},
+                "pages": _text("PDF 的页码范围，如 1-20；省略读前 20 页"),
+            },
+            ["file"],
+        ),
+        _tool(
+            "cheese_space_materials",
+            "空间资料库：不给 material 列出提问人能看的资料（id、名称、大小）；"
+            "给 material 读那一份的文字，PDF 用 pages 分段读。",
+            {
+                "space": {"type": "integer", "description": "空间 id"},
+                "material": {"type": "integer", "description": "资料 id"},
+                "pages": _text("PDF 的页码范围，如 1-20"),
+            },
+            ["space"],
         ),
     )
 )
@@ -1275,7 +1473,7 @@ def _ask_body(args: dict) -> dict:
     if to is not None and (
         not isinstance(to, list) or not to or not all(isinstance(h, str) for h in to)
     ):
-        raise ValueError("to must be a nonempty list of handles, or [\"all\"]")
+        raise ValueError('to must be a nonempty list of handles, or ["all"]')
     # Identity is supplied by the host credential, never an author in args.
     return {
         "questions": questions,
@@ -1500,6 +1698,12 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 **_given(args, "owner:owner_handle", "source_message_id"),
             },
         }
+    if tool == "cheese_task_state":
+        return {
+            "method": "PUT",
+            "path": here + "/task/progress",
+            "body": {"state": args["state"], **_given(args, "note")},
+        }
     if tool == "cheese_close_task":
         return {
             "method": "POST",
@@ -1594,13 +1798,35 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         # PDF 读成文字。房间里自己的文件才要话题。
         if path.startswith("library/") and project:
             query = urllib.parse.urlencode({"path": path})
-            return {"method": "GET", "path": f"/projects/{project}/library/text?{query}"}
+            return {
+                "method": "GET",
+                "path": f"/projects/{project}/library/text?{query}",
+            }
         if not topic:
             raise ValueError("Missing CHEESE_TOPIC")
         query = urllib.parse.urlencode({"path": path})
         return {"method": "GET", "path": f"/topics/{topic}/preview/file?{query}"}
     if tool == "cheese_my_tasks":
         return {"method": "GET", "path": "/tasks/joined"}
+    if tool == "cheese_task_search":
+        body = {"space": args["space"], "query": args.get("query") or ""}
+        return {"method": "POST", "path": "/task-drafts/agent/search", "body": body}
+    if tool == "cheese_task_get":
+        body = _given(args, "draft", "task")
+        if not body:
+            raise ValueError("cheese_task_get 需要 draft 或 task 之一")
+        return {"method": "POST", "path": "/task-drafts/agent/read", "body": body}
+    if tool == "cheese_task_write":
+        return {"method": "POST", "path": "/task-drafts/agent/write", "body": args}
+    if tool == "cheese_task_publish":
+        body = {"draft": args["draft"]}
+        return {"method": "POST", "path": "/task-drafts/agent/publish", "body": body}
+    if tool == "cheese_file_read":
+        body = {"file": args["file"], **_given(args, "pages")}
+        return {"method": "POST", "path": "/task-drafts/agent/file", "body": body}
+    if tool == "cheese_space_materials":
+        body = {"space": args["space"], **_given(args, "material", "pages")}
+        return {"method": "POST", "path": "/task-drafts/agent/materials", "body": body}
     if tool == "cheese_fetch":
         # 带上话题：不带的话每一次调用都会被判成 "Agent credential is invalid or
         # expired"——沙箱 token 是带作用域的。
@@ -1707,7 +1933,10 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         params.update(_given(args, "group"))
         if args.get("query"):
             params["q"] = args["query"]
-        return {"method": "GET", "path": "/run-records?" + urllib.parse.urlencode(params)}
+        return {
+            "method": "GET",
+            "path": "/run-records?" + urllib.parse.urlencode(params),
+        }
     if tool == "cheese_feedback_get":
         ref = urllib.parse.quote(str(args["feedback"]).strip(), safe="")
         return {"method": "GET", "path": f"/feedback/{ref}?topic={topic}"}
@@ -1872,9 +2101,7 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
     plus a `doc_versions` dict that outlives a single call. The text is what the
     agent acts on — ids, the next call to make — so it is written for that
     reader, not dumped JSON."""
-    table = next(
-        (t for t in (PLATFORM_TOOLS, DELEGATED_TOOLS) if tool in t), None
-    )
+    table = next((t for t in (PLATFORM_TOOLS, DELEGATED_TOOLS) if tool in t), None)
     if table is None:
         raise ValueError(f"Unknown platform tool: {tool}")
     # 拒在发出任何请求、碰任何机器之前：一张已经递出去的卡收不回来。
@@ -1953,7 +2180,11 @@ def _chat_get(args: dict, host) -> str:
     if not 1 <= length <= _CHAT_TEXT_BUDGET or offset < 0:
         raise PlatformToolError(f"length 取 1..{_CHAT_TEXT_BUDGET}，offset 不小于 0")
     topic = args.get("topic") or host.environ.get("CHEESE_TOPIC", "")
-    raw_id = args["message_id"].removeprefix("record:") if args["message_id"].startswith("record:") else None
+    raw_id = (
+        args["message_id"].removeprefix("record:")
+        if args["message_id"].startswith("record:")
+        else None
+    )
     path = (
         f"/topics/{urllib.parse.quote(topic, safe='')}/history/"
         + urllib.parse.quote(args["message_id"], safe="")
@@ -1981,11 +2212,26 @@ def _chat_get(args: dict, host) -> str:
 
 def _chat_record(item: dict) -> dict:
     import base64
-    cursor = base64.urlsafe_b64encode(json.dumps([item["at"], item["harness"], item["agent_handle"], item["sequence"]]).encode()).decode().rstrip("=")
+
+    cursor = (
+        base64.urlsafe_b64encode(
+            json.dumps(
+                [item["at"], item["harness"], item["agent_handle"], item["sequence"]]
+            ).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
     if "cursor" in item:
         cursor = item["cursor"]
-    return {"id": f"record:{cursor}", "created_at": item["at"], "author": item["agent_handle"],
-        "author_type": "participant", "kind": "event", "content": json.dumps(item["record"], ensure_ascii=False)}
+    return {
+        "id": f"record:{cursor}",
+        "created_at": item["at"],
+        "author": item["agent_handle"],
+        "author_type": "participant",
+        "kind": "event",
+        "content": json.dumps(item["record"], ensure_ascii=False),
+    }
 
 
 def _chat_page(tool: str):
@@ -2022,10 +2268,16 @@ def _chat_page(tool: str):
             for direction in ("before", "after"):
                 if params.get(direction):
                     params[direction] = params[direction].removeprefix("record:")
-            path = f"/topics/{urllib.parse.quote(topic, safe='')}/session-records?" + urllib.parse.urlencode(params)
+            path = (
+                f"/topics/{urllib.parse.quote(topic, safe='')}/session-records?"
+                + urllib.parse.urlencode(params)
+            )
         data = host.request({"method": "GET", "path": path})["data"]
         if args.get("kind") == "event" and tool != "cheese_chat_replies":
-            data = {"data": [_chat_record(item) for item in data["items"]], "has_more": data["next"] is not None}
+            data = {
+                "data": [_chat_record(item) for item in data["items"]],
+                "has_more": data["next"] is not None,
+            }
 
         def preview(block):
             text = _chat_message_text(block)
@@ -2381,7 +2633,9 @@ def _app_save(args: dict, host) -> str:
     )
     images = [
         {"data": data, "mimeType": "image/png"}
-        for _, data in sorted((saved.get("pictures") or {}).items(), key=lambda kv: -int(kv[0]))
+        for _, data in sorted(
+            (saved.get("pictures") or {}).items(), key=lambda kv: -int(kv[0])
+        )
     ]
     if not key:
         title = str(args.get("title") or "").strip() or "小程序"
@@ -2396,7 +2650,9 @@ def _app_save(args: dict, host) -> str:
             said += _LOOK.format(app=made) + "无论是否修改，最后都要把块放进文档。"
         return Said(said, images)
     version = saved.get("version") or 1
-    said = f"已保存小程序 {key} 的第 {version} 版。{unchecked}" + _point_at(host, key, version)
+    said = f"已保存小程序 {key} 的第 {version} 版。{unchecked}" + _point_at(
+        host, key, version
+    )
     if images:
         said += _LOOK.format(app=key)
     return Said(said, images)
@@ -2515,7 +2771,9 @@ def _doc_set(args: dict, host) -> str:
         data = error.get("data") or {}
         if data.get("reason") == "suggestions":
             # 有人留的修改建议还挂着：整份覆盖会把它们一起丢掉，服务拒绝。
-            why = str(error.get("message") or "文档里还有别人留下、没处理的修改建议").rstrip("。")
+            why = str(
+                error.get("message") or "文档里还有别人留下、没处理的修改建议"
+            ).rstrip("。")
             raise PlatformToolError(
                 f"没写进去，文档没有变：{why}。先请人接受或退回这些建议，"
                 "或者改用 cheese_doc_edit 逐处修改，别再整份覆盖。"
@@ -2783,7 +3041,10 @@ def _run_records(args: dict, host) -> str:
         return _turns_lines(body)
     if args.get("key") and args.get("kind"):
         meta = body.get("meta") or {}
-        lines = [f"[{body.get('kind')}] {body.get('content')}", f"最近一次：{body.get('at')}"]
+        lines = [
+            f"[{body.get('kind')}] {body.get('content')}",
+            f"最近一次：{body.get('at')}",
+        ]
         if meta.get("stack"):
             lines += ["调用栈：", str(meta["stack"])[:_FEEDBACK_LOG_BUDGET]]
         lines.append("出现在：")
@@ -2885,8 +3146,7 @@ def _turn_lines(turn: dict) -> str:
     lines.append(f"运行记录 {len(records)} 条：")
     for record in records:
         lines.append(
-            f"  [{record.get('kind')}] {record.get('content')}"
-            f"  {record.get('at')}"
+            f"  [{record.get('kind')}] {record.get('content')}  {record.get('at')}"
         )
     return "\n".join(lines)
 
@@ -3032,9 +3292,7 @@ def _feedback_claim(args: dict, host) -> str:
 
 def _feedback_release(args: dict, host) -> str:
     try:
-        data = host.request(
-            request_plan("cheese_feedback_release", args, host.environ)
-        )
+        data = host.request(request_plan("cheese_feedback_release", args, host.environ))
     except Exception as exc:
         status = getattr(exc, "status", None)
         why = _feedback_refusal(exc)
@@ -3109,9 +3367,7 @@ def _read_chat_attachment(host, path, request_id) -> bytes:
     try:
         size = int(
             "".join(
-                _machine_stdout(
-                    host, f"wc -c < {quoted}", f"{request_id}-size"
-                ).split()
+                _machine_stdout(host, f"wc -c < {quoted}", f"{request_id}-size").split()
             )
         )
     except ValueError as exc:
@@ -3201,6 +3457,10 @@ _STEPS = {
     "cheese_feedback_release": _feedback_release,
     "cheese_run_records": _run_records,
     "cheese_wait_environment": _wait_machine,
+    "cheese_task_write": lambda args, host: _task_step("cheese_task_write", args, host),
+    "cheese_task_publish": lambda args, host: _task_step(
+        "cheese_task_publish", args, host
+    ),
 }
 
 
@@ -3216,10 +3476,7 @@ def _say_task(args, data, env) -> str:
             "还有什么没定。然后，负责人已经说了要做什么就接着做；还没说，回复一两句说明"
             "文档整理了什么，停下来等他的话。"
         )
-    return (
-        f"已创建任务「{title}」，负责人 {owner}，由它自己对话里的 AI 队友去做。"
-    )
-
+    return f"已创建任务「{title}」，负责人 {owner}，由它自己对话里的 AI 队友去做。"
 
 
 def _say_notify(args, data, env) -> str:
@@ -3290,6 +3547,131 @@ def _say_my_tasks(args, data, env) -> str:
     if not data:
         return "提问人没有参加任何题目。"
     return json.dumps(data, ensure_ascii=False)
+
+
+def _said_by_platform(exc: Exception) -> str | None:
+    """What the platform said when it refused a request (any 4xx), or None."""
+    status = getattr(exc, "status", None)
+    if not isinstance(status, int) or not 400 <= status < 500:
+        return None
+    try:
+        return json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+#: The form's fields as 芝士 names them, for saying what a write changed.
+_TASK_FIELD_WORDS = {
+    "name": "name",
+    "description": "description",
+    "submissionSchema": "submission",
+    "rubric": "rubric",
+    "rubricPublic": "rubric_public",
+    "submitterType": "form",
+    "minTeamSize": "team_min",
+    "maxTeamSize": "team_max",
+    "rank": "difficulty",
+    "participantLimit": "participant_limit",
+    "deadline": "deadline",
+    "defaultDeadline": "days_to_submit",
+    "categoryId": "category",
+    "topics": "tags",
+    "requireRealName": "real_name",
+}
+
+
+def _task_step(tool: str, args: dict, host) -> str:
+    plan = request_plan(tool, args, host.environ)
+    try:
+        data = host.request(plan).get("data") or {}
+    except Exception as exc:
+        why = _said_by_platform(exc)
+        if why is None:
+            raise
+        raise PlatformToolError(f"未完成：{why.rstrip('。')}。") from exc
+    if tool == "cheese_task_publish":
+        task = data.get("task") or {}
+        if data.get("saved"):
+            return f"已保存题目 {task.get('id')}「{task.get('name')}」的修改。"
+        state = "已上线" if task.get("approved") == "APPROVED" else "待空间管理员审核"
+        return f"已发布题目 {task.get('id')}「{task.get('name')}」，{state}。"
+    changed = [
+        _TASK_FIELD_WORDS[k]
+        for k in data.get("changed") or []
+        if k in _TASK_FIELD_WORDS
+    ]
+    said = (
+        f"已新建草稿 {data.get('draft')}"
+        if data.get("created")
+        else f"已写入草稿 {data.get('draft')}"
+    )
+    said += f"（version {data.get('version')}）。"
+    said += f"改了：{'、'.join(changed)}。" if changed else "没有字段变化。"
+    if data.get("kept"):
+        said += (
+            f"用户在你读草稿之后改过 {'、'.join(data['kept'])}，这些保持用户的版本；"
+            "要改先 cheese_task_get 读最新的内容。"
+        )
+    if data.get("missing"):
+        said += f"发布前还缺：{'、'.join(data['missing'])}。"
+    if data.get("description"):
+        said += (
+            "套用模板后的详情如下，按它的小标题往下填（用 description_edits 或"
+            "保留小标题整篇写入）：\n" + str(data["description"])
+        )
+    return said
+
+
+def _say_task_search(args, data, env) -> str:
+    data = data or {}
+    lines = []
+    for t in data.get("tasks") or []:
+        state = {"APPROVED": "已发布", "NONE": "待审核", "DISAPPROVED": "未通过"}.get(
+            str(t.get("approved")), ""
+        )
+        due = (
+            f"，截止 {t['deadline'][:16].replace('T', ' ')}"
+            if t.get("deadline")
+            else ""
+        )
+        lines.append(
+            f"- 题目 {t.get('id')}「{t.get('name')}」{state}{due}：{t.get('intro') or ''}"
+        )
+    for d in data.get("drafts") or []:
+        what = f"题目 {d['taskId']} 的未保存修改" if d.get("taskId") else "新题目"
+        lines.append(f"- 草稿 {d.get('id')}「{d.get('name') or '未命名'}」（{what}）")
+    return "\n".join(lines) or "没有找到。换个关键词，或把 query 留空看最近的题目。"
+
+
+def _say_document(args, data, env):
+    data = data or {}
+    if data.get("unreadable") == "binary":
+        return (
+            f"{data.get('name')} 不是文本文件，也不是 PDF，读不出文字。"
+            "请用户转成 PDF 后重新上传。"
+        )
+    if data.get("unreadable"):
+        return f"{data.get('name')} 打不开，可能已损坏。"
+    head = f"{data.get('name')}"
+    if data.get("pages"):
+        head += f"（共 {data['pages']} 页，这里是第 {data.get('first')}–{data.get('last')} 页）"
+    tail = ""
+    if data.get("pages") and data.get("last", 0) < data["pages"]:
+        tail += f"\n\n还有第 {data['last'] + 1} 页起没有读：用 pages 接着读。"
+    if data.get("cut"):
+        tail += "\n\n文字太长，后面截掉了：缩小 pages 的范围再读。"
+    return Said(f"{head}\n\n{data.get('text') or ''}{tail}", data.get("images") or [])
+
+
+def _say_materials(args, data, env):
+    data = data or {}
+    if "materials" in data:
+        rows = [
+            f"- 资料 {m.get('id')}：{m.get('name')}"
+            for m in data.get("materials") or []
+        ]
+        return "\n".join(rows) or "这个空间的资料库是空的。"
+    return _say_document(args, data, env)
 
 
 def _say_fetch(args, data, env) -> str:
@@ -3493,6 +3875,9 @@ _SAY = {
         f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),
+    "cheese_task_state": lambda a, d, e: (
+        "看板上这件任务现在显示你说的状态，直到你再设一次。"
+    ),
     "cheese_describe": lambda a, d, e: (
         "验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
         f"{(d or {}).get('change_subject') or '（空）'}"
@@ -3522,6 +3907,10 @@ _SAY = {
     "cheese_memory_read": _say_memory_read,
     "cheese_attachment_read": _say_attachment_read,
     "cheese_my_tasks": _say_my_tasks,
+    "cheese_task_search": _say_task_search,
+    "cheese_task_get": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_file_read": _say_document,
+    "cheese_space_materials": _say_materials,
     "cheese_members": _say_members,
     "cheese_status": lambda a, d, e: _format_status(d or {}),
     "cheese_library_ls": _say_library,
@@ -3856,9 +4245,8 @@ def _flush_pre_push_reports() -> None:
         return
     pending = list(_pending_pre_push_reports.values())
     _pending_pre_push_reports.clear()
-    content = (
-        "⚠️ 这次提交的推前自检没过（它只是报告，不挡推送）：\n\n"
-        + "\n\n".join(pending)
+    content = "⚠️ 这次提交的推前自检没过（它只是报告，不挡推送）：\n\n" + "\n\n".join(
+        pending
     )
     try:
         message = _RoomMessage(content)
@@ -3942,7 +4330,13 @@ def _commit_as(repo: Path, task_dir: Path, data: dict) -> None:
     # project repository's `core.bare` there makes each task's checkout bare
     # too, and git refuses `add` in it. It belongs to the repository's own.
     bare = _git_task(
-        repo, "config", "--local", "--type=bool", "--default=false", "--get", "core.bare"
+        repo,
+        "config",
+        "--local",
+        "--type=bool",
+        "--default=false",
+        "--get",
+        "core.bare",
     )
     if bare.strip() == "true":
         own = Path(_git_task(repo, "rev-parse", "--absolute-git-dir").strip())
@@ -4025,7 +4419,9 @@ def _worktree_relative(path: str) -> str:
 #: `MAX_PAGE_ASSETS` — and the largest it takes (`library.MAX_FILE_BYTES`).
 PAGE_ASSET_LIMIT = 200
 PAGE_ASSET_MAX_BYTES = 10 * 1024 * 1024
-_CSS_REF = re.compile(r"""url\(\s*['"]?([^'")\s]+)['"]?\s*\)|@import\s+['"]([^'"]+)['"]""")
+_CSS_REF = re.compile(
+    r"""url\(\s*['"]?([^'")\s]+)['"]?\s*\)|@import\s+['"]([^'"]+)['"]"""
+)
 
 
 def _css_refs(text: str) -> list[str]:
@@ -4306,8 +4702,7 @@ def _installed_dirs(task_dir: Path) -> list[str]:
     return sorted(
         name
         for name in listed.split("\0")
-        if name.endswith("/")
-        and name.rstrip("/").rsplit("/", 1)[-1] in _INSTALLED_DIRS
+        if name.endswith("/") and name.rstrip("/").rsplit("/", 1)[-1] in _INSTALLED_DIRS
     )
 
 
@@ -4322,6 +4717,7 @@ def _still_prepared(task_dir: Path, stamp: Path, wanted: str) -> bool:
         )
     except (OSError, ValueError, KeyError, TypeError):
         return False
+
 
 # The files a project's dependencies are installed from, by name, wherever in
 # the tree they sit. Which of them a project's startup script reads is the
@@ -4952,8 +5348,13 @@ def _deliver_task_branch(
     # read back and handed to the room (`_flush_pre_push_reports`).
     pre_push_report = _pre_push_report_path(worktree)
     if not _git_task(worktree, "ls-remote", "origin", f"refs/heads/{branch}"):
-        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}",
-                  pre_push_report=pre_push_report)
+        _git_task(
+            worktree,
+            "push",
+            "origin",
+            f"{head}:refs/heads/{branch}",
+            pre_push_report=pre_push_report,
+        )
         return
     _git_task(
         worktree,
@@ -4968,8 +5369,13 @@ def _deliver_task_branch(
     if queued_pr:
         raise _BranchQueued(branch, queued_pr)
     if _is_ancestor(worktree, tip, head):
-        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}",
-                  pre_push_report=pre_push_report)
+        _git_task(
+            worktree,
+            "push",
+            "origin",
+            f"{head}:refs/heads/{branch}",
+            pre_push_report=pre_push_report,
+        )
         return
     own = _git_task(
         worktree, "reflog", "show", "--format=%H", f"refs/heads/{branch}"
@@ -5414,7 +5820,9 @@ def _check_page(a: argparse.Namespace) -> None:
     if a.pdf and not re.fullmatch(
         r"[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?", a.margin
     ):
-        print('[cheese] --margin 写一个或两个长度,如 "0" 或 "16mm 18mm"', file=sys.stderr)
+        print(
+            '[cheese] --margin 写一个或两个长度,如 "0" 或 "16mm 18mm"', file=sys.stderr
+        )
         sys.exit(2)
     body = {
         "html": html,
@@ -5805,13 +6213,13 @@ def build_parser() -> argparse.ArgumentParser:
             "每个任务使用独立的预览地址，应用可直接从根路径运行，\n"
             "无需为了预览修改资源路径。例如:\n"
             "  PIDFILE=\"/tmp/preview-$(pwd | cksum | cut -d' ' -f1).pid\"\n"
-            "  [ -s \"$PIDFILE\" ] && { kill \"$(cat \"$PIDFILE\")\" 2>/dev/null; rm -f \"$PIDFILE\"; sleep 1; }\n"
+            '  [ -s "$PIDFILE" ] && { kill "$(cat "$PIDFILE")" 2>/dev/null; rm -f "$PIDFILE"; sleep 1; }\n'
             "  ./node_modules/.bin/vite build --outDir dist || exit\n"
             "  curl -s --max-time 2 --noproxy '*' -o /dev/null 127.0.0.1:<端口> \\\n"
             "      && { echo '端口已经有人在用'; exit 1; }\n"
             "  nohup ./node_modules/.bin/vite preview --outDir dist --host 127.0.0.1 \\\n"
             "      --strictPort --port <端口> >/tmp/preview-<端口>.log 2>&1 &\\\n"
-            "  echo $! >\"$PIDFILE\"   # 收工只停这个进程,不按名字杀\n"
+            '  echo $! >"$PIDFILE"   # 收工只停这个进程,不按名字杀\n'
             "\n"
             "报之前,这条命令自己先敲一次 127.0.0.1:<端口>(浏览器式的 GET):应用已经\n"
             "在听就立刻过;还在起的等它应答,最多 --wait 秒(默认 30,--no-wait 跳过)。\n"
@@ -5943,9 +6351,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="改用这些宽度(可重复,最多 3 个;默认 400 和 1280)",
     )
-    pcheck.add_argument(
-        "--dark", action="store_true", help="按深色模式渲染(默认浅色)"
-    )
+    pcheck.add_argument("--dark", action="store_true", help="按深色模式渲染(默认浅色)")
     pcheck.add_argument(
         "--pdf",
         default=None,
@@ -5954,7 +6360,7 @@ def build_parser() -> argparse.ArgumentParser:
     pcheck.add_argument(
         "--margin",
         default="0",
-        help="PDF 页边距,一个值四边相同,两个值是「上下 左右」,如 \"16mm 18mm\"(默认 0)",
+        help='PDF 页边距,一个值四边相同,两个值是「上下 左右」,如 "16mm 18mm"(默认 0)',
     )
 
     ppull = sub.add_parser(
@@ -6093,8 +6499,7 @@ def main() -> None:
                 os.makedirs(parent, exist_ok=True)
             _raw_request(
                 "GET",
-                f"/projects/{project}/library/raw"
-                f"?path={urllib.parse.quote(a.name)}",
+                f"/projects/{project}/library/raw?path={urllib.parse.quote(a.name)}",
                 None,
                 out=out,
             )
@@ -6195,9 +6600,7 @@ def main() -> None:
                 print(f"[cheese] {a.path} 不是文本文件: {exc}", file=sys.stderr)
                 sys.exit(1)
         assets = (
-            _page_assets(a.path)
-            if a.path.lower().endswith((".html", ".htm"))
-            else []
+            _page_assets(a.path) if a.path.lower().endswith((".html", ".htm")) else []
         )
         if assets:
             folder = posixpath.dirname(rel)

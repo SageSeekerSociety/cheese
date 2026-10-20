@@ -151,9 +151,7 @@ async def prepare(
         # for the recipient routing, the replay counter and the 「没人在等」
         # bail, and a platform notice is an answer to none of those. It only
         # rides into the prompt and gets stamped.
-        notices = await notices_after(
-            session, place.conversation_id, after=cursor
-        )
+        notices = await notices_after(session, place.conversation_id, after=cursor)
         # Holds and waiting answers are kept per conversation, as inputs
         # are registered: a task's or a 支线's own, not its room's.
         held = await prep._held_blocks(

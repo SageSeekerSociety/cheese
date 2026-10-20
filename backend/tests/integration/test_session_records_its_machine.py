@@ -7,8 +7,6 @@ token passed to the next launch. The latter is metadata coverage; transcript
 hydration and actual model recall are outside this fixture.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -33,6 +31,7 @@ from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_central_room_sessions import screen_for, sessions
+from tests.support.devices import enrollment_team, place_in_project_team
 
 INSTALLED = {
     "workspace": "/project",

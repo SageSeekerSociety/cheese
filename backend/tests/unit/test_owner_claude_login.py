@@ -8,10 +8,6 @@ happens to carry, since a session placed on the answer authenticates with that
 login and nothing else.
 """
 
-from app.domain.device.wiring import sql_device_service
-from tests.support.devices import enrollment_team
-
-
 import json
 import os
 import subprocess
@@ -32,7 +28,9 @@ from app.domain.agent.place import (
 from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.user.models import User
+from tests.support.devices import enrollment_team
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32", reason="the fake build is a shell script"
@@ -199,7 +197,9 @@ def test_probe_uses_the_moved_logins_keychain_command(tmp_path):
     login = Path(env["FIRST_LOGIN_DIR"])
     command = login / "keychain/security"
     command.parent.mkdir()
-    command.write_text("#!/bin/sh\necho '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'\n")
+    command.write_text(
+        '#!/bin/sh\necho \'{"loggedIn":true,"authMethod":"claude.ai"}\'\n'
+    )
     command.chmod(0o700)
     other = tmp_path / "other-bin"
     other.mkdir()

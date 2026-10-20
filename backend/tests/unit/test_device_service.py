@@ -5,8 +5,6 @@ owner and mints a token, but grants NO agent identity. The agent a screen runs a
 resolved per project/topic at turn time, not stored on the device.
 """
 
-from tests.support.devices import enrollment_team
-
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -16,6 +14,7 @@ from app.core.errors import NotFoundError
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService, DeviceStatus
 from app.domain.device.supply import Supply
+from tests.support.devices import enrollment_team
 
 
 def _service(

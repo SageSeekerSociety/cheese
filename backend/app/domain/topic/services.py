@@ -31,6 +31,7 @@ from app.core.sentences import say
 from app.domain.conversation.services import room_of
 from app.domain.delivery_events import SettleCard
 from app.domain.event_about import EventAbout
+from app.domain.session_record.tail import SessionTail, tails
 from app.domain.topic.models import (
     NotifyLevel,
     RoomCleanup,
@@ -55,7 +56,6 @@ from app.domain.topic.ports import (
     SessionStore,
     WorkspacePaths,
 )
-from app.domain.session_record.tail import SessionTail, tails
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,

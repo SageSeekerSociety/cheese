@@ -7,9 +7,10 @@ Revises: e7a4913c62bf
 import logging
 import time
 
-from alembic import op
 import sqlalchemy as sa
 from migration_helpers import with_lock_retries
+
+from alembic import op
 
 revision = "f4b1298ca631"
 down_revision = "e7a4913c62bf"

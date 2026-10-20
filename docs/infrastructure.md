@@ -411,10 +411,11 @@ The repo is **squash-only** (merge commits and rebase are disabled; branches
 auto-delete on merge). Every PR lands as one squashed commit.
 
 
-`main` requires the GitHub Actions check `CI required` and the
-[Main CI and merge queue ruleset](https://github.com/SageSeekerSociety/cheese/rules/23778889).
-The ruleset has no bypass actors and carries only the required status check: it
-has no merge-queue rule, so a green PR merges directly with `gh pr merge --squash`.
+`main` requires the GitHub Actions check `CI required` through
+[ruleset 23778889](https://github.com/SageSeekerSociety/cheese/rules/23778889).
+The ruleset carries only the required status check: it has no merge-queue rule,
+so a green PR merges directly with `gh pr merge --squash`. The repository's
+admin role may always bypass it.
 Without a merge strategy, noninteractive `gh pr merge` fails; `--auto` would
 allow a later merge without another local review check.
 
@@ -433,8 +434,7 @@ waits for a later release.
 `.github/workflows/required-ci.yml` runs the quick tier on every pull request.
 Ready PRs aggregate as `CI required`; drafts aggregate as
 `CI required (draft quick)`. The full suites selected by
-`.github/scripts/required-ci-paths.json` run after a push to main. The workflow
-also accepts `merge_group` events, but the ruleset does not create queue entries.
+`.github/scripts/required-ci-paths.json` run after a push to main.
 Failed scope detection, failed or cancelled selected suites, and unexpected
 skips fail the full gate.
 
@@ -448,8 +448,8 @@ was queued. The push runs join one fixed concurrency group with
 `cancel-in-progress: false`, which is what keeps one run executing and one
 waiting. The deploy gate (`deploy/check-auto-deploy.py`) accepts that push run.
 PR titles are checked before merge; main push titles are reported as warnings
-with `--warn-only`, because those commits have already landed. Remote execution acceptance
-remains advisory pending the stability target in #1279; the MCP latest-version
+with `--warn-only`, because those commits have already landed. Remote execution
+acceptance is one of the gated suites on a main push; the MCP latest-version
 canary runs on schedule or manual dispatch.
 
 The feedback-time targets remain those in #1279.

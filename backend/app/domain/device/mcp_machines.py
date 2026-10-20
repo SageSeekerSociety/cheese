@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.project.models import Project
+from app.domain.remote_mcp.local import Machine
 from app.domain.team.models import Team, TeamUserRelation
 from app.domain.team.protocol import TeamMemberRole
-from app.domain.remote_mcp.local import Machine
 from app.domain.user.models import User
 
 

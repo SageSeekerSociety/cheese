@@ -12,8 +12,8 @@ from app.domain.agent_instance.own.ownership import (
     connections_of,
     owned_rows_in_project,
 )
-from app.domain.project.models import Project
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.project.models import Project
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle
 

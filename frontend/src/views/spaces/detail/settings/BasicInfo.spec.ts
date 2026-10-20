@@ -88,7 +88,7 @@ async function mountPage(currentUserId: number | null) {
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'root', component: { render: () => h('div') } },
-      { path: '/spaces', name: 'HomeSpaces', component: { render: () => h('div') } },
+      { path: '/inbox', name: 'inbox', component: { render: () => h('div') } },
       // 空间外壳（Detail）读回空间，这一栏挂在它下面，和真的路由树一样。
       {
         path: '/spaces/:spaceId',
@@ -186,7 +186,7 @@ describe('题目板删除入口', () => {
     await fireEvent.click(dialogButtonWith('spaces.detail.deleteSpace'))
     await waitFor(() => expect(delSpace).toHaveBeenCalledWith(SPACE_ID))
 
-    await waitFor(() => expect(router.currentRoute.value.name).toBe('HomeSpaces'))
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('inbox'))
     expect(router.currentRoute.value.name).not.toBe('SpacesDetail')
   })
 })

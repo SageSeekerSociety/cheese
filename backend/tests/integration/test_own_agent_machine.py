@@ -9,8 +9,6 @@ conversation has, like any agent's, which is its owner's computer only when
 that is the environment.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -28,7 +26,6 @@ from app.domain.agent.harness.channel import ScreenSetupError, mint_session_toke
 from app.domain.agent.owner_provider import OWNER_CHANNEL, OwnerChannel
 from app.domain.agent.place import OWN_LOGIN_ID
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
-from app.domain.project.models import Project
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow
@@ -36,9 +33,11 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
+from app.domain.project.models import Project
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 

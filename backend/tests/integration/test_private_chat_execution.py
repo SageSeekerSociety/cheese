@@ -20,8 +20,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.session_record.service import read
 from app.domain.topic.services import TopicService
-from tests.conftest import stub_compute
-from tests.conftest import StubChannel, settle_turn
+from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import project_service, registered
 
 pytestmark = pytest.mark.anyio

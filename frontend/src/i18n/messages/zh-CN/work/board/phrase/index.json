@@ -4,6 +4,7 @@
   "awaiting_answer": "等一个回答",
   "awaiting_checks": "等平台跑完检查",
   "awaiting_review": "等人审阅",
+  "blocked": "卡住了，等人帮忙",
   "bounced": "退回了，芝士要改",
   "checks_failed": "检查没过，等你决定",
   "closed": "已关闭",
@@ -15,5 +16,6 @@
   "resolving_conflict": "和主线有冲突，芝士正在处理",
   "running": "芝士在做",
   "started": "进行中",
-  "updating_branch": "平台正在更新分支"
+  "updating_branch": "平台正在更新分支",
+  "waiting": "在等结果"
 }

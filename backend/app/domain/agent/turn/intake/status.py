@@ -114,7 +114,7 @@ class WorkStatus:
         「有动静」有两样，取较新的那个：房间里落下了一帧（`idle_for_s`），或者
         读这一轮的那一路收到了 runner 的一声应答（`alive_for_s`，`note_alive`）。
         后者在长思考、跑长命令、等机器起来的时候一直在，而前者一帧都没有 —— 只数
-        帧才是红灯误亮的原因。两样都旧，才是真的没人应了。
+        帧会把一轮好好跑着的活判成停了。两样都旧，才是真的没人应了。
 
         This is the heartbeat half of the stall verdict (see
         `TopicService.stall_signal`), and deliberately not `topic_work()`:

@@ -132,17 +132,24 @@ class NativeInput(UuidPk, Base):
     settled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    #: 确认终止的时刻：那一段 work 被 Stop 打断，或者 native 报错结束了。它**不是**
-    #: 完成 —— `completed_at` 照旧为空，持有的 block 也照旧持有，因为答案到底被消费
-    #: 了没有仍然不知道。记它只为让座位不再被一段已经死掉的 work 永久占住。
+    #: 确认这一条**再也不会被读到**的时刻：runner 说它没读就被丢了（构建把它当作
+    #: 未读结算掉，或者进程带着它走了），或者平台放弃了一条结果不明的输入。只有
+    #: 没读过（`echoed_at` 为空）的输入会走到这里——读过的已经送达，什么都不用再记。
     terminated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    #: 终止原因：`interrupted` 或 `is_error`。
+    #: 为什么不会被读到：`dropped`、`exited`、`orphaned`、`task_closed`，或者
+    #: 构建自己对它的结算（`cancelled`、`discarded`、`refused`、`completed`）。
     termination: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: 这条输入被读进去之后，读它的那段工作失败了（「读了，然后失败」）：会话
+    #: 下一次回到空闲时报的失败，挂在它从上次空闲以来读进去的每一条输入上。它不
+    #: 改变送达——读到了就是送达——只是让「这句话有人读了却没得到回答」查得到。
+    failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 失败的种类（`harness/driven/lifecycle.py`）：`api_error`、`error`、
+    #: `interrupted`、`stuck`、`exited`。
+    failure: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class TimedDelivery(UuidPk, Base):

@@ -13,9 +13,9 @@ from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.agent_instance.models import AccountConnection, PersonalModelResource
-from app.domain.team.models import Team
 from app.domain.device.login_kind import ConnectionKind
 from app.domain.integration.service import refuse_internal_host
+from app.domain.team.models import Team
 
 #: Where an Anthropic API key is called.
 ANTHROPIC_API = "https://api.anthropic.com"

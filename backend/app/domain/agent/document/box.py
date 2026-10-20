@@ -35,7 +35,15 @@ from app.domain import project_material
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question, session
 from app.domain.agent.document.question import Asked
-from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
+from app.domain.agent.session_host.answer import (
+    Answer,
+    Thinking,
+    Tool,
+    ToolArgs,
+    ToolFailed,
+    Waiting,
+    Words,
+)
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import HostFull, Prompt, StartAbandoned
 from app.domain.agent.session_host.host import SessionHost
@@ -391,7 +399,9 @@ class Answers:
     stopped = staticmethod(question.is_stopped)
 
     async def took(
-        self, consumption: Consumption, item: Waiting | Words | Tool
+        self,
+        consumption: Consumption,
+        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
     ) -> None:
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})
@@ -399,7 +409,7 @@ class Answers:
             await self._consumptions.publish(
                 consumption, "delta", {"text": item.text, "at": item.at}
             )
-        else:
+        elif isinstance(item, Tool):
             await self._consumptions.publish(consumption, "tool", {"name": item.name})
 
     async def ended(

@@ -88,7 +88,7 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
         heard.append(read.event)
 
     with caplog.at_level(logging.WARNING, logger=session_host.logger.name):
-        await host._pump(ref, running, Subscription(), hand, False)
+        await host._pump(ref, running, Subscription(), hand)
 
     said = [r for r in caplog.records if r.name == session_host.logger.name]
     assert len(said) == 1, said

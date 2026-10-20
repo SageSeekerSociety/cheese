@@ -5,23 +5,19 @@
 也是它），范围换成我能看见的全部项目。为什么它不能由通知表拼出来，写在
 `room_task/awaiting.py` 的模块说明里。
 
-查询留在 API 层，不进领域：这一份要问项目、房间、活、验收卡、消息块、轮次六个地方，
+查询留在 API 层，不进领域：这一份要问项目、房间、活、验收卡、消息块五个地方，
 而项目看板那两份（`projects.list_project_tasks` / `topics.list_topics`）也是在路由里
 把批查询拼起来的 —— 同一个形状，同一个理由。查询本身在 `app/api/awaiting_deps.py`：
 推送（`routes/notifications_live.py`）读的也是它，而路由模块之间不互相 import（C4
 `routes-independent`）。
 """
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.awaiting_deps import all_waiting
-from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.domain.agent.chat import ChatService
 
 router = APIRouter(prefix="/awaiting-me", tags=["awaiting"])
 
@@ -30,7 +26,6 @@ router = APIRouter(prefix="/awaiting-me", tags=["awaiting"])
 async def list_awaiting_me(
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """我现在要处理的事项，最近动过的在前：项目里的事（`kind: "work"`），和等我回答
     的邀请、申请（`project_invite` / `team_invite` / `join_request`）。
@@ -41,6 +36,6 @@ async def list_awaiting_me(
     who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         return ok(page([], 0))
-    items = await all_waiting(db, chat, handle=who.handle, user_id=who.user_id)
+    items = await all_waiting(db, handle=who.handle, user_id=who.user_id)
     rows = [item.as_dict() for item in items]
     return ok(page(rows, len(rows)))

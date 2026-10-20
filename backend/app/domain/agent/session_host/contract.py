@@ -45,18 +45,6 @@ class StartAbandoned(SessionError):
     for it."""
 
 
-class InputProtocolUnavailable(SessionError):
-    """The session's runner predates the receipt protocol, so nothing can be
-    said to it whose reading would be known. Nothing was said; the session,
-    its conversation and its pending inputs stay as they are."""
-
-    def __init__(self):
-        super().__init__(
-            "The original runner needs a receipt protocol upgrade; its "
-            "conversation and pending inputs are retained"
-        )
-
-
 @dataclass(frozen=True)
 class SessionRef:
     """One session: its harness, and where it lives on the session host.
@@ -74,12 +62,21 @@ class SessionRef:
         return f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/{self.home}"
 
 
+#: Carries a teammate's thinking effort through the launch environment to where
+#: its session is started, which hands it to the harness as
+#: ``ModelSettings.effort`` (``room.sessions.starting``).
+EFFORT_ENV = "CHEESE_THINKING_EFFORT"
+
+
 @dataclass(frozen=True)
 class ModelSettings:
     """How the model is called, beyond which model it is. The defaults are the
     provider's own."""
 
     thinking: bool = True
+    #: How hard the model thinks (``gateway.EFFORTS``), one the model honours;
+    #: None leaves it to the model. Each harness says it its own way.
+    effort: str | None = None
     #: The longest answer, in tokens.
     max_tokens: int | None = None
     #: The context the conversation may grow to.
@@ -222,13 +219,15 @@ class SessionStatus:
     conversation: str = ""
     #: The work it is doing, while it works.
     work_id: str | None = None
-    #: Whether its runner can take an input whose receipt will be read.
-    takes_inputs: bool = True
     #: False when the runner answered that its harness process is gone.
     alive: bool = True
     #: The machine answered that this session's runner is not there at all
     #: (``host.attach``). Its process is gone with it.
     runner_gone: bool = False
+    #: The runner speaks an earlier protocol than this release reads: one the
+    #: previous release started (``host.attach``). It is not read; the next
+    #: start replaces it, resuming its conversation.
+    outdated: bool = False
 
 
 class InputUnconfirmed(SessionError):

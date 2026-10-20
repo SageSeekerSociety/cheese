@@ -10,11 +10,14 @@ import { computed, ref } from 'vue'
 
 import { useMessageFold } from '@/composables/useMessageFold'
 
+import AttachmentImage from '@/components/AttachmentImage.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { isAgentBlock } from '@/lib/authorship'
+import { artifactName, isImageBlock } from '@/lib/blockDisplay'
 import { clockTime } from '@/lib/dateText'
 
 const props = defineProps<{
@@ -23,18 +26,29 @@ const props = defineProps<{
   /** 这个人挑过的头像；没挑过是空串，画彩色首字母。 */
   avatar: string
   refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  /** 和这条消息一起发出去的附件：图片画成图，别的文件是一颗能下载的条。 */
+  files?: Block[]
+  /** 附件字节从哪个频道取。下载本身交给拿着这一栏的那一层，组件不自己去取。 */
+  topicId?: string
 }>()
+
+const emit = defineEmits<{ (e: 'download', block: Block): void }>()
 
 const foldEl = ref<HTMLElement | null>(null)
 const foldToggleEl = ref<HTMLElement | null>(null)
 const { foldable, expanded, clamped, foldPx, toggle } = useMessageFold(
   foldEl,
-  computed(() => true),
+  // 只收正文：一张图本身就是这条消息，没有「展开」可言。
+  computed(() => props.root.kind === 'message'),
   computed(() => props.root.content),
   // 展开后那颗「收起」在正文末尾，正文高过一屏就掉到视野外：交给它自己把按钮带回来。
   foldToggleEl
 )
 const time = computed(() => clockTime(new Date(props.root.created_at).getTime()))
+
+function download(block: Block) {
+  emit('download', block)
+}
 </script>
 
 <template>
@@ -48,27 +62,72 @@ const time = computed(() => clockTime(new Date(props.root.created_at).getTime())
         <span class="thread-root__name">{{ name }}</span>
         <span class="t-meta thread-root__time">{{ time }}</span>
       </div>
-      <div
-        ref="foldEl"
-        class="fold"
-        :class="{ 'fold-clamped': clamped }"
-        :style="clamped ? { maxHeight: `${foldPx}px` } : undefined"
-      >
-        <MarkdownView class="thread-root__text" :source="root.content" as="chat" :names="refs" />
-        <div v-if="clamped" class="fold-fade" aria-hidden="true" />
+      <!-- 只发了图、没有字的时候，这条消息本身就是那张图。 -->
+      <div v-if="root.kind === 'attachment'" class="thread-root__files">
+        <AttachmentImage
+          v-if="isImageBlock(root)"
+          :topic-id="topicId ?? null"
+          :path="root.content"
+          :alt="artifactName(root)"
+        />
+        <BaseButton
+          v-else
+          kind="ghost"
+          prepend-icon="mdi-file-document-outline"
+          append-icon="mdi-download-outline"
+          class="thread-root__file"
+          :title="t('work.room.message.downloadFile', { name: artifactName(root) })"
+          @click="download(root)"
+        >
+          <span class="text-truncate">{{ artifactName(root) }}</span>
+        </BaseButton>
       </div>
-      <button
-        v-if="foldable"
-        ref="foldToggleEl"
-        type="button"
-        class="fold-toggle"
-        :aria-expanded="expanded"
-        data-testid="thread-root-fold"
-        @click="toggle"
-      >
-        <v-icon size="16">{{ expanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
-        {{ expanded ? t('work.room.message.showLess') : t('work.room.message.showMore') }}
-      </button>
+      <template v-else>
+        <div
+          ref="foldEl"
+          class="fold"
+          :class="{ 'fold-clamped': clamped }"
+          :style="clamped ? { maxHeight: `${foldPx}px` } : undefined"
+        >
+          <MarkdownView class="thread-root__text" :source="root.content" as="chat" :names="refs" />
+          <div v-if="clamped" class="fold-fade" aria-hidden="true" />
+        </div>
+        <button
+          v-if="foldable"
+          ref="foldToggleEl"
+          type="button"
+          class="fold-toggle"
+          :aria-expanded="expanded"
+          data-testid="thread-root-fold"
+          @click="toggle"
+        >
+          <v-icon size="16">{{ expanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+          {{ expanded ? t('work.room.message.showLess') : t('work.room.message.showMore') }}
+        </button>
+        <!-- 和这条消息一起发出去的文件，按主线的样子跟在正文后面：图是图，别的
+             文件是一颗能下载的条。 -->
+        <div v-if="files?.length" class="thread-root__files">
+          <template v-for="file in files" :key="file.id">
+            <AttachmentImage
+              v-if="isImageBlock(file)"
+              :topic-id="topicId ?? null"
+              :path="file.content"
+              :alt="artifactName(file)"
+            />
+            <BaseButton
+              v-else
+              kind="ghost"
+              prepend-icon="mdi-file-document-outline"
+              append-icon="mdi-download-outline"
+              class="thread-root__file"
+              :title="t('work.room.message.downloadFile', { name: artifactName(file) })"
+              @click="download(file)"
+            >
+              <span class="text-truncate">{{ artifactName(file) }}</span>
+            </BaseButton>
+          </template>
+        </div>
+      </template>
     </div>
   </article>
 </template>
@@ -107,5 +166,15 @@ const time = computed(() => clockTime(new Date(props.root.created_at).getTime())
   line-height: var(--lh-15);
   color: var(--text);
   overflow-wrap: anywhere;
+}
+.thread-root__files {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+.thread-root__file {
+  max-width: 100%;
 }
 </style>

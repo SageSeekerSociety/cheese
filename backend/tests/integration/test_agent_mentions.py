@@ -281,9 +281,7 @@ def test_a_person_mentioned_by_a_teammate_is_told_the_teammates_own_name(client)
     assert mention["contextMetadata"]["authorName"] == "评审"
 
 
-def test_retrying_an_agent_publication_reports_no_fuse(
-    client, stub_hooks, monkeypatch
-):
+def test_retrying_an_agent_publication_reports_no_fuse(client, stub_hooks, monkeypatch):
     """A retry of a publication that already woke its teammate must not count
     itself against the hourly fuse and tell the room nobody was woken."""
     monkeypatch.setattr(mention, "AGENT_MENTIONS_PER_HOUR", 1)

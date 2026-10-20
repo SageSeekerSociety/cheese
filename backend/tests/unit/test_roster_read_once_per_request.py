@@ -5,10 +5,10 @@ import re
 import uuid
 from collections import Counter
 from contextlib import contextmanager
+from contextvars import copy_context
 
 import pytest
 from sqlalchemy import delete, event, text, update
-from contextvars import copy_context
 
 from app.core.query_watch import request_scope
 from app.core.request_facts import recall, remember

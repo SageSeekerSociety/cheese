@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.asked import Awaited
 from app.domain.block.indexed_rows import QUEUED_MESSAGE_ROWS, SHOWN_ROWS
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import READ_FAILED_META_KEY, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 
@@ -55,6 +55,20 @@ def queued_messages(since, topic_id=None):
     if topic_id is not None:
         query = query.where(Block.conversation_id == topic_id)
     return query.order_by(Block.created_at, Block.id)
+
+
+def read_failed_messages(since, topic_id):
+    """The messages of ``topic_id`` since ``since`` that were read into work
+    that then failed (`READ_FAILED_META_KEY`): read, and not answered."""
+    return (
+        select(Block)
+        .where(
+            Block.conversation_id == topic_id,
+            Block.created_at >= since,
+            Block.meta[READ_FAILED_META_KEY].as_string().is_not(None),
+        )
+        .order_by(Block.created_at, Block.id)
+    )
 
 
 async def message_reply_target(
@@ -90,9 +104,7 @@ async def notices_after(
     after: tuple[datetime, uuid.UUID] | None,
 ) -> list[Block]:
     """The platform notices a seat has not read, oldest first."""
-    return await BlockRepository(session).notices_after(
-        conversation_id, after=after
-    )
+    return await BlockRepository(session).notices_after(conversation_id, after=after)
 
 
 async def client_delivery_bundle(

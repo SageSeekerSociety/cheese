@@ -536,9 +536,9 @@ def reference(binary, layout, port):
 
 
 class RunnerSocket:
-    """The runner's socket, standing in: the one request the session's own
-    helpers make of it, `control`, passed to the session on its stdin as the
-    runner passes it (`claude_code.runner.Runner.dispatch`)."""
+    """The runner's socket, standing in: the requests the session's own helpers
+    make of it, passed to the session on its stdin as the runner passes them
+    (`claude_code.runner.Runner.dispatch`)."""
 
     def __init__(self, path):
         self.path = str(path)
@@ -548,12 +548,24 @@ class RunnerSocket:
         class Handler(socketserver.StreamRequestHandler):
             def handle(self):
                 request = json.loads(self.rfile.readline())
-                if request.get("method") != "control" or owner.session is None:
+                method = request.get("method")
+                params = request.get("params") or {}
+                if method == "apply_hooks" and owner.session is not None:
+                    # The helper that attaches a machine hands the session the
+                    # project's tool hooks; the runner applies them as flag
+                    # settings, so the next tool call fires them.
+                    answer = {
+                        "result": owner.session.control(
+                            {
+                                "subtype": "apply_flag_settings",
+                                "settings": {"hooks": params["hooks"]},
+                            }
+                        )
+                    }
+                elif method != "control" or owner.session is None:
                     answer = {"error": "Unknown Claude Code session operation"}
                 else:
-                    answer = {
-                        "result": owner.session.control(request["params"]["request"])
-                    }
+                    answer = {"result": owner.session.control(params["request"])}
                 self.wfile.write(json.dumps(answer).encode() + b"\n")
 
         self.server = socketserver.ThreadingUnixStreamServer(self.path, Handler)

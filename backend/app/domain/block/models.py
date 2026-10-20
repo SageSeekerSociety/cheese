@@ -66,8 +66,9 @@ class BlockKind(enum.StrEnum):
 
 
 # `meta` key carried by every new message/attachment that arrives as an input.
-# Its value is null while the input is pending, then the id of the agent turn
-# whose clean Stop showed the session had read it (BlockRepository.mark_consumed).
+# Its value is null while the input is pending, then the id of the work the
+# session read it into, stamped when its runner reported it read — a read
+# message is delivered, whatever the work did next (BlockRepository.mark_consumed).
 # Presence of the null key distinguishes a tracked pending input from a legacy
 # block created before turn accounting.
 #
@@ -80,12 +81,12 @@ class BlockKind(enum.StrEnum):
 # 查询/索引，而本仓多个 agent 并发改动，一次 alembic 分叉的代价高于一列的收益。
 CONSUMED_TURN_META_KEY = "consumed_turn"
 
-# How many turns have taken this block into a prompt — INCLUDING the ones that
-# died before finishing. `consumed_turn` above is stamped only by a turn that
-# completed, which is deliberate (a dead turn must not eat the message). The
-# cost of that correctness is invisible replay: a turn that keeps failing keeps
-# re-sending the exact same blocks, forever, and from the room it is
-# indistinguishable from "this topic is broken".
+# How many prompts have carried this block — INCLUDING the ones the session
+# never read. `consumed_turn` above is stamped only once the session read it,
+# which is deliberate (a prompt that never arrived must not eat the message).
+# The cost of that correctness is invisible replay: a session that keeps dying
+# before it reads keeps being re-sent the exact same blocks, and from the room
+# it is indistinguishable from "this topic is broken".
 #
 # 两个键分开，不是一个计数器兼职两件事：`consumed_turn` 决定**下一轮带什么**，
 # 这个键只决定**要不要把重放说出来**。合并成一个的话，"说出来"就得改动窗口语义，
@@ -98,6 +99,13 @@ PROMPT_ATTEMPTS_META_KEY = "prompt_attempts"
 # lives in memory, and a backend replaced mid-turn loses it while the session
 # on the machine runs on and stops against the new process.
 PROMPTED_TURN_META_KEY = "prompted_turn"
+
+# The block was read, and the work it was read into then failed — the kind of
+# failure (`harness/driven/lifecycle.py`). Reading delivers a message; it does
+# not answer it, and this is the one trace of a message that was read and got
+# no answer: what a task close names as unfinished, and what makes an edit of
+# it a question asked again (`read_failed`).
+READ_FAILED_META_KEY = "read_failed"
 
 # What this block has to say to 芝士, written by whoever created it — and absent
 # on the blocks that have nothing to say to it, which is most of them.
@@ -143,6 +151,11 @@ def checklist_text(items: list[dict], result: str | None) -> str:
 def consumed_turn(block: "Block") -> str | None:
     """Which turn already read this block into a prompt (None = still pending)."""
     return (block.meta or {}).get(CONSUMED_TURN_META_KEY)
+
+
+def read_failed(block: "Block") -> str | None:
+    """How the work this block was read into failed, if it did."""
+    return (block.meta or {}).get(READ_FAILED_META_KEY)
 
 
 def agent_notice(block: "Block") -> str | None:

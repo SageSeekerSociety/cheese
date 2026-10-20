@@ -426,13 +426,17 @@ def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
     # deferred-import: breaks the cycle session_host.host -> agent.compute
     from app.domain.agent.session_host.host import SessionHost
 
-    # One liveness policy for every harness (``docs/agent-liveness.md``): the
-    # room ends a turn on its evidence, whichever runner produced it.
-    policy = {
-        "hard_ceiling_s": settings.agent_turn_hard_ceiling_s,
-        "no_progress_s": settings.agent_no_progress_s,
-        "unread_grace_s": settings.agent_unread_grace_s,
-    }
+    # The room ends stuck work on its own clocks only for a harness whose
+    # runner does not (``Harness.reports_lifecycle``): one that reports in the
+    # lifecycle protocol is handed the same two limits when it is registered
+    # (`session_host.starting.register`) and ends it there.
+    def policy(name: str) -> dict:
+        own = not HARNESSES[name].reports_lifecycle
+        return {
+            "hard_ceiling_s": settings.agent_turn_hard_ceiling_s,
+            "no_progress_s": settings.agent_no_progress_s if own else 0.0,
+            "unread_grace_s": settings.agent_unread_grace_s if own else 0.0,
+        }
 
     # 一个骨架挂不挂得上一条通道，看它能不能把工具送到那条通道的手上。被
     # `CentralChannel` 包起来的，会话在中心机、手在执行机，所以只挂声明了
@@ -451,7 +455,7 @@ def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
     # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
     host = host or SessionHost()
     backends: list[RoomSessions] = [
-        RoomSessions(CentralChannel(DeviceChannel()), harness, host, **policy)
+        RoomSessions(CentralChannel(DeviceChannel()), harness, host, **policy(harness))
         for harness in HARNESSES
         if forwards(harness)
     ]
@@ -461,10 +465,10 @@ def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
     # the device transport.
     owned = {
         (CLAUDE_CODE, False): RoomSessions(
-            OwnerChannel(DeviceChannel()), CLAUDE_CODE, host, **policy
+            OwnerChannel(DeviceChannel()), CLAUDE_CODE, host, **policy(CLAUDE_CODE)
         ),
         (CLAUDE_CODE, True): RoomSessions(
-            AccountChannel(DeviceChannel()), CLAUDE_CODE, host, **policy
+            AccountChannel(DeviceChannel()), CLAUDE_CODE, host, **policy(CLAUDE_CODE)
         ),
     }
     return ComputePool(backends, owned)

@@ -94,6 +94,7 @@ const summary = computed(() => {
       <div class="tfm__row">
         <v-switch
           v-model="requireRealName"
+          data-agent-field="real_name"
           color="primary"
           density="compact"
           hide-details

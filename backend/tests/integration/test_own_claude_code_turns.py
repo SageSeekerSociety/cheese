@@ -20,7 +20,6 @@ from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.gateway_usage import OWN_ROUTE
-from app.domain.agent.harness.claude_code.events import Assembler
 from app.domain.agent.service import AgentResult
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
@@ -30,6 +29,7 @@ from app.domain.delivery.models import TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.usage.models import ResourceUsage
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
+from tests.support.claude_results import work_ended
 
 USAGE = {
     "input_tokens": 120,
@@ -59,14 +59,8 @@ def _state(project, topic, seat, route):
 
 
 def _result(seat, *records) -> AgentResult:
-    """The turn's records through the assembler; its last answer is the result."""
-    assembler = Assembler({}, session_id="native-session")
-    events = []
-    for record in records:
-        events = assembler.accept(record)
-    (result,) = events
-    assert isinstance(result, AgentResult)
-    return result
+    """The turn's records through the runner; how it ended is the result."""
+    return work_ended(seat, *records)
 
 
 def _finished(seat, **changes):

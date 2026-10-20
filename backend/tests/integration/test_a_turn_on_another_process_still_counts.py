@@ -3,9 +3,10 @@
 Two ``ChatService`` objects share one database and nothing else — no lock, no
 cache, exactly as two backend processes do. The authority on 「这一轮在跑」 is
 the open ``AgentTurn`` row, so the second service must recognise the first's
-turn from the row alone: the board reads the task as running, a message meant
-for it is merged into that turn rather than opening a second one beside it, and
-once the row closes the second service stops counting it. The old process-local
+turn from the row alone: a message meant for it is merged into that turn rather
+than opening a second one beside it, and once the row closes the second service
+stops counting it. The board is not one of the things that follows the turn: a
+task shows what its teammate last said, and an open turn does not change it. The old process-local
 ``hook_work`` could see none of that — the row is what carries 「在跑」 across
 processes.
 
@@ -110,8 +111,7 @@ def _a_room(client):
 
 
 def _a_reviewed_task(client):
-    """A started task alice reviews — she is on this task's list whichever way
-    the board reads it, and the board is what this test watches."""
+    """A started task alice reviews: its card waits on her, turn or no turn."""
     project, room, seat = _a_room(client)
     task = delivery_task(client, room)
     filed = client.post(
@@ -192,8 +192,7 @@ def _phrase(client, task_id: str) -> str | None:
 
 
 def _task_phrase(client, room: str, task_id: str) -> str | None:
-    """The task's board presentation — the one cell 「运行中」 is drawn in, and
-    the same facts `/awaiting-me` runs on."""
+    """The task's board presentation — the same facts `/awaiting-me` runs on."""
     r = client.get(f"/topics/{room}/tasks")
     assert r.status_code == 200, r.text
     for row in r.json()["data"]["data"]:
@@ -233,13 +232,11 @@ def test_a_message_from_another_backend_lands_in_the_running_turn(client):
     # The app is served by B: what the sidebar reads must come from the row.
     app.dependency_overrides[get_chat_service] = lambda: b
 
-    # The board — where 「运行中」 is drawn, and the same facts `/awaiting-me`
-    # uses — says the task is running, off the row B never cached. Without the
-    # row it would read its card's 「待你审阅」.
-    assert _task_phrase(client, room, task_id) == "running"
-    # So the card does not linger as a stale 「待你审阅」 in alice's list: the
-    # run B now sees is what took that item out of her hands.
-    assert _phrase(client, task_id) is None
+    # The board does not follow the turn: the task's teammate has said nothing
+    # about its work, so its card speaks — 「待你审阅」, on the board and in
+    # alice's list alike.
+    assert _task_phrase(client, room, task_id) == "awaiting_review"
+    assert _phrase(client, task_id) is not None
 
     # A message that lands on B is merged into A's turn: steered at the expected
     # work id and its seat, its input stamped seen_by that same seat.
@@ -266,12 +263,11 @@ def test_a_message_from_another_backend_lands_in_the_running_turn(client):
     # No second turn was opened beside A's.
     assert len(_rows(client, AgentTurn, conversation)) == 1
 
-    # The lifecycle ends it; A lets go. B stops counting it, the board stops
-    # calling it running, and a later message opens its own turn instead.
+    # The lifecycle ends it; A lets go. B stops counting it, and a later message
+    # opens its own turn instead.
     _close_row(client, work)
     client.portal.call(a.live.mark_turn_inactive, conversation, work)
     assert client.portal.call(b.has_running_turn, conversation) is False
-    assert _task_phrase(client, room, task_id) != "running"
     assert (
         client.portal.call(
             b.merge_into_running_turn, conversation, [], "又一句", "alice", None, seat

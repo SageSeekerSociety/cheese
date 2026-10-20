@@ -1,10 +1,10 @@
 """Failed-job log signatures that identify a main push's red as infrastructure flake.
 
-rerun-failed.py reruns a failed push to main automatically, because there is no
-pull request left to push a commit to. That is only safe when the log says the
-failure came from somewhere outside the commit: a connection the peer reset, a
-TLS handshake, a rate-limited API, a runner that vanished, a tool download that
-timed out. Anything else is left for a person to read — a retry that cures
+rerun-failed.py, when a `rerun-failed` dispatch names it, reruns a failed push to
+main, because there is no pull request left to push a commit to. That is only
+safe when the log says the failure came from somewhere outside the commit: a
+connection the peer reset, a TLS handshake, a rate-limited API, a runner that
+vanished, a tool download that timed out. Anything else is left for a person to read — a retry that cures
 nothing costs the failed job set again and delays the real diagnosis.
 
 `pattern` is a regular expression searched case-insensitively in one line of a

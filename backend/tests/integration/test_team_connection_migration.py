@@ -5,13 +5,12 @@ import uuid
 from pathlib import Path
 from threading import Thread
 
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
+from alembic import command
 from app.core.config import settings
-
 from tests.integration.migration_replay import database_at
 
 

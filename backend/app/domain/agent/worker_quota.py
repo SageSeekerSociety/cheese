@@ -12,11 +12,9 @@ the number its quota allows, as process environment:
 - `VITEST_MAX_FORKS` is what `frontend/vite.config.ts` sizes its own worker
   pool from (and what vitest's fork pool read before 4). Deliberately not
   `VITEST_MAX_WORKERS`: vitest applies that one AFTER everything else,
-  command-line flags included, so it would undo a harness's own decision —
-  `ci:fast` passes `--maxWorkers=1 --no-file-parallelism` from a memory
-  budget, and two 2 GB forks in a 3 GiB sandbox is the failure this whole
-  change is meant to prevent. Config is a default; a flag is somebody's
-  answer.
+  command-line flags included, so it would undo a run's own `--maxWorkers`,
+  and two 2 GB forks in a 3 GiB sandbox is the failure this whole change is
+  meant to prevent. Config is a default; a flag is somebody's answer.
 
 WHERE THE QUOTA COMES FROM. A platform sandbox's quota travels in the
 executor payload (`sandbox.cpus`): it is the same number `sandbox_host.limit`

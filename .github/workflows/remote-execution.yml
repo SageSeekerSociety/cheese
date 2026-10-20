@@ -2,14 +2,6 @@ name: Remote execution acceptance
 
 on:
   workflow_call:
-  push:
-    branches: [experiment/remote-execution]
-    paths:
-      - 'backend/**'
-      - 'cli/**'
-      - 'scripts/remote_execution/**'
-      - '.github/scripts/ci-test-evidence.py'
-      - '.github/workflows/remote-execution.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,9 +9,9 @@ permissions:
   packages: read
 
 concurrency:
-  # Keep each main and merge-group result, including runs still pending.
-  group: remote-execution-${{ (github.ref == 'refs/heads/main' || github.event_name == 'merge_group') && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'merge_group' }}
+  # Keep each main result, including runs still pending.
+  group: remote-execution-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   windows:
@@ -46,24 +38,13 @@ jobs:
           python -m pip install --quiet pytest
           python -m pytest tests/unit/session_machine --noconftest -q -p no:cacheprovider
 
+  # The private executor end to end: a scratch session in the private image,
+  # then turns through the runner. Its routing and authorization cases are
+  # integration and unit tests, which Backend Test runs; this job does not run
+  # them a second time.
   private-chat:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432/tcp
-        options: >-
-          --tmpfs /var/lib/postgresql/data:rw,size=1g
-          --health-cmd="pg_isready -h 127.0.0.1 -U postgres"
-          --health-interval=5s --health-timeout=5s --health-retries=10
-      redis:
-        image: mirror.gcr.io/library/redis:7-alpine
-        ports:
-          - 6379/tcp
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Let a session have its own namespace
@@ -110,32 +91,6 @@ jobs:
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_acceptance.py
           --output tmp/remote-execution/private-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Verify private chat routing and authorization
-        id: private_tests
-        working-directory: backend
-        env:
-          CHEESE_TEST_CLAUDE: ${{ github.workspace }}/scripts/remote_execution/node_modules/.bin/claude
-          TEST_PG_BASE: postgresql+asyncpg://postgres:postgres@localhost:${{ job.services.postgres.ports[5432] }}
-          REDIS_URL: redis://localhost:${{ job.services.redis.ports[6379] }}/0
-        run: >-
-          .venv/bin/pytest tests/integration/test_private_chat_execution.py
-          tests/unit/test_private_chat.py -q
-          tests/integration/test_central_room_sessions.py
-          tests/integration/test_llm_proxy.py
-          tests/unit/test_execution_bootstrap.py tests/unit/test_execution_transport.py
-          tests/unit/test_session_transfer.py tests/unit/test_resource_cleanup.py
-          tests/unit/test_compute_pool.py tests/unit/test_device_provider.py
-          --junitxml "$RUNNER_TEMP/private-chat.xml"
-      # This job installs tmux and the pinned claude itself, so a skip here is
-      # the install having gone wrong rather than a case that cannot run. The
-      # floor catches the other half: a selection that collapsed to a handful
-      # of cases and reported green anyway.
-      - name: Assert the private-chat selection actually ran
-        id: private_selection
-        working-directory: backend
-        run: >-
-          .venv/bin/python scripts/assert_suite_ran.py
-          "$RUNNER_TEMP/private-chat.xml" --at-least 170
       - name: Verify private turns through the runner
         id: private_terminal
         if: ${{ !cancelled() && steps.scratch.outcome == 'success' }}
@@ -143,36 +98,6 @@ jobs:
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/remote-execution/private-ci-terminal-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Produce private-chat CLEAN evidence
-        id: private_evidence
-        if: ${{ !cancelled() }}
-        env:
-          CI_STEPS_JSON: ${{ toJSON(steps) }}
-          EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: >-
-          python3 .github/scripts/ci-test-evidence.py
-          --suite private-chat
-          --source "$RUNNER_TEMP/private-chat.xml"
-          --output "$RUNNER_TEMP/ci-test-evidence/private-chat/evidence.json"
-          --run-id "$GITHUB_RUN_ID"
-          --run-attempt "$GITHUB_RUN_ATTEMPT"
-          --head-sha "$EVIDENCE_HEAD_SHA"
-          --tested-sha "$GITHUB_SHA"
-          --steps-json "$CI_STEPS_JSON"
-          --require-step scratch
-          --require-step private_tests
-          --require-step private_selection
-          --require-step private_terminal
-          --at-least 170
-      - name: Upload private-chat CLEAN evidence
-        if: ${{ !cancelled() && steps.private_evidence.outcome == 'success' }}
-        timeout-minutes: 3
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: ci-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}-private-chat
-          path: ${{ runner.temp }}/ci-test-evidence/private-chat/evidence.json
-          if-no-files-found: error
-          retention-days: 90
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         # Tolerated: this is debug output, and the account's artifact storage
         # filling up is not this change being broken. On 2026-09-16 it reported

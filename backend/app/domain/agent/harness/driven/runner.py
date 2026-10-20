@@ -468,7 +468,7 @@ class Runner(Generic[J]):  # noqa: UP046
             if (
                 self.closing
                 or self.ended()
-                or self.journal.last() > after
+                or self.has_news(after)
                 or self.live_mark() != seen
             ):
                 break
@@ -496,6 +496,11 @@ class Runner(Generic[J]):  # noqa: UP046
                 "blocks": [dict(block) for block in self.live_blocks],
             }
         return answer
+
+    def has_news(self, after: int) -> bool:
+        """Whether there is something past ``after`` to answer a read with: a
+        record, for a harness that reports nothing else."""
+        return self.journal.last() > after
 
     # --- letting an idle session go ------------------------------------------
 

@@ -36,8 +36,8 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     session_transfer,
 )
 from app.domain.agent.place import (
-    CLAUDE_KEYCHAIN_DIR,
     CHECKOUT_DIR,
+    CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
     SANDBOXES_DIR,

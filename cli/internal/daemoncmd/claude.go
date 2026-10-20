@@ -99,7 +99,7 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			}
 			if !installed {
 				ui.Warn("Claude Code is not set up on this machine yet.")
-				ui.Hint("`cheesehost claude login` to install and log it in")
+				ui.Hint("Open your team's Models page and use its subscription login command.")
 				return nil
 			}
 			ids, err := claudecode.Logins()
@@ -108,7 +108,7 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			}
 			if len(ids) == 0 {
 				ui.Warn("Claude Code is not logged in.")
-				ui.Hint("`cheesehost claude login` to log in")
+				ui.Hint("Open your team's Models page and use its subscription login command.")
 				return nil
 			}
 			for _, id := range ids {

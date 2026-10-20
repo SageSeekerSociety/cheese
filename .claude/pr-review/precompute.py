@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """precompute.py — facts about a PR that a reviewer would otherwise burn subagents on.
 
-pr-review.sh prepare runs this and appends its PRECOMPUTED.md to REVIEW.md. Four
+pr-review.sh prepare runs this and appends its PRECOMPUTED.md to REVIEW.md. Three
 sections, each a thing a script finds faster and more exactly than a model:
 
-  1. ci:fast — what already passed (do not re-run it) and what did not run (aim here).
-  2. Symbols — public Python/TS symbols the diff added, removed or changed, where the
+  1. Symbols — public Python/TS symbols the diff added, removed or changed, where the
      whole repo references them, where tests patch them, and exports that the deletion
      left with one reference (their own definition): dead code the diff made.
-  3. Trial merge — when the PR adds a repo-wide guard test (_KNOWN/_BASELINE) or its body
+  2. Trial merge — when the PR adds a repo-wide guard test (_KNOWN/_BASELINE) or its body
      names other PRs, merge them with the latest main in a scratch tree and run the new
      tests there. Two PRs that are each green alone can fail together.
-  4. prove-regression --auto and recompute-pr-claims on the PR's own tree and body.
+  3. prove-regression --auto and recompute-pr-claims on the PR's own tree and body.
 
 Nothing here decides anything: it prints facts and a section that cannot be computed
 says so. Exit 0 whenever PRECOMPUTED.md was written.
@@ -24,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import json
 import os
 import re
 import shlex
@@ -58,42 +56,7 @@ def show(repo, rev, path):
     return p.stdout.decode("utf-8", "replace") if p.returncode == 0 else None
 
 
-# ---------------------------------------------------------------- 1. ci:fast
-def section_ci(repo, tree, report, head=None):
-    out = ["## 1. ci:fast 报告"]
-    cands = [Path(report)] if report else []
-    for d in (tree, repo):
-        try:
-            cands.append(Path(d) / git(d, "rev-parse", "--git-path", "ci-fast-report.json").strip())
-        except RuntimeError:
-            pass
-    path = next((c for c in cands if c.is_file()), None)
-    if path is None:
-        return out + ["没有找到 ci-fast-report.json（审查机上没跑过 ci:fast）。没有已 pass 的检查可以信任，"
-                      "所有检查都按没跑过对待。"]
-    try:
-        rep = json.loads(path.read_text())
-    except (OSError, ValueError) as exc:
-        return out + [f"{path} 读不出来（{exc}），按没跑过对待。"]
-    rep_head = str(rep.get("head") or "")
-    if head and not (rep_head and (head.startswith(rep_head) or rep_head.startswith(head))):
-        return out + [f"`{path}` 是别的提交（{rep_head[:12] or '没写'}）的报告，不是钉住的 {head[:12]}，不采信。"
-                      "所有检查都按没跑过对待。"]
-    ran = rep.get("ran") or []
-    passed = [r["id"] for r in ran if r.get("result") == "pass"]
-    other = [r for r in ran if r.get("result") not in ("pass", "not_applicable")]
-    not_run = rep.get("not_run") or []
-    out.append(f"报告：`{path}`，状态 {rep.get('status')}，档 {rep.get('tier')}。")
-    out.append("")
-    out.append(f"- **已 pass（{len(passed)} 项，分身不要重跑）**：" + (", ".join(f"`{i}`" for i in passed) or "无"))
-    out.append(f"- **未 pass 的已跑项（{len(other)}）**：" + (
-        "; ".join(f"`{r['id']}` {r.get('result')} {r.get('reason', '')}".strip() for r in other) or "无"))
-    out.append(f"- **没跑（{len(not_run)} 项，审查靶心）**：" + (
-        "; ".join(f"`{r['id']}`（{r.get('reason', '')}）" for r in not_run) or "无"))
-    return out
-
-
-# --------------------------------------------------------------- 2. symbols
+# --------------------------------------------------------------- 1. symbols
 def py_symbols(src):
     try:
         tree = ast.parse(src)
@@ -172,7 +135,7 @@ def removed_identifiers(repo, base, head):
 
 
 def section_symbols(repo, base, head):
-    out = ["## 2. 公开符号与引用"]
+    out = ["## 1. 公开符号与引用"]
     try:
         names = git(repo, "diff", "--name-status", "--no-renames", base, head).splitlines()
     except RuntimeError as exc:
@@ -238,7 +201,7 @@ def section_symbols(repo, base, head):
     return out
 
 
-# ---------------------------------------------------------- 3. trial merge
+# ---------------------------------------------------------- 2. trial merge
 def added_test_files(repo, base, head):
     files, guard = [], []
     for line in git(repo, "diff", "--name-status", "--no-renames", base, head).splitlines():
@@ -313,7 +276,7 @@ def trial(repo, main_ref, merge_refs, head, test_files, test_cmd):
 
 
 def section_trial(repo, base, head, pr, body, main_ref, others, test_cmd):
-    out = ["## 3. 与 main / 其他 PR 的试合并"]
+    out = ["## 2. 与 main / 其他 PR 的试合并"]
     try:
         test_files, guards = added_test_files(repo, base, head)
     except RuntimeError as exc:
@@ -349,7 +312,7 @@ def section_trial(repo, base, head, pr, body, main_ref, others, test_cmd):
     return out
 
 
-# ------------------------------------------------------- 4. helper scripts
+# ------------------------------------------------------- 3. helper scripts
 def run_helper(cmd, cwd, timeout):
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
@@ -360,7 +323,7 @@ def run_helper(cmd, cwd, timeout):
 
 
 def section_helpers(tree, repo, base, head, pr_body, scripts, skip_prove, skip_claims):
-    out = ["## 4. 回归证明与正文数字复算"]
+    out = ["## 3. 回归证明与正文数字复算"]
     scripts = Path(scripts)
     for rel in ("backend/.venv", "frontend/node_modules", "node_modules", ".venv"):
         src, dst = Path(repo) / rel, Path(tree) / rel
@@ -393,7 +356,6 @@ def main(argv=None):
     ap.add_argument("--pr", default="0")
     ap.add_argument("--pr-body", default="")
     ap.add_argument("--scripts", default=str(Path(__file__).resolve().parents[1] / "scripts"))
-    ap.add_argument("--report", help="ci-fast-report.json (default: the git dir's)")
     ap.add_argument("--main-ref", default="origin/main")
     ap.add_argument("--other", action="append", default=[], metavar="LABEL=REF", help="extra merge (tests)")
     ap.add_argument("--test-cmd", help="command template with {files}")
@@ -405,16 +367,15 @@ def main(argv=None):
     body = Path(a.pr_body).read_text(errors="replace") if a.pr_body and Path(a.pr_body).is_file() else ""
     others = [tuple(o.split("=", 1)) for o in a.other]
     secs = []
-    for fn in (lambda: section_ci(a.repo, tree, a.report, a.head),
-               lambda: section_symbols(a.repo, a.base, a.head),
+    for fn in (lambda: section_symbols(a.repo, a.base, a.head),
                lambda: section_trial(a.repo, a.base, a.head, a.pr, body, a.main_ref, others, a.test_cmd),
                lambda: section_helpers(tree, a.repo, a.base, a.head, a.pr_body, a.scripts, a.no_prove, a.no_claims)):
         try:
             secs.append("\n".join(fn()))
         except Exception as exc:  # a section that breaks must not take the review down
             secs.append(f"（这一节没算出来：{type(exc).__name__}: {exc}）")
-    head = ("## Precomputed facts\n\n脚本在 prepare 时算好的事实，不是结论。第 1 节已 pass 的检查不要再让分身重跑；"
-            "没跑的和第 2、3 节的警告是靶心。\n")
+    head = ("## Precomputed facts\n\n脚本在 prepare 时算好的事实，不是结论。CI 的结果看 PR 上的检查，"
+            "这里不重复；第 1、2 节的警告是靶心。\n")
     Path(a.out).write_text(head + "\n" + "\n\n".join(secs) + "\n")
     print(a.out)
     return 0

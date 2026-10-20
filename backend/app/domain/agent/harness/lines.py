@@ -121,9 +121,7 @@ def message_prompt_line(
     )
 
 
-def addressee(
-    b, *, recipient: str | None, recipient_instance_id=None
-) -> str | None:
+def addressee(b, *, recipient: str | None, recipient_instance_id=None) -> str | None:
     """The seat a block names, when that is not the reader; else None.
 
     ``recipient``/``recipient_instance_id`` are who is reading. A caller that

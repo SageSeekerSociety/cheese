@@ -8,14 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
+from app.domain.task.inputs import APPROVE_APPROVED
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
     TaskMembership,
     TaskMentor,
+    TaskRubricItem,
     TaskSubmissionSchemaEntry,
     TaskTagRelation,
 )
+from app.domain.task.rubric import RubricLine
 from app.domain.task.submission_repositories import (
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
@@ -81,6 +84,22 @@ class TaskRepository:
             .order_by(Task.updated_at.desc(), Task.id.desc())
             .limit(limit)
         )
+        return (await self._session.execute(stmt)).scalars().all()
+
+    async def search_in_space(
+        self, space_id: int, words: Sequence[str], *, viewer_id: int, limit: int
+    ) -> Sequence[Task]:
+        """The space's 题目 whose name or intro holds every word, latest first:
+        the published ones, and the viewer's own however they were reviewed."""
+        stmt = select(Task).where(
+            Task.space_id == space_id,
+            Task.deleted_at.is_(None),
+            or_(Task.approved == APPROVE_APPROVED, Task.creator_id == viewer_id),
+        )
+        for word in words:
+            like = f"%{word}%"
+            stmt = stmt.where(or_(Task.name.ilike(like), Task.intro.ilike(like)))
+        stmt = stmt.order_by(Task.updated_at.desc(), Task.id.desc()).limit(limit)
         return (await self._session.execute(stmt)).scalars().all()
 
     async def list_tasks(
@@ -790,6 +809,37 @@ class TaskSubmissionSchemaRepository:
             new_entries.append(row)
         await self._session.flush()
         return new_entries
+
+
+class TaskRubricRepository:
+    """A task's 评分要点, kept in order and replaced as a whole."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_by_task_id(self, task_id: int) -> list[TaskRubricItem]:
+        stmt = (
+            select(TaskRubricItem)
+            .where(TaskRubricItem.task_id == task_id)
+            .order_by(TaskRubricItem.index.asc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def replace(self, task_id: int, items: Sequence[RubricLine]) -> None:
+        await self._session.execute(
+            delete(TaskRubricItem).where(TaskRubricItem.task_id == task_id)
+        )
+        for idx, line in enumerate(items):
+            self._session.add(
+                TaskRubricItem(
+                    task_id=task_id,
+                    index=idx,
+                    item=line.item,
+                    points=line.points,
+                    criteria=line.criteria,
+                )
+            )
+        await self._session.flush()
 
 
 class TaskAccessDomainRepository:

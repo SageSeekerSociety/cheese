@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ValidationError
 from app.core.sentences import NoticeText, say
 from app.domain.block.repositories import BlockRepository as BlockRepository
+from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_ACCEPT_CONFLICT as EVENT_ACCEPT_CONFLICT,
 )
@@ -79,7 +80,6 @@ from app.domain.notice_meta import (
 )
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository as ProjectRepository
-from app.domain.library import service as library
 from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,

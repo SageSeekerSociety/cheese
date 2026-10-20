@@ -64,7 +64,6 @@ class Live:
     acting: str
     #: The harness's own id for the conversation.
     conversation: str
-    takes_inputs: bool = True
     #: Which reading of the seat its events come from (FB-56): a reading
     #: that was replaced is refused where the room's books change.
     attachment: str = field(default="", compare=False)

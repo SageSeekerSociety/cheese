@@ -1,7 +1,7 @@
 name: Backend Test
 
 # Every job here but the last (`test-complete`, a seconds-long aggregation that
-# takes the cheese-ci pool for same-repo PRs and the merge queue) runs on a
+# takes the cheese-ci pool for same-repo PRs) runs on a
 # GitHub-hosted runner: the repository is public, so
 # hosted minutes are free and unlimited. Postgres and Valkey come as service
 # containers on the same images and host ports the cheese-ci pool's resident
@@ -23,20 +23,38 @@ on:
       ref:
         type: string
         default: ""
-      # Whether to run the 5-shard integration layer. Pull requests pass false
-      # from required-ci.yml and leave integration to merge_group; merge_group
-      # and deploy-prod keep the true default.
-      integration:
-        type: boolean
-        default: true
+      # The integration layer's test files, as a JSON array of paths relative
+      # to backend/, or the JSON string "all". A pull request passes the files
+      # its diff reaches (required-ci.py: integration_plan); an empty array
+      # means the layer is not due. Every other caller runs it whole.
+      integration-files:
+        type: string
+        default: '"all"'
+      # The integration layer's partitions, a JSON array of "index/count".
+      integration-shards:
+        type: string
+        default: '["0/5","1/5","2/5","3/5","4/5"]'
+      # The fewest integration cases the layer may select: the whole layer's
+      # floor, or 0 for a narrowed selection, whose files may hold none.
+      integration-floor:
+        type: number
+        default: 2400
       # Whether `test-complete` runs here. required-ci.yml passes false and runs
-      # the same shard-coverage check inside its own `CI required` job, which
-      # takes the merge queue's critical path one runner hop shorter (each hop
-      # waited ~14 min at p90 on 2026-10-17); deploy-prod's x86 run has no
-      # aggregator of its own and keeps the default.
+      # the same shard-coverage check inside its own `CI required` job, one
+      # runner hop shorter; deploy-prod's x86 run has no aggregator of its own
+      # and keeps the default.
       coverage-job:
         type: boolean
         default: true
+      # Trace the whole integration layer under coverage.py, one context per
+      # test, and upload each shard's function-to-test-files map: the input of
+      # a pull request's integration selection (coverage-map.yml, the only
+      # caller). Only the integration layer runs, and a red case does not fail
+      # the shard — a traced run is slower and trips the per-case ceiling, and
+      # what it produces is a map, not a verdict.
+      trace-coverage:
+        type: boolean
+        default: false
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to.
 permissions:
@@ -46,15 +64,11 @@ defaults:
   run:
     working-directory: backend
 
-# Cancel superseded runs on a PR, never in the merge queue. Keying queue runs
-# by sha gives each queued commit its own group, so one entry cannot cancel
-# another's run and leave the commit that lands on main with no result — a
-# cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
-# to one PR still supersede each other.
-# Required CI selects this suite from the queued commit's changed paths
-# and runs it against that commit, including changes since the PR was tested.
+# Cancel superseded runs on a PR; elsewhere each commit has its own group, so
+# one run cannot cancel another's and leave a commit with no result. PR refs
+# keep the ref key, so repeated pushes to one PR supersede each other.
 concurrency:
-  group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}${{ inputs.trace-coverage && '-traced' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -64,6 +78,7 @@ jobs:
   # to queue for its own runner and check out the tree for well under two
   # minutes of work, and a run's wall clock is mostly that queue.
   static:
+    if: ${{ !inputs.trace-coverage }}
     runs-on: ubuntu-latest
     # Measured median 1.6m for lint and 1.8m for migration-heads as separate
     # jobs; the margin covers a cold uv cache without leaving a stuck run.
@@ -99,19 +114,18 @@ jobs:
       # From here each check runs whether or not the one before it passed:
       # they were separate jobs, and one red step must not hide another's
       # verdict.
-      # The same hooks a developer's commit runs, read from
-      # .pre-commit-config.yaml. Before this, CI and the local gate were two
-      # hand-maintained lists that agreed only as long as someone remembered to
-      # update both. Each hook cds into backend/ on its own, so these run from
-      # the workspace root rather than under this job's `defaults`. ruff-format
-      # is deliberately not here: it is a fixer on a developer's commit, and
-      # layout is not something CI fails a change for.
+      # The hooks read from .pre-commit-config.yaml, so CI and the local list
+      # cannot drift apart. Both are `stages: [manual]`: a commit only fixes the
+      # staged files (ruff-fix), and the whole-tree verdict — lint, import
+      # order, layout, types — is here. Each hook cds into backend/ on its own,
+      # so these run from the workspace root rather than under this job's
+      # `defaults`.
       - name: Lint and type-check (pre-commit hooks)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         run: |
-          uvx pre-commit run --all-files --show-diff-on-failure ruff
-          uvx pre-commit run --all-files pyright
+          uvx pre-commit run --all-files --hook-stage manual --show-diff-on-failure ruff
+          uvx pre-commit run --all-files --hook-stage manual pyright
 
       # A check that reports "clean" because it never ran is the failure this
       # job exists to prevent, and this one is easy to break silently: it reads
@@ -159,19 +173,22 @@ jobs:
       - name: OpenAPI document builds and untyped ratchet holds
         run: uv run python -m scripts.export_openapi --check
 
+      # The plan holds exactly what the shards are meant to run: with a
+      # narrowed integration selection, the same files the shards filter to.
       - name: Independently collect every required backend case
         id: collect
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
-          EXPECT_INTEGRATION: ${{ inputs.integration && github.event_name != 'pull_request' }}
+          INTEGRATION_FILES: ${{ inputs.integration-files }}
         run: |
           mark_args=()
-          if [ "$EXPECT_INTEGRATION" != true ]; then
+          if [ "$INTEGRATION_FILES" = '[]' ]; then
             mark_args=(-m "not integration")
           fi
+          printf '%s' "$INTEGRATION_FILES" > "$RUNNER_TEMP/integration-files.json"
           uv run python -m pytest tests/ --collect-only -q \
             --ignore=tests/forgejo -k 'not kotlin' "${mark_args[@]}" \
-            -p scripts.ci_shard \
+            -p scripts.ci_shard --ci-integration-files="$RUNNER_TEMP/integration-files.json" \
             --ci-selection-output="$RUNNER_TEMP/backend-expected"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -201,16 +218,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --test tests/extension/*.test.ts
 
-      - name: Exactly one alembic head
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: |
-          uv run alembic heads
-          heads="$(uv run alembic heads | grep -c '(head)')"
-          if [ "$heads" != "1" ]; then
-            echo "::error::alembic has $heads heads — parallel migrations forked the chain. Rechain your new migration onto the current head (or run 'uv run alembic merge heads') before merging."
-            exit 1
-          fi
-
       # Judges only the migrations this PR adds, against origin/main's models
       # (is a dropped column still mapped by the release that keeps serving
       # while migrations run?). The merge base it needs came from the fetch
@@ -223,13 +230,14 @@ jobs:
         run: python3 .claude/scripts/check-migration-safety.py
 
   test:
+    if: ${{ !inputs.trace-coverage }}
     runs-on: ${{ inputs.runner }}
     name: ${{ matrix.layer }} (${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Two pure shards: at one, the pure layer was often the merge queue's
+          # Two pure shards: at one, the pure layer was often the run's
           # slowest job, CPU-bound on its runner. Go back to one if the queue's
           # wait for a runner grows by more than the second shard saves.
           - {layer: pure, shard: '0/2', floor: 4000, timeout: 10}
@@ -298,8 +306,21 @@ jobs:
           echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
           echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
 
+      # The .deb files of the tools below, saved on main by warm-caches.yml
+      # (its harness-bins job, on the same arm64 image) and read here only:
+      # with them ensure-apt.sh installs with dpkg and opens no apt, which on a
+      # fresh hosted VM is an `apt-get update` every job. A miss is apt as before.
+      - name: Name the cached tool packages
+        id: apt-debs
+        run: echo "key=apt-debs-v1-${ImageOS:-self}-${ImageVersion:-0}-$(uname -m)-bubblewrap-iproute2-iptables-lsof-ripgrep-tmux-zsh" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/cheese-apt-debs
+          key: ${{ steps.apt-debs.outputs.key }}
+
       - name: Ensure required test tools
         run: |
+          export CHEESE_APT_DEBS="$HOME/.cache/cheese-apt-debs"
           # bubblewrap: a Cloud session's executor runs in its sandbox, whose
           # network the machine connects with iproute2 and iptables as root.
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
@@ -587,21 +608,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Heavy DB-backed integration shards: deferred to merge_group (and deploy-prod)
-  # when inputs.integration is false or the event is pull_request.
+  # The DB-backed integration layer, over the files `integration-files` names,
+  # in the partitions `integration-shards` lists. Not due when the selection is
+  # empty: a matrix cannot be empty, so the job is skipped instead.
   integration:
-    if: ${{ inputs.integration && github.event_name != 'pull_request' }}
+    if: ${{ inputs.integration-files != '[]' }}
     runs-on: ${{ inputs.runner }}
-    name: ${{ matrix.layer }} (${{ matrix.shard }})
+    name: integration (${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {layer: integration, shard: '0/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '1/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '2/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '3/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '4/5', floor: 2400, timeout: 15}
+        shard: ${{ fromJSON(inputs.integration-shards) }}
     env:
       REDIS_URL: redis://localhost:6389/0
       JWT_SECRET: test-secret
@@ -643,8 +660,21 @@ jobs:
           echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
           echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
 
+      # The .deb files of the tools below, saved on main by warm-caches.yml
+      # (its harness-bins job, on the same arm64 image) and read here only:
+      # with them ensure-apt.sh installs with dpkg and opens no apt, which on a
+      # fresh hosted VM is an `apt-get update` every job. A miss is apt as before.
+      - name: Name the cached tool packages
+        id: apt-debs
+        run: echo "key=apt-debs-v1-${ImageOS:-self}-${ImageVersion:-0}-$(uname -m)-bubblewrap-iproute2-iptables-lsof-ripgrep-tmux-zsh" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/cheese-apt-debs
+          key: ${{ steps.apt-debs.outputs.key }}
+
       - name: Ensure required test tools
         run: |
+          export CHEESE_APT_DEBS="$HOME/.cache/cheese-apt-debs"
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
           echo "CHEESE_TEST_SANDBOX_HOST=1" >> "$GITHUB_ENV"
           "$GITHUB_WORKSPACE"/.github/scripts/sandbox-disk.sh
@@ -670,14 +700,15 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --all-extras
 
+      # Through the service container's own psql, as the layers above do: a
+      # client installed here would be one more apt run per job.
       - name: Give this run an empty database
         env:
-          PGPASSWORD: postgres
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh postgresql-client
-          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
-          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
 
       - name: Run database migrations
@@ -776,23 +807,48 @@ jobs:
           echo "CHEESE_CI_POSTGRES_PID=$pid" >> "$GITHUB_ENV"
 
       - name: Run the selected layer partition
-        timeout-minutes: ${{ matrix.timeout }}
+        timeout-minutes: ${{ inputs.trace-coverage && 30 || 15 }}
+        continue-on-error: ${{ inputs.trace-coverage }}
         env:
-          TEST_LAYER: ${{ matrix.layer }}
+          TRACE: ${{ inputs.trace-coverage }}
+          TEST_LAYER: integration
+          INTEGRATION_FILES: ${{ inputs.integration-files }}
           TEST_SHARD: ${{ matrix.shard }}
+        # A narrowed selection names its files to pytest, so collection does
+        # not import the rest of the layer; the plugin filters to the same set
+        # the plan was collected with either way.
         run: |
           mkdir -p "$RUNNER_TEMP/backend-results"
           set -o pipefail
+          printf '%s' "$INTEGRATION_FILES" > "$RUNNER_TEMP/integration-files.json"
+          mapfile -t targets < <(python3 -c 'import json,sys; f=json.load(open(sys.argv[1])); print("\n".join(["tests/"] if f == "all" else f))' "$RUNNER_TEMP/integration-files.json")
+          with=(); trace=()
+          if [ "$TRACE" = true ]; then
+            mkdir -p "$RUNNER_TEMP/coverage"
+            export COVERAGE_FILE="$RUNNER_TEMP/coverage/.coverage"
+            with=(--with pytest-cov==7.0.0 --with coverage==7.10.7)
+            trace=(--cov=app --cov=scripts --cov-context=test --cov-report=)
+          fi
           uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" \
-            -- uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+            -- uv run "${with[@]}" python -m pytest "${targets[@]}" "${trace[@]}" -m "$TEST_LAYER" -k 'not kotlin' \
             --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
+            --ci-integration-files="$RUNNER_TEMP/integration-files.json" \
             --ci-selection-output="$RUNNER_TEMP/backend-results" \
             -p scripts.ci_evidence --ci-evidence-dir="$RUNNER_TEMP/backend-results" \
             --reruns 1 --reruns-delay 1 \
             --dist loadfile --no-loadscope-reorder --tb=short --durations=30 \
             --junitxml="$RUNNER_TEMP/backend-results/results.xml" 2>&1 \
-            | tee "$RUNNER_TEMP/backend-results/pytest.log"
+            | tee "$RUNNER_TEMP/backend-results/pytest.log" && status=0 || status=$?
+          # A narrowed selection can name files that hold no integration case,
+          # or leave this shard none after the split: pytest says "no tests
+          # collected" (5). The plan check in CI required still holds every
+          # planned case to having run.
+          if [ "$status" = 5 ] && [ "$INTEGRATION_FILES" != '"all"' ]; then
+            echo "No integration case of the narrowed selection landed on this shard."
+            status=0
+          fi
+          exit "$status"
 
       - name: Annotate the shard's failing cases
         if: ${{ failure() }}
@@ -800,6 +856,21 @@ jobs:
           uv run python -m scripts.report_failed_cases
           "$RUNNER_TEMP/backend-results/results.xml"
           --log "$RUNNER_TEMP/backend-results/pytest.log"
+
+      - name: Map which test files executed each function
+        if: ${{ !cancelled() && inputs.trace-coverage }}
+        run: >-
+          uv run --with coverage==7.10.7 python ../.github/scripts/coverage_map.py build
+          "$RUNNER_TEMP/coverage/.coverage" --backend . --out "$RUNNER_TEMP/coverage/shard.json"
+
+      - name: Preserve the shard's map
+        if: ${{ !cancelled() && inputs.trace-coverage }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-shard-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/coverage/shard.json
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Name what a lost worker was running
         if: ${{ !cancelled() }}
@@ -821,13 +892,14 @@ jobs:
           sudo -n du -sh "$RUNNER_TEMP"/* /tmp/pytest-of-* 2>/dev/null | sort -h | tail -15 || true
 
       - name: Verify the partition ran without skips
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && !inputs.trace-coverage }}
         env:
-          LAYER_FLOOR: ${{ matrix.floor }}
+          LAYER_FLOOR: ${{ inputs.integration-floor }}
+          ALLOW_EMPTY: ${{ inputs.integration-files != '"all"' && '--allow-empty' || '' }}
         run: >-
           uv run python -m scripts.assert_suite_ran
           "$RUNNER_TEMP/backend-results/results.xml"
-          --at-least "$LAYER_FLOOR"
+          --at-least "$LAYER_FLOOR" $ALLOW_EMPTY
           --selection-dir "$RUNNER_TEMP/backend-results"
           --reruns "$RUNNER_TEMP/backend-results/reruns.jsonl"
 
@@ -835,7 +907,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: backend-${{ matrix.layer }}-${{ strategy.job-index }}-${{ github.run_attempt }}
+          name: backend-integration-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/backend-results/
           if-no-files-found: error
           retention-days: 14
@@ -845,10 +917,10 @@ jobs:
     needs: [static, test, integration]
     if: ${{ !cancelled() && inputs.coverage-job }}
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
-    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # runner queue behind the big jobs. Same-repo PRs use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs, a deleted fork and every
     # other caller (deploy-prod's x86 run) stay on GitHub's machines.
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -862,7 +934,7 @@ jobs:
         env:
           TEST_RESULT: ${{ needs.test.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
-          EXPECT_INTEGRATION: ${{ inputs.integration && github.event_name != 'pull_request' }}
+          EXPECT_INTEGRATION: ${{ inputs.integration-files != '[]' }}
           PLAN_ARTIFACT: backend-expected
         run: |
           python3 -m scripts.assert_shards_complete "$RUNNER_TEMP/backend-artifacts" --plan "$PLAN_ARTIFACT"

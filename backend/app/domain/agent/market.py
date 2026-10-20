@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent.environment import TEAM_DEVICES, STANDARD, VM
+from app.domain.agent.environment import STANDARD, TEAM_DEVICES, VM
 from app.domain.agent.profiles import ProfileRegistry
 
 # --- 档位 (结论 3: 模型是工作占用的资源，与机器（地点）同形) --------------------

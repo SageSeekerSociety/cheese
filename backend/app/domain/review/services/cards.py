@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-
 from app.core.errors import (
     ConflictError,
     NotFoundError,
@@ -34,6 +33,7 @@ from app.domain.review.models import (
     GateOutcome,
 )
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.room_task import progress
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
@@ -287,6 +287,9 @@ async def create_card(
         )
     if has_branch_changes:
         card.pr_number, card.pr_url = task.pr_number, task.pr_url
+    # The card says where the task stands now (等审): what its teammate
+    # reported before it is over.
+    progress.clear(task)
     await self._announce_filed(topic, card, task)
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)

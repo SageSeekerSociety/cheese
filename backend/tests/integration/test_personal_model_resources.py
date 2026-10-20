@@ -9,7 +9,7 @@ from app.domain.agent_instance.models import AccountConnection
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.project.models import Project
 from tests.integration.conftest import new_project, session_auth_headers
-from tests.integration.test_team_model_connections import setup_team, keep, path
+from tests.integration.test_team_model_connections import keep, path, setup_team
 from tests.integration.test_team_model_connections import service as service
 
 

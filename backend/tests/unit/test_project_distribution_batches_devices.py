@@ -62,9 +62,7 @@ def _placed(handle: str, device_id: str):
 
 async def test_the_distribution_reads_every_machine_in_one_call(monkeypatch) -> None:
     devices = _FakeDeviceService()
-    monkeypatch.setattr(
-        session_reports, "sql_device_service", lambda _db: devices
-    )
+    monkeypatch.setattr(session_reports, "sql_device_service", lambda _db: devices)
     db = _FakeDb([_placed("one", "device-1"), _placed("two", "device-2")])
 
     distribution = await session_reports.project_distribution(db, PROJECT)

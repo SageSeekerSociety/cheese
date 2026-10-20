@@ -4,6 +4,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.owner_provider import OWNER_CHANNEL
+from app.domain.agent_instance.models import PersonalModelResource
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device import claude_login
 from app.domain.device.login_kind import FIRST_LOGIN
@@ -12,7 +13,6 @@ from app.domain.device.models import (
     DeviceRow,
     ModelCredentialHost,
 )
-from app.domain.agent_instance.models import PersonalModelResource
 
 
 async def of_team(

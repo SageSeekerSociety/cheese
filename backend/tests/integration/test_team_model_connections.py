@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.domain.agent_instance import account_connections
-from app.domain.agent_instance.own.ownership import owned_instance, connection_of
+from app.domain.agent_instance.own.ownership import connection_of, owned_instance
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -16,8 +16,8 @@ from app.domain.project.models import Project
 from app.domain.team.models import TeamUserRelation
 from app.domain.user.models import User
 from tests.integration.conftest import (
-    new_project,
     join_project_team,
+    new_project,
     session_auth_headers,
 )
 
@@ -57,8 +57,8 @@ def setup_team(client):
     project = new_project(client, "Team models", owner="alice")
 
     async def shared_team():
-        from app.domain.team.services import TeamService
         from app.domain.team.repositories import TeamRepository
+        from app.domain.team.services import TeamService
 
         async with client.test_factory() as db:
             alice = await db.scalar(select(User).where(User.username == "alice"))
@@ -269,9 +269,9 @@ def test_project_cannot_select_disallowed_model_or_another_teams_device(
 def test_saved_execution_device_is_used_and_never_replaced_by_another_team_device(
     client, service
 ):
+    from app.domain.agent.environment import TEAM_DEVICES
     from app.domain.agent_instance.models import AgentInstance
     from app.domain.machine.environments import device_for_spec
-    from app.domain.agent.environment import TEAM_DEVICES
 
     project, team, device, _ = setup_team(client)
     connection = keep(client, team)
@@ -362,7 +362,7 @@ def test_changing_allowed_models_stops_an_existing_teammate_from_using_a_removed
 
 def test_account_closure_keeps_shared_team_connections_and_teammates(client, service):
     from app.domain.account.deletion import close_account
-    from app.domain.agent_instance.models import AgentInstance, AccountConnection
+    from app.domain.agent_instance.models import AccountConnection, AgentInstance
     from app.domain.team.protocol import TeamMemberRole
 
     project, team, device, login = setup_team(client)

@@ -8,8 +8,6 @@ same physical machine is either, depending on which enrolment door it came throu
 — 入口决定待遇，不是硬件决定待遇.
 """
 
-from tests.support.devices import enrollment_team
-
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -19,6 +17,7 @@ from app.core.errors import ForbiddenError
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
+from tests.support.devices import enrollment_team
 
 
 def _service() -> DeviceService:

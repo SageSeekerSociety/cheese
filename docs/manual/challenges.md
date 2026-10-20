@@ -29,7 +29,7 @@ slug: challenges
 
 ## 问芝士 {#ask}
 
-「问芝士」是题目页上的提问面板。芝士是平台的 AI 队友，在面板中读取这道题的说明、要求和题目信息，不读附件。不领取也能提问；对话只有本人看得到，每次提问使用[个人额度](/quota#personal)。提问的做法见[让芝士讲懂一道题](/ask-about-a-challenge#ask-about-a-challenge)。
+「问芝士」是题目页上的提问面板。芝士是平台的 AI 队友，在面板中读取这道题的说明、要求和题目信息；领取获批后，也能读取这道题的材料。不领取也能提问；对话只有本人看得到，每次提问使用[个人额度](/quota#personal)。提问的做法见[让芝士讲懂一道题](/ask-about-a-challenge#ask-about-a-challenge)。
 
 ## 领取与批准 {#claim}
 

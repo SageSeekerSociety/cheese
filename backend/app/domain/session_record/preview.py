@@ -122,6 +122,8 @@ _TOOL_ARG = {
     # 任务的 id 是个 UUID，跟在动词后面等于什么都没说 —— 同一条理由让上面那批
     # 路径要剪掉工作区前缀。关掉一条活时说的是为什么关。
     "cheese_close_task": "conclusion",
+    # 报任务状态时说的是那一句：状态本身是个码。
+    "cheese_task_state": "note",
     "cheese_fetch": "url",
     "cheese_decision": "text",
     "cheese_title": "text",
