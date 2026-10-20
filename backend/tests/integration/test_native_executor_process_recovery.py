@@ -19,8 +19,7 @@ from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.main import app
-from tests.conftest import stub_compute
-from tests.conftest import settle_turn
+from tests.conftest import settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
     post_message,

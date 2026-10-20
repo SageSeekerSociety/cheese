@@ -114,19 +114,18 @@ jobs:
       # From here each check runs whether or not the one before it passed:
       # they were separate jobs, and one red step must not hide another's
       # verdict.
-      # The same hooks a developer's commit runs, read from
-      # .pre-commit-config.yaml. Before this, CI and the local gate were two
-      # hand-maintained lists that agreed only as long as someone remembered to
-      # update both. Each hook cds into backend/ on its own, so these run from
-      # the workspace root rather than under this job's `defaults`. ruff-format
-      # is deliberately not here: it is a fixer on a developer's commit, and
-      # layout is not something CI fails a change for.
+      # The hooks read from .pre-commit-config.yaml, so CI and the local list
+      # cannot drift apart. Both are `stages: [manual]`: a commit only fixes the
+      # staged files (ruff-fix), and the whole-tree verdict — lint, import
+      # order, layout, types — is here. Each hook cds into backend/ on its own,
+      # so these run from the workspace root rather than under this job's
+      # `defaults`.
       - name: Lint and type-check (pre-commit hooks)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         run: |
-          uvx pre-commit run --all-files --show-diff-on-failure ruff
-          uvx pre-commit run --all-files pyright
+          uvx pre-commit run --all-files --hook-stage manual --show-diff-on-failure ruff
+          uvx pre-commit run --all-files --hook-stage manual pyright
 
       # A check that reports "clean" because it never ran is the failure this
       # job exists to prevent, and this one is easy to break silently: it reads

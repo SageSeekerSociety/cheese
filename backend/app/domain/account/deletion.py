@@ -34,7 +34,6 @@ from sqlalchemy.orm import aliased
 
 from app.core.errors import ConflictError
 from app.core.sentences import listing, say
-
 from app.domain.admin.models import PlatformAdmin
 from app.domain.agent_instance.models import (
     AccountConnection,

@@ -99,7 +99,9 @@ def test_separate_github_account_authorization_is_gone(client, monkeypatch):
     monkeypatch.setattr(settings, "oauth_enabled_providers", "github_app")
     monkeypatch.setattr(settings, "oauth_github_app_client_id", "test-client-id")
     monkeypatch.setattr(settings, "oauth_github_app_client_secret", "test-secret")
-    monkeypatch.setattr(settings, "oauth_github_app_redirect_url", "https://example.test/callback")
+    monkeypatch.setattr(
+        settings, "oauth_github_app_redirect_url", "https://example.test/callback"
+    )
     token = seed_user(client, "routecheck")
     response = client.get(
         "/users/me/github-account/authorize-url",

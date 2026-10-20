@@ -28,9 +28,9 @@ import pytest
 from sqlalchemy import select
 
 from app.api.deps import get_work_runner
-from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent.chat import ChatService
 from app.domain.agent.opening import OPENING, PURPOSE
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.mention import BY_PERSON
@@ -43,8 +43,8 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import project_service, registered
-from tests.support.threads import thread_in
 from tests.support.hang import HANG_S
+from tests.support.threads import thread_in
 
 
 class Seat(StubChannel):

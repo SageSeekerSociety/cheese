@@ -21,7 +21,7 @@ from functools import partial
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import BaseError, ValidationError
-from app.domain.agent import own_limit, turn_inputs
+from app.domain.agent import own_limit, runner_reports, turn_inputs
 
 # 兼容门面：`ChatService` 的四块职责分在同目录的四个 mixin 里，类继承顺序即下面
 # 这一列。方法体里的 `self.` 一格没动，所以子类覆盖、类属性读取和测试的
@@ -106,9 +106,8 @@ from app.domain.agent.queries import (
     _pass_policy_gate,
     _Proposed,
 )
-from app.domain.agent.recovery import SessionRecovery
-from app.domain.agent import runner_reports
 from app.domain.agent.reads import Report
+from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
 

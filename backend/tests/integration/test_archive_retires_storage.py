@@ -3,8 +3,6 @@
 Archived-room cleanup behavior is covered in test_archive_lifecycle.py.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import shlex
 import subprocess
 import uuid
@@ -16,6 +14,7 @@ from app.domain.agent.device_storage import list_device_storage
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 

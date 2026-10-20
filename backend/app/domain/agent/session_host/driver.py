@@ -26,7 +26,6 @@ from app.domain.agent.harness.driven.subscription import (
     Subscription,
 )
 from app.domain.agent.launch import ExecutorLaunch
-from app.domain.agent.session_state import SeatKey
 from app.domain.agent.platform_failures import classify_session_start
 from app.domain.agent.session_host.contract import (
     Access,
@@ -35,6 +34,7 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
     StartRefused,
 )
+from app.domain.agent.session_state import SeatKey
 
 
 @dataclass(frozen=True)

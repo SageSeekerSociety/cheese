@@ -237,9 +237,7 @@ def _add(client, project_id, connection, who="bob"):
     )
 
 
-def test_a_team_teammate_uses_the_connection_and_carries_its_name(
-    client, service
-):
+def test_a_team_teammate_uses_the_connection_and_carries_its_name(client, service):
     project_id = _people(client)
     connection = _keep(
         client,

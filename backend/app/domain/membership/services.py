@@ -56,8 +56,8 @@ from app.domain.project.models import (
     ProjectMember,
     ProjectTransfer,
 )
-from app.domain.project.repositories import ProjectRepository
 from app.domain.project.reads import project_or_404
+from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import (
     DEFAULT_GRANTS,
     MANAGING,

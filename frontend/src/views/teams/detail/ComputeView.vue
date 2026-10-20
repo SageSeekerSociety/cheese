@@ -94,7 +94,6 @@ const adding = ref(false)
             >{{ t('teams.compute.remove') }}</BaseButton
           >
         </div>
-
       </section>
     </div>
   </v-container>

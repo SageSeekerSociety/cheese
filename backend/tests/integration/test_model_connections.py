@@ -6,8 +6,6 @@ when it next connects. A status probe never registers an unknown login or assign
 its team.
 """
 
-from tests.support.devices import enrollment_team
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -30,15 +28,16 @@ from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.team.services import team_service
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
-from app.domain.team.services import team_service
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     post_message,
     post_project,
     session_auth_headers,
 )
+from tests.support.devices import enrollment_team
 
 
 class _Machines:
@@ -305,7 +304,8 @@ def test_a_removed_connection_starts_no_session(client, monkeypatch):
     assert machines.logins[laptop][FIRST_LOGIN] is True
     # Asking it again from the page changes nothing either.
     recheck = client.post(
-        f"/connector/teams/{team_id(client)}/claude-logins/{laptop}/check", headers=alice
+        f"/connector/teams/{team_id(client)}/claude-logins/{laptop}/check",
+        headers=alice,
     )
     assert recheck.status_code == 200, recheck.text
     (still,) = _connections(client, alice)

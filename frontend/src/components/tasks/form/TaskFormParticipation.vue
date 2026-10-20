@@ -123,8 +123,8 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
 
     <div class="tf-grid">
       <BaseField
-        data-agent-field="team_min"
         v-if="isTeam"
+        data-agent-field="team_min"
         :label="t('tasks.form.teamSize')"
         required
         :error="errorOf(maxTeamSizeControl) ?? errorOf(minTeamSizeControl)"
@@ -209,8 +209,8 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
       <v-checkbox v-model="mentorsJoin" :label="t('tasks.form.mentor.require')" density="compact" hide-details />
       <v-autocomplete
         v-if="mentorsJoin"
-        autocomplete="off"
         v-model="mentors"
+        autocomplete="off"
         :items="props.mentorOptions ?? []"
         :label="t('tasks.form.mentor.label')"
         multiple

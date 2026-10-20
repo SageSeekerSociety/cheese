@@ -32,9 +32,9 @@ from app.domain.agent.platform_failures import (
 from app.domain.agent.reads import Read, Replaced
 from app.domain.agent.room import sessions as pkg
 from app.domain.agent.room.sessions.records import Clock, Live, _home
+from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.contract import Access, Owner
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
-from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.host import RunnerUnsupported
 
 logger = logging.getLogger("app.domain.agent.room.sessions")

@@ -22,4 +22,3 @@ export type User = {
   work_role?: string | null
   organization?: string | null
 }
-

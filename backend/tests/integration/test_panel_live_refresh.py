@@ -22,8 +22,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.models import Block
 from app.main import app
-from tests.conftest import stub_compute
-from tests.conftest import StubChannel, retire_topic
+from tests.conftest import StubChannel, retire_topic, stub_compute
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
     in_thread,

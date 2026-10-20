@@ -126,9 +126,9 @@ class OwnerChannel(CentralChannel):
                 )
                 if instance is None:
                     raise ScreenSetupError(say("screenAgentIdentityMissing"))
-                prepared.env[OWN_MODEL] = (
-                    (instance.configuration or {}).get("model") or "sonnet"
-                )
+                prepared.env[OWN_MODEL] = (instance.configuration or {}).get(
+                    "model"
+                ) or "sonnet"
             yield prepared
 
     async def _login(self, session: SessionRef) -> DeviceClaudeLoginRow:

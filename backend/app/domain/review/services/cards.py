@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-
 from app.core.errors import (
     ConflictError,
     NotFoundError,

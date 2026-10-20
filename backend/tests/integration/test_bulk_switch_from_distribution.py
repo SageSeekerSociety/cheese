@@ -4,8 +4,6 @@ session (push first), and a session whose room is mid-turn is left alone with
 the reason 「正在运行任务，稍后再换」.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -27,6 +25,7 @@ from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.executor_release import running
 from tests.integration.conftest import post_project, registered, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 

@@ -24,11 +24,13 @@ from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
 from app.domain.agent import runner_reports
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness.claude_code.runner import LIVE_LAUNCH, Runner
 from app.domain.agent.harness.driven import lifecycle
+from app.domain.agent.models import SessionState
 from app.domain.agent.reads import Report, SessionExited
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.contract import (
@@ -39,8 +41,6 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.conversation.models import Conversation
-from app.domain.agent.models import SessionState
-from sqlalchemy import select
 from tests.turn_log import a_topic
 
 SEAT = "cheese-test"

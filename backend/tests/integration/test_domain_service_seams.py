@@ -12,8 +12,6 @@ repository，正路是走对方的 service。这个文件测的就是那几条�
 
 """
 
-from tests.support.devices import enrollment_team
-
 import uuid
 from datetime import UTC, datetime
 
@@ -30,6 +28,7 @@ from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.integration.conftest import project_service, registered
+from tests.support.devices import enrollment_team
 
 pytestmark = pytest.mark.anyio
 

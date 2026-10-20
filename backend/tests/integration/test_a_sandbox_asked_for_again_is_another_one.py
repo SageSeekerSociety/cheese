@@ -13,10 +13,6 @@ The hosts, the pool and the tool call here are the ones of
 client does.
 """
 
-from app.domain.device.wiring import sql_device_service
-from tests.support.devices import enrollment_team
-
-
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -26,6 +22,7 @@ from app.core.device_failures import DeviceCallError
 from app.domain.agent import execution
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost
@@ -38,6 +35,7 @@ from tests.integration.test_sandbox_idle_stop import (
     tool_call,
     working_on,
 )
+from tests.support.devices import enrollment_team
 
 STANDARD = {"kind": "sandbox", "spec": "standard"}
 

@@ -4,8 +4,9 @@ Revision ID: b8c24e91a7d0
 Revises: b6e1d47c2a95
 """
 
-from alembic import op
 from migration_helpers import with_lock_retries
+
+from alembic import op
 
 revision = "b8c24e91a7d0"
 down_revision = "b6e1d47c2a95"

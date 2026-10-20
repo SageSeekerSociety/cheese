@@ -33,6 +33,7 @@ from app.domain.review.github_pr._shared import (
     _refused,
     logger,
 )
+from app.domain.review.github_pr.branch_comparisons import read_branch_comparisons
 from app.domain.review.github_pr.failure_logs import (
     _FAILURE_DETAIL_MAX_JOBS,
     _LOG_TAIL_BYTES,
@@ -41,7 +42,6 @@ from app.domain.review.github_pr.failure_logs import (
     _error_excerpt,
     _failure_headline,
 )
-from app.domain.review.github_pr.branch_comparisons import read_branch_comparisons
 from app.domain.review.github_pr.protocol import (
     BranchComparisonResult,
     BranchPair,

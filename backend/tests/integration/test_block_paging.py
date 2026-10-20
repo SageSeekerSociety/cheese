@@ -14,9 +14,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.domain.agent.harness import SessionRef
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.agent.harness import SessionRef
 from app.domain.event_author import AuthorType
 from app.domain.session_record import service as session_records
 from tests.conftest import TEST_DATABASE_URL

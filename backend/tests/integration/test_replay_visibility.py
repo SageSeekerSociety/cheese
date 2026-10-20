@@ -25,7 +25,6 @@ from app.domain.block.models import Block, consumed_turn, read_failed
 from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
-from tests.support.session_records import wait_for_record
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -34,6 +33,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import wait_for_record
 
 
 @pytest.fixture(autouse=True)

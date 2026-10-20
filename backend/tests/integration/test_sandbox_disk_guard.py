@@ -25,10 +25,6 @@ walked and counted. Only the size of the filesystem they are on is given,
 since this machine's own disk cannot be made full.
 """
 
-from app.domain.device.wiring import sql_device_service
-from tests.support.devices import enrollment_team
-
-
 import json
 import os
 import re
@@ -42,6 +38,7 @@ from app.core.config import settings
 from app.domain.block.models import Block, BlockKind
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.machine import disk_guard
 from app.domain.machine.disk_guard import DiskGuard
 from app.domain.machine.models import CloudHost
@@ -58,6 +55,7 @@ from tests.integration.test_sandbox_idle_stop import (  # noqa: F401 — fixture
     tool_call,
     working_on,
 )
+from tests.support.devices import enrollment_team
 
 
 def disk_of(case, filesystem: dict) -> list[bool]:

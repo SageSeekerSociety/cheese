@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from app.core.config import settings
+from app.domain.agent import session_state
 from app.domain.agent.admission import HostMemory
 from app.domain.agent.device_hub import (
     DeviceCallError,
@@ -88,8 +89,6 @@ from app.domain.agent.session_host.driver import (
     Reports,
     Wire,
 )
-from app.domain.agent import session_state
-from app.domain.agent.session_state import SeatKey
 from app.domain.agent.session_host.pi import PiDriver
 
 # 下面这些 import 都是再导出：`X as X` 是仓库里认的那种写法，读的人一眼看出它
@@ -105,19 +104,20 @@ from app.domain.agent.session_host.sessions import (
 from app.domain.agent.session_host.sessions import (
     _Running as _Running,
 )
-from app.domain.agent.session_host.sessions import key
 from app.domain.agent.session_host.sessions import (
     _seat as _seat,
 )
 from app.domain.agent.session_host.sessions import (
     keeps_memory as keeps_memory,
 )
+from app.domain.agent.session_host.sessions import key
 from app.domain.agent.session_host.sessions import (
     with_pictures as with_pictures,
 )
 from app.domain.agent.session_host.starting import (
     RunnerUnsupported as RunnerUnsupported,
 )
+from app.domain.agent.session_state import SeatKey
 
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel

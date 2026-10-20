@@ -10,11 +10,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
-from app.domain.agent.reads import InputRead
 from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.reads import InputRead
 from app.domain.agent.room import reads as room_reads
 from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.delivery.note import NOT_YOUR_OWN_THREAD

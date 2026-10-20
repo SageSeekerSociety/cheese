@@ -4,8 +4,6 @@ The periodic scan starts the waiting message once the device comes back.
 The room is told once per message, rather than once per scan.
 """
 
-from tests.support.devices import enrollment_team
-
 import uuid
 from datetime import UTC, datetime
 
@@ -19,14 +17,15 @@ from app.domain.block.models import Block
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
-from app.domain.topic_membership.services import TopicMemberService
 from app.domain.project.models import Project
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
 from tests.integration.conftest import (
     post_message,
     post_project,
     session_auth_headers,
 )
+from tests.support.devices import enrollment_team
 
 
 class _Hub:

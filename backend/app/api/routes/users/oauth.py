@@ -23,13 +23,13 @@ from fastapi.responses import RedirectResponse
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.app_return import back_in_app, started_in_app
 from app.api.deps import (
     get_oauth_service,
     get_user_auth_service,
 )
 from app.api.legal_deps import client_context
 from app.api.response import ok, typed_response
-from app.api.app_return import back_in_app, started_in_app
 from app.api.routes.users._common import (
     GithubAppIntentOut,
     GithubAppIntentRequest,
@@ -70,7 +70,6 @@ from app.domain.legal.services import ConsentService
 from app.domain.oauth.services import OAuthService
 from app.domain.user.login_security import LoginDelay, TOTPService
 from app.domain.user.passwords import require_new_password
-from app.domain.user.sessions import SessionService
 from app.domain.user.services import (
     NICKNAME_MAX_LENGTH,
     USERNAME_MAX_LENGTH,
@@ -78,6 +77,7 @@ from app.domain.user.services import (
     is_valid_username,
     normalize_nickname,
 )
+from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 

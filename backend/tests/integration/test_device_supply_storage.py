@@ -7,8 +7,6 @@ show — a field that never survives a write is the same bug as not storing it, 
 it is the failure the whole decision is meant to end.
 """
 
-from tests.support.devices import enrollment_team
-
 import importlib.util
 import uuid
 from datetime import UTC, datetime
@@ -25,6 +23,7 @@ from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply
 from app.domain.user.models import User
+from tests.support.devices import enrollment_team
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal

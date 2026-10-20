@@ -16,8 +16,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.background import PeriodicJobs, PeriodicRunner
-from app.core.background import periodic_health, watch_periodic_jobs
+from app.core.background import (
+    PeriodicJobs,
+    PeriodicRunner,
+    periodic_health,
+    watch_periodic_jobs,
+)
 from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio

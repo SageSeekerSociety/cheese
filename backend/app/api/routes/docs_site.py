@@ -18,8 +18,8 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.auth import ActorResolverDep
-from app.api.request_deps import DbSession
 from app.api.refusal import refuse
+from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
@@ -255,7 +255,9 @@ async def ask(
     if refused is not None:
         await limits.release(auth.user_id)
         response = refuse(429, refused.message, refused.retry_after_s())
-        response.headers["X-Credits-Path"] = f"/teams/{quote(auth.handle, safe='')}/credits"
+        response.headers["X-Credits-Path"] = (
+            f"/teams/{quote(auth.handle, safe='')}/credits"
+        )
         return response
 
     if settings.docs_assistant_agentic:
