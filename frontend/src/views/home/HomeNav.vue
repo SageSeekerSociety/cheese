@@ -40,8 +40,8 @@ const props = defineProps<{
   inbox?: boolean
   /** 我所在的团队（含自己名下那一个）。 */
   teams: Team[]
-  /** 我加入的空间。 */
-  spaces: { id: number; name: string }[]
+  /** 我加入的空间，加上我建的、还没过审的那几个。 */
+  spaces: SpaceLink[]
   /** 待我处理的件数；0 或没给就不画那颗角标。 */
   awaiting?: number
   /** 正在看的是哪个团队（`/teams/<handle>/…`）——那一个必须是展开的。 */
