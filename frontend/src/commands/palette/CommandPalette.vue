@@ -14,7 +14,7 @@
 import type { MenuCommand } from '@/commands'
 import type { ResultRow } from './results'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -60,6 +60,44 @@ function focusField() {
   void nextTick(() => bar.value?.focus())
 }
 
+// 返回手势 / 返回键关掉的是面板这一层，不是它底下那一页：开着的时候在历史里压一
+// 格（地址不变，只在 state 上做个记号），返回把它弹掉，这里听到就关。手机上从话题
+// 列表叫出面板、按返回却换了页，就是少了这一格。
+//
+// 用面板里的办法关掉（左上角、Esc、点空白）时，那一格得自己退掉，不在身后留一格
+// 空的——否则下一次返回什么也不做。正要选一条结果离开这一页时不退：那一格正好是
+// 「回到打开面板的地方」。
+const HISTORY_MARK = 'commandPalette'
+let historyPushed = false
+
+function onPopState() {
+  if ((history.state as Record<string, unknown> | null)?.[HISTORY_MARK]) return
+  historyPushed = false
+  close()
+}
+
+function pushHistory() {
+  if (historyPushed) return
+  history.pushState({ ...(history.state as object | null), [HISTORY_MARK]: true }, '')
+  historyPushed = true
+}
+
+function dropHistory() {
+  if (!historyPushed) return
+  historyPushed = false
+  if (!(history.state as Record<string, unknown> | null)?.[HISTORY_MARK]) return
+  // 关掉之后这一轮里页面可能正要跳去别处（选中了一条结果）。等这一轮结束再看：
+  // 地址变了就把那一格留给「返回」，不要退掉它。
+  const href = location.href
+  setTimeout(() => {
+    if (location.href !== href) return
+    if ((history.state as Record<string, unknown> | null)?.[HISTORY_MARK]) history.back()
+  }, 0)
+}
+
+onMounted(() => window.addEventListener('popstate', onPopState))
+onBeforeUnmount(() => window.removeEventListener('popstate', onPopState))
+
 // 这一栏钉在顶上：一打开、一问一答完、换了范围，光标都该回来。
 let returnFocus: HTMLElement | null = null
 watch(paletteOpen, async (open) => {
@@ -67,6 +105,7 @@ watch(paletteOpen, async (open) => {
   paletteAsk.value = null
   scope.value = undefined
   if (open) {
+    pushHistory()
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     input.value = ''
     selected.value = 0
@@ -74,6 +113,9 @@ watch(paletteOpen, async (open) => {
     await nextTick()
     bar.value?.focus()
   } else {
+    // 底部那张操作清单是面板的一部分：面板关了，它不能自己留在页面上。
+    sheetOpen.value = false
+    dropHistory()
     returnFocus?.focus?.()
     returnFocus = null
   }
@@ -129,6 +171,8 @@ function choose(item: ResultRow, newTab = false) {
     return
   }
   if (!item.remote) recordVisit(item)
+  // 要去别处了：历史里那一格留着，从那边返回时正好回到打开面板的地方。
+  if (item.to) historyPushed = false
   close()
   item.run?.()
   if (item.to) void router.push(item.to)
@@ -152,6 +196,8 @@ async function runAction(action: MenuCommand) {
     bar.value?.select()
     return
   }
+  // 同 choose()：这一件要去别处，历史里那一格留给返回。
+  if (action.to) historyPushed = false
   close()
   if (action.to) void router.push(action.to)
 }
