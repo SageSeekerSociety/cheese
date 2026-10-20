@@ -284,6 +284,17 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         expect: '保存在平台',
         expectSelector: '[data-connection="held-glm"]',
       },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s6.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s6.note')
+        },
+        // The button that opens it is a header command of the team page (Models.vue).
+        props: { addingPersonal: true },
+        expectSelector: '[role="dialog"]',
+      },
     ],
   },
   {
