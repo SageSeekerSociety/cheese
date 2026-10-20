@@ -8,8 +8,9 @@ Three tiers, one judge (:func:`tier_for`):
   run.
 - ``pr``: a ready pull request runs every suite its diff selects except
   :data:`POST_MERGE_SUITES`, and the backend's integration layer only for the
-  test files the diff reaches (``backend_imports.select_integration``). It
-  aggregates as ``CI required`` and checks the commit title.
+  test files that executed what the diff changed, by the latest coverage map
+  (``coverage_map.select``), or whole when there is no map. It aggregates as
+  ``CI required`` and checks the commit title.
 - ``full``: a push to main runs every selected suite, all of each. Only this
   post-submit result can authorize deployment.
 
@@ -34,6 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import backend_imports
+import coverage_map
 
 PATHS = json.loads(Path(__file__).with_name("required-ci-paths.json").read_text())
 
@@ -58,6 +60,7 @@ INTEGRATION_FLOOR = 2400
 #: exactly the change that must not be judged by it.
 SELECTION_INPUTS = (
     ".github/scripts/backend_imports.py",
+    ".github/scripts/coverage_map.py",
     ".github/scripts/required-ci.py",
     "backend/scripts/ci_shard.py",
 )
@@ -138,21 +141,82 @@ def select(paths, tier="full"):
     return selected
 
 
-def integration_plan(paths, tier, backend):
-    """``(files, shards, floor, reason)`` for the backend integration layer.
+#: The workflow that publishes the coverage map, and its artifact.
+COVERAGE_MAP_WORKFLOW = "coverage-map.yml"
+COVERAGE_MAP_ARTIFACT = "integration-coverage-map"
+
+
+class Diff:
+    """What the integration selection reads of a diff: the changed lines, and
+    a path's text at the base and at the head (None when it is absent)."""
+
+    def __init__(self, base, head="HEAD"):
+        self.base, self.head = base, head
+        self.lines = coverage_map.changed_lines(subprocess.check_output(
+            ["git", "diff", "-U0", "--no-renames", base, head, "--", "backend/"]).decode())
+
+    def _show(self, rev, path):
+        result = subprocess.run(["git", "show", f"{rev}:{path}"], capture_output=True)
+        return result.stdout.decode() if result.returncode == 0 else None
+
+    def read_base(self, path):
+        return self._show(self.base, path)
+
+    def read_head(self, path):
+        return self._show(self.head, path)
+
+
+def load_coverage_map():
+    """``(map, note)`` for the newest published coverage map, or ``(None,
+    reason)`` when none can be read: any failure means the whole layer."""
+    import io
+    import urllib.request
+    import zipfile
+
+    token, repo = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY")
+    if not token or not repo:
+        return None, "no GITHUB_TOKEN to read the coverage map with"
+    api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+
+    def get(url):
+        request = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.read()
+
+    try:
+        runs = json.loads(get(f"{api}/repos/{repo}/actions/workflows/{COVERAGE_MAP_WORKFLOW}"
+                              "/runs?branch=main&status=success&per_page=1"))["workflow_runs"]
+        if not runs:
+            return None, "no coverage map has been published"
+        artifacts = json.loads(get(f"{api}/repos/{repo}/actions/runs/{runs[0]['id']}"
+                                   "/artifacts"))["artifacts"]
+        artifact = next((a for a in artifacts if a["name"] == COVERAGE_MAP_ARTIFACT
+                         and not a["expired"]), None)
+        if artifact is None:
+            return None, f"run {runs[0]['id']} has no unexpired {COVERAGE_MAP_ARTIFACT}"
+        with zipfile.ZipFile(io.BytesIO(get(artifact["archive_download_url"]))) as archive:
+            cmap = json.loads(archive.read("map.json"))
+    except Exception as error:  # noqa: BLE001 — every failure here means the whole layer
+        return None, f"the coverage map could not be read ({error.__class__.__name__}: {error})"
+    return cmap, f"coverage map from {cmap['commit'][:9]} ({runs[0]['created_at']})"
+
+
+def integration_plan(paths, tier, backend, cmap=None, diff=None, map_note=""):
+    """``(files, shards, floor, reasons)`` for the backend integration layer.
 
     ``files`` is ``None`` for every integration test, else the backend-relative
     paths to run (empty: the layer is not due). ``shards`` lists ``"i/n"``
     partitions; ``floor`` is the case count the layer is held to. Only a ``pr``
-    run narrows, and only when every path that selected the backend suite is a
-    backend file the import graph can judge.
+    run narrows, only with a coverage map ``cmap`` and the run's ``diff``, and
+    only when every path that selected the backend suite is a backend file.
     """
     whole = (None, [f"{i}/{INTEGRATION_SHARDS}" for i in range(INTEGRATION_SHARDS)],
              INTEGRATION_FLOOR)
     if tier != "pr":
-        return (*whole, f"the {tier} tier runs the whole layer")
+        return (*whole, [f"the {tier} tier runs the whole layer"])
     if gate_changed(paths) or any(path in SELECTION_INPUTS for path in paths):
-        return (*whole, "the gate or the selection itself changed")
+        return (*whole, ["the gate or the selection itself changed"])
     patterns = PATHS["backend"]
     outside = sorted(
         path for path in paths
@@ -160,12 +224,19 @@ def integration_plan(paths, tier, backend):
         and any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
     )
     if outside:
-        return (*whole, f"{outside[0]} selects the backend suite from outside backend/")
-    files, reason = backend_imports.select_integration(backend, paths)
+        return (*whole, [f"{outside[0]} selects the backend suite from outside backend/"])
+    if cmap is None or diff is None:
+        return (*whole, [map_note or "no coverage map"])
+    try:
+        files, reasons = coverage_map.select(
+            cmap, backend, paths, diff.lines, diff.read_base, diff.read_head)
+    except Exception as error:  # noqa: BLE001 — a selection that failed selects everything
+        return (*whole, [f"the selection failed ({error.__class__.__name__}: {error})"])
+    reasons = [map_note, *reasons] if map_note else reasons
     if files is None:
-        return (*whole, reason)
+        return (*whole, reasons)
     count = min(INTEGRATION_SHARDS, math.ceil(len(files) / INTEGRATION_FILES_PER_SHARD))
-    return files, [f"{i}/{count}" for i in range(count)], 0, reason
+    return files, [f"{i}/{count}" for i in range(count)], 0, reasons
 
 
 def failures(needs, expected_tier):
@@ -412,8 +483,14 @@ def main():
         # The commit the ``api`` job prints the base document from: the same
         # base this diff was taken against, so the two answer one question.
         outputs["base"] = event_base
+        cmap, diff, map_note = None, None, ""
+        if tier == "pr" and selected.get("backend"):
+            cmap, map_note = load_coverage_map()
+            if cmap is not None:
+                diff = Diff(event_base)
         files, shards, floor, why = integration_plan(
-            changed, tier, Path(__file__).resolve().parents[2] / "backend")
+            changed, tier, Path(__file__).resolve().parents[2] / "backend",
+            cmap=cmap, diff=diff, map_note=map_note)
         outputs["integration_files"] = json.dumps(files if files is not None else "all")
         outputs["integration_shards"] = json.dumps(shards)
         outputs["integration_floor"] = str(floor)
@@ -421,7 +498,10 @@ def main():
         print(f"Effective base: {event_base or '(none: every tracked path)'}")
         print(f"Base reason: {reason}")
         print(f"Tier: {tier}")
-        print(f"Integration: {len(shards)} shard(s); {why}")
+        print(f"Integration: {len(shards)} shard(s), "
+              f"{'every' if files is None else len(files)} test files")
+        for line in why:
+            print(f"  {line}")
         suites = ", ".join(suite for suite, is_selected in selected.items() if is_selected)
         print(f"Selected suites: {suites or 'none'}")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:

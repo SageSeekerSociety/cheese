@@ -46,6 +46,15 @@ on:
       coverage-job:
         type: boolean
         default: true
+      # Trace the whole integration layer under coverage.py, one context per
+      # test, and upload each shard's function-to-test-files map: the input of
+      # a pull request's integration selection (coverage-map.yml, the only
+      # caller). Only the integration layer runs, and a red case does not fail
+      # the shard — a traced run is slower and trips the per-case ceiling, and
+      # what it produces is a map, not a verdict.
+      trace-coverage:
+        type: boolean
+        default: false
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to.
 permissions:
@@ -59,7 +68,7 @@ defaults:
 # one run cannot cancel another's and leave a commit with no result. PR refs
 # keep the ref key, so repeated pushes to one PR supersede each other.
 concurrency:
-  group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}${{ inputs.trace-coverage && '-traced' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -69,6 +78,7 @@ jobs:
   # to queue for its own runner and check out the tree for well under two
   # minutes of work, and a run's wall clock is mostly that queue.
   static:
+    if: ${{ !inputs.trace-coverage }}
     runs-on: ubuntu-latest
     # Measured median 1.6m for lint and 1.8m for migration-heads as separate
     # jobs; the margin covers a cold uv cache without leaving a stuck run.
@@ -221,6 +231,7 @@ jobs:
         run: python3 .claude/scripts/check-migration-safety.py
 
   test:
+    if: ${{ !inputs.trace-coverage }}
     runs-on: ${{ inputs.runner }}
     name: ${{ matrix.layer }} (${{ matrix.shard }})
     strategy:
@@ -296,8 +307,21 @@ jobs:
           echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
           echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
 
+      # The .deb files of the tools below, saved on main by warm-caches.yml
+      # (its harness-bins job, on the same arm64 image) and read here only:
+      # with them ensure-apt.sh installs with dpkg and opens no apt, which on a
+      # fresh hosted VM is an `apt-get update` every job. A miss is apt as before.
+      - name: Name the cached tool packages
+        id: apt-debs
+        run: echo "key=apt-debs-v1-${ImageOS:-self}-${ImageVersion:-0}-$(uname -m)-bubblewrap-iproute2-iptables-lsof-ripgrep-tmux-zsh" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/cheese-apt-debs
+          key: ${{ steps.apt-debs.outputs.key }}
+
       - name: Ensure required test tools
         run: |
+          export CHEESE_APT_DEBS="$HOME/.cache/cheese-apt-debs"
           # bubblewrap: a Cloud session's executor runs in its sandbox, whose
           # network the machine connects with iproute2 and iptables as root.
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
@@ -635,8 +659,21 @@ jobs:
           echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
           echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
 
+      # The .deb files of the tools below, saved on main by warm-caches.yml
+      # (its harness-bins job, on the same arm64 image) and read here only:
+      # with them ensure-apt.sh installs with dpkg and opens no apt, which on a
+      # fresh hosted VM is an `apt-get update` every job. A miss is apt as before.
+      - name: Name the cached tool packages
+        id: apt-debs
+        run: echo "key=apt-debs-v1-${ImageOS:-self}-${ImageVersion:-0}-$(uname -m)-bubblewrap-iproute2-iptables-lsof-ripgrep-tmux-zsh" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/cheese-apt-debs
+          key: ${{ steps.apt-debs.outputs.key }}
+
       - name: Ensure required test tools
         run: |
+          export CHEESE_APT_DEBS="$HOME/.cache/cheese-apt-debs"
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
           echo "CHEESE_TEST_SANDBOX_HOST=1" >> "$GITHUB_ENV"
           "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
@@ -661,14 +698,15 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --all-extras
 
+      # Through the service container's own psql, as the layers above do: a
+      # client installed here would be one more apt run per job.
       - name: Give this run an empty database
         env:
-          PGPASSWORD: postgres
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh postgresql-client
-          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
-          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
 
       - name: Run database migrations
@@ -767,8 +805,10 @@ jobs:
           echo "CHEESE_CI_POSTGRES_PID=$pid" >> "$GITHUB_ENV"
 
       - name: Run the selected layer partition
-        timeout-minutes: 15
+        timeout-minutes: ${{ inputs.trace-coverage && 30 || 15 }}
+        continue-on-error: ${{ inputs.trace-coverage }}
         env:
+          TRACE: ${{ inputs.trace-coverage }}
           TEST_LAYER: integration
           INTEGRATION_FILES: ${{ inputs.integration-files }}
           TEST_SHARD: ${{ matrix.shard }}
@@ -780,8 +820,15 @@ jobs:
           set -o pipefail
           printf '%s' "$INTEGRATION_FILES" > "$RUNNER_TEMP/integration-files.json"
           mapfile -t targets < <(python3 -c 'import json,sys; f=json.load(open(sys.argv[1])); print("\n".join(["tests/"] if f == "all" else f))' "$RUNNER_TEMP/integration-files.json")
+          with=(); trace=()
+          if [ "$TRACE" = true ]; then
+            mkdir -p "$RUNNER_TEMP/coverage"
+            export COVERAGE_FILE="$RUNNER_TEMP/coverage/.coverage"
+            with=(--with pytest-cov==7.0.0 --with coverage==7.10.7)
+            trace=(--cov=app --cov=scripts --cov-context=test --cov-report=)
+          fi
           uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" \
-            -- uv run python -m pytest "${targets[@]}" -m "$TEST_LAYER" -k 'not kotlin' \
+            -- uv run "${with[@]}" python -m pytest "${targets[@]}" "${trace[@]}" -m "$TEST_LAYER" -k 'not kotlin' \
             --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
             --ci-integration-files="$RUNNER_TEMP/integration-files.json" \
@@ -808,6 +855,21 @@ jobs:
           "$RUNNER_TEMP/backend-results/results.xml"
           --log "$RUNNER_TEMP/backend-results/pytest.log"
 
+      - name: Map which test files executed each function
+        if: ${{ !cancelled() && inputs.trace-coverage }}
+        run: >-
+          uv run --with coverage==7.10.7 python ../.github/scripts/coverage_map.py build
+          "$RUNNER_TEMP/coverage/.coverage" --backend . --out "$RUNNER_TEMP/coverage/shard.json"
+
+      - name: Preserve the shard's map
+        if: ${{ !cancelled() && inputs.trace-coverage }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-shard-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/coverage/shard.json
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Name what a lost worker was running
         if: ${{ !cancelled() }}
         run: |
@@ -828,7 +890,7 @@ jobs:
           sudo -n du -sh "$RUNNER_TEMP"/* /tmp/pytest-of-* 2>/dev/null | sort -h | tail -15 || true
 
       - name: Verify the partition ran without skips
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && !inputs.trace-coverage }}
         env:
           LAYER_FLOOR: ${{ inputs.integration-floor }}
           ALLOW_EMPTY: ${{ inputs.integration-files != '"all"' && '--allow-empty' || '' }}

@@ -242,23 +242,40 @@ class AggregationTierTest(unittest.TestCase):
 class IntegrationPlanTest(unittest.TestCase):
     """Which backend integration tests a run executes, on how many shards.
 
-    Only a ready pull request narrows the layer, and only when the import graph
-    can judge every path that selected the backend suite; anything else runs
-    it whole. A whole layer keeps its five shards and its case floor; a
-    narrowed one gets the shards its file count needs and must run something.
+    Only a ready pull request narrows the layer, only with a coverage map, and
+    only when every path that selected the backend suite is under backend/;
+    anything else runs it whole. A whole layer keeps its five shards and its
+    case floor; a narrowed one gets the shards its file count needs.
     """
 
     TREE = {
         "app/__init__.py": "",
-        "app/rooms.py": "x = 1\n",
-        "app/billing.py": "y = 1\n",
+        "app/rooms.py": "def open_room():\n    return 1\n\n\ndef close_room():\n    return 2\n",
+        "app/billing.py": "def charge():\n    return 1\n",
         "tests/__init__.py": "",
         "tests/integration/__init__.py": "",
-        "tests/integration/test_rooms.py": "from app import rooms\n",
-        "tests/integration/test_rooms_more.py": "from app.rooms import x\n",
+        "tests/integration/test_rooms.py": "def test_open():\n    pass\n",
+        "tests/integration/test_close.py": "def test_close():\n    pass\n",
         "tests/integration/test_other.py": "z = 1\n",
     }
+    #: What the traced run saw: HTTP-only tests, so no import edge says it.
+    MAP = {"commit": "a" * 40, "unmapped": [], "files": {
+        "app/rooms.py": {"open_room": ["tests/integration/test_rooms.py"],
+                         "close_room": ["tests/integration/test_close.py"]},
+        "app/billing.py": {"charge": ["tests/integration/test_other.py"]},
+    }}
     WHOLE_SHARDS = [f"{i}/5" for i in range(5)]
+
+    class FakeDiff:
+        def __init__(self, backend, lines):
+            self.backend, self.lines = backend, lines
+
+        def read_base(self, path):
+            return self.read_head(path)
+
+        def read_head(self, path):
+            file = self.backend.parent / path
+            return file.read_text() if file.exists() else None
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -269,8 +286,9 @@ class IntegrationPlanTest(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
 
-    def plan(self, paths, tier="pr"):
-        return gate.integration_plan(list(paths), tier, self.backend)
+    def plan(self, paths, tier="pr", lines=None, cmap=MAP):
+        diff = self.FakeDiff(self.backend, lines or {})
+        return gate.integration_plan(list(paths), tier, self.backend, cmap=cmap, diff=diff)
 
     def assert_whole(self, plan):
         files, shards, floor, _reason = plan
@@ -284,30 +302,27 @@ class IntegrationPlanTest(unittest.TestCase):
             with self.subTest(tier=tier):
                 self.assert_whole(self.plan(["backend/app/rooms.py"], tier))
 
-    def test_a_ready_pr_runs_the_tests_that_import_the_change(self):
-        files, shards, floor, _reason = self.plan(["backend/app/rooms.py"])
-        self.assertEqual(files, ["tests/integration/test_rooms.py",
-                                 "tests/integration/test_rooms_more.py"])
+    def test_without_a_coverage_map_the_layer_runs_whole(self):
+        self.assert_whole(self.plan(["backend/app/rooms.py"], cmap=None))
+
+    def test_a_ready_pr_runs_the_tests_that_executed_the_changed_function(self):
+        # Line 2 is close_room's body: the test that called it over HTTP runs,
+        # the one that only called open_room does not.
+        files, shards, floor, _reason = self.plan(
+            ["backend/app/rooms.py"], lines={"backend/app/rooms.py": ({5}, {5})})
+        self.assertEqual(files, ["tests/integration/test_close.py"])
         self.assertEqual(shards, ["0/1"])
         self.assertEqual(floor, 0)
-
-    def test_a_change_no_integration_test_reaches_leaves_the_layer_out(self):
-        files, shards, _floor, _reason = self.plan(["backend/app/billing.py"])
-        self.assertEqual(files, [])
-        self.assertEqual(shards, [])
 
     def test_a_change_to_the_gate_or_the_selection_runs_the_whole_layer(self):
         # A change to what decides the selection cannot be judged by it.
         for path in (".github/workflows/required-ci.yml", ".github/scripts/required-ci.py",
                      ".github/scripts/test_required_ci.py", ".github/scripts/backend_imports.py",
-                     "backend/scripts/ci_shard.py"):
+                     ".github/scripts/coverage_map.py", "backend/scripts/ci_shard.py"):
             with self.subTest(path=path):
                 self.assert_whole(self.plan(["backend/app/billing.py", path]))
 
     def test_a_backend_selecting_path_outside_backend_runs_the_whole_layer(self):
-        # The import graph sees only backend/; a file elsewhere that the
-        # backend suite reads (its workflow, a catalog it loads) is a change
-        # the graph cannot place.
         for path in (".github/workflows/test.yml", ".pre-commit-config.yaml",
                      "frontend/src/i18n/messages/zh-CN/global.json",
                      "deploy/metering-proxy/cheese_billing_core.py"):
@@ -320,6 +335,10 @@ class IntegrationPlanTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assert_whole(self.plan([path]))
 
+    def test_a_selection_that_fails_runs_the_whole_layer(self):
+        with mock.patch.object(gate.coverage_map, "select", side_effect=KeyError("files")):
+            self.assert_whole(self.plan(["backend/app/rooms.py"]))
+
     def test_a_narrowed_selection_takes_the_shards_its_size_needs(self):
         # 144 files a shard (the layer's 718 over its five), never more than
         # the whole layer's five.
@@ -327,8 +346,7 @@ class IntegrationPlanTest(unittest.TestCase):
                               (577, 5), (5000, 5)):
             selected = [f"tests/integration/test_{i}.py" for i in range(count)]
             with self.subTest(count=count), mock.patch.object(
-                    gate.backend_imports, "select_integration",
-                    return_value=(selected, "stubbed")):
+                    gate.coverage_map, "select", return_value=(selected, ["stubbed"])):
                 files, got, floor, _reason = self.plan(["backend/app/rooms.py"])
                 self.assertEqual(files, selected)
                 self.assertEqual(got, [f"{i}/{shards}" for i in range(shards)])
@@ -852,7 +870,8 @@ class MainCliTest(unittest.TestCase):
         scripts = WORKFLOW.parent.parent / "scripts"
         target = tmp / ".github" / "scripts"
         target.mkdir(parents=True)
-        for name in ("required-ci.py", "required-ci-paths.json", "backend_imports.py"):
+        for name in ("required-ci.py", "required-ci-paths.json", "backend_imports.py",
+                         "coverage_map.py"):
             shutil.copy(scripts / name, target / name)
 
         def git(*args):
@@ -879,7 +898,8 @@ class MainCliTest(unittest.TestCase):
     def _pr_scope(self, tmp, script, base, draft):
         out = tmp / "github_output"
         out.write_text("")
-        env = {**os.environ, "GITHUB_EVENT_NAME": "pull_request",
+        env = {**{k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"},
+               "GITHUB_EVENT_NAME": "pull_request",
                "GITHUB_EVENT_PATH": self._event_file(tmp, {"pull_request": {"draft": draft}}),
                "GITHUB_OUTPUT": str(out)}
         proc = subprocess.run([sys.executable, str(script), "scope", base],
@@ -908,7 +928,7 @@ class MainCliTest(unittest.TestCase):
         self.assertEqual({suite: written[suite] for suite in gate.PATHS},
                          {suite: "false" for suite in gate.PATHS})
 
-    def test_a_ready_pr_scope_runs_what_it_selects_and_narrows_integration(self):
+    def test_a_ready_pr_scope_runs_what_it_selects(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             changed = {**self.CHANGE, "e2e/tests/login.spec.ts": "x\n"}
@@ -923,12 +943,12 @@ class MainCliTest(unittest.TestCase):
             # The api job compares the document against the commit this diff
             # was taken from, so the two cannot be answering different questions.
             self.assertEqual(written["base"], base)
-            # Only the test that imports the changed module, on one shard held
-            # to running something.
-            self.assertEqual(json.loads(written["integration_files"]),
-                             ["tests/integration/test_rooms.py"])
-            self.assertEqual(json.loads(written["integration_shards"]), ["0/1"])
-            self.assertEqual(written["integration_floor"], "0")
+            # No coverage map can be read here (no token), so the layer runs
+            # whole rather than narrowing on a guess.
+            self.assertEqual(json.loads(written["integration_files"]), "all")
+            self.assertEqual(json.loads(written["integration_shards"]),
+                             [f"{i}/5" for i in range(5)])
+            self.assertEqual(written["integration_floor"], "2400")
 
             # The judge accepts the run those outputs describe.
             needs = {"scope": {"result": "success", "outputs": written},
@@ -1053,7 +1073,8 @@ class MainCliTest(unittest.TestCase):
     def test_check_mode_fails_closed_when_the_event_is_unreadable(self):
         missing = tempfile.TemporaryDirectory()
         self.addCleanup(missing.cleanup)
-        env = {**os.environ, "GITHUB_EVENT_NAME": "pull_request",
+        env = {**{k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"},
+               "GITHUB_EVENT_NAME": "pull_request",
                "GITHUB_EVENT_PATH": str(Path(missing.name) / "no-such-event.json"),
                "CI_NEEDS": json.dumps({"scope": {"result": "success",
                                                  "outputs": {k: "false" for k in gate.PATHS} | {"tier": "draft"}}})}
