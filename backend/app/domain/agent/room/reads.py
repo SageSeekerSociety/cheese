@@ -24,6 +24,7 @@ from app.domain.agent.reads import (
     Received,
     Replaced,
     Report,
+    ResultLanded,
     Working,
     Writing,
 )
@@ -42,7 +43,7 @@ from app.domain.delivery.input_identity import InputReceipt
 # False for one it had applied and followed through before, and what follows
 # from it is not done a second time; ``Followed`` says it was followed through.
 # Every other item answers nothing.
-RoomReader = Callable[[SessionRef, Read], Awaitable[bool | None]]
+RoomReader = Callable[[SessionRef, Read], Awaitable[object]]
 
 
 class NativeEvents(Protocol):
@@ -65,9 +66,11 @@ class RoomBooks(Protocol):
 
     async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None: ...
 
-    async def apply_report(self, report: Report) -> bool: ...
+    async def apply_report(self, report: Report) -> object: ...
 
     async def report_followed(self, report: Report) -> None: ...
+
+    async def result_landed(self, report: Report) -> None: ...
 
     async def inputs_replaced(
         self, conversation_id: uuid.UUID, agent_handle: str, harness: str, native: str
@@ -101,7 +104,7 @@ class RoomBooks(Protocol):
 def reader(chat: RoomBooks) -> RoomReader:
     """The room's ear, for ``chat``'s rooms."""
 
-    async def hear(session: SessionRef, read: Read) -> bool | None:
+    async def hear(session: SessionRef, read: Read) -> object:
         event = read.event
         work = uuid.UUID(read.work_id) if read.work_id else None
         if isinstance(event, Received):
@@ -110,6 +113,8 @@ def reader(chat: RoomBooks) -> RoomReader:
             return await chat.apply_report(event)
         elif isinstance(event, Followed):
             await chat.report_followed(event.report)
+        elif isinstance(event, ResultLanded):
+            await chat.result_landed(event.report)
         elif isinstance(event, Replaced):
             await chat.inputs_replaced(
                 session.conversation_id,

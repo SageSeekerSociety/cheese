@@ -64,6 +64,7 @@ async def test_the_result_lands_once_after_the_room_refused_it_once(db_factory):
     )
     chat.apply_report = lambda report: runner_reports.apply(chat, report)
     chat.report_followed = lambda report: runner_reports.projected(chat, report)
+    chat.result_landed = lambda report: runner_reports.landed(chat, report)
     svc = RoomSessions(None, HARNESS, None)  # type: ignore[arg-type]
     svc.reader = room_reads.reader(chat)  # type: ignore[arg-type]
     ref = SessionRef(project, topic, SEAT, harness=HARNESS)
@@ -98,6 +99,71 @@ async def test_the_result_lands_once_after_the_room_refused_it_once(db_factory):
     assert accept.results == [(work, "done")], "the closing result never landed"
     assert activity.count((work, False)) == 1, "the work was not marked over once"
     assert svc.work.get(seat) is None
+
+
+@pytest.mark.anyio
+async def test_the_result_lands_once_when_marking_the_work_over_failed_once(
+    db_factory,
+):
+    """The room took the work's result and then failed marking the work over:
+    the event comes again, the work is marked over then, and the room is not
+    handed the same result a second time."""
+    topic = await a_topic(db_factory)
+    async with db_factory() as session:
+        project = (await session.get(Conversation, topic)).project_id
+    key = session_state.SeatKey(topic, SEAT, HARNESS)
+    epoch = await session_state.register(db_factory, key)
+    results: list = []
+    activity: list = []
+    failed = {"once": False}
+
+    class _Landing:
+        async def accept(self, project, topic, work, event, eid, seen, unsolicited):
+            if isinstance(event, AgentResult):
+                results.append((work, event.text))
+
+    async def set_activity(project_id, topic_id, work_id, active, *, agent_handle=None):
+        if not active and not failed["once"]:
+            failed["once"] = True
+            raise RuntimeError("transient: the turn store refused once")
+        activity.append((work_id, active))
+
+    chat = SimpleNamespace(
+        session_factory=db_factory,
+        live=SimpleNamespace(unread_inputs={}),
+        hook_events=_Landing(),
+        _set_hook_activity=set_activity,
+    )
+    chat.apply_report = lambda report: runner_reports.apply(chat, report)
+    chat.report_followed = lambda report: runner_reports.projected(chat, report)
+    chat.result_landed = lambda report: runner_reports.landed(chat, report)
+    svc = RoomSessions(None, HARNESS, None)  # type: ignore[arg-type]
+    svc.reader = room_reads.reader(chat)  # type: ignore[arg-type]
+    ref = SessionRef(project, topic, SEAT, harness=HARNESS)
+    live = Live(ref, None, SEAT, "conv")  # type: ignore[arg-type]
+    seat = (topic, SEAT)
+    svc.live[seat] = live
+    work = uuid.uuid4()
+    now = datetime.now(UTC)
+    running = Report(topic, SEAT, HARNESS, epoch, epoch, 1, now, SessionRunning(work))
+    idle = Report(
+        topic,
+        SEAT,
+        HARNESS,
+        epoch,
+        epoch,
+        2,
+        now,
+        SessionIdle(work, AgentResult(text="done", session_id="conv")),
+    )
+    await room_reading._report(svc, seat, live, running)
+
+    with pytest.raises(RuntimeError):
+        await room_reading._report(svc, seat, live, idle)
+    await room_reading._report(svc, seat, live, idle)
+
+    assert results == [(work, "done")]
+    assert activity.count((work, False)) == 1
 
 
 @pytest.mark.anyio

@@ -58,6 +58,7 @@ def upgrade() -> None:
         sa.Column("epoch", sa.BigInteger(), nullable=False),
         sa.Column("applied_seq", sa.BigInteger(), nullable=False),
         sa.Column("projected_seq", sa.BigInteger(), nullable=False, server_default="0"),
+        sa.Column("landed_seq", sa.BigInteger(), nullable=False, server_default="0"),
         sa.PrimaryKeyConstraint("conversation_id", "agent_handle", "harness", "epoch"),
     )
     op.add_column(

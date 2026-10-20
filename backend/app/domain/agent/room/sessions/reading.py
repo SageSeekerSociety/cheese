@@ -37,6 +37,7 @@ from app.domain.agent.reads import (
     Read,
     Received,
     Report,
+    ResultLanded,
     SessionExited,
     SessionIdle,
     SessionRunning,
@@ -246,35 +247,46 @@ async def _report(
     second time and the rest is done again. Never ends the reading itself: a
     session that is gone ends it once its runner has heard the last event was
     taken."""
-    if await svc._hear(live.session, Read(None, report), required=True) is False:
+    applied = await svc._hear(live.session, Read(None, report), required=True)
+    if applied is False:
         # Applied and followed through before (a redelivery): everything that
         # follows from it was done then.
         return False
-    await _keep(svc, seat, live, report)
+    await _keep(
+        svc, seat, live, report, landed=bool(getattr(applied, "result_landed", False))
+    )
     await svc._hear(live.session, Read(None, Followed(report)), required=True)
     return False
 
 
-async def _keep(svc: pkg.RoomSessions, seat: Seat, live: Live, report: Report) -> None:
+async def _keep(
+    svc: pkg.RoomSessions, seat: Seat, live: Live, report: Report, *, landed: bool
+) -> None:
     """The room's books on what a seat's runner reported. Each part is
-    idempotent: an event delivered again after a failure here is kept again."""
+    idempotent: an event delivered again after a failure here is kept again,
+    and the closing result it carries, already handed to the room in an earlier
+    delivery (``landed``), is not handed again."""
     project, fact = live.session.project_id, report.fact
     if isinstance(fact, SessionRunning) and fact.work_id is not None:
         await svc._activity(project, seat, fact.work_id, True)
     elif isinstance(fact, SessionIdle) and fact.work_id is not None:
         result = fact.result
-        await svc._consume(
-            project,
-            seat[0],
-            fact.work_id,
-            result,
-            f"{svc.harness}:{report.conversation_id}:{report.agent_handle}"
-            f":{report.epoch}:{report.seq}",
-            # The closing text was already landed as its own message; the
-            # result must not publish it twice.
-            not result.is_error,
-            fact.unsolicited,
-        )
+        if not landed:
+            await svc._consume(
+                project,
+                seat[0],
+                fact.work_id,
+                result,
+                f"{svc.harness}:{report.conversation_id}:{report.agent_handle}"
+                f":{report.epoch}:{report.seq}",
+                # The closing text was already landed as its own message; the
+                # result must not publish it twice.
+                not result.is_error,
+                fact.unsolicited,
+            )
+            await svc._hear(
+                live.session, Read(None, ResultLanded(report)), required=True
+            )
         await svc._activity(project, seat, fact.work_id, False)
         # 会话空闲时问一次记忆：agent 该写的记忆按规矩写在回复之前，所以它停下
         # 来就是它写完的时刻。

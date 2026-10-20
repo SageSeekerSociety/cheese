@@ -295,3 +295,7 @@ class SessionOffset(Base):
     projected_seq: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default="0"
     )
+    #: How far the room has landed the closing results those events carried:
+    #: done again, the rest of an event's projection does not hand the room
+    #: the same result twice (`session_state.result_landed`).
+    landed_seq: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")

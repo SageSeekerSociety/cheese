@@ -21,7 +21,7 @@ from collections.abc import Awaitable, Callable, Collection
 from datetime import datetime
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import Uuid, column, exists, select, table
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -201,12 +201,22 @@ class ProgressNotices(Protocol):
     async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> object: ...
 
 
+#: The review domain's cards, read as a bare table: that domain imports this
+#: one, so a card is read here by its row (as `room_task.closing` does).
+_cards = table("accept_cards", column("task_id", Uuid), column("status"))
+#: The statuses of a card that is still open (`review.archive.OPEN_CARD_STATUSES`,
+#: which a unit test holds this copy to): while one is, the card says where the
+#: task stands (等审, fixing its checks, resolving a conflict), not its teammate.
+OPEN_CARD_STATUSES = ("pending", "pending_gate", "conflict")
+
+
 class StaleProgressReminder:
     """做任务的会话还在跑，而它报的任务状态（`cheese_task_state`）停在原地超过
     `chat_progress_reminder_after_s`，就问它一句。
 
-    判据只有两样，都不看轮次：这个会话此刻在不在跑（``running`` 给出，会话协议
-    声明的状态：哪些对话上有座位在跑），和离它上一次报状态过了多久。一轮结束不是任何一件事的边界 ——
+    判据都不看轮次：这个会话此刻在不在跑（``running`` 给出，会话协议声明的状态：
+    哪些对话上有座位在跑），离它上一次报状态过了多久，以及此刻是不是它报的状态在说
+    话 —— 任务开着、没有一张还开着的卡（卡在的时候由卡说，它报也会被拒绝）。一轮结束不是任何一件事的边界 ——
     在等构建的会话一轮结束了还在等。从没报过的，从这里第一次看见它在跑时算起。
     提醒过一次，下一次再从提醒那一刻算起，所以一直不报的会话每过一个阈值听到一次。
 
@@ -241,7 +251,16 @@ class StaleProgressReminder:
                         Task.id,
                         Task.progress_set_at,
                         Task.owner_handle,
-                    ).where(Task.id.in_(running), Task.status == TaskStatus.open)
+                    ).where(
+                        Task.id.in_(running),
+                        Task.status == TaskStatus.open,
+                        # While a card is open it speaks for the task, and a
+                        # report would be refused: nothing to ask for.
+                        ~exists().where(
+                            _cards.c.task_id == Task.id,
+                            _cards.c.status.in_(OPEN_CARD_STATUSES),
+                        ),
+                    )
                 )
             ).all()
             languages = {

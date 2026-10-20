@@ -44,7 +44,7 @@ logger = logging.getLogger("app.domain.agent.room.sessions")
 
 async def _hear(
     svc: pkg.RoomSessions, session: SessionRef, read: Read, *, required: bool = False
-) -> bool | None:
+) -> object:
     """Hand the room one thing its session said or did, and what the room
     answered (``room.reads.RoomReader``). What the room has to hear for its
     books to be right (``required``) is an error to drop; the rest is only

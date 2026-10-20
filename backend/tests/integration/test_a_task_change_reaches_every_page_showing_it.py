@@ -202,7 +202,7 @@ def test_the_task_session_ending_is_heard_in_its_channel(client):
             datetime.now(UTC),
             SessionExited("launch-1"),
         )
-        assert client.portal.call(runner_reports.apply, chat, exited) is True
+        assert client.portal.call(runner_reports.apply, chat, exited) is not False
 
         assert _told(task_page, room)
         assert _told(channel, room)

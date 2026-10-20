@@ -11,6 +11,7 @@ upgrade as its failure, which the platform starts again by itself.
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -22,6 +23,7 @@ from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.models import TurnResume
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind, consumed_turn
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.input_identity import InputEffects, InputIdentity
@@ -181,12 +183,18 @@ async def test_a_seat_whose_old_runner_survived_the_deploy_takes_messages_at_onc
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("was_a_resume", [False, True])
 async def test_a_turn_the_old_runner_was_in_is_interrupted_and_resumed(
     client,
     room,  # noqa: F811
     center,
     tmp_path,
+    was_a_resume,
 ):
+    """The old runner was in the middle of a turn: its work is taken away, and
+    the turn is started again by itself. The upgrade cut it short, not the
+    agent failing, so it is resumed even when that turn was itself the
+    resume of a failure a moment before (``was_a_resume``)."""
     project, topic = room
     hub = OldRunnerHub()
     hub.ping = dict(IDLE)
@@ -195,26 +203,123 @@ async def test_a_turn_the_old_runner_was_in_is_interrupted_and_resumed(
     async def exercise():
         session = ref(project, topic)
         await _started_by_the_previous_release(client, hub, tmp_path, session)
+        if was_a_resume:
+            # The turn running at deploy is the resume of a rate-limited
+            # turn, handed to the seat a moment before.
+            now = datetime.now(UTC)
+            async with client.test_request_factory() as db:
+                instance = await db.scalar(
+                    select(AgentInstance).where(
+                        AgentInstance.project_id == project,
+                        AgentInstance.is_active.is_(True),
+                        AgentInstance.handle != "cheese",
+                    )
+                )
+                assert instance is not None
+                db.add(
+                    TurnResume(
+                        id=uuid.uuid4(),
+                        project_id=project,
+                        conversation_id=topic,
+                        recipient_handle=hub.opened[0].agent_handle,
+                        agent_instance_id=instance.id,
+                        failed_turn_id=uuid.uuid4(),
+                        reason="rate_limited",
+                        said="429",
+                        attempt=1,
+                        failed_at=now,
+                        due_at=now,
+                        handed_at=now,
+                    )
+                )
+                await db.commit()
         hub.old = True
         hub.old_ping = {**OLD_PING, "working": True, "work_id": str(work)}
         service = _backend(client, hub, tmp_path)
 
         await service.recover_sessions()
 
-        async def resumed() -> list[TurnResume]:
+        async def resume_of_the_turn() -> list[TurnResume]:
             async with client.test_request_factory() as db:
                 return list(
                     await db.scalars(
-                        select(TurnResume).where(TurnResume.conversation_id == topic)
+                        select(TurnResume).where(
+                            TurnResume.conversation_id == topic,
+                            TurnResume.failed_turn_id == work,
+                        )
                     )
                 )
 
         await _until(lambda: hub.interrupted == 1)
         found: list[TurnResume] = []
         async with asyncio.timeout(HANG_S):
-            while not (found := await resumed()):
+            while not (found := await resume_of_the_turn()):
                 await asyncio.sleep(0.05)
-        assert found, "the turn the upgrade cut short was not resumed"
         await service.stop_listening(0)
+        (resume,) = found
+        assert resume.reason == "runner_replaced"
+        assert resume.dropped_at is None, resume.dropped_reason
+        # The streak carries on as it stood: the upgrade is not one more
+        # failure for the agent's next resume to count against.
+        assert resume.attempt == (1 if was_a_resume else 0)
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_a_replacement_that_failed_once_is_settled_on_the_retry(
+    client,
+    room,  # noqa: F811
+    center,
+    tmp_path,
+    monkeypatch,
+):
+    """Settling the replaced runner fails once (the database was away for a
+    moment): recovery tries the seat again, and this time what the old runner
+    never read is dropped and the seat is free."""
+    from app.domain.agent import recovery, runner_reports
+
+    monkeypatch.setattr(recovery, "REPLAY_RETRY_S", 0.1)
+    real = runner_reports.drop_unread_of_session
+    calls = {"n": 0}
+
+    async def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("database away for a moment")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(runner_reports, "drop_unread_of_session", flaky)
+    project, topic = room
+    hub = OldRunnerHub()
+    hub.ping = dict(IDLE)
+
+    async def exercise():
+        session = ref(project, topic)
+        await _started_as_this_release_would(client, hub, tmp_path, session)
+        await _unread_input(client, session)
+        hub.old = True
+        service = _backend(client, hub, tmp_path)
+        await service.recover_sessions()
+
+        async def holds():
+            async with client.test_request_factory() as db:
+                return (
+                    await seat_has_unfinished_input(db, topic, session.agent_handle),
+                    await held_blocks(
+                        db,
+                        project_id=project,
+                        topic_id=topic,
+                        recipient_handle=session.agent_handle,
+                    ),
+                )
+
+        try:
+            async with asyncio.timeout(HANG_S):
+                while await holds() != (False, set()):
+                    await asyncio.sleep(0.05)
+        finally:
+            await service.stop_listening(0)
+        assert calls["n"] >= 2
 
     client.portal.call(exercise)

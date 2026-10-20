@@ -12,6 +12,7 @@ from app.domain.agent.reads import (
     Received,
     Replaced,
     Report,
+    ResultLanded,
     Working,
     Writing,
 )
@@ -56,7 +57,7 @@ def room_reader(
             heard = reachability and reachability(
                 session.project_id, session.topic_id, work, event.yes, event.reason
             )
-        elif isinstance(event, Followed | Replaced):
+        elif isinstance(event, Followed | Replaced | ResultLanded):
             # The room's own bookkeeping on a report or a replaced runner: no
             # kind of its own here; ``rest`` hears it when there is one.
             heard = None

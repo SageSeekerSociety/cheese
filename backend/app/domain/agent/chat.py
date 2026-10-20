@@ -342,7 +342,7 @@ class ChatService(
 
         await confirm_receipt(self._sessions, self.live, receipt)
 
-    async def apply_report(self, report: Report) -> bool:
+    async def apply_report(self, report: Report) -> runner_reports.Applied | bool:
         """Apply what a seat's runner reported, once (`runner_reports`): False
         when it was applied and followed through before."""
         return await runner_reports.apply(self, report)
@@ -355,6 +355,10 @@ class ChatService(
         await runner_reports.replaced(
             self, conversation_id, agent_handle, harness, native
         )
+
+    async def result_landed(self, report: Report) -> None:
+        """The room landed the result ``report`` carries (`runner_reports.landed`)."""
+        await runner_reports.landed(self, report)
 
     async def report_followed(self, report: Report) -> None:
         """Everything that follows from ``report`` was done

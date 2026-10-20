@@ -84,7 +84,7 @@ class _Runner:
             datetime.now(UTC),
             fact,
         )
-        assert self.client.portal.call(runner_reports.apply, chat, report) is True
+        assert self.client.portal.call(runner_reports.apply, chat, report) is not False
 
 
 def _a_task(client) -> tuple[str, str, str]:

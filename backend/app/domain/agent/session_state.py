@@ -144,6 +144,34 @@ async def projected(
         await session.commit()
 
 
+async def result_landed(
+    session: AsyncSession, key: SeatKey, *, epoch: int, seq: int
+) -> bool:
+    """Whether the room already landed the closing result event ``(epoch,
+    seq)`` carried: what follows from it is being done again."""
+    landed_seq = await session.scalar(
+        select(SessionOffset.landed_seq).where(*_offset(key, epoch))
+    )
+    return (landed_seq or 0) >= seq
+
+
+async def landed(
+    sessions: async_sessionmaker[AsyncSession],
+    key: SeatKey,
+    *,
+    epoch: int,
+    seq: int,
+) -> None:
+    """The room landed the closing result event ``(epoch, seq)`` carried."""
+    async with sessions() as session:
+        await session.execute(
+            update(SessionOffset)
+            .where(*_offset(key, epoch))
+            .values(landed_seq=func.greatest(SessionOffset.landed_seq, seq))
+        )
+        await session.commit()
+
+
 def _offset(key: SeatKey, epoch: int):
     return (
         SessionOffset.conversation_id == key.conversation_id,

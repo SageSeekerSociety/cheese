@@ -285,7 +285,7 @@ class RoomSessions:
 
     async def _hear(
         self, session: SessionRef, read: Read, *, required: bool = False
-    ) -> bool | None:
+    ) -> object:
         return await _books._hear(self, session, read, required=required)
 
     def _room(

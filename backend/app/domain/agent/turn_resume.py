@@ -178,7 +178,7 @@ async def after_failure(
             # and the latest failure would get no resume at all. A person's
             # word in between starts the streak again, as it does below.
             spoke = await _person_spoke(session, conversation_id, owed.failed_at)
-            attempt = 1 if spoke else owed.attempt
+            attempt = (0 if found.policy.platform else 1) if spoke else owed.attempt
             wait, dropped = _wait(found, attempt, now)
             owed.failed_turn_id = failed_turn_id
             owed.reason = found.kind
@@ -204,7 +204,11 @@ async def after_failure(
             )
             stored = owed
         else:
-            attempt = await _streak(session, conversation_id, seat, now) + 1
+            # A platform interruption carries the streak as it stands: it is
+            # not one more failure of the agent's (`Policy.platform`).
+            attempt = await _streak(session, conversation_id, seat, now) + (
+                0 if found.policy.platform else 1
+            )
             wait, dropped = _wait(found, attempt, now)
             row = {
                 "id": uuid.uuid4(),
@@ -453,6 +457,8 @@ def _wait(
 ) -> tuple[float | None, str | None]:
     """Seconds to wait before the resume, or the reason there is none."""
     policy = found.policy
+    if policy.platform:
+        return policy.base_s, None
     if attempt > policy.attempts:
         return None, ATTEMPTS_USED_UP
     stated = found.wait_s

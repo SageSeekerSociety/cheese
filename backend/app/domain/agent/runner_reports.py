@@ -21,6 +21,7 @@ This sits beside the room, not in it: it settles deliveries and resumes
 """
 
 import uuid
+from dataclasses import dataclass
 
 from app.domain.agent import session_state
 from app.domain.agent.harness.driven.lifecycle import IDLE, RUNNING
@@ -55,11 +56,20 @@ def _key(report: Report) -> session_state.SeatKey:
     )
 
 
-async def apply(chat, report: Report) -> bool:
-    """Apply ``report`` for ``chat``'s rooms, and tell who has to know. True
-    when what follows from it is to be done now (``projected`` once it is):
-    it is new, or it was applied and not followed through. False when both
-    were done before: nothing is done again."""
+@dataclass(frozen=True)
+class Applied:
+    """What follows from a report is to be done now (``projected`` once it is).
+    ``result_landed``: the room already landed the closing result it carries,
+    in an earlier delivery of it (``landed``)."""
+
+    result_landed: bool = False
+
+
+async def apply(chat, report: Report) -> Applied | bool:
+    """Apply ``report`` for ``chat``'s rooms, and tell who has to know.
+    ``Applied`` when what follows from it is to be done now: it is new, or it
+    was applied and not followed through. False when both were done before:
+    nothing is done again."""
     key = _key(report)
     fact = report.fact
     started = None
@@ -77,6 +87,9 @@ async def apply(chat, report: Report) -> bool:
             await db.commit()
             return False
         new = claim is session_state.Claim.NEW
+        already_landed = not new and await session_state.result_landed(
+            db, key, epoch=report.epoch, seq=report.seq
+        )
         if isinstance(fact, InputWritten):
             if new:
                 await record_receipt(db, InputReceipt(fact.identity, "accepted"))
@@ -153,7 +166,15 @@ async def apply(chat, report: Report) -> bool:
         # The seat may take what was waiting for it.
         nudge_messages(chat, report.conversation_id)
         wake_held_deliveries(chat, report.conversation_id, report.agent_handle)
-    return True
+    return Applied(result_landed=already_landed)
+
+
+async def landed(chat, report: Report) -> None:
+    """The room landed the closing result ``report`` carries
+    (``session_state.landed``)."""
+    await session_state.landed(
+        chat.session_factory, _key(report), epoch=report.epoch, seq=report.seq
+    )
 
 
 async def projected(chat, report: Report) -> None:

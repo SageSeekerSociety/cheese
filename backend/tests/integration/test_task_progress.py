@@ -11,9 +11,12 @@ one.
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import update
 
 from app.core.config import settings
+from app.domain.review.models import AcceptCard
+from app.domain.review.notes import NoteCode
 from app.domain.room_task.models import Task
 from app.domain.room_task.progress import note_agent_left
 from tests.delivery import delivery_artifact
@@ -383,4 +386,52 @@ def test_a_closed_task_is_not_asked_for_its_state(client):
 
     assert client.portal.call(remind, now) == 0
     assert client.portal.call(remind, now + 2 * threshold) == 0
+    assert chat.told == []
+
+
+@pytest.mark.parametrize(
+    "card_state",
+    [
+        {},
+        {"status": "pending", "note_code": NoteCode.checks_failed, "note": "CI 未通过"},
+        {
+            "status": "conflict",
+            "note_code": NoteCode.merge_conflict,
+            "note": "合并冲突",
+        },
+    ],
+    ids=["awaiting_review", "fixing_checks", "resolving_conflict"],
+)
+def test_a_running_session_whose_task_has_an_open_card_is_not_asked(client, card_state):
+    """While a card is open it says where the task stands (等审, fixing its
+    checks, resolving a conflict), and a report would be refused: the platform
+    does not ask the teammate for one, however long its session runs."""
+    from app.domain.agent.turn.steps.reminders import StaleProgressReminder
+
+    project_id, task_id, _seat = _a_task(client)
+    card = _file_card(client, project_id, task_id)
+    if card_state:
+
+        async def seed() -> None:
+            async with client.test_factory() as session:
+                await session.execute(
+                    update(AcceptCard)
+                    .where(AcceptCard.id == uuid.UUID(card["id"]))
+                    .values(**card_state)
+                )
+                await session.commit()
+
+        client.portal.call(seed)
+    threshold = timedelta(seconds=settings.chat_progress_reminder_after_s)
+    now = datetime.now(UTC)
+    chat = _Chat(client)
+
+    async def sessions_running(_session):
+        return {uuid.UUID(task_id)}
+
+    remind = StaleProgressReminder(chat, sessions_running)
+
+    asked = [client.portal.call(remind, now + k * threshold) for k in range(4)]
+
+    assert asked == [0, 0, 0, 0]
     assert chat.told == []

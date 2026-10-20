@@ -52,6 +52,10 @@ class Policy:
     cap_s: float
     attempts: int
     needs_reset: bool = False
+    #: The platform cut the turn short, not the agent or its service failing:
+    #: it neither counts towards a streak's ``attempts`` nor is held to them
+    #: (`turn_resume.after_failure`).
+    platform: bool = False
 
 
 RATE_LIMITED: Final = "rate_limited"
@@ -63,7 +67,8 @@ SUBSCRIPTION_COOLING: Final = "subscription_cooling"
 QUOTA_RESET: Final = "quota_reset"
 #: The platform's upgrade replaced the runner a turn was running in
 #: (``platform_failures.RUNNER_REPLACED_CODE``): the conversation goes on in
-#: the new one, so the turn is started again at once, and once.
+#: the new one, so the turn is started again at once, whatever the streak of
+#: resumes before it (``Policy.platform``).
 RUNNER_REPLACED: Final = "runner_replaced"
 
 POLICIES: Final[dict[str, Policy]] = {
@@ -76,7 +81,7 @@ POLICIES: Final[dict[str, Policy]] = {
     # Unreadable snapshot: the accounts' thaw is unknown, so ask rarely.
     SUBSCRIPTION_COOLING: Policy(base_s=15 * 60, cap_s=2 * 3600, attempts=3),
     QUOTA_RESET: Policy(base_s=0, cap_s=0, attempts=2, needs_reset=True),
-    RUNNER_REPLACED: Policy(base_s=5, cap_s=5, attempts=1),
+    RUNNER_REPLACED: Policy(base_s=5, cap_s=5, attempts=0, platform=True),
 }
 
 

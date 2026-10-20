@@ -196,6 +196,14 @@ class Replaced:
 
 
 @dataclass(frozen=True)
+class ResultLanded:
+    """The room landed the closing result ``report`` carries: delivered again,
+    it is not handed to the room a second time (``runner_reports.landed``)."""
+
+    report: Report
+
+
+@dataclass(frozen=True)
 class Followed:
     """Everything that follows from ``report`` was done, the room's books
     included: delivered again, it asks nothing more (``runner_reports``)."""
@@ -218,6 +226,7 @@ class Read:
         | Received
         | Report
         | Followed
+        | ResultLanded
         | Replaced
         | Reachable
         | Moved

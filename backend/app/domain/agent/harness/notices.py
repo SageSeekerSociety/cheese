@@ -99,20 +99,21 @@ def stale_progress_reminder(minutes: int | None, language: str | None = None) ->
     """做任务的会话还在跑，而它报的任务状态已经 `minutes` 分钟没动过（None =
     从没报过）。
 
-    看板上这件任务只显示它自己报的那一句（`cheese_task_state`），平台不替它推断：
-    它在等构建、跑长命令时一轮结束了也照旧是「在做」，而它做完了不说，看板就一直
-    说它在做。所以平台能做的是问。
+    没有卡在等审阅的时候，看板上这件任务显示的是它自己报的那一句
+    （`cheese_task_state`），平台不替它推断：它在等构建、跑长命令时一轮结束了也照旧
+    是「在做」，而它做完了不说，看板就一直说它在做。所以平台能做的是问；卡在的时候
+    由卡说，也就不问（`StaleProgressReminder`）。
     """
     if minutes is None:
         return _in_the_readers_language(
             language,
-            "你还没说这件任务做到哪了，看板上它只能显示「进行中」。现在就用 "
-            "cheese_task_state 设一次：working 在做、waiting 在等结果、blocked "
-            "卡住了，note 写一句在做什么。做完了就递卡，看板会显示等审。",
-            "You have not said where this task stands, so the board can only show "
-            "it as in progress. Call cheese_task_state now: working, waiting (on a "
-            "build, CI or a long command) or blocked, with a one-line note. When "
-            "the work is done, file a card: the board then shows it awaiting review.",
+            "你还没说这件任务做到哪了。现在就用 cheese_task_state 设一次：working "
+            "在做、waiting 在等结果、blocked 卡住了，note 写一句在做什么。做完了就"
+            "递卡，看板会显示等审。",
+            "You have not said where this task stands. Call cheese_task_state now: "
+            "working, waiting (on a build, CI or a long command) or blocked, with a "
+            "one-line note. When the work is done, file a card: the board then "
+            "shows it awaiting review.",
         )
     return _in_the_readers_language(
         language,

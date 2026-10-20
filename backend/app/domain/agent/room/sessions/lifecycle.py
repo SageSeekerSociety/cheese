@@ -215,8 +215,11 @@ async def replay(svc: pkg.RoomSessions, session: SessionRef) -> None:
     on reading it. Returns once the tail is landed; raises what stopped the
     reading before it was."""
     seat = svc._seat_of(session)
-    if (outdated := svc.outdated.pop(seat, None)) is not None:
+    if (outdated := svc.outdated.get(seat)) is not None:
+        # Forgotten only once it is settled: a settlement that fails is
+        # retried with the replay (`recovery`), and finds the seat still owed.
         await _replaced(svc, outdated)
+        svc.outdated.pop(seat, None)
         return
     if seat not in svc.live:
         return
