@@ -157,7 +157,7 @@ const actions = computed<MenuAction[]>(() =>
     </AdaptiveMenu>
     <div class="routine-row__head">
       <div class="routine-row__id">
-        <div class="t-body routine-row__title">{{ routine.title }}</div>
+        <div class="t-body routine-row__title">{{ routine.title || t('routines.unnamed') }}</div>
         <div v-if="roomLine" class="t-meta c-faint">{{ roomLine }}</div>
       </div>
       <span
