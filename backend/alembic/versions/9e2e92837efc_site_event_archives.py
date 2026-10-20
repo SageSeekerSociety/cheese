@@ -1,7 +1,7 @@
 """Record where each batch of retired 现场 rows went
 
 Revision ID: 9e2e92837efc
-Revises: e3b7a19c4d52
+Revises: b7d2e94a1c05
 Create Date: 2026-10-20
 
 `app.domain.session_record.retired_site` moves the hidden event rows the old
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "9e2e92837efc"
-down_revision: str | Sequence[str] | None = "e3b7a19c4d52"
+down_revision: str | Sequence[str] | None = "b7d2e94a1c05"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
