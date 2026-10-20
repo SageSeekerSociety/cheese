@@ -6,7 +6,7 @@ block. What they wrote is an agent's trace, and agent traces are kept for good,
 so the rows leave the database only by way of the bucket. `RETIRED_SITE_ROWS`
 names them by what they carry, exactly as `scripts/dev/count-retired-site.py`
 counts them; the hidden notices that are still written (an edited message, a
-memory change, a mention nobody answers) carry none of it and stay.
+memory change) carry none of it and stay.
 
 One batch is one conversation's rows, at most `BATCH_ROWS`, in one transaction:
 
