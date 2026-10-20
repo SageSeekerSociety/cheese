@@ -108,7 +108,7 @@ watch(
           <div class="compute-row__name" data-user-content>{{ device.name }}</div>
           <div class="compute-row__status">
             <span class="compute-dot" :class="{ 'compute-dot--on': device.online }" aria-hidden="true" />
-            <span :class="{ 'c-ok': device.online }">{{ status(device) }}</span>
+            <span :class="{ 'compute-row__online': device.online }">{{ status(device) }}</span>
           </div>
         </div>
         <div v-if="canManage" class="compute-row__actions">
@@ -243,6 +243,10 @@ watch(
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
+}
+
+.compute-row__online {
+  color: var(--ok-ink);
 }
 
 .compute-dot {
