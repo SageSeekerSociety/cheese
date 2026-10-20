@@ -11,7 +11,7 @@ upgrade as its failure, which the platform starts again by itself.
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,6 +23,8 @@ from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.models import TurnResume
+from app.domain.agent.service import AgentResult
+from app.domain.agent.turn_resume import after_failure, hand_due
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind, consumed_turn
 from app.domain.delivery.input_holds import seat_has_unfinished_input
@@ -321,5 +323,85 @@ async def test_a_replacement_that_failed_once_is_settled_on_the_retry(
         finally:
             await service.stop_listening(0)
         assert calls["n"] >= 2
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_a_turn_a_person_restarted_is_resumed_at_once_after_the_upgrade(
+    client,
+    room,  # noqa: F811
+    center,
+    tmp_path,
+):
+    """The seat was waiting out a rate limit hours long; a person told it to
+    carry on, which ends that wait, and the turn that started is cut short by
+    the upgrade. It is resumed within seconds, not after the limit."""
+    project, topic = room
+    hub = OldRunnerHub()
+    hub.ping = dict(IDLE)
+    work = uuid.uuid4()
+    factory = client.test_request_factory
+    limited = (
+        "API Error: Server is temporarily limiting requests (not your usage limit)"
+        " · Rate limited. Please try again in 4 hours"
+    )
+
+    async def exercise():
+        session = ref(project, topic)
+        await _started_by_the_previous_release(client, hub, tmp_path, session)
+        seat = hub.opened[0].agent_handle
+        waiting = await after_failure(
+            factory,
+            project_id=project,
+            conversation_id=topic,
+            seat=seat,
+            failed_turn_id=uuid.uuid4(),
+            result=AgentResult(text=limited, session_id="s", is_error=True),
+            route="subscription",
+        )
+        assert waiting is not None and waiting.dropped_at is None
+        await asyncio.sleep(0.05)
+        async with factory() as db:
+            db.add(
+                Block(
+                    id=uuid.uuid4(),
+                    project_id=project,
+                    conversation_id=topic,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author="alice",
+                    content="fixed it, carry on",
+                    meta={},
+                )
+            )
+            await db.commit()
+        await asyncio.sleep(0.05)
+        hub.old = True
+        hub.old_ping = {**OLD_PING, "working": True, "work_id": str(work)}
+        service = _backend(client, hub, tmp_path)
+        await service.recover_sessions()
+        await _until(lambda: hub.interrupted == 1)
+
+        async def resume_of_the_turn() -> TurnResume | None:
+            async with factory() as db:
+                return await db.scalar(
+                    select(TurnResume)
+                    .where(
+                        TurnResume.conversation_id == topic,
+                        TurnResume.failed_turn_id == work,
+                    )
+                    .execution_options(populate_existing=True)
+                )
+
+        row: TurnResume | None = None
+        async with asyncio.timeout(HANG_S):
+            while (row := await resume_of_the_turn()) is None:
+                await asyncio.sleep(0.05)
+        await service.stop_listening(0)
+        now = datetime.now(UTC)
+        assert row.reason == "runner_replaced"
+        assert row.due_at <= now + timedelta(seconds=10)
+        assert await hand_due(factory, now=now + timedelta(seconds=60)) == 1
 
     client.portal.call(exercise)
