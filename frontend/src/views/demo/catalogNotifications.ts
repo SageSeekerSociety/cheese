@@ -25,6 +25,7 @@ import {
   mentionNotification,
   reactionNotification,
   replyNotification,
+  taskNotification,
   teamInvitationAcceptedNotification,
   teamInvitationCanceledNotification,
   teamInvitationDeclinedNotification,
@@ -40,6 +41,7 @@ import RenderDeviceInUseNotification from '@/components/common/Notification/rend
 import RenderMentionNotification from '@/components/common/Notification/renders/RenderMentionNotification.vue'
 import RenderReactionNotification from '@/components/common/Notification/renders/RenderReactionNotification.vue'
 import RenderReplyNotification from '@/components/common/Notification/renders/RenderReplyNotification.vue'
+import RenderTaskNotification from '@/components/common/Notification/renders/RenderTaskNotification.vue'
 import RenderTeamInvitationAcceptedNotification from '@/components/common/Notification/renders/RenderTeamInvitationAcceptedNotification.vue'
 import RenderTeamInvitationCanceledNotification from '@/components/common/Notification/renders/RenderTeamInvitationCanceledNotification.vue'
 import RenderTeamInvitationDeclinedNotification from '@/components/common/Notification/renders/RenderTeamInvitationDeclinedNotification.vue'
@@ -156,6 +158,35 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
         expect: '知识库里导入的旧文档怎么处理',
       },
       {
+        name: '题目上等你的',
+        note: '你出的题目上有领取要批准、提交要批改：按空间分组，一道题一行，点开去领取名单或提交页。',
+        props: {
+          items: [
+            {
+              kind: 'task_queue',
+              taskId: 88,
+              taskName: '基于 eBPF 的容器网络延迟分析工具',
+              spaceId: 7,
+              spaceName: '系统与网络实验室',
+              claims: 2,
+              reviews: 1,
+              at: '2026-10-07T10:00:00Z',
+            },
+            {
+              kind: 'task_queue',
+              taskId: 89,
+              taskName: '校园网 DNS 日志中的异常域名检测',
+              spaceId: 7,
+              spaceName: '系统与网络实验室',
+              claims: 0,
+              reviews: 3,
+              at: '2026-10-06T10:00:00Z',
+            },
+          ],
+        },
+        expect: '2 份领取待批准，1 份提交待批改',
+      },
+      {
         name: '没有要处理的',
         note: '一件都没有时只说一句「暂无等你处理的事项」。',
         props: { items: [] },
@@ -187,6 +218,29 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
         slot: '已回答：A 左侧白色竖条',
         expect: '已回答：A 左侧白色竖条',
         expectSelector: '.inbox-row--done',
+      },
+    ],
+  },
+  {
+    id: 'render-task-notification',
+    title: 'RenderTaskNotification',
+    about:
+      '空间里一道题目上的事：领取通过与否、提交批改了、提交要求或个人截止时间改了、截止快到了、有人过了截止没交。标题是后端说的那一句，底下是空间；点开去题目页，批改结果去提交页。',
+    file: 'src/components/common/Notification/renders/RenderTaskNotification.vue',
+    component: RenderTaskNotification,
+    needs: TEXT,
+    states: [
+      {
+        name: '提交批改了',
+        note: '学生的动态：哪道题、通过没有、几分；点开去「我的提交」。',
+        props: { notification: taskNotification('reviewed') },
+        expect: '的提交已通过，88 分',
+      },
+      {
+        name: '截止不到一天',
+        note: '已领取还没交、离个人提交截止不到 24 小时：这一条也推送到手机和桌面。',
+        props: { notification: taskNotification('dueSoon') },
+        expect: '距提交截止不到 24 小时',
       },
     ],
   },

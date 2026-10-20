@@ -45,6 +45,11 @@
       "allow": "Allow",
       "refuse": "Don't allow",
       "added": "Added by {name} in project settings"
+    },
+    "task": {
+      "claims": "{n} claims to approve",
+      "reviews": "{n} submissions to review",
+      "and": ", "
     }
   },
   "nav": {

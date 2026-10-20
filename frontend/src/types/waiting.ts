@@ -2,7 +2,22 @@ import type { BoardPhrase } from '../cx_types'
 
 /** 待我处理清单里的一行（后端 `/awaiting-me`）：项目里的一件事，或一条等我回答的
  *  邀请、申请。两种按 `kind` 分。 */
-export type WaitingItem = WaitingWork | WaitingAsk | WaitingRun
+export type WaitingItem = WaitingWork | WaitingAsk | WaitingRun | WaitingTask
+
+/** 我出的（或我管的空间里的）一道题目上等我的事（后端 `task/queue.py`）：几份领取
+ *  等我批准、几份提交等我批改。批完就不在清单上了。 */
+export interface WaitingTask {
+  kind: 'task_queue'
+  taskId: number
+  taskName: string
+  spaceId: number
+  spaceName: string
+  /** 等我批准的领取有几份。 */
+  claims: number
+  /** 等我批改的提交有几份。 */
+  reviews: number
+  at: string
+}
 
 /** 项目里等我的一件事（后端 `room_task/awaiting.py`）。
  *

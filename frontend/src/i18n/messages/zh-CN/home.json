@@ -45,6 +45,11 @@
       "allow": "允许运行",
       "refuse": "不允许",
       "added": "{name} 在项目设置中添加"
+    },
+    "task": {
+      "claims": "{n} 份领取待批准",
+      "reviews": "{n} 份提交待批改",
+      "and": "，"
     }
   },
   "nav": {

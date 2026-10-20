@@ -41,6 +41,7 @@ from app.domain.task.services import (
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
+from app.domain.task_notices import notices as task_notices
 
 
 async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> dict:
@@ -262,6 +263,13 @@ async def update_task(
         )
         task.category_id = effective_category_id
 
+    # 领过这道题的人要知道提交内容或评分要点变了：先记下改之前的样子，和改之后比。
+    # 发布页保存时整份带上这两样，没改也一样，所以比的是内容，不是带没带。
+    requirements_before = (
+        _submission_schema_to_api(await service.list_submission_schema(task.id)),
+        rubric_to_api(await service.list_rubric(task.id)),
+    )
+
     # submissionSchema: 覆盖更新（先删后插）。
     if payload.submission_schema is not None:
         await service.replace_submission_schema(task.id, payload.submission_schema)
@@ -286,6 +294,14 @@ async def update_task(
 
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)
+    requirements_after = (
+        _submission_schema_to_api(await service.list_submission_schema(task.id)),
+        rubric_to_api(await service.list_rubric(task.id)),
+    )
+    if requirements_after != requirements_before and task.approved == 0:
+        await task_notices.requirements_changed(
+            db, task=task, by=user_id, at=task.updated_at
+        )
     # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
     # runs after the response has gone out, so a client told a task is approved
     # could open the board on its next request and not find the task there yet.

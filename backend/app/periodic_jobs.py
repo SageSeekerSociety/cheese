@@ -38,6 +38,7 @@ from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
 from app.domain.session_record import periodic as session_record_periodic
 from app.domain.task import periodic as task_periodic
+from app.domain.task_notices import periodic as task_notices_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
 from app.domain.topic_membership.services import addressable_seat
 from app.domain.usage import periodic as usage_periodic
@@ -47,6 +48,7 @@ PERIODIC_JOB_NAMES = (
     "forge credential cache cleanup",
     "forge orphan account sweep",
     "quiet task reminder",
+    "task deadline reminder",
     "pr poll",  # forge_bound: PR status reads
     "task pr poll",  # forge_bound: task branch/PR reads
     "task closing",  # forge_bound: a task going on reads its next branch
@@ -158,6 +160,7 @@ def periodic_jobs(
         last_activity=last_activity,
     )
     task_quiet_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    task_notices_periodic.register_periodic_jobs(jobs, sessions=sessions)
     review_periodic.register_periodic_jobs(
         jobs,
         chat=chat,
