@@ -16,7 +16,6 @@ from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
-    Column,
     DateTime,
     Enum,
     ForeignKey,
@@ -132,23 +131,6 @@ class AccountConnection(UuidPk, Timestamps, Base):
     """
 
     __tablename__ = "account_model_connections"
-    # Schema metadata only while the previous backend serves during rollout.
-    # The follow-up release drops this column after the team-owned code deploys.
-    __table_args__ = (
-        Column(
-            "owner_user_id",
-            Integer,
-            ForeignKey(
-                "user.id",
-                ondelete="CASCADE",
-                name="fk_account_model_connections_owner_user_id_user",
-            ),
-            nullable=True,
-            index=True,
-        ),
-    )
-    __mapper_args__ = {"exclude_properties": ["owner_user_id"]}
-
     team_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey(
