@@ -14,7 +14,6 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import urlsplit
 
 if sys.platform != "win32":
     import fcntl
@@ -318,7 +317,7 @@ def release_store(owner):
     Beside the rooms, never inside one: a sandboxed room can write all of its
     own home, and programs from here also run outside its sandbox — the
     install below, the teardown, the environment reset (`record_sandbox`). A
-    sandbox is shown this directory read-only (`sandbox_argv`), so what is here
+    sandbox is shown this directory read-only (`confinement.sandbox_argv`), so what is here
     is what the platform put here."""
     return execution_root(owner) / "executor-releases"
 
@@ -632,7 +631,7 @@ def sudo(command, failure):
 # machine says the same when asked as it connects (`device.sandbox`), and the
 # backend refuses such a room before it gets here. A system gains an
 # environment by leaving this table in the same change that teaches
-# `sandbox_tools` and `sandbox_argv` to build it.
+# `sandbox_tools` and `confinement.sandbox_argv` to build it.
 NO_SANDBOX = {"win32": "sandboxNoneOnWindows"}
 
 
@@ -791,172 +790,6 @@ def forget_sandbox(owner, home):
     marker.with_name(home.name + ".process").unlink(missing_ok=True)
 
 
-# Where the machine keeps what is not the system's: mounted disks, and on WSL
-# the Windows drives and the socket that runs Windows programs. Hidden in a
-# sandbox like the owner's home: they hold the owner's files, and a Windows
-# program would run outside it.
-HIDDEN_MOUNTS = ("/mnt", "/media", "/run/media", "/run/WSL")
-
-
-def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds, network=True):
-    """`argv` run in a bubblewrap sandbox: the room's processes see the machine
-    read-only, and of the owner's home only what is bound back below.
-
-    Writable: the room's home and its project's package store. Read-only: the
-    machine's toolchain, the release store and the Claude build. Hidden: every
-    other room, every other project's store, the owner's own files (the
-    connector's credential is among them), the owner's runtime directory,
-    whose user bus would start processes outside, and the Docker daemon's
-    socket. `/tmp` and `/var/tmp` are a
-    directory of the room's own on disk, with the one directory of the
-    machine's /tmp that holds this executor's sockets bound back, so the
-    connector can still reach it.
-
-    Its own pid namespace too: no other room's processes to signal, trace, or
-    reach a filesystem through via /proc. That makes the pid an executor
-    reports meaningless outside it, which is why it is stopped by request.
-
-    And, with `network`, its own network namespace, empty until
-    `start_sandbox` has the machine connect it (`sandbox_host.py`). Without
-    it, on a machine a person enrolled, the sandbox shares the machine's
-    network. Bubblewrap reports the sandbox's first process on `fds["info"]`
-    and waits on `fds["block"]` before running `argv`, under the seccomp
-    program on `fds["seccomp"]`.
-
-    On a machine a person enrolled the owner's home holds everything they
-    installed there too (nvm, `~/.cargo/bin`, `~/.local/bin`), which a
-    session does not see; mounted disks are hidden as well (`HIDDEN_MOUNTS`).
-    """
-    store = execution_root(owner) / "store" / home.parent.name
-    toolchain = execution_root(owner) / "toolchain"
-    tmp = home / PLATFORM_DIR / "tmp"
-    for directory in (store, toolchain, tmp):
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    sockets.mkdir(exist_ok=True, mode=0o700)
-    command = [
-        bwrap,
-        "--unshare-user",
-        "--unshare-pid",
-        "--unshare-ipc",
-        "--unshare-uts",
-        # No cgroup namespace of its own: one is made when the sandbox
-        # starts, before `SANDBOX_HOST` moves it into its limited cgroup, and
-        # would leave a runtime that sizes itself by its limit (Node, the JVM)
-        # reading a path it cannot resolve.
-        *(["--unshare-net"] if network else []),
-        "--info-fd",
-        str(fds["info"]),
-        "--block-fd",
-        str(fds["block"]),
-        "--seccomp",
-        str(fds["seccomp"]),
-        "--ro-bind",
-        "/",
-        "/",
-        "--dev",
-        "/dev",
-        "--proc",
-        "/proc",
-        # The boot id as the machine reports it. A container's lxcfs gives it
-        # its own, which a fresh /proc does not show, and the environment
-        # runner's record of a process (`process_identity`) made inside would
-        # then never match the same process read from outside.
-        "--ro-bind",
-        "/proc/sys/kernel/random/boot_id",
-        "/proc/sys/kernel/random/boot_id",
-        # Before anything under the owner's home: a home kept under /tmp would
-        # otherwise be covered by the session's own /tmp.
-        "--bind",
-        str(tmp),
-        "/tmp",
-        "--bind",
-        str(tmp),
-        "/var/tmp",
-    ]
-    # Before the owner's home too, which may be kept on one of them.
-    for mount in HIDDEN_MOUNTS:
-        if Path(mount).is_dir():
-            command += ["--tmpfs", mount]
-    command += ["--tmpfs", str(owner)]
-    names = resolv_conf()
-    if network and names != "/etc/resolv.conf":
-        # Onto the file it leads to: bwrap mounts on no link (systemd-resolved's).
-        command += ["--ro-bind", names, os.path.realpath("/etc/resolv.conf")]
-    command += bool(fd := fds.get("hosts")) * ["--ro-bind-data", str(fd), "/etc/hosts"]
-    runtime_dir = Path(f"/run/user/{os.getuid()}")
-    if runtime_dir.is_dir():
-        command += ["--tmpfs", str(runtime_dir)]
-    # The docker group's socket is root on the machine, and a user namespace
-    # keeps the owner's groups: a session would reach it through a read-only
-    # mount as well, since connecting to a socket is not a write to the mount.
-    if Path("/run/docker.sock").exists():
-        command += ["--ro-bind", "/dev/null", "/run/docker.sock"]
-    # The Python the executor runs on, when the person keeps it in their home
-    # (pyenv, uv, conda): shown read-only, as the machine's own would be, at
-    # the path it is run by as well as where a link there leads.
-    prefixes = {Path(sys.base_prefix), Path(sys.prefix)}
-    for prefix in sorted(prefixes | {path.resolve() for path in prefixes}):
-        if owner in prefix.parents:
-            command += ["--ro-bind", str(prefix), str(prefix)]
-    for option, path in (
-        ("--bind", home),
-        ("--bind", store),
-        ("--ro-bind", toolchain),
-        ("--ro-bind", release_store(owner)),
-        ("--ro-bind", claude.parent),
-    ):
-        command += [option, str(path), str(path)]
-    command += [
-        "--bind",
-        str(sockets),
-        str(sockets),
-        "--chdir",
-        str(home / CHECKOUT_DIR),
-        "--",
-    ]
-    return command + argv
-
-
-# A copy of `sandbox_host.RESOLV_CONFS`, held to it by test_footprint_root.py.
-RESOLV_CONFS = ("/etc/resolv.conf", "/run/systemd/resolve/resolv.conf")
-
-
-def resolv_conf():
-    """The resolv.conf a sandbox reads: the machine's, unless that names only
-    a loopback stub, which inside the sandbox is the sandbox's own loopback
-    and answers nothing; then the stub's upstream list, the one
-    `sandbox_host.py` lets the sandbox reach."""
-    for path in RESOLV_CONFS:
-        try:
-            text = Path(path).read_text()
-        except OSError:
-            continue
-        for line in text.splitlines():
-            fields = line.split()
-            if (
-                len(fields) >= 2
-                and fields[0] == "nameserver"
-                and "." in fields[1]
-                and not fields[1].startswith("127.")
-            ):
-                return path
-    return RESOLV_CONFS[0]
-
-
-def loopback_ports(env):
-    """The machine's loopback ports a sandbox must reach as its own: the
-    backend's, where the machine reaches it through a loopback forward
-    (`machine_address.device_api_base`), and the preview tunnel's beside it."""
-
-    ports = []
-    for name in ("CHEESE_API", "CHEESE_PREVIEW_URL"):
-        address = urlsplit(env.get(name) or "")
-        if address.hostname in ("127.0.0.1", "localhost") and address.port:
-            if address.port not in ports:
-                ports.append(address.port)
-    return ports
-
-
 def start_sandbox(
     argv,
     *,
@@ -971,7 +804,7 @@ def start_sandbox(
     release,
     **options,
 ):
-    """Start `argv` in a sandbox (`sandbox_argv`) and, with `connect`, give
+    """Start `argv` in a sandbox (`confinement.sandbox_argv`) and, with `connect`, give
     it, before it runs anything, its network and its limits (`SANDBOX_HOST
     up`). A sandbox the machine cannot connect or limit is killed, never left
     to run without. Without `connect` (a machine a person enrolled, where
@@ -1000,21 +833,26 @@ def start_sandbox(
             env=env,
             **options,
         )
+    confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
     info, report = os.pipe()
     wait, go = os.pipe()
     seccomp, program = os.pipe()
-    confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
     os.write(program, confinement["seccomp_filter"]())
     os.close(program)
     fds = {"info": report, "block": wait, "seccomp": seccomp}
     site = connect and confinement["site_hosts"](env, fds)
     try:
         process = subprocess.Popen(
-            sandbox_argv(
+            confinement["sandbox_argv"](
                 argv,
                 bwrap=bwrap,
                 owner=owner,
                 home=home,
+                store=execution_root(owner) / "store" / home.parent.name,
+                toolchain=execution_root(owner) / "toolchain",
+                tmp=home / PLATFORM_DIR / "tmp",
+                releases=release_store(owner),
+                workdir=home / CHECKOUT_DIR,
                 claude=claude,
                 sockets=sockets,
                 fds=fds,
@@ -1042,7 +880,7 @@ def start_sandbox(
             command = [SANDBOX_HOST, "up", home.name, str(first), "--home", str(home)]
             for name in ("memory_mb", "swap_mb", "cpus", "pids", "disk_mib", "inodes"):
                 command += ["--" + name.replace("_", "-"), str(limits[name])]
-            for port in loopback_ports(env):
+            for port in confinement["loopback_ports"](env):
                 command += ["--forward", str(port)]
             command += ["--site", str(site)] * bool(site)
             answer = json.loads(
@@ -1402,7 +1240,7 @@ def configure_idle(payload):
                     bwrap = sandbox_tools(release, platform_machine=True)
                 record_sandbox(Path.home(), home, release)
                 # WSL runs a Windows program through this socket, outside every
-                # sandbox; the directory it is in is hidden too (`HIDDEN_MOUNTS`).
+                # sandbox; the directory it is in is hidden too (`confinement.HIDDEN_MOUNTS`).
                 env = {k: v for k, v in env.items() if k != "WSL_INTEROP"}
                 directory = Path(runtime["socket_directory"](state))
                 # The service makes this link in the /tmp it is shown, which is
