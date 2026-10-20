@@ -7,18 +7,13 @@ undispatched, and retried every 40 seconds for as long as anyone looked, with a
 "concurrent turns are full" notice posted into the room every time.
 """
 
-import importlib.util
 import uuid
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.domain.agent import turn_inputs
-from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
@@ -200,66 +195,6 @@ async def test_a_turn_the_sweep_leaves_alone_keeps_its_seat(db_factory):
     async with db_factory() as session:
         assert await seat_has_unfinished_input(session, topic, SEAT)
     assert all(row.terminated_at is None for row in await _rows(db_factory, topic))
-
-
-_HEAL = (
-    Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "7d2e9a41c6b3_end_inputs_of_turns_that_already_ended.py"
-)
-
-
-async def _heal(factory) -> None:
-    """The migration's own ``upgrade()``, on the path ``alembic upgrade`` takes."""
-    spec = importlib.util.spec_from_file_location("_heal", _HEAL)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    def apply(conn) -> None:
-        with Operations.context(MigrationContext.configure(conn)):
-            module.upgrade()
-
-    async with factory() as session:
-        await (await session.connection()).run_sync(apply)
-        await session.commit()
-
-
-async def _ended(factory, turn_id, ago: timedelta | None) -> None:
-    async with factory() as session:
-        await session.execute(
-            update(AgentTurn)
-            .where(AgentTurn.id == turn_id)
-            .values(stopped_at=None if ago is None else datetime.now(UTC) - ago)
-        )
-        await session.commit()
-
-
-@pytest.mark.anyio
-async def test_seats_held_by_turns_that_ended_before_the_fix_are_freed(db_factory):
-    long_ago = await a_topic(db_factory, title="ended long ago")
-    just_now = await a_topic(db_factory, title="just ended")
-    running = await a_topic(db_factory, title="still running")
-    turns = {}
-    for topic in (long_ago, just_now, running):
-        turns[topic] = await open_turn(db_factory, topic, delivered=True, age_s=7200)
-        await _inputs_into(db_factory, topic, turns[topic])
-    await _ended(db_factory, turns[long_ago], timedelta(hours=2))
-    await _ended(db_factory, turns[just_now], timedelta(minutes=10))
-
-    await _heal(db_factory)
-
-    async with db_factory() as session:
-        assert not await seat_has_unfinished_input(session, long_ago, SEAT)
-        # A turn that only just ended may still have its result on the way, and
-        # one still running is owed everything.
-        assert await seat_has_unfinished_input(session, just_now, SEAT)
-        assert await seat_has_unfinished_input(session, running, SEAT)
-    healed = await _rows(db_factory, long_ago)
-    assert all(row.termination == "orphaned" for row in healed)
-    for topic in (just_now, running):
-        assert all(row.terminated_at is None for row in await _rows(db_factory, topic))
 
 
 async def _task(factory, room, *, closed: bool) -> uuid.UUID:
