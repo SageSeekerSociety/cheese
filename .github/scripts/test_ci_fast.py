@@ -1092,8 +1092,8 @@ if "--project" in args:
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         rows = {r["id"]: r for r in self.report()["ran"]}
         self.assertEqual(rows["frontend-unit"]["evidence"]["passed"], 2)
-        self.assertIn("related", rows["frontend-unit"]["command"])
-        self.assertIn("--run", rows["frontend-unit"]["command"])
+        self.assertEqual(rows["frontend-unit"]["evidence"]["mode"], "related")
+        self.assertNotIn("related", rows["frontend-unit"]["command"])
         self.assertIn("--maxWorkers=1", rows["frontend-unit"]["command"])
         self.assertIn("frontend-i18n", rows)
         config_path = rows["frontend-typecheck-changed"]["command"][-2]
@@ -2042,6 +2042,34 @@ class SelectionEvidenceTest(unittest.TestCase):
                             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
         self.assertEqual(unit["evidence"]["mode"], "related")
+
+    def test_frontend_runs_only_the_specs_that_name_the_change(self):
+        # One layer: a spec that imports the changed file directly runs; a
+        # spec that reaches it through another module is full CI's. Following
+        # the transitive graph selected most of the suite (856 s on #4448).
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/lib/util.ts", "export const x = 1\n")
+        self.put("frontend/src/deep.ts", "import { x } from './lib/util'\n")
+        self.put("frontend/src/direct.spec.ts", "import { x } from '@/lib/util'\n")
+        self.put("frontend/src/alias.spec.ts", "import { x } from './lib/util'\n")
+        self.put("frontend/src/deep.spec.ts", "import './deep'\n")
+        plan, _ = test_plan(self.root, ["frontend/src/lib/util.ts"],
+                            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "related")
+        self.assertNotIn("related", unit["command"])
+        self.assertIn("src/direct.spec.ts", unit["command"])
+        self.assertIn("src/alias.spec.ts", unit["command"])
+        self.assertNotIn("src/deep.spec.ts", unit["command"])
+
+    def test_a_changed_spec_runs_itself(self):
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/lib/util.ts", "export const x = 1\n")
+        self.put("frontend/src/deep.spec.ts", "import './lib/util'\n")
+        plan, _ = test_plan(self.root, ["frontend/src/deep.spec.ts"],
+                            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertIn("src/deep.spec.ts", unit["command"])
 
     def test_the_docs_build_runs_only_for_docs_or_scene_changes(self):
         from ci_fast_checks import test_plan
