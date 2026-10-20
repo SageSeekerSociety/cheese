@@ -181,8 +181,9 @@ describe('房间右侧的「例行事务」', () => {
     await waitFor(() => expect(createRoutine).toHaveBeenCalled())
     const [room, body] = vi.mocked(createRoutine).mock.calls[0]
     expect(room).toBe('room-1')
-    expect(body.trigger).toBe('schedule')
-    expect(body.spec).toEqual({ freq: 'weekly', time: '09:00', weekdays: [0] })
+    // 没选触发方式：空着交出去，由这个房间的队友照目标补（不替人挑一个）。
+    expect(body.trigger).toBe('')
+    expect(body.spec).toEqual({})
   })
 
   it('勾了「存成模板」：规则存下来之后，「项目里存的」里多一条，下次能从它开始', async () => {

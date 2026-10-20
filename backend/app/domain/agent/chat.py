@@ -43,12 +43,6 @@ from app.domain.agent.event_lines import (
     _Changeset,  # noqa: F401 — 测试仍从 chat.py 导它
     _diff_file_stats,  # noqa: F401 — 测试仍从 chat.py 导它
     _format_change_summary,  # noqa: F401 — 测试仍从 chat.py 导它
-    _format_tool_event,  # noqa: F401 — 测试仍从 chat.py 导它
-    _is_platform_tool,  # noqa: F401 — 测试仍从 chat.py 导它
-    _short_tool_name,  # noqa: F401 — 测试仍从 chat.py 导它
-    _subagent_event_text,  # noqa: F401 — 测试仍从 chat.py 导它
-    _subagent_result_meta,  # noqa: F401 — 测试仍从 chat.py 导它
-    _tool_event_meta,  # noqa: F401 — 测试仍从 chat.py 导它
 )
 from app.domain.agent.gateway import LlmGateway
 

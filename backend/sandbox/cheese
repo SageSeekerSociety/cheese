@@ -1034,7 +1034,7 @@ PLATFORM_TOOLS = ToolTable(
             "建完自己说一句它已经开跑了、什么时候跑第一次，话里带上返回的那个"
             "链接（就是规则的名字，点开还是这个频道，右栏那一格开在这一条上）。",
             {
-                "title": _text("规则名字，一句话；不写就取目标的第一句"),
+                "title": _text("规则名字，一句话；不写就由你照目标起一个"),
                 "instructions": _text("目标：到点要做的事，写清做什么、交出什么"),
                 "note": _text(
                     "补充说明：还有什么要它知道的；不写就没有这一项"
@@ -1985,11 +1985,18 @@ def _chat_get(args: dict, host) -> str:
     if not 1 <= length <= _CHAT_TEXT_BUDGET or offset < 0:
         raise PlatformToolError(f"length 取 1..{_CHAT_TEXT_BUDGET}，offset 不小于 0")
     topic = args.get("topic") or host.environ.get("CHEESE_TOPIC", "")
+    raw_id = args["message_id"].removeprefix("record:") if args["message_id"].startswith("record:") else None
     path = (
         f"/topics/{urllib.parse.quote(topic, safe='')}/history/"
         + urllib.parse.quote(args["message_id"], safe="")
     )
+    if raw_id is not None:
+        if ":" in raw_id:
+            topic, raw_id = raw_id.split(":", 1)
+        path = f"/topics/{urllib.parse.quote(topic, safe='')}/session-records/{urllib.parse.quote(raw_id, safe='')}"
     block = host.request({"method": "GET", "path": path})["data"]
+    if raw_id is not None:
+        block = _chat_record(block)
     text = _chat_message_text(block)
     end = offset + length
     shown = text[offset:end]
@@ -2002,6 +2009,15 @@ def _chat_get(args: dict, host) -> str:
         )
         shown += f"\n\n[More text: {more}]"
     return shown
+
+
+def _chat_record(item: dict) -> dict:
+    import base64
+    cursor = base64.urlsafe_b64encode(json.dumps([item["at"], item["harness"], item["agent_handle"], item["sequence"]]).encode()).decode().rstrip("=")
+    if "cursor" in item:
+        cursor = item["cursor"]
+    return {"id": f"record:{cursor}", "created_at": item["at"], "author": item["agent_handle"],
+        "author_type": "participant", "kind": "event", "content": json.dumps(item["record"], ensure_ascii=False)}
 
 
 def _chat_page(tool: str):
@@ -2032,7 +2048,16 @@ def _chat_page(tool: str):
             f"/topics/{urllib.parse.quote(topic, safe='')}/history?"
             + urllib.parse.urlencode(params)
         )
+        if args.get("kind") == "event" and tool != "cheese_chat_replies":
+            params.pop("kind", None)
+            params["newest"] = "false" if args.get("after") else "true"
+            for direction in ("before", "after"):
+                if params.get(direction):
+                    params[direction] = params[direction].removeprefix("record:")
+            path = f"/topics/{urllib.parse.quote(topic, safe='')}/session-records?" + urllib.parse.urlencode(params)
         data = host.request({"method": "GET", "path": path})["data"]
+        if args.get("kind") == "event" and tool != "cheese_chat_replies":
+            data = {"data": [_chat_record(item) for item in data["items"]], "has_more": data["next"] is not None}
 
         def preview(block):
             text = _chat_message_text(block)

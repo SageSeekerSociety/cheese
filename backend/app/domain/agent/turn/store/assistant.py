@@ -102,7 +102,6 @@ async def persist_assistant_message(
     continuation_id: uuid.UUID | None = None,
     at: datetime | None = None,
     inner_id: uuid.UUID | None = None,
-    publish: bool = False,
     author: str | None = None,
     publication_id: str | None = None,
     own_output: bool = False,
@@ -110,8 +109,7 @@ async def persist_assistant_message(
     closing: bool = False,
     attachments: list[dict] | None = None,
 ) -> StoredAssistant:
-    as_progress = not publish
-    meta: dict | None = {"in_room": False, "progress": True} if as_progress else None
+    meta: dict | None = None
     if eid:
         meta = {**(meta or {}), "eid": eid}
     if len(eids) > 1:
@@ -173,7 +171,7 @@ async def persist_assistant_message(
         # disagree no matter where the process dies.
         if continuation_id is not None and not await idem.claim(
             session,
-            action_key(continuation_id, "progress" if as_progress else "message", text),
+            action_key(continuation_id, "message", text),
             action="message",
             scope_id=str(topic_id),
         ):
@@ -205,7 +203,7 @@ async def persist_assistant_message(
             author=author,
             author_type=AuthorType.participant,
             content=text,
-            kind=BlockKind.event if as_progress else BlockKind.message,
+            kind=BlockKind.message,
             reply_to=reply_to,
             turn_id=turn_id,
             meta=meta,
@@ -238,7 +236,7 @@ async def persist_assistant_message(
         # <@handle> mentions in 芝士's message → strong notify (the token is
         # the single source of truth: what's shown = who's notified).
         # Hallucinated handles get flagged in 现场, never silently no-op.
-        if topic is not None and not as_progress:
+        if topic is not None:
             await notify_mentions(
                 session, topic, block, author, roster, flag_unresolved=True
             )

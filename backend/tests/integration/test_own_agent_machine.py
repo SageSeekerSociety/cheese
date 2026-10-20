@@ -28,6 +28,7 @@ from app.domain.agent.harness.channel import ScreenSetupError, mint_session_toke
 from app.domain.agent.owner_provider import OWNER_CHANNEL, OwnerChannel
 from app.domain.agent.place import OWN_LOGIN_ID
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
+from app.domain.project.models import Project
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow
@@ -149,9 +150,11 @@ async def _own_session(client, *, environment_on):
         for machine in (bobs_laptop, alices_desk):
             db.add(
                 DeviceClaudeLoginRow(
+                    team_id=(await db.get(Project, project_id)).team_id,
                     device_id=machine,
                     installed=True,
                     logged_in=True,
+                    auth_method="claude.ai",
                     checked_at=datetime.now(UTC),
                     allowed_models=["sonnet", "opus"],
                 )
@@ -284,10 +287,11 @@ async def _bobs_desk(client, own) -> str:
         db.add(
             DeviceClaudeLoginRow(
                 device_id=desk,
+                team_id=(await db.get(Project, own.project_id)).team_id,
                 installed=True,
                 logged_in=True,
-                auth_method="model_service",
-                model="kimi-k2",
+                auth_method="claude.ai",
+                subscription_type="pro",
                 checked_at=datetime.now(UTC),
                 allowed_models=["sonnet", "opus"],
             )
@@ -333,7 +337,7 @@ async def test_an_own_agent_whose_connection_was_removed_starts_nothing(client):
 
     with pytest.raises(ScreenSetupError) as refused:
         _precheck(client, own, online=lambda device: device in (own.bobs_laptop, desk))
-    assert "模型连接已解除" in str(refused.value), "the room is told why"
+    assert str(refused.value), "the room receives a reason for refusing to start"
 
 
 async def _launch_env(client, own, *, leased_on):
@@ -382,6 +386,7 @@ async def _on_a_second_login(client, own) -> str:
     that one; the first stays logged in. The second's record id."""
     async with client.test_factory() as db:
         second = DeviceClaudeLoginRow(
+            team_id=(await db.get(Project, own.project_id)).team_id,
             device_id=own.bobs_laptop,
             local_id="B7QX",
             installed=True,
@@ -431,7 +436,7 @@ async def test_an_own_agent_on_a_removed_login_starts_nothing_beside_one_in_use(
 
     with pytest.raises(ScreenSetupError) as refused:
         _precheck(client, own, online=lambda device: True)
-    assert "模型连接已解除" in str(refused.value), "the room is told why"
+    assert str(refused.value), "the room receives a reason for refusing to start"
 
 
 async def test_an_own_session_is_told_when_its_executor_is_on_another_machine(

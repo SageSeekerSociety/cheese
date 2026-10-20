@@ -73,6 +73,15 @@ META = {
     ".pre-commit-config.yaml",
 }
 UNIT_PREFIX = "tests/unit/"
+#: The migration tree and its config. A migration has no static consumer and
+#: runs against a database this tier does not have; full CI's integration/e2e
+#: judges it. A change here must therefore narrow like any other backend edit,
+#: not widen to every pure test (measured ~320 s on #4431).
+ALEMBIC_PREFIX = "backend/alembic/"
+
+
+def is_migration_path(path):
+    return path == "backend/alembic.ini" or path.startswith(ALEMBIC_PREFIX)
 DYNAMIC_IMPORT_NAMES = {"import_module", "__import__"}
 # The pinned harness builds enter a test through this helper, or by the test
 # reading one of the variables itself (test_execution_bootstrap.py does, with
@@ -185,7 +194,8 @@ def select_backend(root, changed, conservative=False, harness_gap=""):
     backend = root / "backend"
     # Include deleted modules in import resolution, so their consumers survive.
     changed_modules = {module_name(p.removeprefix("backend/")) for p in changed
-                       if p.startswith("backend/") and p.endswith(".py")}
+                       if p.startswith("backend/") and p.endswith(".py")
+                       and not is_migration_path(p)}
     paths = [p for folder in ("app", "scripts", "tests") for p in (backend / folder).rglob("*.py")]
     by_module = {module_name(p.relative_to(backend)): p for p in paths}
     tests = {m: p for m, p in by_module.items() if is_unit_test(_rel(p, backend))}
@@ -251,10 +261,14 @@ def select_backend(root, changed, conservative=False, harness_gap=""):
         if not affected and not changed_module.startswith("tests."):
             return result(all_tests, f"full pure fallback: no static consumers for {changed_module}", [])
         targets.update(_rel(tests[m], backend) for m in affected)
-    relevant = [p for p in changed if p.startswith("backend/") and p not in META]
+    relevant = [p for p in changed if p.startswith("backend/") and p not in META
+                and not is_migration_path(p)]
     if any(not p.endswith(".py") for p in relevant):
         return result(all_tests, "full pure fallback: non-Python backend input", [])
     # Guards also run for frontend catalog inputs selected by the CI path map.
     selected = set(targets)
     selected.update(f"{UNIT_PREFIX}{name}" for name in TREE_GUARDS)
-    return result(sorted(selected), "reverse transitive Python imports plus tree/i18n guards", sorted(targets))
+    reason = "reverse transitive Python imports plus tree/i18n guards"
+    if any(is_migration_path(p) for p in changed):
+        reason += "; migrations are judged by full CI"
+    return result(sorted(selected), reason, sorted(targets))

@@ -97,7 +97,7 @@ Commands without `--profile` address `default`. An explicit login to an already 
 
 The connector supplies `CHEESE_PROFILE_ROOT` to execution commands and screens. Backend paths, harness state, executor releases, sandbox records and cleanup resolve that root on the machine. The connector announces `profiles` in `hello`; a connector that does not (one built before profiles) is a default-profile machine, and the hub writes `.cheese` into the paths it resolves itself until its update lands. Uninstall removes the selected profile's service, config and workspace. Uninstalling `default` preserves the other profiles under `profiles/`.
 
-Claude logins belong to the enrollment and its team. The first lives at `<profile-root>/logins/claude-login`, the others at `<profile-root>/logins/claude-logins/<id>`, including each login's `model-service.json`. Login, status, logout, probes and session launches all select that profile. On first start, the connector moves the old shared store into the single enrollment, preserving its macOS Keychain entries; when several profiles exist, the default profile inherits it. Old paths are removed after the move. Uninstall removes the selected enrollment's logins. While another enrollment remains, shared binaries, runtime skill cache and the connector's PATH entry stay; the last uninstall removes the whole installation.
+Claude credentials record their own team and personal owner, independently of any execution-device enrollment. A profile chooses their local storage and connector transport. Subscription directories live at `<profile-root>/logins/claude-logins/<id>`; an existing first login keeps `<profile-root>/logins/claude-login`. Login, status, logout, probes and session launches select that profile. On first start, the connector moves the old shared store into the single profile, preserving its macOS Keychain entries; when several profiles exist, the default profile inherits it. Old paths are removed after the move. Uninstall removes the selected profile's logins. While another profile remains, shared binaries, runtime skill cache and the connector's PATH entry stay; the last uninstall removes the whole installation.
 
 ---
 
@@ -157,15 +157,15 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 平台字符串用**厂商的词汇**（`linux-x64`、`linux-arm64-musl`），不是我们的 `<os>-<arch>`——我们的命名表达不了 musl，而只有机器知道自己的 libc。
 
-### Enrollment Claude Code logins
+### Claude subscription credentials
 
-Run `cheesehost --profile <profile> claude login` to add a Claude subscription or Anthropic Console login to that enrollment. The connector asks `GET <origin>/connector/claude/pin` for the pinned version, downloads it to `~/.cheese/claude/versions/<version>` when needed, and runs `claude auth login` with the login's own `CLAUDE_CONFIG_DIR`. Each invocation adds a login; `--login <id>` signs an existing one in again. The first is at `<profile-root>/logins/claude-login`, and further logins are at `<profile-root>/logins/claude-logins/<id>`. Each has its own credentials and refresh cycle; the owner's `~/.claude` is untouched.
+Add a subscription from the team's Models page. The desktop app runs the login on the current computer with its current profile. On the web, run the displayed `cheesehost claude login --server <server> --ticket <ticket>` command on the computer that will store the login. The single-use authorization expires after 15 minutes. This creates a model credential without enrolling an execution device, and each authorization creates an independent login directory.
 
-`cheesehost --profile <profile> claude status` lists that enrollment's logins. `cheesehost --profile <profile> claude logout <id>` removes one; the id is optional when there is only one. The backend records each connection in `claude_logins` by device and local id, and a session uses the connection it was added with.
+The connector asks `GET <origin>/connector/claude/pin` for the pinned version, downloads it to `~/.cheese/claude/versions/<version>` when needed, and runs `claude auth login` with the login's own `CLAUDE_CONFIG_DIR`. `cheesehost --profile <profile> claude login --login <id>` signs an existing login in again. `claude status` lists the selected profile's logins; `claude logout <id>` removes one, with the id optional when there is only one. Each login has its own refresh cycle; the owner's `~/.claude` is untouched.
 
-For another Anthropic-compatible model service, use `claude login --base-url <url> --model <model>` with the same profile. Its key comes from `CHEESE_MODEL_TOKEN`, or from the terminal prompt, and is stored privately with the address and model in that login's `model-service.json`. The launcher exports `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and the selected model for the session and its subagents. Probes return the model and host, never the key. Signing that login in without `--base-url`, or logging it out, removes its model-service file.
+Add API keys and Anthropic-compatible model services through the team's Models page. Their keys are encrypted on the platform and have no storage computer.
 
-机器每次连上，后端经 `hub.exec(["python3", "-"])` 在机器上跑 `claude auth status`（不调用模型），对每份登录各跑一次，把答案记进 `claude_logins`，每份一行（`harness/claude_code/owner_login.py`）。只问人接入的机器，云机器不问。
+When a credential host connects, the backend runs `claude auth status` through its connector for each registered subscription, without calling a model. It updates the registered login's status; it does not discover credentials from execution-device ownership. A credential-only host and an enrolled execution device can use the same transport.
 
 **入册时缺任何一样都是 fatal**，理由同 §0：留到后面发现的失败，全都出现在没人看的地方。
 

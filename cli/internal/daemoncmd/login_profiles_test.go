@@ -24,9 +24,10 @@ func TestUpgradeMovesSharedLoginsIntoTheSingleEnrollment(t *testing.T) {
 			}
 			for _, relative := range []string{"claude-login", "claude-logins/extra"} {
 				old := filepath.Join(home, place.Root, relative)
-				if err := claudecode.SaveModelService(old, claudecode.ModelService{
-					BaseURL: "https://example.test", Token: relative, Model: "model",
-				}); err != nil {
+				if err := os.MkdirAll(old, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(old, ".credentials.json"), []byte(relative), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -35,9 +36,9 @@ func TestUpgradeMovesSharedLoginsIntoTheSingleEnrollment(t *testing.T) {
 			}
 			for id, relative := range map[string]string{"default": "claude-login", "extra": "claude-logins/extra"} {
 				dir := filepath.Join(home, config.Root(path), "logins", relative)
-				service, err := claudecode.LoadModelService(dir)
-				if err != nil || service == nil || service.Token != relative {
-					t.Fatalf("upgrade lost login %s: %+v, %v", id, service, err)
+				credential, err := os.ReadFile(filepath.Join(dir, ".credentials.json"))
+				if err != nil || string(credential) != relative {
+					t.Fatalf("upgrade lost login %s: %+v, %v", id, credential, err)
 				}
 				if _, err := os.Stat(filepath.Join(home, place.Root, relative)); !os.IsNotExist(err) {
 					t.Fatalf("shared login %s still exists: %v", relative, err)

@@ -1,24 +1,25 @@
 import type { AccountConnectionInput } from '@/types/modelConnections'
-import type { AccountConnection, ModelConnection, ModelServiceDevice } from '@/types/modelConnections'
+import type { AccountConnection, ModelConnection } from '@/types/modelConnections'
 
 import { computed, inject, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
-import { listTeamDevices } from '@/api'
 import {
   addAccountConnection,
   checkAccountConnection,
   checkModelConnection,
   listModelConnections,
+  type PersonalConnectionChoice,
+  personalConnectionChoices,
+  putPersonalResource,
   removeAccountConnection,
+  removePersonalResource,
   renameAccountConnection,
   renameModelConnection,
   revokeModelConnection,
   setConnectionModels,
   startTeamClaudeLogin,
 } from '@/api/modelConnections'
-import { checkClaudeCode } from '@/api/ownAgents'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { desktopBridge } from '@/lib/desktop'
@@ -26,11 +27,9 @@ import { desktopBridge } from '@/lib/desktop'
 export function useTeamModels() {
   const team = inject(teamDataInjectionKey, ref())
   const teamId = computed(() => team.value?.id ?? 0)
-  const route = useRoute()
-  const router = useRouter()
   const connections = ref<ModelConnection[]>([])
   const held = ref<AccountConnection[]>([])
-  const devices = ref<ModelServiceDevice[]>([])
+  const personalChoices = ref<PersonalConnectionChoice[]>([])
   const platformModels = ref<{ id: string; label: string }[]>([])
   const canManage = ref(false)
   const loading = ref(false)
@@ -48,13 +47,13 @@ export function useTeamModels() {
     loading.value = true
     error.value = null
     try {
-      const [models, enrolled] = await Promise.all([listModelConnections(id), listTeamDevices(id)])
+      const [models, personal] = await Promise.all([listModelConnections(id), personalConnectionChoices(id)])
       if (read !== generation) return
       connections.value = models.connections
       held.value = models.account_connections
       platformModels.value = models.platform_models
       canManage.value = models.can_manage
-      devices.value = enrolled.devices.filter((d) => d.online).map((d) => ({ device_id: d.device_id, name: d.name }))
+      personalChoices.value = personal.connections
     } catch (cause) {
       if (read === generation)
         error.value = cause instanceof Error ? cause.message : t('account.modelConnections.loadFailed')
@@ -76,61 +75,37 @@ export function useTeamModels() {
     }
   }
 
-  async function login(deviceId: string) {
-    const id = teamId.value
-    const handle = team.value?.handle ?? ''
+  async function login() {
     await act('login', async () => {
-      const [permission, enrolled] = await Promise.all([listModelConnections(id), listTeamDevices(id)])
-      if (!permission.can_manage) throw new Error(t('account.modelConnections.readOnly'))
-      if (!enrolled.devices.some((d) => d.device_id === deviceId))
-        throw new Error(t('account.modelConnections.noDevice'))
+      const result = await startTeamClaudeLogin(teamId.value)
       loginCommand.value = null
-      const profiles = bridge ? await bridge.enrollmentProfiles() : {}
-      const profile = profiles[deviceId]
-      if (bridge && profile !== undefined) {
-        await bridge.claudeLogin(false, null, () => {}, profile)
-        await checkClaudeCode(deviceId)
+      if (bridge?.modelCredentialLogin) {
+        const profiles = await bridge.enrollmentProfiles()
+        const profile = Object.values(profiles)[0] ?? 'default'
+        await bridge.claudeLogin(null, () => {}, profile, result)
       } else {
-        const result = await startTeamClaudeLogin(id, deviceId, handle)
         loginCommand.value = result.command
-        toast.info(t(result.opened ? 'account.modelConnections.loginOpened' : 'account.modelConnections.loginTerminal'))
       }
     })
   }
 
-  async function requestedLogin() {
-    const deviceId = route.query.loginDevice
-    if (!bridge || typeof deviceId !== 'string' || !teamId.value) return
-    await router.replace({ query: { ...route.query, loginDevice: undefined } })
-    await login(deviceId)
-  }
-
-  onMounted(async () => {
-    await load()
-    await requestedLogin()
-  })
+  onMounted(load)
   watch(teamId, () => {
     connections.value = []
     held.value = []
+    personalChoices.value = []
     loginCommand.value = null
     void load()
-    void requestedLogin()
   })
-  watch(
-    () => route.query.loginDevice,
-    () => void requestedLogin()
-  )
 
   return {
-    refresh: async () => {
-      if (canManage.value)
-        await act('refresh', () => Promise.all(devices.value.map((d) => checkClaudeCode(d.device_id))))
-      else await load()
-    },
+    refresh: load,
     teamId,
     connections,
     held,
-    devices,
+    personalChoices,
+    addPersonal: (id: string) => act('personal', () => putPersonalResource(teamId.value, id)),
+    removePersonal: (id: string) => act(`${id}:remove`, () => removePersonalResource(teamId.value, id)),
     platformModels,
     canManage,
     loading,

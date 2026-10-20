@@ -975,12 +975,16 @@ async def finish_turn(service, topic_id) -> None:
     await close_topic_subscriptions(service, topic_id)
 
 
-def stub_compute(channel: StubChannel | None = None) -> "ComputePool":
+def stub_compute(channel: StubChannel | None = None, *, sessions=None) -> "ComputePool":
     """A pool holding one screen, for the many tests that build a ChatService
     by hand. Pass the channel when the test asserts against it."""
     from app.domain.agent.compute import ComputePool
 
     screen = channel or StubChannel()
+    if sessions is not None:
+        from app.domain.session_record import service as session_records
+
+        screen.host._records = functools.partial(session_records.append, sessions)
     return ComputePool([screen.runtime])
 
 
@@ -1483,6 +1487,13 @@ def client(
     # Taken now, not in teardown: by then the test may have replaced
     # `app.api.deps.get_work_runner` (monkeypatch undoes it after this fixture).
     work_runner = get_work_runner()
+    # Production wires this sink in get_session_host; the scripted host needs
+    # the same durable record path, using this client's isolated database.
+    from functools import partial
+
+    from app.domain.session_record import service as session_records
+
+    stub_hooks.host._records = partial(session_records.append, test_factory)
 
     async def override_get_db():
         async with test_factory() as session:
@@ -2174,10 +2185,12 @@ def _ceiling_scale() -> float:
         scale = float(raw)
     except ValueError as exc:
         raise pytest.UsageError(
-            f"CHEESE_TEST_CEILING_SCALE must be a number, got {raw!r}") from exc
+            f"CHEESE_TEST_CEILING_SCALE must be a number, got {raw!r}"
+        ) from exc
     if not math.isfinite(scale) or scale < 1:
         raise pytest.UsageError(
-            f"CHEESE_TEST_CEILING_SCALE must be finite and at least 1, got {raw!r}")
+            f"CHEESE_TEST_CEILING_SCALE must be finite and at least 1, got {raw!r}"
+        )
     return scale
 
 
@@ -2312,13 +2325,18 @@ def _over_ceiling(layer: str, took: float, ceiling: float, scale: float) -> str:
     factor, the base number and the factor too: a reader who sees 40 s has to
     know it is 10 s x 4, not a new limit.
     """
-    allowance = (f"{ceiling:g} s" if scale == 1 else
-                 f"{ceiling:g} s ({_LAYER_CEILING_S[layer]:g} s x {scale:g} for"
-                 " CHEESE_TEST_CEILING_SCALE)")
-    return (f"took {took:.1f} s with setup, over the {layer} layer's {allowance}"
-            " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
-            " for and give it a shorter timer or interval rather than adding it to"
-            " slow_tests.txt.")
+    allowance = (
+        f"{ceiling:g} s"
+        if scale == 1
+        else f"{ceiling:g} s ({_LAYER_CEILING_S[layer]:g} s x {scale:g} for"
+        " CHEESE_TEST_CEILING_SCALE)"
+    )
+    return (
+        f"took {took:.1f} s with setup, over the {layer} layer's {allowance}"
+        " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
+        " for and give it a shorter timer or interval rather than adding it to"
+        " slow_tests.txt."
+    )
 
 
 @pytest.hookimpl(wrapper=True)

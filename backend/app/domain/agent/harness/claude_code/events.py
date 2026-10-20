@@ -15,10 +15,10 @@ How the work ended is not read here: the runner reports it in the lifecycle
 protocol (`driven/lifecycle.py`), and a ``result`` record is only something the
 session wrote.
 
-A tool's return is written onto the step it belongs to (``AgentStepOutput``),
-and a failed one also marks that step. A subagent's return is its conclusion,
-which otherwise reaches only the thread that spawned it, so it becomes an event
-of its own instead.
+A tool's return stays in the raw journal; a failed one marks its call as
+failed (``AgentStepFailed``). A subagent's return is its conclusion, which
+otherwise reaches only the thread that spawned it, so it becomes an event of
+its own.
 """
 
 import re
@@ -32,7 +32,6 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
-    AgentStepOutput,
     AgentToolResult,
     AgentToolUse,
     step_error,
@@ -228,8 +227,6 @@ class Assembler:
                     )
                 )
             if made.get("name") not in SUBAGENT_TOOLS or block.get("is_error"):
-                if said.strip():
-                    events.append(AgentStepOutput(call_id=call, text=said))
                 continue
             result = message.get("tool_use_result")
             report = (

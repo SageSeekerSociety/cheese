@@ -12,6 +12,8 @@ library and the shared journal.
 import json
 from datetime import UTC, datetime
 
+from app.core.journal_images import extract, reference
+from app.core.journal_images import prune as prune_images
 from app.domain.agent.harness.driven import journal
 
 
@@ -32,10 +34,12 @@ class Journal(journal.Journal):
 
     def append(self, record: dict) -> None:
         with self.connection:
-            self.connection.execute(
+            record = extract(record, self.connection)
+            result = self.connection.execute(
                 "INSERT INTO records(recorded_at, record) VALUES (?, ?)",
                 (datetime.now(UTC).isoformat(), json.dumps(record, ensure_ascii=False)),
             )
+            reference(record, self.connection, result.lastrowid)
         self.grew()
 
     def expire(self, before: str) -> None:
@@ -46,3 +50,4 @@ class Journal(journal.Journal):
             self.connection.execute(
                 f"DELETE FROM {self.table} WHERE recorded_at < ?", (before,)
             )
+            prune_images(self.connection, self.table)

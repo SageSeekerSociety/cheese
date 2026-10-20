@@ -1,7 +1,7 @@
 """A task closed on work past its deadline keeps the turns that close stopped.
 
 The bug this covers: ``unfinished`` read the open turns of a task and threw
-away their ids, keeping only the prompt text. So when the landing watch closed
+away their ids, keeping only the prompt text. So when the platform closed
 an overdue task and stopped what was still running in it, the room got one line
 naming the prompts and nothing anywhere said which turns had been stopped: no
 run record carried a turn id, and the turn log (which reads failure events by

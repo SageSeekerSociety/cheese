@@ -97,9 +97,10 @@ def _until(predicate, what: str, timeout: float = 15.0) -> None:
 def test_the_second_teammate_reads_the_first_one_s_reply(client, stub_hooks):
     room, first, second = _room_with_two_teammates(client)
     _say(client, room, "alice", f"<@{first}> 先说一句")
-    _until(lambda: "Hello world" in _said(client, room), "第一位队友没有回话")
+    _until(lambda: "先说一句" in _prompt_of(stub_hooks, room, first), "第一句没送进去")
     wait_work_idle()
     _reply(client, room, first, "第一位队友的结论")
+    assert "第一位队友的结论" in _said(client, room)
 
     _say(client, room, "alice", f"<@{second}> 你怎么看")
     _until(
@@ -116,9 +117,10 @@ def test_the_second_teammate_reads_the_first_one_s_reply(client, stub_hooks):
 def test_a_teammate_is_not_handed_its_own_reply(client, stub_hooks):
     room, first, _ = _room_with_two_teammates(client)
     _say(client, room, "alice", f"<@{first}> 先说一句")
-    _until(lambda: "Hello world" in _said(client, room), "第一位队友没有回话")
+    _until(lambda: "先说一句" in _prompt_of(stub_hooks, room, first), "第一句没送进去")
     wait_work_idle()
     _reply(client, room, first, "我自己的结论")
+    assert "我自己的结论" in _said(client, room)
 
     _say(client, room, "alice", f"<@{first}> 再说一句")
     _until(

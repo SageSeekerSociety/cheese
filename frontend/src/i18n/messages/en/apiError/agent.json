@@ -57,6 +57,9 @@
   "modelConnectionKindNotHeld": "Your account can keep an Anthropic API key or a custom model service; sign in to a Claude subscription on a device",
   "modelConnectionRefused": "Not saved: the service failed the check ({reason})",
   "modelGatewayUnreachable": "Can't reach the model gateway",
+  "modelLoginAuthorizationInvalid": "This model login command is invalid or expired. Get a new command from the team Models page",
+  "modelLoginAuthorizationUsed": "This model login command was already used. Get a new command from the team Models page",
+  "modelLoginConnectionUnknown": "This computer has no registered model connection",
   "modelNameInvalid": "A model name is 1 to 64 letters, digits, dots, underscores or hyphens",
   "modelNeedsOverseasApproval": "\"{label}\" has to be enabled for this team by a platform administrator first.",
   "modelNotInPlan": "The current plan does not include the model \"{label}\".",
@@ -68,6 +71,7 @@
   "offeredNeedsPrices": "A model needs both an input and an output price to be offered: an unpriced model silently disables the project's max_budget brake",
   "ownAgentAddPersonOnly": "Only members can add their own Claude Code to a project",
   "ownAgentConnectionNotFound": "Model connection not found: it isn't yours, or it was removed or logged out",
+  "ownAgentHasNoOwner": "This agent has no personal owner to ask privately.",
   "ownAgentNotFound": "No member's own Claude Code by that name in this project",
   "ownerMachineOffline": "Can't start: the computer holding this model connection is offline",
   "projectCredentialManagerOnly": "Only someone who can change the project's settings can manage its credentials",
@@ -112,12 +116,11 @@
   "subagentModelNotInCatalog": "The model {model} the subagent asked for isn't in this project's model catalog. Available: {offer}",
   "subscriptionModelNotInDocs": "The selected subscription model can't be used in documents yet",
   "taskClosedNoTurn": "This task has ended and takes no more messages",
+  "teamConnectionModelRefused": "This team connection does not allow the selected model",
   "teammateHandleNotFound": "This project has no teammate with the handle {handle}",
   "teammateInactiveNoDefault": "This teammate is deactivated and can't be made the default",
   "teammateNotSeatedHere": "This AI teammate isn't in this channel, so it can't work here. Add it to the channel, or ask another teammate",
   "topicNotFound": "Channel not found",
   "turnForceStopped": "This turn was force-stopped",
-  "upstreamModelRequired": "The upstream model ID can't be empty",
-  "ownAgentHasNoOwner": "This agent has no personal owner to ask privately.",
-  "teamConnectionModelRefused": "This team connection does not allow the selected model"
+  "upstreamModelRequired": "The upstream model ID can't be empty"
 }

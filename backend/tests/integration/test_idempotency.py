@@ -6,14 +6,13 @@ effect can be committed while the record of it is not. It cannot close it:
 power going out. So every side effect a re-sent turn could repeat carries a
 durable key, and this file asserts the property one action at a time.
 
-The key is scoped to the **continuation** — the logical unit of work that a turn
-and its re-send share (``AgentWorkRunner.continuation_for``). That is what makes
-"the re-sent 芝士 re-doing it" and "someone legitimately doing the same thing
-next week" distinguishable at all; see ``domain.idempotency.keys``.
+Chat publications use their explicit request_id: retrying a send keeps the
+message, while a new send can say the same words again. The other actions use
+the continuation shared by a turn and its re-send; see ``domain.idempotency.keys``.
 
 Three actions, three tests:
 
-  1. 发消息      — the resumed turn re-narrating must not post a second copy
+  1. 发消息      — retrying an explicit publication must not post a second copy
   2. 记周报      — must not stack a second 周报 row
   3. 开 PR       — must not open a second PR / file a second card
 
@@ -28,14 +27,16 @@ import uuid
 import pytest
 from sqlalchemy import func, select
 
-from app.api import deps as session_turn_deps
 from app.api.deps import get_work_runner
-from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block, BlockKind
 from app.domain.idempotency.keys import action_key
-from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import join_project_team, post_project
+from tests.integration.conftest import (
+    in_thread,
+    join_project_team,
+    post_project,
+    room_agent_headers,
+)
 
 # One fixed continuation for every test here: it stands for "the interrupted
 # turn and the turn that resumed it", which is the whole point — two separate
@@ -78,123 +79,37 @@ async def _count(factory, stmt) -> int:
 # --- 1. 发消息 ---------------------------------------------------------------
 
 
-class _SameMessageTwice(StubChannel):
-    """A 芝士 that says the exact same thing on both attempts — which is what a
-    resumed session with no memory of the first attempt does."""
-
-    new_session_id = "s1"
-
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self._text = text
-
-    def emit_turn(
-        self,
-        topic_id: uuid.UUID,
-        prompt: str,
-        reply: str,
-        *,
-        agent: str | None = None,
-    ) -> None:
-        del reply
-        self.starts(topic_id, session_id="s1")
-        self.acknowledges(topic_id, prompt)
-        self.says(topic_id, self._text)
-        self.stops(topic_id, self._text, session_id="s1")
+def _publish(client, topic, content, request_id):
+    response = client.post(
+        f"/topics/{topic}/messages",
+        json={"content": content, "request_id": request_id},
+        headers=room_agent_headers(client, topic),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
-def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
-    pid = _project(client)
-    tid = _topic(client, pid)
+def test_retrying_a_publication_does_not_post_the_message_twice(client):
+    tid = in_thread(client, _topic(client, _project(client)), "owner")
     text = "我先把这五条落到代码上逐一自查，不动手改。"
-    chat = ChatService(
-        work_runner=session_turn_deps.get_work_runner(),
-        session_factory=client.test_request_factory,
-        compute=stub_compute(_SameMessageTwice(text)),
-        base_system_prompt="你是芝士。",
-        workspace_root=str(tmp_path / "ws"),
-    )
-
-    async def _turn() -> None:
-        async for _ in chat.converse(
-            topic_id=uuid.UUID(tid),
-            author="u",
-            content="做事",
-            summon=True,
-            continuation_id=CONTINUATION,
-        ):
-            pass
-        await settle_turn(chat, uuid.UUID(tid))
-
-    async def _both() -> None:
-        await _turn()  # the attempt that got interrupted
-        await _turn()  # the auto-resume, saying the same thing again
-
-    client.portal.call(lambda: _both())
-
-    said = client.portal.call(
-        lambda: _count(
-            client.test_request_factory,
-            select(func.count())
-            .select_from(Block)
-            .where(
-                Block.conversation_id == uuid.UUID(tid),
-                Block.kind == BlockKind.event,
-                Block.meta["progress"].as_boolean().is_(True),
-                Block.content == text,
-            ),
-        )
-    )
-    assert said == 1, "重发把同一句话又说了一遍"
+    request_id = str(uuid.uuid4())
+    first = _publish(client, tid, text, request_id)
+    retry = _publish(client, tid, text, request_id)
+    assert retry["id"] == first["id"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    assert [(block["id"], block["content"]) for block in blocks] == [
+        (first["id"], text)
+    ]
 
 
-def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
-    """The complement, and the reason the key is not just a content hash: the
-    SAME text in a LATER, unrelated unit of work is a second message, not a
-    duplicate. A dedup that swallowed it would silence 芝士 for saying "好的"
-    twice in one topic."""
-    pid = _project(client)
-    tid = _topic(client, pid)
+def test_distinct_publications_can_say_the_same_words(client):
+    tid = in_thread(client, _topic(client, _project(client)), "owner")
     text = "好的"
-    chat = ChatService(
-        work_runner=session_turn_deps.get_work_runner(),
-        session_factory=client.test_request_factory,
-        compute=stub_compute(_SameMessageTwice(text)),
-        base_system_prompt="你是芝士。",
-        workspace_root=str(tmp_path / "ws"),
-    )
-
-    async def _turn(cont: uuid.UUID) -> None:
-        async for _ in chat.converse(
-            topic_id=uuid.UUID(tid),
-            author="u",
-            content="做事",
-            summon=True,
-            continuation_id=cont,
-        ):
-            pass
-        await settle_turn(chat, uuid.UUID(tid))
-
-    async def _both() -> None:
-        await _turn(uuid.uuid4())
-        await _turn(uuid.uuid4())
-
-    client.portal.call(lambda: _both())
-
-    said = client.portal.call(
-        lambda: _count(
-            client.test_request_factory,
-            select(func.count())
-            .select_from(Block)
-            .where(
-                Block.conversation_id == uuid.UUID(tid),
-                Block.kind == BlockKind.event,
-                Block.meta["progress"].as_boolean().is_(True),
-                Block.content == text,
-            ),
-        )
-    )
-    assert said == 2
+    first = _publish(client, tid, text, str(uuid.uuid4()))
+    second = _publish(client, tid, text, str(uuid.uuid4()))
+    assert first["id"] != second["id"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    assert [block["content"] for block in blocks] == [text, text]
 
 
 # --- 2. 记周报 ---------------------------------------------------------------

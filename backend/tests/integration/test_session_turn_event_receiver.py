@@ -62,7 +62,7 @@ async def _consume(chat, project, topic, work, event, eid=None):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("tool", [False, True])
-async def test_the_supplied_runner_observes_durable_output_and_completed_work(
+async def test_the_supplied_runner_observes_output_and_completed_work(
     business_db_factory, tmp_path, monkeypatch, tool
 ):
     factory = business_db_factory
@@ -87,18 +87,13 @@ async def test_the_supplied_runner_observes_durable_output_and_completed_work(
         row = await independent.get(AgentTurn, work)
         assert row is not None and row.delivered_at is not None
         assert row.stopped_at is None and not row.resendable
-        (output,) = [
+        # What a session does on its own is kept in its raw records; nothing of
+        # it is said in the conversation.
+        assert [
             block
             for block in await BlockRepository(independent).list_for_topic(topic)
             if block.turn_id == work
-        ]
-        assert output.conversation_id == topic
-        assert output.meta is not None
-        assert output.meta["eid"] == "own-output"
-        if tool:
-            assert output.meta["tool"] == "Bash"
-        else:
-            assert output.content == "A session working on its own"
+        ] == []
 
     await _consume(chat, project, topic, work, AgentResult(text="", session_id=None))
     # No finish_turn helper, coroutine finally or sweep completes this afterward.
@@ -142,7 +137,7 @@ async def test_the_supplied_runner_observes_durable_output_and_completed_work(
 
 
 @pytest.mark.anyio
-async def test_open_and_publish_are_awaited_before_output_and_close_notifications(
+async def test_open_is_awaited_before_output_and_close_notifications(
     business_db_factory, tmp_path, monkeypatch
 ):
     factory = business_db_factory
@@ -164,16 +159,6 @@ async def test_open_and_publish_are_awaited_before_output_and_close_notification
     other_chat = _chat(factory, tmp_path, other_runner)
     work, other_work = uuid.uuid4(), uuid.uuid4()
     await other_chat.native_turns.begin(other_project, other_topic, other_work)
-    publishing, allow_publish = asyncio.Event(), asyncio.Event()
-    publish = broker.publish
-
-    async def waiting_publish(channel, frame):
-        if channel == str(topic) and frame["type"] == "event_block":
-            publishing.set()
-            await allow_publish.wait()
-        await publish(channel, frame)
-
-    monkeypatch.setattr(broker, "publish", waiting_publish)
     consuming = asyncio.create_task(
         _consume(
             chat,
@@ -192,24 +177,11 @@ async def test_open_and_publish_are_awaited_before_output_and_close_notification
             assert await independent.get(AgentTurn, work) is None
             assert await BlockRepository(independent).list_for_topic(topic) == []
         allow_open.set()
-        await asyncio.wait_for(publishing.wait(), HANG_S)
-        assert not consuming.done()
-        assert runner.recent_work()[0]["first_output_s"] is None
-        assert runner.recent_work()[0]["tools"] == 0
-        async with factory() as independent:
-            assert (await independent.get(AgentTurn, work)).delivered_at is not None
-            (output,) = [
-                block
-                for block in await BlockRepository(independent).list_for_topic(topic)
-                if block.turn_id == work
-            ]
-            assert output.conversation_id == topic
-            assert output.meta is not None
-            assert output.meta["eid"] == "awaited-tool"
-            assert output.meta["tool"] == "Bash"
-        allow_publish.set()
         await asyncio.wait_for(consuming, HANG_S)
         assert runner.recent_work()[0]["tools"] == 1
+        assert runner.recent_work()[0]["first_output_s"] is not None
+        async with factory() as independent:
+            assert (await independent.get(AgentTurn, work)).delivered_at is not None
         assert other_runner.recent_work()[0]["first_output_s"] is None
         assert other_runner.recent_work()[0]["tools"] == 0
         assert other_runner.recent_work()[0]["status"] == "running"
@@ -242,7 +214,6 @@ async def test_open_and_publish_are_awaited_before_output_and_close_notification
             assert (await independent.get(AgentTurn, other_work)).stopped_at is None
     finally:
         allow_open.set()
-        allow_publish.set()
         if "allow_close" in locals():
             allow_close.set()
         await asyncio.wait_for(consuming, HANG_S)

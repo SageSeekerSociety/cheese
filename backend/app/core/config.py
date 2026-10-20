@@ -876,8 +876,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     memory_migration_chunk: int = 60
 
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
-    # How often the poller checks an open PR's CI / its post-merge deploy —
-    # the clock every card's merge state is mirrored on (`CHECK_WATCH_TICKS`).
+    # How often the poller checks an open PR's CI — the clock every card's
+    # merge state is mirrored on (`CHECK_WATCH_TICKS`) — and how often the
+    # `task closing` sweep looks at tasks being written up.
     accept_pr_poll_interval_s: int = 60
     # 草稿扫描自己的时钟（卡轮询不跟着慢）：一个候选每遍要问 GitHub 两次，
     # 2026-10-18 实测 23 个候选每 60 秒 ≈2,760 次/小时。

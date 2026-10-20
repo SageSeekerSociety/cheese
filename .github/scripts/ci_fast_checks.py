@@ -82,7 +82,12 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 
-from ci_fast_backend import TREE_GUARDS, pinned_harness_gap, select_backend
+from ci_fast_backend import (
+    TREE_GUARDS,
+    is_migration_path,
+    pinned_harness_gap,
+    select_backend,
+)
 
 I18N_SPECS = ("src/i18n/catalog.spec.ts", "src/i18n/english.spec.ts")
 # Specs that judge a frontend file by reading it with `node:fs` — a component's
@@ -376,6 +381,16 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         roots = [p.removeprefix("frontend/") for p in surviving
                  if p.startswith("frontend/src/") and p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
                  and not p.endswith(".d.ts")]
+        # A demo scene is data its loader globs in (`scenes/index.ts`); the
+        # static graph has no edge from the JSON to the specs that read the
+        # scenes, so seed the loader. Without this a one-line scene edit
+        # widened to the whole suite (measured 900 s, the per-check timeout).
+        # A deleted scene seeds it too: the loader's glob still names the set.
+        if any(p.startswith("frontend/src/views/demo/scenes/") and p.endswith(".json")
+               for p in frontend_paths):
+            loader = "src/views/demo/scenes/index.ts"
+            if (root / "frontend" / loader).is_file() and loader not in roots:
+                roots.append(loader)
         # A frontend change with no surviving source root cannot be narrowed
         # when it carries runtime content: `related` is seeded from the changed
         # source files, and a file the suite reads off disk rather than imports
@@ -499,6 +514,10 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
                               "reason": f"{len(omitted)} test files need the pinned Claude Code/"
                                         f"Codex/pi builds, which this tier does not install: "
                                         + ", ".join(omitted)})
+        if any(is_migration_path(p) for p in changed):
+            omissions.append({"id": "backend-pure:alembic",
+                              "reason": "migration files run in full CI's integration/e2e, "
+                                        "not the pure layer"})
         output = tmp / "pytest.xml"
         nodes = tmp / "pytest-nodes.json"
         # The audit plugin sits beside the runner; pytest imports it by module
@@ -522,6 +541,21 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
                                  "--junitxml", str(output)],
                      "evidence": {"kind": "junit", "path": str(output), "nodes": str(nodes),
                                   "files": selected, "required": targets, "selection": reason}})
+    if any(p.startswith("docs/") or p.startswith("frontend/src/views/demo/scenes/")
+           for p in changed):
+        # The docs build checks links, anchors and the demo scene/fence step
+        # titles. Full CI runs it only after merge, so an edit that breaks it
+        # lands red on main (2026-10-19: turn.md step 4 did). It is cheap:
+        # three npm packages, about ten seconds, and OUT keeps it out of the
+        # checkout.
+        site = root / "docs" / "site"
+        plan.append({"id": "docs-deps", "cwd": site,
+                     "evidence": {"kind": "install",
+                                  "strict": any(p.startswith("docs/site/package") for p in changed)},
+                     "command": ["npm", "ci", "--no-audit", "--no-fund"]})
+        plan.append({"id": "docs-build", "cwd": site, "needs": "docs-deps",
+                     "env": {"OUT": str(tmp / "docs")},
+                     "command": ["npm", "run", "build"]})
     return plan, omissions
 
 
@@ -759,6 +793,19 @@ def resolve(process, evidence):
         return process
     kind = evidence["kind"]
     rc = process.get("returncode")
+    if kind == "install":
+        # An install that fails is the machine (or the registry) missing a
+        # dependency, not a verdict on the change. Exit 3 says exactly that;
+        # a timeout, memory stop or signal keeps its own result above. The one
+        # exception is a change that edits docs/site's own package files: there
+        # the install is judging the change, so its failure stays a failure.
+        if process["result"] == "fail":
+            if evidence.get("strict"):
+                return {**process, "result": "fail",
+                        "reason": f"the docs dependencies the change edits do not install (exit {rc})"}
+            return {**process, "result": "blocked",
+                    "reason": f"could not install the docs dependencies (exit {rc})"}
+        return process
     if kind == "types":
         detail = {"evidence": {k: v for k, v in evidence.items() if k != "path"}}
         if process["result"] == "pass":

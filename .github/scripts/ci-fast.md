@@ -281,6 +281,11 @@ everything is still allowed to answer unknown.
   tests are matched by classname module prefix (pytest writes no `file`
   attribute). Running only the guards never proves a changed module has
   coverage; a change whose modules have no `pure` consumer at all is unknown.
+  Migrations are the exception: `backend/alembic/**` and `backend/alembic.ini`
+  have no static consumer and need a database this tier does not have, so a
+  change there narrows like any other backend edit (the guards still run) and
+  the report records `backend-pure:alembic` as not run — full CI's
+  integration/e2e judges those files.
   Excluded `integration`/`contract` nodes are the tier working as designed —
   recorded not-run and owned by full CI — not a silent gap. Unresolvable
   dynamic imports (`import_module(name)`,
@@ -316,7 +321,11 @@ everything is still allowed to answer unknown.
   workflow or CI script is imported by the frontend graph, so it leaves a
   related run seeded by the surviving roots and, alone, runs no unit test at
   all (`frontend-unit` is recorded as an omission, not as the full suite or an
-  unknown). A path the map does not name is not frontend content either; since
+  unknown). A demo scene under `frontend/src/views/demo/scenes/` is the
+  exception: its loader `scenes/index.ts` is the root, so the related run
+  selects the specs that read the scene instead of widening to the whole suite
+  (measured 900 s before this). A path the map does not name is not frontend
+  content either; since
   #4393 it does not even turn frontend scope on. The full type check follows
   the same rule: `.github/` is not part of the compiler project, so it no
   longer forces `pnpm run typecheck`. A backend change does not reach the frontend type check here
@@ -334,6 +343,15 @@ everything is still allowed to answer unknown.
   declaration file —
   leaves the tier running the guards alone with `frontend-unit` recorded not-run
   and a reason.
+- A `docs/**` edit or a demo scene change runs the docs site build
+  (`docs/site`, three npm packages, about ten seconds, `OUT` to a temporary
+  directory). It checks links, anchors and the scene/fence step titles; full
+  CI's guards job runs the same build only after merge, which is how a
+  mismatched step name landed red on main on 2026-10-19. The install is its
+  own row, and `npm ci` failing is blocked (a missing dependency), not a red
+  change; the build does not run without a passed install. A change that edits
+  `docs/site`'s package files is the exception: its install failure is a
+  verdict on those files and stays a failure.
 
   A narrowed run is seeded with the changed source roots **and** every spec that
   judges a frontend file by reading it off disk rather than importing it

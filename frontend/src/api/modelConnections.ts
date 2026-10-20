@@ -76,12 +76,32 @@ export function setConnectionModels(teamId: number, id: string, models: string[]
   })
 }
 
-export function startTeamClaudeLogin(teamId: number, deviceId: string, teamHandle: string) {
-  return connectorRequest<{ opened: boolean; command: string | null }>(
-    `/teams/${teamId}/devices/${encodeURIComponent(deviceId)}/claude-login`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ team_handle: teamHandle }),
-    }
-  )
+export function startTeamClaudeLogin(teamId: number) {
+  return connectorRequest<{ ticket: string; server: string; command: string }>(`/teams/${teamId}/claude-login`, {
+    method: 'POST',
+  })
+}
+
+export interface PersonalConnectionChoice {
+  id: string
+  name: string | null
+  kind: string
+  allowed_models: string[]
+  added: boolean
+}
+
+export function personalConnectionChoices(teamId: number) {
+  return connectorRequest<{ connections: PersonalConnectionChoice[] }>(`/teams/${teamId}/personal-model-resources`)
+}
+
+export function putPersonalResource(teamId: number, id: string) {
+  return connectorRequest<ModelConnections>(`/teams/${teamId}/personal-model-resources/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+  })
+}
+
+export function removePersonalResource(teamId: number, id: string) {
+  return connectorRequest<ModelConnections>(`/teams/${teamId}/personal-model-resources/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
 }

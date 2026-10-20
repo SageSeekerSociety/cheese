@@ -282,8 +282,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---
         # `app.domain.topic.services → app.domain.block.repositories` 是 2026-10-16
-        # 还掉的：本包要写一句平台的话走 `topic/ports.py` 的 `PlatformLine`，读每条
-        # 房间最后说的那一句走本包的裸表（`repositories/latest.py`），两条路都不再
+        # 还掉的：本包要写一句平台的话走 `topic/ports.py` 的 `PlatformLine`，不再
         # 摸 `block` 的 repository。
         # 2026-10-16：`topic_membership/services.py` 变成了包（门面在 `__init__.py`，
         # 名册与席位那一半在 `housekeeping.py`）。这两条边本来就在，发起方是门面的

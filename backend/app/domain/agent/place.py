@@ -203,11 +203,6 @@ CLAUDE_LOGIN_DIR = "logins/claude-login"
 #: what the machine calls it. Held to the connector's copy by the same test.
 CLAUDE_LOGINS_DIR = "logins/claude-logins"
 
-#: In the login directory: another model service its owner set instead of the
-#: login (`cheesehost claude login --base-url`), as `{base_url, token, model}`.
-#: The launch exports it and the probe reports its model; the connector writes
-#: it (`claudecode.serviceFile`), held to this name by the same test.
-MODEL_SERVICE_FILE = "model-service.json"
 
 #: In a migrated login: a security command retaining its original Keychain
 #: items while credential files are read from the enrollment's new directory.

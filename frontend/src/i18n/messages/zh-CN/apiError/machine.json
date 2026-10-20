@@ -24,7 +24,6 @@
   "executionTimedOut": "环境没有在时限内回应这次执行调用",
   "machineAllocationInProgress": "环境分配仍在进行，稍后再更换",
   "machineOfflineCannotConfirmStop": "电脑离线，无法确认旧会话已停止，连接后重试",
-  "modelServiceMachineOffline": "这台设备不在线。设备上线后再设置自定义模型服务",
   "nodeCloudOffline": "这个部署还没有接入云端",
   "nodeCloudOnline": "平台可以提供环境",
   "nodeDeviceOffline": "暂无已连接的设备",

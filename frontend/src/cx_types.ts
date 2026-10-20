@@ -150,8 +150,7 @@ export interface BlockMeta extends AskBlockMeta {
   // 这一步的工具报错回来了，以及它最后说的那截。成功的步骤两个都没有。
   failed?: boolean
   error?: string
-  // 这一步打印了多少（字节，抹掉凭据之后）。有它就说明后端留了一截末尾可看，
-  // 那一截本身不在这里，摊开时再取（api.getStepOutput）。
+  // Output byte count reported with the tool's status.
   output_bytes?: number
   platform?: boolean
   // 现场工具的显示名；action 则表示平台动作指向的资源。
@@ -171,13 +170,6 @@ export interface BlockMeta extends AskBlockMeta {
   // 更早的清单消息这里只有一个 `true`，照普通消息画。
   checklist?: ChecklistMeta | boolean
   quoted_context?: import('./lib/quotedContext').QuotedContext
-}
-
-/** 一段脚本里调过的一样工具（pi 的 codemode），记在脚本那一步的 `meta.calls` 上。 */
-export interface ScriptCall {
-  tool: string
-  arg: string
-  failed?: boolean
 }
 
 export interface ChecklistMeta {

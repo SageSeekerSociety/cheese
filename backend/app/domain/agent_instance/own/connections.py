@@ -3,26 +3,26 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance import account_connections
-from app.domain.agent_instance.models import AccountConnection
+from app.domain.agent_instance.models import AccountConnection, PersonalModelResource
 from app.domain.device.login_kind import (
     FIRST_LOGIN,
     ConnectionKind,
-    connection_kind,
 )
-from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow, HostedDeviceRow
-from app.domain.device.supply import Supply
+from app.domain.device.models import (
+    DeviceClaudeLoginRow,
+    DeviceRow,
+    ModelCredentialHost,
+)
 
 
 @dataclass(frozen=True)
 class Login:
-    """One of a person's model connections, and how it reaches a model: one
-    login their own Claude Code has for the platform on one of their machines
-    (a machine may hold several), or one the team stores encrypted on the platform (an API key or a
-    model service). Each is named by its own row."""
+    """A team or personal credential, stored on a computer or on the platform.
+    Its storage computer is independent of its team and member ownership."""
 
     #: What the connection is named by: the login's record id, or the account
     #: connection's.
@@ -37,28 +37,41 @@ class Login:
     #: The machine holding it; None for an encrypted platform-held connection.
     device_id: str | None = None
     device_name: str | None = None
-    #: What its owner named the connection.
+    #: The connection's chosen name.
     name: str | None = None
     allowed_models: tuple[str, ...] = ()
+    owner_user_id: int | None = None
+    storage_team_id: int | None = None
+
+    def storage_name(self, team_id: int, viewer: int | None) -> str | None:
+        if self.storage_team_id == team_id or (
+            self.owner_user_id is not None and self.owner_user_id == viewer
+        ):
+            return self.device_name
+        return self.device_id
 
     @property
     def on_account(self) -> bool:
         return self.device_id is None
 
 
-def _login(device_id: str, name: str, row: DeviceClaudeLoginRow) -> Login:
-    kind = connection_kind(row.auth_method, row.subscription_type)
-    service = kind is ConnectionKind.model_service
+def _login(
+    device_id: str,
+    name: str,
+    row: DeviceClaudeLoginRow,
+    storage_team_id: int | None = None,
+) -> Login:
     return Login(
         id=row.id,
         device_id=device_id,
         device_name=name,
-        kind=kind,
-        plan=row.subscription_type if kind is ConnectionKind.subscription else None,
-        model=row.model if service else None,
-        service_host=row.service_host if service else None,
+        kind=ConnectionKind.subscription,
+        plan=row.subscription_type,
+        model=None,
         name=row.name,
         allowed_models=tuple(row.allowed_models),
+        owner_user_id=row.owner_user_id,
+        storage_team_id=storage_team_id,
     )
 
 
@@ -71,47 +84,54 @@ def _held(row: AccountConnection) -> Login:
         service_host=account_connections.host_of(row),
         name=row.name,
         allowed_models=tuple(row.allowed_models),
+        owner_user_id=row.owner_user_id,
     )
 
 
 def _usable():
-    """The conditions under which a login on a machine is a connection a session
-    may run on: logged in, on a machine its owner enrolled, and not removed by
-    its owner — whatever a backend that predates removals wrote back into
-    ``logged_in``, it never touches ``revoked_at``."""
+    """A login is usable while logged in and not revoked."""
     return (
-        DeviceRow.supply == Supply.self_hosted,
         DeviceClaudeLoginRow.logged_in.is_(True),
+        DeviceClaudeLoginRow.auth_method == "claude.ai",
         DeviceClaudeLoginRow.revoked_at.is_(None),
     )
 
 
 async def logins(db: AsyncSession, team_id: int) -> list[Login]:
-    """This person's model connections: their machines' logins, the most
-    recently confirmed first, then the ones the team stores encrypted on the platform, oldest first."""
+    """The team's device logins, most recently confirmed first, followed by
+    connections stored encrypted on the platform, oldest first."""
     return (await logins_by_teams(db, {team_id}))[team_id]
 
 
 async def logins_by_teams(
     db: AsyncSession, team_ids: set[int]
 ) -> dict[int, list[Login]]:
-    """The same ordered connections for each owner, read in two queries."""
+    """Credentials native to each team and members' personal references."""
     result: dict[int, list[Login]] = {owner: [] for owner in team_ids}
     if not team_ids:
         return result
     rows = await db.execute(
         select(
-            DeviceRow.team_id,
-            DeviceRow.device_id,
+            DeviceClaudeLoginRow,
             DeviceRow.name,
-            DeviceClaudeLoginRow,
+            DeviceRow.team_id,
+            ModelCredentialHost.name,
         )
-        .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
-        .join(
-            DeviceClaudeLoginRow,
-            DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
+        .outerjoin(DeviceRow, DeviceRow.device_id == DeviceClaudeLoginRow.device_id)
+        .outerjoin(
+            ModelCredentialHost, ModelCredentialHost.id == DeviceClaudeLoginRow.host_id
         )
-        .where(DeviceRow.team_id.in_(team_ids), *_usable())
+        .where(
+            or_(
+                DeviceClaudeLoginRow.team_id.in_(team_ids),
+                DeviceClaudeLoginRow.id.in_(
+                    select(PersonalModelResource.login_id).where(
+                        PersonalModelResource.team_id.in_(team_ids)
+                    )
+                ),
+            ),
+            *_usable(),
+        )
         # One machine's logins are confirmed in one answer: the first
         # login first, then the same order on every read.
         .order_by(
@@ -120,15 +140,42 @@ async def logins_by_teams(
             DeviceClaudeLoginRow.local_id,
         )
     )
-    for owner, device_id, name, row in rows:
-        result[owner].append(_login(device_id, name, row))
+    refs = list(
+        await db.scalars(
+            select(PersonalModelResource).where(
+                PersonalModelResource.team_id.in_(team_ids)
+            )
+        )
+    )
+    for row, name, storage_team, host_name in rows:
+        login = _login(
+            row.transport_id, name or host_name or row.transport_id, row, storage_team
+        )
+        destinations = {r.team_id for r in refs if r.login_id == row.id}
+        if row.team_id in team_ids:
+            destinations.add(row.team_id)
+        for team in destinations:
+            result[team].append(login)
     held = await db.scalars(
         select(AccountConnection)
-        .where(AccountConnection.team_id.in_(team_ids))
+        .where(
+            or_(
+                AccountConnection.team_id.in_(team_ids),
+                AccountConnection.id.in_(
+                    select(PersonalModelResource.account_connection_id).where(
+                        PersonalModelResource.team_id.in_(team_ids)
+                    )
+                ),
+            )
+        )
         .order_by(AccountConnection.created_at)
     )
     for row in held:
-        result[row.team_id].append(_held(row))
+        destinations = {r.team_id for r in refs if r.account_connection_id == row.id}
+        if row.team_id in team_ids:
+            destinations.add(row.team_id)
+        for team in destinations:
+            result[team].append(_held(row))
     return result
 
 
@@ -142,9 +189,8 @@ def _connection_key(
 
 
 def label(login: Login) -> str:
-    """What tells one of a person's own agents from another in its name: the
-    name its owner gave the connection, else a subscription's plan, a model
-    service's model, or that it is an API key."""
+    """Label a teammate with its connection's name, falling back to the
+    subscription plan, service model, or API-key kind."""
     if login.name:
         return login.name
     if login.kind is ConnectionKind.subscription:

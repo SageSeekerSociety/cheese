@@ -14,11 +14,13 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.session_record import service as session_records
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import project_service, registered
 from tests.support.hang import HANG_S
+from tests.support.session_records import assistant_texts
 from tests.support.threads import thread_in
 
 
@@ -236,7 +238,7 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
     chat = ChatService(
         work_runner=runner,
         session_factory=factory,
-        compute=stub_compute(screen),
+        compute=stub_compute(screen, sessions=factory),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -289,10 +291,25 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
                 for frame in replayed
             )
             screen.says(conversation, "second still works", agent=second_seat)
-            output = await until_frame(browser, "event_block")
-            while output["block"]["content"] != "second still works":
-                output = await until_frame(browser, "event_block")
-            assert output["block"]["turn_id"] == str(second_turn)
+            async with asyncio.timeout(HANG_S):
+                while True:
+                    async with factory() as observer:
+                        page = await session_records.read(
+                            observer, conversation, turn_id=second_turn
+                        )
+                    output = next(
+                        (
+                            item
+                            for item in page.items
+                            if assistant_texts([item]) == ["second still works"]
+                        ),
+                        None,
+                    )
+                    if output is not None:
+                        break
+                    await asyncio.sleep(0.02)
+            assert output["turn_id"] == str(second_turn)
+            assert output["agent_handle"] == "second"
             screen.stops(conversation, "second finished", agent=second_seat)
             await until_frame(browser, "turn_finished", turn_id=second_turn)
             await runner.drain(timeout_s=60)

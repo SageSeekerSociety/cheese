@@ -7,7 +7,7 @@
 // 估计值会咬到两处「必须按真实高度算」的地方：
 //   1. 向上翻页按 scrollHeight 的差补偿 scrollTop（lib/blockPaging 的
 //      scrollTopAfterPrepend）——量到的是估计高度，补进去的就是错的，翻页会跳。
-//   2. 长回复折起来/现场某条要不要夹的判定（lib/chatFold、useSiteClamp）——同样量的是
+//   2. 长回复折起来的判定（lib/chatFold）——同样量的是
 //      被夹那一层的高度。
 // 两处测量前挂上 MEASURE_CLASS：它关掉子树里的 content-visibility，让离屏内容也按真实
 // 高度铺开，量完再撤——撤掉之后已经渲染过的行被 `auto` 记住，高度不再变，跳不回去。

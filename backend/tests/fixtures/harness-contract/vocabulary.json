@@ -29,21 +29,7 @@
       "required": [
         "call_id"
       ],
-      "why": "That step came back an error. It marks the step already on the timeline rather than adding one — and it is NOT the event a tool that returned produces, which is the whole of #1096."
-    },
-    "step_output": {
-      "class": "AgentStepOutput",
-      "required": [
-        "call_id"
-      ],
-      "why": "What that step handed back, for whoever opens its line. Written onto the step already on the timeline, never a line of its own; the room keeps only a capped tail."
-    },
-    "step_calls": {
-      "class": "AgentStepCalls",
-      "required": [
-        "call_id"
-      ],
-      "why": "The tools a step called on its own — a script the model wrote (pi's codemode) calls them without the model calling each — written onto that step, never lines of their own."
+      "why": "That step came back an error, marked on the call it answers rather than as a step of its own — and it is NOT the event a tool that returned produces, which is the whole of #1096. What a tool returned stays in the raw journal."
     },
     "tool_result": {
       "class": "AgentToolResult",
@@ -51,7 +37,7 @@
         "name",
         "text"
       ],
-      "why": "A subagent's conclusion, as its own event: it otherwise reaches only the thread that spawned it. Every other return is written onto its step (step_output)."
+      "why": "A subagent's conclusion, as its own event: it otherwise reaches only the thread that spawned it. Every other return stays in the raw journal and produces no event."
     },
     "session_info": {
       "class": "AgentSessionInfo",
@@ -82,7 +68,6 @@
   "differences": {
     "no-subagent-tool-return": "This harness never reports what a subagent handed back as a tool return.",
     "refusal-in-provider-words": "This harness words a refused model request as the provider answered it (`401: {...}`), not in Claude Code's own line; the turn still ends once, in failure, with the HTTP status on the result.",
-    "no-session-id-of-its-own": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result.",
-    "no-script-calls": "This harness has no tool that runs a script calling other tools; every call it makes is a step of its own."
+    "no-session-id-of-its-own": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result."
   }
 }

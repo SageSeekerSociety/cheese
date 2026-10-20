@@ -8,10 +8,10 @@ the connection that row names and what its owner is called.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_instance.models import AgentInstance, OwnAgent
+from app.domain.agent_instance.models import AccountConnection, AgentInstance, OwnAgent
 from app.domain.agent_instance.own.connections import (
     Login,
     logins_by_teams,
@@ -46,7 +46,7 @@ _OWNED = (
     AgentInstance.id,
     OwnAgent.owner_user_id,
     OwnAgent.harness,
-    DeviceClaudeLoginRow.device_id,
+    func.coalesce(DeviceClaudeLoginRow.host_id, DeviceClaudeLoginRow.device_id),
     OwnAgent.account_connection_id,
     OwnAgent.login_id,
 )
@@ -105,7 +105,7 @@ async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | No
         row.instance_id,
         row.owner_user_id,
         row.harness,
-        login.device_id if login is not None else None,
+        login.transport_id if login is not None else None,
         row.account_connection_id,
         row.login_id,
     )
@@ -115,10 +115,19 @@ async def owned_in_project(
     db: AsyncSession, project_id: uuid.UUID
 ) -> list[tuple[AgentInstance, int]]:
     """The project's personal agents and their owners, including inactive ones."""
-    return [
-        (instance, owned.owner_user_id)
-        for instance, owned in await owned_rows_in_project(db, project_id)
-    ]
+    owner_id = func.coalesce(
+        AccountConnection.owner_user_id, DeviceClaudeLoginRow.owner_user_id
+    )
+    rows = await db.execute(
+        select(AgentInstance, owner_id)
+        .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+        .outerjoin(
+            AccountConnection, AccountConnection.id == OwnAgent.account_connection_id
+        )
+        .outerjoin(DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id)
+        .where(AgentInstance.project_id == project_id, owner_id.is_not(None))
+    )
+    return [(instance, owner) for instance, owner in rows]
 
 
 async def owned_rows_in_project(
@@ -160,7 +169,7 @@ async def connections_of(
         for team_id, logins in by_team.items()
         for login in logins
     }
-    return {
+    result = {
         owned.instance_id: connections.get(
             (
                 teams.get(owned.instance_id),
@@ -172,6 +181,19 @@ async def connections_of(
         )
         for owned in owners
     }
+    return {
+        owned.instance_id: (
+            login
+            if login is not None
+            and (
+                login.owner_user_id is None
+                or login.owner_user_id == owned.owner_user_id
+            )
+            else None
+        )
+        for owned in owners
+        for login in [result[owned.instance_id]]
+    }
 
 
 async def owner_of(db: AsyncSession, instance_id: uuid.UUID) -> tuple[str, str] | None:
@@ -180,6 +202,17 @@ async def owner_of(db: AsyncSession, instance_id: uuid.UUID) -> tuple[str, str] 
 
     owned = await owned_instance(db, instance_id)
     if owned is None:
+        return None
+    credential_owner = await db.scalar(
+        select(AccountConnection.owner_user_id).where(
+            AccountConnection.id == owned.account_connection_id
+        )
+        if owned.on_account
+        else select(DeviceClaudeLoginRow.owner_user_id).where(
+            DeviceClaudeLoginRow.id == owned.login_id
+        )
+    )
+    if credential_owner is None:
         return None
     user = await db.get(User, owned.owner_user_id)
     if user is None:

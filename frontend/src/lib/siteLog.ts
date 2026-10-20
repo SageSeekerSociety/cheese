@@ -2,61 +2,12 @@
 // behave like one: newest at the bottom and visible on open, and a single
 // enormous entry must not push everything else off the screen.
 //
-// The length rule lives here rather than in a CSS `line-clamp` alone because
-// the template needs the same answer the style does — whether to render the
-// 展开 affordance at all. Asking the DOM for a measured height would mean
-// reading layout during render; asking the text is deterministic and testable.
-
 import type { Block } from '../cx_types'
 
 import { noticeText } from './noticeText'
-import { TOOL_LABELS, toolLabel } from './toolLabels'
+import { toolLabel } from './toolLabels'
 
 import { t } from '@/i18n'
-
-/** Collapsed height for a long entry, in lines of the 现场 monospace type. */
-export const SITE_CLAMP_LINES = 12
-
-/** Beyond this, an entry is long even if it never wraps a newline. */
-const SITE_CLAMP_CHARS = 900
-
-/**
- * Whether this transcript entry should start collapsed.
- *
- * Two ways to be long, and both matter: 芝士 emits both wide prose (few
- * newlines, thousands of characters) and tall command output (many short
- * lines). Testing only one of them lets the other through.
- */
-export function isLongSiteEntry(content: string): boolean {
-  if (!content) return false
-  if (content.length > SITE_CLAMP_CHARS) return true
-  return countLines(content) > SITE_CLAMP_LINES
-}
-
-/** Lines in the entry, for the "展开全部（N 行）" label. */
-export function countLines(content: string): number {
-  if (!content) return 0
-  return content.split('\n').length
-}
-
-/**
- * Whether a rendered body overflows the 12-line clamp budget.
- *
- * The clamp is `max-height`, so it clips whatever is actually tall — including
- * a block-level `<pre>`, which `-webkit-line-clamp` silently let through. The
- * template needs the same answer to decide whether to offer 展开 at all, and a
- * character count cannot give it: 900 characters fit in twelve lines of a wide
- * panel and overflow a narrow one. Measuring the rendered element is the only
- * answer that agrees with what the style does, at every width.
- *
- * `lineHeight` is the body's computed line height in px; a non-positive value
- * (no layout, as in a unit test) means "cannot tell", and the caller falls back
- * to the content heuristic.
- */
-export function overflowsClamp(scrollHeight: number, lineHeight: number, lines = SITE_CLAMP_LINES): boolean {
-  const budget = lines * lineHeight
-  return budget > 0 && scrollHeight > budget + 1
-}
 
 /**
  * How many frames the tail-pin may keep re-pinning while the panel is still
@@ -102,13 +53,13 @@ export function shouldKeepPinning(
 interface NarrationMeta {
   [key: string]: unknown
   tool?: string
-  progress?: unknown
+  record?: unknown
 }
 
 /** 这一行是工具调用，还是芝士自己说的话。 */
 export function isNarration(meta?: NarrationMeta | null): boolean {
   if (!meta) return false
-  return meta.tool === undefined && meta.progress === true
+  return meta.tool === undefined && meta.record !== undefined
 }
 
 export interface SiteTurn<T> {
@@ -156,7 +107,7 @@ export function groupByTurn<T extends TurnLike>(blocks: T[], starts: Record<stri
   for (const turn of turns) {
     // 平台自己说的一句（重试、等机器、这一轮失败了）也不是它做的一步：带 `who`
     // 的是平台提示（后端 platform_notices.notice 拼的）。
-    turn.steps = turn.entries.filter((b) => !isNarration(b.meta) && b.meta?.who === undefined).length
+    turn.steps = turn.entries.filter((b) => Boolean(b.meta?.tool)).length
     // 平台替一轮写的开场那一行落在这一轮登记之前，所以取两者里早的那个。
     const first = Math.min(Date.parse(turn.entries[0].created_at), starts[turn.key] ?? Infinity)
     const last = Date.parse(turn.entries[turn.entries.length - 1].created_at)
@@ -174,14 +125,6 @@ export function formatSpan(seconds: number): string {
   return t('work.room.site.span.hours', { h: Math.floor(minutes / 60), m: String(minutes % 60).padStart(2, '0') })
 }
 
-// 工具事件那一行：backend stores "verb\npreview"; legacy rows are "🔧 toolname".
-// Split into the action verb and an optional argument preview. 现场和卡片详情都按
-// 这一份翻译，同一步操作在两处写成同一个词。legacy 行的工具名也查同一张表。
-
-// Meta-first rendering: an event block with structured meta ({tool, arg}) is
-// translated at DISPLAY time via the full toolLabels table — so a verb missing
-// from the table at write time is never frozen untranslated. Rows without meta
-// (pre-meta data) fall back to the baked content text.
 // 运行记录（平台运行中记下的事，只在现场）的动词列写它是哪一类事，正文是那一句话。
 // 键名写全，不拼：拼出来的键谁也搜不到。
 const RECORD_VERB: Record<string, string> = {
@@ -216,74 +159,10 @@ function recordVerb(b: Block): string | null {
 export function eventVerb(b: Block): string {
   const recorded = recordVerb(b)
   if (recorded) return recorded
-  // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
-  // tool 仍然如实记着真正跑的是哪个工具。
-  if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
-  const first = (noticeText(b).split('\n')[0] || '').replace(/^🔧\s*/, '')
-  return Object.hasOwn(TOOL_LABELS, first) ? toolLabel(first) : first
+  return b.meta?.tool ? toolLabel(b.meta.tool) : noticeText(b).split('\n')[0]
 }
 
-export function eventArg(b: Block): string {
-  if (recordVerb(b)) return noticeText(b).split('\n')[0]
-  if (b.meta?.tool) return b.meta.arg ?? ''
-  const text = noticeText(b)
-  const nl = text.indexOf('\n')
-  return nl >= 0 ? text.slice(nl + 1).trim() : ''
-}
-
-// 这一步挂了没有。后端只在挂了的时候写这个字段，所以「没有」就是「没挂」。
 export function eventFailed(b: Block): boolean {
-  return b.meta?.failed === true
-}
-
-// ---- 参数那一列的省略 ----
-
-/**
- * Beyond this many characters a non-prose argument (a path or a command) is
- * shown with its middle elided. The panel is a narrow side column; at 1280px
- * its argument column fits roughly this many monospace characters. It is a
- * guess about width, which is why the full text stays on `title` and 展开
- * still shows every character.
- */
-export const SITE_ARG_MID_CHARS = 36
-
-/**
- * Keep the head and the tail, drop the middle.
- *
- * A path's two ends are what identify it — `backend/app/…/callback.py` — and a
- * command's are the program and its target. An end-ellipsis throws away exactly
- * the half that says *which* file, which is the whole point of the column. The
- * budget is split the way the label asks: 40% head, 40% tail, an ellipsis
- * between them; short enough to stay on one line, long enough to keep both
- * identifying ends.
- *
- * Counted in code points, not UTF-16 units: `slice` cuts between the two halves
- * of a surrogate pair, so a path with an emoji or a rare CJK glyph (𠮷) came
- * back with a lone half that renders as a replacement box.
- */
-export function middleTruncate(text: string, max = SITE_ARG_MID_CHARS): string {
-  const points = Array.from(text)
-  if (points.length <= max) return text
-  const keep = Math.max(1, Math.floor(max * 0.4))
-  return `${points.slice(0, keep).join('')}…${points.slice(points.length - keep).join('')}`
-}
-
-/** 参数里有中文的（文档标题、验收卡标题、一句说明）不走等宽：中文没有等宽字形，
- * 落在等宽字体上会掉到别的字体、字距被拉开。路径和命令照旧等宽。 */
-const CJK = /[㐀-鿿豈-﫿]/
-
-/** Whether this step's argument reads as prose (a title, a sentence) rather than
- * a path or a command. The 现场 argument column drops the monospace font for
- * prose (see the template), and elides it from the end rather than the middle. */
-export function isProseArg(b: Block): boolean {
-  return CJK.test(eventArg(b))
-}
-
-/** The collapsed argument column's text. A path or command loses its middle —
- * its two ends are what identify it — while prose is left whole for the CSS
- * end-ellipsis, which cuts a sentence cleanly where a middle ellipsis would cut
- * it in half. 摊开 goes through its own reader, not this. */
-export function argDisplay(b: Block): string {
-  const arg = eventArg(b)
-  return isProseArg(b) ? arg : middleTruncate(arg)
+  const parts = b.meta?.parts as { failed?: boolean }[] | undefined
+  return parts?.some((part) => part.failed) ?? false
 }

@@ -29,7 +29,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.delivery.agent import record_task_instruction
 from app.domain.delivery.models import Delivery
-from app.domain.review import landing_watch
+from app.domain.review import pr_poll
 from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task
 from app.main import app
@@ -287,7 +287,7 @@ def test_a_task_closed_for_a_write_up_that_never_ended_stops_the_turn(client):
         assert _interrupts(channel, task_id) == []
 
         client.portal.call(
-            lambda: landing_watch.watch_landings(
+            lambda: pr_poll.sweep_closings(
                 service,
                 announce,
                 record_instruction=record_task_instruction,
@@ -315,7 +315,7 @@ def test_the_write_up_deadline_does_not_stop_other_work_in_the_task(client):
         _accepted_long_ago(client, task_id)
 
         client.portal.call(
-            lambda: landing_watch.watch_landings(
+            lambda: pr_poll.sweep_closings(
                 service,
                 announce,
                 record_instruction=record_task_instruction,

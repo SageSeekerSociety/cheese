@@ -25,6 +25,7 @@ from app.domain.block.models import Block, consumed_turn, read_failed
 from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
+from tests.support.session_records import wait_for_record
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -87,7 +88,7 @@ def _use_failing_agent(client, monkeypatch) -> UnlaunchedScreen:
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/replay-ws",
-        compute=stub_compute(screen),
+        compute=stub_compute(screen, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     return screen
@@ -263,14 +264,13 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/replay-ws",
-        compute=stub_compute(before),
+        compute=stub_compute(before, sessions=client.test_request_factory),
     )
-    with room_socket(client, topic_id, "user-1") as ws:
+    with room_socket(client, topic_id, "user-1"):
         post_message(client, topic_id, "user-1", {"content": f"{first} @芝士"})
-        while True:
-            frame = ws.receive_json()
-            if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):
-                break
+        wait_for_record(
+            client, topic_id, lambda record: "sleep 600" in str(record), owner="user-1"
+        )
 
     # The old process stops reading, as a replaced backend does. `_detach` takes
     # a seat, not a room, so `_detach(room)` removed nothing and the old reader
@@ -288,7 +288,7 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/replay-ws",
-        compute=stub_compute(after),
+        compute=stub_compute(after, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     assert client.portal.call(service.recover_sessions) == 1
@@ -410,7 +410,7 @@ def test_a_batch_a_dead_session_never_started_on_is_sent_again(client):
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/replay-ws",
-        compute=stub_compute(screen),
+        compute=stub_compute(screen, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
 
@@ -503,16 +503,15 @@ def test_a_batch_a_failed_turn_never_echoed_is_sent_again(client, monkeypatch):
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/replay-ws",
-        compute=stub_compute(screen),
+        compute=stub_compute(screen, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
 
-    with room_socket(client, topic_id, "user-1") as ws:
+    with room_socket(client, topic_id, "user-1"):
         post_message(client, topic_id, "user-1", {"content": "第一句 @芝士"})
-        while True:
-            frame = ws.receive_json()
-            if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):
-                break
+        wait_for_record(
+            client, topic_id, lambda record: "sleep 600" in str(record), owner="user-1"
+        )
 
     # 会话正在干活，provider 先断了：这一轮以错误结果结束。
     screen.says(room, "API Error: Rate limit reached", error="rate_limit")

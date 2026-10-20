@@ -26,6 +26,10 @@ afterEach(() => {
 function connection(deviceId: string, extra: Partial<ModelConnection> = {}): ModelConnection {
   return {
     id: deviceId,
+    can_manage: true,
+    can_remove: false,
+    owner_user_id: null,
+    owner_name: null,
     allowed_models: ['sonnet', 'opus'],
     local_id: 'default',
     device_id: deviceId,
@@ -35,8 +39,6 @@ function connection(deviceId: string, extra: Partial<ModelConnection> = {}): Mod
     logged_in: true,
     auth_method: 'claude.ai',
     subscription_type: 'max',
-    model: null,
-    service_host: null,
     name: null,
     checked_at: new Date().toISOString(),
     last_used_at: null,
@@ -48,6 +50,10 @@ function connection(deviceId: string, extra: Partial<ModelConnection> = {}): Mod
 function heldKey(id: string): AccountConnection {
   return {
     id,
+    can_manage: true,
+    can_remove: false,
+    owner_user_id: null,
+    owner_name: null,
     allowed_models: ['sonnet'],
     kind: 'api_key',
     name: null,
@@ -60,13 +66,9 @@ function heldKey(id: string): AccountConnection {
   }
 }
 
-function mount(
-  connections: ModelConnection[],
-  devices = [{ device_id: 'desk', name: 'desk' }],
-  held: AccountConnection[] = []
-) {
+function mount(connections: ModelConnection[], held: AccountConnection[] = []) {
   return render(ModelConnectionsView, {
-    props: { loading: false, error: null, connections, held, devices, busy: '', saved: 0 },
+    props: { loading: false, error: null, connections, held, busy: '', saved: 0 },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
@@ -145,7 +147,7 @@ describe('ModelConnectionsView', () => {
   })
 
   it('says a key failed its check while closed, and why once opened', async () => {
-    mount([], [], [{ ...heldKey('bad'), check_error: 'HTTP 401 invalid x-api-key' }, heldKey('good')])
+    mount([], [{ ...heldKey('bad'), check_error: 'HTTP 401 invalid x-api-key' }, heldKey('good')])
 
     expect(summary('bad').textContent).toContain(t('account.modelConnections.checkFailedState'))
     expect(summary('good').textContent).not.toContain(t('account.modelConnections.checkFailedState'))
@@ -156,7 +158,7 @@ describe('ModelConnectionsView', () => {
   })
 
   it('says which kind of connection is missing, and still offers each way to add one', () => {
-    mount([], [], [heldKey('one')])
+    mount([], [heldKey('one')])
 
     const devices = screen.getByRole('region', { name: t('account.modelConnections.devicesTitle') })
     const account = screen.getByRole('region', { name: t('account.modelConnections.heldTitle') })
@@ -176,12 +178,43 @@ describe('ModelConnectionsView', () => {
     )
   })
 
-  it('starts subscription login only for the selected device', async () => {
+  it('starts a subscription on this computer without selecting a team device', async () => {
     const view = mount([])
     await fireEvent.click(screen.getByRole('button', { name: t('account.modelConnections.addSubscription') }))
-    expect(view.emitted('login')).toBeUndefined()
-    await fireEvent.click(await screen.findByRole('button', { name: t('account.modelConnections.login') }))
-    expect(view.emitted('login')).toEqual([['desk']])
+    expect(view.emitted('login')).toEqual([[]])
+    expect(screen.queryByRole('combobox')).toBeNull()
+  })
+
+  it('lets a member add their existing credential and keeps another member’s credential read-only', async () => {
+    const view = render(ModelConnectionsView, {
+      props: {
+        loading: false,
+        error: null,
+        busy: '',
+        saved: 0,
+        canManage: false,
+        held: [],
+        connections: [connection('personal', { owner_name: 'Carol', can_manage: false, can_remove: true })],
+        personalChoices: [
+          { id: 'mine', name: 'My connection', kind: 'api_key', allowed_models: ['sonnet'], added: false },
+        ],
+      },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await expand('personal')
+    expect(within(row('personal')).queryByRole('button', REMOVE())).toBeNull()
+    await fireEvent.click(
+      within(row('personal')).getByRole('button', { name: t('account.modelConnections.removePersonal') })
+    )
+    expect(view.emitted('removePersonal')).toEqual([['personal']])
+    await fireEvent.click(screen.getByRole('button', { name: t('account.modelConnections.addPersonal') }))
+    await fireEvent.mouseDown(
+      await screen.findByLabelText(t('account.modelConnections.connection'), { selector: 'input' })
+    )
+    await fireEvent.click(await screen.findByRole('option', { name: 'My connection' }))
+    const dialog = screen.getByRole('dialog')
+    await fireEvent.click(within(dialog).getByRole('button', { name: t('account.modelConnections.addPersonal') }))
+    expect(view.emitted('addPersonal')).toEqual([['mine']])
   })
 
   it('keeps an API key on the account only once one is typed, exactly as typed', async () => {
@@ -236,7 +269,7 @@ describe('ModelConnectionsView', () => {
   })
 
   it('removes a key on the account only after confirming, and only that one', async () => {
-    const view = mount([], [], [heldKey('one'), heldKey('two')])
+    const view = mount([], [heldKey('one'), heldKey('two')])
     await expand('two')
 
     await fireEvent.click(within(row('two')).getByRole('button', REMOVE()))
@@ -250,7 +283,7 @@ describe('ModelConnectionsView', () => {
   })
 
   it('names the login on the device whose row was asked, and nothing on the account', async () => {
-    const view = mount([connection('desk'), connection('laptop')], [], [heldKey('one')])
+    const view = mount([connection('desk'), connection('laptop')], [heldKey('one')])
     await expand('laptop')
 
     await fireEvent.click(within(row('laptop')).getByRole('button', { name: t('account.modelConnections.rename') }))

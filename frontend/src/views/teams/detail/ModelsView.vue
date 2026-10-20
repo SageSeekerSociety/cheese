@@ -19,6 +19,11 @@
         <li v-for="model in platformModels" :key="model.id">{{ model.label }}</li>
       </ul>
     </section>
+    <div class="mc-actions">
+      <BaseButton kind="secondary" @click="addingPersonal = true">{{
+        t('account.modelConnections.addPersonal')
+      }}</BaseButton>
+    </div>
     <p v-if="!canManage" class="mc-note">{{ t('account.modelConnections.readOnly') }}</p>
     <p v-if="loginCommand" class="mc-note">
       {{ t('account.modelConnections.loginTerminal') }}<br /><code>{{ loginCommand }}</code>
@@ -33,12 +38,14 @@
             size="sm"
             prepend-icon="mdi-plus"
             :aria-label="t('account.modelConnections.addSubscription')"
-            @click="openLogin"
+            @click="emit('login')"
           >
             {{ t('account.modelConnections.addSubscription') }}
           </BaseButton>
         </div>
       </div>
+
+      <p class="mc-platform mc-note">{{ t('account.modelConnections.loginHint') }}</p>
 
       <div v-if="firstLoad" class="d-flex justify-center py-6">
         <v-progress-circular indeterminate size="24" />
@@ -66,6 +73,7 @@
         >
           <v-icon class="mc-sum__chev" icon="mdi-chevron-right" size="18" aria-hidden="true" />
           <span class="mc-sum__name">{{ c.name || kindLabel(c) }}</span>
+          <span v-if="c.owner_name" class="mc-sum__kind">{{ c.owner_name }}</span>
           <span v-if="c.name" class="mc-sum__kind">{{ kindLabel(c) }}</span>
           <span class="mc-sum__where">
             <span class="mc-dot" :class="{ 'mc-dot--on': c.online }" aria-hidden="true" />
@@ -82,10 +90,14 @@
           <div v-if="isOpen(c.id)" :id="`${uid}-${c.id}`" class="mc-body">
             <div class="mc-body__inner">
               <div class="mc-body__pad">
+                <p v-if="c.owner_name" class="mc-note">{{ t('account.modelConnections.personalHint') }}</p>
+                <BaseButton v-if="c.can_remove" kind="ghost" size="sm" @click="emit('removePersonal', c.id)">{{
+                  t('account.modelConnections.removePersonal')
+                }}</BaseButton>
                 <dl class="mc-spec">
-                  <template v-if="!canManage"
-                    ><dt>{{ t('account.modelConnections.models') }}</dt>
-                    <dd>{{ c.allowed_models.join('、') }}</dd></template
+                  <template v-if="c.owner_name"
+                    ><dt>{{ t('account.modelConnections.owner') }}</dt>
+                    <dd>{{ c.owner_name }}</dd></template
                   >
                   <dt>{{ t('account.modelConnections.storedOn') }}</dt>
                   <dd>
@@ -94,10 +106,8 @@
                       c.online ? t('account.devices.online') : t('account.devices.offline')
                     }}</span>
                   </dd>
-                  <template v-if="c.service_host">
-                    <dt>{{ t('account.thisDevice.modelServiceUrl') }}</dt>
-                    <dd>{{ c.service_host }}</dd>
-                  </template>
+                  <dt>{{ t('account.modelConnections.models') }}</dt>
+                  <dd>{{ c.allowed_models.join('、') }}</dd>
                   <dt>{{ t('account.modelConnections.checkedAt') }}</dt>
                   <dd>{{ relTime(c.checked_at) }}</dd>
                   <dt>{{ t('account.modelConnections.lastUsed') }}</dt>
@@ -106,7 +116,7 @@
                 <p v-if="c.revoking" class="mc-note">
                   {{ t('account.modelConnections.revokingHint', { device: c.device_name }) }}
                 </p>
-                <div v-if="canManage && !c.revoking" class="mc-models">
+                <div v-if="c.can_manage && !c.revoking" class="mc-models">
                   <v-combobox
                     v-model="modelDraft[c.id]"
                     autocomplete="off"
@@ -123,7 +133,7 @@
                     >{{ t('account.modelConnections.saveModels') }}</BaseButton
                   >
                 </div>
-                <div v-if="canManage && !c.revoking" class="mc-actions">
+                <div v-if="c.can_manage && !c.revoking" class="mc-actions">
                   <BaseButton
                     kind="secondary"
                     size="sm"
@@ -187,6 +197,7 @@
         >
           <v-icon class="mc-sum__chev" icon="mdi-chevron-right" size="18" aria-hidden="true" />
           <span class="mc-sum__name">{{ h.name || heldLabel(h) }}</span>
+          <span v-if="h.owner_name" class="mc-sum__kind">{{ h.owner_name }}</span>
           <span v-if="h.name" class="mc-sum__kind">{{ heldLabel(h) }}</span>
           <span class="mc-sum__where">····{{ h.key_last4 }}</span>
           <span class="mc-state" :class="h.check_error ? 'mc-state--failed' : 'mc-state--ok'">{{
@@ -197,11 +208,19 @@
           <div v-if="isOpen(h.id)" :id="`${uid}-${h.id}`" class="mc-body">
             <div class="mc-body__inner">
               <div class="mc-body__pad">
+                <p v-if="h.owner_name" class="mc-note">{{ t('account.modelConnections.personalHint') }}</p>
+                <BaseButton v-if="h.can_remove" kind="ghost" size="sm" @click="emit('removePersonal', h.id)">{{
+                  t('account.modelConnections.removePersonal')
+                }}</BaseButton>
                 <p v-if="h.check_error" class="mc-note mc-note--failed">
                   {{ t('account.modelConnections.checkFailed', { reason: h.check_error }) }}
                 </p>
                 <dl class="mc-spec">
-                  <template v-if="!canManage"
+                  <template v-if="h.owner_name"
+                    ><dt>{{ t('account.modelConnections.owner') }}</dt>
+                    <dd>{{ h.owner_name }}</dd></template
+                  >
+                  <template v-if="!h.can_manage"
                     ><dt>{{ t('account.modelConnections.models') }}</dt>
                     <dd>{{ h.allowed_models.join('、') }}</dd></template
                   >
@@ -216,7 +235,7 @@
                   <dt>{{ t('account.modelConnections.checkedAt') }}</dt>
                   <dd>{{ h.checked_at ? relTime(h.checked_at) : t('account.modelConnections.notChecked') }}</dd>
                 </dl>
-                <div v-if="canManage" class="mc-models">
+                <div v-if="h.can_manage" class="mc-models">
                   <v-combobox
                     v-model="modelDraft[h.id]"
                     autocomplete="off"
@@ -233,7 +252,7 @@
                     >{{ t('account.modelConnections.saveModels') }}</BaseButton
                   >
                 </div>
-                <div v-if="canManage" class="mc-actions">
+                <div v-if="h.can_manage" class="mc-actions">
                   <BaseButton
                     kind="secondary"
                     size="sm"
@@ -355,34 +374,34 @@
     </AdaptiveDialog>
 
     <AdaptiveDialog
-      :model-value="addingLogin"
-      :title="t('account.modelConnections.addSubscription')"
-      :primary-label="t('account.modelConnections.login')"
-      :primary-loading="busy === 'login'"
-      :primary-disabled="!loginDevice"
-      @update:model-value="addingLogin = false"
-      @primary="emit('login', loginDevice)"
+      :model-value="addingPersonal"
+      :title="t('account.modelConnections.addPersonal')"
+      :primary-label="t('account.modelConnections.addPersonal')"
+      :primary-disabled="!personalId"
+      :primary-loading="busy === 'personal'"
+      @update:model-value="addingPersonal = false"
+      @primary="emit('addPersonal', personalId)"
     >
       <v-select
-        v-model="loginDevice"
+        v-model="personalId"
         autocomplete="off"
-        :items="devices"
+        :items="availablePersonal"
         item-title="name"
-        item-value="device_id"
-        :label="t('account.modelConnections.device')"
+        item-value="id"
+        :label="t('account.modelConnections.connection')"
       />
-      <p class="mc-note">{{ t('account.modelConnections.loginHint') }}</p>
+      <p class="mc-note">{{ t('account.modelConnections.personalHint') }}</p>
     </AdaptiveDialog>
   </div>
 </template>
 
 <script setup lang="ts">
+import type { PersonalConnectionChoice } from '@/api/modelConnections'
 import type {
   AccountConnection,
   AccountConnectionInput,
   AccountConnectionKind,
   ModelConnection,
-  ModelServiceDevice,
 } from '@/types/modelConnections'
 
 import { computed, reactive, ref, useId, watch } from 'vue'
@@ -393,7 +412,6 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
-import { connectionKind } from '@/types/modelConnections'
 
 defineOptions({ name: 'ModelsView' })
 
@@ -407,22 +425,24 @@ const props = withDefaults(
     connections: ModelConnection[]
     /** 保存在账号里的 API key 和模型服务。 */
     held: AccountConnection[]
-    /** 能改用自定义模型服务的设备：自己接入、此刻在线的。 */
-    devices: ModelServiceDevice[]
+    /** Existing credentials owned by the current member. */
+    personalChoices?: PersonalConnectionChoice[]
     /** 正在进行的动作：`<id>:check`、`<id>:revoke`、`<id>:rename`（id 是账号里那一份的，或设备的）、
      *  `service` 或 `add`。 */
     busy: string
     /** 表单保存成功了几次；变了就关上开着的表单。 */
     saved: number
   }>(),
-  { canManage: true, platformModels: () => [], loginCommand: null }
+  { canManage: true, platformModels: () => [], loginCommand: null, personalChoices: () => [] }
 )
 
 const emit = defineEmits<{
   refresh: []
   recheck: [loginId: string]
   revoke: [loginId: string]
-  login: [deviceId: string]
+  login: []
+  addPersonal: [id: string]
+  removePersonal: [id: string]
   setModels: [id: string, models: string[], onDevice: boolean]
   addHeld: [input: AccountConnectionInput]
   checkHeld: [id: string]
@@ -440,13 +460,9 @@ watch(
   },
   { immediate: true }
 )
-const addingLogin = ref(false)
-function openLogin() {
-  loginDevice.value = props.devices[0]?.device_id ?? ''
-  addingLogin.value = true
-}
-const loginDevice = ref('')
-
+const addingPersonal = ref(false)
+const personalId = ref('')
+const availablePersonal = computed(() => props.personalChoices.filter((c) => !c.added))
 // 第一次取数还没回来：两张卡里先转圈，不先说「暂无」。
 const firstLoad = computed(() => props.loading && !props.connections.length && !props.held.length)
 
@@ -517,16 +533,8 @@ function saveRename() {
 
 // 订阅档位按厂商的写法首字母大写（max → Max）。
 function kindLabel(c: ModelConnection): string {
-  switch (connectionKind(c)) {
-    case 'modelService':
-      return t('account.modelConnections.modelService', { model: c.model ?? '' })
-    case 'subscription': {
-      const plan = c.subscription_type ?? ''
-      return t('account.modelConnections.subscription', { plan: plan.charAt(0).toUpperCase() + plan.slice(1) })
-    }
-    default:
-      return t('account.modelConnections.apiKey')
-  }
+  const plan = c.subscription_type ?? ''
+  return t('account.modelConnections.subscription', { plan: plan.charAt(0).toUpperCase() + plan.slice(1) })
 }
 
 const removing = ref<ModelConnection | null>(null)
@@ -539,7 +547,7 @@ function confirmRemove() {
 watch(
   () => props.saved,
   () => {
-    addingLogin.value = false
+    addingPersonal.value = false
     addingKind.value = null
     heldForm.key = ''
     renaming.value = null
