@@ -81,6 +81,18 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
         props: { notification: { ...replyNotification(true), read: true } },
         expect: '我按你说的把第二节重写了一遍。',
       },
+      {
+        name: '题目的提交批改了',
+        note: '学生的动态：标题是哪道题、通过没有、几分，下面是空间；点开去「我的提交」。',
+        props: { notification: taskNotification('reviewed') },
+        expect: '系统与网络实验室',
+      },
+      {
+        name: '截止不到一天',
+        note: '已领取还没交：离个人提交截止不到 24 小时的这一条也推送到手机和桌面。',
+        props: { notification: taskNotification('dueSoon') },
+        expect: '距提交截止不到 24 小时',
+      },
     ],
   },
   {
