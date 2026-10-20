@@ -86,13 +86,21 @@ def test_a_backend_change_selects_its_consumer(runner, platform, tmp_path):
     assert all("typecheck" not in entry["id"] for entry in plan)
 
 
-def test_a_frontend_change_seeds_related_and_drops_typecheck(
+def test_a_frontend_change_runs_the_specs_that_name_it_and_drops_typecheck(
     runner, platform, tmp_path
 ):
+    """A changed component runs the spec that imports it, not an unrelated one."""
     root = _tree(tmp_path)
-    widget = root / "frontend" / "src" / "components" / "Widget.vue"
-    widget.parent.mkdir(parents=True)
-    widget.write_text("<template><div/></template>\n", encoding="utf-8")
+    components = root / "frontend" / "src" / "components"
+    components.mkdir(parents=True)
+    (components / "Widget.vue").write_text("<template><div/></template>\n", encoding="utf-8")
+    (components / "Other.vue").write_text("<template><span/></template>\n", encoding="utf-8")
+    (components / "Widget.spec.ts").write_text(
+        "import Widget from './Widget.vue'\n", encoding="utf-8"
+    )
+    (components / "Other.spec.ts").write_text(
+        "import Other from './Other.vue'\n", encoding="utf-8"
+    )
     changed = ["frontend/src/components/Widget.vue"]
     plan, _ = runner.plan_for(
         platform,
@@ -107,9 +115,10 @@ def test_a_frontend_change_seeds_related_and_drops_typecheck(
     )
     assert [entry["id"] for entry in plan] == ["frontend-unit", "frontend-i18n"]
     unit = plan[0]
-    assert unit["evidence"]["mode"] == "related"
+    assert runner.pinpointed(platform, unit)
     assert unit["evidence"]["roots"] == ["src/components/Widget.vue"]
-    assert "related" in unit["command"]
+    assert "src/components/Widget.spec.ts" in unit["command"]
+    assert "src/components/Other.spec.ts" not in unit["command"]
     # The empty-graph guard, without which a run that selected no test reports
     # the exit code of the specs that always run.
     assert "--no-passWithNoTests" in unit["command"]
