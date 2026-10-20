@@ -23,7 +23,17 @@
         :to="{ name: 'SpacesDetailTasksList', params: { spaceId } }"
         :active="isTasksLinkActive()"
         :title="t('spaces.detail.allContests')"
-      />
+      >
+        <template v-if="newTaskCount" #append>
+          <span
+            class="side-nav__count"
+            :title="t('spaces.sidebar.newTasks', { n: newTaskCount })"
+            :aria-label="t('spaces.sidebar.newTasks', { n: newTaskCount })"
+            data-testid="space-side-new-tasks"
+            >{{ newTaskCount >= 50 ? '50+' : newTaskCount }}</span
+          >
+        </template>
+      </v-list-item>
       <v-list-item
         v-if="myDraftCount || isDraftsPage"
         rounded="lg"
@@ -100,7 +110,14 @@ import { useSpaceStore } from '@/stores/space'
 const { t } = useI18n()
 const nav = useNavigation()
 const spaceStore = useSpaceStore()
-const { currentSpace: space, categories, isManager, pendingAuditCount, myDraftCount } = storeToRefs(spaceStore)
+const {
+  currentSpace: space,
+  categories,
+  isManager,
+  pendingAuditCount,
+  myDraftCount,
+  newTaskCount,
+} = storeToRefs(spaceStore)
 const { mdAndUp } = useDisplay()
 
 /** 侧栏里的分类：未归档的，按显示顺序。 */

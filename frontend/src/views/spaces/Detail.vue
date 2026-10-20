@@ -52,6 +52,10 @@ const getSpace = async (spaceId: number) => {
     return
   }
   spaceData.fetchCategories()
+  // 侧栏的两个数：「我的草稿」有几份，上次看过题目列表之后新发了几道（正在看题目列表
+  // 的话那一页自己清零）。
+  void spaceData.fetchMyDraftCount()
+  if (route.name !== 'SpacesDetailTasksList') void spaceData.fetchNewTaskCount()
   if (space.value?.name) setDynamicTitle(space.value.name, 'SpacesDetail')
 }
 
@@ -71,11 +75,6 @@ watch(
   },
   { immediate: true }
 )
-
-// 侧栏「我的草稿」旁边的数：换了空间重读一次（发布页、草稿页改动时它们自己更新）。
-watch(currentSpaceId, (id) => {
-  if (id && !underReview.value) void spaceData.fetchMyDraftCount()
-})
 
 onMounted(async () => {
   await getSpace(Number(route.params.spaceId))

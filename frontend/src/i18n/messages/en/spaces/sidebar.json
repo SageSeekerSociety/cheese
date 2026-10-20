@@ -6,5 +6,6 @@
   "manage": "Manage",
   "members": "Members",
   "settings": "Settings",
-  "tasks": "Tasks"
+  "tasks": "Tasks",
+  "newTasks": "{n} new since you last looked"
 }

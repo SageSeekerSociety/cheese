@@ -204,7 +204,9 @@
       "nearestDeadline": "最近截止"
     },
     "topic": "标签",
-    "topicCount": "{n} 个标签"
+    "topicCount": "{n} 个标签",
+    "closed": "已截止或名额已满（{n}）",
+    "noOpenTasks": "暂无可领取的题目"
   },
   "templateForm": {
     "cancel": "取消",

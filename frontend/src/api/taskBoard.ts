@@ -107,7 +107,8 @@ export namespace TaskBoardApi {
     joined?: boolean
     topics?: number[]
     categoryId?: number
-    lifecycle?: 'ended' | 'recruiting' | 'notEnded'
+    /** `recruiting`：没结束、报名没截止、还有名额；`closed`：其余的。 */
+    lifecycle?: 'ended' | 'recruiting' | 'closed' | 'notEnded'
     limitedView?: boolean
     /** 让服务端在**同一个响应**里多带一个 `distinctParticipants`：这一页题目上去重
      *  后的参与人数（一个人领三道题算一人）。逐题的 `participants.total` 只能求和当

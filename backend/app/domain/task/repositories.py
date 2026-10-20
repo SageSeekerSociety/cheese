@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
-from sqlalchemy import CTE, Select, and_, delete, exists, func, or_, select
+from sqlalchemy import CTE, Select, and_, delete, exists, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.reads import get_by_ids
@@ -345,7 +345,10 @@ class TaskRepository:
             return stmt.where(Task.ended_at.is_not(None))
         if lifecycle == "notEnded":
             return stmt.where(Task.ended_at.is_(None))
-        if lifecycle == "recruiting":
+        if lifecycle in ("recruiting", "closed"):
+            # Still to be claimed: not ended, registration not over, a seat left.
+            # A 题目 whose registration has not opened yet is still ahead of the
+            # reader, so it counts as recruiting.
             approved_count = (
                 select(func.count(TaskMembership.id))
                 .where(
@@ -356,13 +359,16 @@ class TaskRepository:
                 .correlate(Task)
                 .scalar_subquery()
             )
-            return stmt.where(
+            open_ = and_(
                 Task.ended_at.is_(None),
+                or_(Task.deadline.is_(None), Task.deadline > func.now()),
                 or_(
                     Task.participant_limit.is_(None),
+                    Task.participant_limit <= 0,
                     approved_count < Task.participant_limit,
                 ),
             )
+            return stmt.where(open_ if lifecycle == "recruiting" else not_(open_))
         return stmt
 
     def _apply_space_task_visibility(
