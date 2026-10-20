@@ -7,7 +7,9 @@ const {
   teamId,
   connections,
   held,
-  devices,
+  personalChoices,
+  addPersonal,
+  removePersonal,
   platformModels,
   canManage,
   loading,
@@ -33,7 +35,7 @@ const {
     :key="teamId"
     :connections="connections"
     :held="held"
-    :devices="devices"
+    :personal-choices="personalChoices"
     :platform-models="platformModels"
     :can-manage="canManage"
     :loading="loading"
@@ -42,6 +44,8 @@ const {
     :saved="saved"
     :login-command="loginCommand"
     @login="login"
+    @add-personal="addPersonal"
+    @remove-personal="removePersonal"
     @recheck="recheck"
     @revoke="revoke"
     @add-held="addHeld"

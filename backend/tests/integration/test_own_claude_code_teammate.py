@@ -41,6 +41,8 @@ def _log_in_claude_code(client, handle: str, machine: str = "", **login) -> str:
             )
             db.add(
                 DeviceClaudeLoginRow(
+                    team_id=device.team_id,
+                    owner_user_id=user.id,
                     device_id=device.device_id,
                     installed=True,
                     logged_in=True,

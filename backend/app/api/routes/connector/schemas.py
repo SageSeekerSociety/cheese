@@ -72,6 +72,10 @@ class ClaudeCodeLoginOut(BaseModel):
 
 
 class ModelConnectionOut(ClaudeCodeLoginOut):
+    owner_user_id: int | None = None
+    owner_name: str | None = None
+    can_manage: bool = False
+    can_remove: bool = False
     allowed_models: list[str]
     device_id: str
     device_name: str
@@ -108,6 +112,10 @@ class AccountConnectionOut(BaseModel):
     a model service, kept sealed by the platform. Never the key."""
 
     id: str
+    owner_user_id: int | None = None
+    owner_name: str | None = None
+    can_manage: bool = False
+    can_remove: bool = False
     allowed_models: list[str]
     kind: ConnectionKind
     #: What its owner calls it.

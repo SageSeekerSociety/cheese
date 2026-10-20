@@ -13,7 +13,6 @@ from app.domain.agent_instance.own.ownership import (
     owned_rows_in_project,
 )
 from app.domain.project.models import Project
-from app.domain.device.mcp_machines import names as device_names
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle
@@ -47,18 +46,19 @@ async def listing(
         )
     }
     faces = await faces_by_handle(db, [owner.username for owner in owners.values()])
-    machines = await device_names(
-        db,
-        [owned.device_id for _, owned in active if owned.device_id is not None],
-    )
+    project = await db.get(Project, project_id)
     rows = []
     for instance, owned in active:
         login = connections[instance.id]
-        owner = owners.get(owned.owner_user_id)
+        owner = (
+            owners.get(owned.owner_user_id)
+            if login is None or login.owner_user_id is not None
+            else None
+        )
         machine = None
-        if owned.device_id is not None and owned.device_id in machines:
+        if login is not None and owned.device_id is not None and project is not None:
             machine = {
-                "name": machines[owned.device_id],
+                "name": login.storage_name(project.team_id, viewer_user_id),
                 "online": bool(is_online(owned.device_id)),
             }
         rows.append(
@@ -121,10 +121,12 @@ async def my_connections(
             "name": login.name,
             "service_host": login.service_host,
             "on_account": login.on_account,
-            "machine_name": login.device_name,
+            "machine_name": login.storage_name(project.team_id, viewer_user_id),
+            "owner_user_id": login.owner_user_id,
             "online": login.on_account or bool(is_online(login.device_id)),
             "added": login.id in here,
             "allowed_models": list(login.allowed_models),
         }
         for login in await logins(db, project.team_id)
+        if login.owner_user_id is None or login.owner_user_id == viewer_user_id
     ]

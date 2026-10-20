@@ -16,7 +16,7 @@ import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, Ro
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
 import type { ChannelEntry } from '@/types/channelDirectory'
-import type { AccountConnection, ModelConnection, ModelServiceDevice } from '@/types/modelConnections'
+import type { AccountConnection, ModelConnection } from '@/types/modelConnections'
 import type { ProgressItem } from '@/types/projectProgress'
 import type { User } from '@/types/users'
 import type RealNameView from '@/views/user/settings/RealNameView.vue'
@@ -234,11 +234,12 @@ export const DEVICE_TEAMS: MyTeam[] = [
 
 // ---- 模型连接（`ModelConnectionsView`）-------------------------------------
 
-/** 三种连接：工作站上的 Claude 订阅、笔记本上的自定义模型服务、一台离线机器上的 API key，
- *  以及工作站上的第二份订阅（一台设备可以登录几个账号）。 */
+/** Team and personal subscriptions, including an offline storage computer. */
 export const MODEL_CONNECTIONS: ModelConnection[] = [
   {
     id: 'dev-desk',
+    can_manage: true,
+    can_remove: false,
     local_id: 'default',
     allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-desk',
@@ -257,24 +258,30 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
   },
   {
     id: 'dev-laptop',
+    can_manage: false,
+    can_remove: true,
+    owner_user_id: 42,
+    owner_name: '王小明',
     local_id: 'default',
     allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-laptop',
-    device_name: '王小明的 MacBook',
+    device_name: 'credential-host-7c821a',
     online: true,
     installed: true,
     logged_in: true,
-    auth_method: 'model_service',
-    subscription_type: null,
-    model: 'kimi-k2',
-    service_host: 'api.moonshot.cn',
-    name: 'Kimi',
+    auth_method: 'claude.ai',
+    subscription_type: 'pro',
+    model: null,
+    service_host: null,
+    name: '王小明的 Claude',
     checked_at: ago(HOUR),
     last_used_at: null,
     revoking: false,
   },
   {
     id: 'dev-lab',
+    can_manage: true,
+    can_remove: false,
     local_id: 'default',
     allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-lab',
@@ -282,8 +289,8 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     online: false,
     installed: true,
     logged_in: true,
-    auth_method: 'console',
-    subscription_type: null,
+    auth_method: 'claude.ai',
+    subscription_type: 'max',
     model: null,
     service_host: null,
     name: null,
@@ -293,6 +300,8 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
   },
   {
     id: 'login-desk-pro',
+    can_manage: true,
+    can_remove: false,
     allowed_models: ['sonnet', 'opus', 'haiku'],
     local_id: 'K3V7Q2M8XWZ4TN6PRJ5BHD2C7A',
     device_id: 'dev-desk',
@@ -311,16 +320,12 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
   },
 ]
 
-/** 能改用自定义模型服务的设备：在线的那两台。 */
-export const MODEL_SERVICE_DEVICES: ModelServiceDevice[] = [
-  { device_id: 'dev-desk', name: '工作站' },
-  { device_id: 'dev-laptop', name: '王小明的 MacBook' },
-]
-
 /** 保存在账号里的两份：一个起了名字的 API key，一个自定义模型服务。 */
 export const MODEL_HELD: AccountConnection[] = [
   {
     id: 'held-key',
+    can_manage: true,
+    can_remove: false,
     kind: 'api_key',
     allowed_models: ['sonnet', 'opus'],
     name: '工作用',
@@ -333,6 +338,8 @@ export const MODEL_HELD: AccountConnection[] = [
   },
   {
     id: 'held-glm',
+    can_manage: true,
+    can_remove: false,
     kind: 'model_service',
     allowed_models: ['kimi-k2'],
     name: null,

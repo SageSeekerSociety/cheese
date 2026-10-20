@@ -15,6 +15,8 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.model_catalog import model_choices
 from app.domain.agent_instance.configuration import AgentConfiguration
+from app.domain.agent_instance.own.ownership import connection_of
+from app.domain.agent_instance.own.connections import logins
 from app.domain.agent_instance.own import (
     add,
     listing,
@@ -75,6 +77,7 @@ class MyConnectionOut(BaseModel):
     online: bool = True
     added: bool = False
     allowed_models: list[str]
+    owner_user_id: int | None = None
 
 
 class ExecutionDeviceOut(BaseModel):
@@ -111,20 +114,23 @@ async def get_own_agents(
     choices = await my_connections(
         db, project_id, actor.user_id, project.settings, device_hub.is_online
     )
-    access = await UsageService(db).model_access(project.team_id)
-    choices.insert(
-        0,
-        {
-            "id": "platform",
-            "kind": "platform",
-            "name": None,
-            "allowed_models": [
-                m["id"]
-                for m in model_choices(project.settings)
-                if access.shows(m) and access.allows(m)
-            ],
-        },
-    )
+    if not can_manage:
+        choices = [c for c in choices if c.get("owner_user_id") == actor.user_id]
+    if can_manage:
+        access = await UsageService(db).model_access(project.team_id)
+        choices.insert(
+            0,
+            {
+                "id": "platform",
+                "kind": "platform",
+                "name": None,
+                "allowed_models": [
+                    m["id"]
+                    for m in model_choices(project.settings)
+                    if access.shows(m) and access.allows(m)
+                ],
+            },
+        )
     return ok(
         {
             "can_manage": can_manage,
@@ -154,12 +160,18 @@ async def add_own_agent(
     project_id: uuid.UUID, body: OwnAgentAdd, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(
-        actor, project_id=project_id, permission=Permission.configure_agents
-    )
+    await resolver.authorize_project(actor, project_id=project_id)
     if actor.user_id is None:
         raise ForbiddenError(say("ownAgentAddPersonOnly"))
     project = await ProjectService(db).get_or_404(project_id)
+    chosen = next(
+        (c for c in await logins(db, project.team_id) if c.id == body.connection_id),
+        None,
+    )
+    if chosen is None or chosen.owner_user_id is None:
+        await resolver.authorize_project(
+            actor, project_id=project_id, permission=Permission.configure_agents
+        )
     devices = sql_device_service(db)
     device = await devices.get_hosted_device(body.device_id)
     if device is None or not await devices.serves_project(body.device_id, project_id):
@@ -199,12 +211,18 @@ async def remove_own_agent(
     project_id: uuid.UUID, handle: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(
-        actor, project_id=project_id, permission=Permission.configure_agents
-    )
+    await resolver.authorize_project(actor, project_id=project_id)
     owned = await owned_by_seat(db, project_id, handle)
     if owned is None:
         raise NotFoundError(say("ownAgentNotFound"))
+    connection = await connection_of(db, owned)
+    if not (
+        owned.owner_user_id == actor.user_id
+        and (connection is None or connection.owner_user_id == actor.user_id)
+    ):
+        await resolver.authorize_project(
+            actor, project_id=project_id, permission=Permission.configure_agents
+        )
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.get_in_project(

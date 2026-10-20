@@ -22,6 +22,7 @@ from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.project.models import Project
 from app.domain.user.models import User
 from tests.integration.conftest import (
     post_message,
@@ -72,6 +73,8 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
         ).device_id
         db.add(
             DeviceClaudeLoginRow(
+                team_id=(await db.get(Project, project_id)).team_id,
+                allowed_models=["sonnet"],
                 device_id=laptop,
                 installed=True,
                 logged_in=True,

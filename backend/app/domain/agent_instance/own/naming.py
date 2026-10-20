@@ -44,8 +44,8 @@ def own_role(nickname: str, *, owner_handle: str, on_account: bool = False) -> s
     where = (
         f"你是{nickname}的 Claude Code，使用团队在平台上加密保存的模型连接。"
         if on_account
-        else f"你是{nickname}的 Claude Code，使用团队设备上保存的模型登录。"
-        "模型进程在保存登录的设备上运行，工具在为你配置的执行设备上运行。"
+        else f"你是{nickname}的 Claude Code，使用模型凭据所在电脑上的登录。"
+        "模型进程在保存登录的电脑上运行，工具在为你配置的执行设备上运行。"
     )
     return where + (
         f"你是{nickname}的私人助手，对主人{owner_handle}负责。"
@@ -133,6 +133,9 @@ async def _name_owners_agents(
         key = _connection_key(login_id, account_id)
         login = by_id.get(key) if key else None
         if login is not None:
+            if login.owner_user_id is None:
+                instance.display_name = label(login)
+                continue
             base = label(login)
             seen[base] = seen.get(base, 0) + 1
             distinction = base if seen[base] == 1 else f"{base} {seen[base]}"

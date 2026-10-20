@@ -12,17 +12,19 @@ const connectionId = ref('')
 const model = ref('')
 const deviceId = ref('')
 const choices = computed(() =>
-  (props.state?.my_connections ?? []).map((c) => ({
-    ...c,
-    label:
-      c.kind === 'platform'
-        ? t('account.modelConnections.platformTitle')
-        : c.name ||
-          c.service_host ||
-          (c.kind === 'subscription'
-            ? t('account.modelConnections.subscription', { plan: c.plan ?? '' })
-            : t('account.modelConnections.apiKey')),
-  }))
+  (props.state?.my_connections ?? [])
+    .filter((c) => props.state?.can_manage || c.owner_user_id != null)
+    .map((c) => ({
+      ...c,
+      label:
+        c.kind === 'platform'
+          ? t('account.modelConnections.platformTitle')
+          : c.name ||
+            c.service_host ||
+            (c.kind === 'subscription'
+              ? t('account.modelConnections.subscription', { plan: c.plan ?? '' })
+              : t('account.modelConnections.apiKey')),
+    }))
 )
 const connection = computed(() => choices.value.find((c) => c.id === connectionId.value))
 watch(connectionId, () => {
@@ -37,7 +39,7 @@ function create() {
   <div data-testid="own-agents">
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <p class="t-body c-muted mb-4">{{ t('work.projectSettings.ownAgents.intro') }}</p>
-    <div v-if="state?.can_manage" class="team-agent-picker">
+    <div v-if="state && (state.can_manage || choices.length)" class="team-agent-picker">
       <v-select
         v-model="connectionId"
         autocomplete="off"

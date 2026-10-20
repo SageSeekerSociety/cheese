@@ -11,12 +11,6 @@ export type ModelConnections = Schemas['ModelConnectionsOut']
 /** 保存在团队里的一份连接：Anthropic API key 或自定义模型服务。只有密钥后四位，没有密钥。 */
 export type AccountConnection = Schemas['AccountConnectionOut']
 
-/** 「使用自定义模型服务」可以选的设备：自己接入、此刻在线的那几台。 */
-export interface ModelServiceDevice {
-  device_id: string
-  name: string
-}
-
 /** 这份连接是哪一种：Claude 订阅、Anthropic API key，还是自定义模型服务。 */
 export type ModelConnectionKind = 'subscription' | 'apiKey' | 'modelService'
 

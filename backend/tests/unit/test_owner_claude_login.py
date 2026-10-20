@@ -299,6 +299,19 @@ async def test_a_persons_machine_is_asked_as_it_connects_and_the_answer_kept(
     db_factory,
 ):
     device = await _device(db_factory, Supply.self_hosted)
+    async with db_factory() as db:
+        enrolled = await db.get(DeviceRow, device)
+        db.add(
+            DeviceClaudeLoginRow(
+                id=device,
+                device_id=device,
+                team_id=enrolled.team_id,
+                installed=False,
+                logged_in=False,
+                checked_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
     hub = _Hub(_one_login({"loggedIn": True, "authMethod": "claude.ai"}))
     await owner_login.refresh_on_connect(db_factory, hub, device)
 

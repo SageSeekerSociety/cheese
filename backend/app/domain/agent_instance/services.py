@@ -2,20 +2,21 @@
 
 import re
 import uuid
+from sqlalchemy import select
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import (
-    AccountConnection,
     AgentInstance,
     NameSource,
     OwnAgent,
+    AccountConnection,
+    PersonalModelResource,
 )
 from app.domain.device.models import DeviceRow, DeviceClaudeLoginRow
 from app.domain.agent_instance.repositories import AgentInstanceRepository
@@ -399,28 +400,43 @@ class AgentInstanceService:
         own = await self._session.get(OwnAgent, instance_id) if instance_id else None
         if own is not None:
             if own.account_connection_id:
-                connection = await self._session.get(
-                    AccountConnection, own.account_connection_id
-                )
-                models = (
-                    connection.allowed_models
-                    if connection and connection.team_id == project.team_id
-                    else []
+                table, field, connection_id = (
+                    AccountConnection,
+                    PersonalModelResource.account_connection_id,
+                    own.account_connection_id,
                 )
             else:
-                connection = await self._session.scalar(
-                    select(DeviceClaudeLoginRow)
-                    .join(
-                        DeviceRow, DeviceRow.device_id == DeviceClaudeLoginRow.device_id
-                    )
-                    .where(
-                        DeviceClaudeLoginRow.id == own.login_id,
-                        DeviceRow.team_id == project.team_id,
-                        DeviceClaudeLoginRow.logged_in.is_(True),
-                        DeviceClaudeLoginRow.revoked_at.is_(None),
-                    )
+                table, field, connection_id = (
+                    DeviceClaudeLoginRow,
+                    PersonalModelResource.login_id,
+                    own.login_id,
                 )
-                models = connection.allowed_models if connection else []
+            connection = (
+                await self._session.get(table, connection_id) if connection_id else None
+            )
+            reference = await self._session.scalar(
+                select(PersonalModelResource.id).where(
+                    PersonalModelResource.team_id == project.team_id,
+                    field == connection_id,
+                )
+            )
+            available = (
+                connection is not None
+                and (connection.team_id == project.team_id or reference is not None)
+                and (
+                    connection.owner_user_id is None
+                    or connection.owner_user_id == own.owner_user_id
+                )
+            )
+            if isinstance(connection, DeviceClaudeLoginRow):
+                available = (
+                    available and connection.logged_in and connection.revoked_at is None
+                )
+            models = (
+                connection.allowed_models
+                if available and connection is not None
+                else []
+            )
             if config.model not in models:
                 raise ValidationError(say("teamConnectionModelRefused"))
             return
