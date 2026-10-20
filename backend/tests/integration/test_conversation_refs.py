@@ -137,7 +137,11 @@ def test_an_agent_message_naming_nothing_gets_a_line_beside_it(client):
         )
         assert sent.status_code == 200, sent.text
 
-    blocks = client.get(f"/topics/{room}/blocks", headers=OWNER).json()["data"]["data"]
+    # The line is written beside the message but carries `in_room: false`, so
+    # it is read through the room's hidden side rather than what it shows.
+    blocks = client.get(
+        f"/topics/{room}/blocks", params={"shown": "false"}, headers=OWNER
+    ).json()["data"]["data"]
     lines = [b["content"] for b in blocks if b["kind"] == "event"]
     assert [line for line in lines if nothing in line]
     assert not [line for line in lines if thread in line]

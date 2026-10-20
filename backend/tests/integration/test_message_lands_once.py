@@ -38,12 +38,13 @@ async def _topic(factory) -> uuid.UUID:
 async def _ai_messages(factory, topic_id: uuid.UUID) -> list[str]:
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
+    # Assistant output lands as a message now (#4448 retired the hidden
+    # progress event it used to be), so the room's own timeline is the place
+    # to count it.
     return [
         b.content
         for b in blocks
-        if looks_like_agent_handle(b.author)
-        and b.kind == BlockKind.event
-        and (b.meta or {}).get("progress")
+        if looks_like_agent_handle(b.author) and b.kind == BlockKind.message
     ]
 
 

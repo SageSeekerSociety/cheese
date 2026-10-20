@@ -127,7 +127,9 @@ def test_a_rule_saved_without_a_trigger_waits_for_one(client):
     """Two boxes left empty: the rule is saved, paused, due at no moment, and
     the list says no moment has been chosen. Giving it one later starts it."""
     room = _room(client, _project(client))
-    made = _weekly(client, room, owner_handle=OWNER, trigger="", spec={})
+    # A person leaves the boxes empty. A teammate creating its own rule is not
+    # asked to fill what it just typed, so the creator has to be the person.
+    made = _weekly(client, room, headers=PERSON, trigger="", spec={})
     assert made.status_code == 200, made.text
     routine = made.json()["data"]
     assert routine["state"] == "paused"
@@ -439,12 +441,13 @@ def _deliveries(client, recipient: str):
     """Timed deliveries waiting for this recipient."""
     from app.domain.delivery.models import TimedDelivery
 
-    return _db(
-        client,
-        lambda s: s.scalars(
+    async def waiting(session):
+        found = await session.scalars(
             select(TimedDelivery).where(TimedDelivery.recipient_handle == recipient)
-        ).all(),
-    )
+        )
+        return found.all()
+
+    return _db(client, waiting)
 
 
 def test_a_rule_that_was_given_no_name_is_named_by_the_teammate(client):
