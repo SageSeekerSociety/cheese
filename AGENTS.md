@@ -22,6 +22,8 @@ A design still being argued lives in issues; whatever `docs/` says about it pred
 
 ## We are still building this
 
+Build every decision for the end state: nothing here is yet too expensive to replace, so a decision made now is one we live with. Before changing anything, find the root cause from first principles and how mature systems solve the same problem, and build that design in its smallest complete form. A change that works around the cause instead of removing it — a special case, a retry or probe around a failure, a sweep that cleans up after something the design should prevent, a step a later stage would discard — is not merged, and one already on main is reverted. Where the right design is not settled, leave the problem open in an issue with what is known rather than spend work on a stopgap.
+
 Finish a decided change completely: leave no expiry note, compatibility path, deprecation marker, dual-write, flag keeping the old branch reachable, or doc section about the old way. Those protect existing users, which we have none of; each is more to unwind and a place the next reader mistakes for something in use. Adopting a replacement means deleting what it replaced, and the change is finished only when the code that chooses changes — check there, not in the menu, the contract or the doc.
 
 Judge a mechanism by what it does now, not by why it was created. A check written after an incident points at where that incident surfaced; the code that causes it moves on.
