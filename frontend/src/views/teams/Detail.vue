@@ -62,8 +62,8 @@ const PAGE_TITLES: Record<string, string> = {
 }
 const pageTitle = computed(() => t(PAGE_TITLES[String(route.name)] ?? 'home.nav.teamProjects'))
 
-// 成员和额度是读的一栏，页头跟着正文封顶居中；其余几页铺满内容区。
-const READ_PAGES = new Set(['TeamsDetailMembers', 'TeamsDetailCredits'])
+// 成员、模型和额度是读的一栏，页头跟着正文封顶居中；其余几页铺满内容区。
+const READ_PAGES = new Set(['TeamsDetailMembers', 'TeamsDetailModels', 'TeamsDetailCredits'])
 const pageWidth = computed(() => (READ_PAGES.has(String(route.name)) ? 'read' : 'full'))
 
 const teamIntro = computed(() => teamData.value?.intro ?? '')

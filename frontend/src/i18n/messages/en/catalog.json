@@ -1162,6 +1162,10 @@
     "s5": {
       "name": "Both kinds of connection",
       "note": "Sample data includes device subscriptions, services and API keys, plus platform-held keys and services, one row per connection."
+    },
+    "s6": {
+      "name": "Adding my connection",
+      "note": "Pick one of your existing connections to add to the team; it serves only your own assistant."
     }
   },
   "channelBrowseView": {
