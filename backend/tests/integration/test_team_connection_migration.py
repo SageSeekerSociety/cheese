@@ -1,5 +1,6 @@
 """Credentials survive team backfill and writes from the serving old backend."""
 
+import logging
 import uuid
 from pathlib import Path
 from threading import Thread
@@ -32,6 +33,7 @@ def test_existing_connection_gets_personal_team_and_old_backend_can_still_insert
             "SELECT c.*, t.personal_owner_user_id FROM account_model_connections c JOIN team t ON t.id = c.team_id WHERE c.id = $1",
             connection,
         )
+        assert row is not None
         assert row["key"] == "sealed-original"
         assert row["personal_owner_user_id"] == user
         assert row["allowed_models"] == '["kimi-test"]'
@@ -68,7 +70,7 @@ def test_existing_connection_gets_personal_team_and_old_backend_can_still_insert
         )
 
 
-def _upgrade_with_old_write(db, monkeypatch, after_statement, write):
+def _upgrade_with_old_write(db, monkeypatch, caplog, after_statement, write):
     inserted = []
     errors = []
 
@@ -90,12 +92,23 @@ def _upgrade_with_old_write(db, monkeypatch, after_statement, write):
             assert not errors, errors
 
     monkeypatch.setattr(settings, "database_url", db.url)
+    logger = logging.getLogger(__name__)
+    # The CLI configuration disables application loggers in this pytest worker.
+    # Run the real migrations without replacing the caller's logging setup.
+    migration_dir = str(Path("alembic").resolve())
+    config = Config()
+    config.set_main_option("script_location", migration_dir)
+    config.set_main_option("prepend_sys_path", migration_dir)
+    config.set_main_option("path_separator", "os")
     event.listen(Engine, "after_cursor_execute", after_execute)
     try:
-        command.upgrade(Config(str(Path("alembic.ini").resolve())), "d4f30c9e71a2")
+        command.upgrade(config, "d4f30c9e71a2")
     finally:
         event.remove(Engine, "after_cursor_execute", after_execute)
     assert inserted == [True]
+    with caplog.at_level(logging.WARNING, logger=__name__):
+        logger.warning("migration replay left application logging available")
+    assert "migration replay left application logging available" in caplog.text
 
 
 def _owner(db):
@@ -106,7 +119,7 @@ def _owner(db):
     )
 
 
-def test_old_connection_insert_during_backfill_gets_a_team(monkeypatch):
+def test_old_connection_insert_during_backfill_gets_a_team(monkeypatch, caplog):
     with database_at("d1f37c8a46b2") as db:
         owner = _owner(db)
         connection = uuid.uuid4()
@@ -119,14 +132,18 @@ def test_old_connection_insert_during_backfill_gets_a_team(monkeypatch):
             )
 
         _upgrade_with_old_write(
-            db, monkeypatch, "UPDATE account_model_connections c SET team_id", write
+            db,
+            monkeypatch,
+            caplog,
+            "UPDATE account_model_connections c SET team_id",
+            write,
         )
         assert db.fetchval(
             "SELECT team_id FROM account_model_connections WHERE id = $1", connection
         )
 
 
-def test_old_login_insert_during_backfill_keeps_usable_models(monkeypatch):
+def test_old_login_insert_during_backfill_keeps_usable_models(monkeypatch, caplog):
     with database_at("d1f37c8a46b2") as db:
         owner = _owner(db)
         team = db.fetchval(
@@ -149,7 +166,7 @@ def test_old_login_insert_during_backfill_keeps_usable_models(monkeypatch):
             )
 
         _upgrade_with_old_write(
-            db, monkeypatch, "UPDATE claude_logins SET allowed_models", write
+            db, monkeypatch, caplog, "UPDATE claude_logins SET allowed_models", write
         )
         assert (
             db.fetchval(
