@@ -41,6 +41,14 @@ class TaskService:
     def of(cls, session: AsyncSession) -> "TaskService":
         return cls(TaskRepository(session=session), session=session)
 
+    async def search_in_space(
+        self, space_id: int, words: Sequence[str], *, viewer_id: int, limit: int
+    ) -> Sequence[Task]:
+        """The space's 题目 matching every word, as ``viewer_id`` may list them."""
+        return await self._repo.search_in_space(
+            space_id, words, viewer_id=viewer_id, limit=limit
+        )
+
     async def list_joined(self, user_id: int, *, limit: int = 30) -> Sequence[Task]:
         """The tasks ``user_id`` takes part in, across every space."""
         return await self._repo.list_joined(user_id, limit=limit)

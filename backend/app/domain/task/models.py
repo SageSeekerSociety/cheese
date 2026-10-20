@@ -14,7 +14,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
@@ -421,4 +421,63 @@ class TaskAttachment(Base):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class TaskDraft(Base):
+    """A 题目 written but not yet published, or the changes to a published one
+    not yet saved (``task_id``). It holds the publish form as the person left
+    it, so the form survives a reload, and it is what their 芝士 writes into:
+    an answer goes on after its page is closed, so what it fills has to be
+    somewhere other than that page (``app.domain.task.drafts``).
+
+    ``fields`` is the form, in the shape ``POST /tasks`` takes. ``version``
+    counts the writes; ``marks`` holds, per field, the version of the person's
+    last write to it, so a write by 芝士 made from an older reading leaves a
+    field the person has since changed as they left it.
+    """
+
+    __tablename__ = "task_draft"
+    __table_args__ = (
+        # A person's drafts in a space, latest first: the draft list.
+        Index("ix_task_draft_user_space", "user_id", "space_id", "updated_at"),
+        Index("ix_task_draft_space_id", "space_id"),
+        Index("ix_task_draft_task_id", "task_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("user.id", ondelete="CASCADE", name="fk_task_draft_user_id_user"),
+        nullable=False,
+    )
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("space.id", ondelete="CASCADE", name="fk_task_draft_space_id_space"),
+        nullable=False,
+    )
+    # The published 题目 these are changes to; NULL for a new one.
+    task_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("task.id", ondelete="CASCADE", name="fk_task_draft_task_id_task"),
+        nullable=True,
+    )
+    # The 芝士 conversation working on it, when there is one. Not a foreign key:
+    # the conversation is the assistant's, and a draft outlives a deleted one.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    # Where it came from, as the list shows it: a file's name, or empty.
+    source: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    fields: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    marks: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )

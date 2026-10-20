@@ -41,6 +41,8 @@ from app.domain.agent.session_host.answer import (
     Answer,
     Progress,
     Tool,
+    ToolArgs,
+    ToolFailed,
     Waiting,
     Words,
     follow,
@@ -167,7 +169,9 @@ class Consumer(Protocol):
         ...
 
     async def took(
-        self, consumption: Consumption, item: Waiting | Words | Tool
+        self,
+        consumption: Consumption,
+        item: Waiting | Words | Tool | ToolArgs | ToolFailed,
     ) -> None:
         """One step of the answer, as it comes."""
         ...

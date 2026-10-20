@@ -43,6 +43,7 @@ LINES = (LINE_COLLAB, LINE_ASK, LINE_WRITE, LINE_COMPUTE)
 TEAM_LINES = (LINE_COLLAB, LINE_COMPUTE)
 KIND_LINES: dict[str, str] = {
     "assistant": LINE_ASK,
+    "assistant_write": LINE_WRITE,
     "docs_ask": LINE_ASK,
     "task_pdf_draft": LINE_WRITE,
     SANDBOX: LINE_COMPUTE,

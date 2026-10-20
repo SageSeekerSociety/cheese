@@ -29,7 +29,12 @@ from app.domain.agent.reads import (
     SessionIdle,
     Writing,
 )
-from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
+from app.domain.agent.service import (
+    AgentMessage,
+    AgentResult,
+    AgentStepFailed,
+    AgentToolUse,
+)
 from app.domain.agent.session_host.contract import (
     Access,
     Prompt,
@@ -55,9 +60,30 @@ class Words:
 
 @dataclass(frozen=True)
 class Tool:
-    """The session is calling a tool."""
+    """The session is calling a tool: ``call`` is the harness's own id for the
+    call, when it gives one."""
 
     name: str
+    call: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolArgs:
+    """More of a call's arguments as the model writes them: raw JSON, from its
+    ``at``-th character. A reader can show what a call is about to do before
+    it is made — a form field filling as the value is written."""
+
+    call: str
+    text: str
+    at: int = 0
+
+
+@dataclass(frozen=True)
+class ToolFailed:
+    """A call came back an error; ``text`` is the tail of what it said."""
+
+    call: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -83,7 +109,7 @@ async def ask(
     work_id: uuid.UUID,
     ceiling_s: float,
     stopped: Callable[[], Awaitable[bool]] | None = None,
-) -> AsyncIterator[Words | Tool | Waiting | Answer]:
+) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Waiting | Answer]:
     """Say ``prompt`` and hand on the answer as it is written; ends with one
     ``Answer``. ``prompt`` may be what makes it once the session has started,
     for a prompt whose credential should count from then rather than from
@@ -158,6 +184,8 @@ class Progress:
     parts: list[str] = field(default_factory=list)
     shown: str = ""
     announced: set[str] = field(default_factory=set)
+    #: How much of each call's arguments was handed on.
+    argued: dict[str, int] = field(default_factory=dict)
     #: The records of the messages already folded in, so one read again is
     #: not said twice.
     taken: set[str] = field(default_factory=set)
@@ -179,13 +207,25 @@ class Progress:
             return []
         if call:
             self.announced.add(call)
-        return [Tool(name)]
+        return [Tool(name, call)]
 
-    def writing(self, blocks: tuple[dict, ...]) -> list[Words | Tool]:
-        said: list[Words | Tool] = []
+    def arguments(self, call: str | None, raw: str) -> list[ToolArgs]:
+        """What more of a call's arguments was written since last handed on."""
+        if not call:
+            return []
+        seen = self.argued.get(call, 0)
+        if len(raw) <= seen:
+            return []
+        self.argued[call] = len(raw)
+        return [ToolArgs(call, raw[seen:], seen)]
+
+    def writing(self, blocks: tuple[dict, ...]) -> list[Words | Tool | ToolArgs]:
+        said: list[Words | Tool | ToolArgs] = []
         for block in blocks:
             if block.get("type") == "tool":
-                said += self.tool(block.get("id"), str(block.get("name") or ""))
+                call = block.get("id")
+                said += self.tool(call, str(block.get("name") or ""))
+                said += self.arguments(call, str(block.get("arguments") or ""))
         written = [str(b.get("text") or "") for b in blocks if b.get("type") == "text"]
         said += self._extend([*self.parts, *written])
         return said
@@ -203,6 +243,7 @@ class Progress:
             "parts": self.parts,
             "shown": self.shown,
             "announced": sorted(self.announced),
+            "argued": self.argued,
             "taken": sorted(self.taken),
             "result": (
                 None
@@ -218,6 +259,7 @@ class Progress:
             parts=list(data.get("parts") or []),
             shown=str(data.get("shown") or ""),
             announced=set(data.get("announced") or []),
+            argued={str(k): int(v) for k, v in (data.get("argued") or {}).items()},
             taken=set(data.get("taken") or []),
             result=None if result is None else Answer(result["text"], result["error"]),
         )
@@ -231,7 +273,7 @@ async def follow(
     deadline: float,
     progress: Progress,
     keep: Callable[[Progress], Awaitable[None]] | None = None,
-) -> AsyncIterator[Words | Tool | Answer]:
+) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Answer]:
     """Read the answer to work ``work_id`` on from ``progress``, handing on
     what more of it is written; ends with one ``Answer``. Past ``deadline``
     (on the monotonic clock) the work is stopped and the answer is what failed
@@ -272,7 +314,7 @@ async def follow(
             if read.work_id not in (None, work):
                 continue
             event = read.event
-            said: list[Words | Tool] = []
+            said: list[Words | Tool | ToolArgs | ToolFailed] = []
             if isinstance(event, Report):
                 # What a runner reported: of all of it, only the ending of the
                 # work, or of the session, ends an answer.
@@ -287,13 +329,15 @@ async def follow(
                 yield await ended(Answer("", "the session ended mid-answer"))
                 return
             if isinstance(event, Writing):
-                said = progress.writing(event.blocks)
+                said = [*progress.writing(event.blocks)]
             elif read.work_id != work:
                 continue
             elif isinstance(event, AgentMessage):
                 said = list(progress.message(event.text, read.eid))
             elif isinstance(event, AgentToolUse):
                 said = list(progress.tool(event.call_id, event.name))
+            elif isinstance(event, AgentStepFailed):
+                said = [ToolFailed(event.call_id, event.text)]
             elif isinstance(event, AgentResult):
                 error = (
                     (event.text or "the model call failed") if event.is_error else None

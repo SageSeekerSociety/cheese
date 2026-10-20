@@ -219,9 +219,7 @@ class Started:
 
     def __init__(self, user: int, conversation: uuid.UUID | None = None):
         self.user = user
-        ref, spec, self.access = personal.session(
-            user, conversation or uuid.uuid4(), ""
-        )
+        ref, spec, self.access = personal.session(user, conversation or uuid.uuid4())
         self.ref = ref
         self.spec = dataclasses.replace(
             spec, system_prompt=PROMPT, tools=TOOLS, model="fixture-model"
@@ -288,7 +286,7 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
     said = "".join(e.text for e in events if isinstance(e, Words))
     assert said == "你领了一道题：图像分类基线复现。"
-    assert Tool("cheese_my_tasks") in events
+    assert any(isinstance(e, Tool) and e.name == "cheese_my_tasks" for e in events)
     assert events[-1] == Answer("你领了一道题：图像分类基线复现。")
     # More than one piece: the first words were handed on while the model was
     # still writing the rest.

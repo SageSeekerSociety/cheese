@@ -20,6 +20,7 @@ it hears (``prompt.earlier``), so it goes on from where it was.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -37,9 +38,16 @@ from app.core.sandbox_auth import mint_delegated_credential
 from app.core.sentences import error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
 from app.domain.agent.personal import billing
-from app.domain.agent.personal.prompt import earlier
+from app.domain.agent.personal.prompt import earlier, page
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
-from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
+from app.domain.agent.session_host.answer import (
+    Answer,
+    Tool,
+    ToolArgs,
+    ToolFailed,
+    Waiting,
+    Words,
+)
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import (
     Access,
@@ -89,6 +97,31 @@ async def answering(redis: Redis, conversation_id: uuid.UUID | str) -> bool:
 
 def _stop_key(conversation_id: uuid.UUID | str) -> str:
     return f"assistant:stop:{conversation_id}"
+
+
+def _page_key(conversation_id: uuid.UUID | str) -> str:
+    return f"assistant:page:{conversation_id}"
+
+
+#: How long a conversation is taken to remember the page it was last told: past
+#: this the page is said again, whether or not it changed.
+PAGE_REMEMBERED_S = 6 * 3600
+
+
+async def page_to_say(redis: Redis, conversation_id: uuid.UUID, context: str) -> str:
+    """The page to say with this question: all of it when it changed since the
+    conversation was last told, nothing when it did not."""
+    if not context:
+        return ""
+    digest = hashlib.sha256(context.encode()).hexdigest()
+    said = await redis.get(_page_key(conversation_id))
+    if (
+        said is not None
+        and (said.decode() if isinstance(said, bytes) else said) == digest
+    ):
+        return ""
+    await redis.set(_page_key(conversation_id), digest, ex=PAGE_REMEMBERED_S)
+    return context
 
 
 async def stop(
@@ -220,6 +253,17 @@ class AssistantConversations:
         return row
 
 
+async def follow_task(
+    session: AsyncSession, conversation_id: uuid.UUID, task_id: int
+) -> None:
+    """A draft was published: the conversation that wrote it now belongs to the
+    题目, so its writer goes on with it from the 题目's page. A conversation
+    already on a 题目 stays where it is."""
+    row = await session.get(AssistantConversation, conversation_id)
+    if row is not None and row.place_kind == "draft":
+        row.place_kind, row.place_id = "task", str(task_id)
+
+
 #: What a question to a person's 芝士 is, to the questions the platform reads
 #: to the end (``session_host.consumptions``); its key is the conversation.
 KIND = "personal"
@@ -246,7 +290,9 @@ class Answers:
         )
 
     async def took(
-        self, consumption: Consumption, item: Waiting | Words | Tool
+        self,
+        consumption: Consumption,
+        item: Waiting | Words | Tool | ToolArgs | ToolFailed,
     ) -> None:
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})
@@ -254,8 +300,22 @@ class Answers:
             await self._consumptions.publish(
                 consumption, "delta", {"text": item.text, "at": item.at}
             )
+        elif isinstance(item, Tool):
+            await self._consumptions.publish(
+                consumption, "tool", {"name": item.name, "call": item.call}
+            )
+        elif isinstance(item, ToolArgs):
+            # A call's arguments as they are written: the page shows a form
+            # field filling with the value before the call writes it.
+            await self._consumptions.publish(
+                consumption,
+                "tool_args",
+                {"call": item.call, "text": item.text, "at": item.at},
+            )
         else:
-            await self._consumptions.publish(consumption, "tool", {"name": item.name})
+            await self._consumptions.publish(
+                consumption, "tool_failed", {"call": item.call, "text": item.text}
+            )
 
     async def ended(
         self,
@@ -290,7 +350,11 @@ class Answers:
                 await store.append(conversation, "assistant", text, stopped=stopped)
                 await session.commit()
         spawn(
-            billing.settle(self._sessions, user_id),
+            billing.settle(
+                self._sessions,
+                user_id,
+                str(consumption.data.get("billing") or billing.ASKING),
+            ),
             name=f"assistant-charge-{conversation_id}",
         )
         closing = [("error", error_frame(refusal))] if failed else []
@@ -307,6 +371,8 @@ async def ask(
     question: str,
     held_at: float,
     slot: Slot,
+    context: str = "",
+    kind: str = billing.ASKING,
 ) -> Consumption:
     """Ask ``question`` in the conversation; the answer is read to its end in
     the background (``Answers``), and what its readers see of it is the
@@ -317,7 +383,9 @@ async def ask(
     The caller has already checked that the conversation is the person's, that
     they may see its place and have credits left, and has taken the
     conversation's hold at ``held_at`` (``take_conversation``). The session is
-    ``started`` (`personal.session`)."""
+    ``started`` (`personal.session`). ``context`` is the page the person has
+    open, when the conversation has not been told it yet (``page_to_say``);
+    ``kind`` the line its spend is charged under (``billing``)."""
     work = uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
@@ -328,21 +396,25 @@ async def ask(
         await session.commit()
 
     async def said() -> Prompt:
-        # What its tools read with while answering: this person's own view, for
-        # no longer than the answer may take from when the session is there,
-        # and nothing it could change.
+        # What its tools act with while answering: this person's own
+        # permissions, for no longer than the answer may take from when the
+        # session is there.
         acting = mint_delegated_credential(
             user_id=user_id,
             handle=handle or str(user_id),
             work=str(work),
             ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
+            read_only=False,
         )
-        return Prompt(work, question, acting=acting, preface=earlier(before))
+        # The page goes with the question itself: a preface is said only to a
+        # session that has not been spoken to yet.
+        said = f"{page(context)}\n\n{question}" if context else question
+        return Prompt(work, said, acting=acting, preface=earlier(before))
 
     return await consumptions.begin(
         kind=KIND,
         key=str(conversation_id),
-        data={"user": user_id},
+        data={"user": user_id, "billing": kind},
         work_id=work,
         session=started,
         prompt=said,
