@@ -238,15 +238,25 @@ def run_plan_checks(plan, invoke, jobs, report):
     overlap. Each check keeps its own process group, ceiling, timeout and
     evidence — nothing is merged into one shared run. The rows go back into the
     report in plan order, so the file does not depend on which check finished
-    first.
+    first. A check may name a ``needs`` id; it runs only when that row passed,
+    and is recorded not-run otherwise (a build cannot outlive its install).
     """
     clear_stop()  # a stop from an earlier run in this process is not this run's
+    verdicts: dict[str, str] = {}
+    def note_skip(check, need):
+        report["not_run"].append(
+            {"id": check["id"], "reason": f"depends on {need}, which did not pass"})
     if jobs <= 1 or len(plan) <= 1:
         for check in plan:
-            invoke(check["id"], check["command"], check["cwd"],
-                   check.get("evidence"), check.get("env"))
+            need = check.get("needs")
+            if need and verdicts.get(need) != "pass":
+                note_skip(check, need)
+                continue
+            verdicts[check["id"]] = invoke(check["id"], check["command"], check["cwd"],
+                                           check.get("evidence"), check.get("env"))
         return
     order = {check["id"]: index for index, check in enumerate(plan)}
+    planned = set(order)
     pending = list(plan)
     busy: set[str] = set()
     running = {}
@@ -259,7 +269,17 @@ def run_plan_checks(plan, invoke, jobs, report):
                     cwd = str(check["cwd"])
                     if cwd in busy:  # one writer per tree at a time
                         continue
+                    need = check.get("needs")
+                    if need and need not in verdicts:
+                        if need in planned:
+                            continue  # wait for the dependency to finish
+                        pending.remove(check)
+                        note_skip(check, need)
+                        continue
                     pending.remove(check)
+                    if need and verdicts[need] != "pass":
+                        note_skip(check, need)
+                        continue
                     busy.add(cwd)
                     running[pool.submit(
                         invoke, check["id"], check["command"], check["cwd"],
@@ -268,8 +288,9 @@ def run_plan_checks(plan, invoke, jobs, report):
                     break
                 done, _ = wait(running, return_when=FIRST_COMPLETED)
                 for future in done:
-                    busy.discard(str(running.pop(future)["cwd"]))
-                    future.result()
+                    finished = running.pop(future)
+                    busy.discard(str(finished["cwd"]))
+                    verdicts[finished["id"]] = future.result()
         except KeyboardInterrupt:
             # Each check runs in its own session, so the interrupt that reached
             # this thread does not reach them. Without this the pool's exit
@@ -497,7 +518,7 @@ def run(args, report, finish, started):
                 print("\n".join(out.strip().splitlines()[-15:]))
                 label = {"timeout": "超时", "skipped": "被跳过"}.get(row["result"], row["result"])
                 report["reasons"].append(f"{row['id']}: {label} {row.get('reason', '')}".strip())
-        return result
+        return row["result"]
 
     def run_plan(plan):
         run_plan_checks(plan, invoke, args.jobs, report)

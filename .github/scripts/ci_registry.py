@@ -180,6 +180,14 @@ PLAN_CHECKS = (
     # does not, so it is declared here like the rest.
     _spec("backend-pure:pinned-harness", "plan", (), {"python"}, "quick_only", ("backend/**",),
           report_only=True),
+    # The docs site build (links, anchors and the demo scene/fence step
+    # titles). `npm ci` is its own row so an install failure is its own
+    # finding; the build needs what it installed, but the machine requirement
+    # is still only the node toolchain.
+    _spec("docs-deps", "plan", ("npm", "ci"),
+          {"node"}, "quick_only", ("docs/**", "frontend/src/views/demo/scenes/**")),
+    _spec("docs-build", "plan", ("npm", "run", "build"),
+          {"node"}, "quick_only", ("docs/**", "frontend/src/views/demo/scenes/**")),
     # Only the static tier runs the guards as a check of their own; the quick
     # tier folds the same files into backend-pure's selection.
     _spec("tree-guards", "plan", ("uv", "run", "pytest"),
