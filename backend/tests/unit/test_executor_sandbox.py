@@ -22,7 +22,7 @@ from app.domain.agent import environment_runner
 from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-from tests.support import bubblewrap, executor_release
+from tests.support import bubblewrap, sandbox_disk, executor_release
 
 RUNTIME = Path(runtime.__file__)
 BACKEND = Path(__file__).resolve().parents[2]
@@ -82,7 +82,10 @@ def _load_the_releases_own_parts(monkeypatch, request):
 def _bubblewrap_runs() -> bool:
     # A sandbox's network and limits are set up as root (`sandbox_host.py`),
     # which only a machine that opted in lets a test do: CI's runner.
-    if os.environ.get("CHEESE_TEST_SANDBOX_HOST") != "1":
+    if (
+        os.environ.get("CHEESE_TEST_SANDBOX_HOST") != "1"
+        or not sandbox_disk.available()
+    ):
         return False
     if not sys.platform.startswith("linux") or shutil.which("bwrap") is None:
         return False
@@ -94,9 +97,16 @@ def _bubblewrap_runs() -> bool:
     return probe.returncode == 0
 
 
+@pytest.fixture
+def owner(tmp_path):
+    with sandbox_disk.owner(tmp_path) as found:
+        yield found
+
+
 sandboxed = pytest.mark.skipif(
     not _bubblewrap_runs(),
-    reason="needs bubblewrap, user namespaces and sudo (CHEESE_TEST_SANDBOX_HOST=1)",
+    reason="needs bubblewrap, user namespaces, sudo (CHEESE_TEST_SANDBOX_HOST=1) and "
+    "a directory with project quotas (CHEESE_TEST_SANDBOX_DISK)",
 )
 
 
@@ -452,9 +462,8 @@ def test_git_in_a_sandboxed_rooms_checkout_runs_in_a_sandbox_too(
 
 @sandboxed
 def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
-    tmp_path, monkeypatch, capsys
+    owner, monkeypatch, capsys
 ):
-    owner = tmp_path / "owner"
     monkeypatch.setenv("HOME", str(owner))
     bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
@@ -508,7 +517,7 @@ def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
         ].strip() == ("ok")
         assert (home / "mine").exists() and (store / "cached").exists()
         assert (home / ".cheese/tmp/scratch").exists()
-        assert bash("printf %s $UV_LINK_MODE")["stdout"] == "copy"
+        assert bash("printf %s $UV_LINK_MODE")["stdout"] == "clone"
         # Nothing of anyone else's, and none of the owner's.
         for hidden in (neighbour / "notes", credential, other_store):
             assert (
@@ -545,11 +554,10 @@ def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
 
 @sandboxed
 def test_a_sandboxed_executor_survives_its_own_room_rewriting_its_programs(
-    tmp_path, monkeypatch, capsys
+    owner, monkeypatch, capsys
 ):
     """The next install reaches a running executor from outside the sandbox
     with the programs it ships, never with the ones the room's config names."""
-    owner = tmp_path / "owner"
     monkeypatch.setenv("HOME", str(owner))
     bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)

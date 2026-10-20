@@ -35,7 +35,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     sandbox_host,
 )
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-from tests.support import bubblewrap
+from tests.support import bubblewrap, sandbox_disk
 
 HELPER = Path(sandbox_host.__file__)
 RUNNER = Path(environment_runner.__file__)
@@ -44,7 +44,7 @@ RUNNER = Path(environment_runner.__file__)
 def _sandbox_host_runs() -> bool:
     if os.environ.get("CHEESE_TEST_SANDBOX_HOST") != "1":
         return False
-    if not os.path.isdir(os.environ.get("CHEESE_TEST_SANDBOX_DISK", "")):
+    if not sandbox_disk.available():
         return False
     if not sys.platform.startswith("linux") or shutil.which("bwrap") is None:
         return False
@@ -145,8 +145,11 @@ class Room:
 
 @pytest.fixture
 def rooms(tmp_path, monkeypatch, capsys):
-    disk = os.environ.get("CHEESE_TEST_SANDBOX_DISK")
-    owner = Path(tempfile.mkdtemp(dir=disk)) / "owner" if disk else tmp_path / "owner"
+    with sandbox_disk.owner(tmp_path) as owner:
+        yield from _rooms(owner, monkeypatch, capsys)
+
+
+def _rooms(owner, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(owner))
     bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
@@ -160,8 +163,6 @@ def rooms(tmp_path, monkeypatch, capsys):
     yield start
     for room in started:
         room.teardown()
-    if disk:
-        shutil.rmtree(owner.parent)
 
 
 # The sandbox's firewall drops what it refuses rather than rejecting it, so each
