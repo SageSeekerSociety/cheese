@@ -78,8 +78,12 @@ uploads marker. No remote deletion or backup failure policy changes.
 
 Each verified dump is also pushed to Cloudflare R2 bucket `cheese-db-backups`
 (key `db/cheese-<ts>.dump`), so a copy survives loss of the app box itself.
-Off-site retention is a **30-day R2 bucket lifecycle rule** (server-side, so the
-box needs no delete permission). The upload uses a **scoped R2 API token** (Object
+Off-site retention of the dumps is the bucket's one lifecycle rule,
+`expire-db-dumps-30d`: objects under `db/` expire 30 days after upload (maxAge
+2592000 s, read from the Cloudflare API on 2026-10-19). It runs server-side, so
+the box needs no delete permission. The rule reaches `db/` and nothing else:
+nothing under `session-records/`, `transcripts/`, `archive/` or a `prod-*`
+prefix expires, and no rule may be added that reaches them. The upload uses a **scoped R2 API token** (Object
 Read & Write, that bucket only) stored in `~/ops/r2.env` (chmod 600, NOT in git —
 see `r2.env.example`). The off-site leg is best-effort: if it fails, the local
 backup still counts as a success and the failure is logged as `WARN` in

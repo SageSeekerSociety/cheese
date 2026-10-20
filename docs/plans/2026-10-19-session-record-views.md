@@ -10,9 +10,9 @@ Claude Code stores images separately by SHA-256, up to 10 MiB per image (display
 
 Hidden tool, narration and subagent event-block writes and mutations are removed, along with the event transcript reader, step-output API, capped-output helper, old row components and clamp composable. Memory read counts and the agent CLI's event search now consume native session records. Deliberately published room messages and platform statuses remain. The room red light, liveness hints and transcript-derived control path belong to branch `feat/runner-lifecycle-protocol`.
 
-## Data deletion: confirmation required before integration merges
+## Data deletion
 
-No deployed data was changed. Release two deletes exactly the rows the removed 现场 writers produced, identified by what each one stored, never by visibility alone:
+Release two deletes exactly the rows the removed 现场 writers produced, identified by what each one stored, never by visibility alone:
 
 ```sql
 kind = 'event'
@@ -32,7 +32,7 @@ Release one removes readers/writers and adds only the conversation launch bounda
 2. Read each object back and verify it against what was exported.
 3. Only then delete exactly the rows that object holds.
 
-Nothing deletes those archive objects. The database dumps on R2 are not that copy: `db/` has a 30-day lifecycle rule. This PR does not implement the job. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule.
+Nothing deletes those archive objects, and they sit outside `db/`, the one prefix the bucket's lifecycle rule (`expire-db-dumps-30d`, 30 days) expires. The database dumps under `db/` are therefore not that copy. The job is `app/domain/session_record/retired_site.py` (periodic job `retired site archive`); each batch it deletes is recorded in `site_event_archives` in the same transaction. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule.
 
 ## Sources adopted
 
