@@ -59,10 +59,9 @@ def _one_of(values: tuple[str, ...]) -> str:
 
 
 #: What a room's conversation shows: the kinds it draws, minus the blocks
-#: written for the record and kept out of the room (`meta.in_room` false — an
-#: agent's steps, which the 现场 reads, and the notices meant only for an agent).
-#: Most of a working room's blocks are such steps, so a page of the conversation
-#: read without this is mostly rows nobody sees (`GET /topics/{id}/blocks?shown=true`).
+#: written for the record and kept out of the room (`meta.in_room` false — the
+#: notices meant only for an agent, and the old rows that recorded an agent's
+#: steps) (`GET /topics/{id}/blocks?shown=true`).
 SHOWN_KINDS = ("message", "attachment", "artifact", "event")
 SHOWN_ROWS = text(
     f"kind IN ({_one_of(SHOWN_KINDS)}) AND COALESCE(meta ->> 'in_room', '') <> 'false'"

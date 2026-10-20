@@ -4,7 +4,7 @@
 // 面板里那一半（`components/panels/PanelSite.vue`）只吃 props：场景棘轮认的「场景」是
 // `components/panels/**` 下每个 SFC，A 档的意思是「给一组 props 就能单独出画面」，取数
 // 一滴都不能漏进去。所以这一格所有的取数——这一窗 transcript、按队友筛的名册、每一轮的
-// 起始时间、顶上的会话栏、摊开一步之后那一段输出——都在
+// 起始时间、顶上的会话栏——都在
 // `composables/usePanelSite.ts` 里调一次，结果原样递下去。
 //
 // 外壳只能待在这儿：`components/panels/**` 底下每个 SFC 都是场景、包括外壳自己，所以它

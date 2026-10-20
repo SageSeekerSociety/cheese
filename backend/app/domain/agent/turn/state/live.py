@@ -166,9 +166,6 @@ class HookWorkState:
     # 的时刻，不是清单本身的时刻：清单自己的时刻在 `TopicProgress.updated_at`，
     # 那才是它会因为一次写入而变新的地方。
     last_checklist_reminder_at: datetime | None = None
-    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。结果回来时要
-    #: 写上输出、挂了要标红的就是那一块。只在内存里、只活这一轮：重启丢掉的只是几
-    #: 截输出和几个红点，不是记录。
 
     # The topic branch's commits as of turn start — what makes "this turn's
     # changes" answerable at turn end. A task rather than a value, because the

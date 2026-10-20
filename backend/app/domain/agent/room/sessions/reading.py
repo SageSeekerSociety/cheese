@@ -382,8 +382,8 @@ async def _died(
         # looks exactly the same, and that one stays "unknown".
         svc.dead.add((seat, live.conversation))
         # Nothing will report on the inputs this work held: the runner that
-        # would have written a completion or a terminal is the process that
-        # is gone. The turn's interval ends with the result above, which is
+        # would have reported them read or dropped is the process that is
+        # gone. The turn's interval ends with the result above, which is
         # what puts it out of the orphan sweep's reach, so the room ends
         # them here or they hold a seat no later message can take.
         await svc._hear(live.session, Read(str(work), Abandoned()))

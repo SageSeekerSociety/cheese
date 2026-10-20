@@ -10,12 +10,14 @@ room (``RoomReader``), after these books have taken it.
 The work does not live here. A session runs in a runner on the session host
 that outlives this process, and ``recover`` finds it again after a restart.
 
-What ends work the session did not end itself is decided here and in the core,
-the same way for every harness (``docs/agent-liveness.md``): the core says the
-session is gone (its process exited, or its runner was out of reach for
-``RUNNER_GONE_S`` while work was owed); here, the session has been talking
-without working for ``no_progress_s``, or something said to it has gone unread
-for ``unread_grace_s``.
+What ends work the session did not end itself depends on the harness
+(``docs/agent-liveness.md``). A runner that reports in the lifecycle protocol
+ends stuck work itself, on the two limits it is registered with, and reports
+the exit. For any other harness the core says the session is gone (its process
+exited, or its runner was out of reach for ``RUNNER_GONE_S`` while work was
+owed); here, the session has been talking without working for
+``no_progress_s``, or something said to it has gone unread for
+``unread_grace_s``.
 
 **This package is the module's facade.** One file held all of it until
 2026-10-16; the bodies moved into the sibling modules of this package, and what
@@ -530,7 +532,9 @@ class RoomSessions:
         return (topic, agent) if agent else self._room_seat(topic)
 
     async def control_state(self, topic: uuid.UUID, agent: str | None = None) -> dict:
-        """What the room's controls show, from the session's mirror alone.
+        """What the room's controls show, as the session's runner last reported
+        them (`session_host.control`); nothing for a harness whose runner does
+        not report them.
 
         ``seats`` lists every live seat in the room with its session, so a room
         with two teammates working says so instead of showing no session."""
