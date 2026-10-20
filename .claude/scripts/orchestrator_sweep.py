@@ -2139,10 +2139,9 @@ def _self_test_adopt():
         body = f"改了什么：A。\n\n独立 review：head {H[:8]} 结论 无 blocker/major\n"
         f = {"task": 42, "card": {"id": "c1", "pr_number": 7, "pr_head_sha": H,
                                   "reviewer_handle": "me", "change_body": body},
-             "pr": {"head": H, "mergeable": "MERGEABLE", "merged": False, "in_queue": False,
-                    "comments": []},
+             "pr": {"head": H, "mergeable": "MERGEABLE", "merged": False, "in_queue": False},
              "ci": "success", "files": list(files)}
-        f["review"] = _autoaccept().latest_review(body, [])
+        f["review"] = _autoaccept().latest_review(body)
         return f
 
     def run(argv, files=("backend/app/x.py",)):
