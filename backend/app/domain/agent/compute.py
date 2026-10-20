@@ -314,6 +314,15 @@ class ComputePool:
                 return runtime
         return None
 
+    def working_seats(self, topic_id: uuid.UUID) -> set[tuple[str, str]]:
+        """Every seat whose session in this room is at work, as its own handle
+        and the handle it acts under — the seats this process holds."""
+        return {
+            seat
+            for runtime in self._runtimes()
+            for seat in runtime.working_seats(topic_id)
+        }
+
     def working_seat(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> tuple[str, str] | None:

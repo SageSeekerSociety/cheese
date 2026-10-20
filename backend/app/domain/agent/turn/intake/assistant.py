@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -206,14 +206,4 @@ class AssistantMessages:
             # 支线 grew from this one place. Without it the line under the
             # message keeps the count it was read with.
             await self._thread_replied(inner_id)
-        conversation_id = inner_id or topic_id
-        work_id = turn_id or self.live.attributed_work_id(conversation_id, author)
-        state = (
-            self.live.hook_work.get((conversation_id, work_id))
-            if work_id is not None
-            else None
-        )
-        if state is not None:
-            state.last_chat_at = datetime.now(UTC)
-            state.last_progress_reminder_at = None
         return payload, list(stored.attachments)

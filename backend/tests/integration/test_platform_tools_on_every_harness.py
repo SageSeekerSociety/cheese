@@ -40,6 +40,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
+from app.domain.agent.turn.steps.reminders import QuietSessionReminders
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -294,32 +295,18 @@ def test_an_edit_reaches_the_room_the_same_way(client, room, harness):
 def test_a_message_through_any_harness_silences_the_reminder(
     client, stub_hooks, room, harness, monkeypatch
 ):
-    """`remind_silent_turns` picks the turns that owe the room a word by when it
-    last heard one. That clock moves when `chat_send` lands, so it has to land
-    the same way from every harness — or one harness is reminded forever, or
-    never."""
-    from app.domain.agent import chat as chat_module
-    from app.domain.agent.turn.intake import assistant as assistant_module
-    from app.domain.agent.turn.steps import send as send_module
-    from app.domain.agent.turn.store import session_inputs as session_inputs_module
-
+    """`QuietSessionReminders.silence` picks the sessions that owe the room a
+    word by when it last heard one from them. That clock moves when
+    `chat_send` lands, so it has to land the same way from every harness — or
+    one harness is reminded forever, or never."""
     _, topic = room
     chat = client.app.dependency_overrides[get_chat_service]()
+    quiet = QuietSessionReminders(chat, chat.compute)
     clock = datetime.now(UTC)
-
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return clock
-
-    monkeypatch.setattr(chat_module, "datetime", Clock)
-    monkeypatch.setattr(send_module, "datetime", Clock)
-    monkeypatch.setattr(session_inputs_module, "datetime", Clock)
-    monkeypatch.setattr(assistant_module, "datetime", Clock)
     threshold = settings.chat_progress_reminder_after_s
     notices: list[str] = []
 
-    async def notice(topic_id, text):
+    async def notice(topic_id, text, **_kwargs):
         notices.append(text)
         return True
 
@@ -334,16 +321,17 @@ def test_a_message_through_any_harness_silences_the_reminder(
     with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         wait_for_record(client, topic, lambda record: "Internal output" in str(record))
+        clock = datetime.now(UTC)
         clock += timedelta(seconds=threshold)
-        assert client.portal.call(chat.remind_silent_turns) == 1
+        assert client.portal.call(quiet.silence, clock) == 1
         assert "chat_send" in notices[0] and "todo_write" in notices[0]
 
         harness("chat_send", {"content": "我先核对一下当前流程。"})
-        assert client.portal.call(chat.remind_silent_turns) == 0
+        assert client.portal.call(quiet.silence, clock) == 0
         # A checklist is not a word to the room: it does not reset the clock.
         harness("todo_write", {"todos": PLAN})
         clock += timedelta(seconds=threshold)
-        assert client.portal.call(chat.remind_silent_turns) == 1
+        assert client.portal.call(quiet.silence, clock) == 1
         assert len(notices) == 2
 
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished")

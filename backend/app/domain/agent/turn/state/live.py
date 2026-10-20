@@ -70,19 +70,6 @@ class HookWorkState:
     # assembled a turn for the session (a screen recovered on the way up).
     model: str = ""
     assistant_count: int = 0
-    last_chat_at: datetime | None = None
-    # When this turn was last told it had gone quiet — NOT whether it has been.
-    # A flag meant one reminder per silent stretch, so a turn that worked for
-    # three hours without publishing was asked once, at the ten-minute mark, and
-    # then left alone for the remaining two hours and fifty minutes. The room
-    # showing nothing for that long is the complaint this reminder exists for.
-    last_progress_reminder_at: datetime | None = None
-    # Same shape, other thing: when this turn was last called on to bring its own
-    # checklist up to date. 一轮可以一直在说话、清单却停在开工那一版，而清单是看
-    # 的人唯一能看见「做到哪了」的地方——`silence_reminder` 数不着它。这里是已提醒
-    # 的时刻，不是清单本身的时刻：清单自己的时刻在 `TopicProgress.updated_at`，
-    # 那才是它会因为一次写入而变新的地方。
-    last_checklist_reminder_at: datetime | None = None
 
     # The topic branch's commits as of turn start — what makes "this turn's
     # changes" answerable at turn end. A task rather than a value, because the
@@ -273,17 +260,3 @@ class LiveWork:
         active.discard(work_id)
         if not active:
             self.active_turn_ids.pop(topic_id, None)
-
-    def attributed_work_id(self, topic_id: uuid.UUID, author: str) -> uuid.UUID | None:
-        """Which live hook work a room publication with no turn id belongs to."""
-        live = [s for (t, _), s in self.hook_work.items() if t == topic_id]
-        own = [s for s in live if s.acting_agent == author]
-        if len(own) == 1:
-            return own[0].work_id
-        if len(own) > 1:
-            active = self.active_turn_ids.get(topic_id, ())
-            hits = [s.work_id for s in own if s.work_id in active]
-            return hits[0] if len(hits) == 1 else None
-        if len(live) == 1:
-            return live[0].work_id
-        return None

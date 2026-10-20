@@ -10,6 +10,7 @@ while its session went on working.
 import asyncio
 import time
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -21,6 +22,7 @@ from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.reads import InputRead, Report
 from app.domain.agent.room import reads as room_reads
+from app.domain.agent.turn.steps.reminders import QuietSessionReminders
 from app.domain.block.models import Block
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
@@ -227,7 +229,12 @@ def test_a_long_command_gets_the_progress_reminder_written_to_the_session(
         wait_for_record(client, room, lambda record: "make test" in str(record))
         before = len(_written(stub_hooks, room))
         monkeypatch.setattr(settings, "chat_progress_reminder_after_s", 0)
-        assert client.portal.call(chat.remind_silent_turns) == 1
+        assert (
+            client.portal.call(
+                QuietSessionReminders(chat, chat.compute).silence, datetime.now(UTC)
+            )
+            == 1
+        )
         written = _written(stub_hooks, room)[before:]
         assert len(written) == 1, written
         assert "chat_send" in str(written[0]["message"]["content"])
@@ -310,8 +317,10 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
     ]
 
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", 0)
-    with caplog.at_level("INFO", logger="app.domain.agent.chat"):
-        client.portal.call(chat.remind_silent_turns)
+    with caplog.at_level("INFO", logger="app.domain.agent.turn.steps.reminders"):
+        client.portal.call(
+            QuietSessionReminders(chat, chat.compute).silence, datetime.now(UTC)
+        )
     assert "chat progress reminder topic=" not in caplog.text
 
 

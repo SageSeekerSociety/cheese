@@ -126,7 +126,6 @@ class Journal:
             f"SELECT MIN(sequence) FROM {self.table} "
             "WHERE sequence > ? AND (recorded_at >= ? "
             f"OR json_extract({self.column}, '$.cheese.receipt') = 1 "
-            f"OR json_extract({self.column}, '$.cheese.work_completed') = 1 "
             f"OR ({self.turn_end}))",
             (after, before),
         ).fetchone()

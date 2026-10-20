@@ -62,8 +62,7 @@ def _world():
         session_factory=chat_sessions,
         work_runner=Mock(name="the chat's work runner"),
         stop_work_in_closed_tasks=AsyncMock(),
-        remind_silent_turns=AsyncMock(),
-        remind_stale_checklists=AsyncMock(),
+        compute=SimpleNamespace(working_conversations=Mock(return_value=set())),
         sweep_memory_dreams=AsyncMock(),
     )
     runner = SimpleNamespace(
@@ -246,8 +245,6 @@ async def test_machine_clocks_call_the_explicitly_supplied_sweeper(name, collabo
     ("name", "method"),
     [
         ("closed task stop", "stop_work_in_closed_tasks"),
-        ("chat progress reminder", "remind_silent_turns"),
-        ("checklist reminder", "remind_stale_checklists"),
         ("memory dream", "sweep_memory_dreams"),
     ],
 )
@@ -255,6 +252,13 @@ async def test_chat_clocks_call_the_supplied_chat(name, method):
     world = _world()
     await world.jobs[name]._job()
     getattr(world.chat, method).assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("name", ["chat progress reminder", "checklist reminder"])
+async def test_reminder_clocks_ask_the_supplied_chats_sessions(name):
+    world = _world()
+    await world.jobs[name]._job()
+    world.chat.compute.working_conversations.assert_called_once_with()
 
 
 @pytest.mark.parametrize(

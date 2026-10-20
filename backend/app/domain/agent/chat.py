@@ -15,7 +15,6 @@ Turn intake, transport steps, durable writes and live state have separate owners
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime
 from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -135,7 +134,6 @@ from app.domain.agent.turn.state.live import LiveWork
 
 # 一轮还跑着的时候平台往它里面说的两句话（沉默、清单停在原地），连同各自的扫底。
 # 用 `TurnNotices` 收窄到 `ChatService` 对外的几样，所以这里不用反向被 import。
-from app.domain.agent.turn.steps import reminders
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn_usage import record_turn_usage
@@ -322,15 +320,11 @@ class ChatService(
         """
         return self._work_runner
 
-    async def remind_silent_turns(self) -> int:
-        """Queue an internal reminder while a room response is still running."""
-        return await reminders.remind_silent_turns(self, datetime.now(UTC))
-
-    async def remind_stale_checklists(self) -> int:
-        """Ask a running turn whose own checklist stopped moving to write it
-        again. Both sweeps share one interval: each asks whether something
-        visible about this turn has stopped moving."""
-        return await reminders.remind_stale_checklists(self, datetime.now(UTC))
+    @property
+    def compute(self) -> ComputePool:
+        """The sessions this process holds, and which of them are at work
+        (`turn.steps.reminders.QuietSessionReminders`)."""
+        return self._compute
 
     async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None:
         """Commit identity-bound effects before the journal may acknowledge.
