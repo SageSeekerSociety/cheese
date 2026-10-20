@@ -28,12 +28,15 @@ def upgrade() -> None:
     with_lock_retries("task")
     op.create_table(
         "task_rubric_item",
-        sa.Column("task_id", sa.BigInteger(), sa.ForeignKey("task.id"), nullable=False),
+        sa.Column("task_id", sa.BigInteger(), nullable=False),
         sa.Column("index", sa.Integer(), nullable=False),
         sa.Column("item", sa.String(64), nullable=False),
         sa.Column("points", sa.Integer(), nullable=False),
         sa.Column("criteria", sa.Text(), nullable=False, server_default=""),
         sa.PrimaryKeyConstraint("task_id", "index"),
+        sa.ForeignKeyConstraint(
+            ["task_id"], ["task.id"], name="fk_task_rubric_item_task_id_task"
+        ),
     )
     op.add_column(
         "task",

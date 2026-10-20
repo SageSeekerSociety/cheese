@@ -10,6 +10,7 @@ course may score out of 100, out of 10, or not at all.
 from dataclasses import dataclass
 
 from app.core.errors import BadRequestError
+from app.core.sentences import say
 
 #: Lines a rubric may have. A rubric is read at a glance; past this it is a
 #: grading guide, which belongs in the description or an attachment.
@@ -39,18 +40,24 @@ def rubric_lines(raw: list[dict]) -> list[RubricLine]:
         if not item and not criteria:
             continue
         if not item:
-            raise BadRequestError("Every rubric line needs a name")
+            raise BadRequestError(say("rubricLineNeedsName"))
         if len(item) > MAX_ITEM_CHARS or len(criteria) > MAX_CRITERIA_CHARS:
-            raise BadRequestError("A rubric line is too long")
+            raise BadRequestError(
+                say(
+                    "rubricLineTooLong",
+                    item=MAX_ITEM_CHARS,
+                    criteria=MAX_CRITERIA_CHARS,
+                )
+            )
         try:
             points = int(entry.get("points") or 0)
         except (TypeError, ValueError):
-            raise BadRequestError("Rubric points must be a whole number") from None
+            raise BadRequestError(say("rubricPointsRange", max=MAX_POINTS)) from None
         if not 0 <= points <= MAX_POINTS:
-            raise BadRequestError(f"Rubric points must be between 0 and {MAX_POINTS}")
+            raise BadRequestError(say("rubricPointsRange", max=MAX_POINTS))
         lines.append(RubricLine(item=item, points=points, criteria=criteria))
     if len(lines) > MAX_LINES:
-        raise BadRequestError(f"A rubric has at most {MAX_LINES} lines")
+        raise BadRequestError(say("rubricTooManyLines", max=MAX_LINES))
     return lines
 
 

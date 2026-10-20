@@ -227,7 +227,10 @@ class TaskRubricItem(Base):
     __tablename__ = "task_rubric_item"
 
     task_id: Mapped[int] = mapped_column(
-        "task_id", BigInteger, ForeignKey("task.id"), primary_key=True
+        "task_id",
+        BigInteger,
+        ForeignKey("task.id", name="fk_task_rubric_item_task_id_task"),
+        primary_key=True,
     )
     index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
     item: Mapped[str] = mapped_column("item", String(64), nullable=False)
