@@ -12,6 +12,7 @@ from app.api.response import ok, page
 from app.api.topics_deps import _actor_in_place
 from app.core.errors import NotFoundError
 from app.core.sentences import say
+from app.domain.agent.harness.notices import without_reminders
 from app.domain.agent.run_records import for_site
 from app.domain.agent.turn_times import turn_starts
 from app.domain.agent_instance.services import AgentInstanceService
@@ -22,6 +23,47 @@ from app.domain.session_record.history import earlier_turns
 from app.domain.session_record.views import as_block
 
 router = APIRouter(prefix="/topics", tags=["topics"])
+
+
+def hide_platform_reminders(items: list[dict]) -> list[dict]:
+    """现场 keeps every record, but does not repeat the platform's own reminders.
+
+    The 现场 reads the harness journal, and every input in it carries the
+    platform's words — the chat contract on every turn, a nudge when the room or
+    the checklist went quiet. They are instructions to the model, not
+    conversation, so showing them makes a reader scroll past the same paragraph
+    over and over. `without_reminders` takes them out of the display only: the
+    journal keeps every line (`meta.record` still has it) and the model already
+    read them.
+
+    A text part left with nothing is dropped, so a notice-only input leaves no
+    empty row behind.
+    """
+    for item in items:
+        meta = item.get("meta")
+        if not isinstance(meta, dict):
+            continue
+        parts = meta.get("parts")
+        if not isinstance(parts, list) or not parts:
+            if isinstance(item.get("content"), str):
+                item["content"] = without_reminders(item["content"])
+            continue
+        kept = []
+        changed = False
+        for part in parts:
+            text = part.get("text") if part.get("kind") == "text" else None
+            if isinstance(text, str):
+                hidden = without_reminders(text)
+                if hidden != text:
+                    changed = True
+                if not hidden:
+                    continue
+                part = {**part, "text": hidden}
+            kept.append(part)
+        if changed:
+            meta["parts"] = kept
+            item["content"] = "\n".join(p.get("text", "") for p in kept)
+    return items
 
 
 @router.get("/{topic_id}/transcript")
@@ -93,7 +135,7 @@ async def topic_transcript(
         key=order,
     )
     has_more = raw.next is not None or more_old or len(candidates) > limit
-    items = candidates[-limit:]
+    items = hide_platform_reminders(candidates[-limit:])
     starts = await turn_starts(
         db,
         place.conversation_id,
