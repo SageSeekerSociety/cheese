@@ -655,7 +655,8 @@ async def list_topic_blocks(
     - `author`: only blocks signed by this handle;
     - `shown=true`: only what the room's conversation shows
       (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only
-      what it keeps out of the room (an agent's steps, notices for an agent).
+      what it keeps out of the room (notices for an agent, unresolved-reference
+      lines). Session output is not here: it is read from `/session-records`.
 
     Cursors still name any block of the conversation, shown or not.
 
@@ -804,10 +805,8 @@ async def _history_block(
     block = await repo.get(block_id)
     if (
         block is None
-        or (
-            block.kind == BlockKind.event and (block.meta or {}).get("in_room") is False
-        )
         or (block.conversation_id != conversation_id and block.id not in also)
+        or not await repo.holds(block)
     ):
         raise NotFoundError("Message not found in this conversation")
     return block
