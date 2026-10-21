@@ -339,6 +339,19 @@ async def lifespan(application: FastAPI):
         except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("startup gate sweep failed")
 
+        # 卡片是在补记「谁在 GitHub 上合的」这项之前合并的：上线时补一次项目
+        # 总览还显示的那 14 天，之后正常轮询看到合并就记。一次，不是定时任务。
+        try:
+            # deferred-import: startup cost
+            from app.domain.review import pr_poll
+
+            background.spawn(
+                pr_poll.backfill_missing_merge_actors(get_chat_service()),
+                name="merge actor backfill",
+            )
+        except Exception:  # never block startup
+            get_logger("cheesex.runtime").exception("merge actor backfill failed")
+
         background.spawn(
             sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
             name="cleanup startup recovery",

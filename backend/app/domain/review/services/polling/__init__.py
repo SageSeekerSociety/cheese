@@ -21,6 +21,9 @@ from app.domain.review.services.polling.advance import (
 from app.domain.review.services.polling.advance import (
     note_poll_crashed as note_poll_crashed,
 )
+from app.domain.review.services.polling.backfill import (
+    fill_merged_by as fill_merged_by,
+)
 from app.domain.review.services.polling.card_poll import (
     _poll_pr_card as _poll_pr_card,
 )

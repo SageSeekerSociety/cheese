@@ -182,11 +182,19 @@ async def waiting_on_checks(db: AsyncSession, task_id: uuid.UUID) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Returned:
-    """一次退回：哪条活、谁退的、什么时候。"""
+    """一次退回：哪条活、谁退的、什么时候。
+
+    采纳也借用它（`accepted_by_task`）：那里 `by` 是平台上的采纳人，`at` 是
+    合并/决定时刻，`merged_by` 是卡上记的 GitHub 合并人（见下）。
+    """
 
     task_id: uuid.UUID
     by: str | None
     at: datetime
+    #: 卡上记的 GitHub 合并人原始事实：`{"github_id", "login"}`、`{}`（问过
+    #: 没人）或 None（还没问过）。`by` 为空而这一项有人时，读者看到的人就是
+    #: 从它换出来的 —— 换成哪个平台成员是显示层的事（`project_progress.feed`）。
+    merged_by: dict | None = None
 
 
 async def returned_since(
@@ -210,7 +218,12 @@ async def accepted_by_task(
         at = card.pr_merged_at or card.decided_at
         if card.task_id is not None and at is not None:
             found.setdefault(card.task_id, []).append(
-                Returned(task_id=card.task_id, by=card.decided_by, at=at)
+                Returned(
+                    task_id=card.task_id,
+                    by=card.decided_by,
+                    at=at,
+                    merged_by=card.merged_by,
+                )
             )
     return found
 
