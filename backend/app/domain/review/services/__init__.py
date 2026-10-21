@@ -192,6 +192,9 @@ from app.domain.review.services._shared import (
     approvals_required_of as approvals_required_of,
 )
 from app.domain.review.services._shared import (
+    deliverable_revision as deliverable_revision,
+)
+from app.domain.review.services._shared import (
     logger as logger,
 )
 from app.domain.review.services._shared import (

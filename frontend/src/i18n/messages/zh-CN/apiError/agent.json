@@ -28,6 +28,8 @@
   "assistantNoReviewCard": "这个任务还没有审阅卡",
   "assistantCannotAnswerHere": "这件事要用户在「待办」页自己答复",
   "assistantInviteThenAdmin": "不在项目里的人要先以成员身份邀请，加入后才能设为管理员",
+  "assistantWhoAmbiguous": "叫「{who}」的不止一人，账号分别是 {handles}；问用户是哪一位，用账号再试",
+  "assistantWhoUnknown": "找不到叫「{who}」的用户：既不是账号，也不是哪位用户的名字。问用户要账号",
   "assistantSettingValue": "{name}只能是：{choices}",
   "assistantSettingUnknown": "没有这一项设置；能改的是 {keys}",
   "assistantRuleUnknown": "没有「{rule}」这一类",

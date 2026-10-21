@@ -205,6 +205,18 @@ _STATUS: dict[str, str] = {
 }
 
 
+def checks_of(card: AcceptCard) -> str:
+    """The card's checks, as a clause for an action naming the card: a person
+    who asked for "the ones whose checks passed" is matched against it."""
+    if card.status is AcceptStatus.gate_failed:
+        return "，检查未通过"
+    if card.status is AcceptStatus.pending_gate:
+        return "，检查运行中"
+    if card.gate_passed_at is not None:
+        return "，检查已通过"
+    return ""
+
+
 async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     project, found = await _numbered(reader, ref, address.Numbered.task)
     place = await access.topic(found.id)
@@ -233,6 +245,8 @@ async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
         lines.append(f"合并请求：{card.pr_url}")
     if card.note:
         lines.append(f"卡上的说明：{card.note}")
+    if card.gate_passed_at is not None:
+        lines.append(f"检查：{_when(reader, card.gate_passed_at)} 通过")
     if card.gate_output:
         lines.append("检查输出：\n" + card.gate_output)
     lines.append(

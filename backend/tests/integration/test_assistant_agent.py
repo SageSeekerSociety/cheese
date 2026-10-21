@@ -16,8 +16,11 @@ from app.domain.assistant.models import (
 )
 from app.domain.gateway_chat import Completion, Usage
 from app.domain.project.models import Project
+from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.topic.models import Topic
+from app.domain.user.repositories import UserProfileRepository
 from tests.conftest import seed_user
+from tests.integration.conftest import open_task
 from tests.integration.test_assistant import _ledger_user
 from tests.integration.test_message_edit import _room, _say
 
@@ -250,6 +253,66 @@ def test_a_message_the_person_asked_for_is_sent_as_them_through_the_gate(
     assert check.cache_read_tokens == 80
 
 
+def test_a_card_delivering_a_link_is_accepted_as_the_version_cheese_read(
+    client, monkeypatch, stub_project_forge
+):
+    """A card that hands over a file or a link is accepted only for the version
+    its reviewer saw. 芝士's call carries the one it read, as the card page's
+    does, so the card is accepted rather than refused as out of date."""
+    room, _ = _room(client)
+    slug, _ = _names(client, room)
+    task = open_task(client, room, "整理相关工作表格")
+
+    async def file_card():
+        async with client.test_factory() as db:
+            card = AcceptCard(
+                topic_id=uuid.UUID(room),
+                task_id=uuid.UUID(task["id"]),
+                reviewer_handle="alice",
+                status=AcceptStatus.pending,
+                change_subject="相关工作对比表",
+                deliverable_kind=DeliverableKind.link,
+                deliverable_url="https://example.edu/table",
+            )
+            db.add(card)
+            await db.commit()
+            return card.id
+
+    card_id = asyncio.run(file_card())
+    conversation = _asked_in(client, "alice", "整理相关工作表格那张卡采纳了")
+    token = _acting(client, "alice", conversation)
+
+    async def looks(session):
+        return _Gatekeeper("放")
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+    r = client.post(
+        "/assistant/agent/act",
+        json={
+            "kind": "review",
+            "ref": f"{slug}/tasks/{task['number']}",
+            "choice": "accept",
+        },
+        headers=_as(token),
+    )
+    assert r.status_code == 200, r.text
+    got = r.json()["data"]
+    [call] = got["calls"]
+    accepted = client.post(
+        call["path"],
+        json=call["body"],
+        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+    )
+
+    assert accepted.status_code == 200, accepted.text
+
+    async def status():
+        async with client.test_factory() as db:
+            return (await db.get(AcceptCard, card_id)).status
+
+    assert asyncio.run(status()) == AcceptStatus.accepted
+
+
 def test_without_the_gate_the_route_refuses_the_persons_cheese(client):
     room, _ = _room(client)
     token = _acting(client, "alice", _asked_in(client, "alice", "你好"))
@@ -315,6 +378,56 @@ def test_removing_someone_is_asked_by_the_persons_rule_with_no_model(
     assert got["card"]["calls"][0]["method"] == "DELETE"
     [check] = _checks(client, "alice")
     assert check.stage == "rule"
+
+
+def test_someone_named_by_their_name_is_added_by_their_handle(client, monkeypatch):
+    """People say names, the routes take handles: a name one account goes by
+    is that account, named both ways in the action the gate reads, and a name
+    nobody goes by is said so rather than tried as a handle."""
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    seed_user(client, "zhaoym")
+    user_id = _ledger_user(client, "zhaoym")[0]
+
+    async def name():
+        async with client.test_factory() as db:
+            profiles = UserProfileRepository(db)
+            profile = await profiles.get_profile_by_user_id(user_id)
+            if profile is None:
+                await profiles.create_profile(
+                    user_id=user_id, nickname="赵一鸣", intro="", avatar_id=1
+                )
+            else:
+                profile.nickname = "赵一鸣"
+            await db.commit()
+
+    asyncio.run(name())
+    token = _acting(client, "alice", _asked_in(client, "alice", "把赵一鸣加进综合频道"))
+    keeper = _Gatekeeper("放")
+
+    async def looks(session):
+        return keeper
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+    where = f"{slug}/channels/{number}"
+
+    r = client.post(
+        "/assistant/agent/act",
+        json={"kind": "member", "where": where, "who": "赵一鸣"},
+        headers=_as(token),
+    )
+
+    assert r.status_code == 200, r.text
+    [call] = r.json()["data"]["calls"]
+    assert call["body"] == {"handle": "zhaoym"}
+    assert "将 赵一鸣（zhaoym） 加入频道" in keeper.shown[0]
+    unknown = client.post(
+        "/assistant/agent/act",
+        json={"kind": "member", "where": where, "who": "钱多多"},
+        headers=_as(token),
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["error"]["i18n"]["key"] == "assistantWhoUnknown"
 
 
 def test_the_persons_own_settings_change_at_once_and_undo_from_the_panel(client):

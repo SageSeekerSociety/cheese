@@ -38,9 +38,10 @@ from app.domain.assistant import changes, gate, passes, refs
 from app.domain.notification.preferences import local_time
 from app.domain.project import address
 from app.domain.project.services import ProjectService
+from app.domain.review.services import deliverable_revision
 from app.domain.room_task.awaiting import WaitingItem
 from app.domain.topic.services import TopicService
-from app.domain.user.services import timezones_by_ids
+from app.domain.user.services import search_accounts, timezones_by_ids, user_by_handle
 
 Questions = Annotated[Consumptions, Depends(get_consumptions)]
 
@@ -160,7 +161,7 @@ async def _work_line(item: WaitingItem, names: _Names, tz: str | None) -> str:
 def _ask_line(item: MembershipAsk, tz: str | None) -> str:
     within = item.place_id if item.kind == "join_request" else None
     ref = refs.of(_ASK_REF[item.kind], item.id, within=within)
-    role = f"，身份：{item.role}" if item.role else ""
+    role = f"，身份：{_ROLE.get(item.role, item.role)}" if item.role else ""
     said = f"\n  附言：{item.message}" if item.message else ""
     return (
         f"- {item.person.name}{_ASK[item.kind]}「{item.place.name}」{role}，"
@@ -437,7 +438,13 @@ async def _review(db, access, body: ActIn, me: Person) -> _Plan:
             {
                 "method": "POST",
                 "path": f"/accept-cards/{card.id}/accept",
-                "body": {"decided_by": me.handle, "head_sha": card.pr_head_sha},
+                # The version 芝士 just read, as a person's card carries it:
+                # a file or link replaced since is refused, not accepted.
+                "body": {
+                    "decided_by": me.handle,
+                    "head_sha": card.pr_head_sha,
+                    "deliverable_revision": deliverable_revision(project.id, card),
+                },
             },
         )
     elif body.choice == "reject":
@@ -457,7 +464,8 @@ async def _review(db, access, body: ActIn, me: Person) -> _Plan:
         gate.Action(
             "review",
             f"{verb.split('，')[0]}任务「{place.task.title}」的审阅卡（项目"
-            f"「{project.name}」，改动：{card.change_subject or '未写'}）"
+            f"「{project.name}」，改动：{card.change_subject or '未写'}"
+            f"{reading.checks_of(card)}）"
             + (f"，{verb.split('，', 1)[1]}" if "，" in verb else ""),
         ),
         [call],
@@ -556,8 +564,27 @@ async def _respond(db, body: ActIn, me: Person) -> _Plan:
     )
 
 
+async def _named(db, said: str) -> tuple[str, str]:
+    """The handle of the person ``said`` names, and how actions name them
+    (「赵一鸣（zhaoym）」, so the check can match it to what the person said):
+    a handle as it is, or a name one account alone goes by. Two people by
+    that name are not guessed between; 芝士 is told both, to ask which."""
+    found = {h: name for h, name in await search_accounts(db, said, 20)}
+    if await user_by_handle(db, said) is not None:
+        name = found.get(said) or said
+        return said, said if name == said else f"{name}（{said}）"
+    named = [h for h, name in found.items() if name == said]
+    if len(named) == 1:
+        return named[0], f"{said}（{named[0]}）"
+    if named:
+        raise BadRequestError(
+            say("assistantWhoAmbiguous", who=said, handles="、".join(named))
+        )
+    raise NotFoundError(say("assistantWhoUnknown", who=said))
+
+
 async def _member(db, access, body: ActIn, me: Person) -> _Plan:
-    who = _need(body.who, "who").lstrip("@")
+    who, shown = await _named(db, _need(body.who, "who").lstrip("@"))
     ref = refs.parse(_need(body.where, "where"))
     if ref is None:
         raise BadRequestError(say("assistantRefUnknown", ref=body.where))
@@ -568,17 +595,18 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
             return _Plan(
                 gate.Action(
                     "member",
-                    f"将 {who} 移出频道「{room.title}」（项目「{project.name}」）",
+                    f"将 {shown} 移出频道「{room.title}」（项目「{project.name}」）",
                     ("remove_member",),
                 ),
                 [{"method": "DELETE", "path": f"/topics/{room.id}/members/{who}"}],
                 [(_DOORS["channel_remove"], str(room.id))],
                 card=("act", {}),
-                done=f"已把 {who} 移出频道「{room.title}」。",
+                done=f"已把 {shown} 移出频道「{room.title}」。",
             )
         return _Plan(
             gate.Action(
-                "member", f"将 {who} 加入频道「{room.title}」（项目「{project.name}」）"
+                "member",
+                f"将 {shown} 加入频道「{room.title}」（项目「{project.name}」）",
             ),
             [
                 {
@@ -589,7 +617,7 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
             ],
             [(_DOORS["channel_add"], str(room.id))],
             card=("act", {}),
-            done=f"已把 {who} 加进频道「{room.title}」。",
+            done=f"已把 {shown} 加进频道「{room.title}」。",
         )
     if ref.kind != "project":
         raise BadRequestError(say("assistantRefUnknown", ref=body.where))
@@ -604,13 +632,13 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
         return _Plan(
             gate.Action(
                 "member",
-                f"将 {who}（{_ROLE.get(seat or '', '不在项目中')}）移出项目「{project.name}」",
+                f"将{_ROLE.get(seat or '', '不在项目中的')} {shown} 移出项目「{project.name}」",
                 ("remove_member",),
             ),
             [{"method": "DELETE", "path": f"/projects/{pid}/members/{who}"}],
             [(_DOORS["project_remove"], pid)],
             card=("act", {}),
-            done=f"已把 {who} 移出项目「{project.name}」。",
+            done=f"已把 {shown} 移出项目「{project.name}」。",
         )
     role = body.role or "member"
     if role not in ("admin", "member", "mentor"):
@@ -623,7 +651,7 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
         return _Plan(
             gate.Action(
                 "member",
-                f"邀请 {who} 以{_ROLE[role]}身份加入项目「{project.name}」",
+                f"邀请 {shown} 以{_ROLE[role]}身份加入项目「{project.name}」",
             ),
             [
                 {
@@ -634,13 +662,13 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
             ],
             [(_DOORS["project_invite"], pid)],
             card=("act", {}),
-            done=f"已邀请 {who} 加入项目「{project.name}」，等对方接受。",
+            done=f"已邀请 {shown} 加入项目「{project.name}」，等对方接受。",
         )
     lowers = _RANK.index(role) > _RANK.index(seat)
     return _Plan(
         gate.Action(
             "member",
-            f"将 {who} 在项目「{project.name}」的角色从{_ROLE[seat]}改为{_ROLE[role]}",
+            f"将 {shown} 在项目「{project.name}」的角色从{_ROLE[seat]}改为{_ROLE[role]}",
             ("lower_role",) if lowers else (),
         ),
         [
@@ -652,7 +680,7 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
         ],
         [(_DOORS["project_role"], pid)],
         card=("act", {}),
-        done=f"已把 {who} 改成{_ROLE[role]}。",
+        done=f"已把 {shown} 改成{_ROLE[role]}。",
     )
 
 
