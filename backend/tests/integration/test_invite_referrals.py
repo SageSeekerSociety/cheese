@@ -3,8 +3,8 @@
 The rules are the team's 《内测激励与裂变机制设计方案》:
 a code admits one person until its owner has accepted a delivery, then three
 more; the friend is paid 50 for their first project and 100 for accepting a
-delivery within seven days, which also pays the inviter 150 credits and 50
-points; each friend pays out once.
+delivery within seven days, which also pays the inviter 150 credits and records
+50 contribution points (not shown to anyone yet); each friend pays out once.
 """
 
 import asyncio
@@ -41,10 +41,37 @@ def _credits(client, headers) -> float:
     return sum(p["credits_total"] for p in response.json()["data"]["packs"])
 
 
+def _days_left(client, headers) -> set[int]:
+    """Whole days each pack has left before it expires."""
+    response = client.get("/users/me/credits/usage", headers=headers)
+    assert response.status_code == 200, response.text
+    now = datetime.now(UTC)
+    return {
+        (datetime.fromisoformat(p["expires_at"]) - now).days
+        for p in response.json()["data"]["packs"]
+    }
+
+
 def _sources(client, headers) -> set[str]:
     response = client.get("/users/me/credits/usage", headers=headers)
     assert response.status_code == 200, response.text
     return {p["source"] for p in response.json()["data"]["packs"]}
+
+
+def _referrer_points(client, _portal) -> int:
+    """Contribution points recorded for inviters. No page shows them; the
+    record is kept, so it is read from the database."""
+
+    async def read() -> int:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(CreditReward.points).where(
+                    CreditReward.key.like("invite:referrer:%")
+                )
+            )
+            return sum(rows)
+
+    return _portal.call(read)
 
 
 def _register(client, _portal, code: str | None) -> tuple[str, dict]:
@@ -203,8 +230,11 @@ def test_the_friends_first_acceptance_pays_both_sides_once(client, _portal, invi
     assert _credits(client, theirs) == 150
     assert _credits(client, mine) == 150
     seen = _invites(client, mine)
-    assert (seen["invite_credits"], seen["points"]) == (150, 50)
+    assert seen["invite_credits"] == 150
+    assert _referrer_points(client, _portal) == 50
     assert seen["invitees"][0]["stage"] == "activated"
+    # Invitation packs last a year, like every other reward.
+    assert _days_left(client, theirs) == _days_left(client, mine) == {364}
 
 
 def test_an_acceptance_after_seven_days_pays_nobody(client, _portal, inviter):
@@ -249,7 +279,7 @@ def test_someone_who_accepted_before_ever_opening_the_page_starts_unlocked(
     assert _invites(client, headers)["max_uses"] == 4
 
 
-def test_past_the_monthly_cap_only_points_are_recorded(
+def test_past_the_monthly_cap_the_inviter_gets_no_credits_but_points_are_kept(
     client, _portal, inviter, monkeypatch
 ):
     from app.domain.usage import referrals
@@ -263,7 +293,8 @@ def test_past_the_monthly_cap_only_points_are_recorded(
         _accept_a_delivery(client, friend)
 
     seen = _invites(client, mine)
-    assert (seen["invite_credits"], seen["points"]) == (150, 100)
+    assert seen["invite_credits"] == 150
+    assert _referrer_points(client, _portal) == 100
     assert sorted(p["credits"] for p in seen["invitees"]) == [0, 150]
     assert _credits(client, mine) == 150
 

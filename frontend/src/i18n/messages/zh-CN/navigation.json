@@ -71,6 +71,8 @@
       "light": "浅色",
       "dark": "深色"
     },
+    "invites": "邀请好友",
+    "invitesWithSeats": "邀请好友 · 剩 {n} 个名额",
     "archivedProjects": "已归档的项目",
     "download": "下载客户端",
     "usePhone": "在手机上使用"
