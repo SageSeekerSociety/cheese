@@ -275,6 +275,42 @@ async def _not_sealed(
     ]
 
 
+async def note(
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    agent_handle: str,
+    record: dict,
+    turn_id: uuid.UUID | None = None,
+    harness: str = "machine",
+    at: datetime | None = None,
+) -> None:
+    """Keep one record the machine itself wrote for 现场 (a sync that failed).
+
+    Not a harness journal row (`append`): the machine speaks in its own voice,
+    so it gets a sequence of its own and `harness` keeps it out of every
+    agent's run. It is sealed and read back exactly like a harness record."""
+    when = at or datetime.now(UTC)
+    sequence = int(when.timestamp() * 1_000_000)
+    entry = {"sequence": sequence, "at": when.isoformat(), "record": scrubbed(record)}
+    db.add(
+        SessionRecord(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            first_sequence=sequence,
+            last_sequence=sequence,
+            first_at=when,
+            last_at=when,
+            count=1,
+            bytes=size(entry),
+            records=[entry],
+        )
+    )
+    await db.flush()
+
+
 # --- sealing -----------------------------------------------------------------
 
 

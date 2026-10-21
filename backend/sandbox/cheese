@@ -5041,21 +5041,22 @@ class _BranchQueued(RuntimeError):
 def _report_sync_failure(
     task_id: str, branch: str | None, queued_pr: int | None = None
 ) -> None:
-    """Tell the room that a task's work did not reach its branch.
+    """Report that a task's work did not reach its branch.
 
     Only the failure: a turn that ends with its work still on the machine looks
     identical to one that succeeded — that is what let a rejected push read as a
     completed turn until the machine was deleted and the work went with it. On
-    success the work is already visible in the branch, and a message per turn
+    success the work is already visible in the branch, and a note per turn
     saying so would be noise that trains people to skip it.
+
+    An ordinary failed push is a line in 现场: it belongs beside the turn whose
+    work it is, and nobody in the room can do anything about it. The queue case
+    is different — retrying cannot help and a person has to choose — so that
+    one is still said in the room.
     """
     if not (API and TOPIC and TOKEN):
         return  # A human using the CLI directly already receives its exit status.
     where = branch or f"任务 {task_id}"
-    content = (
-        f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
-        "看不到它。请重试本轮；若机器被回收，改动会丢失。"
-    )
     if queued_pr:
         # Retrying cannot help: the branch stays locked until the queue is done.
         content = (
@@ -5063,12 +5064,39 @@ def _report_sync_failure(
             "队列里，排队的分支不能再改。提交留在那台机器上并已备份；PR 合并后"
             "在新任务里交付它们，或由验收人退回这张卡、PR 撤出队列后再推。"
         )
-    if not _tell_room(content):
+        delivered = _tell_room(content)
+    else:
+        content = (
+            f"这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
+            "看不到它；若机器被回收，改动会丢失。"
+        )
+        delivered = _tell_site(content)
+    if not delivered:
         print(
             f"[cheese] 同步失败的通知未送达，任务 {task_id} 的 "
             "cheese-sync.log 保留了结果",
             file=sys.stderr,
         )
+
+
+def _tell_site(content: str) -> bool:
+    """Put `content` in 现场 as the machine's own status line; whether it arrived."""
+    body = {"subtype": "sync_failed", "text": content}
+    req = urllib.request.Request(
+        f"{API}/topics/{TOPIC}/session-records",
+        data=json.dumps(body).encode(),
+        method="POST",
+    )
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-Cheese-Token", TOKEN)
+    if TURN:
+        req.add_header("X-Cheese-Turn", TURN)
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            pass
+    except Exception:
+        return False
+    return True
 
 
 def _tell_room(content: str) -> bool:

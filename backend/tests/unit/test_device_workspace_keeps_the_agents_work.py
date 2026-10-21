@@ -512,7 +512,11 @@ def test_failed_push_leaves_work_and_a_durable_failure_log(device):
     assert (work / "draft.txt").read_text() == "keep me"
 
 
-def test_failed_push_is_told_to_the_room(device):
+def test_failed_push_is_shown_in_the_site(device):
+    """A failed push is a line in 现场, beside the turn whose work it is.
+
+    It is not a chat message: nobody in the room can retry the turn, and the
+    message that said to read like one for a person."""
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
@@ -527,10 +531,13 @@ def test_failed_push_is_told_to_the_room(device):
     (report,) = [
         json.loads(line) for line in (home / "posted.jsonl").read_text().splitlines()
     ]
-    assert report["path"] == f"/topics/{os.environ['CHEESE_TOPIC']}/messages"
+    assert (
+        report["path"]
+        == f"/topics/{os.environ['CHEESE_TOPIC']}/session-records"
+    )
     assert report["token"] == "test-secret"
-    assert tasks[task]["branch"] in report["body"]["content"]
-    assert report["body"]["request_id"]
+    assert report["body"]["subtype"] == "sync_failed"
+    assert tasks[task]["branch"] in report["body"]["text"]
 
 
 def test_a_push_that_lands_tells_the_room_nothing(device):
@@ -545,12 +552,16 @@ def test_a_push_that_lands_tells_the_room_nothing(device):
 
 
 def _told_the_room(home):
+    """What was posted, whichever door it went through: a chat message carries
+    `content`, a 现场 record carries `text`."""
     posted = home / "posted.jsonl"
     if not posted.exists():
         return []
-    return [
-        json.loads(line)["body"]["content"] for line in posted.read_text().splitlines()
-    ]
+    told = []
+    for line in posted.read_text().splitlines():
+        body = json.loads(line)["body"]
+        told.append(body.get("content") or body.get("text"))
+    return told
 
 
 def test_the_pre_push_report_of_a_commit_reaches_the_room(device):
@@ -1545,7 +1556,7 @@ def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
         cli._sync_all_tasks()
 
     told = [
-        json.loads(line)["body"]["content"]
+        json.loads(line)["body"]["text"]
         for line in (home / "posted.jsonl").read_text().splitlines()
     ]
     assert len(told) == 1

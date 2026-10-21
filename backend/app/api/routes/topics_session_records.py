@@ -5,22 +5,31 @@ sessions journaled (Claude Code's stream-json lines, Codex's app-server
 notifications, pi's entries), scrubbed of credentials and otherwise as the
 harness wrote them, oldest first and paged. `turn_id` narrows it to one turn.
 
+`POST /topics/{topic_id}/session-records`: one status record the machine
+itself reports for 现场 (a sync that failed). It is not a harness journal
+entry; `harness` keeps it apart from every agent's run, and it is read back
+with the turn it belongs to.
+
 The same door as 现场 (`topics_transcript.py`): whoever may read the
 conversation's transcript may read its raw record.
 """
 
 import uuid
 from datetime import datetime
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, StringConstraints
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.topics_deps import _actor_in_place
+from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.errors import NotFoundError
 from app.core.sentences import say
+from app.core.work_context import current_work_id
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.room_task.place import place_or_404
 from app.domain.session_record import service
@@ -181,3 +190,53 @@ async def session_record(
     ) != (at.isoformat(), harness, agent, sequence):
         raise NotFoundError(say("cursorEventNotFound"))
     return JSONResponse(ok(result.items[0]))
+
+
+class MachineRecordIn(BaseModel):
+    #: Only what the machine itself reports and 现场 has a line for. A harness's
+    #: own journal is never written through this door.
+    subtype: Literal["sync_failed"]
+    text: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)
+    ]
+
+
+class MachineRecordOut(BaseModel):
+    recorded: bool
+
+
+@router.post(
+    "/{topic_id}/session-records",
+    dependencies=[CHEESE_ONLY_IN_ROOM],
+    **typed_response(MachineRecordOut),
+)
+async def note_machine_record(
+    topic_id: uuid.UUID,
+    body: MachineRecordIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Let the machine put one line in 现场, in its own voice.
+
+    The sync that pushes a turn's work runs after the turn has ended, so its
+    failure is not in the agent's journal — and posting it into the room as a
+    chat message told a person to do something only the machine could. Here it
+    is what it is: one status record in 现场, beside the turn it belongs to.
+    """
+    place = await place_or_404(db, topic_id)
+    if place.room.deleted_at is not None:
+        raise NotFoundError(say("topicNotFound"))
+    actor = await _actor_in_place(resolver, place)
+    await service.note(
+        db,
+        place.conversation_id,
+        agent_handle=actor.handle,
+        turn_id=current_work_id.get(),
+        record={
+            "type": "system",
+            "subtype": body.subtype,
+            "message": body.text,
+        },
+    )
+    await db.commit()
+    return ok({"recorded": True})

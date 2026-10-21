@@ -49,7 +49,11 @@ def parts(record: dict) -> list[dict]:
     """Readable parts with complete arguments and output; previews alone are capped."""
     if record.get("type") == "cheese_file":
         record = record.get("entry") or record.get("record") or record
-    message = record.get("message") or {}
+    message = record.get("message")
+    if not isinstance(message, dict):
+        # A machine's note carries its sentence as a string; a harness record
+        # carries a message object. Only the latter has content to read parts from.
+        message = {}
     content = message.get("content")
     if isinstance(content, str):
         return [{"kind": "text", "text": content}]
@@ -89,6 +93,7 @@ def parts(record: dict) -> list[dict]:
     if record.get("subtype") in (
         "api_retry",
         "compact_boundary",
+        "sync_failed",
         "task_started",
         "task_notification",
     ):
