@@ -72,6 +72,14 @@ COOLING = (
     "API Error: Server is temporarily limiting requests (not your usage limit)"
     " · cheese: all Claude accounts are cooling down"
 )
+# Our gateway's lifetime cap on an upstream key (`deploy/gateway/spend_cap.py`),
+# in the words a turn ends with when it is reached.
+SPENT_CAP = (
+    "API Error: Server is temporarily limiting requests (not your usage limit)"
+    " · gemini/gemini-4-argon has reached its spend cap: $1005.08 of $1000.00."
+    " Received Model Group=gemini-4-argon\nAvailable Model Group Fallbacks=None"
+    "（rate_limit）"
+)
 
 
 class Seat(StubChannel):
@@ -279,6 +287,30 @@ async def test_a_refused_request_is_not_resumed(business_db_factory, tmp_path):
     )
     try:
         # Sending the same conversation again is refused the same way.
+        assert await _owed_resumes(factory, conversation, expected=False) == []
+        assert await _failure_cards(factory, conversation) == 1
+        later = datetime.now(UTC) + timedelta(days=1)
+        assert await hand_due(factory, now=later) == 0
+        assert await dispatch_pending(factory, chat=chat, runner=runner) == 0
+        assert len(screen.handed) == 1
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_spent_upstream_cap_is_not_resumed(business_db_factory, tmp_path):
+    """The gateway's lifetime cap on an upstream key refuses under the same
+    "temporarily limiting requests" wording as a rate limit, and used to be
+    resumed until the streak ran out: six rounds of ten retries, all refused
+    (2026-10-21)."""
+    factory = business_db_factory
+    conversation, _seat, screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, SPENT_CAP
+    )
+    try:
+        # Nothing about raising a cap happens by waiting: the seat stays idle
+        # and the room gets the failure card, which offers no retry.
         assert await _owed_resumes(factory, conversation, expected=False) == []
         assert await _failure_cards(factory, conversation) == 1
         later = datetime.now(UTC) + timedelta(days=1)
