@@ -319,6 +319,12 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         props: { changes: changesBundle(NO_REPO) },
         expect: '暂无代码仓库',
       },
+      {
+        name: '现场工作区没及时响应',
+        note: '取数那一层退到了已提交版本：顶上一条中性说明和「重试现场」，差异照旧能看，不是红条。',
+        props: { changes: changesBundle({ liveFallback: 'committed' }) },
+        expect: '现场工作区没有及时响应，已切到已提交版本',
+      },
     ],
   },
   {

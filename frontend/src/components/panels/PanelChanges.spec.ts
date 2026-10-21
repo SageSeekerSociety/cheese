@@ -19,7 +19,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError } from '@/api'
+import { ApiError, RequestTimeoutError } from '@/api'
 import { setLocale } from '@/i18n'
 
 // 断言读的是中文界面上的那一行字，语言钉在中文上。
@@ -390,6 +390,28 @@ describe('这一支的活', () => {
     // 「载入最新版本」= 丢掉自己的改动，重读这一版。
     await waitFor(() => expect(readFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'room-1', 't-1', 'live'))
     await waitFor(() => expect(screen.queryByText(/这个文件已被修改/)).toBeNull())
+  })
+
+  it('现场工作区超时：先给已提交版本，不把整格换成请求超时', async () => {
+    getGitDiff.mockImplementation((_pid: string, _tid: string, _task: string, source: string) =>
+      source === 'live' ? Promise.reject(new RequestTimeoutError()) : Promise.resolve({ diff: DIFF })
+    )
+    listFiles.mockImplementation((_pid: string, _tid: string, _task: string, source: string) =>
+      source === 'live'
+        ? Promise.reject(new RequestTimeoutError())
+        : Promise.resolve({ data: FILES, total: FILES.length, source: 'committed' })
+    )
+    mount()
+    // 说明说的是「已切到已提交版本」，而不是把浏览器那句请求超时原样挂出来。
+    expect(await screen.findByText('现场工作区没有及时响应，已切到已提交版本')).toBeTruthy()
+    expect(screen.queryByText(/请求等待超时/)).toBeNull()
+    // 已提交版本的差异照样能看。
+    expect(await screen.findByText('+const c = 4')).toBeTruthy()
+
+    // 「重试现场」再问一次现场，不是让人只能停在已提交版本上。
+    getGitDiff.mockClear()
+    await fireEvent.click(screen.getByText('重试现场'))
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'live'))
   })
 
   it('列文件失败：那句错挂出来，并给一条换版本的出路', async () => {

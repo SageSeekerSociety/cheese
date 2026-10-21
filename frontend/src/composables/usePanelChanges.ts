@@ -15,7 +15,7 @@
 // 拆在 `panelChanges/` 下 —— 工作树差异、打开的那一份文件、文档的字节与修订、和
 // 上一版的比较。返回的那一包和拆之前一模一样，组件与单测都不用动。
 import type { FileSource, RoomTask } from '../cx_types'
-import type { PanelChangesProps } from './panelChanges/types'
+import type { LiveSourceFallback, PanelChangesProps } from './panelChanges/types'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -101,6 +101,10 @@ export function usePanelChanges(props: PanelChangesProps) {
   // A background re-fetch: spins only the 刷新 button, never replaces the panel.
   const refreshing = ref(false)
   const errorMsg = ref<string | null>(null)
+  // 现场工作区没及时答上来时，这一格退到了哪一面（见 `onLiveTimeout`）。
+  const liveFallback = ref<LiveSourceFallback>('none')
+  // 这一次前台读现场是不是超时了；`loadAll` 拿它在两次读都落地之后切来源。
+  const liveTimeout = ref(false)
   // 见 checkRepo。
   const noRepo = ref(false)
 
@@ -113,6 +117,8 @@ export function usePanelChanges(props: PanelChangesProps) {
     noWorkYet,
     refreshing,
     errorMsg,
+    liveFallback,
+    liveTimeout,
     epoch: () => sourceEpoch,
     startLoad,
   })
@@ -161,11 +167,32 @@ export function usePanelChanges(props: PanelChangesProps) {
       if (taskLoadError.value) return
       void checkRepo()
       if (noRepo.value) return
-      void gitChanges.loadGit(opts)
-      void pane.loadFiles(opts)
+      // 两边都落地再决定退不退：现场那条路可能先超时（差异走机器），也可能文件
+      // 清单先超时。等完再切来源，文件清单才不会落在上一代的请求上。
+      await Promise.all([gitChanges.loadGit(opts), pane.loadFiles(opts)])
+      await adoptCommittedFallback()
     } finally {
       done?.()
     }
+  }
+
+  // 现场工作区没在浏览器的读取预算里答上来：差异那边已经把已提交版本取回来了，
+  // 这里把来源也切过去，后面的读文件、列文件才不会再撞同一次超时。摘要（差异）
+  // 不再问一次。
+  async function adoptCommittedFallback() {
+    if (!liveTimeout.value || fileSource.value !== 'live') return
+    requestedSource.value = 'committed'
+    liveFallback.value = 'committed'
+    await pane.loadFiles()
+  }
+
+  // 从「现场工作区没有及时响应」那条说明上重试：来源回到现场，两边重新读。
+  async function retryLive() {
+    requestedSource.value = null
+    liveFallback.value = 'none'
+    errorMsg.value = null
+    await Promise.all([gitChanges.loadGit(), pane.loadFiles()])
+    await adoptCommittedFallback()
   }
 
   // 项目没接代码仓库时，文件和提交记录都拿不到，后端答的是一句「项目没有代码仓库」。
@@ -237,6 +264,8 @@ export function usePanelChanges(props: PanelChangesProps) {
     loading.value = false
     gitChanges.clearGitDiff()
     errorMsg.value = null
+    liveFallback.value = 'none'
+    liveTimeout.value = false
   }
 
   async function selectVersion(source: FileSource) {
@@ -289,6 +318,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     loading,
     refreshing,
     errorMsg,
+    liveFallback,
     noRepo,
     fileDiffs: gitChanges.fileDiffs,
     diffByPath: gitChanges.diffByPath,
@@ -332,6 +362,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     toggleCompare: compare.toggleCompare,
     // 动作
     loadAll,
+    retryLive,
     selectFile: pane.selectFile,
     closeFile: pane.closeFile,
     selectVersion,

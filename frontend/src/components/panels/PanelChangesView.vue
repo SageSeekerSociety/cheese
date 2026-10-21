@@ -20,6 +20,7 @@
 // `ChangesFileBar`、打开着的那一份 `ChangesFileContent`、没打开文件时的全部改动
 // `ChangesAllView`。留在这里的是三面共用的东西：面板外形、文件树那一列（含拖动）、
 // 取不到改动时那几格，以及三面之间要传的话。props、emits、画出来的 DOM 都照旧。
+import type { LiveSourceFallback } from '../../composables/panelChanges/types'
 import type { DocumentRevisionsBundle } from '../../composables/useDocumentRevisions'
 import type { FileSource, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { DiffLine, FileDiff } from '../../lib/diff'
@@ -57,6 +58,8 @@ const props = defineProps<{
   loading: boolean
   refreshing: boolean
   errorMsg: string | null
+  /** 现场工作区没及时响应时退到了哪一面；正常是 `none`。 */
+  liveFallback?: LiveSourceFallback
   noRepo: boolean
   fileDiffs: FileDiff[]
   diffByPath: Map<string, FileDiff>
@@ -111,6 +114,8 @@ const emit = defineEmits<{
   /** 回到全部改动那一面。 */
   'close-file': []
   'select-version': [source: FileSource]
+  /** 现场工作区没答上来之后，再试一次现场来源。 */
+  'retry-live': []
   'toggle-dir': [path: string]
   refresh: []
   download: []
@@ -262,6 +267,21 @@ const fileRows = computed(() =>
       </v-alert>
     </div>
     <div v-else class="file-tool">
+      <!-- 现场工作区没在读取预算里答上来：差异和文件已经退到已提交版本。这不是
+           错误，不拿它顶掉整格——把现在看的是什么说清楚，再留一条回现场的出路。 -->
+      <div v-if="props.liveFallback && props.liveFallback !== 'none'" class="live-fallback">
+        <v-icon size="15" class="me-1">mdi-clock-alert-outline</v-icon>
+        <span class="live-fallback__text">
+          {{
+            props.liveFallback === 'committed'
+              ? t('work.room.changes.liveTimeoutCommitted')
+              : t('work.room.changes.liveTimeoutUnavailable')
+          }}
+        </span>
+        <BaseButton kind="ghost" size="sm" @click="emit('retry-live')">{{
+          t('work.room.changes.retryLive')
+        }}</BaseButton>
+      </div>
       <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
          human choose — a silent winner is how edits vanished. -->
       <ReviewMergePicker
@@ -440,6 +460,24 @@ const fileRows = computed(() =>
   flex: 0 0 auto;
 }
 .file-conflict__text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+/* 现场没答上来时那条说明：和冲突那条不同，它不是错误（红底会把「可以先看这个」
+   读成「坏了」），用中性的底和墨色。 */
+.live-fallback {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--fill);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.live-fallback__text {
   flex: 1 1 200px;
   min-width: 0;
 }
