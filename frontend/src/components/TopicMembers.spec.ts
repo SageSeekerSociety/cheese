@@ -460,3 +460,47 @@ describe('队友名字下面那串 handle', () => {
     expect(options).not.toContain('cheese-a2')
   })
 })
+
+describe('名册一打开先有内容', () => {
+  // 打开名册是点下去之后第一个有画面的动作：整份名单一次建出来，几十行在平板上要等
+  // 几秒，而列表只露得出五六行。先挂看得见的那几行，其余等浏览器空闲再补——第一帧
+  // 必须有内容，否则看起来像没点到。
+  const manyMembers = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      member_handle: `member-${i}`,
+      name: `成员${i}`,
+      role: 'member',
+      agent: false,
+      avatar_id: null,
+    }))
+
+  it('打开那一帧只挂前几行，其余的分批补上', async () => {
+    server.rows = manyMembers(30)
+
+    // 把空闲回调攥在手里：补行排在里面，什么时候跑由这个用例决定。
+    const idle: Array<() => void> = []
+    const scope = globalThis as {
+      requestIdleCallback?: (cb: () => void) => number
+      cancelIdleCallback?: (id: number) => void
+    }
+    const original = scope.requestIdleCallback
+    const originalCancel = scope.cancelIdleCallback
+    scope.requestIdleCallback = (cb: () => void) => idle.push(cb)
+    scope.cancelIdleCallback = (id: number) => {
+      idle[id - 1] = () => {}
+    }
+    try {
+      await openRoster()
+      expect(document.querySelectorAll('.roster__item')).toHaveLength(8)
+
+      while (idle.length) idle.shift()!()
+      await settle()
+      expect(document.querySelectorAll('.roster__item')).toHaveLength(30)
+    } finally {
+      if (original) scope.requestIdleCallback = original
+      else delete scope.requestIdleCallback
+      if (originalCancel) scope.cancelIdleCallback = originalCancel
+      else delete scope.cancelIdleCallback
+    }
+  })
+})

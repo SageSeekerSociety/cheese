@@ -367,6 +367,11 @@ function onMenuToggle(open: boolean) {
 .topic-row.is-active:hover {
   background: var(--line-2);
 }
+/* 按下去那一帧就换底色。触屏上没有 hover，点了之后页面要等一下才换，中间这一下
+   要是也没有变化，看起来就像没点到。 */
+.topic-row:active {
+  background: var(--line-2);
+}
 
 .topic-status {
   font-size: 13px;

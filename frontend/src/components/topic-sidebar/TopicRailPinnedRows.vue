@@ -100,6 +100,10 @@ const entries = computed(() =>
 .nav-row.is-active:hover {
   background: var(--line-2);
 }
+/* 按下那一帧就换底色：触屏没有 hover，点了之后要等一下才换页。 */
+.nav-row:active {
+  background: var(--line-2);
+}
 .nav-row :deep(.v-list-item__spacer) {
   width: 8px !important;
 }

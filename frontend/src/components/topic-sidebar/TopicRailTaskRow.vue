@@ -95,6 +95,11 @@ const emit = defineEmits<{
   background: var(--fill-2);
   color: var(--ink);
 }
+/* 按下那一帧就换底色：触屏没有 hover，任务页又要等一下才出来。 */
+.rail-task:active {
+  background: var(--line-2);
+  color: var(--ink);
+}
 /* 选中沿用频道行那一档：底色 --line-2，标题再重一层。这条 rail 的底是 --canvas，
    --fill 在它上面只有 1.027:1，拿它当选中等于没画（同 TopicRailRow.vue 那段注释）。
    字重落在行上、由标题继承：未读那颗 650 比它重，选中一行未读的任务仍是未读的样子。
