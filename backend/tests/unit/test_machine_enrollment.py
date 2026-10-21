@@ -485,7 +485,7 @@ def _tool_check_block() -> str:
     return script[start : script.index("\ndone", start) + len("\ndone")]
 
 
-@pytest.mark.parametrize("missing", ["tmux", "git", "python3", "ip"])
+@pytest.mark.parametrize("missing", ["tmux", "git", "python3", "ip", "lsof"])
 def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
     """Each of these fails SILENTLY when discovered later, which is the whole
     reason the check is here rather than in whatever breaks first.
@@ -496,6 +496,8 @@ def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
     at environment preparation instead, because the platform's own programs on a
     machine — `cheese` and the environment helper — are python3. Without
     ip no session on the machine can have the network its sandbox runs with.
+    Without lsof no sandbox on the machine can be destroyed, so its homes stay
+    and the host never empties.
 
     None is guaranteed by the image: MicroCloud's LXC template lists git but not
     tmux, and the VM template installs neither.
