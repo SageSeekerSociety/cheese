@@ -29,7 +29,6 @@ import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
 import { myHandle } from '../me'
 
-import BaseButton from './base/BaseButton.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
@@ -410,14 +409,6 @@ const rowSheetActions = computed<MenuAction[]>(() =>
   rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
 )
 
-// 这一列里我还没有别的频道。侧栏只列我加入的，所以「没有别的行」既可能是刚建出来的
-// 项目，也可能是别的频道我一个都没加入——两种情况下「新建一个」都接得上；反过来，
-// 有别的行时不该多这一块。加载中和读失败都返回 false：那两种情况下「没有行」说的是
-// 数据还没到，不是没有频道。
-const noOtherChannels = computed(
-  () => !props.error && !props.loadingTopics && !railSections.value.some((section) => section.rows.length > 0)
-)
-
 // 项目文档 (C4): 项目目标 / 周报集 / 记忆 在侧栏只占一行，点开进项目目标；
 // 三选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
 // 这一行在任何一种文档打开时都是选中态。
@@ -561,7 +552,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <!-- 频道的第一行：项目自带的「综合」，固定在最上面，和其他频道同一组。 -->
           <TopicRailRootRow
             v-if="!error"
-            v-guide-anchor="'sidebar-general'"
             :root-topic="rootTopic"
             :selected-topic-id="selectedTopicId"
             :page="page === true"
@@ -626,15 +616,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <LoadingSkeleton v-else-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
-            <!-- 一个别的频道都还没有：光一个 ＋ 太安静，把话说出来，并给一颗主按钮
-                顶上（空项目里这是唯一要做的事）。 -->
-            <div v-if="canCreate && noOtherChannels" class="rail-empty" data-testid="no-other-channels">
-              <span class="t-meta c-faint">{{ t('work.sidebar.noOtherChannels') }}</span>
-              <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" @click="emit('new-channel')">
-                {{ t('work.projectSettings.channels.create') }}
-              </BaseButton>
-            </div>
-
             <template v-for="section in railSections" :key="section.key">
               <v-list v-if="section.rows.length" density="compact" nav class="py-0" tabindex="-1">
                 <!-- Rows are ordered by most recent activity, so a new message pushes a room
@@ -794,15 +775,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 .side-subhead__add:hover {
   color: var(--accent-ink);
   background: var(--fill);
-}
-
-/* 还没有别的频道时那一块：一句话 + 主按钮。 */
-.rail-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 16px 4px;
 }
 
 /* 话题还在路上时，先把行的形状画出来（LoadingSkeleton）。这条 rail 的底是
