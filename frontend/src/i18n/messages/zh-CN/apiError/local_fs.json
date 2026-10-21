@@ -17,6 +17,7 @@
   "libraryNotARevision": "不是一个修订",
   "libraryPathRelative": "path 必须是资料库里的相对路径",
   "libraryPrefixReserved": "{prefix}/ 留给资料库，频道文件不能写在这里",
+  "libraryUploadTooLarge": "文件太大（上限 10 MB）",
   "libraryVersionIsCurrent": "这一版已经是现在这一份",
   "libraryVersionNotFound": "找不到这一版",
   "localDirGrantNotFound": "这条授权不存在",
@@ -42,6 +43,6 @@
   "templateSuffixRequired": "「{template}」模板要存成 .{suffix}",
   "tooManySameNameFiles": "同名文件太多：{name}",
   "unsupportedFileType": "不支持的文件类型",
-  "uploadExpired": "这次上传已经过期，请重新上传",
-  "uploadIncomplete": "文件没有传完整，请重新上传"
+  "uploadExpired": "上传已过期，需要重新上传",
+  "uploadIncomplete": "文件未完整上传，需要重新上传"
 }

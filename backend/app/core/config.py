@@ -1109,6 +1109,22 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         return self.app_release or self.app_version
 
     @model_validator(mode="after")
+    def _files_bucket_named_when_new_files_go_there(self) -> "Settings":
+        """Refuse to boot when new files are to go to a bucket nobody named:
+        otherwise the first upload after the deploy is where it shows."""
+        if self.files_store == "bucket" and not (
+            self.files_bucket
+            and self.files_bucket_endpoint_url
+            and self.files_bucket_access_key
+            and self.files_bucket_secret_key
+        ):
+            raise ValueError(
+                "FILES_STORE=bucket needs FILES_BUCKET, FILES_BUCKET_ENDPOINT_URL, "
+                "FILES_BUCKET_ACCESS_KEY and FILES_BUCKET_SECRET_KEY"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _require_real_jwt_secret_on_deployment(self) -> "Settings":
         """Fail the boot when a deployment left JWT_SECRET at its insecure default.
 

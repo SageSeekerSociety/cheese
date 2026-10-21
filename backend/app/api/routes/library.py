@@ -31,6 +31,11 @@ from app.domain.project_permissions import Permission
 router = APIRouter(prefix="/projects", tags=["library"])
 
 
+#: 资料库页上一次放进来的文件多大为止，视频也一样；和对话里上传附件是同一条线，数在
+#: `library.MAX_FILE_BYTES`（落地那一层），这里只借它的名字。
+MAX_LIBRARY_UPLOAD_BYTES = library.MAX_FILE_BYTES
+
+
 class LibraryRoom(BaseModel):
     """一份资料是在哪个房间给出来的（`room_ref`）：房间的 id 和名字。"""
 
@@ -301,6 +306,8 @@ async def library_upload_slot(
     await _library_keeper(project_id, db, resolver)
     if body.size <= 0:
         raise ValidationError(say("emptyFile"))
+    if body.size > MAX_LIBRARY_UPLOAD_BYTES:
+        raise ValidationError(say("libraryUploadTooLarge"))
     name = library.clean_upload_name(body.name)
     return ok(await library_records.upload_slot(project_id, name, body.size))
 

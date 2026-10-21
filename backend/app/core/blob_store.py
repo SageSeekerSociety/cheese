@@ -42,8 +42,13 @@ BUCKET = "bucket"
 #: platform's other trees, which are all dot-named.
 INCOMING = ".incoming/"
 
-#: How long an address to put one upload at stays good.
+#: How long an address to put one upload at stays good: the PUT has to start
+#: within it.
 UPLOAD_URL_SECONDS = 15 * 60
+#: How long the token that registers an upload stays good: long enough for a
+#: slow PUT of a large file to finish, short of the day after which the bucket
+#: expires what was left under ``.incoming/``.
+UPLOAD_TOKEN_SECONDS = 6 * 60 * 60
 
 #: Bytes to keep: whole in memory, or a readable file that can be rewound.
 Content = bytes | BinaryIO
@@ -251,8 +256,9 @@ class BucketStore(BlobStore):
         await self.bucket.delete(key)
 
     async def upload_url(self, key: str, size: int) -> str:
-        # The length is signed in: the bucket refuses a PUT of any other size,
-        # so no more than was declared can land.
+        # The length is signed in, so a bucket that checks signed headers
+        # refuses a PUT of any other size. What is registered is measured
+        # again either way (`records.received`).
         return await self.bucket.presign(
             key, "put_object", UPLOAD_URL_SECONDS, ContentLength=size
         )
@@ -271,7 +277,9 @@ class SealedUpload:
     size: int
 
 
-def seal_upload(upload: SealedUpload, *, bound_to: str) -> str:
+def seal_upload(
+    upload: SealedUpload, *, bound_to: str, seconds: int = UPLOAD_URL_SECONDS
+) -> str:
     """A token that stands for ``upload`` for whoever holds it, for a while,
     and only where ``bound_to`` is named again when it is opened."""
     body = json.dumps(
@@ -279,7 +287,7 @@ def seal_upload(upload: SealedUpload, *, bound_to: str) -> str:
             "location": upload.location,
             "key": upload.key,
             "size": upload.size,
-            "until": int(time.time()) + UPLOAD_URL_SECONDS,
+            "until": int(time.time()) + seconds,
         }
     )
     return encrypt(Purpose.FILE_UPLOAD, body, bound_to=bound_to)

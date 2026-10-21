@@ -143,3 +143,30 @@ def test_a_file_over_the_ceiling_gets_no_upload_address(client, new_files_go_to)
     )
 
     assert r.status_code == 422
+
+
+def test_an_upload_to_this_server_needs_no_credential_but_its_address(
+    client, new_files_go_to
+):
+    """The browser sends the bytes with nothing but the address it was given,
+    as it does to a presigned bucket address; the address alone lets them in,
+    and a forged one does not."""
+    project_id = _project(client)
+    new_files_go_to("local")
+    slot = client.post(
+        f"/projects/{project_id}/library/uploads", json={"name": "a.md", "size": 2}
+    ).json()["data"]
+    credential = client.headers.pop("Authorization")
+
+    forged = client.put("/files/incoming/v1:forged:token", content=b"hi")
+    landed = client.put(slot["url"], content=b"hi")
+
+    client.headers["Authorization"] = credential
+    assert forged.status_code == 422
+    assert landed.status_code == 200
+    r = client.post(
+        f"/projects/{project_id}/library",
+        json={"upload": slot["upload"], "filename": "a.md"},
+    )
+    assert r.status_code == 200, r.text
+    assert _raw(client, project_id, "a.md").content == b"hi"

@@ -124,7 +124,11 @@ async def upload_slot(project_id: uuid.UUID, name: str, size: int) -> dict:
     sealed = blob_store.SealedUpload(store.location, blob_store.incoming_key(), size)
     return {
         "url": await store.upload_url(sealed.key, size),
-        "upload": blob_store.seal_upload(sealed, bound_to=str(project_id)),
+        "upload": blob_store.seal_upload(
+            sealed,
+            bound_to=str(project_id),
+            seconds=blob_store.UPLOAD_TOKEN_SECONDS,
+        ),
     }
 
 

@@ -239,7 +239,10 @@ class S3StorageBackend(StorageBackend):
             region_name=self._region,
             # Short socket timeouts, so a stalled socket is retried well within
             # a caller's transfer deadline.
+            # A presigned URL is SigV4 everywhere: R2 accepts nothing older,
+            # and only V4 signs the headers a URL is bound to (Content-Length).
             config=AioConfig(
+                signature_version="s3v4",
                 connect_timeout=5,
                 read_timeout=self._read_timeout_s,
                 retries={"mode": "standard", "total_max_attempts": 3},
