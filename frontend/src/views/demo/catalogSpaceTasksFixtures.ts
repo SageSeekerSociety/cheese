@@ -119,12 +119,6 @@ export const SPACE_SETTINGS_GROUPS: SettingsGroup[] = [
         to: { name: 'SpacesDetailSettingsGuidance', params: { spaceId: '7' } },
         icon: 'mdi-robot-outline',
       },
-      {
-        key: 'SpacesDetailSettingsMaterials',
-        label: t('spaces.settings.tabs.materials'),
-        to: { name: 'SpacesDetailSettingsMaterials', params: { spaceId: '7' } },
-        icon: 'mdi-folder-outline',
-      },
     ],
   },
 ]
@@ -135,8 +129,21 @@ export const SPACE_TEACHING: SpaceTeaching = {
   systemPrompt: '这是一门操作系统的课。回答时先给结论，再给可以自己动手验证的那一步。不要用 pthread 以外的线程库。',
 }
 
-/** 资料库里的几份：文件、图、仅管理员的一档各来一个。 */
+/** 资料库里的几份：文件、图、文本、仅管理员的一档各来一个。 */
 export const SPACE_MATERIALS: SpaceMaterial[] = [
+  {
+    id: 504,
+    name: '实验三要求.md',
+    type: 'file',
+    visibility: 'members',
+    size: 1_800,
+    mime: 'text/markdown',
+    uploaderId: 2,
+    uploaderName: '王助教',
+    createdAt: NOW - 3 * 60 * 60 * 1000,
+    downloadCount: 4,
+    usedByCount: 1,
+  },
   {
     id: 501,
     name: '实验指导书.pdf',
@@ -145,6 +152,7 @@ export const SPACE_MATERIALS: SpaceMaterial[] = [
     size: 2_400_000,
     mime: 'application/pdf',
     uploaderId: 1,
+    uploaderName: '陈老师',
     createdAt: NOW - 9 * DAY,
     downloadCount: 18,
     usedByCount: 3,
@@ -157,6 +165,7 @@ export const SPACE_MATERIALS: SpaceMaterial[] = [
     size: 512_000,
     mime: 'image/png',
     uploaderId: 1,
+    uploaderName: '陈老师',
     createdAt: NOW - 6 * DAY,
     downloadCount: 7,
     usedByCount: 0,
@@ -169,11 +178,22 @@ export const SPACE_MATERIALS: SpaceMaterial[] = [
     size: 1_100_000,
     mime: 'application/pdf',
     uploaderId: 1,
+    uploaderName: '陈老师',
     createdAt: NOW - 2 * DAY,
     downloadCount: 2,
     usedByCount: undefined,
   },
 ]
+
+/** 资料库里点开「实验三要求.md」时预览读到的内容。 */
+export const SPACE_MATERIAL_TEXT = `# 实验三：进程调度
+
+用 C 实现时间片轮转调度，时间片可配置。
+
+1. 读入进程列表（到达时间、运行时间）。
+2. 输出每个进程的完成时间和周转时间。
+3. 比较时间片为 2 和 8 时的平均周转时间，写在报告里。
+`
 
 // ---- 题目与报名（说明 / 数据 / 领取者）-------------------------------------
 

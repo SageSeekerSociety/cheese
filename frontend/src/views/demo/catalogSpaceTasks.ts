@@ -21,6 +21,7 @@ import {
   PANEL_SPLIT,
   PUBLISH_DRAFTS,
   SPACE_CATEGORY,
+  SPACE_MATERIAL_TEXT,
   SPACE_MATERIALS,
   SPACE_SETTINGS_GROUPS,
   SPACE_TASK_BOARD,
@@ -37,13 +38,13 @@ import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import { t } from '@/i18n'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
+import SpaceLibraryView from '@/views/spaces/detail/library/SpaceLibraryView.vue'
 import ManageDeniedView from '@/views/spaces/detail/ManageDeniedView.vue'
 import MyDraftsView from '@/views/spaces/detail/MyDraftsView.vue'
 import PublishTaskView from '@/views/spaces/detail/PublishTaskView.vue'
 import BasicInfoView from '@/views/spaces/detail/settings/BasicInfoView.vue'
 import IndexView from '@/views/spaces/detail/settings/IndexView.vue'
 import SpaceGuidanceView from '@/views/spaces/detail/settings/SpaceGuidanceView.vue'
-import SpaceMaterialsView from '@/views/spaces/detail/settings/SpaceMaterialsView.vue'
 import BriefView from '@/views/tasks/detail/BriefView.vue'
 import InsightsView from '@/views/tasks/detail/InsightsView.vue'
 import RosterView from '@/views/tasks/detail/RosterView.vue'
@@ -457,55 +458,97 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
-    id: 'space-materials-view',
-    title: 'SpaceMaterialsView',
+    id: 'space-library-view',
+    title: 'SpaceLibraryView',
     get about() {
-      return t('catalog.spaceMaterialsView.about')
+      return t('catalog.spaceLibraryView.about')
     },
-    file: 'src/views/spaces/detail/settings/SpaceMaterialsView.vue',
-    component: SpaceMaterialsView,
+    file: 'src/views/spaces/detail/library/SpaceLibraryView.vue',
+    component: SpaceLibraryView,
     needs: UI_T,
-    args: { materials: SPACE_MATERIALS, canManage: true, loading: false, busy: false, uploadOpen: false },
+    args: {
+      materials: SPACE_MATERIALS,
+      canManage: true,
+      loading: false,
+      failed: false,
+      error: null,
+      selected: null,
+      wide: true,
+      busy: false,
+      uploadOpen: false,
+      read: () => async () => new TextEncoder().encode(SPACE_MATERIAL_TEXT).buffer,
+    },
     states: [
       {
         get name() {
-          return t('catalog.spaceMaterialsView.s1.name')
+          return t('catalog.spaceLibraryView.s1.name')
         },
         get note() {
-          return t('catalog.spaceMaterialsView.s1.note')
+          return t('catalog.spaceLibraryView.s1.note')
         },
         props: {},
         expect: '实验指导书.pdf',
       },
       {
         get name() {
-          return t('catalog.spaceMaterialsView.s2.name')
+          return t('catalog.spaceLibraryView.s2.name')
         },
         get note() {
-          return t('catalog.spaceMaterialsView.s2.note')
+          return t('catalog.spaceLibraryView.s2.note')
+        },
+        props: { canManage: false, materials: SPACE_MATERIALS.filter((m) => m.visibility === 'members') },
+        expect: '实验指导书.pdf',
+      },
+      {
+        get name() {
+          return t('catalog.spaceLibraryView.s3.name')
+        },
+        get note() {
+          return t('catalog.spaceLibraryView.s3.note')
+        },
+        props: { selected: SPACE_MATERIALS[0] },
+        expectSelector: '[data-testid="slib-detail"]',
+      },
+      {
+        get name() {
+          return t('catalog.spaceLibraryView.s4.name')
+        },
+        get note() {
+          return t('catalog.spaceLibraryView.s4.note')
         },
         props: { materials: [] },
         expect: '暂无资料',
       },
       {
         get name() {
-          return t('catalog.spaceMaterialsView.s3.name')
+          return t('catalog.spaceLibraryView.s5.name')
         },
         get note() {
-          return t('catalog.spaceMaterialsView.s3.note')
+          return t('catalog.spaceLibraryView.s5.note')
         },
-        props: { loading: true },
+        props: { materials: [], loading: true },
         expectSelector: '[role="progressbar"]',
       },
       {
         get name() {
-          return t('catalog.spaceMaterialsView.s4.name')
+          return t('catalog.spaceLibraryView.s6.name')
         },
         get note() {
-          return t('catalog.spaceMaterialsView.s4.note')
+          return t('catalog.spaceLibraryView.s6.note')
+        },
+        props: { selected: SPACE_MATERIALS[0], wide: false },
+        expectSelector: '[data-testid="slib-detail"]',
+      },
+      {
+        get name() {
+          return t('catalog.spaceLibraryView.s7.name')
+        },
+        get note() {
+          return t('catalog.spaceLibraryView.s7.note')
         },
         props: { uploadOpen: true },
-        expect: '上传一份资料',
+        // The dialog teleports out of the frame's root; the list behind it is what mounts here.
+        expect: '实验指导书.pdf',
       },
     ],
   },

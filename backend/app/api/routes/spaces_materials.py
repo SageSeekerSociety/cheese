@@ -9,7 +9,8 @@
 - ``POST /spaces/{spaceId}/materials`` 传一份上去（multipart），同时定档。
 - ``PATCH /spaces/{spaceId}/materials/{materialId}`` 改档。
 - ``DELETE /spaces/{spaceId}/materials/{materialId}`` 从板上撤下来（软删关联行）。
-- ``GET /spaces/{spaceId}/materials/{materialId}/download`` 取字节。
+- ``GET /spaces/{spaceId}/materials/{materialId}/download`` 取字节。资料库页面上
+  点开预览也走这一条，带 ``preview=true``：看一眼不算一次下载。
 
 三条判据全在 ``app.domain.space.material_service`` 里，这一层只搬数据、拼响应。
 **响应里从不出现素材的 ``url``** —— 那是 ``/uploads/...`` 下一条公开可猜的路径，
@@ -27,7 +28,17 @@
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Path, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Path,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +54,7 @@ from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.space.material_service import SpaceMaterialService
 from app.domain.task.teaching import count_material_references
+from app.domain.user.services import user_service
 
 router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
@@ -70,6 +82,13 @@ async def list_space_materials(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     data = await service.list_for_space(space_id=space_id, user_id=auth_user.user_id)
+    # 每一份是谁传的：资料库页面每行写上传人。昵称在用户那一域，这一层拼上去。
+    profiles = await user_service(db).get_users_by_ids(
+        sorted({item["uploaderId"] for item in data["materials"] if item["uploaderId"]})
+    )
+    for item in data["materials"]:
+        profile = profiles.get(item["uploaderId"])
+        item["uploaderName"] = profile.nickname if profile else None
     if data["canManage"]:
         # 「还有几处配置列着它」只发给能删的人：这是删除之前的判断依据（撤了就
         # 留下几处指着空处），成员那一侧既看不见管理入口，也不该看见别人的配置
@@ -158,11 +177,15 @@ async def delete_space_material(
 async def download_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     material_id: Annotated[int, Path(ge=0, alias="materialId")],
+    preview: Annotated[bool, Query()] = False,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceMaterialService = Depends(get_space_material_service),
 ) -> Response:
     content, filename, content_type = await service.download(
-        space_id=space_id, user_id=auth_user.user_id, material_id=material_id
+        space_id=space_id,
+        user_id=auth_user.user_id,
+        material_id=material_id,
+        counted=not preview,
     )
     # ``filename*=UTF-8''…`` 而不是裸引号：中文文件名直接写进 header 会让
     # Starlette 按 latin-1 编码时报错，名字里的引号还会把 header 语法提前闭合。

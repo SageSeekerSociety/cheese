@@ -148,10 +148,10 @@ export default {
     // 这四条都挂着 `spaceManageGuard`（见文件头）：非管理员直接被领到下面那条
     // `SpaceManageDenied`，不再靠页面自己拉到 403 才报错。
     {
-      // 空间资料库：成员看「所有成员」那一档，管理员在这里也能传、改档、撤下（和设置里那一栏同一页）。
+      // 空间资料库：成员看「所有成员」那一档，管理员在这里传、改可见范围、移除。
       path: 'library',
       name: 'SpacesLibrary',
-      component: () => import('@/views/spaces/detail/settings/SpaceMaterials.vue'),
+      component: () => import('@/views/spaces/detail/library/SpaceLibrary.vue'),
       meta: { titleKey: 'spaces.materials.title' },
     },
     {
@@ -268,9 +268,10 @@ export default {
           component: () => import('@/views/spaces/detail/settings/SpaceGuidance.vue'),
         },
         {
+          // 资料库原来是设置里的一栏，现在是侧栏的一页；旧链接接着能打开。
           path: 'materials',
           name: 'SpacesDetailSettingsMaterials',
-          component: () => import('@/views/spaces/detail/settings/SpaceMaterials.vue'),
+          redirect: (to) => ({ name: 'SpacesLibrary', params: to.params }),
         },
         {
           // 模板的新建和编辑是「题目模板」下一级的整页表单，画在同一层里。
