@@ -45,6 +45,9 @@ export interface WaitingWork {
   threadId?: string | null
   /** 第二行：等的是什么（提问的原话、改动的主题、停住的原因、拍板的说明）；没有就空。 */
   detail?: string
+  /** 等你审阅的那一行才有：这件任务递的第几版、什么时候递上来的（ISO）。 */
+  cardVersion?: number | null
+  cardSince?: string | null
   /** 来自通知的才有：哪一条、它的标题（要拍板的问题、改了什么），决策请求可选的答案。 */
   alertId?: number | null
   headline?: string

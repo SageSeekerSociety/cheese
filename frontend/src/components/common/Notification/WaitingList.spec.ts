@@ -80,3 +80,16 @@ it('a stuck task whose teammate said what it needs shows that, not the generic l
   expect(view.getByText('没有预发环境的测试账号')).toBeTruthy()
   expect(view.queryByText('芝士卡住了，打开看看它需要什么')).toBeNull()
 })
+
+// 等你审阅的那一行，改动主题后面说这是第几版：只看主题分不出是第一次交，还是退回后又交的一版。
+it('a card waiting on your review says which version it is', async () => {
+  const view = await mount({
+    ...ownerItem('awaiting_review'),
+    reason: 'reviewer',
+    detail: '登录表单加「记住我」',
+    cardVersion: 2,
+    cardSince: new Date().toISOString(),
+  })
+  expect(view.getByText('登录表单加「记住我」')).toBeTruthy()
+  expect(view.container.textContent).toContain('第 2 版')
+})

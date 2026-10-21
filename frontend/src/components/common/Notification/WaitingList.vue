@@ -51,7 +51,10 @@
                 <span class="waiting__ask" :class="`waiting__ask--${askOf(item).tone}`">{{ askOf(item).text }}</span>
                 <span :data-user-content="itemTitleWritten(item) || undefined">{{ itemTitle(item) }}</span>
               </template>
-              <span v-if="item.detail" class="waiting__detail t-body" data-user-content>{{ item.detail }}</span>
+              <span v-if="item.detail || reviewedOf(item)" class="waiting__detail t-body"
+                ><span v-if="item.detail" data-user-content>{{ item.detail }}</span
+                ><template v-if="item.detail && reviewedOf(item)"> · </template>{{ reviewedOf(item) }}</span
+              >
               <span
                 v-else-if="item.phrase === 'blocked'"
                 class="waiting__detail t-body"
@@ -272,6 +275,17 @@ function askOf(item: WaitingWork): { text: string; tone: 'warn' | 'danger' } {
   if (item.phrase === 'checks_failed') return { text: t('home.inbox.reason.checksFailed'), tone: 'danger' }
   if (item.phrase === 'blocked') return { text: t('home.inbox.reason.blocked'), tone: 'warn' }
   return { text: t('home.inbox.reason.bounced'), tone: 'warn' }
+}
+
+/** 等你审阅的那一行，在改动主题后面说第几版、什么时候提交的；别的行没有这一段。 */
+function reviewedOf(item: WaitingWork): string {
+  if (item.reason !== 'reviewer') return ''
+  return [
+    item.cardVersion ? t('work.taskState.version', { n: item.cardVersion }) : '',
+    item.cardSince ? t('work.taskState.submitted', { time: relTime(item.cardSince) }) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 /** 停在一件任务的某一格上的那几条（审阅、回答、负责人要动手的），行首画那一格的状态

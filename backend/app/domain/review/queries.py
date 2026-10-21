@@ -26,7 +26,7 @@ session。这里交出去的 `RailCard` 是一份冻结的值：没有 session�
 
 import uuid
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -75,6 +75,8 @@ class RailCard:
     deliverable_name: str | None = None
     #: 什么时候递上来的：「等审」那一行写「从几点起等」。
     created_at: datetime | None = None
+    #: 这条活递过的第几张卡，从 1 数（「第 N 版」）；只有 `listed_cards` 数它。
+    version: int | None = None
 
 
 def _rail_card(card: AcceptCard | Row[Any]) -> RailCard:
@@ -125,13 +127,16 @@ async def listed_cards(
     )
     by_room: dict[uuid.UUID, RailCard] = {}
     by_task: dict[uuid.UUID, RailCard] = {}
-    # Oldest first, so the last write per key is the newest card there.
+    filed: dict[uuid.UUID, int] = {}
+    # Oldest first, so the last write per key is the newest card there, and
+    # counting as they come gives the newest card its 「第 N 版」.
     for row in rows:
         card = _rail_card(row)
         if row.task_id is None:
             by_room[row.topic_id] = card
         else:
-            by_task[row.task_id] = card
+            filed[row.task_id] = filed.get(row.task_id, 0) + 1
+            by_task[row.task_id] = replace(card, version=filed[row.task_id])
     return by_room, by_task
 
 

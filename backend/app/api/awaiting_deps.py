@@ -43,7 +43,7 @@ from app.domain.notification.services import (
     asks_for_decision,
 )
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review.queries import listed_cards
+from app.domain.review.queries import RailCard, listed_cards
 from app.domain.room_task import awaiting, presentation
 from app.domain.room_task.presentation import hand_of
 from app.domain.room_task.repositories import ListedTask, TaskRepository
@@ -61,6 +61,13 @@ PHRASE_CHANGED = "change_alert"
 
 #: 卡停住时，卡上那句原因就是这一行要说的「等的是什么」。
 _CARD_SAYS_WHY = frozenset({"checks_failed", "bounced"})
+
+
+def _reviewed(reason: str, card: RailCard | None) -> dict:
+    """等你审阅的那一行还说第几版、什么时候递上来的（`card_version` / `card_since`）。"""
+    if reason != REASON_REVIEWER or card is None:
+        return {}
+    return {"card_version": card.version, "card_since": card.created_at}
 
 
 def _one_line(text: str, limit: int = 140) -> str:
@@ -276,6 +283,7 @@ async def waiting_items(
                 at=task.last_said_at or task.updated_at,
                 block_id=questions[task.id][1] if reason == "asked" else None,
                 detail=_one_line(detail),
+                **_reviewed(reason, task_cards.get(task.id)),
             )
         )
 
