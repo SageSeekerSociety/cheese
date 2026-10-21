@@ -2707,12 +2707,22 @@ def test_an_external_merger_with_no_platform_account_keeps_the_github_login(
     client, app_world
 ):
     fake = app_world["fake"]
-    _pid, _tid, cid, number, _head = _ready_card(client, app_world)
+    pid, tid, cid, number, _head = _ready_card(client, app_world)
     fake.merge_externally(number, merged_by=("999", "someone-else"))
 
     _poll(client)
 
     assert _merge_actor(client, cid) == "someone-else"
+    progress = client.get(
+        f"/projects/{pid}/progress", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    accepted = [
+        item
+        for item in progress
+        if item["kind"] == "accepted"
+        and item["taskId"] == str(delivery_task_id(client, tid))
+    ]
+    assert [item["by"] for item in accepted] == ["someone-else"]
 
 
 def test_a_merge_by_the_app_records_no_merge_actor(client, app_world):
