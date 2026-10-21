@@ -617,6 +617,7 @@ async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
         )
         taken, taken_input = written["taken"], written["taken_input"]
         block, prompt = written["block"], written["prompt"]
+        old = hub.opened[0]
         hub.old_ping = {
             **OLD_PING,
             "worker_epoch": 7,
@@ -637,6 +638,9 @@ async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
         async with asyncio.timeout(HANG_S):
             while not (rows := await _resumes(client, topic)):
                 await asyncio.sleep(0.05)
+        # The resume is written as the failed turn is closed, before what that
+        # turn read is settled; the old screen closes once all of it is.
+        await _until(lambda: old.sid in hub.closed)
         await service.stop_listening(0)
         assert [row.reason for row in rows] == ["runner_replaced"]
         assert hub.interrupted == 0
