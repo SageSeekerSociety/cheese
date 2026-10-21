@@ -20,8 +20,8 @@
 #                           compose file's own ./logs) is only right when this
 #                           checkout is where the backend already reads from.
 #   CHEESE_GATEWAY_BASE     e.g. http://172.17.0.1:4000 — where the API-key
-#                           pool (LiteLLM) listens. A project whose supply
-#                           decision says `gateway` is routed here instead of
+#                           pool (LiteLLM) listens. A request whose admission
+#                           supply says `gateway` is routed here instead of
 #                           to Anthropic. Empty = no API-key pool on
 #                           this box, and such a project is refused.
 #   CHEESE_TOKEN_CAP        rolling-window backstop, 0 = off
