@@ -80,13 +80,15 @@ covers:
 |---|---|
 | `conflict` | agent（芝士解冲突） |
 | `required_check_failed` / `check_failed` | agent（芝士修） |
-| `required_check_missing` / `ci_running` | ci（等，超宽限期才转人） |
+| `required_check_missing` / `ci_running` | `blocked` 时 ci（等，超宽限期才转人）；`unstable` 时人先看，见下 |
 | `behind_base` | platform（平台 update-branch） |
 | `draft` | agent（活还没做完） |
 | `github_verdict` | 看是什么词；透传模式下就是平台的原话 |
 | `no_obstacle` | human（可以合了） |
 | `no_signal` | platform（下一轮自然收敛） |
 | `dependency` | 依赖的任务还没落地 |
+
+`unstable` 是「可采纳」那一档：必跑名单整份放行过，采纳按钮是亮的，所以它的下一步是人。还有非必跑检查在跑不改变这一点——写成 `ci` 会让人守着一格他本来就能点的卡，而且那些检查可能永远不汇报（2026-10-21 的 #4562：job 每一步都绿了、run 也结束了，GitHub 却一直报 `in_progress`）。有红检查时仍先交给 agent（不在必跑名单的红也算，见上表第一行）。
 
 必跑名单的路径域语义：带路径的条目只对碰了那些路径的改动生效；拿不到 diff（`changed_paths=None`）时**保守处理**——照样算必需，并把回退如实写进 reason。glob 是 GitHub Actions `paths:` 那套的子集（`**` 跨目录、`*` 不跨目录），`fnmatch` 不能用：它的 `*` 会跨 `/`，等于把阀关掉。未绑托管平台的项目走 `local_merge_state`：唯一的信号是「与基线是否冲突」。
 
