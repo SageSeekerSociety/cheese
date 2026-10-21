@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 # reads them from here, not from `block.models` / `event_author`, so it does
 # not depend on the table definitions directly.
 from app.domain.block.models import (
+    Block,
+)
+from app.domain.block.models import (
     BlockKind as BlockKind,
 )
 from app.domain.event_author import (
@@ -56,3 +59,29 @@ class BlockOut(BaseModel):
     # endpoints fill it from one batch query (see reactions_for_blocks).
     reactions: list[ReactionOut] = []
     created_at: datetime
+
+
+#: How much of a quoted message travels with the reply when its parent is not in
+#: the page. The quote bar itself shows one short line (`replySnippet`); this cap
+#: keeps a page of replies from carrying whole reports, while leaving enough for
+#: the reader to recognise the line.
+REPLY_PREVIEW_CHARS = 200
+
+
+def reply_preview(parent: Block) -> dict:
+    """The one-line stand-in for a message quoted by one on this page.
+
+    The reader's timeline may not hold the parent — it can be on an older page —
+    so without this the reply cue would silently disappear. Only what the cue
+    draws travels: who said it, what kind it is, and the first
+    ``REPLY_PREVIEW_CHARS`` characters. The parent itself is not added to the
+    page or kept by the reader.
+    """
+    return {
+        "id": str(parent.id),
+        "kind": parent.kind.value,
+        "author_type": parent.author_type.value,
+        "author": parent.author,
+        "content": parent.content[:REPLY_PREVIEW_CHARS],
+        "mime_type": parent.mime_type,
+    }

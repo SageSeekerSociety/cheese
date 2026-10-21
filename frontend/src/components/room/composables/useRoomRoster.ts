@@ -195,7 +195,7 @@ export function useRoomRoster(options: {
   function agentDisplayName(handle: string): string {
     return agentNameOf(handle) || t('work.room.defaultAgentName')
   }
-  function displayName(m: Block): string {
+  function displayName(m: Pick<Block, 'author_type' | 'author'>): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)
     const name = memberByHandle.value.get(m.author)?.name
     if (name) return name
