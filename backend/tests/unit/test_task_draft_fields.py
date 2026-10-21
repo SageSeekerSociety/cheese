@@ -109,7 +109,7 @@ def test_a_draft_says_its_new_fields_in_芝士s_words():
     assert "team_locking: 报名通过后锁定" in view
     assert "mentors: 王立（wangli）" in view
     assert "access: 本校邮箱" in view
-    assert "课题说明.pdf（文件 id 12）" in view
+    assert "课题说明.pdf（files/12）" in view
     assert "可以当导师的人：王立（wangli）、陈浩（chenhao）" in view
 
 

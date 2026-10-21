@@ -142,13 +142,14 @@ describe('侧栏那只慢钟', () => {
     expect(rowFor(container, 'b').querySelector('.row-light')).toBeNull()
   })
 
-  it('红灯那一句说的是谁在等、等了多久', async () => {
+  it('唯一红灯仍保留成员等待时长的说明', async () => {
     vi.useFakeTimers()
     const { container } = mount({ topics: waitingTopic(10) })
     await nextTick()
     const dot = rowFor(container, 'a').querySelector('.row-light--red') as HTMLElement
     expect(dot.title).toContain('分钟')
-    expect(dot.title).not.toBe('')
+    expect(dot.title).toContain('等')
+    expect(dot.getAttribute('aria-label')).toBe(dot.title)
   })
 
   it('卸载之后那只钟就停了', async () => {

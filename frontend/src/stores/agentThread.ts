@@ -11,7 +11,7 @@
 // 原因，`done` 收尾。回答在服务端答到底，跟这条连接无关：连接断了就从断的地方接着读。
 import { computed, ref } from 'vue'
 
-import { type AgentChange, AgentChangesApi, request } from '@/api'
+import { type AgentChange, AgentChangesApi, type AssistantCall, request } from '@/api'
 import { followEventStream, getEventStream, type OnEvent, postEventStream, StreamRefused } from '@/api/eventStream'
 import { t } from '@/i18n'
 import { isCreditRefusal } from '@/lib/creditUsage'
@@ -52,6 +52,10 @@ interface StoredParts {
  *  （`id` 是它的编号）；更早的回答里的写入没有记下，只给看。 */
 export interface AssistantEdit {
   id: number
+  /** `draft` 是写题目草稿；`settings`、`notify` 是改这个人自己的通知设置、频道提醒
+   *  （`title` 是卡头，`changed` 每一项带着它的名字 `label`）。 */
+  kind: string
+  title: string
   undoable: boolean
   draft: number
   taskId: number | null
@@ -70,7 +74,7 @@ export interface AssistantEdit {
  *  开出的任务），或人说不用了（dismissed）。 */
 export interface AssistantProposal {
   id: number
-  kind: 'message' | 'task'
+  kind: 'message' | 'task' | 'act'
   state: 'pending' | 'sent' | 'dismissed'
   request: string
   project: string
@@ -81,7 +85,11 @@ export interface AssistantProposal {
   channelName?: string
   title?: string
   brief?: string
-  result?: { topic?: string; message?: string; task?: string }
+  /** `act`：要做的事（把关读到的那句话）、为什么先问人、确认后的调用。 */
+  summary?: string
+  reason?: string
+  calls?: AssistantCall[]
+  result?: { topic?: string; message?: string; task?: string; done?: string }
 }
 
 /** 芝士发布了一份草稿（或把修改保存到了题目上）。 */
@@ -331,6 +339,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
     const kept = typeof payload.id === 'number'
     return {
       id: kept ? (payload.id as number) : -++editSeq,
+      kind: typeof payload.kind === 'string' ? payload.kind : 'draft',
+      title: typeof payload.title === 'string' ? payload.title : '',
       undoable: kept,
       draft: Number(payload.draft),
       taskId: typeof payload.taskId === 'number' ? payload.taskId : null,

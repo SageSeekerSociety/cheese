@@ -36,6 +36,7 @@ from app.domain.agent.service import (
     AgentResult,
     AgentStepFailed,
     AgentToolUse,
+    AgentUsage,
 )
 from app.domain.agent.session_host.contract import (
     Access,
@@ -105,6 +106,9 @@ class Answer:
 
     text: str
     error: str | None = None
+    #: What the answer's model calls took, when the session reported it: an
+    #: account of the answer, not part of what it is.
+    usage: AgentUsage | None = field(default=None, compare=False)
 
 
 async def ask(
@@ -368,7 +372,7 @@ async def follow(
                     (event.text or "the model call failed") if event.is_error else None
                 )
                 await _settle(host, ref, deadline)
-                yield await ended(Answer(progress.whole(), error))
+                yield await ended(Answer(progress.whole(), error, usage=event.usage))
                 return
             else:
                 continue
