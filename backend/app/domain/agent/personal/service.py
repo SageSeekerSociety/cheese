@@ -305,7 +305,7 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             )
         elif event == "tool_failed" and data.get("call") in by_call:
             by_call[data["call"]]["failed"] = str(data.get("text") or "")
-        elif event == "edit":
+        elif event == "change":
             edits.append(data)
         elif event == "published":
             published.append(data)

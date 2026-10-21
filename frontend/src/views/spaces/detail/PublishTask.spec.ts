@@ -42,13 +42,16 @@ const attachmentLimits = vi.fn()
 const toastError = vi.fn()
 
 // 芝士：开对话走 `request`，问一句走事件流。事件流按 `script` 一条条念出来，照的是
-// 服务端真推的那几种（`tool`、`tool_args`、`edit`、`delta`、`done`）。
+// 服务端真推的那几种（`tool`、`tool_args`、`change`、`delta`、`done`）。撤销芝士的改动
+// 走 `/assistant/changes`。
 const apiRequest = vi.fn()
+const undoChange = vi.fn()
 let script: [string, Record<string, unknown>][] = []
 
 vi.mock('@/api', async (original) => ({
   ...(await original<Record<string, unknown>>()),
   request: (...a: unknown[]) => apiRequest(...a),
+  AgentChangesApi: { undo: (...a: unknown[]) => undoChange(...a), redo: vi.fn() },
 }))
 
 vi.mock('@/api/eventStream', async (original) => ({
@@ -492,15 +495,18 @@ describe('发题页：边写边存', () => {
 })
 
 describe('发题页：和芝士一起写', () => {
-  it('芝士写的几格填进表单，改动卡上能撤销；撤销的那一格当作人改的存下', async () => {
+  it('芝士写的几格填进表单，改动卡上能撤销；撤销由服务端以人的名义写回，表单照着填', async () => {
     await boardAs(MEMBER)
     script = [
       ['tool', { name: 'cheese_task_write', call: 'c1' }],
       ['tool_args', { call: 'c1', text: '{"draft":61,"name":"Lab 3 缓', at: 0 }],
       ['tool_args', { call: 'c1', text: '存模拟器","difficulty":"中级"}', at: 26 }],
       [
-        'edit',
+        'change',
         {
+          id: 9,
+          kind: 'draft',
+          undone: [],
           draft: 61,
           taskId: null,
           created: false,
@@ -529,10 +535,18 @@ describe('发题页：和芝士一起写', () => {
     // 芝士写进去的不是人改的：不为它再存一遍。
     expect(saveDraft).not.toHaveBeenCalled()
 
+    undoChange.mockResolvedValue({
+      changes: [{ id: 9, kind: 'draft', undone: ['name'] }],
+      draft: 61,
+      version: 3,
+      fields: { name: '' },
+    })
     await fireEvent.click(view.getAllByRole('button', { name: '撤销名称' })[0])
     await waitFor(() => expect(nameInput(view).value).toBe(''))
-    await waitFor(() => expect(saveDraft).toHaveBeenCalled(), { timeout: 3000 })
-    expect(saveDraft.mock.calls[0]).toEqual([61, { name: '' }])
+    expect(undoChange).toHaveBeenCalledWith(9, 'name')
+    // 服务端已经存下了；表单填回去不算人又改了一次。
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    expect(saveDraft).not.toHaveBeenCalled()
   })
 })
 

@@ -5,6 +5,7 @@
     <div
       v-if="outline"
       class="al__outline"
+      :class="{ 'al__outline--glide': gliding }"
       :style="{ left: `${outline.x}px`, top: `${outline.y}px`, width: `${outline.w}px`, height: `${outline.h}px` }"
     />
 
@@ -23,16 +24,7 @@
       :style="{ left: `${mark.x}px`, top: `${mark.y}px` }"
       :data-testid="`agent-mark-${mark.key}`"
     >
-      <CheeseAvatar :size="14" aria-hidden="true" />
-      <span>{{ t('tasks.agentLayer.filled') }}</span>
-      <button
-        type="button"
-        class="al__undo"
-        :aria-label="t('tasks.assistant.changes.undoOne', { field: mark.label })"
-        @click="emit('undo', mark.key)"
-      >
-        {{ t('tasks.agentLayer.undo') }}
-      </button>
+      <AgentMark :label="mark.label" @undo="emit('undo', mark.key)" />
     </div>
 
     <div
@@ -58,9 +50,13 @@
 // 颜色），再换上新的。
 //
 // 位置都由外面量好交进来（相对这一层的左上角）；这里只画、只往上报撤销。
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import AgentMark from '@/components/agent/AgentMark.vue'
+
+/** 和 `--dur-base` 一样长。 */
+const GLIDE_MS = 220
 
 export interface AgentPointer {
   x: number
@@ -75,9 +71,11 @@ export interface AgentBox {
   y: number
   w: number
   h: number
+  /** 描的是哪一格：换了格子时描边滑过去，同一格里长高、挪动时立刻跟上。 */
+  key?: string
 }
 
-export interface AgentMark {
+export interface AgentMarkSpot {
   /** 芝士的字段名。 */
   key: string
   label: string
@@ -85,11 +83,11 @@ export interface AgentMark {
   y: number
 }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     pointer: AgentPointer | null
     outline: AgentBox | null
-    marks: AgentMark[]
+    marks: AgentMarkSpot[]
     /** 芝士选中、要换掉的那段字（每行一块）。 */
     selection?: AgentBox[]
     /** 光标旁边写的名字。 */
@@ -101,6 +99,22 @@ withDefaults(
 const emit = defineEmits<{ undo: [key: string] }>()
 
 const { t } = useI18n()
+
+/** 描边正从一格滑到另一格。只在这时带过渡：同一格里每一帧都在重量，带过渡就会慢半拍。 */
+const gliding = ref(false)
+let glideTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => props.outline?.key,
+  (now, was) => {
+    if (!now || !was || now === was) return
+    gliding.value = true
+    if (glideTimer) clearTimeout(glideTimer)
+    glideTimer = setTimeout(() => (gliding.value = false), GLIDE_MS)
+  }
+)
+onBeforeUnmount(() => {
+  if (glideTimer) clearTimeout(glideTimer)
+})
 </script>
 
 <style scoped>
@@ -116,6 +130,9 @@ const { t } = useI18n()
   border: 2px solid var(--accent);
   border-radius: var(--radius-md);
   box-shadow: 0 0 0 4px var(--accent-wash);
+}
+
+.al__outline--glide {
   transition:
     left var(--dur-base) var(--ease-standard),
     top var(--dur-base) var(--ease-standard),
@@ -131,26 +148,9 @@ const { t } = useI18n()
 
 .al__mark {
   position: absolute;
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
   padding: 0 2px 0 4px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  white-space: nowrap;
   transform: translateX(-100%);
   pointer-events: auto;
-}
-
-.al__undo {
-  padding: 0 2px;
-  color: var(--accent-ink);
-  border-radius: var(--radius-sm);
-}
-
-.al__undo:hover {
-  text-decoration: underline;
 }
 
 .al__pointer {
@@ -162,9 +162,10 @@ const { t } = useI18n()
   transition: transform var(--dur-slow) var(--ease-standard);
 }
 
-/* While typing the caret follows the words, so it moves at the pace of the writing. */
+/* While typing the caret is measured every frame and sits at the end of the words, as a text
+   caret does; easing it would leave it behind the text it follows. */
 .al__pointer--caret {
-  transition-duration: var(--dur-quick);
+  transition: none;
 }
 
 .al__arrow path {

@@ -4,7 +4,7 @@
   <button
     type="button"
     class="agent-entry"
-    :class="{ 'agent-entry--compact': compact }"
+    :class="{ 'agent-entry--compact tap-target': compact }"
     :aria-label="name"
     :title="name"
     v-bind="$attrs"
@@ -52,7 +52,11 @@ withDefaults(
 }
 
 .agent-entry--compact {
+  /* Only the face shows. The box is 44 wide so a neighbour's own tap target cannot cover
+     part of it; `.tap-target` takes the height to 44 as well. */
+  position: relative;
   justify-content: center;
+  min-width: 44px;
   padding: 0;
 }
 

@@ -55,7 +55,7 @@ function service(doc: Y.Doc, { edits = [] as { old: string; new: string }[], ans
     let markdown = exportMarkdown(doc)
     for (const edit of edits) markdown = markdown.replace(edit.old, edit.new)
     if (edits.length) writeMarkdown(doc, markdown)
-    listener.done({ answer, edits, stopped: false })
+    listener.done({ answer, edits, changes: edits.length ? [41] : [], stopped: false })
     void request
   })
 }
@@ -63,7 +63,7 @@ function service(doc: Y.Doc, { edits = [] as { old: string; new: string }[], ans
 function controller(
   editor: Editor,
   ask: (request: DocAgentRequest, listener: DocAgentListener) => Promise<void>,
-  { applyEdits = vi.fn(async () => {}), editable = true, toComment = vi.fn(async () => 'thread-1') } = {}
+  { undoChanges = vi.fn(async () => {}), editable = true, toComment = vi.fn(async () => 'thread-1') } = {}
 ) {
   const onError = vi.fn()
   const stop = vi.fn(async () => {})
@@ -75,14 +75,14 @@ function controller(
       ask: () => ask,
       stop: () => stop,
       editable: () => editable,
-      applyEdits: () => applyEdits,
+      undoChanges: () => undoChanges,
       toComment: () => toComment,
       agentName: () => '芝士',
       onError,
     })
   )!
   cleanups.push(() => scope.stop())
-  return { ctl, onError, applyEdits, stop, toComment }
+  return { ctl, onError, undoChanges, stop, toComment }
 }
 
 const polish: AgentPreset = { id: 'polish', kind: 'edit', label: '', icon: '' }
@@ -105,13 +105,13 @@ describe('在文档里找 AI 队友', () => {
     expect(sel.block.slice(sel.start, sel.end)).toBe('一千万')
   })
 
-  it('改了的几处在正文里标出来；撤销把每一处都换回去，标记也去掉', async () => {
+  it('改了的几处在正文里标出来；撤销交给服务端按记下的改动换回去，标记也去掉', async () => {
     const { doc, editor } = room('数据量到一千万行时开始评估迁移。\n\n周二例会。')
     const edits = [
       { old: '一千万', new: '五百万' },
       { old: '周二', new: '周三' },
     ]
-    const { ctl, applyEdits } = controller(editor, service(doc, { edits }))
+    const { ctl, undoChanges } = controller(editor, service(doc, { edits }))
 
     ctl.open(select(editor, '一千万'))
     ctl.run(polish, '润色')
@@ -120,12 +120,13 @@ describe('在文档里找 AI 队友', () => {
     expect(editMarks(editor.state).review?.edits).toEqual(edits)
 
     await ctl.undo()
-    expect(applyEdits).toHaveBeenCalledWith([
-      { old: '周三', new: '周二' },
-      { old: '五百万', new: '一千万' },
-    ])
+    expect(undoChanges).toHaveBeenCalledWith([41], false)
     expect(ctl.phase.value).toBe('undone')
     expect(editMarks(editor.state).review).toBeNull()
+
+    await ctl.redo()
+    expect(undoChanges).toHaveBeenLastCalledWith([41], true)
+    expect(ctl.phase.value).toBe('done')
   })
 
   it('接着说的是同一个会话，不再拿改过的那一处当选中的字', async () => {
@@ -220,7 +221,7 @@ describe('在文档里找 AI 队友', () => {
     let finish: (() => void) | null = null
     const ask = vi.fn(async (_request: DocAgentRequest, listener: DocAgentListener) => {
       await new Promise<void>((resolve) => (finish = resolve))
-      listener.done({ answer: '晚到的', edits: [], stopped: false })
+      listener.done({ answer: '晚到的', edits: [], changes: [], stopped: false })
     })
     const { ctl } = controller(editor, ask)
 

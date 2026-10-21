@@ -37,7 +37,8 @@
     "kept": "You changed this; left as is",
     "ordinal": "No. {n}",
     "days": "{n} days",
-    "none": "None"
+    "none": "None",
+    "undoFailed": "Couldn't undo"
   },
   "notes": {
     "title": "Needs your check"

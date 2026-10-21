@@ -40,7 +40,11 @@ from app.domain.agent_instance.models import (
     AgentInstance,
     OwnAgent,
 )
-from app.domain.assistant.models import AssistantConversation, AssistantGatewayKey
+from app.domain.assistant.models import (
+    AssistantChange,
+    AssistantConversation,
+    AssistantGatewayKey,
+)
 from app.domain.device.models import DeviceRow
 from app.domain.integration.models import Integration
 from app.domain.local_fs.models import LocalDirectoryGrantRow
@@ -236,6 +240,9 @@ async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
     )
     await session.execute(
         delete(AssistantConversation).where(AssistantConversation.user_id == user_id)
+    )
+    await session.execute(
+        delete(AssistantChange).where(AssistantChange.user_id == user_id)
     )
     await session.execute(
         delete(Notification).where(

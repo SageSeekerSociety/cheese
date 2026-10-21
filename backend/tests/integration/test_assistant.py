@@ -1033,7 +1033,8 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     )
     assert r.status_code == 200, r.text
     events = _events(r.text)
-    edit = next(data for event, data in events if event == "edit")
+    edit = next(data for event, data in events if event == "change")
+    assert edit["kind"] == "draft" and edit["undone"] == []
     assert edit["draft"] == draft
     assert edit["changed"] == {"rank": {"before": 2, "after": 3}}
     assert any(event == "tool_args" for event, _ in events)
@@ -1060,6 +1061,70 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     # draft), and not with the third.
     last = json.dumps(gateway.requests[-1]["messages"], ensure_ascii=False)
     assert last.count("<当前页面>") == 2
+
+
+def test_what_cheese_wrote_into_a_draft_is_undone_by_the_person(client, gateway):
+    """Undoing a field 芝士 wrote puts back what it was before the answer, as
+    the person's own write; the kept answer says it is undone, and it can be
+    put back as 芝士 left it. Only the asker may."""
+    me = _auth(client, "asker")
+    user_id, _, _ = _ledger_user(client, "asker")
+    draft = _draft(client, user_id, _task(client))
+    conversation = client.post("/assistant/conversations", headers=me).json()["data"][
+        "id"
+    ]
+    gateway.script = [
+        ("tool", "cheese_task_write", {"draft": draft, "difficulty": "初级"}),
+        ("tool", "cheese_task_write", {"draft": draft, "difficulty": "高级"}),
+        ("text", "难度改成了高级。"),
+    ]
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "难一点", "page": {"kind": "draft", "id": draft}},
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    told = [data for event, data in _events(r.text) if event == "change"]
+    assert len(told) == 2
+    last = told[-1]["id"]
+
+    assert (
+        client.post(
+            f"/assistant/changes/{last}/undo",
+            json={"part": "difficulty"},
+            headers=_auth(client, "stranger"),
+        ).status_code
+        == 404
+    )
+    r = client.post(
+        f"/assistant/changes/{last}/undo", json={"part": "difficulty"}, headers=me
+    )
+    assert r.status_code == 200, r.text
+    done = r.json()["data"]
+    # Back to before the first of the two writes.
+    assert done["fields"] == {"rank": 2}
+    assert sorted(c["id"] for c in done["changes"]) == sorted(c["id"] for c in told)
+    assert all(c["undone"] == ["difficulty"] for c in done["changes"])
+
+    async def row() -> TaskDraft:
+        async with client.test_factory() as s:
+            return await s.get(TaskDraft, draft)
+
+    undone = asyncio.run(row())
+    assert undone.fields["rank"] == 2 and undone.version == done["version"]
+    assert undone.marks["rank"] == undone.version
+    kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    edits = kept["data"]["messages"][-1]["parts"]["edits"]
+    assert [e["undone"] for e in edits] == [["difficulty"], ["difficulty"]]
+    again = client.post(
+        f"/assistant/changes/{last}/undo", json={"part": "difficulty"}, headers=me
+    )
+    assert again.status_code == 400
+
+    r = client.post(f"/assistant/changes/{last}/redo", json={}, headers=me)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["fields"] == {"rank": 3}
+    assert asyncio.run(row()).fields["rank"] == 3
 
 
 def test_files_handed_over_alone_are_a_question_the_page_explains(client, gateway):

@@ -37,7 +37,8 @@
     "kept": "你改过，未修改",
     "ordinal": "第 {n} 道",
     "days": "{n} 天",
-    "none": "无"
+    "none": "无",
+    "undoFailed": "撤销失败"
   },
   "notes": {
     "title": "待你确认"
