@@ -331,24 +331,29 @@ async function seed(page: Page): Promise<Seed> {
     reviewer_handle: "alice",
     change_subject: "docs: add the release notes",
   });
-  const token = await page.evaluate(() => localStorage.getItem("accessToken"));
-  const uploaded = await page.request.post(
-    `/api/projects/${projectId}/library`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-      multipart: {
-        file: {
-          name: "brief.txt",
-          mimeType: "text/plain",
-          buffer: Buffer.from("The brief.\n"),
-        },
-      },
-    },
+  // The library page's own three steps (frontend/src/lib/libraryApi.ts,
+  // `sendLibraryBytes`): ask for an address, put the bytes there, register
+  // what arrived. The bytes no longer pass through the registration call; a
+  // multipart body there is refused (`#4545`).
+  const brief = Buffer.from("The brief.\n");
+  const slot = (await api(
+    page,
+    "post",
+    `/projects/${projectId}/library/uploads`,
+    { name: "brief.txt", size: brief.length },
+  )) as { url: string; upload: string };
+  const put = await page.request.put(
+    // A path starting with `/` is this backend's own, reached through the
+    // frontend's `/api` proxy, the way the page reaches it.
+    slot.url.startsWith("/") ? `/api${slot.url}` : slot.url,
+    { data: brief },
   );
-  if (!uploaded.ok())
-    throw new Error(
-      `library upload → ${uploaded.status()} ${await uploaded.text()}`,
-    );
+  if (!put.ok())
+    throw new Error(`library bytes → ${put.status()} ${await put.text()}`);
+  await api(page, "post", `/projects/${projectId}/library`, {
+    upload: slot.upload,
+    filename: "brief.txt",
+  });
   const feedback = (await api(page, "post", "/feedback", {
     kind: "bug",
     title: "The board forgets its filter",
