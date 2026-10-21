@@ -9,6 +9,7 @@
     "app": "Desktop app",
     "devices": "Devices and connections"
   },
+  "invites": "Invite friends",
   "notifications": "Notifications",
   "realName": "Real-name information",
   "title": "Settings"

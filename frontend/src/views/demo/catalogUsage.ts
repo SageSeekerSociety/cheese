@@ -312,7 +312,12 @@ export const USAGE_ENTRIES: CatalogEntry[] = [
           rewards: {
             feedback_count: 1,
             feedback_credits: 100,
-            items: [{ kind: 'feedback', credits: 100, created_at: '2026-10-18T00:00:00Z' }],
+            invite_credits: 150,
+            points: 50,
+            items: [
+              { kind: 'invite', credits: 150, points: 50, created_at: '2026-10-19T00:00:00Z' },
+              { kind: 'feedback', credits: 100, points: 0, created_at: '2026-10-18T00:00:00Z' },
+            ],
           },
           usage: PERSON,
           loading: false,
