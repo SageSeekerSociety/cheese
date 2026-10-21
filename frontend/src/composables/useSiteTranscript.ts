@@ -60,6 +60,8 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   // 手上这一窗是给哪个视角读的（null = 全部）。换视角时它和这一栏现在要读的东西就
   // 不是一回事了，重读时不能再和它合。
   let loadedFor: string | null = null
+  // 手上这一窗是哪段对话的。换了对话又没读回来时，屏上那份是上一个对话的，失败要报出来。
+  let loadedTopic: string | null = null
 
   async function loadOlder() {
     const tid = hooks.topicId()
@@ -138,6 +140,13 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     }
   }
 
+  // 一次只发一个「读最近一页」的请求。3 秒一次的刷新、每来一行 socket、一轮结束的
+  // 重读，谁也拦不住谁：后端慢一点的时候它们会叠起来——每个都等别人让出连接和数据库
+  // 连接，20 秒的读超时一到就翻成「请求等待超时」，而且先发出去的那个晚回来还会把
+  // 新读的一页盖掉。请求在飞的时候只记下一个「还要再读一次」，回来之后再读。
+  let loadingPage = false
+  let reloadQueued = false
+
   // 这一栏已经有东西时，再读一遍是安静的：不换骨架屏、不跳回底部——换成骨架屏再
   // 换回来，就是整栏闪一下。
   //
@@ -145,20 +154,26 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   // 时间线：那一页到手之前手上那份还是上一位的（照旧渲染，不闪骨架屏），到手之后
   // 它整个换掉——不是往上摞。一个人可能有上千步，把上一位翻出来的历史带过去，就
   // 等于又「切一次加载全部」。
-  async function load() {
+  //
+  // 后台刷新失败不动屏上的东西：那几行还是好的，只是旧了三秒。把它们换成一条
+  // 「请求等待超时」的红条，等于一次读慢了就让人看不成现场；下一次刷新会再试。
+  // 打开（屏上还没有东西）、换视角、换对话这三种失败才报错——那几页本来就不在屏上。
+  async function loadPage() {
     const tid = hooks.topicId()
     if (!tid) return
     const author = hooks.viewing()
     const switched = author !== loadedFor
+    const switchedTopic = tid !== loadedTopic
     const quiet = transcript.value.length > 0
-    if (!quiet) loading.value = true
-    errorMsg.value = null
+    if (!quiet && errorMsg.value === null) loading.value = true
     try {
       const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE, author })
       // 读的人可能已经又换了一个视角：这一页不是他现在要的，丢掉。骨架屏由下面的
       // finally 收掉，不能让它留在半路。
       if (hooks.topicId() !== tid || hooks.viewing() !== author) return
       loadedFor = author
+      loadedTopic = tid
+      errorMsg.value = null
       hooks.noteAgents(tx.data)
       hooks.noteStarts(tx.turn_starts)
       // 跟不跟，读读者自己滚出来的那个状态，而不是此刻量一次：请求在路上的这几百毫秒
@@ -185,9 +200,27 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
         }
       }
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
+      if (!quiet || switched || switchedTopic) {
+        errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
+      }
     } finally {
       loading.value = false
+    }
+  }
+
+  async function load(): Promise<void> {
+    if (loadingPage) {
+      reloadQueued = true
+      return
+    }
+    loadingPage = true
+    try {
+      do {
+        reloadQueued = false
+        await loadPage()
+      } while (reloadQueued)
+    } finally {
+      loadingPage = false
     }
   }
 

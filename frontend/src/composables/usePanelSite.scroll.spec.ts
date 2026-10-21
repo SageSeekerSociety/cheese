@@ -200,3 +200,58 @@ describe('a reader back at the end', () => {
     scope.stop()
   })
 })
+
+describe('a read that is slow or fails', () => {
+  it('keeps one read in flight and runs one more after it', async () => {
+    api.getTranscript.mockResolvedValue(OPEN)
+    const { scope } = await openAtBottom()
+
+    // The backend is slow: the read has not come back when two more refreshes
+    // and a socket line ask for one.
+    api.getTranscript.mockClear()
+    let answer!: (value: ReturnType<typeof page>) => void
+    api.getTranscript.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve
+        })
+    )
+    vi.advanceTimersByTime(3000)
+    await settle()
+    expect(api.getTranscript).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(3000)
+    vi.advanceTimersByTime(3000)
+    await settle()
+    expect(api.getTranscript).toHaveBeenCalledTimes(1)
+
+    // It comes back: the waiting refreshes collapse into one more read, not three.
+    answer(OPEN)
+    await settle()
+    expect(api.getTranscript).toHaveBeenCalledTimes(2)
+
+    scope.stop()
+  })
+
+  it('keeps the records on screen when a background refresh fails', async () => {
+    api.getTranscript.mockResolvedValue(OPEN)
+    const { site, scope } = await openAtBottom()
+    const rows = site.transcript.value.length
+
+    api.getTranscript.mockRejectedValue(new Error('请求等待超时，请重试'))
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    expect(site.errorMsg.value).toBeNull()
+    expect(site.transcript.value).toHaveLength(rows)
+    scope.stop()
+  })
+
+  it('shows the error when there is nothing on screen yet', async () => {
+    api.getTranscript.mockRejectedValue(new Error('请求等待超时，请重试'))
+    const { site, scope } = await openAtBottom()
+
+    expect(site.errorMsg.value).toBe('请求等待超时，请重试')
+    scope.stop()
+  })
+})
