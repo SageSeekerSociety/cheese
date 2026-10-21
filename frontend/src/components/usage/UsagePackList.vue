@@ -11,9 +11,9 @@ defineProps<{ packs: UsagePack[] }>()
 
 const { t, locale } = useI18n()
 
-/** 条画用掉的比例：用完或透支时是满的，还剩多少看右边的字。 */
+/** 条画剩下的比例，和右边的「剩余」是同一个数；透支时比例为负，画成空。 */
 function fill(pack: UsagePack): string {
-  return `${Math.min(100, Math.max(0, (1 - pack.remaining_ratio) * 100))}%`
+  return `${Math.min(100, Math.max(0, pack.remaining_ratio * 100))}%`
 }
 
 function name(pack: UsagePack): string {
