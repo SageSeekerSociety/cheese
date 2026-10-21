@@ -1361,6 +1361,29 @@ DELEGATED_TOOLS = ToolTable(
             {"project": _text("只看这个项目的（项目短名）；省略看全部")},
         ),
         _tool(
+            "cheese_search",
+            "按关键词搜用户能看到的工作内容：频道、消息、任务、文档段落、周报、资料库文件、"
+            "产物，或一个空间里的题目和他的草稿。不给 where 搜他最近的几个项目；where "
+            "给项目短名只搜那个项目，给 spaces/4 搜那个空间的题目（query 留空列出最近的"
+            "题目）。每条命中写着在哪和读它的编号。每个词都要命中，没找到就换个说法或"
+            "少几个词。平台怎么用的问题用 cheese_help。",
+            {
+                "query": _text("关键词，空格分开"),
+                "where": _text("项目短名，或 spaces/空间 id；省略搜全部项目"),
+            },
+        ),
+        _tool(
+            "cheese_help",
+            "知是的使用文档：给 query 按关键词检索（怎么建项目、验收、设备、额度……），"
+            "返回相关的页、小节、链接和摘录；给 page 读一整页原文（页名如 accept、"
+            "quickstart，或检索结果里的链接）。用户问平台怎么用时先查再答，答案里附上"
+            "查到的链接。",
+            {
+                "query": _text("关键词或问题"),
+                "page": _text("页名或链接，如 accept、/docs/accept#is-merge"),
+            },
+        ),
+        _tool(
             "cheese_read",
             "给编号读一样东西。编号就是它页面地址里 /projects/ 后面那段：项目 "
             "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它的审阅卡 "
@@ -1965,6 +1988,22 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
     if tool == "cheese_read":
         return _read_plan(args)
+    if tool == "cheese_search":
+        where = (args.get("where") or "").strip().strip("/")
+        space = re.fullmatch(r"spaces/(\d+)", where)
+        if space:
+            body = {"space": int(space.group(1)), "query": args.get("query") or ""}
+            return {"method": "POST", "path": "/task-drafts/agent/search", "body": body}
+        if not (args.get("query") or "").strip():
+            raise ValueError("cheese_search 需要 query（只有搜空间里的题目时可以留空）")
+        body = {"query": args["query"], **({"project": where} if where else {})}
+        return {"method": "POST", "path": "/assistant/agent/search", "body": body}
+    if tool == "cheese_help":
+        if args.get("page"):
+            return {"method": "POST", "path": "/docs/agent/read", "body": {"page": args["page"]}}
+        if not args.get("query"):
+            raise ValueError("cheese_help 要 query 或 page 之一")
+        return {"method": "POST", "path": "/docs/agent/search", "body": {"query": args["query"]}}
     if tool == "cheese_my_tasks":
         return {"method": "GET", "path": "/tasks/joined"}
     if tool == "cheese_task_search":
@@ -3813,12 +3852,21 @@ def _say_task_search(args, data, env) -> str:
             if t.get("deadline")
             else ""
         )
-        lines.append(
-            f"- 题目 {t.get('id')}「{t.get('name')}」{state}{due}：{t.get('intro') or ''}"
+        space = re.fullmatch(r"spaces/(\d+)", (args.get("where") or "").strip("/"))
+        name = (
+            f"题目「{t.get('name')}」（spaces/{space.group(1)}/tasks/{t.get('id')}）"
+            if space
+            else f"题目 {t.get('id')}「{t.get('name')}」"
         )
+        lines.append(f"- {name}{state}{due}：{t.get('intro') or ''}")
     for d in data.get("drafts") or []:
         what = f"题目 {d['taskId']} 的未保存修改" if d.get("taskId") else "新题目"
-        lines.append(f"- 草稿 {d.get('id')}「{d.get('name') or '未命名'}」（{what}）")
+        name = (
+            f"草稿「{d.get('name') or '未命名'}」（drafts/{d.get('id')}）"
+            if "where" in args
+            else f"草稿 {d.get('id')}「{d.get('name') or '未命名'}」"
+        )
+        lines.append(f"- {name}（{what}）")
     return "\n".join(lines) or "没有找到。换个关键词，或把 query 留空看最近的题目。"
 
 
@@ -4101,6 +4149,12 @@ _SAY = {
     "cheese_my_tasks": _say_my_tasks,
     "cheese_inbox": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_read": _say_read,
+    "cheese_search": lambda a, d, e: (
+        _say_task_search(a, d, e) if "tasks" in (d or {}) else (d or {}).get("text") or ""
+    ),
+    "cheese_help": lambda a, d, e: (
+        _say_docs_read(a, d, e) if a.get("page") else _say_docs_search(a, d, e)
+    ),
     "cheese_message_draft": lambda a, d, e: (
         f"已起草发到「{(d or {}).get('topicName')}」的消息，等用户在面板里确认发送；"
         "还没有发出去。"

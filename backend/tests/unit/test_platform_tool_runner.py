@@ -904,3 +904,29 @@ def test_a_space_s_materials_are_listed_with_the_refs_that_read_them():
     )
     said = cheese.run_platform_tool("cheese_read", {"ref": "spaces/4"}, host)
     assert "讲义.pdf（spaces/4/materials/9）" in said
+
+
+@pytest.mark.parametrize(
+    ("args", "plan"),
+    [
+        ({"query": "端口"}, ("/assistant/agent/search", {"query": "端口"})),
+        (
+            {"query": "端口", "where": "ml-course"},
+            ("/assistant/agent/search", {"query": "端口", "project": "ml-course"}),
+        ),
+        (
+            {"where": "spaces/4"},
+            ("/task-drafts/agent/search", {"space": 4, "query": ""}),
+        ),
+    ],
+)
+def test_search_looks_in_projects_or_in_a_space(args, plan):
+    got = cheese.request_plan("cheese_search", args, {})
+    assert (got["path"], got["body"]) == plan
+
+
+def test_help_searches_the_manual_or_reads_one_page_of_it():
+    asked = cheese.request_plan("cheese_help", {"query": "验收"}, {})
+    read = cheese.request_plan("cheese_help", {"page": "accept"}, {})
+    assert (asked["path"], asked["body"]) == ("/docs/agent/search", {"query": "验收"})
+    assert (read["path"], read["body"]) == ("/docs/agent/read", {"page": "accept"})

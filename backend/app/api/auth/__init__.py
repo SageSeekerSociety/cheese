@@ -73,6 +73,7 @@ DELEGATED_ROUTES: dict[str, bool] = {
     # thing by its ref, a web page.
     "app.api.routes.assistant_agent.agent_inbox": False,
     "app.api.routes.assistant_agent.agent_read": False,
+    "app.api.routes.project_context.agent_search": False,
     "app.api.routes.fetch.read_url": False,
 }
 

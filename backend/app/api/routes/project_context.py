@@ -18,15 +18,18 @@ from collections.abc import Iterable
 from typing import Annotated
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 from sqlalchemy import ColumnElement, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.errors import NotFoundError, ValidationError
+from app.api.write_access import ROUTE_DECIDES
+from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.adapters import project_team
+from app.domain.assistant import refs
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
@@ -34,7 +37,9 @@ from app.domain.library import listing as library_listing
 from app.domain.living_doc import search as doc_search
 from app.domain.living_doc.schemas import document_row
 from app.domain.membership.roster import roster
-from app.domain.project.models import ProjectArtifact
+from app.domain.project import address
+from app.domain.project.models import Project, ProjectArtifact
+from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
 from app.domain.room_task.place import place_or_404
 from app.domain.search import bm25
@@ -530,3 +535,114 @@ async def search_documents(
         for room, task in [homes[h.document.id]]
     ]
     return ok({"query": q, "library": library_hits, "rooms": room_hits})
+
+
+#: How many of the person's projects a search without a project looks in, the
+#: latest first, and how many hits of each kind it lists per project.
+AGENT_PROJECTS = 8
+AGENT_HITS = 5
+#: What a record's kind is called where 芝士 reads it.
+_RECORD_NAMES = {"message": "消息", "weekly": "周报"}
+
+
+class AgentSearchIn(BaseModel):
+    query: str
+    #: A project's slug; without one, every project the person is in.
+    project: str | None = None
+
+
+async def _agent_hits(
+    db: AsyncSession, project: Project, hits: dict[str, list[dict]], readable
+) -> list[str]:
+    """One project's hits in 芝士's words, each with the ref that reads it."""
+    slug = project.slug
+    lines: list[str] = []
+    numbers: dict[str, int | None] = {}
+
+    async def task_ref(task_id: str) -> str:
+        if task_id not in numbers:
+            found = await address.thing_by_id(
+                db, address.Numbered.task, uuid.UUID(task_id)
+            )
+            numbers[task_id] = found.number if found else None
+        return refs.task(slug, numbers[task_id])
+
+    def room_ref(room_id: str) -> str:
+        return refs.channel(slug, readable[uuid.UUID(room_id)].number)
+
+    for room in hits.get("rooms", []):
+        lines.append(f"- 频道「{room['room_title']}」（{room_ref(room['room_id'])}）")
+    for task in hits.get("tasks", []):
+        state = "进行中" if task["status"] == "open" else "已结束"
+        lines.append(
+            f"- 任务「{task['title']}」（{await task_ref(task['id'])}），{state}："
+            f"{task['snippet']}"
+        )
+    for record in hits.get("records", []):
+        where = (
+            await task_ref(record["task_id"])
+            if record.get("task_id")
+            else room_ref(record["room_id"])
+        )
+        kind = _RECORD_NAMES.get(record["kind"], "文档段落")
+        who = record.get("author_name") or record["author"]
+        lines.append(
+            f"- {kind}，{who}，在频道「{record['room_title']}」（{where}）："
+            f"{record['snippet']}"
+        )
+    for found in hits.get("library", []):
+        lines.append(f"- 资料库文件：{found['path']}")
+    for artifact in hits.get("artifacts", []):
+        lines.append(f"- 产物「{artifact['name']}」：{artifact.get('about') or ''}")
+    return lines
+
+
+@router.post(
+    "/assistant/agent/search", include_in_schema=False, dependencies=[ROUTE_DECIDES]
+)
+async def agent_search(
+    body: AgentSearchIn, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """cheese_search: what the person can read that matches, across their
+    projects or in one, in 芝士's words with the ref of each hit."""
+    q = _query(body.query)
+    actor = await resolver.resolve()
+    if not actor.authenticated:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    if body.project:
+        project = await address.project_by_ref(db, body.project)
+        if project is None:
+            raise NotFoundError.for_resource("project", body.project)
+        projects = [project]
+    else:
+        projects = (
+            await ProjectService(db).list_visible_to(
+                handle=actor.handle, user_id=actor.user_id
+            )
+        )[:AGENT_PROJECTS]
+    terms = bm25.words(q)
+    await bm25.serial_scans(db)
+    parts: list[str] = []
+    for project in projects:
+        readable, _ = await _readable_rooms(
+            db, resolver.for_reading(), project.id, None
+        )
+        hits = await search_everything(db, project.id, q, terms, readable, AGENT_HITS)
+        lines = await _agent_hits(db, project, hits, readable)
+        if lines:
+            parts.append(
+                f"项目「{project.name}」（{project.slug}）：\n" + "\n".join(lines)
+            )
+    if not parts:
+        where = f"项目 {body.project}" if body.project else "你的项目"
+        return ok(
+            {
+                "text": f"在{where}里没有搜到「{q}」。每个词都要命中：换个说法或少几个词再搜。"
+            }
+        )
+    looked = (
+        ""
+        if body.project or len(projects) < AGENT_PROJECTS
+        else f"\n（只搜了最近的 {AGENT_PROJECTS} 个项目；要搜别的，给 project。）"
+    )
+    return ok({"text": "\n\n".join(parts) + looked})

@@ -100,3 +100,27 @@ def test_the_inbox_says_when_nothing_waits(client):
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["text"] == "现在没有等你处理的事。"
+
+
+def test_a_search_finds_across_the_persons_projects_with_refs(client):
+    room, _ = _room(client)
+    _say(client, room, "alice", "部署要改成 8443 端口")
+    slug, number = _names(client, room)
+
+    r = client.post(
+        "/assistant/agent/search",
+        json={"query": "8443"},
+        headers=_as(_personal(client, "alice")),
+    )
+
+    assert r.status_code == 200, r.text
+    text = r.json()["data"]["text"]
+    assert f"项目「P」（{slug}）" in text
+    assert f"在频道「话题」（{slug}/channels/{number}）" in text
+    # Someone not in the project finds nothing of it.
+    other = client.post(
+        "/assistant/agent/search",
+        json={"query": "8443"},
+        headers=_as(_personal(client, "carol")),
+    )
+    assert "没有搜到" in other.json()["data"]["text"]
