@@ -1,7 +1,7 @@
 """A DeepSeek answer that searched costs its tokens plus each search it ran.
 
-Goes through the proxy's own `/v1/messages` route, under config.yaml's real
-`deepseek-flash` row, to a local DeepSeek-shaped upstream whose answer reports
+Goes through the proxy's own `/v1/messages` route, under the
+`deepseek-flash` row of test_rows.yaml, to a local DeepSeek-shaped upstream whose answer reports
 how many searches it ran, streamed and not. The cost LiteLLM logs is the spend
 every key is charged in credits from, so a search priced wrong here is charged
 wrong everywhere. A LiteLLM upgrade that stops pricing searches, prices one
@@ -97,11 +97,10 @@ class Costs(CustomLogger):
 
 
 def official_row(base: str) -> dict:
-    """config.yaml's deepseek-flash row on DeepSeek's own API, pointed here."""
-    config = yaml.safe_load(Path(__file__).with_name("config.yaml").read_text())
+    """The deepseek-flash row on DeepSeek's own API (test_rows.yaml), pointed here."""
     rows = [
         row
-        for row in config["model_list"]
+        for row in yaml.safe_load(Path(__file__).with_name("test_rows.yaml").read_text())["model_list"]
         if row["model_name"] == "deepseek-flash"
         and row["litellm_params"].get("api_key") == "os.environ/DEEPSEEK_API_KEY"
     ]
