@@ -284,11 +284,19 @@ class AgentSessionService:
         )
 
     async def drain(
-        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        launch: str,
     ) -> datetime:
         """When the drain of this session's runner began; see the repository."""
         return await self._repo.drain(
-            conversation_id=conversation_id, agent_handle=agent_handle, harness=harness
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            launch=launch,
         )
 
     async def drained(

@@ -86,6 +86,8 @@ class OldRunnerHub(ReleaseHub):
         self.interrupt_fails: Exception | None = None
         # What the work it interrupts had read by then.
         self.read_before_interrupt: list[str] = []
+        # It accepts the interrupt and works on regardless.
+        self.ignores_interrupt = False
         self.told: list[tuple[str, str]] = []
 
     async def call_executor(self, device_id, state, method, params, timeout=None):
@@ -104,6 +106,8 @@ class OldRunnerHub(ReleaseHub):
                 if held is not None and params.get("epoch") != held:
                     raise DeviceCallError(f"stale worker epoch: {params}")
                 self.interrupted += 1
+                if self.ignores_interrupt:
+                    return {"interrupted": True}
                 cut = {
                     "work": self.old_ping.get("work_id"),
                     "failure": {"kind": "interrupted"},
@@ -271,11 +275,12 @@ async def test_an_idle_old_runner_is_replaced_at_once(
         # The deploy: the runner on the host is the previous release's, idle
         # after a work that read one of the two.
         hub.old = True
+        reader = uuid.uuid4()
         hub.old_ping = {
             **OLD_PING,
             "endings": [
                 {
-                    "work": str(uuid.uuid4()),
+                    "work": str(reader),
                     "failure": None,
                     "inputs": [str(answered_input)],
                 }
@@ -297,7 +302,7 @@ async def test_an_idle_old_runner_is_replaced_at_once(
             kept = await db.get(Block, block)
             assert kept is not None and consumed_turn(kept) is None
             read = await db.get(Block, answered)
-            assert read is not None and consumed_turn(read) is not None
+            assert read is not None and str(consumed_turn(read)) == str(reader)
         assert hub.interrupted == 0
         await service.stop_listening(0)
 
@@ -563,10 +568,13 @@ async def test_past_the_cap_the_old_runners_turn_is_interrupted_and_resumed(
     client.portal.call(exercise)
 
 
-async def _drain_one(client, hub, tmp_path, project, topic):
-    """A deploy that finds the room's old runner at work; the backend."""
+async def _drain_one(client, hub, tmp_path, project, topic, *, before=None):
+    """A deploy that finds the room's old runner at work; the backend.
+    ``before`` sets up what was there before the deploy."""
     await _seated(client, project, topic)
     await _started_as_this_release_would(client, hub, tmp_path, ref(project, topic))
+    if before is not None:
+        await before()
     hub.old = True
     hub.old_ping = {**AT_WORK, "worker_epoch": 7}
     service = _backend(client, hub, tmp_path)
@@ -590,16 +598,25 @@ async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
     hub = OldRunnerHub()
     hub.ping = dict(IDLE)
 
-    async def exercise():
-        service = await _drain_one(client, hub, tmp_path, project, topic)
-        # Two messages written to it before the deploy: it reads one after
+    session = ref(project, topic)
+    later = uuid.uuid4()
+    written: dict = {}
+
+    async def before_the_deploy():
+        # Two messages written to it: it reads one in a work of its own after
         # the failed work, and never reads the other.
-        session = ref(project, topic)
-        taken, taken_input = await _written(client, session)
-        block = await _unread_input(client, session)
+        written["taken"], written["taken_input"] = await _written(client, session)
+        written["block"] = await _unread_input(client, session)
         # And the message the failed work was started with, which it failed
         # before reading.
-        prompt = await _prompted(client, session, WORK)
+        written["prompt"] = await _prompted(client, session, WORK)
+
+    async def exercise():
+        service = await _drain_one(
+            client, hub, tmp_path, project, topic, before=before_the_deploy
+        )
+        taken, taken_input = written["taken"], written["taken_input"]
+        block, prompt = written["block"], written["prompt"]
         hub.old_ping = {
             **OLD_PING,
             "worker_epoch": 7,
@@ -610,7 +627,7 @@ async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
                     "inputs": [],
                 },
                 {
-                    "work": str(uuid.uuid4()),
+                    "work": str(later),
                     "failure": None,
                     "inputs": [str(taken_input)],
                 },
@@ -628,7 +645,8 @@ async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
             kept = await db.get(Block, block)
             assert kept is not None and consumed_turn(kept) is None
             read = await db.get(Block, taken)
-            assert read is not None and consumed_turn(read) is not None
+            # Read, by the work that read it.
+            assert read is not None and str(consumed_turn(read)) == str(later)
             # The failed work did not hear its own prompt: the message is no
             # longer counted as that work's.
             opening = await db.get(Block, prompt)
@@ -739,6 +757,86 @@ async def test_the_cap_counts_from_when_the_drain_began_across_backends(
 
     client.portal.call(first)
     client.portal.call(second)
+
+
+@pytest.mark.anyio
+async def test_a_drain_left_by_another_runner_does_not_count_for_this_one(
+    client,
+    room,  # noqa: F811
+    center,
+    tmp_path,
+    monkeypatch,
+):
+    """A drain cut off by a deploy whose runner then went away leaves its start
+    on the seat. A later runner of another release found at work there gets
+    its own full drain, not what is left of that one."""
+    monkeypatch.setattr(settings, "runner_drain_s", 2.0)
+    project, topic = room
+    hub = OldRunnerHub()
+    hub.ping = dict(IDLE)
+
+    async def first_runner():
+        hub.old_ping = {**AT_WORK, "launch": "first"}
+        first = _backend(client, hub, tmp_path)
+        await _seated(client, project, topic)
+        await _started_as_this_release_would(
+            client, hub, tmp_path, ref(project, topic)
+        )
+        hub.old = True
+        hub.old_ping = {**AT_WORK, "launch": "first"}
+        await first.recover_sessions()
+        await asyncio.sleep(0.3)
+        await first.stop_listening(0)
+        # It goes away during the deploy, and the next backend finds it gone.
+        hub.old_ping = {**OLD_PING, "alive": False}
+        between = _backend(client, hub, tmp_path)
+        await between.recover_sessions()
+        await between.stop_listening(0)
+        await asyncio.sleep(2.0)
+
+    async def second_runner():
+        # Past the first drain's cap, another old runner is found at work.
+        hub.old_ping = {**AT_WORK, "launch": "second"}
+        later = _backend(client, hub, tmp_path)
+        await later.recover_sessions()
+        await asyncio.sleep(1.0)
+        assert hub.interrupted == 0
+        await later.stop_listening(0)
+
+    client.portal.call(first_runner)
+    client.portal.call(second_runner)
+
+
+@pytest.mark.anyio
+async def test_a_runner_that_works_on_after_the_interrupt_is_replaced_anyway(
+    client,
+    room,  # noqa: F811
+    center,
+    tmp_path,
+    monkeypatch,
+):
+    """Past the cap the old runner accepts the interrupt but keeps working: the
+    drain waits a bounded while for it to say how the work ended, then settles
+    without it, so the seat's messages are not held for good."""
+    monkeypatch.setattr(settings, "runner_drain_s", 0.3)
+    monkeypatch.setattr(room_sessions, "DRAIN_STOP_WAIT_S", 0.5)
+    project, topic = room
+    hub = OldRunnerHub()
+    hub.ping = dict(IDLE)
+    hub.ignores_interrupt = True
+
+    async def exercise():
+        service = await _drain_one(client, hub, tmp_path, project, topic)
+        rows: list[TurnResume] = []
+        async with asyncio.timeout(HANG_S):
+            while not (rows := await _resumes(client, topic)):
+                await asyncio.sleep(0.05)
+        assert not service._compute.draining(topic, AGENT)
+        await service.stop_listening(0)
+        assert hub.interrupted == 1
+        assert [row.reason for row in rows] == ["runner_replaced"]
+
+    client.portal.call(exercise)
 
 
 @pytest.mark.anyio

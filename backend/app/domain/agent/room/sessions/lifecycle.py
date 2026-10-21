@@ -220,6 +220,7 @@ async def recover(
                 working=status.working,
                 work=work,
                 epoch=status.epoch,
+                launch=status.launch or status.conversation,
                 endings=status.endings,
             )
             if work is not None:
@@ -317,7 +318,7 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
     while True:
         try:
             if began is None:
-                began = await svc.channel.drain_started(live.session)
+                began = await svc.channel.drain_started(live.session, outdated.launch)
             status = await svc.host.attach(live.ref, outdated.access)
         except Exception:  # a drain that died would hold the seat's messages for good
             logger.exception(

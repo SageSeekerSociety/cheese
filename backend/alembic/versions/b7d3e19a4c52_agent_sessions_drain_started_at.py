@@ -7,7 +7,8 @@ A runner of another lifecycle protocol that is at work is drained before it is
 replaced, for at most RUNNER_DRAIN_S. The cap counts from when the drain began,
 so that is kept with the seat: a backend that takes the seat over in the middle
 of a drain goes on counting from the same moment instead of starting again.
-NULL whenever the seat's runner is not being drained.
+`drain_launch` names the runner that drain is of (its ping's launch), so a start
+left behind by a drain that never settled does not count for another runner.
 """
 
 from collections.abc import Sequence
@@ -29,7 +30,12 @@ def upgrade() -> None:
         "agent_sessions",
         sa.Column("drain_started_at", sa.DateTime(timezone=True), nullable=True),
     )
+    op.add_column(
+        "agent_sessions",
+        sa.Column("drain_launch", sa.String(256), nullable=True),
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("agent_sessions", "drain_launch")
     op.drop_column("agent_sessions", "drain_started_at")

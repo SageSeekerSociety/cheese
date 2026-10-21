@@ -166,6 +166,10 @@ class AgentSession(UuidPk, Timestamps, Base):
     drain_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The runner that drain is of (its ping's ``launch``): a start left by a
+    # drain that never settled (its runner went away during a takeover) does
+    # not count for another runner.
+    drain_launch: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     def place(self) -> SessionPlace | None:
         """这条会话在哪——它自己那一半地点的唯一入口。

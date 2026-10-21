@@ -193,16 +193,18 @@ class CentralChannel(DeviceChannel):
                 )
             await db.commit()
 
-    async def drain_started(self, session: SessionRef) -> datetime:
-        """When the drain of this session's runner began, starting it now if
-        none is under way: kept with the seat, so every backend that reads the
-        seat counts the drain's cap from the same moment."""
+    async def drain_started(self, session: SessionRef, launch: str) -> datetime:
+        """When the drain of this session's runner ``launch`` began, starting
+        it now if none of that runner is under way: kept with the seat, so
+        every backend that reads the seat counts the drain's cap from the same
+        moment."""
         factory = self._session_factory or async_session_factory
         async with factory() as db:
             started = await AgentSessionService(db).drain(
                 conversation_id=session.conversation_id,
                 agent_handle=session.agent_handle,
                 harness=session.harness,
+                launch=launch,
             )
             await db.commit()
         return started

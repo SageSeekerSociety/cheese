@@ -244,6 +244,8 @@ class SessionStatus:
     #: The registration the runner holds (its ping's ``worker_epoch``): what a
     #: call this process makes without registering it carries.
     epoch: int = 0
+    #: Which start of the runner answered (its ping's ``launch``).
+    launch: str | None = None
     #: How the runner's last few works ended (its ping's ``endings``): how a
     #: runner this release does not read says what its work came to.
     endings: tuple[Ending, ...] = ()

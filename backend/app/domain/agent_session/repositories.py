@@ -4,6 +4,8 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    and_,
+    case,
     delete,
     exists,
     func,
@@ -155,10 +157,20 @@ class AgentSessionRepository:
         await self._session.flush()
 
     async def drain(
-        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        launch: str,
     ) -> datetime:
-        """When the drain of this session's runner began: now, unless one is
-        already under way (``AgentSession.drain_started_at``)."""
+        """When the drain of runner ``launch`` on this session began: now,
+        unless a drain of that same runner is already under way
+        (``AgentSession.drain_started_at``)."""
+        same = and_(
+            AgentSession.drain_launch == launch,
+            AgentSession.drain_started_at.is_not(None),
+        )
         started = await self._session.scalar(
             update(AgentSession)
             .where(
@@ -167,9 +179,10 @@ class AgentSessionRepository:
                 AgentSession.harness == harness,
             )
             .values(
-                drain_started_at=func.coalesce(
-                    AgentSession.drain_started_at, func.now()
-                )
+                drain_started_at=case(
+                    (same, AgentSession.drain_started_at), else_=func.now()
+                ),
+                drain_launch=launch,
             )
             .returning(AgentSession.drain_started_at)
         )
@@ -187,7 +200,7 @@ class AgentSessionRepository:
                 AgentSession.agent_handle == agent_handle,
                 AgentSession.harness == harness,
             )
-            .values(drain_started_at=None)
+            .values(drain_started_at=None, drain_launch=None)
         )
 
     async def _upsert(

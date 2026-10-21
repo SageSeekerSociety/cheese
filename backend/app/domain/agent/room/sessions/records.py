@@ -87,6 +87,9 @@ class Outdated:
     work: uuid.UUID | None
     #: The registration it holds, for the interrupt the cap falls back to.
     epoch: int = 0
+    #: Which start of it this is (its ping's ``launch``; its conversation for a
+    #: runner that names none): what the drain's start is kept under.
+    launch: str = ""
     #: How its last few works ended, as its ping last said
     #: (``SessionStatus.endings``).
     endings: tuple[Ending, ...] = ()

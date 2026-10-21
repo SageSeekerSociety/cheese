@@ -245,6 +245,7 @@ async def attach(
             found,
             outdated=True,
             epoch=int(status.get("worker_epoch") or 0),
+            launch=status.get("launch"),
             endings=tuple(
                 Ending(
                     str(ending["work"]),
