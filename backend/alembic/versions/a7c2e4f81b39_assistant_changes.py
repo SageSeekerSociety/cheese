@@ -43,7 +43,12 @@ def upgrade() -> None:
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["user.id"],
+            ondelete="CASCADE",
+            name="fk_assistant_changes_user_id_user",
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(

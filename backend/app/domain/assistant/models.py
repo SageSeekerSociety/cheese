@@ -122,7 +122,10 @@ class AssistantChange(Timestamps, Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+        ForeignKey(
+            "user.id", ondelete="CASCADE", name="fk_assistant_changes_user_id_user"
+        ),
+        nullable=False,
     )
     work: Mapped[str] = mapped_column(String(64), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
