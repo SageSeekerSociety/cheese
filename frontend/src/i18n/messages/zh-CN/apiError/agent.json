@@ -55,7 +55,7 @@
   "gatewayAdminNotConfigured": "未配置模型网关的管理密钥",
   "gatewayMissingList": "网关 {path} 的响应里没有 {field} 列表",
   "gatewayModelExists": "模型 {name} 已经存在：要给它加一条上游，请用「添加线路」",
-  "gatewayLastOfferedModel": "模型 {name} 是最后一个上架的模型：停用、删除或下架它，智能体设置里就没有模型可选了。请先上架另一个模型",
+  "gatewayLastOfferedModel": "模型 {name} 是最后一个上架的模型：停用、删除或下架它之后，设置 AI 队友时就没有模型可选。先上架另一个模型，再处理它",
   "gatewayModelHasRoles": "平台模型角色 {roles} 还跑在模型 {name} 上：先在「平台模型角色」里把它们指到别的模型，再停用或删除它",
   "roleNotFound": "没有叫 {role} 的平台模型角色",
   "roleNeedsOfferedModel": "这个角色只能指到上架的模型：{name} 现在没有上架（停用、未上架或缺价）",

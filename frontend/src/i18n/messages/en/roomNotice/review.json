@@ -107,7 +107,7 @@
   "prNoLink": "No link",
   "prReview": "PR #{pr}: {head}",
   "prReviewCapped": "Review on PR #{pr} has gone back and forth {limit} times; a person needs to step in",
-  "prTitleDisagrees": "PR #{pr}: the title on GitHub and the review's title differ; the merge is paused",
+  "prTitleDisagrees": "PR #{pr}'s title on GitHub differs from the title it was submitted for review with; merging is paused",
   "prReviewChangesRequested": "someone requested changes",
   "prReviewCommented": "someone left review comments",
   "reasonUnstated": "No reason given",

@@ -107,7 +107,7 @@
   "prNoLink": "无链接",
   "prReview": "PR #{pr} 上{head}",
   "prReviewCapped": "PR #{pr} 的评审意见已来回 {limit} 轮，需要人介入",
-  "prTitleDisagrees": "PR #{pr} 的标题和审阅标题不一致，合并已暂停",
+  "prTitleDisagrees": "PR #{pr} 在 GitHub 上的标题和提交审阅时的标题不一致，合并已暂停",
   "prReviewChangesRequested": "有人在 PR 上要求改动",
   "prReviewCommented": "有人在 PR 上留了评审意见",
   "reasonUnstated": "未说明原因",

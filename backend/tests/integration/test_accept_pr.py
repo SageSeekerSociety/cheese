@@ -1983,7 +1983,7 @@ def test_accept_is_refused_when_the_pr_title_is_not_the_line_the_card_would_land
     assert card["status"] == "pending"
     assert card["pr_number"] == number  # PR 还挂在卡上：改完卡就能重试
     # 执行者是唯一该醒的人 —— 改卡会把 PR 标题一起改掉，检查按新标题重跑。
-    settled = _task_settled(client, tid, "标题和卡片不一致")
+    settled = _task_settled(client, tid, "标题和提交审阅时的标题不一致")
     assert "fix(review): land the title the checks judged" in settled
     assert "chore(test): file an accept card" in settled
 
@@ -2032,7 +2032,7 @@ def test_poll_holds_the_notice_and_the_armed_merge_while_the_titles_disagree(
     wait_work_idle()
 
     assert fake.merge_calls == []  # 检查绿也不合
-    settled = _task_settled(client, tid, "标题和卡片不一致")
+    settled = _task_settled(client, tid, "标题和提交审阅时的标题不一致")
     assert "fix(review): land the title the checks judged" in settled
     assert "chore(test): file an accept card" in settled
     card = _cards(client, tid)[0]

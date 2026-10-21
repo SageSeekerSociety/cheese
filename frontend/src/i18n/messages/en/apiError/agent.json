@@ -55,7 +55,7 @@
   "gatewayAdminNotConfigured": "The model gateway's admin key isn't configured",
   "gatewayMissingList": "The gateway's {path} response has no {field} list",
   "gatewayModelExists": "The model {name} already exists: to give it another upstream, add a source to it",
-  "gatewayLastOfferedModel": "{name} is the last offered model: pausing, deleting or unlisting it would leave agent settings with no model to pick. Offer another model first",
+  "gatewayLastOfferedModel": "{name} is the last offered model: pausing, deleting or unlisting it would leave no model to choose when setting up an AI teammate. Offer another model first, then change this one",
   "gatewayModelHasRoles": "The platform model roles {roles} still run on {name}: point them at another model under Platform model roles before pausing or deleting it",
   "roleNotFound": "There is no platform model role called {role}",
   "roleNeedsOfferedModel": "This role can only point at an offered model: {name} is not offered (paused, unlisted or unpriced)",
