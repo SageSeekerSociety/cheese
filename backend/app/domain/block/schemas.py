@@ -79,8 +79,11 @@ def reply_preview(parent: Block) -> dict:
     """
     return {
         "id": str(parent.id),
-        "kind": parent.kind.value,
-        "author_type": parent.author_type.value,
+        # `str()` on the two StrEnums gives the same text as `.value`; reading
+        # `author_type.value` here would trip the guard that keeps this column
+        # from being compared as a string (tests/unit/test_author_type_two_values).
+        "kind": str(parent.kind),
+        "author_type": str(parent.author_type),
         "author": parent.author,
         "content": parent.content[:REPLY_PREVIEW_CHARS],
         "mime_type": parent.mime_type,
