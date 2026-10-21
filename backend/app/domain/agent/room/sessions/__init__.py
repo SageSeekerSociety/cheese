@@ -533,10 +533,13 @@ class RoomSessions:
         if not self._draining(seat):
             return False
         outdated = self.outdated[seat]
-        outdated.stopped = True
-        return await self.host.stop(
+        stopped = await self.host.stop(
             outdated.live.ref, host=outdated.access.host, epoch=outdated.epoch
         )
+        # Only a stop that reached it ends its work as stopped; one that did
+        # not leaves the work to end as it will.
+        outdated.stopped = outdated.stopped or stopped
+        return stopped
 
     def holding(self, seat: Seat) -> SessionRef | None:
         """The session this process holds on the seat, a runner being drained

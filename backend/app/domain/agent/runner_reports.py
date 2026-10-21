@@ -45,7 +45,7 @@ from app.domain.delivery.receipts import (
     drop_input,
     drop_unread_of_session,
     fail_read_inputs,
-    read_unread_of_session,
+    read_inputs_of_session,
     record_receipt,
 )
 from app.domain.room_task.progress import note_agent_back, note_agent_left
@@ -193,19 +193,22 @@ async def replaced(
     harness: str,
     native: str,
     *,
-    read: bool = False,
+    read: tuple[str, ...] = (),
     read_into: uuid.UUID | None = None,
 ) -> None:
     """The process holding native session ``native`` was replaced by one of
     this release's: what it was written and never read is dropped as its
     runner would have dropped it at its exit, and the seat may take what was
-    waiting for it. A runner that went idle on its own first (``read``) took
-    in what it was written: that is recorded as read, into ``read_into``, and
-    only what cannot be recorded so is dropped."""
+    waiting for it. The inputs its runner reported its work read (``read``)
+    are recorded as read, into ``read_into``; only the rest is dropped."""
     async with chat.session_factory() as db:
         if read:
-            await read_unread_of_session(
-                db, harness=harness, native_session_id=native, work_id=read_into
+            await read_inputs_of_session(
+                db,
+                harness=harness,
+                native_session_id=native,
+                input_ids=read,
+                work_id=read_into,
             )
         await drop_unread_of_session(
             db, harness=harness, native_session_id=native, reason=RUNNER_REPLACED_CODE

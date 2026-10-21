@@ -31,6 +31,7 @@ from app.domain.agent.device_hub import (
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.session_host.contract import (
     Access,
+    Ending,
     SessionError,
     SessionRef,
     SessionSpec,
@@ -244,8 +245,14 @@ async def attach(
             found,
             outdated=True,
             epoch=int(status.get("worker_epoch") or 0),
-            last_work=status.get("last_work"),
-            last_failed=bool(status.get("last_failure")),
+            endings=tuple(
+                Ending(
+                    str(ending["work"]),
+                    ending.get("failure") is not None,
+                    tuple(ending.get("inputs") or ()),
+                )
+                for ending in status.get("endings") or ()
+            ),
         )
     launched = Launched(
         found.conversation,

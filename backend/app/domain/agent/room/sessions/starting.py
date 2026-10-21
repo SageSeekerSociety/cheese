@@ -60,7 +60,9 @@ async def ensure(
         # Starting one now would close the old runner's screen in the middle
         # of the work it is being left to finish. A turn waits for the drain
         # at admission (``admitted_initial``); a start that never passes there
-        # (the platform's own work) is refused and tried again later.
+        # (the platform's own work, the memory dream) fails, and that work
+        # runs again when its own schedule next takes it up.
+        # i18n-exempt: only starts that skip admission get here, and they log it
         raise SessionError(
             "This seat's runner is finishing work another release started; "
             "it is replaced once that is done"

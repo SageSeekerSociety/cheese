@@ -47,7 +47,7 @@ from app.domain.agent.reads import Read, Replaced
 from app.domain.agent.room import sessions as pkg
 from app.domain.agent.room.sessions.records import Clock, Live, Outdated, _home
 from app.domain.agent.service import AgentResult
-from app.domain.agent.session_host.contract import Access, Owner
+from app.domain.agent.session_host.contract import Access, Ending, Owner
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.agent.session_host.host import RunnerUnsupported
 
@@ -288,8 +288,8 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
 
     Its ping is the one thing every protocol keeps (``lifecycle``'s
     handshake), so that is all this asks it, every ``DRAIN_POLL_S``. Idle, it
-    is replaced, and its work ends the way its ping says the work ended: as
-    finished, or, when it ended in a failure, started again on the new
+    is replaced, and its work ends the way its ping's ``endings`` say it did:
+    as finished, or, when it ended in a failure, started again on the new
     runner (``runner_replaced``). Gone, its work is started again too. Still
     at work past ``settings.runner_drain_s`` from when this process found it,
     its work is interrupted and started again, the way every replacement went
@@ -297,6 +297,9 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
     the same cap. Work somebody stopped meanwhile (``RoomSessions.interrupt``)
     ends as stopped."""
     live = outdated.live
+    # How its works ended, as it last said: what they read is recorded as read
+    # whatever ends the drain.
+    endings: tuple[Ending, ...] = ()
     logger.info(
         "runner_drain_started topic=%s seat=%s conversation=%s work=%s cap_s=%.0f",
         seat[0],
@@ -314,12 +317,14 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
                 "outdated runner not asked topic=%s seat=%s", seat[0], seat[1]
             )
             status = None
+        if status is not None and status.endings:
+            endings = status.endings
         if status is not None and not status.alive:
             reason = "gone"
             break
         if status is not None and not status.working:
-            ended_badly = status.last_failed and status.last_work == str(outdated.work)
-            reason = "failed" if ended_badly else "drained"
+            mine = [e for e in endings if e.work == str(outdated.work)]
+            reason = "failed" if any(e.failed for e in mine) else "drained"
             break
         if time.monotonic() - outdated.found >= settings.runner_drain_s:
             try:
@@ -353,9 +358,7 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
                 svc,
                 outdated,
                 failed=reason in ("gone", "failed", "timed_out"),
-                # It went idle on its own; stopped, it may have been cut off
-                # before it took in what it was written.
-                read=reason in ("drained", "failed"),
+                read=tuple(i for ending in endings for i in ending.inputs),
             )
             break
         except Exception:  # the database away for a moment: settle again
@@ -376,16 +379,20 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
 
 
 async def _replaced(
-    svc: pkg.RoomSessions, outdated: Outdated, *, failed: bool, read: bool = False
+    svc: pkg.RoomSessions,
+    outdated: Outdated,
+    *,
+    failed: bool,
+    read: tuple[str, ...] = (),
 ) -> None:
     """Settle a seat whose runner is another release's, and have one of this
     release's take its place on the same conversation.
 
-    What it was written and has no record of reading is dropped, so the
-    messages in it are offered again, unless it went idle on its own
-    (``read``): a runner goes idle only once it has taken in everything it
-    was written, so those were read into its work, and offering them again
-    would have them answered twice. What waited for it goes ahead. Work it
+    The inputs its ping says its works read (``read``) are recorded as read,
+    into the work it was doing, since offering them again would have them answered
+    twice; whatever else it was written and has no record of reading is
+    dropped, so the messages in it are offered again. What waited for it goes
+    ahead. Work it
     finished ends as finished; work it did not (``failed``: it ended in a
     failure, was interrupted at the drain's cap, or its process went) ends
     with the upgrade as its failure, which the platform starts again by
@@ -410,7 +417,7 @@ async def _replaced(
                 failure_code=RUNNER_REPLACED_CODE if failed else None,
                 agent_handle=live.acting,
                 harness=svc.harness,
-                inputs_read=read,
+                inputs_read=bool(read),
             ),
             f"{svc.harness}:{live.conversation}:replaced:{work}",
             False,

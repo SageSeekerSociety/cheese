@@ -89,6 +89,10 @@ TAIL_POLL_S = 0.5
 # How long the runner keeps what it recorded, and how often it looks.
 RETENTION_S = 7 * 24 * 3600
 RETENTION_EVERY_S = 3600
+# How many works' endings the ping carries (``Runner.endings``): enough that a
+# drain polling every few seconds sees the work it waits for even when the
+# runner opened and ended a few more of its own in between.
+ENDED_KEPT = 16
 # A tool result read from a transcript file is not capped the way stdout is.
 # The room reads the tail of a failure and a subagent's conclusion; neither is
 # worth more than stdout would have carried.
@@ -506,10 +510,11 @@ class Runner(runner.Runner[Journal]):
         self.work: str | None = None
         self.unsolicited = False
         self.last_work: str | None = None
-        # How ``last_work`` ended: its typed failure, None when it ended
-        # cleanly. Kept for the ping, which a release that cannot read this
-        # protocol drains this runner by (``lifecycle``).
-        self.last_failure: dict | None = None
+        # How the last few works ended: each one's work id, typed failure
+        # (None when it ended cleanly) and the platform's inputs it read,
+        # oldest first. Kept for the ping, which a release that cannot read
+        # this protocol drains this runner by (``lifecycle``).
+        self.endings: list[dict] = []
         self.interrupting = False
         # What the session reports, as ordered events (``lifecycle``).
         self.outbox = lifecycle.Outbox(self.journal.connection)
@@ -615,7 +620,7 @@ class Runner(runner.Runner[Journal]):
             json.dumps({"harness": CLAUDE_CODE, "agent_handle": agent_handle}),
         )
         self.last_work = self.journal.recall("last_work")
-        self.last_failure = json.loads(self.journal.recall("last_failure") or "null")
+        self.endings = json.loads(self.journal.recall("endings") or "[]")
         self.errors = (self.state / "claude.log").open("ab")
         # Earlier starts appended here too; this start's words begin here.
         self.errors_from = self.errors.tell()
@@ -1235,8 +1240,13 @@ class Runner(runner.Runner[Journal]):
     def _finish(self, *, failure: dict | None, text: str, usage: dict | None) -> None:
         """The session went idle: report how the work ended, then forget it."""
         if self.work is not None:
-            self.last_failure = failure
-            self.journal.remember("last_failure", json.dumps(failure))
+            ending = {
+                "work": self.work,
+                "failure": failure,
+                "inputs": list(self.run_inputs),
+            }
+            self.endings = [*self.endings, ending][-ENDED_KEPT:]
+            self.journal.remember("endings", json.dumps(self.endings))
         self._emit(
             lifecycle.STATUS,
             worker_status=lifecycle.IDLE,
@@ -1710,11 +1720,13 @@ class Runner(runner.Runner[Journal]):
             # The handshake every release reads, whichever protocol it speaks
             # (``lifecycle``): ``alive``, ``lifecycle``, ``launch``,
             # ``session_id``, ``working`` (the busy flag), ``work_id``,
-            # ``worker_epoch``, ``last_work`` and ``last_failure`` keep their
-            # names and meanings. A later protocol may add fields here, never
-            # drop or change these, so the release after it can still tell
-            # whether this runner is at work, drain it before replacing it, and
-            # know how the work it drained ended.
+            # ``worker_epoch`` and ``endings`` keep their names and meanings
+            # (``endings``' entries their ``work``, ``failure`` and ``inputs``).
+            # A later protocol
+            # may add fields here, never drop or change these, so the release
+            # after it can still tell whether this runner is at work, drain it
+            # before replacing it, and know how the work it drained ended and
+            # what it read.
             return {
                 "pid": os.getpid(),
                 "lifecycle": lifecycle.PROTOCOL,
@@ -1723,8 +1735,7 @@ class Runner(runner.Runner[Journal]):
                 "session_id": self.session_id,
                 "working": self.working,
                 "work_id": self.work if self.working else None,
-                "last_work": self.last_work,
-                "last_failure": self.last_failure,
+                "endings": list(self.endings),
                 "tasks": dict(self.tasks),
                 "alive": self.alive(),
                 "starting": self.starting(),

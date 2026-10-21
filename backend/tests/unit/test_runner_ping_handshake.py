@@ -34,8 +34,7 @@ HANDSHAKE = {
     "working": (bool,),
     "work_id": (str, type(None)),
     "worker_epoch": (int,),
-    "last_work": (str, type(None)),
-    "last_failure": (dict, type(None)),
+    "endings": (list,),
 }
 
 
@@ -57,7 +56,7 @@ def test_the_ping_says_whether_the_runner_is_at_work_from_start_to_end(
     assert idle["working"] is False and idle["work_id"] is None
 
     work = str(uuid.uuid4())
-    screen.send(
+    sent = screen.send(
         contract.do("Bash", command="sleep 4; echo DONE", description="wait"),
         work_id=work,
     )
@@ -73,8 +72,8 @@ def test_the_ping_says_whether_the_runner_is_at_work_from_start_to_end(
     done = _handshake(screen.call("ping"))
     assert done["working"] is False and done["work_id"] is None
     assert done["alive"] is True
-    # How it ended: cleanly.
-    assert done["last_work"] == work and done["last_failure"] is None
+    # How it ended: cleanly, having read what it was sent.
+    assert done["endings"][-1] == {"work": work, "failure": None, "inputs": [sent]}
 
     # Work taken away ends in a failure, and the ping says so.
     cut = str(uuid.uuid4())
@@ -85,5 +84,6 @@ def test_the_ping_says_whether_the_runner_is_at_work_from_start_to_end(
     screen.call("interrupt")
     screen.wait_event(_status("idle", cut))
     stopped = _handshake(screen.call("ping"))
-    assert stopped["last_work"] == cut
-    assert stopped["last_failure"] == {"kind": "interrupted"}
+    assert stopped["endings"][-1]["work"] == cut
+    assert stopped["endings"][-1]["failure"] == {"kind": "interrupted"}
+    assert [ending["work"] for ending in stopped["endings"]] == [work, cut]

@@ -96,11 +96,15 @@ class OldRunnerHub(ReleaseHub):
                 if held is not None and params.get("epoch") != held:
                     raise DeviceCallError(f"stale worker epoch: {params}")
                 self.interrupted += 1
+                cut = {
+                    "work": self.old_ping.get("work_id"),
+                    "failure": {"kind": "interrupted"},
+                    "inputs": [],
+                }
                 self.old_ping = {
                     **self.old_ping,
                     "working": False,
-                    "last_work": self.old_ping.get("work_id"),
-                    "last_failure": {"kind": "interrupted"},
+                    "endings": [*self.old_ping.get("endings", []), cut],
                 }
                 return {"interrupted": True}
             if method == "read":
@@ -130,6 +134,12 @@ async def _started_as_this_release_would(client, hub, tmp_path, session):
 async def _unread_input(client, session) -> uuid.UUID:
     """A message the session's runner was written and has not read, under the
     native session the old runner answers for."""
+    return (await _written(client, session))[0]
+
+
+async def _written(client, session) -> tuple[uuid.UUID, uuid.UUID]:
+    """``_unread_input``'s message, and the platform's id of the input that
+    carried it."""
     block = Block(
         id=uuid.uuid4(),
         project_id=session.project_id,
@@ -155,7 +165,7 @@ async def _unread_input(client, session) -> uuid.UUID:
         await db.flush()
         await register_input(db, identity, InputEffects(held_block_ids=(block.id,)))
         await db.commit()
-    return block.id
+    return block.id, input_id
 
 
 async def _seated(client, project, topic) -> str:
@@ -263,7 +273,7 @@ async def test_a_working_old_runner_finishes_its_turn_and_is_replaced_once_idle(
         )
         # A message written to it just before the deploy, which it reads at its
         # next tool boundary.
-        held["steered"] = await _unread_input(client, session)
+        held["steered"], held["steered_input"] = await _written(client, session)
         hub.old = True
         hub.old_ping = dict(AT_WORK)
         held["service"] = service = _backend(client, hub, tmp_path)
@@ -297,7 +307,16 @@ async def test_a_working_old_runner_finishes_its_turn_and_is_replaced_once_idle(
             await claude.ensure(ref(project, topic), system_prompt="System")
         assert hub.closed == []
         # Its work is done.
-        hub.old_ping = {**OLD_PING, "last_work": str(WORK), "last_failure": None}
+        hub.old_ping = {
+            **OLD_PING,
+            "endings": [
+                {
+                    "work": str(WORK),
+                    "failure": None,
+                    "inputs": [str(held["steered_input"])],
+                }
+            ],
+        }
         await _until(lambda: old.sid in hub.closed and len(hub.opened) == 1)
         assert hub.opened[0].sid != old.sid
         assert hub.interrupted == 0
@@ -309,7 +328,8 @@ async def test_a_working_old_runner_finishes_its_turn_and_is_replaced_once_idle(
         # What it read during the drain is not offered again.
         async with client.test_request_factory() as db:
             steered = await db.get(Block, held["steered"])
-            assert steered is not None and consumed_turn(steered) is not None
+            assert steered is not None
+            assert str(consumed_turn(steered)) == str(WORK)
             assert not await held_blocks(
                 db, project_id=project, topic_id=topic, recipient_handle=AGENT
             )
@@ -496,19 +516,36 @@ async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
     tmp_path,
 ):
     """The old runner went idle on its own, but its work failed (the model
-    service refused it): the turn is started again on the new runner, not
-    closed as finished."""
+    service refused it), and it then took in a message it had been written in
+    a work of its own: the turn is started again on the new runner, not closed
+    as finished. The message it took in is not offered again; one it never
+    read is."""
     project, topic = room
     hub = OldRunnerHub()
     hub.ping = dict(IDLE)
 
     async def exercise():
         service = await _drain_one(client, hub, tmp_path, project, topic)
+        # Two messages written to it before the deploy: it reads one after
+        # the failed work, and never reads the other.
+        session = ref(project, topic)
+        taken, taken_input = await _written(client, session)
+        block = await _unread_input(client, session)
         hub.old_ping = {
             **OLD_PING,
             "worker_epoch": 7,
-            "last_work": str(WORK),
-            "last_failure": {"kind": "api_error", "status": 529},
+            "endings": [
+                {
+                    "work": str(WORK),
+                    "failure": {"kind": "api_error", "status": 529},
+                    "inputs": [],
+                },
+                {
+                    "work": str(uuid.uuid4()),
+                    "failure": None,
+                    "inputs": [str(taken_input)],
+                },
+            ],
         }
         rows: list[TurnResume] = []
         async with asyncio.timeout(HANG_S):
@@ -517,16 +554,27 @@ async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
         await service.stop_listening(0)
         assert [row.reason for row in rows] == ["runner_replaced"]
         assert hub.interrupted == 0
+        # What it never read is offered again, not taken as read.
+        async with client.test_request_factory() as db:
+            kept = await db.get(Block, block)
+            assert kept is not None and consumed_turn(kept) is None
+            read = await db.get(Block, taken)
+            assert read is not None and consumed_turn(read) is not None
+            assert not await held_blocks(
+                db, project_id=project, topic_id=topic, recipient_handle=AGENT
+            )
 
     client.portal.call(exercise)
 
 
 @pytest.mark.anyio
-async def test_closing_the_task_stops_the_old_runners_work_for_good(
+@pytest.mark.parametrize("taken_away_by", ["closing_the_task", "removing_the_agent"])
+async def test_taking_the_work_away_stops_the_old_runners_work_for_good(
     client,
     room,  # noqa: F811
     center,
     tmp_path,
+    taken_away_by,
 ):
     """Work taken away while the old runner drains (the task closed, the agent
     removed) reaches that runner under the registration it holds, and ends
@@ -538,9 +586,12 @@ async def test_closing_the_task_stops_the_old_runners_work_for_good(
     async def exercise():
         service = await _drain_one(client, hub, tmp_path, project, topic)
         old = hub.opened[0]
-        # The closed-task sweep finds it at work.
-        assert topic in service._compute.working_conversations()
-        await service._compute.stop_work(topic)
+        if taken_away_by == "closing_the_task":
+            # The closed-task sweep finds it at work.
+            assert topic in service._compute.working_conversations()
+            await service._compute.stop_work(topic)
+        else:
+            await service._compute.dismiss(topic, AGENT)
         assert hub.interrupted == 1
         await _until(lambda: old.sid in hub.closed)
         await asyncio.sleep(0.3)

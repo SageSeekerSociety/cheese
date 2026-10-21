@@ -344,7 +344,7 @@ class ChatService(
         harness: str,
         native: str,
         *,
-        read: bool = False,
+        read: tuple[str, ...] = (),
         read_into: uuid.UUID | None = None,
     ) -> None:
         """The process holding native session ``native`` was replaced

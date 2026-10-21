@@ -64,9 +64,10 @@ reads their ``ping`` instead, and these fields are the stable handshake every
 version keeps: ``alive``, ``lifecycle`` (``PROTOCOL``), ``launch``,
 ``session_id``, ``working`` (the busy flag: a piece of work is under way, from
 its first sign until its ending, while a tool runs included), ``work_id`` (the
-room's work it is doing), ``worker_epoch`` (the registration it holds),
-``last_work`` (the work it last ended) and ``last_failure`` (that work's typed
-failure, null when it ended cleanly). A
+room's work it is doing), ``worker_epoch`` (the registration it holds) and
+``endings`` (its last few works' endings, oldest first, each with its ``work``,
+its typed ``failure``, null when it ended cleanly, and the platform's
+``inputs`` it read). A
 change of ``PROTOCOL`` may add fields to the ping, never drop or redefine
 these: the release that reads them drains a runner at work before replacing it
 (``room.sessions.lifecycle``). ``tests/unit/test_runner_ping_handshake.py``

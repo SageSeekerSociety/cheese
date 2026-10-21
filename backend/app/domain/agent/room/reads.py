@@ -79,7 +79,7 @@ class RoomBooks(Protocol):
         harness: str,
         native: str,
         *,
-        read: bool = False,
+        read: tuple[str, ...] = (),
         read_into: uuid.UUID | None = None,
     ) -> None: ...
 

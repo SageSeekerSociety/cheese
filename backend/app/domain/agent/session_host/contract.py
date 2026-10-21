@@ -210,6 +210,18 @@ class Prompt:
 
 
 @dataclass(frozen=True)
+class Ending:
+    """How one work of a runner ended, as its ping says."""
+
+    work: str
+    #: It ended in a failure (any typed failure: the model service's, the
+    #: runner's own clocks, an interrupt).
+    failed: bool
+    #: The platform's inputs it read, by input id.
+    inputs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SessionStatus:
     """A running session, as its runner says it is now."""
 
@@ -232,11 +244,9 @@ class SessionStatus:
     #: The registration the runner holds (its ping's ``worker_epoch``): what a
     #: call this process makes without registering it carries.
     epoch: int = 0
-    #: The work the runner last ended, and whether it ended in a failure: how
-    #: a runner this release does not read says how its work ended (its
-    #: ping's ``last_work`` and ``last_failure``).
-    last_work: str | None = None
-    last_failed: bool = False
+    #: How the runner's last few works ended (its ping's ``endings``): how a
+    #: runner this release does not read says what its work came to.
+    endings: tuple[Ending, ...] = ()
 
 
 class InputUnconfirmed(SessionError):
