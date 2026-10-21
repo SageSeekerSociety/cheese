@@ -23,7 +23,7 @@
   "routineTemplateGoalRequired": "模板要写明它要干什么",
   "routineTemplateNotFound": "没有这条模板",
   "routineTriggerInvalid": "触发方式只能是定时或三种项目事件之一",
-  "routinesRoomMemberOnly": "你不是这个频道的成员，看不到这个频道的例行事务",
+  "routinesRoomMemberOnly": "只有这个频道的成员能看到它的例行事务",
   "scheduleHourlyMinute": "每小时执行要给出第几分钟（0–59）",
   "scheduleMonthlyDay": "每月执行要给出几号（1–31）",
   "scheduleTimeFormat": "执行时间要写成 HH:MM，例如 09:00",

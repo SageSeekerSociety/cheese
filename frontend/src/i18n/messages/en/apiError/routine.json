@@ -23,7 +23,7 @@
   "routineTemplateGoalRequired": "A template has to say what it should do",
   "routineTemplateNotFound": "This template doesn't exist",
   "routineTriggerInvalid": "The trigger can only be a schedule or one of the three project events",
-  "routinesRoomMemberOnly": "You're not a member of this channel, so you can't see its routines",
+  "routinesRoomMemberOnly": "Only members of this channel can see its routines",
   "scheduleHourlyMinute": "An hourly routine needs the minute to run at (0–59)",
   "scheduleMonthlyDay": "A monthly routine needs the day of the month (1–31)",
   "scheduleTimeFormat": "Write the time as HH:MM, e.g. 09:00",
