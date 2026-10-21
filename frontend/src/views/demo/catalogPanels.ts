@@ -39,6 +39,7 @@ import {
   ROUTINE_WEEKLY,
   SITE_AGENT_LABELS,
   SITE_AGENTS,
+  SITE_EDIT_RECORD,
   SITE_ONE_TURN,
   SITE_RAW_RECORDS,
   SITE_TURN_START,
@@ -483,6 +484,12 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     states: [
       { name: '概览', props: { raw: false }, note: '示例数据', expect: '运行登录校验测试' },
       { name: '原始记录', props: { raw: true }, note: '示例数据', expect: '查看 JSON 原文' },
+      {
+        name: '平台记的一句点到成员',
+        props: { block: SITE_EDIT_RECORD, raw: false, memberNames: { 'demo-alice': 'Alice' } },
+        note: '示例数据：有人改了房间里 AI 队友读过的消息，句子里的成员按名册显示名字。',
+        expect: 'Alice 改了一条之前的消息',
+      },
     ],
   },
   {

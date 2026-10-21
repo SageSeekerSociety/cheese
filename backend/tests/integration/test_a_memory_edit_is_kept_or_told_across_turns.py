@@ -21,6 +21,7 @@ import pytest
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.runner import Runner, memory_root
 from app.domain.agent.memory_ledger import MemoryLedger
+from app.domain.agent.run_records import for_site
 from app.domain.agent.turn.state.live import LiveWork
 from app.domain.block.models import agent_notice
 from app.domain.block.repositories import BlockRepository
@@ -201,6 +202,36 @@ async def test_an_index_line_over_the_limit_is_told_to_the_agent_that_wrote_it(
     ) == _INDEX + _ADDED + _TOO_LONG
     # 总览里那位什么都没写，这句话不是说给它的。
     assert "MEMORY.md" not in await _told(factory, overview)
+
+
+async def _site(factory, room_id: uuid.UUID) -> list[str]:
+    """What the people in this room read in 现场 that the platform wrote."""
+    async with factory() as session:
+        records = await for_site(session, room_id, since=None, until=None)
+    return [record["content"] for record in records]
+
+
+async def test_the_room_reads_in_the_site_what_its_agent_was_told(
+    business_db_factory, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, overview, room = await _setup(factory)
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+    index = sessions.tree(room) / "team" / INDEX_NAME
+
+    await ledger.sync(_seat(project_id, room))
+    index.write_text(_INDEX + _ADDED + _TOO_LONG, encoding="utf-8")
+    await ledger.sync(_seat(project_id, room))
+
+    async with factory() as session:
+        history = await BlockRepository(session).turn_history(room)
+    [line] = [block.content for block in history if agent_notice(block)]
+    # The agent hears why its line was not kept; the people in its room read
+    # that line in 现场, and the overview, where nobody wrote, does not.
+    assert line in await _site(factory, room)
+    assert line not in await _site(factory, overview)
 
 
 async def test_a_line_over_the_limit_is_refused_even_when_merged(

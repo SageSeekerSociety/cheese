@@ -756,6 +756,20 @@ export const SITE_RAW_RECORDS: Block[] = [
       },
     }) as Block
 )
+/** A platform line in 现场 that names a member: an edit the room's agent was told of. Sample data. */
+export const SITE_EDIT_RECORD: Block = {
+  id: 'sample-run-record-edit',
+  conversation_id: 'demo-room',
+  turn_id: null,
+  author: 'system',
+  author_type: 'platform',
+  kind: 'event',
+  content: '<@demo-alice> 改了一条之前的消息',
+  created_at: '2026-10-19T10:01:00Z',
+  refs: [],
+  run_record: true,
+  meta: { event_type: 'message_edited', severity: 'info', who: 'platform' },
+} as Block
 /** 组头看的那一组：`turn` 剧本到「芝士怎么说话」那一步为止，五步全在同一轮（t1）里。 */
 export const SITE_ONE_TURN: SiteTurn<Block> = (() => {
   const turn = groupByTurn(turnFrame(4).site, turnFrame(4).running)[0]

@@ -208,4 +208,18 @@ describe('raw records and overview share one timeline', () => {
     expect(view.container.textContent).toContain('Waiting')
     expect(view.container.textContent).toContain('Reconnected')
   })
+
+  it('names the member a platform line is about, as the room names them', async () => {
+    const edited = {
+      ...record('1', []),
+      run_record: true,
+      turn_id: null,
+      content: '<@cheese-b> 改了一条之前的消息',
+      meta: { event_type: 'message_edited' },
+    }
+    api.getTranscript.mockResolvedValue({ data: [edited], has_more: false })
+    const view = open()
+    await waitFor(() => expect(view.container.textContent).toContain('B 改了一条之前的消息'))
+    expect(view.container.textContent).not.toContain('cheese-b')
+  })
 })

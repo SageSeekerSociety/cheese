@@ -4,17 +4,26 @@ import type { RecordNode } from '../../lib/sessionRecords'
 import SiteRecordRow from './SiteRecordRow.vue'
 
 import { t } from '@/i18n'
-defineProps<{ nodes: RecordNode[]; raw: boolean; loadImage: (digest: string) => Promise<string> }>()
+withDefaults(
+  defineProps<{
+    nodes: RecordNode[]
+    raw: boolean
+    loadImage: (digest: string) => Promise<string>
+    memberNames?: Record<string, string>
+  }>(),
+  { memberNames: () => ({}) }
+)
 </script>
 
 <template>
   <template v-for="node in nodes" :key="node.block.id">
-    <SiteRecordRow :block="node.block" :raw="raw" :load-image="loadImage" />
+    <SiteRecordRow :block="node.block" :raw="raw" :load-image="loadImage" :member-names="memberNames" />
     <div v-if="node.children.some((child) => !child.block.meta?.parent)" class="record-children">
       <SiteRecordTree
         :nodes="node.children.filter((child) => !child.block.meta?.parent)"
         :raw="raw"
         :load-image="loadImage"
+        :member-names="memberNames"
       />
     </div>
     <details v-if="node.children.some((child) => child.block.meta?.parent)" class="record-children">
@@ -23,6 +32,7 @@ defineProps<{ nodes: RecordNode[]; raw: boolean; loadImage: (digest: string) => 
         :nodes="node.children.filter((child) => child.block.meta?.parent)"
         :raw="raw"
         :load-image="loadImage"
+        :member-names="memberNames"
       />
     </details>
   </template>

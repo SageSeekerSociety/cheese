@@ -31,6 +31,7 @@ covers:
 | AI 服务重试、整理上下文、等机器 | `api_retry`、`context_compact`、`device_waiting` | 现场；在跑的一轮的状态行读它们 |
 | 环境的准备、就绪、空闲释放 | `cloud_startup`、`cloud_provisioning`、`sandbox_asleep` | 现场 |
 | 记忆改动、整理 | `memory_changed` | 现场，见[记忆 · 改动记在哪](/dev/memory#events) |
+| 有人改了房间里 agent 读过的一条消息 | `message_edited` | 现场；agent 读的是同一句旁边那条隐藏提示（`block/editing.py`） |
 | 定时投递到点 | `timed_delivery` | 现场；记录的 id 就是那条定时投递的 id，账本的事件指着它 |
 | 后端报错、前端报错 | `backend_error`、`frontend_error` | 只在管理后台；不属于任何对话，发生在哪个对话写在 `meta.conversation` |
 | 2026-10-07 之前支线以外没跑完的轮次（迁移 `52fee3dd7773` 搬过来的） | `turn_failed`、`platform_error`、`turn_timeout` | 现场；管理后台算在「报错」里 |
