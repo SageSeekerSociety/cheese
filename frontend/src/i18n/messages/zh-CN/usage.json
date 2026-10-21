@@ -51,9 +51,7 @@
     "count": "{n} 条",
     "summaryNote": "奖励发放到你的个人额度。提交反馈后，采纳时发放。",
     "invite": "邀请奖励",
-    "gainPoints": "+{n} 积分",
-    "inviteEarned": "累计获得 {n} 点邀请奖励",
-    "pointsEarned": "贡献积分 {n}"
+    "inviteEarned": "累计获得 {n} 点邀请奖励"
   },
   "offers": {
     "feedbackLink": "前往反馈中心",

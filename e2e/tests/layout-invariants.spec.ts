@@ -56,20 +56,49 @@ test.describe('sidebar channel row geometry', () => {
     expect(hits).toEqual(Array(9).fill(true));
   }
 
-  // Any catalog entry, not only the channel row: the alignment contracts below compare
-  // independently rendered components, and each has its own frame id.
-  async function catalogFrame(page: Page, entry: string, state: number, theme = 'light') {
-    // Dev/nginx rewrite /demo/* to demo.html; Vite preview has no such
-    // middleware. Serve that same built document at the frame address in both
-    // environments, preserving the pathname/query consumed by demo-main.ts.
-    await page.route(`**/demo/catalog/${entry}/frame/*`, async route => {
+  // Dev/nginx rewrite /demo/* to demo.html; Vite preview has no such
+  // middleware. Serve that same built document at the catalog's addresses in both
+  // environments, preserving the pathname/query consumed by demo-main.ts.
+  async function serveDemo(page: Page, entry: string) {
+    await page.route(new RegExp(`/demo/catalog/${entry}(/frame/\\d+)?(\\?|$)`), async route => {
       if (route.request().resourceType() !== 'document') return route.continue();
       const url = new URL(route.request().url());
       url.pathname = '/demo.html';
       const response = await route.fetch({ url: url.href });
       await route.fulfill({ response });
     });
-    await page.goto(`/demo/catalog/${entry}/frame/${state}?theme=${theme}&motion=off&bg=canvas`);
+  }
+
+  // A frame is addressed by its position in the entry's list of states, and entries
+  // gain and lose states as the component changes: a number written here then
+  // measures some other state. So a state is named, and its position read off the
+  // entry's own page, where each case shows its name and its #position.
+  const positions = new Map<string, Map<string, number>>();
+  async function stateIndex(page: Page, entry: string, state: string): Promise<number> {
+    if (!positions.has(entry)) {
+      await serveDemo(page, entry);
+      await page.goto(`/demo/catalog/${entry}`);
+      const heads = page.locator('.catalog-case-head');
+      await expect(heads.first()).toBeVisible({ timeout: 30_000 });
+      const byName = new Map<string, number>();
+      for (const head of await heads.all()) {
+        const name = (await head.locator('.catalog-case-name').innerText()).trim();
+        const index = Number((await head.locator('.catalog-case-index').innerText()).trim().slice(1)) - 1;
+        byName.set(name, index);
+      }
+      positions.set(entry, byName);
+    }
+    const index = positions.get(entry)!.get(state);
+    expect(index, `catalog ${entry} has no state named 「${state}」`).not.toBeUndefined();
+    return index!;
+  }
+
+  // Any catalog entry, not only the channel row: the alignment contracts below compare
+  // independently rendered components, and each has its own frame id.
+  async function catalogFrame(page: Page, entry: string, state: string, theme = 'light') {
+    const index = await stateIndex(page, entry, state);
+    await serveDemo(page, entry);
+    await page.goto(`/demo/catalog/${entry}/frame/${index}?theme=${theme}&motion=off&bg=canvas`);
     await expect(page.locator('.frame-page')).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
   }
@@ -80,7 +109,7 @@ test.describe('sidebar channel row geometry', () => {
     await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
   }
 
-  async function catalogRow(page: Page, state: number, theme = 'light') {
+  async function catalogRow(page: Page, state: string, theme = 'light') {
     await catalogFrame(page, 'topic-rail-row', state, theme);
     const row = page.locator('.frame-page .topic-row');
     await expect(row).toHaveCount(1);
@@ -91,7 +120,7 @@ test.describe('sidebar channel row geometry', () => {
   test('task arrow precedes the name and revealing more neither shifts nor covers the name or light', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     for (const theme of ['light', 'dark']) {
-      const row = await catalogRow(page, 10, theme);
+      const row = await catalogRow(page, '任务块收起：状态合成一盏灯', theme);
       // The standalone frame supplies real component markup; give it the same
       // constrained width as a sidebar rather than a whole desktop viewport.
       await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
@@ -129,9 +158,9 @@ test.describe('sidebar channel row geometry', () => {
   test.describe('400px touch page', () => {
     test.use({ viewport: { width: 400, height: 844 }, hasTouch: true, isMobile: true });
 
-    // State 15: page form with a real subtree and a collapsed yellow task block.
+    // Page form with a real subtree and a collapsed yellow task block.
     test('subtree and task controls each have separate hittable 44px targets', async ({ page }) => {
-      const row = await catalogRow(page, 15);
+      const row = await catalogRow(page, '手机：两个独立折叠入口');
       const subtree = row.locator('.subtree-toggle');
       const arrow = row.locator('.task-fold__btn');
       const title = row.locator('.topic-title');
@@ -188,9 +217,9 @@ test.describe('sidebar channel row geometry', () => {
         ],
       });
 
-      // State 10 is the collapsed row with a yellow task light and menuOpen=false;
-      // state 13 stays untouched because it is the task-only alignment control.
-      const row = await catalogRow(page, 10);
+      // The collapsed row with a yellow task light and menuOpen=false; the
+      // task-only state stays untouched because it is the alignment control.
+      const row = await catalogRow(page, '任务块收起：状态合成一盏灯');
       await narrowFrame(page);
 
       expect(
@@ -227,7 +256,7 @@ test.describe('sidebar channel row geometry', () => {
       await expect(row.locator('.row-glyph')).toHaveCount(0);
     });
 
-    // State 11 is a channel with both controls, expanded and lightless: measure the
+    // 「同层：子频道和任务都能折叠」 is a channel with both controls, expanded and lightless: measure the
     // controls, not a light, and do not assume the task arrow is collapsed.
     test('both fold controls keep separate 44px targets when the row is expanded', async ({ page }) => {
       const cdp = await page.context().newCDPSession(page);
@@ -238,7 +267,7 @@ test.describe('sidebar channel row geometry', () => {
         ],
       });
 
-      const row = await catalogRow(page, 11);
+      const row = await catalogRow(page, '同层：子频道和任务都能折叠');
       await narrowFrame(page);
       expect(await page.evaluate(() => matchMedia('(hover: none)').matches)).toBe(true);
       expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
@@ -271,14 +300,13 @@ test.describe('sidebar channel row geometry', () => {
 
   // 名称前的记号换成了「有子话题 / 有任务」的控件，但同层标题必须仍然从同一条竖线
   // 开始——参差只出现在层级之间，不因为这一行多了哪一个控件而变化。
-  // Catalog 11=子频道+任务，12=仅子频道，13=仅任务，0=都没有。
   test('same-level titles share one left edge with children, tasks, both or neither', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     const cases = [
-      { state: 0, children: false, tasks: false },
-      { state: 11, children: true, tasks: true },
-      { state: 12, children: true, tasks: false },
-      { state: 13, children: false, tasks: true },
+      { state: '有队友在干活', children: false, tasks: false },
+      { state: '同层：子频道和任务都能折叠', children: true, tasks: true },
+      { state: '同层：只有子频道', children: true, tasks: false },
+      { state: '同层：只有任务', children: false, tasks: true },
     ];
     const lefts: number[] = [];
     for (const item of cases) {
@@ -292,10 +320,9 @@ test.describe('sidebar channel row geometry', () => {
   });
 
   // 私密频道的锁说的是「谁能进来」，有任务时不能拿任务箭头把它换掉；悬停说明也还在。
-  // Catalog 14=私密+任务。
   test('private channel keeps its lock and its private hint while tasks are collapsible', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    const row = await catalogRow(page, 14);
+    const row = await catalogRow(page, '私密频道有任务');
     await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
 
     const glyph = row.locator('.row-glyph');
@@ -317,19 +344,19 @@ test.describe('sidebar channel row geometry', () => {
       for (const title of titles) offsets.push(await titleOffsetInRow(title));
     };
 
-    await catalogFrame(page, 'topic-rail-pinned', 0);
+    await catalogFrame(page, 'topic-rail-pinned', '站在总览上');
     await narrowFrame(page);
     const pinned = page.locator('.frame-page .pinned-row .v-list-item-title');
     await expect(pinned).toHaveCount(2); // 总览、资料库
     await collect(await pinned.all());
 
-    await catalogFrame(page, 'topic-rail-root', 0);
+    await catalogFrame(page, 'topic-rail-root', '站在综合里');
     await narrowFrame(page);
     const root = page.locator('.frame-page .pinned-row .v-list-item-title');
     await expect(root).toHaveCount(1);
     await collect([root]);
 
-    const row = await catalogRow(page, 0);
+    const row = await catalogRow(page, '有队友在干活');
     await narrowFrame(page);
     await collect([row.locator('.v-list-item-title')]);
 
@@ -345,14 +372,13 @@ test.describe('sidebar channel row geometry', () => {
   // 都成立，而不是只发一次 CDP 就假定它生效。
   async function expectTaskMoreAligned(page: Page, mode: string) {
     for (const depth of [0, 1]) {
-      // Catalog: more-tasks-row 0=depth0, 2=depth1; task-row 0=depth0, 1=depth1.
-      await catalogFrame(page, 'topic-rail-more-tasks-row', depth === 0 ? 0 : 2);
+      await catalogFrame(page, 'topic-rail-more-tasks-row', depth === 0 ? '收着' : '挂在子频道下面');
       await narrowFrame(page);
       const more = page.locator('.frame-page .rail-more__label');
       await expect(more).toHaveCount(1);
       const moreX = (await boxOf(more)).x;
 
-      await catalogFrame(page, 'topic-rail-task-row', depth);
+      await catalogFrame(page, 'topic-rail-task-row', depth === 0 ? '频道下面的任务' : '子频道下面的任务');
       await narrowFrame(page);
       const task = page.locator('.frame-page .rail-task__title');
       await expect(task).toHaveCount(1);

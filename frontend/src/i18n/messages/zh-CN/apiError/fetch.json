@@ -1,0 +1,4 @@
+{
+  "webSearchNotConfigured": "这个部署没有配置网页搜索服务。知道网址的页面可以用 cheese_fetch 读。",
+  "webSearchUnavailable": "网页搜索服务暂时没有回答（{reason}），稍后再试。"
+}

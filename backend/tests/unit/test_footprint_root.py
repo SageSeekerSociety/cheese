@@ -95,6 +95,16 @@ def test_every_side_of_a_sandbox_names_the_same_helper_cgroup_and_resolvers():
     # The helper gives the executor's state its own quota where the install
     # makes it; elsewhere a full home would leave the executor no room.
     assert sandbox_host.STATE_DIR == f"{bootstrap.PLATFORM_DIR}/executor"
+    # The helper runs root's copies of the host tools, which the bootstrap
+    # installs: one it runs that is not installed fails every sandbox start.
+    assert sandbox_host.TOOLS == bootstrap.SANDBOX_TOOLS
+    ran = {
+        sandbox_host.IP,
+        sandbox_host.XFS_QUOTA,
+        sandbox_host.IPTABLES_SAVE[0],
+        sandbox_host.IPTABLES_RESTORE[0],
+    }
+    assert ran == {f"{bootstrap.SANDBOX_TOOLS}/{name}" for name in bootstrap.HOST_TOOLS}
 
 
 @pytest.mark.parametrize("total_mb", [2048, 4096, 8192, 16384, 65536])

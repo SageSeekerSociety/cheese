@@ -5,6 +5,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from './useChosenAvatar'
 
+import { getMyInvites } from '@/api/invites'
 import { UserAuthApi } from '@/api/userAuth'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import AccountService from '@/services/account'
@@ -47,6 +48,19 @@ export function useUserMenu() {
     { immediate: true }
   )
 
+  // 自己的邀请码还剩几个名额，写在菜单的「邀请好友」那一行上。每次打开菜单读一次，
+  // 不常驻轮询；读不到就当 0，那一行只写「邀请好友」。
+  const inviteSeatsLeft = ref(0)
+  watch(menuOpen, async (open) => {
+    if (!open || !loggedIn.value) return
+    try {
+      const mine = await getMyInvites()
+      inviteSeatsLeft.value = Math.max(0, mine.max_uses - mine.use_count)
+    } catch {
+      inviteSeatsLeft.value = 0
+    }
+  })
+
   // 退出登录
   const onLogout = async () => {
     try {
@@ -69,6 +83,7 @@ export function useUserMenu() {
     avatar,
     nickname,
     intro,
+    inviteSeatsLeft,
 
     // 方法
     onLogout,

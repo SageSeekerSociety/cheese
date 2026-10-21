@@ -28,7 +28,6 @@ const base: MyInvites = {
   unlocked: true,
   unlock_uses: 3,
   invite_credits: 150,
-  points: 50,
   invitees: [],
 }
 

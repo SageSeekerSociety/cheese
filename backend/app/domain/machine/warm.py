@@ -6,8 +6,8 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, or_, select, text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy import and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
@@ -32,7 +32,6 @@ from app.domain.machine.supply import data_disk_gb, pick_offering
 from app.domain.team.services import team_service
 
 logger = logging.getLogger("cheese.machine.warm")
-POOL_LOCK = 728104913
 # A machine whose deletion failed five times may still be billed, so a pile of
 # them stops replacement — but a couple of stale ones must not: counted as pool
 # capacity, the two on dev in September held a size-2 pool at zero for 11 days.
@@ -103,9 +102,6 @@ async def sweep_warm_pool(
             swept = await service.sweep()
         except Exception as exc:  # said on change, not every sweep
             _health.failed(f"{type(exc).__name__}: {exc}", exc)
-            return
-        if swept is None:
-            # Another process holds the pool: this sweep learned nothing.
             return
         if swept:
             _health.failed(swept)
@@ -314,28 +310,17 @@ class WarmPoolService:
         )
         return True
 
-    async def sweep(self) -> str | None:
-        """A dedicated connection holds the worker lock across checkpoint commits.
+    async def sweep(self) -> str:
+        """What keeps the pool from being replenished, or "" when nothing does.
 
-        None when another process holds the pool; otherwise what keeps the
-        pool from being replenished, or "" when nothing does.
+        One sweep at a time is the ownership lock's doing: this runs as a
+        periodic job of the process that owns the running work
+        (`app.core.ownership`), which stops it before handing the work over. It
+        takes no lock of its own because a lock held for the whole sweep is a
+        database connection held through each machine's bootstrap, about a
+        minute of SSH during which every request has one connection fewer;
+        `_prepare` commits before the bootstrap starts.
         """
-        engine = self.session.bind
-        assert isinstance(engine, AsyncEngine)
-        async with engine.connect() as connection:
-            locked = await connection.scalar(
-                text("SELECT pg_try_advisory_lock(:key)"), {"key": POOL_LOCK}
-            )
-            if not locked:
-                return None
-            try:
-                return await self._sweep_locked()
-            finally:
-                await connection.execute(
-                    text("SELECT pg_advisory_unlock(:key)"), {"key": POOL_LOCK}
-                )
-
-    async def _sweep_locked(self) -> str:
         abandoned = (
             await self.session.scalars(
                 select(WarmMachine)

@@ -91,6 +91,7 @@ TOOLS = (
     "cheese_channel_create",
     "cheese_settings_set",
     "cheese_web_fetch",
+    "cheese_web_search",
     "cheese_problem_write",
     "cheese_problem_publish",
 )
