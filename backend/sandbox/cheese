@@ -174,14 +174,14 @@ def _text(description: str) -> dict:
 
 
 FEEDBACK_DESCRIPTION = (
-    "你在轮次里发现的问题,提到平台上给人看。\n"
+    "你干活时发现的问题,提到平台上给人看。\n"
     "\n"
     "**这是提案,不是发布。** 平台会在对话里出一张卡,人按「提交反馈」才算数,"
     "所以你不会打断谁,也不用等回答。要人当场拍板请用 `cheese_ask`。\n"
     "\n"
     "什么时候该提(四条,正着看):某个工具或命令反复失败;你做不到用户要求的"
     "事;用户指出你的错,或者你自己发现犯了错;用户让你提。\n"
-    "什么时候不该提:一轮任务失败但不影响别人、用户已经知道的事、能从文档里"
+    "什么时候不该提:某一次没做成但不影响别人、用户已经知道的事、能从文档里"
     "查到答案的事。**先确认这不是用户的使用方式问题**——这条卡问的就是"
     "「平台坏了」和「用户不会用」之间的那句话。\n"
     "\n"
@@ -229,15 +229,15 @@ FEEDBACK_GET_DESCRIPTION = (
 _FEEDBACK_REF = _text("反馈编号，如 FB-12（详情页上印的那个），或者它的 id")
 
 RUN_RECORDS_DESCRIPTION = (
-    "读平台的运行记录：各个项目里出过的报错（后端、前端、没跑完的轮次）和平台自己"
+    "读平台的运行记录：各个项目里出过的报错（后端、前端、没跑完的运行）和平台自己"
     "处理掉的事（排队、重试、环境启停），和管理后台「运行记录」是同一份。一种事一行："
     "次数、涉及几个项目、首次和最近一次的时间。给 `key` 和 `kind`（列表每行末尾那一对）"
     "就读那一种的详情：最近一次的全文、调用栈、出现在哪些项目和对话里。"
-    "给 `turns` 读另一个问题：这一窗口里一共起了多少轮、其中多少轮留下了终态失败事件"
-    "——一种事一行的读法答不出「一共跑了多少轮」。没有失败事件的轮次读成空，那是平台"
+    "给 `turns` 读另一个问题：这一窗口里一共运行了多少次、其中多少次留下了终态失败事件"
+    "——一种事一行的读法答不出「一共运行了多少次」。没有失败事件的那几次读成空，那是平台"
     "没为它记过，不是记了成功。只读。"
-    "给 `turn_id`（完整轮次号）就读这一轮：它怎么了、落下了哪些运行记录；还没结束的"
-    "轮次还会说会话最近一帧是什么、多久以前 —— 不知道就是不知道，不是 0。"
+    "给 `turn_id`（完整的运行 id）就读这一次：它怎么了、落下了哪些运行记录；还没结束的"
+    "那次还会说会话最近一帧是什么、多久以前 —— 不知道就是不知道，不是 0。"
     "只有做这个平台本身的项目读得到，别的项目会被拒。"
 )
 
@@ -605,7 +605,7 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_task",
             "有人要把支线里说的事做出来时建任务，两种做法：这条支线讨论的就是这一件事，"
-            "here 填 true，支线原地转为任务，还是这段对话、还是你接着做，下一轮起你可以"
+            "here 填 true，支线原地转为任务，还是这段对话、还是你接着做，从下一次起你可以"
             "改项目；讨论拆出了几件各自要做的事，here 不填，每件另开一个任务，挂在支线"
             "所在的那条消息下面，由那边的 AI 队友去做，summary 必填。只在有人说要做时"
             "调：是你自己看出来该做的，先用 cheese_ask 问一句要不要转为任务（选项"
@@ -619,7 +619,7 @@ PLATFORM_TOOLS = ToolTable(
                     "那边的 AI 队友只能从这里和支线里的讨论知道来龙去脉"
                 ),
                 "owner": _text(
-                    "负责人 handle，就是说要做这件事的人；省略是你这一轮回应的那个人"
+                    "负责人 handle，就是说要做这件事的人；省略是你这次回应的那个人"
                 ),
                 "source_message_id": _text(
                     "任务所依据的消息 id；成员自己的 AI 必须引用主人发送的消息"
@@ -646,7 +646,7 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_task_state",
             "在任务里说你的活此刻在哪一步。看板上这件任务就显示你说的这一句，"
-            "直到你再说一次；平台不替你推断，你的一轮结束了它也照旧显示。"
+            "直到你再说一次；平台不替你推断，你停下了它也照旧显示。"
             "开工时设 working；起了构建、CI、长命令在等结果时设 waiting；"
             "没有人帮忙走不下去时设 blocked（负责人会看到要他处理），要人回答的"
             "问题照样用 cheese_ask 问。做完交给人审阅不用设：递卡"
@@ -845,7 +845,7 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_status",
-            "平台状态快照：本轮运行状态、这里的验收卡（含闸门失败输出）、磁盘、排队和"
+            "平台状态快照：这次运行的状态、这里的验收卡（含闸门失败输出）、磁盘、排队和"
             "额度。想知道卡到哪了、闸门为什么红时先看它，别用 platform_request 轮询。",
         ),
         _tool(
@@ -855,11 +855,11 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_ask",
-            "在房间里问人：每个问题是一条带快捷回复按钮的普通消息。问完就结束这一轮，"
+            "在房间里问人：每个问题是一条带快捷回复按钮的普通消息。问完就停下，"
             "不要等、不要轮询：被问的人里有一个点了选项或直接打字回复，那句回复会作为新消息"
-            "开启你的下一轮。问谁用 to 选，和 @ 人一样：一个人、几个人，或 all 表示频道里"
-            "所有人；不填就问让你开始这一轮的那个人。被问的人也可以跳过不答：你点名的人都"
-            "跳过了，你的下一轮会被告知；问 all 的题不会因为有人跳过而告知你。界面总会在你给"
+            "再把你叫起来。问谁用 to 选，和 @ 人一样：一个人、几个人，或 all 表示频道里"
+            "所有人；不填就问这次叫你起来的那个人。被问的人也可以跳过不答：你点名的人都"
+            "跳过了，你下次被叫起来时会被告知；问 all 的题不会因为有人跳过而告知你。界面总会在你给"
             "的选项后面加一个「其他」，点开能自己写答案，所以选项里不要"
             "再放「其他」「都不是」「我自己说」这类兜底项，只写真正的候选。",
             {
@@ -898,7 +898,7 @@ PLATFORM_TOOLS = ToolTable(
                     "minItems": 1,
                     "items": {"type": "string"},
                     "description": "问谁：频道里的人的 handle；写 all 就是频道里所有人。"
-                    "不填就问让你开始这一轮的那个人",
+                    "不填就问这次叫你起来的那个人",
                 },
                 "request_id": _text(
                     "上一次结果不确定时带上它返回的 request_id 重试，同一组问题不会发两遍"
@@ -1005,11 +1005,11 @@ PLATFORM_TOOLS = ToolTable(
                 "kind": _text("要读详情的那一种：列表里那一行的 kind"),
                 "turns": {
                     "type": "boolean",
-                    "description": "一轮一行：这一窗口里跑过的轮次、各自留下什么终态"
-                    "失败事件（空 = 平台没记过，不是成功）、这一轮的提示被投了几次",
+                    "description": "一次运行一行：这一窗口里的每次运行、各自留下什么终态"
+                    "失败事件（空 = 平台没记过，不是成功）、每次的提示被投了几次",
                 },
                 "turn_id": _text(
-                    "完整的一轮号；给了就读这一轮（它怎么了、落下了哪些运行记录、"
+                    "完整的运行 id；给了就读这一次（它怎么了、落下了哪些运行记录、"
                     "还没结束时最近一帧是什么），忽略 window"
                 ),
                 "limit": {
@@ -1033,8 +1033,8 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_note",
-            "给同一个 handle 的另一条线程留一张便条。它直接进那条线程正在跑的"
-            "那一轮，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
+            "给同一个 handle 的另一条线程留一张便条。它直接递给那条线程里"
+            "正在干活的队友，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
             "跟别的 handle 说话只有 chat 一条路。",
             {"thread": _text("那条线程的 topic id"), "content": {"type": "string"}},
             ["thread", "content"],
@@ -1051,7 +1051,7 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_routine_draft",
-            "为当前频道建一条例行事务（到点让这个频道的队友开工一轮）。"
+            "为当前频道建一条例行事务（到点让这个频道的队友开工做一次）。"
             "**存下就在跑**：没有人再点一次确认，所以你建之前先把配置说清楚，"
             "建完自己说一句它已经开跑了、什么时候跑第一次，话里带上返回的那个"
             "链接（就是规则的名字，点开还是这个频道，右栏那一格开在这一条上）。",
@@ -1110,8 +1110,8 @@ PLATFORM_TOOLS = ToolTable(
             "cheese_routine_report",
             "交回一次执行的结果（执行 id 在唤起你的那段工作说明里）：做成什么、结果文件"
             "在哪、没成是为什么。成功时的 summary 就是主线上那条消息的正文，频道里的人"
-            "直接读它。**成功失败都要交**，没交回结果的那一轮会被记成失败。"
-            "返回这一轮现在记着的状态、结果和产出。",
+            "直接读它。**成功失败都要交**，没交回结果的那次执行会被记成失败。"
+            "返回这次执行现在记着的状态、结果和产出。",
             {
                 "run": _text("这次执行的 id"),
                 "status": {
@@ -3424,10 +3424,10 @@ def _turns_lines(body: dict) -> str:
     """
     turns = body.get("turns") or []
     if not turns:
-        return f"{body.get('window')} 内没有跑过轮次。"
+        return f"{body.get('window')} 内没有运行过。"
     lines = [
-        f"{body.get('window')} 内一共 {body.get('total', len(turns))} 轮，"
-        f"这是最近的 {len(turns)} 轮（新的在前）："
+        f"{body.get('window')} 内一共 {body.get('total', len(turns))} 次运行，"
+        f"这是最近的 {len(turns)} 次（新的在前）："
     ]
     for turn in turns:
         if turn.get("failure_event"):
@@ -3444,7 +3444,7 @@ def _turns_lines(body: dict) -> str:
             line += f"  投喂 {turn['prompt_attempts']} 次"
         line += _frame_suffix(turn)
         lines.append(line)
-    lines.append("没有失败事件的轮次是平台没为它记过，不是记了成功。")
+    lines.append("没有失败事件的那几次是平台没为它记过，不是记了成功。")
     return "\n".join(lines)
 
 
@@ -3483,7 +3483,7 @@ def _turn_lines(turn: dict) -> str:
     lines[0] += _frame_suffix(turn)
     records = turn.get("records") or []
     if not records:
-        lines.append("这一轮没有落下运行记录。")
+        lines.append("这次运行没有落下运行记录。")
         return "\n".join(lines)
     lines.append(f"运行记录 {len(records)} 条：")
     for record in records:
@@ -4227,7 +4227,7 @@ def _say_ask(args, data, env) -> str:
     return (
         f"已在房间里问了 {len(blocks)} 个问题（消息 id {ids}；"
         f"request_id {(data or {}).get('request_id')}）。"
-        "现在结束这一轮，不要等：有人回复时，回复会作为新消息开启你的下一轮。"
+        "现在就停下，不要等：有人回复时，回复会作为新消息再把你叫起来。"
     )
 
 
@@ -4393,7 +4393,7 @@ _SAY = {
     "cheese_note": lambda a, d, e: (
         "便条已递给那条线程。"
         if (d or {}).get("delivered")
-        else "那条线程这会儿没有在跑的轮次,便条没人接住。"
+        else "那条线程这会儿没在干活,便条没人接住。"
     ),
     "cheese_deliver_at": lambda a, d, e: f"到 {(d or {}).get('at')} 会把它递给你。",
     "cheese_routine_draft": _say_routine_draft,
@@ -5427,8 +5427,8 @@ def _report_sync_failure(
         return  # A human using the CLI directly already receives its exit status.
     where = branch or f"任务 {task_id}"
     content = (
-        f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
-        "看不到它。请重试本轮；若机器被回收，改动会丢失。"
+        f"⚠️ 这次的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
+        "看不到它。需要再推一次；若机器被回收，改动会丢失。"
     )
     if queued_pr:
         # Retrying cannot help: the branch stays locked until the queue is done.
@@ -6508,7 +6508,7 @@ def _format_status(d: dict) -> str:
     lines.append(head + "）")
     turn = d.get("turn")
     if turn:
-        t = f"本轮: {turn.get('status')}"
+        t = f"这次运行: {turn.get('status')}"
         if turn.get("status") == "running":
             if turn.get("near_ceiling"):
                 t += "，接近硬顶（即将触发兜底结束）"
@@ -6556,7 +6556,7 @@ def _format_status(d: dict) -> str:
     credits = plat.get("credits") or {}
     cred = "不限" if credits.get("unlimited") else f"剩 {credits.get('remaining')}"
     lines.append(
-        f"并发: 全站运行中 {plat.get('active_turns', '?')} 轮，"
+        f"并发: 全站运行中 {plat.get('active_turns', '?')} 个，"
         f"本项目排队 {plat.get('queued_turns', 0)}；额度: {cred}"
     )
     return "\n".join(lines)
@@ -6835,7 +6835,7 @@ def build_parser() -> argparse.ArgumentParser:
             "没摆出来的文件他在界面上根本看不见。平台不会去猜该显示哪个文件——"
             "你显式指定。最后摆的那一样同时是这里的当前预览。\n\n"
             "摆出来的东西留在这里。用户想把一份留下来以后再用,自己按"
-            "「保存到资料库」;它不因此上产物清单——这一轮真交付了什么,走 "
+            "「保存到资料库」;它不因此上产物清单——这次真交付了什么,走 "
             "cheese_accept_request 的 artifact / deliver。"
         ),
     )

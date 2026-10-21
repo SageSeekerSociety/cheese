@@ -109,7 +109,7 @@ LINK_INTERRUPTED = (
 # 每两秒重试一次，连拒几个小时。说「可以重试」是假话，所以这句话叫它停。
 SESSION_ENDED = (
     "平台已经收回了这个会话用机器的凭证（它所在的房间或任务换了归属）："
-    "这个会话里要用机器的工具都不会再成功，重试结果一样。停下来，结束这一轮。"
+    "这个会话里要用机器的工具都不会再成功，重试结果一样。停下来，这次就到这里。"
 )
 _DEAD_CREDENTIAL = (
     "Execution credential does not own this session",

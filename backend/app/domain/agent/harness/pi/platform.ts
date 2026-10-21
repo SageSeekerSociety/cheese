@@ -1116,7 +1116,7 @@ function registerSubagentTools(pi: any, spec: Manifest) {
       }
       if (signal?.aborted) {
         await ask(spec.socket, "subagent_stop", { agent_id: id }).catch(() => {});
-        throw new Error(`${id} 随这一轮一起停了`);
+        throw new Error(`${id} 已随你一起停下`);
       }
       await ask(spec.socket, "subagent_background", { agent_id: id });
       return {
