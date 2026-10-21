@@ -326,6 +326,54 @@ def test_a_room_that_will_not_leave_is_ended_once_the_grace_has_run_out(tmp_path
             squatter.wait(timeout=5)
 
 
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_room_is_ended_on_a_machine_without_lsof(tmp_path, monkeypatch):
+    """A Linux machine need not have lsof (the Debian cloud image behind the VM
+    offering has none), and what still holds a room is found and ended all the
+    same: a process working inside it, and one holding a file of it open."""
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home, work = cleanup.resource_paths(tmp_path, project, resource)
+    home.mkdir(parents=True)
+    work.mkdir(parents=True)
+    (home / "log").write_text("")
+    sleep = subprocess.run(
+        ["sh", "-c", "command -v sleep"], capture_output=True, text=True
+    ).stdout.strip()
+    working = subprocess.Popen([sleep, "300"], cwd=work)
+    holding = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys,time; f=open(sys.argv[1]); time.sleep(300)",
+            str(home / "log"),
+        ],
+        cwd=tmp_path,
+    )
+    empty = tmp_path / "bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    try:
+        wait_for(
+            lambda: (
+                working.pid in cleanup.holders([home, work])
+                and holding.pid in cleanup.holders([home, work])
+            )
+        )
+        with pytest.raises(cleanup.StillRunning):
+            cleanup.check_no_writers([home, work])
+
+        cleanup.end_holders([home, work])
+
+        assert working.wait(timeout=15) != 0
+        assert holding.wait(timeout=15) != 0
+        cleanup.check_no_writers([home, work])
+    finally:
+        for process in (working, holding):
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+
+
 def test_a_safety_refusal_is_never_overruled_by_time(tmp_path):
     """Only "still running" ages into force; a socket of another user does not."""
     project, resource, operation = (str(uuid.uuid4()) for _ in range(3))

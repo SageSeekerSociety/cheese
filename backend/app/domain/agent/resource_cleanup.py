@@ -189,6 +189,76 @@ def windows_holders(paths: list[Path]) -> list[int]:
     return found
 
 
+#: Where Linux shows each process's working directory, root, executable, open
+#: files and mapped files. Read there rather than by lsof, which a stock Linux
+#: image need not have: the Debian cloud image behind the MicroCloud VM offering
+#: has none, and every sandbox destroy on those hosts failed for it (dev,
+#: 2026-10-20). macOS has no /proc and ships lsof.
+PROC = Path("/proc")
+
+
+def _beneath(target: str, roots: list[str]) -> bool:
+    if target.endswith(" (deleted)"):
+        target = target[: -len(" (deleted)")]
+    return any(target == root or target.startswith(root + os.sep) for root in roots)
+
+
+def _places(pid: Path) -> list[str]:
+    """Every path this process holds: its working directory, root and
+    executable, each open file, and each mapped file. A link it does not let
+    this user read (another user's process) is not this user's to end either."""
+    found = []
+    for name in ("cwd", "root", "exe"):
+        try:
+            found.append(os.readlink(pid / name))
+        except OSError:
+            pass
+    try:
+        for fd in os.scandir(pid / "fd"):
+            try:
+                found.append(os.readlink(fd.path))
+            except OSError:
+                pass
+    except OSError:
+        pass
+    try:
+        with open(pid / "maps") as maps:
+            for line in maps:
+                fields = line.split(None, 5)
+                if len(fields) == 6 and fields[5].startswith("/"):
+                    found.append(fields[5].rstrip("\n"))
+    except OSError:
+        pass
+    return found
+
+
+def proc_holders(paths: list[Path]) -> list[int]:
+    """What `lsof +D` answers, read from /proc: the processes whose working
+    directory, root, executable, open files or mapped files lie inside these.
+
+    The paths are compared as the process names them. A sandbox binds the room's
+    home at its own path (`confinement.sandbox_argv`), so a process inside one
+    names its files as the host does."""
+    roots = [os.path.realpath(path) for path in paths]
+    own = {os.getpid(), os.getppid()}
+    found = []
+    for entry in os.scandir(PROC):
+        if not entry.name.isdigit() or int(entry.name) in own:
+            continue
+        if any(_beneath(place, roots) for place in _places(Path(entry.path))):
+            found.append(int(entry.name))
+    return sorted(found)
+
+
+def proc_command(pid: int) -> str:
+    """A process's pid and command line, as `ps -o pid=,args=` would print it."""
+    try:
+        args = (PROC / str(pid) / "cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return str(pid)
+    return f"{pid} " + " ".join(a.decode(errors="replace") for a in args if a)[:150]
+
+
 def run_command(
     argv: list[str], *, cwd: Path | None = None, pass_fds: tuple[int, ...] = ()
 ) -> subprocess.CompletedProcess:
@@ -341,6 +411,14 @@ def check_no_writers(paths: list[Path]) -> None:
                 "directories: " + ", ".join(str(pid) for pid in pids)
             )
         return
+    if PROC.is_dir():
+        pids = proc_holders([Path(path) for path in present])
+        if pids:
+            raise StillRunning(
+                "resource still has processes holding files or working "
+                "directories: " + "; ".join(proc_command(pid) for pid in pids)
+            )
+        return
     result = run_command(["lsof", "-t", "+D", *present])
     if result.stdout.strip():
         pids = sorted(set(result.stdout.split()), key=int)
@@ -367,6 +445,8 @@ def holders(paths: list[Path]) -> list[int]:
         return []
     if sys.platform == "win32":
         return windows_holders([Path(path) for path in present])
+    if PROC.is_dir():
+        return proc_holders([Path(path) for path in present])
     result = run_command(["lsof", "-t", "+D", *present])
     own = {os.getpid(), os.getppid()}
     return [
@@ -379,7 +459,7 @@ def holders(paths: list[Path]) -> list[int]:
 def end_holders(paths: list[Path]) -> None:
     """Terminate whatever still holds the room, gently first, then not.
 
-    lsof names the processes; each gets SIGTERM, ten seconds to act on it,
+    `holders` names the processes; each gets SIGTERM, ten seconds to act on it,
     then SIGKILL. A tmux pane whose process dies reads as dead to the next
     `request_exit`, which closes the session the ordinary way.
     """

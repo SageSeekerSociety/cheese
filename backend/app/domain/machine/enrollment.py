@@ -237,11 +237,6 @@ esac
 #     (`remote_execution/sandbox_host.py`), and a session that cannot have one
 #     does not start. Both are root's, in sbin. bwrap itself is not here:
 #     cheesehost places the platform's (`cli/internal/devenv`).
-#   lsof — destroying a sandbox first ends whatever still holds its home
-#     (`resource_cleanup.end_holders`, run by `sandbox_host.py destroy`), and
-#     that asks lsof. Without it every destroy fails, the home stays, and the
-#     host never empties: the Debian cloud image the VM offering is built on
-#     has no lsof (dev, 2026-10-20).
 # None of them is guaranteed by the image: MicroCloud's LXC template lists git
 # but not tmux, and the VM template installs neither (it adds only curl + Docker
 # on top of a stock Debian cloud image). Depending on which offering a machine
@@ -255,7 +250,7 @@ PATH="$PATH:/usr/sbin:/sbin"
 if command -v cloud-init >/dev/null 2>&1; then
   cloud-init status --wait >/dev/null 2>&1 || true
 fi
-for tool in tmux git python3 ip iptables-restore lsof; do
+for tool in tmux git python3 ip iptables-restore; do
   command -v "$tool" >/dev/null 2>&1 && continue
   case "$tool" in
     ip) package=iproute2 ;;
