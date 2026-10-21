@@ -11,6 +11,7 @@ const user = ref<{ id: number; nickname: string; avatarId: number | null } | nul
 const loggedIn = ref(true)
 const push = vi.fn()
 const logoutRequest = vi.fn()
+const getMyInvites = vi.fn()
 // Like the real one, the session clears only after an await (it unsubscribes push
 // first): a caller that does not wait reaches the root while still signed in.
 const clearSession = vi.fn(async () => {
@@ -21,6 +22,7 @@ const clearSession = vi.fn(async () => {
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
 vi.mock('@/api/avatars', () => ({ getDefaultAvatarId: () => getDefaultAvatarId() }))
+vi.mock('@/api/invites', () => ({ getMyInvites: () => getMyInvites() }))
 vi.mock('@/api/userAuth', () => ({ UserAuthApi: { logout: logoutRequest } }))
 vi.mock('@/services/account', () => ({ default: { _user: user, _loggedIn: loggedIn, logout: clearSession } }))
 
@@ -121,5 +123,28 @@ describe('我的头像', () => {
     await releaseFirstPaint()
     await settle()
     expect(getDefaultAvatarId).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('菜单上的邀请名额', () => {
+  it('打开菜单时读自己的邀请码，写的是还剩几个名额', async () => {
+    getMyInvites.mockResolvedValue({ max_uses: 4, use_count: 1 })
+    const menu = await freshUserMenu()
+    expect(menu.inviteSeatsLeft.value).toBe(0)
+    menu.menuOpen.value = true
+    await settle()
+    expect(menu.inviteSeatsLeft.value).toBe(3)
+  })
+
+  it('读不到就当没有名额，菜单只写「邀请好友」', async () => {
+    getMyInvites.mockResolvedValueOnce({ max_uses: 4, use_count: 1 }).mockRejectedValueOnce(new Error('offline'))
+    const menu = await freshUserMenu()
+    menu.menuOpen.value = true
+    await settle()
+    menu.menuOpen.value = false
+    await settle()
+    menu.menuOpen.value = true
+    await settle()
+    expect(menu.inviteSeatsLeft.value).toBe(0)
   })
 })
