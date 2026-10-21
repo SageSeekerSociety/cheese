@@ -208,11 +208,13 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
   list-style: none;
 }
 .usv__history li {
+  /* 右边留出说明图标那一格：只有「+0 点」那一行有图标，但每行都留，日期和点数才对得齐。 */
+  position: relative;
   display: flex;
   gap: 16px;
   align-items: center;
   border-top: 1px solid var(--line);
-  padding: 12px 0;
+  padding: 12px 28px 12px 0;
   font-size: 13px;
   line-height: var(--lh-13);
 }
@@ -226,14 +228,16 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
 }
 /* 「+0 点」旁边那颗说明：20px 的图标，手指要点得中（tap-target，§3.6）；字色同 --muted。 */
 .usv__why {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: absolute;
+  top: 50%;
+  right: 0;
   width: 20px;
   height: 20px;
-  margin-left: -12px;
   padding: 0;
+  transform: translateY(-50%);
   border-radius: var(--radius-sm);
   color: var(--muted);
   font-size: 14px;
