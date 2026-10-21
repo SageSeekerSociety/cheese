@@ -310,7 +310,8 @@ def main():
                 "http://169.254.169.254/latest/meta-data/",
                 *([] if is_public(lan) else [f"http://{lan}:{platform_port}/"]),
             ]
-            probe = args.output / "page-reads.cjs"
+            # Absolute: Bun reads a relative --preload against nothing useful.
+            probe = (args.output / "page-reads.cjs").resolve()
             probe.write_text(PAGE_READS)
             read = subprocess.run(
                 [args.claude, "--version"],
