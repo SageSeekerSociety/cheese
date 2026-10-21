@@ -29,6 +29,12 @@
       <v-list-item :to="{ name: 'UserPage', params: { handle: menu.currentUser.value?.username } }">
         <v-list-item-title>{{ t('navigation.userMenu.profile') }}</v-list-item-title>
       </v-list-item>
+      <!-- 邀请好友：剩几个名额写在这一行上，用完了只写名字。设置里那一栏照旧留着。 -->
+      <v-list-item :to="{ name: 'UserSettingsInvites' }">
+        <v-list-item-title>{{
+          seatsLeft ? t('navigation.userMenu.invitesWithSeats', { n: seatsLeft }) : t('navigation.userMenu.invites')
+        }}</v-list-item-title>
+      </v-list-item>
       <v-list-item :to="{ name: 'UserSettings' }">
         <v-list-item-title>{{ t('navigation.userMenu.settings') }}</v-list-item-title>
       </v-list-item>
@@ -64,18 +70,37 @@
 <script setup lang="ts">
 import type { useUserMenu } from '@/composables/useUserMenu'
 
+import { ref, watch } from 'vue'
+
 import { useDesktopApp } from '@/composables/useDesktopApp'
 
+import { getMyInvites } from '@/api/invites'
 import LanguagePreference from '@/components/common/LanguagePreference.vue'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { inDesktopApp } from '@/lib/desktopApp'
 
-defineProps<{ menu: ReturnType<typeof useUserMenu> }>()
+const props = defineProps<{ menu: ReturnType<typeof useUserMenu> }>()
 
 const inApp = inDesktopApp()
 const { phoneOpen } = useDesktopApp()
+
+/** 自己的邀请码还剩几个名额。每次打开菜单读一次，不随页面常驻轮询；读不到就只写「邀请好友」。 */
+const seatsLeft = ref(0)
+watch(
+  () => props.menu.menuOpen.value,
+  async (open) => {
+    if (!open) return
+    try {
+      const mine = await getMyInvites()
+      seatsLeft.value = Math.max(0, mine.max_uses - mine.use_count)
+    } catch {
+      seatsLeft.value = 0
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>
