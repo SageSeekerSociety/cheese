@@ -131,7 +131,6 @@ from app.domain.agent.turn.intake.rooms import room_roster
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
 from app.domain.agent.turn.state.live import LiveWork
-
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn_usage import record_turn_usage
