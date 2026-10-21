@@ -23,13 +23,13 @@ import uuid
 from dataclasses import replace
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.assistant_deps import ProjectPages
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_consumptions, get_session_host
-from app.api.doc_access import reach
 from app.api.refusal import refuse
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok, typed_response
@@ -39,11 +39,7 @@ from app.auth.core import AuthUserInfo
 from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.errors import (
-    AuthenticationRequiredError,
-    BadRequestError,
-    NotFoundError,
-)
+from app.core.errors import BadRequestError, NotFoundError
 from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.personal import pages
@@ -57,8 +53,7 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.assistant import changes, proposals
-from app.domain.room_task.place import place_or_404
+from app.domain.assistant import changes, gate, proposals
 from app.domain.space.services import SpaceService
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -253,33 +248,6 @@ class PageIn(BaseModel):
         return str(v)
 
 
-class _ProjectPages:
-    """Whether the asker may open a project's page, judged by the request's
-    own resolver as opening that page is (``pages.PageAccess``) — as a read,
-    since asking only reads where it looks."""
-
-    def __init__(self, db, resolver: ActorResolver) -> None:
-        self._db = db
-        self._resolver = resolver.for_reading()
-
-    async def topic(self, topic_id: uuid.UUID):
-        place = await place_or_404(self._db, topic_id)
-        actor = await self._resolver.resolve(
-            topic_id=place.conversation_id, project_id=place.project_id
-        )
-        await self._resolver.authorize_topic(
-            actor, project_id=place.project_id, room=place.room
-        )
-        return place
-
-    async def document(self, document_id: uuid.UUID) -> None:
-        await reach(self._db, self._resolver, document_id)
-
-    async def project(self, project_id: uuid.UUID) -> None:
-        actor = await self._resolver.resolve(project_id=project_id)
-        await self._resolver.authorize_project(actor, project_id=project_id)
-
-
 async def _page(
     db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo, resolver
 ) -> pages.Shown:
@@ -291,7 +259,7 @@ async def _page(
         user_id=auth.user_id,
         timezone=zones.get(auth.user_id),
         spaces=spaces,
-        access=_ProjectPages(db, resolver),
+        access=ProjectPages(db, resolver),
     )
     return await pages.render(reader, page.kind, page.id)
 
@@ -506,79 +474,6 @@ async def redo_change(
     )
 
 
-class ProposeIn(BaseModel):
-    """What a person's 芝士 drafts (``cheese_message_draft``,
-    ``cheese_task_draft``): a message to ``topic`` (a channel, a task or a
-    支线), or a task to open in the channel ``topic`` is in."""
-
-    kind: Literal["message", "task"]
-    topic: uuid.UUID
-    text: str = Field(default="", max_length=8000)
-    title: str = Field(default="", max_length=300)
-
-
-def _where(place) -> str:
-    """How the place is named on a card: a channel by its name, a task or a
-    支线 by its title."""
-    if place.task is not None:
-        return place.task.title
-    if place.thread is not None:
-        return place.thread.title
-    return place.room.title
-
-
-@router.post("/proposals", include_in_schema=False, dependencies=[ROUTE_DECIDES])
-async def propose(
-    body: ProposeIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    questions: Questions,
-) -> dict:
-    """Keep what 芝士 drafted for the person to send, and show it on the
-    question's stream as a card (``proposal``). Nothing is sent: the person
-    sends it, as themself. Where it would go has to be somewhere the person
-    may speak, in the project the question was asked from."""
-    claims = resolver.delegation()
-    if claims is None or claims.user_id is None or not claims.work:
-        raise AuthenticationRequiredError(say("invalidToken"))
-    place = await place_or_404(db, body.topic)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(actor, project_id=place.project_id, room=place.room)
-    text, title = body.text.strip(), body.title.strip()
-    if body.kind == "message":
-        if not text:
-            raise BadRequestError(say("assistantProposalNeedsText"))
-        payload = {
-            "topic": str(place.conversation_id),
-            "topicName": _where(place),
-            "text": text,
-        }
-    else:
-        if not title or not text:
-            raise BadRequestError(say("assistantProposalNeedsTitle"))
-        payload = {
-            "channel": str(place.room_id),
-            "channelName": place.room.title,
-            "title": title,
-            "brief": text,
-        }
-    payload["project"] = str(place.project_id)
-    row = await proposals.propose(
-        db, user_id=claims.user_id, work=claims.work, kind=body.kind, payload=payload
-    )
-    await db.commit()
-    shown = proposals.view(row)
-    try:
-        asked = await questions.get(claims.work)
-    except RuntimeError:  # no Valkey: nobody to tell
-        asked = None
-    if asked is not None and asked.kind == assistant.KIND:
-        await questions.publish(asked, "proposal", shown)
-    return ok(shown)
-
-
 class SettleIn(BaseModel):
     #: ``sent`` once the person sent it, with what was made; ``dismissed``
     #: when they put it aside.
@@ -615,4 +510,101 @@ async def settle_proposal(
     )
     return ok(
         {"id": row.id, "kind": row.kind, "state": row.state, "result": row.result}
+    )
+
+
+# What a person tells their 芝士 about acting for them, and what it did: the
+# person's own, on their settings page. Not opened to 芝士's credential, so it
+# cannot change its own rules.
+
+
+class RulesIn(BaseModel):
+    ask: list[str] = Field(default_factory=list, max_length=len(gate.CATEGORIES))
+    allowText: str = Field(default="", max_length=2000)
+    askText: str = Field(default="", max_length=2000)
+
+
+class RuleCategoryOut(BaseModel):
+    code: str
+    label: str
+
+
+class RulesOut(BaseModel):
+    """What the person told their 芝士: kinds always asked, and their notes."""
+
+    ask: list[str]
+    allowText: str
+    askText: str
+    categories: list[RuleCategoryOut]
+
+
+class ActivityItemOut(BaseModel):
+    id: int
+    kind: str
+    summary: str
+    verdict: Literal["allowed", "asked"]
+    stage: str
+    reason: str
+    at: str
+
+
+class ActivityOut(BaseModel):
+    items: list[ActivityItemOut]
+
+
+def _rules_out(row) -> dict:
+    return {
+        "ask": [c for c in row.ask if c in gate.CATEGORIES],
+        "allowText": row.allow_text,
+        "askText": row.ask_text,
+        "categories": [{"code": c, "label": t} for c, t in gate.CATEGORIES.items()],
+    }
+
+
+@router.get("/rules", **typed_response(RulesOut))
+async def get_rules(db: DbSession, auth: AuthUser) -> dict:
+    """What the person told their 芝士 to ask first and may simply do."""
+    return ok(_rules_out(await gate.rules_of(db, auth.user_id)))
+
+
+@router.put("/rules", dependencies=[ROUTE_DECIDES], **typed_response(RulesOut))
+async def put_rules(body: RulesIn, db: DbSession, auth: AuthUser) -> dict:
+    unknown = [c for c in body.ask if c not in gate.CATEGORIES]
+    if unknown:
+        raise BadRequestError(say("assistantRuleUnknown", rule=unknown[0]))
+    row = await gate.save_rules(
+        db,
+        auth.user_id,
+        ask=list(dict.fromkeys(body.ask)),
+        allow_text=body.allowText.strip(),
+        ask_text=body.askText.strip(),
+    )
+    await db.commit()
+    return ok(_rules_out(row))
+
+
+@router.get("/activity", **typed_response(ActivityOut))
+async def get_activity(
+    db: DbSession,
+    auth: AuthUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 30,
+) -> dict:
+    """What 芝士 did for the person, or put to them to confirm, newest first,
+    and why."""
+    rows = await gate.recent(db, auth.user_id, limit=limit)
+    return ok(
+        {
+            "items": [
+                {
+                    "id": r.id,
+                    "kind": r.kind,
+                    "summary": r.summary,
+                    "verdict": r.verdict,
+                    "stage": r.stage,
+                    "reason": r.reason,
+                    "at": r.created_at.isoformat(),
+                }
+                for r in rows
+            ]
+        }
     )

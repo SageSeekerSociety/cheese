@@ -467,7 +467,7 @@ async def agent_write(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_task_write: write fields of a draft — a new one in a space, the
+    """cheese_problem_write: write fields of a draft — a new one in a space, the
     one named, or the person's changes to a published 题目 — and tell the
     page."""
     user_id = await _person(resolver)
@@ -587,7 +587,7 @@ async def agent_publish(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_task_publish: publish a draft as the person would."""
+    """cheese_problem_publish: publish a draft as the person would."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, body.draft)
     missing = drafts.missing(row)

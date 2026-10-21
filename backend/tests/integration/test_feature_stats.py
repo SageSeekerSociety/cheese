@@ -489,3 +489,46 @@ def test_visits_age_out_with_the_questions(client):
     assert gone == 1
     remaining = _visit_rows(client)
     assert [row.visitor_id for row in remaining] == ["v:ccccdddd"]
+
+
+def test_the_personal_assistant_page_counts_what_the_gate_did(client, as_admin):
+    """The gate's checks by verdict and stage, their cost and cache share."""
+    from app.domain.assistant.models import AssistantGateCheck
+    from tests.conftest import seed_user
+    from tests.integration.test_assistant import _ledger_user
+
+    seed_user(client, "gated")
+    user_id = _ledger_user(client, "gated")[0]
+
+    async def seed():
+        async with client.test_factory() as s:
+            for verdict, stage in (("allowed", "quick"), ("asked", "rule")):
+                s.add(
+                    AssistantGateCheck(
+                        user_id=user_id,
+                        work="w",
+                        kind="message",
+                        summary="发一条消息",
+                        verdict=verdict,
+                        stage=stage,
+                        reason="",
+                        input_tokens=100 if stage == "quick" else 0,
+                        cache_read_tokens=80 if stage == "quick" else 0,
+                        output_tokens=1,
+                        cost_usd=0.001,
+                        latency_ms=300,
+                    )
+                )
+            await s.commit()
+
+    asyncio.run(seed())
+    body = client.get(
+        "/admin/feature-stats/personal-assistant",
+        headers=session_auth_headers(as_admin),
+    ).json()["data"]
+    gate = body["gate"]
+    assert (gate["checks"], gate["allowed"], gate["asked"]) == (2, 1, 1)
+    assert gate["byStage"] == {"allowed:quick": 1, "asked:rule": 1}
+    assert gate["cacheRate"] == pytest.approx(0.8)
+    assert body["answers"]["cacheRate"] is None
+    assert body["daily"][-1]["checks"] == 2

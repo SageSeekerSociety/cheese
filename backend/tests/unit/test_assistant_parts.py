@@ -8,7 +8,7 @@ from app.domain.agent.personal.service import parts_of
 def test_the_stream_is_kept_as_steps_edits_and_published():
     told = [
         ("1000-0", "thinking", {}),
-        ("3500-0", "tool", {"name": "cheese_task_write", "call": "c1"}),
+        ("3500-0", "tool", {"name": "cheese_problem_write", "call": "c1"}),
         ("3600-0", "tool_args", {"call": "c1", "text": '{"name":"La', "at": 0}),
         ("3700-0", "tool_args", {"call": "c1", "text": 'b 3"}', "at": 11}),
         (
@@ -16,7 +16,7 @@ def test_the_stream_is_kept_as_steps_edits_and_published():
             "change",
             {"draft": 41, "changed": {"name": {"before": "", "after": "Lab 3"}}},
         ),
-        ("4000-0", "tool", {"name": "cheese_task_publish", "call": "c2"}),
+        ("4000-0", "tool", {"name": "cheese_problem_publish", "call": "c2"}),
         ("4100-0", "tool_failed", {"call": "c2", "text": "草稿还不完整"}),
         ("4200-0", "delta", {"text": "还缺描述。", "at": 0}),
     ]
@@ -26,10 +26,10 @@ def test_the_stream_is_kept_as_steps_edits_and_published():
     assert parts == {
         "steps": [
             {"call": "thinking-0", "name": "thinking", "args": "", "ms": 2500},
-            {"call": "c1", "name": "cheese_task_write", "args": '{"name":"Lab 3"}'},
+            {"call": "c1", "name": "cheese_problem_write", "args": '{"name":"Lab 3"}'},
             {
                 "call": "c2",
-                "name": "cheese_task_publish",
+                "name": "cheese_problem_publish",
                 "args": "",
                 "failed": "草稿还不完整",
             },
