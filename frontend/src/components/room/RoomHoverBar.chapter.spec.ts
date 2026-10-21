@@ -1,4 +1,4 @@
-/** 消息的 ⋯ 里的章节：能钉的地方给「钉成章节」，已经钉了的给「取消章节」。 */
+/** 消息的 ⋯ 里的书签：能钉的地方给「加书签」，已经钉了的给「取消书签」。 */
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Block } from '../../cx_types'
 
@@ -67,22 +67,22 @@ async function mount(extra: Record<string, unknown>) {
 
 beforeEach(() => setLocale('zh-CN'))
 
-describe('消息的 ⋯ 里的章节', () => {
-  it('能把一条消息钉成章节', async () => {
+describe('消息的 ⋯ 里的书签', () => {
+  it('能把一条消息加书签', async () => {
     const ui = await mount({ chapterable: true })
-    await fireEvent.click(ui.getByRole('button', { name: '钉成章节' }))
+    await fireEvent.click(ui.getByRole('button', { name: '加书签' }))
     expect((ui.emitted().chapter as [Block][])[0]![0].id).toBe('b1')
   })
 
   it('钉过的给的是取消', async () => {
     const ui = await mount({ chapterable: true, chapteredIds: new Set(['b1']) })
-    expect(ui.queryByRole('button', { name: '钉成章节' })).toBeNull()
-    await fireEvent.click(ui.getByRole('button', { name: '取消章节' }))
+    expect(ui.queryByRole('button', { name: '加书签' })).toBeNull()
+    await fireEvent.click(ui.getByRole('button', { name: '取消书签' }))
     expect((ui.emitted().unchapter as [Block][])[0]![0].id).toBe('b1')
   })
 
-  it('没有章节的地方不给这一项', async () => {
+  it('没有书签的地方不给这一项', async () => {
     const ui = await mount({ chapterable: false })
-    expect(ui.queryByRole('button', { name: '钉成章节' })).toBeNull()
+    expect(ui.queryByRole('button', { name: '加书签' })).toBeNull()
   })
 })

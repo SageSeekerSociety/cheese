@@ -234,7 +234,7 @@ describe('a chapter starts where someone marked it', () => {
     const { container, getAllByRole } = mount({ chapters: [chapter(BLOCKS[1])] })
     const marks = getAllByRole('heading', { level: 3 })
     expect(marks).toHaveLength(1)
-    expect(marks[0]!.textContent).toContain('第 1 章')
+    expect(marks[0]!.textContent).toContain('书签 1')
     expect(marks[0]!.textContent).toContain('second')
     expect(container.querySelector('[data-mid="b"]')!.previousElementSibling).toBe(marks[0])
   })
@@ -242,9 +242,9 @@ describe('a chapter starts where someone marked it', () => {
   it('numbers chapters in reading order, not the order they were marked', () => {
     const { getAllByRole } = mount({ chapters: [chapter(BLOCKS[2]), chapter(BLOCKS[0])] })
     const texts = getAllByRole('heading', { level: 3 }).map((mark) => mark.textContent)
-    expect(texts[0]).toContain('第 1 章')
+    expect(texts[0]).toContain('书签 1')
     expect(texts[0]).toContain('first')
-    expect(texts[1]).toContain('第 2 章')
+    expect(texts[1]).toContain('书签 2')
     expect(texts[1]).toContain('third')
   })
 

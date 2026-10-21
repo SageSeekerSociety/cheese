@@ -1,9 +1,9 @@
 {
   "jump": "跳到这一条",
-  "menu": "章节的操作",
-  "pinnedBy": "{name} 钉的 · {when}",
-  "title": "章节 · {count}",
-  "untitled": "（没有字的章节）",
-  "unpin": "取消章节",
-  "unpinFailed": "取消章节失败"
+  "menu": "书签的操作",
+  "pinnedBy": "{name} 加的 · {when}",
+  "title": "书签 · {count}",
+  "untitled": "（没有字的书签）",
+  "unpin": "取消书签",
+  "unpinFailed": "取消书签失败"
 }

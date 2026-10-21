@@ -63,14 +63,14 @@ describe('章节目录', () => {
     expect(ui.emitted().jump).toEqual([['b2']])
   })
 
-  it('说得上话的人能取消章节，别人只能跳', async () => {
+  it('说得上话的人能取消书签，别人只能跳', async () => {
     const owner = mount(true)
-    await fireEvent.click(owner.getAllByRole('button', { name: '取消章节' })[0]!)
+    await fireEvent.click(owner.getAllByRole('button', { name: '取消书签' })[0]!)
     expect(owner.emitted().unpin).toEqual([['b1']])
     owner.unmount()
 
     const reader = mount(false)
-    expect(reader.queryAllByRole('button', { name: '取消章节' })).toHaveLength(0)
+    expect(reader.queryAllByRole('button', { name: '取消书签' })).toHaveLength(0)
     expect(reader.getAllByRole('button', { name: '跳到这一条' })).toHaveLength(2)
   })
 })

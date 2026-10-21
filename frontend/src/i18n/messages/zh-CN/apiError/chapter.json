@@ -1,6 +1,6 @@
 {
-  "channelJoinToChapter": "加入频道后才能钉章节",
+  "channelJoinToChapter": "加入频道后才能加书签",
   "chapterMessageNotHere": "这条消息不在这段对话里",
-  "chapterMessagesOnly": "只有消息能钉成章节",
-  "chapterNotInPrivateChat": "私聊里没有章节"
+  "chapterMessagesOnly": "只有消息能加书签",
+  "chapterNotInPrivateChat": "私聊里没有书签"
 }

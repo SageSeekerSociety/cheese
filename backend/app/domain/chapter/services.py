@@ -42,9 +42,7 @@ class Chapters:
         )
         return [(chapter, block) for chapter, block in rows.all()]
 
-    async def add(
-        self, place: Place, block_id: uuid.UUID, *, by: str
-    ) -> bool:
+    async def add(self, place: Place, block_id: uuid.UUID, *, by: str) -> bool:
         """``by`` marks a message as a chapter. True when this added one, False
         when it already was one (and said nothing)."""
         await self._may_chapter(place, by)

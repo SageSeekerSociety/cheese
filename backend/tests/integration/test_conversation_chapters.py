@@ -49,7 +49,9 @@ def _say(client, tid, who, text):
 
 
 def _mark(client, tid, block, who):
-    return client.put(f"/topics/{tid}/chapters/{block}", headers=session_auth_headers(who))
+    return client.put(
+        f"/topics/{tid}/chapters/{block}", headers=session_auth_headers(who)
+    )
 
 
 def _chapters(client, tid, who="bob"):

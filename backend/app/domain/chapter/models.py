@@ -24,11 +24,17 @@ class Chapter(UuidPk, Base):
     #: The conversation the chapter is a section of; a block cannot move to
     #: another conversation, so this is the message's own.
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+            name="fk_chapters_conversation_id_conversations",
+        ),
+        index=True,
     )
     #: The message the section starts at. One message is one chapter.
     block_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("blocks.id", ondelete="CASCADE"), unique=True
+        ForeignKey("blocks.id", ondelete="CASCADE", name="fk_chapters_block_id_blocks"),
+        unique=True,
     )
     pinned_by: Mapped[str] = mapped_column(String(128))
     pinned_at: Mapped[datetime] = mapped_column(

@@ -1,6 +1,6 @@
 {
-  "channelJoinToChapter": "Join the channel to mark a chapter",
+  "channelJoinToChapter": "Join the channel to add a bookmark",
   "chapterMessageNotHere": "That message is not in this conversation",
-  "chapterMessagesOnly": "Only a message can start a chapter",
-  "chapterNotInPrivateChat": "A private chat has no chapters"
+  "chapterMessagesOnly": "Only a message can be bookmarked",
+  "chapterNotInPrivateChat": "A private chat has no bookmarks"
 }

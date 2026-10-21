@@ -1,6 +1,6 @@
 {
-  "failed": "The chapter was not saved. Try again.",
-  "mark": "Chapter {no}",
-  "pin": "Pin as chapter",
-  "unpin": "Remove chapter"
+  "failed": "The bookmark was not saved. Try again.",
+  "mark": "Bookmark {no}",
+  "pin": "Add bookmark",
+  "unpin": "Remove bookmark"
 }
