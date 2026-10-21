@@ -79,6 +79,7 @@ def device(tmp_path, monkeypatch):
                             {
                                 "path": self.path,
                                 "token": self.headers["X-Cheese-Token"],
+                                "turn": self.headers.get("X-Cheese-Turn"),
                                 "body": json.loads(payload),
                             }
                         )
@@ -169,6 +170,7 @@ def device(tmp_path, monkeypatch):
         "CHEESE_PROJECT": project,
         "CHEESE_TOPIC": room,
         "CHEESE_TOKEN": "test-secret",
+        "CHEESE_TURN": str(uuid.uuid4()),
         "PATH": str(CLI.parent) + os.pathsep + os.environ["PATH"],
     }.items():
         monkeypatch.setenv(key, value)
@@ -533,6 +535,7 @@ def test_failed_push_is_shown_in_the_site(device):
     ]
     assert report["path"] == f"/topics/{os.environ['CHEESE_TOPIC']}/session-records"
     assert report["token"] == "test-secret"
+    assert report["turn"] == os.environ["CHEESE_TURN"]
     assert report["body"]["subtype"] == "sync_failed"
     assert tasks[task]["branch"] in report["body"]["text"]
 

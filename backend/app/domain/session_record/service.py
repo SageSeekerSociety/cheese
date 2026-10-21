@@ -289,8 +289,14 @@ async def note(
 
     Not a harness journal row (`append`): the machine speaks in its own voice,
     so it gets a sequence of its own and `harness` keeps it out of every
-    agent's run. It is sealed and read back exactly like a harness record."""
+    agent's run. It is sealed and read back exactly like a harness record.
+
+    The sync runs at a turn's end, after the harness's own last record, and the
+    machine is given no turn id. With none, the note joins the last turn this
+    conversation's records carry — the one whose checkpoint it is."""
     when = at or datetime.now(UTC)
+    if turn_id is None:
+        turn_id = await _latest_turn(db, conversation_id)
     sequence = int(when.timestamp() * 1_000_000)
     entry = {"sequence": sequence, "at": when.isoformat(), "record": scrubbed(record)}
     db.add(
@@ -309,6 +315,21 @@ async def note(
         )
     )
     await db.flush()
+
+
+async def _latest_turn(
+    db: AsyncSession, conversation_id: uuid.UUID
+) -> uuid.UUID | None:
+    """The turn the conversation's newest record belongs to, if any."""
+    return await db.scalar(
+        select(SessionRecord.turn_id)
+        .where(
+            SessionRecord.conversation_id == conversation_id,
+            SessionRecord.turn_id.is_not(None),
+        )
+        .order_by(SessionRecord.last_at.desc(), SessionRecord.id.desc())
+        .limit(1)
+    )
 
 
 # --- sealing -----------------------------------------------------------------
