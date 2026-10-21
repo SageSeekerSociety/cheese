@@ -1,0 +1,9 @@
+{
+  "voiceNotWav": "The recording is in the wrong format. Refresh the page and try again.",
+  "voiceEmpty": "This recording is empty.",
+  "voiceTooLong": "A recording can be at most {seconds} seconds long.",
+  "voiceDailyUsedUp": "You've used today's voice input. Try again tomorrow.",
+  "voiceUnavailable": "Voice input isn't available right now.",
+  "voiceNotHeard": "This recording couldn't be transcribed. Try again.",
+  "voicePeopleOnly": "Only people can use voice input."
+}

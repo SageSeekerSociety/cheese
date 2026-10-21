@@ -61,17 +61,13 @@ defineEmits<{ (e: 'select', handle: string | null): void }>()
 
 <style scoped>
 /* 按队友看：一排文字按钮，选中的那个换底色和墨色，不用琥珀——这里不是主操作。 */
-/* 钉在滚动层顶上：现场一长，切队友不该先滚回去。 */
+/* 钉住的是外层表头（`.site-head`），不是这一排自己：两个 sticky 同顶会互相盖住。 */
 .site-agents {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-raised-2);
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 8px 12px 6px;
+  padding: 6px 12px;
   background: var(--surface);
-  border-bottom: 1px solid var(--line);
 }
 .site-agents__tab {
   padding: 2px 8px;

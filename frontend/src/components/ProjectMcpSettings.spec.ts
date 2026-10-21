@@ -206,10 +206,10 @@ it('opens what a server that failed to start printed', async () => {
   expect(view.getByTestId('mcp-log').textContent).toContain('ModuleNotFoundError: notes')
 })
 
-it('names the owner a command waits on', async () => {
+it('identifies team administrators as the command approvers', async () => {
   const waiting = { ...notes, run: { state: 'awaiting' as const, log: [], owner: 'dana' } }
   const view = await mount({ servers: [waiting], problem: null })
-  await waitFor(() => expect(view.container.textContent).toMatch(/等\s*dana\s*允许/))
+  await waitFor(() => expect(view.container.textContent).toMatch(/等团队管理员允许/))
 })
 
 it('says the list is unreadable or invalid instead of showing servers', async () => {

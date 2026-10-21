@@ -44,7 +44,6 @@ from app.domain.agent_instance.adapters import (
     named_teammate,
     project_team,
 )
-from app.domain.agent_instance.own import may_chat_with
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.adapters import platform_line
 from app.domain.block.queries import weeklies_for_project
@@ -454,7 +453,6 @@ async def list_project_tasks(
     project_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
     if_none_match: Annotated[str | None, Header()] = None,
     status: Annotated[Literal["open", "closed"] | None, Query()] = None,
     accepted: Annotated[bool | None, Query()] = None,
@@ -538,7 +536,7 @@ async def list_project_tasks(
             db, [t.id for t in tasks if t.status == "open"]
         )
         items = await project_task_rows(
-            db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
+            db, actor.handle or "", tasks, incomplete_of=incomplete.get
         )
         last = page_rows[-1] if page_rows and has_more else None
         return await conditional_json(
@@ -557,7 +555,7 @@ async def list_project_tasks(
     )
     incomplete = await incomplete_tasks(db, [t.id for t in tasks if t.status == "open"])
     items = await project_task_rows(
-        db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
+        db, actor.handle or "", tasks, incomplete_of=incomplete.get
     )
     return await conditional_json(ok(page(items, len(items))), if_none_match)
 
@@ -690,12 +688,6 @@ async def get_private_chat(
         for handle in (user_handle, peer_handle):
             if not await seats.on_project(project_id, handle, team=project_team):
                 raise ForbiddenError(say("privateChatProjectMembersOnly"))
-    if peer_handle is None:
-        project = await ProjectService(db).get_or_404(project_id)
-        if not await may_chat_with(
-            db, project_id, agent_handle, user_handle, project.settings
-        ):
-            raise ForbiddenError(say("ownAgentOwnerOnlyChat"))
     topic = await TopicService(db).get_or_create_private(
         project_id=project_id,
         user_handle=user_handle,

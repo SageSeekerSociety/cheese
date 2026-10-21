@@ -12,6 +12,7 @@ from app.domain.groups.models import (
     GroupQuestionRelationship,
     GroupTarget,
 )
+from app.domain.repositories import Repository
 
 
 @overload
@@ -26,9 +27,11 @@ def _to_date(dt_or_date: datetime | date | None) -> date | None:
     return dt_or_date
 
 
-class GroupRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+class GroupRepository(Repository[Group]):
+    model = Group
+
+    def base_statement(self) -> Select[tuple[Group]]:
+        return select(Group).where(Group.deleted_at.is_(None))
 
     async def create_group(self, *, name: str) -> Group:
         now = datetime.now(UTC)
@@ -41,14 +44,6 @@ class GroupRepository:
         self._session.add(group)
         await self._session.flush()
         return group
-
-    async def get_by_id(self, group_id: int) -> Group | None:
-        stmt: Select[tuple[Group]] = select(Group).where(
-            Group.id == group_id,
-            Group.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
 
     async def search(
         self,

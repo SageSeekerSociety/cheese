@@ -43,7 +43,7 @@ covers:
 
 ## 回收脚本在设备上跑 {#script}
 
-`domain/agent/resource_cleanup.py` 是用 stdin 送到设备上、在那边跑的程序（没有 `__file__`、import 不到平台任何东西），所以它带着几个常数的**副本**，由 `tests/unit/test_footprint_root.py` 与 `place.py` 对齐：`FOOTPRINT_ROOT = ".cheese"`、`CHECKOUT_DIR = "room"`、`TRANSCRIPTS_ROOT = "transcripts"`、`PLATFORM_DIRS = (".cheese", ".claude")`。名字漂移的代价写得很直白：拆卸会对一条从没存在过的路径报成功，而真正的几百 GB 留在机器上。
+`domain/agent/resource_cleanup.py` 是用 stdin 送到设备上、在那边跑的程序（没有 `__file__`、import 不到平台任何东西），所以它带着几个常数的**副本**，由 `tests/unit/test_footprint_root.py` 与 `place.py` 对齐：`FOOTPRINT_ROOT = ".cheese"`、`CHECKOUT_DIR = "room"`、`TRANSCRIPTS_ROOT = "transcripts"`、`HARNESS_ROOT = "harness"`、`PLATFORM_DIRS = (".cheese", ".claude")`。名字漂移的代价写得很直白：拆卸会对一条从没存在过的路径报成功，而真正的几百 GB 留在机器上。
 
 动作（`main` 的第一个参数）：
 
@@ -53,7 +53,8 @@ covers:
 | `remove` | 旧房间的文件先送进存储（见下一节）、释放私有席位助手、保留记录、删掉 `work` 与 `home` |
 | `keep-room` | 只把旧房间的文件送进存储，不删任何东西 |
 | `tasks` | 删掉房间里已结束任务的检出，只留还有进程在里面的 |
-| `expire` | 到期删除保留的记录 |
+| `send-transcripts` | 把保留的记录送进私有桶（URL 在 `CHEESE_KEEP_URL`），回报大小和 MD5 供平台核对，不删任何东西 |
+| `expire` | 到期删除保留的记录；平台只在桶里核对到这份记录之后才发这个动作 |
 
 宽限的实现有个细节：第一次尝试会在回执目录里写一个 `.requested` 时间戳，**之后每次尝试都从这个戳算宽限**，而不是从自己开始算，所以一个房间绝不会在它第一次拒绝离开时就被打死。超过后强制结束持有者再试一遍。`FORCE_AFTER_S` 默认 600 秒（`CHEESE_CLEANUP_FORCE_AFTER_S` 可覆盖）。给这个数是因为实测（2026-09-18）：45 个归档房间里有 173 个进程还在，有些是几天前的，每一个都把房间的回收卡在「资源还有进程持着文件」上——房间已经归档了，宽限之后的进程是泄漏，不是会话。
 
@@ -70,9 +71,9 @@ covers:
 
 ## 记录（transcripts） {#transcripts}
 
-- 记录不上传。每个 Claude Code 会话都跑在中央会话主机上（`AGENT_SESSION_DEVICE_ID`），所以房间的记录就在它在那台机器上的 home 里。删 home 之前，先把 home 的 `.claude/projects` 树（主会话文件与每个分身的）压成 `~/.cheese/transcripts/<项目>/<房间>/<资源>.tar.gz`，保存在同一台机器上、只有该主机用户可读。**树里的链接按链接存，绝不跟随。** 别的设备不留记录。
-- 之后操作停在 `retained` 状态：home 被删后三十天（`TRANSCRIPT_RETENTION`，`domain/room_cleanup/retire.py`），同一个定时器删掉压缩包，操作变成 `complete`。
-- 这份副本只是事后查 agent 干了什么用的，没有任何东西读它。交接工作不需要它：房间的对话、实况文档和行动时间线都跟着房间走。
+- CLI 自己的记录文件也进私有桶、永久保留（Zhifei 在 #4398 上 2026-10-19 的裁定，推翻 #1611 的“不上传”）；runner 记下的那份原始记录另见[原始记录](/dev/session-records)。每个会话都跑在中央会话主机上（`AGENT_SESSION_DEVICE_ID`）：Claude Code 的记录在房间 home 的 `.claude/projects` 里（主会话与每个分身的），Codex 和 pi 的在资源的 harness 状态目录 `~/.cheese/harness/<项目>/<资源>/` 下（Codex 的 `CODEX_HOME/sessions`，pi 的 `sessions/` 和每个子 agent 的）。回收这个资源时（不管房间在这台主机上有没有 home——Codex 和 pi 的房间往往只有 harness 状态），先把这些一起压成 `~/.cheese/transcripts/<项目>/<房间>/<资源>.tar.gz`，保存在同一台机器上、只有该主机用户可读。**树里的链接按链接存，绝不跟随。** 别的设备不留记录。
+- 压好之后用预签名 PUT 传进私有桶 `transcripts/rooms/<项目>/<房间>/<资源>.tar.gz`，后端按主机报的大小和 MD5 核对桶里那份。桶里那份没有任何代码删。
+- 之后操作停在 `retained` 状态：home 被删后三十天（`TRANSCRIPT_RETENTION`，`domain/room_cleanup/retire.py`），同一个定时器删掉主机上的压缩包，操作变成 `complete`；前提是桶里那份核对过。还没传上去的（当时传失败，或者在有上传之前就留下的）先传，传不上去就留在主机上，过一阵再试。
 - 记录还在保留期内的时候取消归档，**什么都不会被还原**：房间拿到新的资源代际，agent 开新会话；那份压缩包按原计划到期。再归档一次，新代际的记录会在旁边存成第二份。
 
 ## 独立时钟 {#timer}
@@ -92,7 +93,7 @@ covers:
 
 各自的要点：
 
-- 夜间那条的 `--needed` 判断**由脚本自己做**，不写在 unit 里，因为问题不只是关于 `/`：这些机器的 `/tmp` 是单独的 tmpfs，而且先满的是它——2026-09-22 开发机上 `/` 51%、`/tmp` 100%，每个新话题的环境都准备失败，而那个 unit 从来没启动过（当时它的条件是 `df /`）。75% 这个标记压在 `cheesex-disk-pressure-guard` 的 85% 急刹之下，所以是缓存先被回收，轮不到 guard 去删沙箱容器。
+- 夜间那条的 `--needed` 判断**由脚本自己做**，不写在 unit 里，因为问题不只是关于 `/`：这些机器的 `/tmp` 是单独的 tmpfs，而且先满的是它——2026-09-22 开发机上 `/` 51%、`/tmp` 100%，每个新频道的环境都准备失败，而那个 unit 从来没启动过（当时它的条件是 `df /`）。75% 这个标记压在 `cheesex-disk-pressure-guard` 的 85% 急刹之下，所以是缓存先被回收，轮不到 guard 去删沙箱容器。
 - 房间缓存那条与 nightly 那条的区别是**有没有写者**：这里的每条路径都有写者（项目的 setup 脚本，在 `environment_runner` 的 flock 下跑），所以它按房间取同一把锁，跳过正在安装的房间——安装中途删缓存会得到一个半链接的 venv。
 - 老式 checkout 那条的安全性不在于「没人用得上」，而在于**已发布**：删之前过 `check_no_writers`（`resource_cleanup` 里那一个）和脚本自己的 `check_published`。过不去的一律留下并报原因——回收量这么大，闸门就得是准的。
 - 实测回收率不均（2026-09-17）：`~/.npm/_cacache` 792 MiB 全回收、`~/.cache/pip` 240 MiB 全回收，而 `~/.cache/uv` 1.5 GiB 只回收 12%、pnpm store 3.0 GiB 只回收 2%——后两者是内容寻址的 store，安装时是硬链接出去的，大部分字节还在留着的 `.venv`/`node_modules` 里；对 checkout 已经没了的房间，它们才整份回来。

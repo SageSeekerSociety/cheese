@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.addressing import Addressed
 from app.domain.agent.turn.state.live import LiveWork
+from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.delivery.input_identity import InputReconciliationPending
 
 
@@ -28,6 +29,7 @@ class HumanWriter(Protocol):
         attachments: list[dict] | None = None,
         client_id: str | None = None,
         quoted_context: dict | None = None,
+        handoff: HumanHandoff | None = None,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]: ...
 
 
@@ -63,7 +65,7 @@ class MessageService(Protocol):
         agent_instance_id: uuid.UUID | None = None,
     ) -> dict | None: ...
 
-    async def merge_into_running_turn(
+    async def merge_into_running_session(
         self,
         topic_id: uuid.UUID,
         block_ids: list[uuid.UUID],
@@ -75,7 +77,7 @@ class MessageService(Protocol):
         owes_reply: bool = True,
     ) -> bool | InputReconciliationPending | None: ...
 
-    async def join_running_turn(
+    async def join_running_session(
         self, delivery_id: uuid.UUID, attempt_id: uuid.UUID
     ) -> bool | InputReconciliationPending | None: ...
 
@@ -125,7 +127,6 @@ class ReceivedMessage(TypedDict):
     attachments: list[dict] | None
     landed_user_block_id: uuid.UUID
     landed_user_block_ids: list[uuid.UUID]
-    live_delivery_expected: bool
     recipient_handle: str | None
     recipient_instance_id: NotRequired[uuid.UUID | None]
 

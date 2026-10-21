@@ -97,7 +97,7 @@ async def ask_agent(
     """Ask, streamed as server-sent events: ``conversation`` (its id, first),
     ``queued``, ``working``, then once asked ``answering`` (the question's id,
     to read on from elsewhere), ``delta``, ``tool``, then ``done`` (``answer``,
-    ``edits``, ``stopped``) or ``error``. Each event from ``answering`` on
+    ``changes``, ``stopped``) or ``error``. Each event from ``answering`` on
     carries its place in the question's stream (``id``)."""
     reached, actor, redis = await _asker(db, resolver, document_id)
     preset = box.PRESETS.get(body.preset or "") if body.preset else None

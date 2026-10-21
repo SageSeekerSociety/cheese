@@ -24,12 +24,12 @@ from app.domain.topic_membership.services import TopicMemberService
 class NotifiesRunningTurn(Protocol):
     """把一句话递给这个频道**正在跑**的那一轮。
 
-    形状就是 `agent.chat.ChatService.notify_running_turn`，递进来的就是那个服务实
+    形状就是 `agent.chat.ChatService.notify_running_session`，递进来的就是那个服务实
     例。本包在第 3 层、`agent` 也在第 3 层，可两边本来就互读（`agent.runtime` 读本
     包的投递行），再 import 一次就是一个环（C3 的 `domains-acyclic`）。所以本包只
     写下自己要的这一件事，谁在门口谁把服务递进来。"""
 
-    async def notify_running_turn(
+    async def notify_running_session(
         self,
         topic_id: uuid.UUID,
         notice: str,
@@ -71,6 +71,6 @@ async def send_note(
     seats = await TopicMemberService(session).agent_handles(target.room_id)
     if sender not in seats:
         raise ValidationError(NOT_YOUR_OWN_THREAD)
-    return await chat.notify_running_turn(
+    return await chat.notify_running_session(
         target.room_id, content, recipient_seat=sender
     )

@@ -2,7 +2,7 @@
  * 后台那一组整页条目（`catalogViewAdmin.ts` + `catalogViewAdmin2.ts`）用的数据。
  *
  * 形状照产品里的契约写，不现编：方案与团队照 `/admin/plans`、`/admin/teams` 的回答
- * （`@/lib/adminCredits`），棘轮照 `/admin/ratchet` 的 `RatchetBoard`，运行记录照
+ * （`@/lib/adminCredits`），运行记录照
  * `/admin/run-records` 的 `RunRecordOverview` / `RunRecordDetail`，协议照
  * `/legal/*` 的 `LegalDocumentFull`。看板那七份响应在 `catalogDashboardFixtures.ts`，
  * 这里不再抄一份（`AdminStatsPageView` 直接吃那七份）。
@@ -13,7 +13,6 @@
 import type { CreditAudit, CreditPack, CreditTeamDetail, CreditTeamPage, Plan } from '@/lib/adminCredits'
 import type { CiBoard, CiJobRow, CiStepRow } from '@/views/admin/ciActivityApi'
 import type { MachinesOverview } from '@/views/admin/machinesApi'
-import type { RatchetBoard, RatchetCheck } from '@/views/admin/ratchetApi'
 import type { RunRecordDetail, RunRecordGroup, RunRecordOverview } from '@/views/admin/runRecordsApi'
 import type LegalDocumentView from '@/views/legal/LegalDocumentView.vue'
 
@@ -163,84 +162,6 @@ export const CRV_TIER_MODELS = {
   frontier: [],
 }
 
-// --- 棘轮 ------------------------------------------------------------------
-
-/** 一道检查的两个点，都是 `pass`、都量到 3 —— 和 `AdminRatchetPageView.spec.ts`
- *  同一份形状（真实后端在这两个点上的读数就是这样）。 */
-const RATCHET_CHECK: RatchetCheck = {
-  id: 'fe-boundary',
-  area: 'boundaries',
-  better: 'down',
-  direction: 'flat',
-  status: 'pass',
-  actual: 3,
-  frozen: 3,
-  stale: [],
-  stale_count: null,
-  rule_fingerprint: 'fp-a',
-  points: [
-    {
-      commit: 'aaaaaaa1',
-      collected_at: '2026-09-30T10:00:00+00:00',
-      run_url: 'https://example.test/run/1',
-      collection: 'ok',
-      status: 'pass',
-      actual: 3,
-      frozen: 3,
-      stale_count: null,
-      rule_fingerprint: 'fp-a',
-      rule_changed: false,
-      new_exemptions: null,
-      details: null,
-      reason: null,
-    },
-    {
-      commit: 'bbbbbbb2',
-      collected_at: '2026-09-30T11:00:00+00:00',
-      run_url: 'https://example.test/run/2',
-      collection: 'ok',
-      status: 'pass',
-      actual: 3,
-      frozen: 3,
-      stale_count: null,
-      rule_fingerprint: 'fp-a',
-      rule_changed: false,
-      new_exemptions: null,
-      details: null,
-      reason: null,
-    },
-  ],
-}
-
-export const CRV_RATCHET: RatchetBoard = {
-  repo: 'SageSeekerSociety/cheese',
-  generated_at: '2026-09-30T13:00:00Z',
-  deployed_commit: 'dc069a4aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  collected_commit: 'bbbbbbb2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  collected_at: '2026-09-30T11:00:00+00:00',
-  run_url: 'https://example.test/run/2',
-  collection: 'ok',
-  points: 2,
-  total_stored: 2,
-  collections: [
-    {
-      commit: 'aaaaaaa1',
-      collected_at: '2026-09-30T10:00:00+00:00',
-      run_url: 'https://example.test/run/1',
-      collection: 'ok',
-      reason: null,
-    },
-    {
-      commit: 'bbbbbbb2',
-      collected_at: '2026-09-30T11:00:00+00:00',
-      run_url: 'https://example.test/run/2',
-      collection: 'ok',
-      reason: null,
-    },
-  ],
-  areas: [{ area: 'boundaries', checks: [RATCHET_CHECK] }],
-}
-
 // --- 运行记录 --------------------------------------------------------------
 
 function runGroup(kind: string, key: string, title: string, over: Partial<RunRecordGroup> = {}): RunRecordGroup {
@@ -337,7 +258,6 @@ export const CRV_MACHINES: MachinesOverview = {
     sandbox_inode_budget: 600000,
     near_cap: 0.8,
     check_s: 60,
-    walk_s: 300,
     alert_used: { disk: 0.85, inodes: 0.9, memory: 0.9 },
     history_step_s: 300,
   },
@@ -493,6 +413,10 @@ export const CRV_MACHINES: MachinesOverview = {
       id: 'w-1',
       state: 'ready',
       machine_id: 418,
+      hostname: 'warm-7c41e09a2b5d4f18',
+      cores: 4,
+      memory_mb: 16384,
+      disk_gb: 40,
       ip: '10.0.3.30',
       online: true,
       created_at: '2026-10-12T09:45:00Z',

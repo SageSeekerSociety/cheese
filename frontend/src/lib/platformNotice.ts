@@ -208,9 +208,9 @@ export interface LibraryDocCard {
   suggestions: number
 }
 
-/** 芝士起草、等人确认的那一件：它在哪一页、哪一条。 */
+/** 芝士整理出来、等人确认的那一件技能：它在哪一页、哪一条。 */
 export interface ConfirmTarget {
-  name: 'project-routines' | 'project-skills'
+  name: 'project-skills'
   params: { projectId: string }
   query: Record<string, string>
 }

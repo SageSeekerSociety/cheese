@@ -73,6 +73,29 @@ export function dayStamp(at: number, now: number = Date.now()): string {
 }
 
 /**
+ * 日子按各语言自己的写法说：中文「10月12日」、英文「October 12」。不在 `now` 那一年
+ * 就带上年份。
+ *
+ * 和 `absDate` 的 `10-12` 是两种不同的东西：那是挤在一列窄格子里的写法（一列时间戳），
+ * 这是句子里的日子 —— 执行记录那一列左边是时间、右边是结果，不缺位置。
+ */
+export function monthDay(at: number, now: number = Date.now()): string {
+  if (!usable(at)) return ''
+  const d = new Date(at)
+  return new Intl.DateTimeFormat(i18n.global.locale.value, {
+    year: d.getFullYear() === new Date(now).getFullYear() ? undefined : 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(d)
+}
+
+/** `monthDay` 加钟点：`10月12日 18:02`。 */
+export function monthDayTime(at: number, now: number = Date.now()): string {
+  if (!usable(at)) return ''
+  return `${monthDay(at, now)} ${clockTime(at)}`
+}
+
+/**
  * 「昨天 / 前天 / 3 天前」这类日词，按界面语言出（en: yesterday / 2 days ago /
  * 3 days ago）。日词和钟点谁是主语，两种语言都是日词在前。
  */

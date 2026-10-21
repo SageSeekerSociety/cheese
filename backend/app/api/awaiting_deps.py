@@ -6,8 +6,8 @@
 数永远一样。
 
 它留在 API 层、被两个调用方 import，而不留在路由模块里：路由模块之间不互相 import
-（C4 `routes-independent`）。它也不进领域层 —— 要问项目、房间、活、验收卡、消息块、
-轮次六个地方，而项目看板那两份（`projects.list_project_tasks` / `topics.list_topics`）
+（C4 `routes-independent`）。它也不进领域层 —— 要问项目、房间、活、验收卡、消息块
+五个地方，而项目看板那两份（`projects.list_project_tasks` / `topics.list_topics`）
 也是在路由这一层把批查询拼起来的，同一个形状。
 
 上面那几个码只在这份清单里有：`REASON_DECIDE` / `PHRASE_DECIDE` 是一条通知自己就
@@ -22,15 +22,20 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.awaiting_asks import MembershipAsk, RunAsk, membership_asks, run_asks
+from app.api.awaiting_asks import (
+    MembershipAsk,
+    RunAsk,
+    TaskAsk,
+    membership_asks,
+    run_asks,
+    task_asks,
+)
 from app.domain.addressing import (
     REASON_ASKED,
     REASON_REVIEWER,
     Event,
     address,
 )
-from app.domain.agent.chat import ChatService
-from app.domain.agent.liveness import running_tasks
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms
 from app.domain.notification.services import (
@@ -65,7 +70,7 @@ def _one_line(text: str, limit: int = 140) -> str:
 
 
 async def waiting_items(
-    db: AsyncSession, chat: ChatService, *, handle: str, user_id: int | None
+    db: AsyncSession, *, handle: str, user_id: int | None
 ) -> list[awaiting.WaitingItem]:
     """点到 `handle` 的、还没处理完的事项，最近动过的在前。
 
@@ -173,9 +178,6 @@ async def waiting_items(
             pointed.append(task)
     # 题文和题一起回来的（`awaiting_answer_blocks`），不再按块 id 取第二趟。
     said = {question[1]: question[2] for question in questions.values()}
-    # 「运行中」也在这一页出现（一列里的每一格都是同一个函数算的），所以这一屏每行
-    # 要的当下事实也一次问完 —— 这批任务有没有一轮在跑（`agent.liveness`）。
-    running = await running_tasks(chat, db, [task.id for task in tasks])
     # 一次，给整份清单用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
 
@@ -213,10 +215,7 @@ async def waiting_items(
     for task in tasks:
         shown = presentation.task_presentation(
             presentation.facts_for_task(
-                task,
-                task_cards.get(task.id),
-                running=task.id in running,
-                awaiting_answer=task.id in asked,
+                task, task_cards.get(task.id), awaiting_answer=task.id in asked
             ),
             now=now,
         )
@@ -232,9 +231,7 @@ async def waiting_items(
                 # 一个名单（`announce.notify_question`）。题根本不在等，就没有这一层。
                 asked_also=() if asking is None else asking.waiting(task.people),
                 owner=(
-                    task.owner_handle
-                    if presentation.owner_acts_on(shown, running=task.id in running)
-                    else None
+                    task.owner_handle if presentation.owner_acts_on(shown) else None
                 ),
             ),
             hand_of(shown.column),
@@ -379,14 +376,15 @@ async def waiting_items(
 
 
 async def all_waiting(
-    db: AsyncSession, chat: ChatService, *, handle: str, user_id: int | None
-) -> list[awaiting.WaitingItem | MembershipAsk | RunAsk]:
+    db: AsyncSession, *, handle: str, user_id: int | None
+) -> list[awaiting.WaitingItem | MembershipAsk | RunAsk | TaskAsk]:
     """等 `handle` 处理的全部事项，最近的在前：项目里的事，等他回答的邀请、申请，
-    和等他允许在自己电脑上运行的命令。"""
-    rows: list[awaiting.WaitingItem | MembershipAsk | RunAsk] = [
-        *await waiting_items(db, chat, handle=handle, user_id=user_id),
+    等他允许在自己电脑上运行的命令，和他出的题目上等他批准、批改的。"""
+    rows: list[awaiting.WaitingItem | MembershipAsk | RunAsk | TaskAsk] = [
+        *await waiting_items(db, handle=handle, user_id=user_id),
         *await membership_asks(db, handle=handle, user_id=user_id),
         *await run_asks(db, handle=handle),
+        *await task_asks(db, user_id=user_id),
     ]
     rows.sort(key=lambda row: row.at, reverse=True)
     return rows

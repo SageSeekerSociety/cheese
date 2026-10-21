@@ -14,9 +14,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.domain.agent.harness import SessionRef
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.event_author import AuthorType
+from app.domain.session_record import service as session_records
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import post_project, session_auth_headers
 
@@ -405,26 +407,47 @@ def _room_with_steps(client) -> tuple[str, list[str]]:
     said: list[str] = []
 
     async def seed() -> None:
+        entries = []
         async with client.test_factory() as session:
             for i in range(60):
                 shown = i % 6 == 0
-                if shown:
-                    said.append(f"said {i}")
+                if not shown:
+                    entries.append(
+                        {
+                            "sequence": i + 1,
+                            "at": (stamp + timedelta(seconds=i)).isoformat(),
+                            "record": {
+                                "type": "assistant",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [{"type": "text", "text": f"step {i}"}],
+                                },
+                            },
+                        }
+                    )
+                    continue
+                said.append(f"said {i}")
                 session.add(
                     Block(
                         id=uuid.uuid4(),
                         project_id=uuid.UUID(pid),
                         conversation_id=uuid.UUID(tid),
-                        author="cheese" if shown else "cheese-steps",
+                        author="cheese",
                         author_type=AuthorType.participant,
-                        content=f"said {i}" if shown else f"step {i}",
-                        kind=BlockKind.message if shown else BlockKind.event,
-                        meta=None if shown else {"in_room": False, "tool": "Bash"},
+                        content=f"said {i}",
+                        kind=BlockKind.message,
                         created_at=stamp + timedelta(seconds=i),
                         updated_at=stamp,
                     )
                 )
             await session.commit()
+        await session_records.append(
+            client.test_factory,
+            SessionRef(
+                uuid.UUID(pid), uuid.UUID(tid), "cheese-steps", harness="claude-code"
+            ),
+            entries,
+        )
 
     asyncio.run(seed())
     return tid, said
@@ -452,18 +475,28 @@ def test_a_page_of_what_the_room_shows_is_full_of_it(client):
 def test_what_the_room_keeps_out_can_be_read_on_its_own(client):
     tid, said = _room_with_steps(client)
 
-    hidden = _blocks(client, tid, shown="false")["data"]
-    steps = _blocks(client, tid, kind="event", author="cheese-steps")["data"]
-
-    assert len(hidden) == 60 - len(said)
-    assert [b["id"] for b in steps] == [b["id"] for b in hidden]
+    response = client.get(f"/topics/{tid}/session-records", params={"limit": 7})
+    assert response.status_code == 200, response.text
+    page = response.json()["data"]
+    kept = list(page["items"])
+    while page["next"]:
+        page = client.get(
+            f"/topics/{tid}/session-records", params={"limit": 7, "after": page["next"]}
+        ).json()["data"]
+        kept.extend(page["items"])
+    assert [item["record"]["message"]["content"][0]["text"] for item in kept] == [
+        f"step {i}" for i in range(60) if i % 6
+    ]
+    assert len(kept) == 60 - len(said)
+    assert _blocks(client, tid, shown="false")["data"] == []
+    assert _texts(_blocks(client, tid)) == said
 
 
 def test_opening_at_a_row_the_filter_leaves_out_does_not_show_it(client):
     tid, said = _room_with_steps(client)
-    step = _blocks(client, tid, shown="false")["data"][10]
+    weekly = _say(client, tid, "weekly summary")
 
-    payload = _blocks(client, tid, limit=4, around=step["id"], shown="true")
+    payload = _blocks(client, tid, limit=4, around=weekly, kind="message")
 
-    assert step["id"] not in [b["id"] for b in payload["data"]]
+    assert weekly not in [b["id"] for b in payload["data"]]
     assert all(text.startswith("said") for text in _texts(payload))

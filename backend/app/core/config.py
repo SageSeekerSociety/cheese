@@ -195,8 +195,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     request_concurrency: int = Field(default=16, ge=1)
     request_queue_depth: int = Field(default=64, ge=0)
     request_queue_timeout_s: float = Field(default=15.0, ge=0)
-    # How long a rate check may wait on Redis before the request goes through
-    # unchecked: a hung Redis must not hang every request with it.
+    # How long a rate check, or the closed-account check
+    # (``app.core.deleted_accounts``), may wait on Redis before the request goes
+    # through unchecked: a hung Redis must not hang every request with it.
     request_limit_redis_timeout_s: float = Field(default=0.25, gt=0)
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
@@ -450,6 +451,18 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # --- Voice input (app/domain/voice) ---
+    # The composer's microphone: a speech model through the gateway, then a
+    # small model that tidies the transcript into a message. Recorded per
+    # person in voice_inputs and per project in resource_usage; while
+    # voice_input_charged is off the rows cost the project no credits.
+    voice_asr_model: str = "qwen-audio-asr"
+    voice_polish_model: str = "deepseek-flash"
+    voice_input_charged: bool = False
+    voice_max_seconds: int = 60
+    voice_daily_seconds: int = 3600
+    voice_asr_timeout_seconds: float = 30.0
+    voice_polish_timeout_seconds: float = 15.0
     # 项目总览上的「现状」：读项目材料写几句现状的那一问（用项目自己的模型）。
     # 大项目要想一两分钟。
     project_situation_timeout_seconds: float = 240.0
@@ -585,6 +598,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # Generous on purpose: this must never cut a slow-but-live turn, only one
     # that never started. 0 disables it.
     agent_first_output_timeout_s: float = 300.0
+    # 一轮读多少：这个座位上次读过之后的新消息。The count bounds the query and
+    # the characters bound the prompt. A seat that has been away longer than one
+    # window reads the newest part of the conversation; what it skipped stays
+    # behind its cursor and is not handed over later (a room is not a mail
+    # queue, and replaying a day of chatter into one turn helps nobody).
+    agent_input_window_messages: int = 40
+    agent_input_window_chars: int = 12000
     # The wall-clock mark past which a turn is recorded as long. A metric, not
     # a gate: crossing it is written to the turn record (`ceiling_crossed_s`),
     # and nothing ends. With the three gates in place (the session's process or
@@ -856,8 +876,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     memory_migration_chunk: int = 60
 
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
-    # How often the poller checks an open PR's CI / its post-merge deploy —
-    # the clock every card's merge state is mirrored on (`CHECK_WATCH_TICKS`).
+    # How often the poller checks an open PR's CI — the clock every card's
+    # merge state is mirrored on (`CHECK_WATCH_TICKS`) — and how often the
+    # `task closing` sweep looks at tasks being written up.
     accept_pr_poll_interval_s: int = 60
     # 草稿扫描自己的时钟（卡轮询不跟着慢）：一个候选每遍要问 GitHub 两次，
     # 2026-10-18 实测 23 个候选每 60 秒 ≈2,760 次/小时。
@@ -898,14 +919,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     #: 报警，但同一个问题一小时只报一条。
     delivery_overdue_check_interval_s: int = 600
     task_deadline_sweep_interval_s: int = 900
-    #: 叫醒链的两拍（#1343 的定时器、看门狗的心跳）多久核一遍
-    #: （`domain/wake_watch/`，只跑在平台自己那一侧）。比拍的周期密得多就行 ——
-    #: 判停摆的线是 60 分钟，它只决定「多久发现」。0 关闭。
-    wake_watch_interval_s: int = 300
-    #: 判到停摆之后，要不要真的点 #1343 那条线上的座位补一跳
-    #: （`domain/wake_watch/catchup.py`）。关掉就是影子期：只判、只记，判据一个字
-    #: 不变 —— 判据在真实数据上核过之后才默认打开。
-    wake_watch_catchup: bool = True
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having
@@ -916,38 +929,22 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # those and produce merge commits in repos that allow several methods.
     accept_pr_merge_method: str = "squash"
 
-    # --- the platform's own repo: 后台「棘轮」页 and 「CI 与合并队列」页 ---
-    # The ratchet reads its `arch-metrics.yml` snapshots; the CI activity sweep
-    # (every N seconds, 0 disables it) its Actions runs and merge queue.
+    # --- the platform's own repo: CI activity ---
     platform_repository: str = "SageSeekerSociety/cheese"
     ci_activity_sweep_interval_s: int = 300
-    #: How often the backend pulls new `ratchet-snapshot` artifacts. The page
-    #: reads the table and never GitHub, so this clock is what makes a new
-    #: collection visible there; 0 disables the pull and leaves the table as it
-    #: stands. 15 minutes is the design's interval — one listing call per tick,
-    #: and a collection does not need to appear faster than a person reads.
-    ratchet_ingest_interval_s: int = 900
-    #: How many points the page draws. A bound on one response, and the window
-    #: the direction is computed over; the archive keeps everything.
-    ratchet_series_points: int = 60
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared
     # env vars are silently dropped and the feature can never be configured) ---
-    oauth_enabled_providers: str = ""  # comma-separated: "github,google,ruc"
-    oauth_github_client_id: str | None = None
-    oauth_github_client_secret: str | None = None
-    oauth_github_redirect_url: str | None = None
+    oauth_enabled_providers: str = ""  # comma-separated: "github_app,google,ruc"
     oauth_google_client_id: str | None = None
     oauth_google_client_secret: str | None = None
     oauth_google_redirect_url: str | None = None
     oauth_ruc_client_id: str | None = None
     oauth_ruc_client_secret: str | None = None
     oauth_ruc_redirect_url: str | None = None
-    # #192 "连接 GitHub 账号": the cheesex-app GitHub App's own user-to-server
-    # OAuth credential — deliberately separate from oauth_github_client_id
-    # (the login provider above), even though it's the same authorize/token
-    # endpoints. Add "github_app" to oauth_enabled_providers to turn this on.
+    # cheesex-app's user authorization signs in with GitHub. Keep the App's
+    # registered callback URL even though the separate account link is gone.
     oauth_github_app_client_id: str | None = None
     oauth_github_app_client_secret: str | None = None
     oauth_github_app_redirect_url: str | None = None
@@ -976,6 +973,22 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     s3_region: str = "us-east-1"
     s3_public_url: str | None = None
 
+    # --- Project files (#2114, `app.core.blob_store`) ---
+    # Where the bytes of a file the platform keeps for a project are written
+    # when it is first saved: "local" (under `workspace_root`) or "bucket"
+    # (the bucket below). A file's record says where its own bytes are, so
+    # changing this moves nothing that is already stored.
+    files_store: Literal["local", "bucket"] = "local"
+    # A bucket of its own, with a key that reaches only it: these are private
+    # files, and the key is not the one the public and transcript buckets use.
+    # A browser puts an upload straight into it, so its CORS rules must let the
+    # site's origin PUT.
+    files_bucket: str = ""
+    files_bucket_endpoint_url: str | None = None
+    files_bucket_access_key: str | None = None
+    files_bucket_secret_key: str | None = None
+    files_bucket_region: str = "auto"
+
     # --- Human auth (P1 agent-as-user / 真鉴权) ---
     # Enforce topic access (成员/角色/项目 checks). Ops kill-switch: set false to
     # disable the membership check entirely if a token rollout surfaces an
@@ -983,20 +996,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     authz_enforce_topic_access: bool = True
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
-    # (PDF task drafts, rank checks, email/notifications, real-name
-    # encryption) read these off settings. The merge dropped them, so those code
+    # (rank checks, email/notifications, real-name encryption) read these off
+    # settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
-    # The gateway model that turns an uploaded PDF into task drafts; each page
-    # is one call, charged to the publisher's personal credits.
-    task_draft_model: str = "deepseek-flash"
-    task_draft_max_tokens: int = 4096
-    task_draft_timeout_s: float = 300.0
-    pdf_import_max_pages: int = Field(default=20, ge=1, alias="PDF_IMPORT_MAX_PAGES")
-    pdf_import_max_concurrency: int = Field(
-        default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
-    )
-
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")
     email_smtp_port: int = Field(default=587, alias="EMAIL_SMTP_PORT")
@@ -1104,6 +1107,23 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         """The commit this process runs as: the release a deploy named, else
         the commit its image was built from."""
         return self.app_release or self.app_version
+
+    @model_validator(mode="after")
+    def _files_bucket_named_when_new_files_go_there(self) -> "Settings":
+        """Refuse to boot when new files are to go to a bucket nobody named:
+        otherwise the first upload after the deploy is where it shows."""
+        if self.files_store == "bucket" and not (
+            self.files_bucket
+            and self.files_bucket_endpoint_url
+            and self.files_bucket_access_key
+            and self.files_bucket_secret_key
+        ):
+            # i18n-exempt: refuses the boot; read by an operator in the log
+            raise ValueError(
+                "FILES_STORE=bucket needs FILES_BUCKET, FILES_BUCKET_ENDPOINT_URL, "
+                "FILES_BUCKET_ACCESS_KEY and FILES_BUCKET_SECRET_KEY"
+            )
+        return self
 
     @model_validator(mode="after")
     def _require_real_jwt_secret_on_deployment(self) -> "Settings":

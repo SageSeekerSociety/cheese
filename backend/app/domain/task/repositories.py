@@ -2,19 +2,23 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
-from sqlalchemy import CTE, Select, and_, delete, exists, func, or_, select
+from sqlalchemy import CTE, Select, and_, delete, exists, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
+from app.domain.task.inputs import APPROVE_APPROVED
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
     TaskMembership,
     TaskMentor,
+    TaskRubricItem,
     TaskSubmissionSchemaEntry,
     TaskTagRelation,
 )
+from app.domain.task.rubric import RubricLine
 from app.domain.task.submission_repositories import (
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
@@ -46,6 +50,11 @@ class TaskRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_ids(self, task_ids: Sequence[int]) -> dict[int, Task]:
+        return await get_by_ids(
+            self._session, Task, task_ids, Task.deleted_at.is_(None)
+        )
+
     @staticmethod
     def joined_by(user_id: int):
         """The tasks ``user_id`` takes part in: as themselves on an individual
@@ -75,6 +84,22 @@ class TaskRepository:
             .order_by(Task.updated_at.desc(), Task.id.desc())
             .limit(limit)
         )
+        return (await self._session.execute(stmt)).scalars().all()
+
+    async def search_in_space(
+        self, space_id: int, words: Sequence[str], *, viewer_id: int, limit: int
+    ) -> Sequence[Task]:
+        """The space's 题目 whose name or intro holds every word, latest first:
+        the published ones, and the viewer's own however they were reviewed."""
+        stmt = select(Task).where(
+            Task.space_id == space_id,
+            Task.deleted_at.is_(None),
+            or_(Task.approved == APPROVE_APPROVED, Task.creator_id == viewer_id),
+        )
+        for word in words:
+            like = f"%{word}%"
+            stmt = stmt.where(or_(Task.name.ilike(like), Task.intro.ilike(like)))
+        stmt = stmt.order_by(Task.updated_at.desc(), Task.id.desc()).limit(limit)
         return (await self._session.execute(stmt)).scalars().all()
 
     async def list_tasks(
@@ -320,7 +345,10 @@ class TaskRepository:
             return stmt.where(Task.ended_at.is_not(None))
         if lifecycle == "notEnded":
             return stmt.where(Task.ended_at.is_(None))
-        if lifecycle == "recruiting":
+        if lifecycle in ("recruiting", "closed"):
+            # Still to be claimed: not ended, registration not over, a seat left.
+            # A 题目 whose registration has not opened yet is still ahead of the
+            # reader, so it counts as recruiting.
             approved_count = (
                 select(func.count(TaskMembership.id))
                 .where(
@@ -331,13 +359,16 @@ class TaskRepository:
                 .correlate(Task)
                 .scalar_subquery()
             )
-            return stmt.where(
+            open_ = and_(
                 Task.ended_at.is_(None),
+                or_(Task.deadline.is_(None), Task.deadline > func.now()),
                 or_(
                     Task.participant_limit.is_(None),
+                    Task.participant_limit <= 0,
                     approved_count < Task.participant_limit,
                 ),
             )
+            return stmt.where(open_ if lifecycle == "recruiting" else not_(open_))
         return stmt
 
     def _apply_space_task_visibility(
@@ -784,6 +815,37 @@ class TaskSubmissionSchemaRepository:
             new_entries.append(row)
         await self._session.flush()
         return new_entries
+
+
+class TaskRubricRepository:
+    """A task's 评分要点, kept in order and replaced as a whole."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_by_task_id(self, task_id: int) -> list[TaskRubricItem]:
+        stmt = (
+            select(TaskRubricItem)
+            .where(TaskRubricItem.task_id == task_id)
+            .order_by(TaskRubricItem.index.asc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def replace(self, task_id: int, items: Sequence[RubricLine]) -> None:
+        await self._session.execute(
+            delete(TaskRubricItem).where(TaskRubricItem.task_id == task_id)
+        )
+        for idx, line in enumerate(items):
+            self._session.add(
+                TaskRubricItem(
+                    task_id=task_id,
+                    index=idx,
+                    item=line.item,
+                    points=line.points,
+                    criteria=line.criteria,
+                )
+            )
+        await self._session.flush()
 
 
 class TaskAccessDomainRepository:

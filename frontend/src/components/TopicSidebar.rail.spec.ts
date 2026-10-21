@@ -22,7 +22,7 @@ import { screenHeader } from '@/composables/useScreenHeader'
 import ScreenHeaderTitle from './common/Navigation/ScreenHeaderTitle.vue'
 import TopicSidebar from './TopicSidebar.vue'
 
-import { setLocale } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { seedProject, seedProjects } from '@/test/seedQueries'
 
@@ -49,13 +49,6 @@ const topics: Topic[] = [topic('root', null, 'root'), topic('a', 'root'), topic(
 function member(handle: string, name: string): ProjectMemberRow {
   return { user_handle: handle, name, role: 'member' } as ProjectMemberRow
 }
-
-const members: ProjectMemberRow[] = [
-  member('me', '我'),
-  member('zhang', '张衡'),
-  member('li', '李甘'),
-  member('cai', '蔡松洋'),
-]
 
 const router = createRouter({
   history: createWebHistory(),
@@ -328,30 +321,26 @@ describe('行左边那一个槽', () => {
     expect(container.querySelector('[data-row-actions="root"] .mdi-pound')).not.toBeNull()
   })
 
-  it('房间没有「在跑」的点：在干活的是一位队友，画在右边，带它的名字', () => {
-    const busy = topics.map((t) =>
-      t.id === 'a'
-        ? ({ ...t, awaits_me: true, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
-        : t
+  it('频道行不画工作成员头像，只保留一盏有事等你的灯', () => {
+    const busy = topics.map((item) =>
+      item.id === 'a'
+        ? ({ ...item, awaits_me: true, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
+        : item
     )
     const { container } = mount({ topics: busy })
     const row = topicRowFor(container, 'a')
-    // 有事等你画在行尾那盏黄灯上：等的是读这一行的人自己。
-    // 黄不占槽——槽永远是频道记号。
     expect(row.querySelector('.row-slot .row-light')).toBeNull()
+    expect(row.querySelectorAll('.row-light')).toHaveLength(1)
     expect(row.querySelector('.row-light--yellow')).not.toBeNull()
-    const marks = Array.from(row.querySelectorAll('.rail-members__one'))
-    expect(marks.length).toBe(1)
-    expect(marks[0].getAttribute('title')).toContain('正在这里工作')
-    expect(topicRowFor(container, 'b').querySelector('.rail-members__one')).toBeNull()
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
+    expect(row.querySelector('.cheese-avatar')).toBeNull()
+    expect(row.querySelector('[data-state]')).toBeNull()
 
-    // 同一个话题一旦有了子话题，槽让给折叠开关；灯还在行尾，不受影响
-    const withChild = [...busy, topic('a-sub', 'a')]
-    const second = mount({ topics: withChild })
+    const second = mount({ topics: [...busy, topic('a-sub', 'a')] })
     const parent = topicRowFor(second.container, 'a')
     expect(parent.querySelector('button.subtree-toggle')).not.toBeNull()
-    expect(parent.querySelector('.subtree-toggle .row-light')).toBeNull()
-    expect(parent.querySelector('.row-light--yellow')).not.toBeNull()
+    expect(parent.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(parent.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
   })
 
   it('打字的人不画在侧栏上：这份列表隔一阵才读一次，打字几秒就过去了', () => {
@@ -360,6 +349,27 @@ describe('行左边那一个槽', () => {
     )
     const { container } = mount({ topics: typing })
     expect(topicRowFor(container, 'a').querySelector('.rail-members__one')).toBeNull()
+  })
+
+  it.each(['mention', 'failed'])('等待成员（%s）不再给频道行添加头像，原状态灯判据不变', (reason) => {
+    const rows = topics.map((item) =>
+      item.id === 'a'
+        ? ({
+            ...item,
+            waits: [{ member: 'cheese-a1', reason, since: new Date(Date.now() - 6 * 60_000).toISOString() }],
+          } as Topic)
+        : item
+    )
+    const { container } = mount({ topics: rows })
+    const row = topicRowFor(container, 'a')
+    expect(row.querySelector('.cheese-avatar')).toBeNull()
+    expect(row.querySelector('[data-state]')).toBeNull()
+    // 原来成员头像承载的卡住提示保留，但并入这一行唯一灯，不再另画头像。
+    expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    const signal = row.querySelector('.row-light--red') as HTMLElement
+    expect(signal).not.toBeNull()
+    expect(signal.getAttribute('aria-label')).toContain(reason === 'mention' ? '分钟' : '报错')
+    expect(signal.title).toBe(signal.getAttribute('aria-label'))
   })
 
   it('有人等一位队友回话超过五分钟，这一行亮红灯；还没满五分钟不红', () => {
@@ -399,7 +409,7 @@ describe('行左边那一个槽', () => {
   })
 
   // 时间线说不出在等谁的那一笔（member 为 null），侧栏把它记在项目默认的队友头上。
-  // 那就得是**同一位**：同一个头像、同一种底色，和它在干活时画出来的一样。
+  // 频道行不画头像，这个名字落在行尾那盏红灯的说明里。
   describe('说不出是谁的等待，落在项目默认的那位队友身上', () => {
     function withDefaultAgent() {
       const pinia = createPinia()
@@ -443,25 +453,24 @@ describe('行左边那一个槽', () => {
       )
       const { container } = mount({ topics: rows }, withDefaultAgent())
       await nextTick()
-      // 在干活的那一行照旧画它的头像……
-      const tone = topicRowFor(container, 'b')
-        .querySelector('.rail-members__one .cheese-avatar')
-        ?.getAttribute('data-tone')
-      expect(tone).toBeTruthy()
-      // ……在等的那一行不画，但红灯的悬停说的是同一位（默认队友）。
+      // 在干活的那一行也不画头像：频道行统一去掉成员头像。
+      expect(topicRowFor(container, 'b').querySelector('.rail-members__one')).toBeNull()
+      // 在等的那一行，红灯的悬停说的是同一位（默认队友）。
       expect(topicRowFor(container, 'a').querySelector('.rail-members__one')).toBeNull()
       expect(topicRowFor(container, 'a').querySelector('.row-light--red')?.getAttribute('title')).toContain('小芝')
     })
   })
 
-  it('选中的行和有未读的行给的不是同一个标记', () => {
+  it('未读只给名称加粗，不再显示未读数字，也不把未读当作选中', () => {
     const { container } = mount({ selectedTopicId: 'a', unreadMap: { b: { count: 3, new: true, messages: 3 } } })
     const selected = topicRowFor(container, 'a')
     const unread = topicRowFor(container, 'b')
     expect(selected.classList.contains('is-active')).toBe(true)
-    expect(selected.querySelector('.unread-badge')).toBeNull()
     expect(unread.classList.contains('is-active')).toBe(false)
-    expect(unread.querySelector('.unread-badge')?.textContent?.trim()).toBe('3')
+    expect(selected.querySelector('.unread-badge')).toBeNull()
+    expect(unread.querySelector('.unread-badge')).toBeNull()
+    expect(unread.textContent?.trim()).toBe('b')
+    expect(unread.querySelector('.title-unread')?.textContent).toBe('b')
   })
 
   it('右侧不再有相对时间——排序位置已经把它说过一遍了', () => {
@@ -489,15 +498,19 @@ describe('C5 行操作', () => {
       const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((n) =>
         n.textContent?.trim()
       )
-      expect(items).toEqual(expect.arrayContaining(['复制链接', '重命名']))
+      expect(items).toEqual([
+        t('work.room.menu.newTask'),
+        t('work.room.menu.allTasks'),
+        t('work.room.menu.rename'),
+        t('work.channel.leave'),
+      ])
     })
     expect(event.defaultPrevented).toBe(true)
     expect(onSelectTopic).not.toHaveBeenCalled()
   })
 
-  // 「综合」是频道分组里的第一个频道，行尾那颗 ⋯ 和别的频道行是同一颗。它自己的
-  // 那几项（新建任务、全部任务、文件）以前只在右键里摸得到，看着像这一行没有操作。
-  it('综合那一行的行尾也有那颗 ⋯，点开是它自己那几项', async () => {
+  // 综合不能改名或退出，不为凑够四项而扩大权限。
+  it('综合那一行也有 ⋯，只保留它有权使用的新建任务和全部任务', async () => {
     const { container } = mount()
     const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
     if (!row) throw new Error('没有找到「综合」那一行')
@@ -508,7 +521,7 @@ describe('C5 行操作', () => {
       const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((n) =>
         n.textContent?.trim()
       )
-      expect(items).toEqual(expect.arrayContaining(['新建任务', '全部任务', '文件']))
+      expect(items).toEqual([t('work.room.menu.newTask'), t('work.room.menu.allTasks')])
     })
   })
 
@@ -523,6 +536,34 @@ describe('C5 行操作', () => {
 // 灯，哪一行都不显眼。看板上落在「待处理」列、但等的是别人的房间，在你的侧栏上不该
 // 和等你的那一个长得一样。
 describe('C6 等你的那一盏黄灯', () => {
+  it.each([false, true])('综合合并频道和折叠任务的灯、去掉数量，page=%s 的箭头只发折叠事件', async (page) => {
+    const onToggleTasksFold = vi.fn()
+    const onSelectTopic = vi.fn()
+    const { container } = mount({
+      page,
+      topics: [{ ...topic('root', null, 'root'), awaits_me: true }],
+      unreadMap: { root: { count: 4, new: true, messages: 4 } },
+      roomTaskTotals: { root: 7 },
+      roomTasks: { root: [{ id: 'task-root', room_id: 'root', title: 'Task', status: 'open' }] },
+      foldedChannels: { root: true },
+      onToggleTasksFold,
+      onSelectTopic,
+    })
+    const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
+    const arrow = row.querySelector('button[aria-expanded="false"]') as HTMLElement
+    const title = row.querySelector('.v-list-item-title') as HTMLElement
+    expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
+    expect(row.querySelector('.unread-badge')).toBeNull()
+    expect(row.textContent?.trim()).toBe('综合')
+    expect(arrow.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    await fireEvent.click(arrow)
+
+    expect(onToggleTasksFold).toHaveBeenCalledExactlyOnceWith('root')
+    expect(onSelectTopic).not.toHaveBeenCalled()
+  })
+
   function rooms(): Topic[] {
     return [
       topic('root', null, 'root'),
@@ -574,6 +615,86 @@ describe('C6 等你的那一盏黄灯', () => {
   })
 })
 
+// 名称前那一格同时可能站着频道记号、子话题箭头和任务箭头。合成一格以后，任何一样
+// 都不能因为另一样在就消失——私密频道的锁说的是「谁能进来」，它比「这个频道有几条
+// 活」更不能被省略；两个箭头各管一层，也不能互相替代。
+describe('名称前的记号与两种折叠并存', () => {
+  it('私密频道挂着任务时，锁和私密提示仍在，任务箭头只收任务、不选中频道', async () => {
+    const onToggleTasksFold = vi.fn()
+    const onSelectTopic = vi.fn()
+    const secret = { ...topic('secret', 'root'), members_only: true }
+    const { container } = mount({
+      topics: [topic('root', null, 'root'), secret],
+      roomTaskTotals: { secret: 2 },
+      onToggleTasksFold,
+      onSelectTopic,
+    })
+    const row = container.querySelector('[data-row-actions="secret"]') as HTMLElement
+    expect(row).not.toBeNull()
+
+    // 成员可见性是这一行的前提，不能拿折叠箭头把它换掉。
+    const glyph = row.querySelector('.row-glyph')
+    expect(glyph).not.toBeNull()
+    expect(glyph?.classList.contains('mdi-lock-outline')).toBe(true)
+    expect(glyph?.getAttribute('title')).toBe(t('work.channel.privateTip'))
+
+    const fold = row.querySelector('button.task-fold__btn')
+    expect(fold).not.toBeNull()
+    await fireEvent.click(fold as Element)
+
+    expect(onToggleTasksFold).toHaveBeenCalledExactlyOnceWith('secret')
+    expect(onSelectTopic).not.toHaveBeenCalled()
+  })
+
+  it('公共频道挂着任务时不再补一个多余的 #，任务箭头就是那一格里的记号', () => {
+    const { container } = mount({
+      topics: [topic('root', null, 'root'), topic('a', 'root')],
+      roomTaskTotals: { a: 2 },
+    })
+    const row = container.querySelector('[data-row-actions="a"]') as HTMLElement
+    expect(row.querySelector('.row-glyph')).toBeNull()
+    expect(row.querySelector('button.task-fold__btn')).not.toBeNull()
+  })
+})
+
+// 「综合」自己没话说时，收起来的任务仍然要在那一行上说出来。状态灯只有一盏，
+// 所以蓝/绿/红都得能穿过 taskLight 的合并落到 rowLight 上；去掉那次合并，这一组
+// 会只剩 0 盏灯。
+describe('综合自身无灯时，收起来的任务灯仍落在唯一那盏灯上', () => {
+  function task(over: Record<string, unknown>): Record<string, unknown> {
+    return {
+      id: 'task-root',
+      room_id: 'root',
+      title: 'Task',
+      title_source: 'user',
+      status: 'open',
+      presentation: { column: 'todo' },
+      ...over,
+    }
+  }
+
+  it.each([
+    ['蓝：这条归我', task({ owner_handle: null }), '.row-light--blue'],
+    ['绿：有一条交付完了我还没看过', task({ unseen_delivery: true }), '.row-light--green'],
+    [
+      '红：一轮停在报错上，五分钟没人接手',
+      task({ incomplete_since: new Date(Date.now() - 10 * 60_000).toISOString() }),
+      '.row-light--red',
+    ],
+  ])('%s', (_name, foldedTask, selector) => {
+    const { container } = mount({
+      // 「综合」自身没有任何状态事实，灯只能来自收起来的任务块。
+      topics: [topic('root', null, 'root')],
+      roomTaskTotals: { root: 1 },
+      roomTasks: { root: [foldedTask] },
+      foldedChannels: { root: true },
+    })
+    const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
+    expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(row.querySelector(selector)).not.toBeNull()
+  })
+})
+
 // 整页形态：手机上话题列表是页面栈的一层，占满内容区。抽屉和"拖宽度"这两样
 // 在手机上都不成立——但列表本身一条不能少。
 describe('整页形态', () => {
@@ -583,11 +704,28 @@ describe('整页形态', () => {
     expect(container.querySelector('.rail-resizer')).toBeNull()
   })
 
-  // 整页形态没有行的 hover，那里的操作是长按一行升起的面板，所以这颗 ⋯ 一个都不画
-  // ——「综合」那一行也一样，不能只有它留一颗手指摸不到的按钮。
-  it('行尾不画那颗 ⋯，综合那一行也不画', () => {
-    const { container } = mount({ page: true })
-    expect(container.querySelectorAll('.row-actions').length).toBe(0)
+  it('整页形态每行都有可点击的 ⋯，综合也一样，点击不打开房间', async () => {
+    const onSelectTopic = vi.fn()
+    const { container, baseElement } = mount({ page: true, onSelectTopic })
+    for (const id of ['root', 'a', 'b']) {
+      expect(
+        container.querySelector(`[data-row-actions="${id}"] [title="${t('work.sidebar.moreActions')}"]`)
+      ).not.toBeNull()
+    }
+    const more = container.querySelector(`[data-row-actions="a"] [title="${t('work.sidebar.moreActions')}"]`)
+    await fireEvent.click(more as HTMLElement)
+    await waitFor(() => {
+      const items = Array.from(baseElement.querySelectorAll('[role="menuitem"]')).map((item) =>
+        item.textContent?.trim()
+      )
+      expect(items).toEqual([
+        t('work.room.menu.newTask'),
+        t('work.room.menu.allTasks'),
+        t('work.room.menu.rename'),
+        t('work.channel.leave'),
+      ])
+    })
+    expect(onSelectTopic).not.toHaveBeenCalled()
   })
 
   it('装的东西和抽屉形态一样', () => {

@@ -9,11 +9,10 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.checkout_sweep import sweep
 from app.domain.agent.models import AgentTurn
-from app.domain.room_task.closing import turns_ended
 from app.domain.room_task.live import turns_moved
-from app.domain.room_task.ports import SweepCheckouts
+from app.domain.room_task.services import TaskService
+from app.domain.usage.budgets import CreditBudgets
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,15 +53,8 @@ class TurnRecord:
 
 
 class AgentTurnRepository:
-    def __init__(
-        self, session: AsyncSession, *, machines: SweepCheckouts | None = None
-    ) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
-        # Ending an interval can close the task it belonged to, and that close
-        # sweeps the room's closed checkouts (`room_task.closing.turns_ended`).
-        # The sweep is this package's, so a repository built without one still
-        # hands in the real thing; a caller passes its own only to replace it.
-        self._machines = machines if machines is not None else sweep
 
     async def open(
         self,
@@ -105,8 +97,11 @@ class AgentTurnRepository:
                 .on_conflict_do_nothing(index_elements=[AgentTurn.id])
                 .returning(AgentTurn.conversation_id)
             )
+            conversations = list(opened.scalars())
+            if conversations:
+                await self._snapshot_credit_owner(turn_id, conversation_id, started_at)
             if delivered_at is not None:
-                await turns_moved(self._session, opened.scalars())
+                await turns_moved(self._session, conversations)
             return
         self._session.add(
             AgentTurn(
@@ -123,8 +118,26 @@ class AgentTurnRepository:
                 agent_handle=agent_handle,
             )
         )
+        await self._snapshot_credit_owner(turn_id, conversation_id, started_at)
         if delivered_at is not None:
             await turns_moved(self._session, [conversation_id])
+
+    async def _snapshot_credit_owner(
+        self,
+        turn_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        started_at: datetime,
+    ) -> None:
+        task = await TaskService(self._session).get(conversation_id)
+        if task is None:
+            return
+        owner = await TaskService(self._session).credit_owner(task)
+        if owner is None:
+            return
+        budgets = CreditBudgets(self._session)
+        await budgets.snapshot_owner(
+            turn_id, task.id, owner, task.project_id, started_at
+        )
 
     async def mark_delivered(self, turn_id: uuid.UUID, at: datetime) -> None:
         """Stamp the moment the transport accepted this turn's write.
@@ -288,21 +301,24 @@ class AgentTurnRepository:
         )
         return set((await self._session.execute(stmt)).scalars())
 
-    async def close(self, turn_ids: Iterable[uuid.UUID], at: datetime) -> None:
+    async def close(
+        self, turn_ids: Iterable[uuid.UUID], at: datetime
+    ) -> set[uuid.UUID]:
         """End these intervals. Closing is not deleting — the ids stay readable
         next to the blocks that carry them."""
         ids = list(turn_ids)
         if not ids:
-            return
+            return set()
         closed = await self._session.execute(
             update(AgentTurn)
             .where(AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None))
             .values(stopped_at=at)
-            .returning(AgentTurn.conversation_id)
+            .returning(AgentTurn.id, AgentTurn.conversation_id)
         )
-        conversations = list(closed.scalars())
+        rows = closed.all()
+        conversations = [row.conversation_id for row in rows]
         await turns_moved(self._session, conversations)
-        await turns_ended(self._session, conversations, machines=self._machines)
+        return {row.id for row in rows}
 
     async def still_open(
         self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
@@ -387,7 +403,6 @@ class AgentTurnRepository:
         )
         conversations = list(closed.scalars())
         await turns_moved(self._session, conversations)
-        await turns_ended(self._session, conversations, machines=self._machines)
         return len(conversations)
 
     async def started_at_of(
@@ -451,23 +466,6 @@ class AgentTurnRepository:
         for conversation, handle in await self._session.execute(stmt):
             busy.setdefault(conversation, set()).add(handle)
         return busy
-
-    async def open_turn_records(
-        self, conversation_id: uuid.UUID
-    ) -> list[tuple[uuid.UUID, str | None]]:
-        """``(turn id, seat)`` of every interval still open in this conversation.
-
-        The identity half of the open-interval read, for a reader that has to
-        hand a message to the one live turn it names rather than ask whether one
-        exists: the id steers the input, the seat names whose session takes it.
-        """
-        rows = await self._session.execute(
-            select(AgentTurn.id, AgentTurn.agent_handle).where(
-                AgentTurn.conversation_id == conversation_id,
-                AgentTurn.stopped_at.is_(None),
-            )
-        )
-        return [(turn_id, handle) for turn_id, handle in rows]
 
     async def turn_is_open(self, turn_id: uuid.UUID) -> bool:
         """Whether the authority still holds this one turn open.

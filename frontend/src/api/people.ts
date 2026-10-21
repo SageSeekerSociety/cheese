@@ -60,3 +60,10 @@ export function setUserRemark(handle: string, remark: string): Promise<{ handle:
     body: JSON.stringify({ remark }),
   })
 }
+
+// Of these handles, the ones whose account was closed (注销): their old messages
+// are signed 「已注销用户」 instead of a bare handle.
+export function listClosedAccounts(handles: string[]): Promise<{ handles: string[] }> {
+  const query = new URLSearchParams({ handles: handles.join(',') })
+  return request<{ handles: string[] }>(`/closed-accounts?${query}`)
+}

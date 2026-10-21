@@ -22,15 +22,12 @@ Prose elsewhere still calls the 题目分组 a 项目集 — the name this level
 when it WAS the course. `app.domain.space.models.SpaceCategory` is the row.
 
 **教学配置 (#8d772257).** 一门课不只是给额度，它还教。`teaching` 键承载这件事 ——
-本周范围、课程级 system prompt、本周要用的课件。它走**和其他键完全相同的继承**，
-因为给教育字段另起一套继承规则，就等于多一份要同步的规则，第一次有人只改其中一处
-就会两边不一致。
+AI 队友怎么帮学生（四种方式之一）、老师写的补充要求、可以读的课件。
 
-**空间上的默认 (#944).** `teaching` 还多一层：空间 (`Space.teaching`) 可以
-给整块板设一份默认，每道题再覆盖它。于是链是四级 —— 空间 → 项目集 → 题目
-`protocol_override` → 项目 `settings`，最具体的赢。空间只承载 `teaching` 这一个
-键（它没有资源包和壳），`resolve` 却按"这个层有哪些键就读哪些键"来读，所以这一层
-只为 `teaching` 特判，不为某个字段单开一条路径。
+**两层同时生效（10-20 空间这一轮）。** 空间 (`Space.teaching`) 说这块板上的 AI 队友
+一般怎么帮，题目在它上面再加：自己的补充要求、自己的资料，也可以换一种方式。两层
+都算（`Teaching.combine`），不是题目盖掉空间；项目自己的设置有的话整份替换。项目集
+那一层拿掉了，原来写在项目集上的挪到了它的题目上（迁移 e5f1a9c3d7b2）。
 """
 
 import uuid
@@ -54,29 +51,9 @@ def _text(value: Any) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def _week(value: Any) -> int | None:
-    """A week number. Bools are rejected for `compute_credits`' reason — `True`
-    is an int in Python and would silently become 第 1 周."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return value if value >= 0 else None
-
-
-def _texts(value: Any) -> list[str]:
-    """The non-blank strings of a list, in order, deduplicated. A config is a
-    thing a person types, so a repeated line is a typo, not two entries."""
-    if not isinstance(value, list):
-        return []
-    seen: dict[str, None] = {}
-    for item in value:
-        text = _text(item)
-        if text is not None:
-            seen.setdefault(text.strip(), None)
-    return list(seen)
-
-
 def _ids(value: Any) -> list[int]:
-    """Positive int ids, in order, deduplicated. Same reasoning as `_texts`."""
+    """Positive int ids, in order, deduplicated: a config is a thing a person
+    picks, so a repeated id is a slip, not two entries."""
     if not isinstance(value, list):
         return []
     seen: dict[int, None] = {}
@@ -100,37 +77,41 @@ def _uuids(value: Any) -> list[str]:
     return list(seen)
 
 
+#: How an AI teammate helps a student, as the teacher picks it. None = the
+#: level did not say.
+MODES = ("guide", "example", "spec", "free")
+
+
+def _mode(value: Any) -> str | None:
+    return value if value in MODES else None
+
+
 @dataclass(frozen=True)
 class Teaching:
-    """课程级教学配置 — the frame a 创研课's agents work inside THIS week.
+    """How a course wants its AI teammates to help: one level's settings, or
+    the space's and the 题目's together (`resolve`).
 
-    It is a 项目集-level thing (二十个赛题, 一份教学安排) that rides the same
-    three levels as the rest of the protocol. Everything in it changes weekly,
-    which is why none of it is baked into a project at creation: the week is a
-    fact about NOW, and a copy taken at registration is wrong by week two.
+    Two levels, both in force: a 空间 says how its AI teammates help in
+    general, a 题目 adds to it (its own requirements and materials) and may
+    pick a different way of helping. The 项目集 level that used to sit between
+    them is gone (#space-round 10-20): one place per thing to say.
 
-    **It is read, never taught.** Nothing here is content the agent must learn —
-    it is scope. `allowed_topics` says what this week is about, `avoid_in_code`
-    what not to reach for yet; an agent that ignores both still works, it just
-    works on next month's material.
+    **It is read, never taught.** Nothing here is content the agent must learn;
+    it is how to help and what to read.
     """
 
-    #: Course-level system prompt TEMPLATE. `{current_week}` / `{allowed_topics}`
-    #: / `{avoid_in_code}` inside it are filled from the three fields below —
-    #: filled by literal replacement, never `str.format`, so a 讲义 that quotes
-    #: `{"key": ...}` at the agent cannot take the turn down with it.
+    #: How to help (`MODES`): lead with questions, explain with examples, ask
+    #: for a goal and a check before writing, or as the student asks.
+    mode: str | None = None
+    #: The teacher's own requirements, in their words.
     system_prompt: str | None = None
-    #: Which week of the course this is. None = the course did not say.
-    current_week: int | None = None
-    #: What this week covers, in the teacher's words.
-    allowed_topics: list[str] = field(default_factory=list)
-    #: What the course has not taught yet — constructs a solution must not lean
-    #: on, e.g. `["递归"]` in a week that has only reached loops.
-    avoid_in_code: list[str] = field(default_factory=list)
+    #: The space's requirements when the 题目's are said too (`combine`): both
+    #: are in force, and the agent reads them as two.
+    space_prompt: str | None = None
     #: 课件/知识材料 by REFERENCE, not by copy. Resolved to names and links when
     #: the prompt is built (`app.domain.task.teaching`), so a renamed 课件 or a
-    #: rotated link is picked up without re-saving the 项目集 — and so this key
-    #: stays a small JSON blob rather than a second copy of the material library.
+    #: rotated link is picked up without re-saving — and so this key stays a
+    #: small JSON blob rather than a second copy of the material library.
     material_ids: list[int] = field(default_factory=list)
     #: The team documents the course points its AI teammates at (#3774): their
     #: agents may read these, and no other team document.
@@ -143,33 +124,27 @@ class Teaching:
         must not put a word into its prompt, for a configuration it has none
         of."""
         return not (
-            self.system_prompt
-            or self.current_week is not None
-            or self.allowed_topics
-            or self.avoid_in_code
+            self.mode
+            or self.system_prompt
+            or self.space_prompt
             or self.material_ids
             or self.document_ids
         )
 
-    def fill(self, template: str) -> str:
-        """The `system_prompt` template with this week's variables substituted.
-
-        Plain `str.replace` over the three known tokens. `str.format` would
-        treat every `{` in a teacher's prose as a field and raise on the ones it
-        does not recognize — a 讲义 quoting a dict literal would break every
-        turn of the course, and the failure would name a brace rather than the
-        config that caused it.
-        """
-        allowed = "、".join(self.allowed_topics) or "（未指定）"
-        avoid = "、".join(self.avoid_in_code) or "（未指定）"
-        week = str(self.current_week) if self.current_week is not None else "（未指定）"
-        for token, value in (
-            ("{current_week}", week),
-            ("{allowed_topics}", allowed),
-            ("{avoid_in_code}", avoid),
-        ):
-            template = template.replace(token, value)
-        return template
+    def combine(self, task: "Teaching") -> "Teaching":
+        """This (the space's) and a 题目's together: the 题目's way of helping
+        when it picks one, both requirements, both sets of materials."""
+        if task.is_empty:
+            return self
+        if self.is_empty:
+            return task
+        return Teaching(
+            mode=task.mode or self.mode,
+            system_prompt=task.system_prompt,
+            space_prompt=self.system_prompt,
+            material_ids=list(dict.fromkeys([*self.material_ids, *task.material_ids])),
+            document_ids=list(dict.fromkeys([*self.document_ids, *task.document_ids])),
+        )
 
     @classmethod
     def from_json(cls, raw: Any) -> "Teaching":
@@ -177,18 +152,15 @@ class Teaching:
         failure.
 
         `resolve` runs on every turn of every project, so a malformed value
-        reaching it must not take the turn down: a project whose 项目集 carries a
-        typo in one field has to keep working on the other five. Junk is
-        dropped, not raised — the strict check belongs at the edit endpoint,
-        where a person is looking at the form and can be told what is wrong.
+        reaching it must not take the turn down. Junk is dropped, not raised —
+        the strict check belongs at the edit endpoint, where a person is looking
+        at the form and can be told what is wrong.
         """
         if not isinstance(raw, dict):
             return cls()
         return cls(
+            mode=_mode(raw.get("mode")),
             system_prompt=_text(raw.get("system_prompt")),
-            current_week=_week(raw.get("current_week")),
-            allowed_topics=_texts(raw.get("allowed_topics")),
-            avoid_in_code=_texts(raw.get("avoid_in_code")),
             material_ids=_ids(raw.get("material_ids")),
             document_ids=_uuids(raw.get("document_ids")),
         )
@@ -212,17 +184,16 @@ class Protocol:
     #: (`app.domain.shell`). None = nobody said, so `default` is in force.
     shell: str | None = None
 
-    #: 课程级教学配置 — what the course wants its agents to know THIS week. Empty
-    #: for anything that is not a course, which is every project that existed
-    #: before this key did.
+    #: How the course wants its AI teammates to help. Empty for anything that is
+    #: not a course, which is every project that existed before this key did.
     teaching: Teaching = field(default_factory=Teaching)
 
-    #: WHICH level the `teaching` above came from — ``"space"`` | ``"category"``
-    #: | ``"task"`` | ``"project"``, or None when no level said anything. Filled
+    #: WHICH level the `teaching` above came from — ``"space"`` | ``"task"``
+    #: | ``"both"`` | ``"project"``, or None when no level said anything. Filled
     #: by the very loop that picks the value (`_resolve_teaching`): a second
     #: reader would be a second precedence rule, and the first edit to one of
     #: them would make the two disagree. The 从题目建项目 screen needs it to say
-    #: "这条来自项目集" rather than only handing over the composed result.
+    #: where the settings came from rather than only handing over the result.
     teaching_source: str | None = None
 
     @property
@@ -272,42 +243,34 @@ def _resolve_teaching(
     task: Any | None,
     project: Any | None,
 ) -> tuple[Teaching, str | None]:
-    """The 教学安排 in force, and WHICH level it came from.
+    """How the course wants this project's AI teammates to help, and where
+    that came from: ``"space"``, ``"task"``, ``"both"``, ``"project"``, or
+    None when nobody said anything.
 
-    空间 → 项目集 → 题目 → 项目, most specific last. Each level REPLACES the
-    whole key — no deep merge, the same rule the rest of the protocol follows.
-
-    **An empty level did not say anything, so the one below stands.** That is
-    what the two ends of the feature mean by the same sentence: a 空间 sets
-    the default its 项目集 inherit, and a 题目 页面 left blank keeps it. It is
-    also why the column default ``{}`` (every row that predates the key) never
-    wipes an inherited 教学安排 — the whole reason this is a separate reader
-    from the three keys above, whose ``[]``/``{}`` CAN be an explicit value.
-
-    Returns the winning level's name beside the value. The name rides THIS loop
-    rather than a second one: a separate "which level won" reader would be a
-    second copy of the precedence above, and the first edit to one of them
-    would make the screen name a level the turn does not use.
+    The space's settings and the 题目's are both in force (`Teaching.combine`).
+    A project's own settings, when it has any, replace them whole. The 项目集
+    level is no longer read: its settings moved onto its 题目 when it went.
     """
-    chosen = Teaching()
-    source: str | None = None
-    # The levels, outermost first — the same order the four levels are named in
-    # everywhere else. A 赛题 override and a project's settings are dicts; the
-    # other two are rows. `_level_value` reads both shapes.
-    for name, row in (
-        ("space", space),
-        ("category", category),
-        ("task", getattr(task, "protocol_override", None) or {}),
-        ("project", _project_override(project)),
-    ):
-        raw = _level_value(row, "teaching")
-        if raw is None:
-            continue
-        teaching = Teaching.from_json(raw)
-        if not teaching.is_empty:
-            chosen = teaching
-            source = name
-    return chosen, source
+    del category  # no longer a level
+    on_space = Teaching.from_json(_level_value(space, "teaching"))
+    on_task = Teaching.from_json(
+        _level_value(getattr(task, "protocol_override", None) or {}, "teaching")
+    )
+    on_project = Teaching.from_json(
+        _level_value(_project_override(project), "teaching")
+    )
+    if not on_project.is_empty:
+        return on_project, "project"
+    if on_space.is_empty and on_task.is_empty:
+        return Teaching(), None
+    source = (
+        "both"
+        if not on_space.is_empty and not on_task.is_empty
+        else "space"
+        if not on_space.is_empty
+        else "task"
+    )
+    return on_space.combine(on_task), source
 
 
 def _project_override(project: Any | None) -> dict[str, Any]:
@@ -350,8 +313,8 @@ def resolve(
 
     Each level replaces a key WHOLE — no deep merge, for the reason the 分组
     placement was chosen: a half-inherited resource pack is harder to reason
-    about than either source alone. For `teaching` an EMPTY level counts as
-    "did not say", so the level below stands — see `_resolve_teaching`.
+    about than either source alone. `teaching` is the exception: the space's
+    and the 题目's are both in force — see `_resolve_teaching`.
 
     Every argument is optional so callers do not have to branch: a 题目 with no
     分组, or a project with no 题目 at all, resolves to an empty protocol — which

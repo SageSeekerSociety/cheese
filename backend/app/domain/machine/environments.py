@@ -1,12 +1,11 @@
 """Each agent's execution environment in a conversation: what it is, what a new
-agent gets, which sandbox specs a project is offered, and the device a sandbox
-of a person's spec is placed on (``agent.environment``).
+agent gets, which sandbox specs a project is offered, and the team device a
+sandbox is placed on (``agent.environment``).
 
 Changing one agent's environment is ``session_work.switch_environment``; the
 machine it then works on is settled on its next tool call (``session_work``).
 """
 
-import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -17,22 +16,22 @@ from app.core.errors import ForbiddenError, UnprocessableEntityError
 from app.core.sentences import notice_keys, say
 from app.domain.agent.environment import (
     STANDARD,
+    TEAM_DEVICES,
     VM,
     Sandbox,
     SelfHosted,
     default_environment,
-    devices_of,
     project_default,
     spec_of,
     stored,
     works_tasks_of,
 )
 from app.domain.agent.market import cloud_provisionable, cloud_vm_provisionable
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
-from app.domain.user.models import User
 
 
 @dataclass(frozen=True)
@@ -66,7 +65,20 @@ async def environment_of(
     own = await sessions.environment(row.conversation_id, row.agent_handle)
     if own is not None:
         return stored(own.environment) or default_environment()
-    chosen = default_for(topic, task, project.settings if project else None)
+    instance = await db.scalar(
+        select(AgentInstance).where(
+            AgentInstance.project_id == topic.project_id,
+            AgentInstance.handle == row.agent_handle,
+        )
+    )
+    device = (
+        (instance.configuration or {}).get("execution_device_id") if instance else None
+    )
+    chosen = (
+        Default(Sandbox(spec=TEAM_DEVICES), "agent")
+        if device
+        else default_for(topic, task, project.settings if project else None)
+    )
     written = await sessions.set_environment(
         row.conversation_id,
         row.agent_handle,
@@ -80,30 +92,17 @@ async def environment_of(
 async def offered_specs(db: AsyncSession, project) -> list[dict]:
     """The sandbox specs this project may choose, each with the words a
     reader sees for it: the platform's machines where this deployment has
-    them, and each person's own computers attached to the project that can
-    make a sandbox."""
+    them, and the project's team devices that can make a sandbox."""
     out = []
     if cloud_provisionable(settings):
         out.append(_spec(STANDARD, say("specStandard")))
     if cloud_vm_provisionable(settings):
         out.append(_spec(VM, say("specVm")))
-    user_ids = await _people_with_sandboxes(db, project.id)
-    if user_ids:
-        rows = (
-            (
-                await db.execute(
-                    select(User.id, User.username).where(User.id.in_(user_ids))
-                )
-            )
-            .tuples()
-            .all()
-        )
-        users: dict[int, str] = {user_id: username for user_id, username in rows}
-        for user_id in user_ids:
-            if (username := users.get(user_id)) is not None:
-                out.append(
-                    _spec(devices_of(user_id), say("specDevicesOf", name=username))
-                )
+    devices = sql_device_service(db)
+    mine = await devices.list_devices_for_project(project.id)
+    refusing = await devices.refusing_sandboxes([d.device_id for d in mine])
+    if any(d.device_id not in refusing for d in mine):
+        out.append(_spec(TEAM_DEVICES, say("specTeamDevices")))
     return out
 
 
@@ -119,32 +118,9 @@ async def environment_words(db: AsyncSession, environment: Sandbox | SelfHosted)
             return say("specStandard")
         if environment.spec == VM:
             return say("specVm")
-        spec = spec_of(environment.spec)
-        owner = (
-            await db.get(User, spec.owner_user_id)
-            if spec is not None and spec.owner_user_id is not None
-            else None
-        )
-        return say("specDevicesOf", name=owner.username) if owner else environment.spec
+        return say("specTeamDevices")
     device = await sql_device_service(db).get_device(environment.device_id)
     return device.name if device is not None and device.name else environment.device_id
-
-
-async def _people_with_sandboxes(db: AsyncSession, project_id: uuid.UUID) -> list[int]:
-    """The owners of the project's own computers that can make a sandbox, in
-    the order their first such computer joined."""
-    devices = sql_device_service(db)
-    mine = [
-        device
-        for device in await devices.list_devices_for_project(project_id)
-        if device.supply is Supply.self_hosted
-    ]
-    refusing = await devices.refusing_sandboxes([d.device_id for d in mine])
-    owners: list[int] = []
-    for device in mine:
-        if device.device_id not in refusing and device.owner_user_id not in owners:
-            owners.append(device.owner_user_id)
-    return owners
 
 
 async def check_allowed(
@@ -156,9 +132,8 @@ async def check_allowed(
     task=None,
 ) -> None:
     """Refuse an environment ``actor`` may not give: a spec this project is
-    not offered, or a machine to run on without isolation that is not the
-    signed-in person's own (an agent may never choose one). In a task, a
-    person's own computer works only that person's tasks."""
+    not offered, or a machine that the person is not authorized to run without isolation.
+    Only administrators of the device's team can authorize that access."""
     if isinstance(environment, Sandbox):
         if environment.spec not in {
             s["spec"] for s in await offered_specs(db, project)
@@ -172,7 +147,11 @@ async def check_allowed(
         or not await sql_device_service(db).serves_project(device.device_id, project.id)
     ):
         raise UnprocessableEntityError(say("deviceNotInProject"))
-    if actor.via != "token" or actor.user_id != device.owner_user_id:
+    if (
+        actor.via != "token"
+        or actor.user_id is None
+        or not await sql_device_service(db).may_manage(device, actor.user_id)
+    ):
         raise ForbiddenError(say("selfHostedOwnerOnly"))
     if task is not None and not await works_tasks_of(
         db, device.device_id, project, task.owner_handle
@@ -188,21 +167,35 @@ async def device_for_spec(
     task,
     held: str | None,
     is_online,
+    agent_handle: str | None = None,
 ):
-    """A device for a sandbox of a person's spec (``devices_of:<id>``): one of
-    that person's computers serving the project, online, not quarantined and
-    able to make a sandbox — and, for a task, allowed to work its owner's
-    tasks. The one the session already holds comes first while it qualifies.
+    """A device for the team's sandbox pool: online, not quarantined and
+    able to make a sandbox. Every team member's tasks can use it.
+    The one the session already holds comes first while it qualifies.
     None when there is no such device now."""
     wanted = spec_of(spec)
-    assert wanted is not None and wanted.owner_user_id is not None
+    assert wanted is not None and not wanted.platform
     devices = sql_device_service(db)
     candidates = [
         device
         for device in await devices.healthy_devices_for_project(project.id, is_online)
         if device.supply is Supply.self_hosted
-        and device.owner_user_id == wanted.owner_user_id
     ]
+    instance = (
+        await db.scalar(
+            select(AgentInstance).where(
+                AgentInstance.project_id == project.id,
+                AgentInstance.handle == agent_handle,
+            )
+        )
+        if agent_handle
+        else None
+    )
+    selected = (
+        (instance.configuration or {}).get("execution_device_id") if instance else None
+    )
+    if selected:
+        candidates = [d for d in candidates if d.device_id == selected]
     refusing = await devices.refusing_sandboxes([d.device_id for d in candidates])
     candidates = [d for d in candidates if d.device_id not in refusing]
     candidates.sort(key=lambda d: d.device_id != held)
@@ -231,8 +224,6 @@ async def usable_by_owner(db: AsyncSession, raw, project, owner_handle) -> bool:
     if spec is None or spec.platform:
         return True
     for device in await sql_device_service(db).list_devices_for_project(project.id):
-        if device.owner_user_id == spec.owner_user_id and await works_tasks_of(
-            db, device.device_id, project, owner_handle
-        ):
+        if await works_tasks_of(db, device.device_id, project, owner_handle):
             return True
     return False

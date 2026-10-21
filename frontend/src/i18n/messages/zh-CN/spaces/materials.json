@@ -1,38 +1,43 @@
 {
-  "cancel": "取消",
-  "confirmRemove": "确认移除",
+  "actionsOf": "{name} 的操作",
+  "backToList": "返回资料库",
+  "clearFilters": "清除筛选",
+  "close": "关闭",
   "download": "下载",
   "downloads": "{n} 次下载",
   "empty": "暂无资料",
+  "file": "文件",
   "hint": {
-    "admins": "只有这个空间的管理员看得见、能下载。",
-    "members": "这个空间里的人都看得见、都能下载。"
+    "admins": "成员和成员项目里的 AI 队友都看不到",
+    "members": "空间成员都能查看和下载"
   },
-  "intro": "空间成员都能看。标了「仅管理员」的，成员看不到，成员项目里的 AI 队友也读不到。",
-  "pickFile": "选一个文件",
+  "makeAdmins": "设为仅管理员可见",
+  "makeMembers": "设为所有成员可见",
+  "noMatch": "暂无匹配的资料",
   "remove": "移除",
+  "removeBody": "移除后无法恢复",
+  "removeBodyUsed": "{n} 处辅导设置引用了这份资料，移除后 AI 队友将读不到它",
+  "removeTitle": "移除《{name}》",
+  "search": "搜索名称",
+  "submit": "上传",
+  "title": "资料库",
   "toast": {
     "downloadFailed": "下载失败",
-    "loadFailed": "资料读不出来",
+    "loadFailed": "读取资料库失败",
+    "madeVisible": {
+      "admins": "已设为仅管理员可见",
+      "members": "已设为所有成员可见"
+    },
     "removeFailed": "移除失败",
-    "removed": "已移除，成员那边的清单里没有了",
+    "removed": "已移除",
     "uploadFailed": "上传失败",
     "uploaded": "已上传",
-    "visibilityFailed": "改可见范围失败",
-    "visibilityUpdated": "已改"
+    "visibilityFailed": "修改可见范围失败"
   },
-  "type": {
-    "audio": "音频",
-    "file": "文件",
-    "image": "图片",
-    "video": "视频"
-  },
-  "unused": "未被引用",
+  "unused": "未被辅导设置引用",
   "upload": "上传资料",
-  "uploadTitle": "上传一份资料",
-  "uploadedOn": "{date} 上传",
-  "usedBy": "被 {n} 处引用",
-  "visibility": "谁能看",
+  "usedBy": "{n} 处辅导设置引用",
+  "visibility": "可见范围",
   "visibilityValue": {
     "admins": "仅管理员",
     "members": "所有成员"

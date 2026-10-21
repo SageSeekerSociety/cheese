@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/ui"
 )
@@ -24,8 +25,8 @@ const apparmorDir = "/etc/apparmor.d"
 // not the bwrap cheesehost places for its owner. `allow` writes the one that
 // names it. The server asks the machine again when its owner opens the devices
 // page, so nothing has to restart.
-func sandboxCmd() *cobra.Command {
-	allow := &cobra.Command{
+func sandboxCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
+	allow := withConfig(&cobra.Command{
 		Use:   "allow",
 		Short: "Let this machine's AppArmor allow the rooms' sandboxes (run with sudo)",
 		Long: "Writes an AppArmor profile that lets the bubblewrap cheesehost placed for\n" +
@@ -43,12 +44,16 @@ func sandboxCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("sandbox allow: %w", err)
 			}
-			bwrap := filepath.Join(owner.HomeDir, place.Root, "runtime", "bubblewrap", "bwrap")
+			bwrap := filepath.Join(owner.HomeDir, place.CurrentRoot(), "runtime", "bubblewrap", "bwrap")
 			if _, err := os.Stat(bwrap); err != nil {
 				return fmt.Errorf("sandbox allow: %s is not there yet; start cheesehost so it places it, then run this again", bwrap)
 			}
-			path := filepath.Join(apparmorDir, "cheese-bwrap-"+owner.Username)
-			if err := os.WriteFile(path, []byte(bwrapProfile("cheese-bwrap-"+owner.Username, bwrap)), 0o644); err != nil {
+			name := "cheese-bwrap-" + owner.Username
+			if profile := config.Profile(*cfgPath); profile != "default" {
+				name += "-" + profile
+			}
+			path := filepath.Join(apparmorDir, name)
+			if err := os.WriteFile(path, []byte(bwrapProfile(name, bwrap)), 0o644); err != nil {
 				return fmt.Errorf("sandbox allow: %w", err)
 			}
 			if out, err := exec.Command("apparmor_parser", "-r", path).CombinedOutput(); err != nil {
@@ -57,7 +62,7 @@ func sandboxCmd() *cobra.Command {
 			ui.OK("AppArmor now lets %s make the rooms' sandboxes. Open your devices page to see it.", bwrap)
 			return nil
 		},
-	}
+	})
 	group := &cobra.Command{
 		Use:   "sandbox",
 		Short: "The sandboxes rooms run in on this machine",

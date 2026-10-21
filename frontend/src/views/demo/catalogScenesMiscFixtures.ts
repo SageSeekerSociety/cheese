@@ -10,7 +10,7 @@
  * 哪个组件、每一格看什么，在 `catalogScenesMisc.ts`。
  */
 import type { LookedUpUser } from '@/api'
-import type { DeviceUser, MyDevice } from '@/cx_types'
+import type { MyDevice } from '@/cx_types'
 import type { SpaceApplication, Team, TeamMember, TeamMembershipApplication } from '@/types'
 import type { User } from '@/types/users'
 
@@ -72,6 +72,12 @@ export const TEAM_MEMBERS: TeamMember[] = [
   // 管理员读到的另一位管理员：服务端说移不了（`canRemove`），那一行就没有「移除成员」。
   { role: 'ADMIN', user: user({ id: 2, username: 'bob', nickname: '鲍勃' }), canRemove: false },
   { role: 'MEMBER', user: user({ id: 3, username: 'carol', nickname: '卡罗尔' }), canRemove: true },
+  // 昵称长到一行放不下的管理员：窄屏上名字该截断，「管理员」那枚标签照样读得出来。
+  {
+    role: 'ADMIN',
+    user: user({ id: 4, username: 'nova', nickname: '星野 Nova · 一个写不完的超长昵称' }),
+    canRemove: true,
+  },
 ]
 
 /** 「加入申请」和「已发送邀请」两格共用这一种：`TeamMembershipApplication`。 */
@@ -125,47 +131,26 @@ export function device(over: Partial<MyDevice> = {}): MyDevice {
     device_id: 'dev-3f9a21',
     name: '书房的 Mac mini',
     online: true,
-    project_ids: [],
-    team_ids: [1],
+    team_id: 1,
     screens: [],
-    in_use: null,
     ...over,
   }
 }
 
-/** 屏幕后面那位队友正在做的事：`cx_types.ts` 的 `DeviceUser`。 */
-export const IN_USE: DeviceUser = {
-  project_id: 'p-clean',
-  project_name: '数据清洗',
-  topic_id: 't-2',
-  topic_title: '把缺失值补上',
-  agent_handle: 'cheese',
-  agent_name: '芝士',
-  agent_name_source: 'default',
-}
-
-/** 一台在线的、两台被别的项目用着的机器：分别是「在线」「有活干」两种行。 */
+/** Online and offline team devices. */
 export const DEVICES: MyDevice[] = [
-  device({ device_id: 'dev-3f9a21', name: '书房的 Mac mini', online: true, screens: [] }),
   device({
-    device_id: 'dev-8b1c04',
-    name: '客厅的 NUC',
-    online: false,
-    project_ids: ['p-clean'],
-    team_ids: [],
-    in_use: [IN_USE],
-    attached_projects: [{ id: 'p-clean', name: '数据清洗' }],
+    device_id: 'dev-3f9a21',
+    name: '书房的 Mac mini',
+    online: true,
+    screens: [],
   }),
+  // The API also sends when an offline device was last heard from; `MyDevice` leaves it to `lastSeenOf`.
+  {
+    ...device({ device_id: 'dev-8b1c04', name: '客厅的 NUC', online: false }),
+    last_seen_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+  } as MyDevice,
 ]
-
-/** 自己名下、还没注册给这个团队的那一台：菜单里列的就是它。 */
-export const MY_DEVICES: MyDevice[] = [
-  device({ device_id: 'dev-3f9a21', name: '书房的 Mac mini', team_ids: [] }),
-  device({ device_id: 'dev-8b1c04', name: '客厅的 NUC', online: false, team_ids: [] }),
-]
-
-/** 已在团队里那一台，用来给「移出」那颗按钮判据。 */
-export const TEAM_DEVICE_ID = 'dev-3f9a21'
 
 // ---- 空间申请（AdminSpacesPageView）----------------------------------------
 

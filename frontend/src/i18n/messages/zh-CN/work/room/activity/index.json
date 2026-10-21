@@ -1,6 +1,5 @@
 {
   "separator": " · ",
-  "stalled": "已 {span}无新输出",
   "typingMany": "多人正在输入…",
   "typingOne": "{name}正在输入…",
   "typingTwo": "{first}和{second}正在输入…",

@@ -130,13 +130,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.chat_admission", "app.domain.block.repositories"),
         ("app.domain.agent.chat_lifecycle", "app.domain.block.repositories"),
         ("app.domain.agent.chat_places", "app.domain.project.repositories"),
-        # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
-        # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：
-        # 一条读 block（block 领域没有 service 层，`platform_stats.pipeline`
-        # 那条注释讲的是同一件事），一条读话题表（和 `app.domain.mentions` 的
-        # `canonicalize_refs` 是同一种读法）。拆模块没有新增跨包的边，只是发起
-        # 方从 chat.py 换成了 mentions.py，所以按同一笔债入账。
-        ("app.domain.agent.mentions", "app.domain.block.repositories"),
+        # Mention resolution uses the topic repository to canonicalize references.
         ("app.domain.agent.mentions", "app.domain.topic.repositories"),
         # agent.queries 是从 agent.chat 里拆出来的那一块（不碰实例状态的问答：
         # 这一轮谁答、项目 key 带多少额度、这条记忆改动说进哪间房）。它摸的三个
@@ -180,14 +174,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # service 层，`platform_stats.pipeline` 那条注释讲的是同一件事。这条边在
         # api/doc_agent.py 时就有，挪进领域层才进了这本账。
         ("app.domain.agent.document.question", "app.domain.block.repositories"),
-        # agent.turn.steps.reminders 是从 agent.chat 里挪出来的那一块（平台往正
-        # 在跑的一轮里说话的两条扫底：沉默提醒、清单停着提醒）。它摸的
-        # repository 只有 block 一个，正是原先 chat.py 里 `remind_silent_turns` 那
-        # 一段跟着它走的：读一条消息、拿提问的人是谁（定这一句话用哪种语言）。
-        # block 领域没有 service 层，`platform_stats.pipeline` 那条注释讲的是同
-        # 一件事。拆模块没有新增跨包的边，只是发起方从 chat.py 换成了
-        # reminders.py，所以按同一笔债入账。
-        ("app.domain.agent.turn.steps.reminders", "app.domain.block.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
@@ -282,8 +268,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---
         # `app.domain.topic.services → app.domain.block.repositories` 是 2026-10-16
-        # 还掉的：本包要写一句平台的话走 `topic/ports.py` 的 `PlatformLine`，读每条
-        # 房间最后说的那一句走本包的裸表（`repositories/latest.py`），两条路都不再
+        # 还掉的：本包要写一句平台的话走 `topic/ports.py` 的 `PlatformLine`，不再
         # 摸 `block` 的 repository。
         # 2026-10-16：`topic_membership/services.py` 变成了包（门面在 `__init__.py`，
         # 名册与席位那一半在 `housekeeping.py`）。这两条边本来就在，发起方是门面的
@@ -301,7 +286,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 领域内债一样入账：还法是路由改调对方的 service，然后把这里对应的行删掉。
         ("app.api.routes.agent_credential", "app.domain.project.repositories"),
         ("app.api.routes.answers", "app.domain.answers.repositories"),
-        ("app.api.routes.answers", "app.domain.discussion.repositories"),
         ("app.api.routes.answers", "app.domain.questions.repositories"),
         ("app.api.routes.answers", "app.domain.user.repositories"),
         ("app.api.routes.avatars", "app.domain.avatars.repositories"),
@@ -323,7 +307,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.dashboard", "app.domain.project.repositories"),
         ("app.api.routes.dashboard", "app.domain.usage.repositories"),
         ("app.api.routes.feedback_proposals", "app.domain.block.repositories"),
-        ("app.api.routes.github_account_link", "app.domain.oauth.repositories"),
         ("app.api.routes.github_install", "app.domain.oauth.repositories"),
         ("app.api.routes.github_install", "app.domain.project.repositories"),
         ("app.api.routes.github_install", "app.domain.user.repositories"),
@@ -339,21 +322,21 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.notifications_flat", "app.domain.user.repositories"),
         ("app.api.routes.project_environment", "app.domain.user.repositories"),
         ("app.api.routes.questions", "app.domain.answers.repositories"),
-        ("app.api.routes.questions", "app.domain.discussion.repositories"),
         ("app.api.routes.questions", "app.domain.questions.repositories"),
         ("app.api.routes.questions", "app.domain.user.repositories"),
         ("app.api.routes.recruitment", "app.domain.user.repositories"),
         ("app.api.routes.spaces", "app.domain.user.repositories"),
         ("app.api.routes.tags", "app.domain.tag.repositories"),
         ("app.api.routes.tasks._common", "app.domain.space.repositories"),
+        # Moved with the body of PATCH /tasks/{id} out of lifecycle, which still
+        # reads them for its other routes: the same debt, a second importer.
+        ("app.api.routes.tasks._writes", "app.domain.space.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.space.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.team.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.user.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.space.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.task.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.user.repositories"),
-        ("app.api.routes.tasks.publish_pdf", "app.domain.space.repositories"),
-        ("app.api.routes.tasks.publish_pdf", "app.domain.tag.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.task.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.team.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.user.repositories"),

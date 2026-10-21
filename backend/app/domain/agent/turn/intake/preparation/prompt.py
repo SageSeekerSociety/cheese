@@ -66,6 +66,7 @@ async def build_turn_prompt(
             embeds_images=embeds_images,
             replied=replied.get(b.id),
             recipient=recipient_handle,
+            recipient_instance_id=recipient_instance_id,
             gone=b.id in gone_files,
             undecodable=b.id in undecodable_files,
         )
@@ -93,12 +94,15 @@ async def build_turn_prompt(
     if preamble := _platform_preamble(notices):
         prompt_text = f"{preamble}\n\n{prompt_text}"
     # 重放可见 (#416): count this attempt on the blocks themselves. A
-    # turn that dies stamps no `consumed_turn`, so the SAME batch is
-    # re-sent next turn, and the next — correct (a dead turn must not
-    # eat a message) but silent. From the room, "every reply fails" and
-    # "this one batch keeps failing" look identical, and the second one
-    # is the diagnosis. Counting at prompt-build time is the only place
-    # that sees a failed attempt at all.
+    # batch the session never read is not stamped `consumed_turn`, so the
+    # SAME batch is re-sent with the next prompt, and the next — correct (a
+    # prompt that never arrived must not eat a message) but silent. From
+    # the room, "every reply fails" and "this one batch keeps failing" look
+    # identical, and the second one is the diagnosis. A batch that was read
+    # is consumed then, and is not re-sent whatever the work did next; one
+    # read into work that failed says so itself (`READ_FAILED_META_KEY`).
+    # Counting at prompt-build time is the only place that sees an attempt
+    # that never arrived at all.
     if recipient_instance_id is not None and place.task is None:
         await require_pinned_seat(session, place.room_id, recipient_instance_id)
     replay_n = await count_prompt_attempt(session, prompt_pending_ids, turn_id)

@@ -1,0 +1,20 @@
+{
+  "confirmDelete": "Deleting the application for “{name}” cannot be undone.",
+  "confirmWithdraw": "Withdrawing deletes the application for “{name}”. You can create it again later.",
+  "dateFormat": "MMM D",
+  "delete": "Delete application",
+  "deleteFailed": "Couldn't delete. Try again later.",
+  "intro": "Description",
+  "loadFailed": "Couldn't load the application",
+  "notFound": "Can't read this application",
+  "pendingState": "Waiting for a platform admin to review",
+  "reason": "Reason",
+  "rejectedOn": "Rejected by a platform admin on {date}",
+  "rejectedState": "Rejected by a platform admin",
+  "resubmit": "Resubmit",
+  "resubmitFailed": "Couldn't resubmit. Try again later.",
+  "resubmitted": "Resubmitted",
+  "title": "Space application",
+  "withdraw": "Withdraw application",
+  "withdrawFailed": "Couldn't withdraw. Try again later."
+}

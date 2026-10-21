@@ -31,7 +31,9 @@ def test_admission_releases_its_database_connection_before_gateway_key(
     project_id = _make_project(client)
     checked_out = []
 
-    async def gateway_key(self, project_id, *, dream=False):
+    async def gateway_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         status = pool_status(client.test_app_engine)
         assert status is not None
         checked_out.append(status["checked_out"])
@@ -54,7 +56,9 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
     goes to a caller that also presents the proxy's own credential."""
     from app.domain.agent.chat import ChatService
 
-    async def gateway_key(self, project_id, *, dream=False):
+    async def gateway_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return "project-key"
 
     monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
@@ -135,7 +139,9 @@ def _pool(monkeypatch):
 
 @pytest.fixture
 def _project_key(monkeypatch):
-    async def fake_key(self, project_id, *, dream=False):
+    async def fake_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return "sk-virtual-for-" + str(project_id)[:8]
 
     monkeypatch.setattr(
@@ -202,7 +208,9 @@ def test_no_pool_configured_is_refused(client, monkeypatch, _project_key):
 def test_no_project_key_refuses_rather_than_using_pool_credentials(
     client, _pool, monkeypatch
 ):
-    async def no_key(self, project_id, *, dream=False):
+    async def no_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return None
 
     monkeypatch.setattr("app.domain.agent.chat.ChatService.project_gateway_key", no_key)
@@ -525,7 +533,9 @@ def test_a_call_from_the_overview_while_the_project_dreams_is_the_dreams(
     from app.domain.agent.chat import ChatService
     from app.domain.memory import dream
 
-    async def gateway_key(self, project_id, *, dream=False):
+    async def gateway_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return "dream-key" if dream else "room-key"
 
     monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
@@ -565,7 +575,9 @@ def test_a_machine_call_from_the_overview_while_the_project_dreams_uses_the_drea
     metering proxy: the same rule picks the key here."""
     from app.domain.agent.chat import ChatService
 
-    async def gateway_key(self, project_id, *, dream=False):
+    async def gateway_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return "dream-key" if dream else "room-key"
 
     monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)

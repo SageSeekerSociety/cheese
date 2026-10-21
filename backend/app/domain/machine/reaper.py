@@ -176,9 +176,11 @@ class PoolSweep:
 
     # ``HostPool``'s own, called from ``maintain`` and ``_grow`` below.
     async def _provider_failing(self, now: datetime) -> int: ...
-    async def _host_body(self) -> dict: ...
+    async def _host_body(self) -> tuple[dict, int]: ...
     async def _require_room_to_grow(self, *, whole_machine: bool = False) -> None: ...
-    async def _acquire(self, body: dict, home: dict | None) -> CloudHost: ...
+    async def _acquire(
+        self, body: dict, home: dict | None, data_disk: int
+    ) -> CloudHost: ...
 
     async def maintain(self) -> None:
         """Keep the pool the size its sessions need.
@@ -254,7 +256,7 @@ class PoolSweep:
         """Add a host ahead of demand, if the free slots are still short once
         the provider has been read."""
         try:
-            body = await self._host_body()
+            body, data_disk = await self._host_body()
             await self._repo.lock_pool()
             load = await self._repo.occupancy()
             hosts = await self._repo.live()
@@ -263,7 +265,7 @@ class PoolSweep:
                 await self._session.commit()
                 return
             await self._require_room_to_grow()
-            host = await self._acquire(body, None)
+            host = await self._acquire(body, None, data_disk)
         except (MicroCloudError, ValidationError, CloudKeepsFailing, CloudPoolFull):
             logger.warning("cloud pool could not add a host", exc_info=True)
             await self._session.rollback()
@@ -296,8 +298,9 @@ class PoolSweep:
 
     def _lost(self, hosts: list[CloudHost], now: datetime) -> list[CloudHost]:
         """Enrolled pool hosts whose sandboxes will not run again: one the
-        provider reports in error, and one whose connector has been away for
-        ``LOST_AFTER``. A sandbox is disposable — what counts is what was pushed
+        provider reports in error, one with no data disk recorded, where no
+        sandbox starts without a disk limit (``sandbox_host.py``), and one
+        whose connector has been away for ``LOST_AFTER``. A sandbox is disposable — what counts is what was pushed
         — so its session is not left waiting on such a host.
 
         A connector away is only believed while another host of the pool is
@@ -319,6 +322,7 @@ class PoolSweep:
             host
             for host in pool
             if host.status == MachineStatus.error
+            or host.sandbox_disk_gb is None
             or (
                 answering
                 and host.offline_since is not None
@@ -349,8 +353,9 @@ class PoolSweep:
         await self._repo.lock_pool()
         await self._session.refresh(host)
         error = host.status == MachineStatus.error
+        unusable = error or host.sandbox_disk_gb is None
         if host.released_at is not None or (
-            not error and self._hub.is_online(device_id)
+            not unusable and self._hub.is_online(device_id)
         ):
             await self._session.commit()
             return

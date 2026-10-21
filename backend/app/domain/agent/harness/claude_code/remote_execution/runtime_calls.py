@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import runpy
 import select
@@ -370,19 +371,25 @@ def control(self, params):
 
 
 def prepare(self, payload):
-    room_owner = self.state.parents[5]
+    # The state is <owner>/<root>/home/<project>/<resource>/.cheese/executor,
+    # and the root is the enrollment's (`.cheese`, or `.cheese/profiles/<name>`).
+    root = os.environ.get("CHEESE_PROFILE_ROOT", ".cheese")
+    room_owner = self.state.parents[4 + len(Path(root).parts)]
     home = (
         room_owner
-        / ".cheese/home"
+        / root
+        / "home"
         / str(uuid.UUID(payload["project"]))
         / str(uuid.UUID(payload["resource"]))
     )
     if home / ".cheese/executor" != self.state:
         raise ValueError("Executor preparation belongs to another room")
     bootstrap = runpy.run_path(str(self.programs / "remote-execution/bootstrap.py"))
+    disk = {}
     with bootstrap["prepared"](
         payload,
         room_owner,
+        disk=disk,
         # Read-only in a sandbox: only the install, outside it, fetches it.
         fetch_toolchain=not self.config.get("sandbox"),
     ) as (
@@ -404,6 +411,7 @@ def prepare(self, payload):
             **self.dispatch("configure", configure),
             "mcp_servers": bootstrap["process_servers"](config),
             "context_tree": self.context_fs({"operation": "tree"}),
+            **disk,
         }
         if payload.get("environment"):
             runner = runpy.run_path(str(self.programs / "cheese-environment.py"))

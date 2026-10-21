@@ -24,18 +24,17 @@ from app.api import deps as session_turn_deps
 from app.core.config import settings
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.chat import ChatService
-from app.domain.agent.compute import ComputePool
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent_instance.adapters import named_teammate
-from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.session_record.service import read
 from app.domain.topic.services import TopicService
 from tests.ask_fixtures import question_row
-from tests.conftest import StubChannel, finish_turn, settle_turn
+from tests.conftest import StubChannel, finish_turn, settle_turn, stub_compute
 from tests.integration.conftest import (
     post_project,
     project_service,
@@ -244,7 +243,7 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=ComputePool([channel.runtime]),
+        compute=stub_compute(channel, sessions=factory),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -269,12 +268,13 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     assert channel.asked == [False], "私聊这一轮不该去要手"
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
+        kept = await read(session, topic_id)
     assert any(
-        looks_like_agent_handle(b.author)
-        and b.kind == BlockKind.event
-        and b.content == channel.reply
-        for b in blocks
-    ), [(b.author, b.kind, b.content) for b in blocks]
+        item["record"].get("type") == "result"
+        and item["record"].get("result") == channel.reply
+        for item in kept.items
+    ), kept.items
+    assert not [b for b in blocks if looks_like_agent_handle(b.author)]
 
 
 async def test_a_room_turn_still_waits_for_its_hands(business_db_factory, tmp_path):
@@ -284,7 +284,7 @@ async def test_a_room_turn_still_waits_for_its_hands(business_db_factory, tmp_pa
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=ComputePool([channel.runtime]),
+        compute=stub_compute(channel, sessions=factory),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )

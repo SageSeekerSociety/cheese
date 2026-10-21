@@ -33,6 +33,7 @@ from tests.integration.test_file_panel_safety import (  # noqa: F401
     _put,
     task_machine,
 )
+from tests.support import library_uploads
 from tests.support.pictures import picture
 
 #: The exact card an artifact block serialises to. A move that changed the wire
@@ -225,10 +226,7 @@ def test_attachments_upload_library_and_raw_read_the_same(client):
     assert (sent["bytes"], sent["mime"]) == (len(shot), "image/png")
     assert sent["path"].startswith("uploads/") and sent["path"].endswith("/shot.png")
 
-    given = client.post(
-        f"/projects/{pid}/library",
-        files={"file": ("原件.png", b"\x89PNG-library", "image/png")},
-    )
+    given = library_uploads.put_in(client, pid, "原件.png", b"\x89PNG-library")
     assert given.status_code == 200, given.text
     named = client.post(f"/topics/{tid}/attachments", data={"library_path": "原件.png"})
     assert named.status_code == 200, named.text

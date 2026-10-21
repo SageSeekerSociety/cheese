@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import String, delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import with_keys
@@ -50,29 +50,41 @@ class RunRecordRepository:
     async def restate(
         self, record_id: uuid.UUID, *, content: str, meta: dict
     ) -> RunRecord | None:
-        """Say again, in place, what a record says: the third retry of the same
-        request, the wait that ended. `meta` is merged over what is there."""
+        """Append the next state of a series; earlier facts remain immutable."""
         record = await self._session.get(RunRecord, record_id)
         if record is None:
             return None
         merged = with_keys({**(record.meta or {}), **meta}, content=content) or {}
-        record.content = content
-        record.meta = merged
-        record.severity = str(merged.get("severity") or record.severity)
-        await self._session.flush()
-        return record
+        merged["series_id"] = (record.meta or {}).get("series_id", str(record.id))
+        return await self.add(
+            project_id=record.project_id,
+            conversation_id=record.conversation_id,
+            turn_id=record.turn_id,
+            seat=record.seat,
+            content=content,
+            meta=merged,
+        )
 
     async def running(self, turn_id: uuid.UUID, kind: str) -> list[uuid.UUID]:
         """The turn's records of this kind still saying their news is under way
         (``meta.state == "running"``), oldest first."""
-        rows = await self._session.scalars(
-            select(RunRecord.id)
+        series = func.coalesce(
+            RunRecord.meta["series_id"].as_string(), RunRecord.id.cast(String)
+        )
+        latest = (
+            select(RunRecord.id, RunRecord.meta, RunRecord.created_at)
             .where(
                 RunRecord.turn_id == turn_id,
                 RunRecord.kind == kind,
-                RunRecord.meta["state"].as_string() == "running",
             )
-            .order_by(RunRecord.created_at)
+            .distinct(series)
+            .order_by(series, RunRecord.created_at.desc(), RunRecord.id.desc())
+            .subquery()
+        )
+        rows = await self._session.scalars(
+            select(latest.c.id)
+            .where(latest.c.meta["state"].as_string() == "running")
+            .order_by(latest.c.created_at)
         )
         return list(rows)
 
@@ -83,15 +95,26 @@ class RunRecordRepository:
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 500,
+        seat: str | None = None,
+        before: tuple[datetime, str, uuid.UUID] | None = None,
     ) -> list[RunRecord]:
         """The conversation's records between two moments, oldest first."""
         stmt = select(RunRecord).where(RunRecord.conversation_id == conversation_id)
+        if seat is not None:
+            stmt = stmt.where(RunRecord.seat == seat)
         if since is not None:
             stmt = stmt.where(RunRecord.created_at >= since)
         if until is not None:
             stmt = stmt.where(RunRecord.created_at <= until)
+        author = func.coalesce(RunRecord.seat, "system")
+        if before is not None:
+            stmt = stmt.where(
+                tuple_(RunRecord.created_at, author, RunRecord.id) < before
+            )
         rows = await self._session.scalars(
-            stmt.order_by(RunRecord.created_at.desc()).limit(limit)
+            stmt.order_by(
+                RunRecord.created_at.desc(), author.desc(), RunRecord.id.desc()
+            ).limit(limit)
         )
         return list(reversed(list(rows)))
 

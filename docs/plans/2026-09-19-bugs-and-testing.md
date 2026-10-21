@@ -1,6 +1,7 @@
 > 状态：**研究报告，第 5 节五条已拍板**（2026-09-19 至 09-20）。材料是 09-05 以来合并的 200 个 PR、当周事故记录与 CI 运行史；文中引用的 `families-*.md` / `audit-*.md` 是研究过程文件，未入库。讨论去 issue。
 
-> CI status update (2026-09-21): main now requires `CI required` and the merge queue.
+> CI status update (2026-10-18): main requires `CI required`; green PRs squash-merge directly,
+> and the push-to-main Required CI gates dev deployment.
 > The private-plan limitation and missing-gate findings below describe the September 19 snapshot.
 > See [the merge policy](../infrastructure.md#merge-policy) for the active configuration
 > and #1279 for the new timing and download baseline.

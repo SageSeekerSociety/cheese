@@ -1,9 +1,7 @@
-"""A message to a member's own Claude Code waits while its computer is away.
+"""A message waits while its team connection's credential device is away.
 
-It runs only on its owner's computer (#2991). With none of the owner's
-computers online with their login, there is nowhere to run the turn: the
-message waits — the periodic scan of waiting messages starts it once one comes
-back — and the room is told so once, not once per scan.
+The periodic scan starts the waiting message once the device comes back.
+The room is told once per message, rather than once per scan.
 """
 
 import uuid
@@ -19,6 +17,7 @@ from app.domain.block.models import Block
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.project.models import Project
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
 from tests.integration.conftest import (
@@ -26,6 +25,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support.devices import enrollment_team
 
 
 class _Hub:
@@ -62,23 +62,30 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
         code = await devices.start("laptop")
         laptop = (
             await devices.approve(
-                code, owner_user_id=alice.id, supply=Supply.self_hosted
+                code,
+                owner_user_id=alice.id,
+                supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, alice.id),
             )
         ).device_id
         db.add(
             DeviceClaudeLoginRow(
+                team_id=(await db.get(Project, project_id)).team_id,
+                allowed_models=["sonnet"],
                 device_id=laptop,
                 installed=True,
                 logged_in=True,
+                auth_method="claude.ai",
                 checked_at=datetime.now(UTC),
             )
         )
+        await db.flush()
         db.add(
             OwnAgent(
                 instance_id=instance.id,
                 owner_user_id=alice.id,
                 harness="claude-code",
-                device_id=laptop,
+                login_id=laptop,
             )
         )
         seat = await AgentInstanceService(db).ensure_identity(instance)

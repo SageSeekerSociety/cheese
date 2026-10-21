@@ -295,6 +295,65 @@ async def test_commit_subject_refusals_raise_what_callers_catch():
     assert refused.value.args[0].key == "githubRefusedCommitRead"
 
 
+# ---- commit_parents ----------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_commit_parents_are_the_parent_shas_in_order():
+    """A line that merged the base branch in ends on a two-parent commit; the
+    ready title has to walk the FIRST parent, and the order is what says which
+    one that is. The second parent is the base branch's history."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200, json={"parents": [{"sha": "task-tip"}, {"sha": "main-tip"}]}
+        )
+
+    parents = await _client(handler).commit_parents("abc123")
+
+    assert parents == ["task-tip", "main-tip"]
+    [request] = seen
+    assert request.url.path == "/repos/acme/widgets/commits/abc123"
+
+
+@pytest.mark.anyio
+async def test_commit_parents_of_a_root_commit_are_empty():
+    """A root commit has no parents, and a parent the forge left without a sha
+    is not one either: neither may crash the walk or produce a None sha the
+    next read would be addressed to."""
+    root = await _client(
+        lambda _request: httpx.Response(200, json={"commit": {"message": "first"}})
+    ).commit_parents("abc123")
+    shapeless = await _client(
+        lambda _request: httpx.Response(200, json={"parents": [{"sha": None}, {}]})
+    ).commit_parents("abc123")
+
+    assert root == []
+    assert shapeless == []
+
+
+@pytest.mark.anyio
+async def test_commit_parents_refusals_raise_what_callers_catch():
+    """The same two refusals `commit_subject` raises: the ready path catches
+    this pair and nothing else, so the quota has to reach it as the answer it
+    already knows how to give."""
+    with pytest.raises(GitHubPRRateLimited) as limited:
+        await _client(
+            lambda _request: httpx.Response(
+                403, text="API rate limit exceeded for installation"
+            )
+        ).commit_parents("abc123")
+    assert limited.value.args[0].key == "githubRefusedCommitRead"
+
+    with pytest.raises(GitHubPRError) as refused:
+        await _client(lambda _request: httpx.Response(500, text="boom")).commit_parents(
+            "abc123"
+        )
+    assert type(refused.value) is GitHubPRError
+
+
 # ---- unreachable GitHub ------------------------------------------------------
 
 
@@ -360,6 +419,7 @@ def _unreachable(request: httpx.Request) -> httpx.Response:
     [
         lambda c: c.pr_view(7),
         lambda c: c.commit_subject("abc123"),
+        lambda c: c.commit_parents("abc123"),
         lambda c: c.check_runs("abc123"),
         lambda c: c.merge_pr(7, title="t", message="m"),
         lambda c: c.open_pr(head="topic/1", base="main", title="t", body=""),

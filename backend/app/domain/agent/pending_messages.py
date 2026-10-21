@@ -32,45 +32,6 @@ def current_runner():
     return _runner
 
 
-async def finish_work(chat, completion, settle):
-    """Only a committed native completion can wake a deferred message."""
-    async with chat.session_factory() as session:
-        await settle(
-            session,
-            require_registered=True,
-            **{
-                field: getattr(completion, field)
-                for field in completion.__dataclass_fields__
-            },
-        )
-        await session.commit()
-    nudge_messages(chat, completion.conversation_id)
-    wake_held_deliveries(chat, completion.conversation_id, completion.recipient_handle)
-
-
-async def finish_work_termination(chat, termination, settle):
-    """A work interval proved dead frees the seat, and nothing else.
-
-    It does not complete the inputs inside it: whether an answer was taken is
-    still unknown, so their holds stay. What it does is stop those rows from
-    standing between the seat and the next input — and the deferred messages
-    have to be rescanned, because that is what was holding them back.
-    """
-    async with chat.session_factory() as session:
-        await settle(
-            session,
-            **{
-                field: getattr(termination, field)
-                for field in termination.__dataclass_fields__
-            },
-        )
-        await session.commit()
-    nudge_messages(chat, termination.conversation_id)
-    wake_held_deliveries(
-        chat, termination.conversation_id, termination.recipient_handle
-    )
-
-
 def wake_held_deliveries(chat, conversation_id, recipient_handle):
     """Send, in the background, what the platform owes the seat that just freed.
 
@@ -165,7 +126,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
     passes over and why; the sweep logs every message it starts, since one it
     finds is one the nudges missed."""
     # deferred-import: breaks the cycle agent.queries -> agent.pending_messages
-    from app.domain.agent.queries import conversation_seat
+    from app.domain.agent.queries import seats_in_conversations
 
     if not runner.owns_sessions or not runner.accepting_turns:
         return 0
@@ -229,6 +190,20 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
                 for block in waiting
             ],
         )
+        # The seat each waiting message acts under is asked once for the batch:
+        # the messages of one scan come from a handful of conversations, so a
+        # batch read answers them all instead of one `conversation_seat` per
+        # message. The loop still checks the same things in the same order.
+        seats_by_key = await seats_in_conversations(
+            session,
+            [
+                (
+                    answered_in_by_block[block.id],
+                    ((block.meta or {}).get("agent_recipient") or {}).get("handle"),
+                )
+                for block in waiting
+            ],
+        )
         seats = {}
         for block in mentioned:
             if block.id not in answered_in_by_block:
@@ -246,7 +221,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             if await chat.has_running_turn(*key):
                 skipped.append((block, "turn_running_in_process"))
                 continue
-            seated = await conversation_seat(session, conversation, handle)
+            seated = seats_by_key[key]
             if seated is None:
                 skipped.append((block, "no_seat"))
                 continue
@@ -299,7 +274,6 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             attachments=None,
             landed_user_block_id=block.id,
             landed_user_block_ids=[block.id],
-            live_delivery_expected=False,
             recipient_handle=recipient.get("handle"),
             recipient_instance_id=(
                 uuid.UUID(recipient["instance_id"])

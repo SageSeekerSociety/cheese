@@ -47,6 +47,7 @@ from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import KeptRoomFiles, RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered, session_auth_headers
+from tests.support.devices import enrollment_team
 
 pytestmark = pytest.mark.anyio
 
@@ -176,6 +177,7 @@ async def _old_room(client, tmp_path, *, files=True):
             await devices.start("old box"),
             owner_user_id=owner,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner),
         )
         device_id = device.device_id
         # The room's session worked on that machine once; its lease is gone.

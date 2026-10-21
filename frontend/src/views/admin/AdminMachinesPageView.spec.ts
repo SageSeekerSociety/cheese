@@ -3,12 +3,12 @@
  * 它上面的沙箱；接口读失败不画成「一台宿主机都没有」；每台宿主机用了多少内存、读数多旧
  * 看得见，旧到不能当此刻看的要说出来；每个沙箱的内存和它的上限放在一起。
  */
-import type { HostUsage, MachineHost, MachinesOverview } from '@/views/admin/machinesApi'
+import type { HostUsage, MachineHost, MachinesOverview, WarmMachineRow } from '@/views/admin/machinesApi'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, within } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
 import AdminMachinesPageView from './AdminMachinesPageView.vue'
@@ -64,7 +64,30 @@ function host(fields: Partial<MachineHost> = {}): MachineHost {
   }
 }
 
-function overview(pool: Partial<MachinesOverview['pool']> = {}, hosts = [host()]): MachinesOverview {
+function warm(fields: Partial<WarmMachineRow> = {}): WarmMachineRow {
+  return {
+    id: 'w1',
+    state: 'ready',
+    machine_id: 88,
+    hostname: 'warm-spare',
+    cores: 4,
+    memory_mb: 16384,
+    disk_gb: 40,
+    ip: null,
+    online: true,
+    created_at: '2026-10-12T09:30:00Z',
+    enrolled_at: '2026-10-12T09:32:00Z',
+    attempts: 0,
+    error: null,
+    ...fields,
+  }
+}
+
+function overview(
+  pool: Partial<MachinesOverview['pool']> = {},
+  hosts = [host()],
+  warmRows: WarmMachineRow[] = []
+): MachinesOverview {
   return {
     configured: true,
     now: NOW,
@@ -98,12 +121,11 @@ function overview(pool: Partial<MachinesOverview['pool']> = {}, hosts = [host()]
       sandbox_inode_budget: 600000,
       near_cap: 0.8,
       check_s: 60,
-      walk_s: 300,
       alert_used: { disk: 0.85, inodes: 0.9, memory: 0.9 },
       history_step_s: 300,
     },
     hosts,
-    warm: [],
+    warm: warmRows,
     history: {
       since: '2026-10-11T10:00:00Z',
       prepared: 0,
@@ -216,5 +238,23 @@ describe('机器', () => {
     await fireEvent.click(getByText('pool-a'))
     expect(queryByText(/2\.7 \/ 3\.0 GiB/)).not.toBeNull()
     expect(queryByText(/4\.0 \/ 12 GB/)).not.toBeNull()
+  })
+
+  it('还没被领走的温机也在宿主机表里，带着它此刻的阶段：在跑的机器一台都不漏', () => {
+    const { getByRole } = mount({
+      overview: overview({}, [host()], [warm(), warm({ id: 'w2', state: 'preparing', hostname: 'warm-booting' })]),
+    })
+    const table = within(getByRole('table'))
+    const spare = table.getByText('warm-spare').closest('[role="row"]') as HTMLElement
+    expect(within(spare).queryByText(/Unclaimed|待领用/)).not.toBeNull()
+    const booting = table.getByText('warm-booting').closest('[role="row"]') as HTMLElement
+    expect(within(booting).queryByText(/Warming up|预热中/)).not.toBeNull()
+  })
+
+  it('只有温机、还没有宿主机时，不说「一台宿主机都没有」', () => {
+    const none = i18n.global.t('admin.machines.noHosts')
+    const { queryByText } = mount({ overview: overview({}, [], [warm()]) })
+    expect(queryByText(none)).toBeNull()
+    expect(queryByText('warm-spare')).not.toBeNull()
   })
 })

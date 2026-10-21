@@ -41,8 +41,26 @@ class RoutineService:
             topic_id=topic_id,
         )
 
-    async def runs(self, routine_id: uuid.UUID, limit: int = 50) -> list[RoutineRun]:
-        return await rules.runs(self, routine_id=routine_id, limit=limit)
+    async def runs(
+        self,
+        routine_id: uuid.UUID,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        failed_only: bool = False,
+    ) -> tuple[list[RoutineRun], int]:
+        return await rules.runs(
+            self,
+            routine_id=routine_id,
+            offset=offset,
+            limit=limit,
+            failed_only=failed_only,
+        )
+
+    async def latest_run_statuses(
+        self, routine_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        return await rules.latest_run_statuses(self, routine_ids=routine_ids)
 
     async def _agent_for(self, topic_id: uuid.UUID, requested: str | None) -> str:
         return await rules._agent_for(self, topic_id=topic_id, requested=requested)
@@ -55,8 +73,7 @@ class RoutineService:
         by_agent: bool,
         title: str,
         instructions: str,
-        context_scope: str,
-        output_dir: str,
+        note: str,
         trigger: str,
         spec: dict,
         tz: str,
@@ -70,8 +87,7 @@ class RoutineService:
             by_agent=by_agent,
             title=title,
             instructions=instructions,
-            context_scope=context_scope,
-            output_dir=output_dir,
+            note=note,
             trigger=trigger,
             spec=spec,
             tz=tz,
@@ -79,15 +95,8 @@ class RoutineService:
             agent_handle=agent_handle,
         )
 
-    @staticmethod
-    def summary_text(row: Routine) -> str:
-        return rules.summary_text(row=row)
-
-    def _activate(self, row: Routine, *, confirmed_by: str | None = None) -> None:
-        return rules._activate(self, row=row, confirmed_by=confirmed_by)
-
-    async def confirm(self, row: Routine, *, by: str) -> Routine:
-        return await rules.confirm(self, row=row, by=by)
+    def _activate(self, row: Routine) -> None:
+        return rules._activate(self, row=row)
 
     async def _settled(self, row: Routine, content: str) -> None:
         return await rules._settled(self, row=row, content=content)
@@ -98,14 +107,14 @@ class RoutineService:
     async def resume(self, row: Routine) -> Routine:
         return await rules.resume(self, row=row)
 
-    async def update(self, row: Routine, *, by_agent: bool, changes: dict) -> Routine:
-        return await rules.update(self, row=row, by_agent=by_agent, changes=changes)
+    async def update(self, row: Routine, *, changes: dict) -> Routine:
+        return await rules.update(self, row=row, changes=changes)
 
     async def run_now(self, row: Routine, *, by: str) -> RoutineRun:
         return await rules.run_now(self, row=row, by=by)
 
-    async def delete(self, row: Routine) -> None:
-        return await rules.delete(self, row=row)
+    async def delete(self, row: Routine, *, by: str) -> None:
+        return await rules.delete(self, row=row, by=by)
 
     async def announce_archived_rooms(self) -> int:
         return await archive.announce_archived_rooms(self)

@@ -116,6 +116,7 @@ export function usePanelSurface(parts: {
     isMine: parts.authorship.isMine,
     displayName: parts.people.roster.displayName,
     authorTitle: parts.people.roster.authorTitle,
+    nameOfHandle: parts.people.roster.nameOfHandle,
     isExternal: parts.people.roster.isExternal,
     avatarSrc: parts.people.roster.avatarSrc,
     myName: parts.people.roster.myName,

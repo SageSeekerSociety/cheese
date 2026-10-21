@@ -121,6 +121,34 @@ class JournalBacklog[J: Journal]:
             journal.close()
         return given_up
 
+    def unrecorded(self) -> list[dict]:
+        """The next page past what the raw record kept (``recorded``).
+
+        A mirror that has never been recorded starts at its landing cursor:
+        what the room already took before raw records existed is not copied
+        back in.
+        """
+        if self.path is None or not self.path.exists():
+            return []
+        journal = self.journal(self.path)
+        try:
+            kept = journal.recall("recorded")
+            if kept is None:
+                kept = journal.recall("landed") or "0"
+                journal.remember("recorded", kept)
+            return journal.read(int(kept))
+        finally:
+            journal.close()
+
+    def recorded(self, *, through: int) -> None:
+        assert self.path is not None
+        journal = self.journal(self.path)
+        try:
+            with journal.connection:
+                journal.advance("recorded", through)
+        finally:
+            journal.close()
+
     def forget(self, *, older_than_s: float) -> None:
         """Drop what the mirror no longer needs, and give the space back."""
         if self.path is None or not self.path.exists():

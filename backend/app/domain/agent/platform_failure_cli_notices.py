@@ -66,6 +66,14 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"^API Error:.*\b(Overloaded|Bad Gateway)\b", re.I),
         PROVIDER_OVERLOADED_CODE,
     ),
+    # Our gateway's lifetime cap on one upstream key (`deploy/gateway/spend_cap.py`).
+    # It arrives wrapped in the "temporarily limiting requests" wording below,
+    # which would read as an overload that clears up; nothing does until the cap
+    # is raised or the model is moved off that key.
+    (
+        re.compile(r"^API Error:.*\bhas reached its spend cap\b", re.I),
+        MODEL_LIMIT_REACHED_CODE,
+    ),
     # Claude Code's wording for a 429 that is not the account's usage limit.
     (
         re.compile(r"^API Error:.*\btemporarily limiting requests\b", re.I),

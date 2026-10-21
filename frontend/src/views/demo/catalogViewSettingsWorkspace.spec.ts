@@ -19,6 +19,7 @@ const IDS = [
   'profile-view',
   'real-name-view',
   'security-view',
+  'team-agent-picker',
   'model-connections-view',
   'this-device-view',
   'channel-browse-view',

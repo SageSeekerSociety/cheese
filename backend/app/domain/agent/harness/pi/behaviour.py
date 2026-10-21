@@ -47,7 +47,7 @@ def declaration() -> Declaration:
             BuiltIn.TODO: Difference.NOT_BUILT_IN,
             # 1.0.0 没有提醒：工具联合里没有，内建扩展四个里没有，docs/ 下也
             # 没有定时或唤醒的说法。房间太久没听到消息时的提醒是平台的
-            # ChatService.remind_silent_turns，它不看骨架；平台给 pi 的
+            # QuietSessionReminders.silence，它不看骨架；平台给 pi 的
             # extension 里也没有第二份。
             BuiltIn.REMINDER: Difference.NOT_BUILT_IN,
             # 1.0.0 会自己做的是会话的持久化与压缩，不是把工作同步回仓库：工具联

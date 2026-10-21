@@ -13,9 +13,8 @@
 - 把扫描换回逐条版，同一条计数断言就红。这条故意违规是本文件存在的理由：没有
   它，计数断言写成多大都照样绿。
 
-席位解析（`agent.queries.conversation_seat`）不在这一条里——它在另一个域，那里
-有一个在途 PR。测试给它一个不碰库的替身，计数只说这一条改动的读；聊天服务的
-`has_running_turn` 同理。
+席位解析（`agent.queries.seats_in_conversations`）由另一条改动批量化；这里的计数
+只说这一条改动的读，所以给它一个不碰库的替身。聊天服务的 `has_running_turn` 同理。
 """
 
 import uuid
@@ -87,14 +86,20 @@ class _Runner:
         self.started.append({"room": room, "block_id": block_id, **kwargs})
 
 
-async def _seated(session, conversation_id, handle):
-    """`conversation_seat`, minus its own reads: not this change's to batch."""
-    return SimpleNamespace(handle=handle, instance_id=INSTANCE), handle
+async def _seated(session, pairs):
+    """`seats_in_conversations`, minus its own reads.
+
+    The seat read is batched in its own change; this test measures the scan's
+    own reads, so the answer is a stand-in for every pair."""
+    return {
+        pair: (SimpleNamespace(handle=pair[1], instance_id=INSTANCE), pair[1])
+        for pair in dict.fromkeys(pairs)
+    }
 
 
 @pytest.fixture
 def no_seat_reads(monkeypatch):
-    monkeypatch.setattr("app.domain.agent.queries.conversation_seat", _seated)
+    monkeypatch.setattr("app.domain.agent.queries.seats_in_conversations", _seated)
 
 
 async def _seed(factory, *, per_conversation: int = 2):
@@ -166,7 +171,8 @@ async def _more(factory, project_id, places, *, per_conversation):
 
 
 async def _add_held_input(factory, project_id, conversation_id):
-    """One input the seat never finished: it holds that seat by itself."""
+    """One input written to the seat's session and never read: its fate is
+    unknown, and it holds that seat by itself."""
     async with factory() as session:
         now = datetime.now(UTC)
         session.add(
@@ -179,7 +185,6 @@ async def _add_held_input(factory, project_id, conversation_id):
                 input_id=uuid.uuid4(),
                 work_id=uuid.uuid4(),
                 registered_at=now - timedelta(minutes=5),
-                echoed_at=now,
             )
         )
         await session.commit()
@@ -374,7 +379,6 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
                     input_id=uuid.uuid4(),
                     work_id=uuid.uuid4(),
                     registered_at=now,
-                    echoed_at=now,
                 ),
                 NativeInput(
                     project_id=project.id,
@@ -385,8 +389,8 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
                     input_id=finished,
                     work_id=finished,
                     registered_at=now,
+                    # Read: delivered, and holding nothing.
                     echoed_at=now,
-                    completed_at=now,
                 ),
                 # A hold under a seat nobody is asking about in the pair below:
                 # the read may only answer the pairs it was given.
@@ -399,7 +403,6 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
                     input_id=uuid.uuid4(),
                     work_id=uuid.uuid4(),
                     registered_at=now,
-                    echoed_at=now,
                 ),
             ]
         )

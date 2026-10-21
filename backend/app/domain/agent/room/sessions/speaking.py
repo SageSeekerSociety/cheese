@@ -29,7 +29,6 @@ from app.domain.agent.room.stopwatch import timed
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.agent.session_host.contract import (
     Image,
-    InputProtocolUnavailable,
     InputUnconfirmed,
     Prompt,
     SessionError,
@@ -105,8 +104,6 @@ async def send(
         message = svc._with_project_state(
             seat, live, resume_token, session_opening, opening_changes, message
         )
-        if not live.takes_inputs:
-            raise InputProtocolUnavailable()
         pictures = tuple(images or ())
         on_mark(work_id)
         await svc._consume(
@@ -196,7 +193,6 @@ async def steer(
     images: list[Image] | None = None,
     *,
     register_input: InputRegistrar,
-    expected_work_id: uuid.UUID | None = None,
     agent_handle: str | None = None,
     owes_reply: bool = False,
 ) -> bool:
@@ -207,12 +203,13 @@ async def steer(
 
     Addressed by room rather than by session because the caller is on the
     hot path with a person waiting and has no project id in hand.
-    ``agent_handle`` names the seat when the caller knows whose work this
-    belongs to; without it the room must have exactly one working seat, or
-    the expected work id must pick it out — a guess between two working
-    teammates would put the words into the wrong conversation.
+    ``agent_handle`` names the seat when the caller knows whose session this
+    is for; without it the room must have exactly one working seat — a guess
+    between two working teammates would put the words into the wrong
+    conversation. Whether the session is working is its runner's answer
+    (``status``), asked right before the words go in.
     """
-    seat = svc._steer_seat(topic_id, expected_work_id, agent_handle)
+    seat = svc._steer_seat(topic_id, agent_handle)
     if seat is None:
         return False
     live = svc.live.get(seat)
@@ -224,8 +221,6 @@ async def steer(
         return False
     if svc.live.get(seat) is not live or svc.work.get(seat) != work:
         return False
-    if not status.takes_inputs:
-        raise InputProtocolUnavailable()
     identity = InputIdentity(
         live.session.project_id,
         topic_id,
@@ -282,15 +277,11 @@ async def _submit(
         raise InputOutcomeUnconfirmed(identity, accepted=accepted) from exc
 
 
-def _steer_seat(
-    svc: pkg.RoomSessions, topic_id, expected_work_id, agent_handle
-) -> Seat | None:
+def _steer_seat(svc: pkg.RoomSessions, topic_id, agent_handle) -> Seat | None:
     """Which seat words addressed to a room mean, or None when ambiguous."""
     if agent_handle is not None:
         return (topic_id, agent_handle)
     working = [seat for seat in svc.work if seat[0] == topic_id]
-    if expected_work_id is not None:
-        working = [seat for seat in working if svc.work[seat] == expected_work_id]
     return working[0] if len(working) == 1 else None
 
 

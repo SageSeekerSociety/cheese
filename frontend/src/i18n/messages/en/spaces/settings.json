@@ -25,9 +25,8 @@
     "basic": "Basics",
     "categories": "Categories and tags",
     "domainGroups": "Email domain groups",
-    "guidance": "Guidance for the AI teammate",
+    "guidance": "AI teammate guidance",
     "inviteCodes": "Invite codes",
-    "materials": "Library",
     "templates": "Challenge templates"
   },
   "title": "Settings"

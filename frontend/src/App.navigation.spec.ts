@@ -102,7 +102,7 @@ async function mountApp(path: string, width: number) {
         path: '/home',
         component: Home,
         children: [
-          { path: 'spaces', name: 'HomeSpaces', component: blank },
+          { path: 'space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
           { path: 'teams', name: 'HomeTeams', component: blank },
         ],
       },

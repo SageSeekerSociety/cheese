@@ -26,11 +26,24 @@
 #       subagent topology that tier spends. A tier G change is mechanical: no
 #       reviewer runs, prepare writes a result.json that says so, and post can
 #       be run straight away.
+#       Also appends PRECOMPUTED.md (.claude/pr-review/precompute.py): symbol refs, trial merges, regression proofs.
+#       Then BUNDLE.md (.claude/pr-review/bundle.py): the source of every function the diff
+#       touched, its call sites in other files, and single-file pyright errors (PYRIGHT
+#       overrides the command), so the finders do not open the files themselves.
+#       A --since round whose increment §4 does not re-review (only a merge of the base
+#       branch, or only tests, docs or copy) and whose last round on this machine had no
+#       blocker/major inherits that conclusion: result.json is written, no reviewer runs,
+#       and post prints the line with 增量自.
+#       The round — REVIEW-RESULT.md, meta and the review tree — is left under
+#       $HOME/.cheese/review-cache (PR_REVIEW_DIR overrides), not /tmp, so a
+#       machine change does not take it away.
 #   .claude/scripts/pr-review.sh post DIR [--dry-run]
 #       Check DIR/result.json against the schema and the pinned commit, write
 #       the rendered result to DIR/REVIEW-RESULT.md, print it, and remove the
-#       review tree. Paste it into the card body; its first line is the one
-#       the patrol sweep reads. Makes no GitHub call. --dry-run only prints.
+#       review tree. DIR keeps its result and meta, for `ready` and for the
+#       next round. Paste the result into the card body; its first line is
+#       the one the patrol sweep reads. Makes no GitHub call. --dry-run only
+#       prints.
 #   .claude/scripts/pr-review.sh show DIR [--line]
 #       Print DIR/REVIEW-RESULT.md (--line: only its first line).
 #   .claude/scripts/pr-review.sh ready DIR|PR
@@ -40,28 +53,57 @@
 #       increment since it is one §4 does not re-review (a merge of the base
 #       branch, or changes that are only tests, docs or copy); otherwise it
 #       says to run an incremental review first. DIR is a prepare directory;
-#       PR picks the newest prepare directory for that PR on this machine.
+#       PR reads the last stamped conclusion in the current PR body.
 #       Prints 可递 or 还不能递 and the reasons. Exit 0 ready, 1 not ready.
+#   .claude/scripts/pr-review.sh stamp DIR BODY|- [--out FILE]
+#       Put the review conclusion on the last line of the card body, so nobody
+#       types the line by hand: the verdict comes from DIR/REVIEW-RESULT.md, the
+#       head is the branch head this card delivers (`git rev-parse HEAD`), and
+#       when the head only merged the base branch (or the increment is one §4
+#       does not re-review) the line says （增量自 <reviewed sha>）. Refuses,
+#       exit 1, when the commits after the review need a review of their own.
+#       BODY is a file (rewritten in place with --out, printed otherwise) or -
+#       for standard input. Runs check-review-card-body.py --stamp, which owns
+#       the line's grammar and the placement check.
 #
 # Exit status: 0 done, 1 failed (the reason is printed), 2 usage.
 set -uo pipefail
+
+# GIT_NO_LAZY_FETCH=1 keeps a partial clone from fetching a missing blob on demand. post
+# wants that: its git calls are graph lookups, and a fetch there hangs the seat. prepare
+# must not have it: it fetches the PR and reads files out of origin/main. Strip whatever
+# the caller exported before any git call below — post sets it again for itself. A seat
+# that exports it from its own shell profile used to break prepare; now it cannot.
+unset GIT_NO_LAZY_FETCH
 
 REPO=SageSeekerSociety/cheese
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(git -C "$HERE" rev-parse --show-toplevel) || exit 1
 METHOD=.claude/pr-review
 
+# Where prepare leaves a round. REVIEW-RESULT.md and meta have to outlive the review tree
+# and the machine's /tmp, so they live in the seat's home; PR_REVIEW_DIR still overrides.
+REVIEW_ROOT=${PR_REVIEW_DIR:-${HOME:-/tmp}/.cheese/review-cache}
+
 usage() { sed -n '/^#   \.claude/,/^# Exit status/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "pr-review: $*" >&2; exit 1; }
 
+# The round for PR $1 at $2 (a pinned 12-char prefix). Prints the .input directory;
+# fails when there is none.
+round_input() {
+  local d=$REVIEW_ROOT/pr-review-$1-${2:0:12}.input
+  [ -d "$d" ] || return 1
+  printf '%s\n' "$d"
+}
+
 head_of() { gh api "repos/$REPO/pulls/$1" -q .head.sha; }
 
-# The --tier flag, but only for a render.py that knows the field. main's copy predates it
-# until this branch merges: handed --tier it answers with its usage and exits 2, so the
-# review of a change would fail to be written because of the change itself — the shape
-# e6abb7cb fixed for tiers.py, and the two call sites below hand it the flag on every
-# review. A copy that does not know the field is asked without it and the conclusion line
-# carries no 档位, the way a card written before the tiers existed reads.
+# The --tier flag, but only for a render.py that knows the field. Handed --tier, a copy
+# that predates the 档位 answers with its usage and exits 2, so the review of a change
+# would fail to be written because of the change itself — the shape e6abb7cb fixed for
+# tiers.py, and the two call sites below hand it the flag on every review. A copy that
+# does not know the field is asked without it and the conclusion line carries no 档位,
+# the way a card written before the tiers existed reads.
 tier_args() {
   [ -n "$2" ] || return 0
   if grep -q -- "--tier" "$1" 2>/dev/null; then
@@ -82,8 +124,8 @@ resolve_sha() {
 
 prepare() {
   local pr=$1 want=${2:-} since_want=${3:-} spec_want=${4:-}
-  local sha since="" base tree dir method_rev prev merge_base tier tier_txt
-  local rules_rev rules_txt rules_line spec_from="" spec_txt="" spec_note tiers_file
+  local sha since="" base tree dir method_rev prev prev_round merge_base tier tier_txt
+  local rules_rev rules_txt rules_line spec_from="" spec_txt="" spec_note tiers_file inherited=""
   sha=$(resolve_sha "$pr" "$want") || exit 1
   [ -z "$since_want" ] || since=$(resolve_sha "$pr" "$since_want") || exit 1
   base=$(gh api "repos/$REPO/pulls/$pr" -q .base.ref) || exit 1
@@ -95,12 +137,25 @@ prepare() {
     [ "$since" != "$sha" ] || die "${since:0:12} is already the head; nothing to review since"
   fi
 
-  tree=${PR_REVIEW_DIR:-/tmp}/pr-review-$pr-${sha:0:12}
+  tree=$REVIEW_ROOT/pr-review-$pr-${sha:0:12}
   dir=$tree.input
+  # What a second prepare of the same commit must not throw away: the conclusion, the
+  # result behind it, and the requirement contract the review was handed all still belong
+  # to that commit, and losing them is what made a re-prepare after a machine change cost
+  # a whole review.
+  local keep=""
+  keep=$(mktemp -d "${TMPDIR:-/tmp}/pr-review-keep.XXXXXX") || die "could not make a temporary directory"
+  for cand in "$dir/REVIEW-RESULT.md" "$dir/result.json" "$dir/spec.md"; do
+    [ -f "$cand" ] && cp "$cand" "$keep/"
+  done
   # Unconditionally: a tree whose directory is gone (a reboot cleared /tmp)
   # still holds its registration, and that alone blocks a second add.
   git -C "$ROOT" worktree remove --force "$tree" 2>/dev/null; rm -rf "$tree"
   rm -rf "$dir"; mkdir -p "$dir"
+  for f in REVIEW-RESULT.md result.json spec.md; do
+    [ ! -f "$keep/$f" ] || cp "$keep/$f" "$dir/$f"
+  done
+  rm -rf "$keep"
   git -C "$ROOT" worktree add -q --detach "$tree" "$sha" || die "could not check out $sha"
 
   # The method as merged on the default branch; the PR cannot rewrite it.
@@ -110,12 +165,12 @@ prepare() {
     git -C "$ROOT" show "origin/main:$METHOD/prompt.md" > "$dir/REVIEW.md"
     git -C "$ROOT" show "origin/main:$METHOD/schema.json" > "$dir/schema.json"
     git -C "$ROOT" show "origin/main:$METHOD/render.py" > "$dir/render.py"
-    # render.py is on main but the 档位 it prints is not, until this branch merges. The
-    # two copies differ in that field and run the same three checks; a review that cannot
+    # A render.py on main that predates the 档位 cannot be handed the flag. The two
+    # copies differ in that field and run the same three checks; a review that cannot
     # print it still gets written, but its line is the one the board reads with no tier.
-    # Use this checkout's copy in that window, the same way tiers.py falls back below, and
-    # only when it is the copy that knows the field. After the merge, main's copy is the
-    # one used and the PR under review cannot loosen its own result check.
+    # Use this checkout's copy when only it knows the field, the same way tiers.py falls
+    # back below. When main's copy knows the field it is the one used, and the PR under
+    # review cannot loosen its own result check.
     if ! grep -q -- "--tier" "$dir/render.py" 2>/dev/null \
       && grep -q -- "--tier" "$ROOT/$METHOD/render.py" 2>/dev/null; then
       echo "pr-review: origin/main's render.py predates the 档位; using this checkout's copy" >&2
@@ -188,23 +243,25 @@ prepare() {
   if [ -n "$spec_want" ]; then
     [ -f "$spec_want" ] || die "--spec $spec_want: no such file"
     spec_from=$spec_want
-  elif [ -n "$since" ] \
-    && [ -f "${PR_REVIEW_DIR:-/tmp}/pr-review-$pr-${since:0:12}.input/spec.md" ]; then
-    spec_from=${PR_REVIEW_DIR:-/tmp}/pr-review-$pr-${since:0:12}.input/spec.md
+  elif [ -n "$since" ] && prev_round=$(round_input "$pr" "$since") \
+    && [ -f "$prev_round/spec.md" ]; then
+    spec_from=$prev_round/spec.md
+  elif [ -f "$dir/spec.md" ]; then
+    # A second prepare of this same commit carried its contract over above.
+    spec_from=$dir/spec.md
   fi
   if [ -n "$spec_from" ]; then
     [ -s "$spec_from" ] || die "--spec $spec_from is empty; that is not a contract to check"
-    cp "$spec_from" "$dir/spec.md"
+    [ "$spec_from" = "$dir/spec.md" ] || cp "$spec_from" "$dir/spec.md"
     spec_txt=$dir/spec.md
   fi
-  # Step 5b and the contract section are newer than the rest of the method: main's
-  # prompt.md has no 5b until this branch merges, and a section naming a step the method
-  # above it does not contain is one nobody can follow. The contract is left out in that
-  # window the way the 档位 is, with the review told there is none rather than handed a
-  # dangling one. `REVIEW.md` holds the method alone at this point. The bullet says which
-  # of the two it is whether or not a contract was offered: pointing a review at step 5b
-  # when the method it was just handed has none sends it looking for a step that is not
-  # there.
+  # Step 5b and the contract section depend on the method carrying step 5b: a section
+  # naming a step the method above it does not contain is one nobody can follow. The
+  # contract is left out when the method has no 5b the way the 档位 is, with the review
+  # told there is none rather than handed a dangling one. `REVIEW.md` holds the method
+  # alone at this point. The bullet says which of the two it is whether or not a contract
+  # was offered: pointing a review at step 5b when the method it was just handed has none
+  # sends it looking for a step that is not there.
   has_5b=""
   grep -q "^## 5b" "$dir/REVIEW.md" 2>/dev/null && has_5b=yes
   if [ -n "$has_5b" ]; then
@@ -256,8 +313,21 @@ PY
   if [ -n "$since" ]; then
     # The last round's own result, when this machine still has it; otherwise
     # its findings are in the PR body (pr.md), where the card body is mirrored.
-    prev=${PR_REVIEW_DIR:-/tmp}/pr-review-$pr-${since:0:12}.input/REVIEW-RESULT.md
-    if [ -f "$prev" ]; then cp "$prev" "$dir/previous.md"; else rm -f "$dir/previous.md"; fi
+    prev=""
+    if prev_round=$(round_input "$pr" "$since") && [ -f "$prev_round/REVIEW-RESULT.md" ]; then
+      prev=$prev_round/REVIEW-RESULT.md
+    fi
+    if [ -n "$prev" ]; then cp "$prev" "$dir/previous.md"; else rm -f "$dir/previous.md"; fi
+    # An increment §4 does not re-review inherits the last round's conclusion here, with no
+    # subagent: bundle.py writes result.json the way tier G does, and post renders the line
+    # with 增量自. It runs from this checkout, the way `ready` does: the decision is the
+    # deliverer's own §4 check, and nothing in the PR under review can reach it.
+    if [ -f "$ROOT/$METHOD/bundle.py" ] \
+      && python3 "$ROOT/$METHOD/bundle.py" inherit --repo "$ROOT" --base "$base" --since "$since" \
+           --head "$sha" --previous "$dir/previous.md" --kept "$dir/result.json" \
+           --out "$dir/result.json"; then
+      inherited=yes
+    fi
     cat >> "$dir/REVIEW.md" <<EOF
 
 ## Incremental review
@@ -337,12 +407,34 @@ EOF
 - Result: $dir/result.json
 - Post: \`$HERE/pr-review.sh post $dir\`
 EOF
+  if [ -n "$inherited" ]; then
+    cat >> "$dir/REVIEW.md" <<EOF
+
+## Inherited conclusion
+
+The increment since ${since:0:12} is one §4 does not re-review, and the last round had no
+blocker or major: its conclusion is inherited and result.json is already written. Do not
+start any subagent. Run post now: \`$HERE/pr-review.sh post $dir\`
+EOF
+    echo "$dir/REVIEW.md"
+    return 0
+  fi
+  python3 "$HERE/../pr-review/precompute.py" --repo "$ROOT" --tree "$tree" --base "$merge_base" --head "$sha" --pr "$pr" --pr-body "$dir/pr.md" --scripts "$HERE" --out "$dir/PRECOMPUTED.md" >&2 && { printf '\n' ; cat "$dir/PRECOMPUTED.md"; } >> "$dir/REVIEW.md" || echo "pr-review: precompute failed; REVIEW.md carries no PRECOMPUTED section" >&2
+  # Call slices and single-file pyright, so the finders read the bundle instead of the
+  # files. A delta round slices only the increment.
+  python3 "$HERE/../pr-review/bundle.py" facts --repo "$ROOT" --tree "$tree" --base "${since:-$merge_base}" \
+      --head "$sha" ${PYRIGHT:+--pyright "$PYRIGHT"} --out "$dir/BUNDLE.md" >&2 \
+    && { printf '\n'; cat "$dir/BUNDLE.md"; } >> "$dir/REVIEW.md" \
+    || echo "pr-review: bundle failed; REVIEW.md carries no Bundle section" >&2
   echo "$dir/REVIEW.md"
 }
 
 post() {
   local dir=$1 dry=${2:-} pr sha base="" method_rev tree since="" tier="" result
   [ -f "$dir/meta" ] || die "$dir has no meta; run prepare first"
+  # Everything git does here is a graph or tree lookup. On a partial clone an on-demand
+  # fetch for a missing blob can sit for minutes; forbid it (prepare unsets it at the top).
+  export GIT_NO_LAZY_FETCH=1
   # shellcheck disable=SC1091
   . "$dir/meta"
   # The tier is recomputed here, from the classifier that ships with the method — not
@@ -365,8 +457,11 @@ post() {
   printf '%s\n' "$result"
   [ "$dry" = --dry-run ] && return
   printf '%s\n' "$result" > "$dir/REVIEW-RESULT.md"
+  # Only the tree goes: REVIEW-RESULT.md and meta stay in $dir for the card, for a later
+  # `ready`, and for a delta round that reuses this conclusion.
   git -C "$ROOT" worktree remove --force "$tree" 2>/dev/null || true
-  echo "pr-review: wrote $dir/REVIEW-RESULT.md; paste it into the card body (nothing was posted)" >&2
+  echo "pr-review: wrote $dir/REVIEW-RESULT.md; fill the card body with" >&2
+  echo "pr-review:   $HERE/pr-review.sh stamp $dir <body-file> --out <body-file>" >&2
 }
 
 show() {
@@ -378,8 +473,8 @@ show() {
 ready() {
   local arg=$1 dir
   if [[ $arg =~ ^[0-9]+$ ]]; then
-    dir=$(ls -dt "${PR_REVIEW_DIR:-/tmp}"/pr-review-"$arg"-*.input 2>/dev/null | head -n 1)
-    [ -n "$dir" ] || die "no prepare directory for #$arg on this machine; run prepare first"
+    python3 "${READY:-$ROOT/$METHOD/ready.py}" --pr "$arg" --root "$ROOT" --repo "$REPO"
+    return $?
   else
     dir=$arg
   fi
@@ -387,6 +482,29 @@ ready() {
   # This is the deliverer's own check, so it runs the deliverer's ready.py; nothing about
   # the PR under review can reach it.
   python3 "${READY:-$ROOT/$METHOD/ready.py}" --dir "$dir" --root "$ROOT" --repo "$REPO"
+}
+
+stamp() {
+  local dir=$1 body=$2 out="" pr sha base method_rev tree since tier spec head
+  shift 2
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --out) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -f "$dir/meta" ] || die "$dir has no meta; run prepare first"
+  [ -f "$dir/REVIEW-RESULT.md" ] || die "run post first: $dir/REVIEW-RESULT.md does not exist"
+  # shellcheck disable=SC1091
+  . "$dir/meta"
+  # The card is delivered for this checkout's head; reading it from git keeps the line
+  # honest without a GitHub call (and without the rate limit a poll would spend).
+  head=$(git -C "$ROOT" rev-parse HEAD) || die "cannot read the branch head in $ROOT"
+  local args=(--stamp --review-result "$dir/REVIEW-RESULT.md" --head "$head"
+              --root "$ROOT" --base "$base")
+  [ "$body" = - ] || args+=(--text "$body")
+  [ -z "$out" ] || args+=(--out "$out")
+  python3 "$HERE/check-review-card-body.py" "${args[@]}"
 }
 
 case "${1:-}" in
@@ -405,5 +523,6 @@ case "${1:-}" in
   post) [ $# -ge 2 ] && [ $# -le 3 ] && { [ $# -eq 2 ] || [ "$3" = --dry-run ]; } || usage; post "$2" "${3:-}" ;;
   show) [ $# -ge 2 ] && [ $# -le 3 ] && { [ $# -eq 2 ] || [ "$3" = --line ]; } || usage; show "$2" "${3:-}" ;;
   ready) [ $# -eq 2 ] || usage; ready "$2" ;;
+  stamp) [ $# -ge 3 ] || usage; stamp "${@:2}" ;;
   *) usage ;;
 esac

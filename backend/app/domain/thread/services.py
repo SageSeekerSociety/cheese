@@ -15,14 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.models import (
-    CONSUMED_TURN_META_KEY,
-    Block,
-    BlockKind,
-    consumed_turn,
-)
+from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.models import Conversation, ConversationKind
-from app.domain.conversation.services import of_room
 from app.domain.identity.handles import recipient_seat
 from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic, not_a_private_chat
@@ -194,32 +188,6 @@ async def answered_in_many(
     return answers
 
 
-async def waiting_in_room(session: AsyncSession, room_id: uuid.UUID) -> list[uuid.UUID]:
-    """The conversations of a room — its 支线 and tasks — where a message to
-    芝士 is still waiting for an answer, oldest message first. A message still
-    waiting in the main line is waiting in its 支线."""
-
-    blocks = await session.scalars(
-        select(Block)
-        .where(
-            of_room(Block.conversation_id, room_id),
-            Block.kind == BlockKind.message,
-            Block.meta["agent_recipient"]["mentioned"].as_boolean(),
-        )
-        .order_by(Block.created_at, Block.id)
-    )
-    waiting: list[uuid.UUID] = []
-    for block in blocks:
-        if CONSUMED_TURN_META_KEY not in (block.meta or {}):
-            continue
-        if consumed_turn(block) is not None:
-            continue
-        conversation = await answered_in(session, block)
-        if conversation not in waiting:
-            waiting.append(conversation)
-    return waiting
-
-
 async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
     """The seat of the AI teammate a 支线 is talking with: the one the latest
     message that called a teammate there called, the message it hangs under
@@ -250,6 +218,27 @@ async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
     return seat
 
 
+async def files_sent_with(session: AsyncSession, root: Block) -> list[Block]:
+    """The files sent together with a message, in the order they were stored.
+
+    A send with a message stores each file as an attachment block under that
+    message's id (``turn_id``). An image-only send has no message: its first
+    attachment is the root itself, and it has no files of its own.
+    """
+    if root.kind == BlockKind.attachment:
+        return []
+    rows = await session.scalars(
+        select(Block)
+        .where(
+            Block.conversation_id == root.conversation_id,
+            Block.turn_id == root.id,
+            Block.kind == BlockKind.attachment,
+        )
+        .order_by(Block.created_at, Block.id)
+    )
+    return list(rows)
+
+
 async def thread_opening(
     session: AsyncSession, conversation_id: uuid.UUID
 ) -> list[Block]:
@@ -264,16 +253,7 @@ async def thread_opening(
     root = await session.get(Block, root_id)
     if root is None:
         return []
-    files = await session.scalars(
-        select(Block)
-        .where(
-            Block.conversation_id == root.conversation_id,
-            Block.turn_id == root.id,
-            Block.kind == BlockKind.attachment,
-        )
-        .order_by(Block.created_at, Block.id)
-    )
-    return [root, *files]
+    return [root, *await files_sent_with(session, root)]
 
 
 async def conversation_inputs(

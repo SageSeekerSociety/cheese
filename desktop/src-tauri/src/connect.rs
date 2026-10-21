@@ -57,6 +57,58 @@ pub fn approval_code(printed: &str) -> Option<String> {
     (complete && !code.is_empty()).then_some(code)
 }
 
+async fn enrollment_configs() -> Vec<(String, std::path::PathBuf)> {
+    let default = platform::cheesehost_config();
+    let mut configs = vec![("default".into(), default.clone())];
+    if let Some(parent) = default.parent() {
+        if let Ok(mut entries) = tokio::fs::read_dir(parent.join("profiles")).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                configs.push((entry.file_name().to_string_lossy().into(), entry.path().join("config.json")));
+            }
+        }
+    }
+    configs
+}
+
+async fn id_in(path: &Path) -> Option<String> {
+    let config = tokio::fs::read_to_string(path).await.ok()?;
+    let config: serde_json::Value = serde_json::from_str(&config).ok()?;
+    config.get("device_id")?.as_str().map(str::to_string)
+}
+
+pub async fn stored_device_ids() -> Vec<String> {
+    let mut ids = Vec::new();
+    for (_, path) in enrollment_configs().await {
+        if let Some(id) = id_in(&path).await { ids.push(id); }
+    }
+    ids
+}
+
+pub async fn enrollment_profiles() -> std::collections::HashMap<String, String> {
+    let mut found = std::collections::HashMap::new();
+    for (profile, path) in enrollment_configs().await {
+        if let Some(id) = id_in(&path).await { found.insert(id, profile); }
+    }
+    found
+}
+
+async fn profile_for_team(configs: &[(String, std::path::PathBuf)], known: &[String], team_id: u64) -> Option<String> {
+    for (profile, path) in configs {
+        if id_in(&path).await.is_some_and(|id| known.contains(&id)) {
+            return (profile != "default").then_some(profile.clone());
+        }
+    }
+    let base = format!("team-{team_id}");
+    let mut profile = base.clone();
+    let mut next = 2;
+    // A removed enrollment may still have local files; keep them intact.
+    while configs.iter().any(|(name, _)| name == &profile) {
+        profile = format!("{base}-{next}");
+        next += 1;
+    }
+    Some(profile)
+}
+
 /// The last percentage in what curl's progress bar printed ("####   42.7%").
 pub fn percent(printed: &str) -> Option<u8> {
     let end = printed.rfind('%')?;
@@ -188,13 +240,14 @@ pub async fn connect(
     origin: &str,
     resources: &Path,
     known_device_ids: &[String],
+    team_id: u64,
     running: &Running,
     events: &Events<'_>,
 ) -> Result<(), Failure> {
     if !running.begin() {
         return Err(Failure::at("busy", ""));
     }
-    let result = connect_steps(origin, resources, known_device_ids, running, events).await;
+    let result = connect_steps(origin, resources, known_device_ids, team_id, running, events).await;
     running.end();
     result
 }
@@ -203,6 +256,7 @@ async fn connect_steps(
     origin: &str,
     resources: &Path,
     known_device_ids: &[String],
+    team_id: u64,
     running: &Running,
     events: &Events<'_>,
 ) -> Result<(), Failure> {
@@ -216,17 +270,15 @@ async fn connect_steps(
         .await
         .map_err(|e| if running.cancelled() { Failure::cancelled() } else { Failure::at("download", e) })?;
 
-    // A credential on disk for a device the signed-in user does not own (unbound
-    // since, or someone else's) would connect as that device or be refused, so
-    // it is dropped and the login runs again.
-    if stored_device_id().await.is_some_and(|id| !known_device_ids.contains(&id)) {
-        let _ = platform::cheesehost().args(["auth", "logout"]).output().await;
-    }
+    // Reuse only an enrollment for this team. A second team gets a separate
+    // profile; no credential or service of another team is removed.
+    let profile = profile_for_team(&enrollment_configs().await, known_device_ids, team_id).await;
 
     // On Windows `link connect` also fetches the runtime the server's commands
     // need, which is most of the wait the first time.
     (events.step)("approve");
     let mut cmd = platform::cheesehost();
+    if let Some(profile) = &profile { cmd.args(["--profile", profile]); }
     cmd.args(["link", "connect", &format!("{origin}/connector")]);
     let mut printed = String::new();
     let mut sent = false;
@@ -252,22 +304,27 @@ async fn connect_steps(
     })
 }
 
-/// Logs in the Claude Code the platform runs here, with a Claude subscription
-/// or, `console`, an Anthropic Console account. It opens in the browser and
-/// finishes there; `on_step` hears "preparing" while the build downloads and
-/// "browser" once the sign-in page is open.
+/// Logs in the Claude Code the platform runs here with a Claude subscription.
+/// Sign-in takes place in the browser; `on_step` hears "preparing" while the build
+/// downloads and "browser" once the sign-in page is open.
 pub async fn claude_login(
     running: &Running,
-    console: bool,
+    login_id: Option<&str>,
+    profile: Option<&str>,
+    server: Option<&str>,
+    ticket: Option<&str>,
     on_step: &(dyn Fn(&'static str) + Send + Sync),
 ) -> Result<(), Failure> {
     if !running.begin() {
         return Err(Failure::at("busy", ""));
     }
-    let mut cmd = platform::cheesehost();
+    let mut cmd = claude_command(profile);
     cmd.args(["claude", "login"]);
-    if console {
-        cmd.arg("--console");
+    if let (Some(server), Some(ticket)) = (server, ticket) {
+        cmd.args(["--server", server, "--ticket", ticket]);
+    }
+    if let Some(id) = login_id {
+        cmd.args(["--login", id]);
     }
     let mut on_line = |line: &str| {
         if line.contains("Downloading Claude Code") {
@@ -282,38 +339,10 @@ pub async fn claude_login(
     result.map_err(|e| if cancelled { Failure::cancelled() } else { Failure::at("login", e) })
 }
 
-/// Points the platform's Claude Code here at another model service instead of
-/// a Claude account. The key reaches the connector in its environment, so it
-/// is on no command line; `on_step` hears "preparing" while the build
-/// downloads.
-pub async fn claude_model_service(
-    running: &Running,
-    base_url: &str,
-    token: &str,
-    model: &str,
-    on_step: &(dyn Fn(&'static str) + Send + Sync),
-) -> Result<(), Failure> {
-    if !running.begin() {
-        return Err(Failure::at("busy", ""));
-    }
-    let mut cmd = platform::cheesehost();
-    cmd.args(["claude", "login", "--base-url", base_url, "--model", model]);
-    cmd.env("CHEESE_MODEL_TOKEN", token);
-    let mut on_line = |line: &str| {
-        if line.contains("Downloading Claude Code") {
-            on_step("preparing");
-        }
-    };
-    let result = run(cmd, running, &|_: u8| {}, &mut on_line).await;
-    let cancelled = running.cancelled();
-    running.end();
-    result.map_err(|e| if cancelled { Failure::cancelled() } else { Failure::at("login", e) })
-}
-
-/// Logs the platform's Claude Code out on this computer.
-pub async fn claude_logout() -> Result<(), String> {
-    let out = platform::cheesehost()
-        .args(["claude", "logout"])
+/// Logs one of the platform's Claude Code logins out on this computer.
+pub async fn claude_logout(login_id: String, profile: Option<&str>) -> Result<(), String> {
+    let out = claude_command(profile)
+        .args(["claude", "logout", &login_id])
         .stdin(Stdio::null())
         .output()
         .await
@@ -323,6 +352,13 @@ pub async fn claude_logout() -> Result<(), String> {
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
+}
+
+/// All Claude operations select the same enrollment as the device being managed.
+fn claude_command(profile: Option<&str>) -> Command {
+    let mut cmd = platform::cheesehost();
+    cmd.args(["--profile", profile.unwrap_or("default")]);
+    cmd
 }
 
 /// Stops this computer's connector, keeps it from coming back at the next
@@ -349,7 +385,32 @@ pub async fn disconnect() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{approval_code, percent};
+    use super::{approval_code, claude_command, percent, profile_for_team};
+
+    #[tokio::test]
+    async fn reconnecting_after_removal_keeps_other_enrollments() {
+        let root = std::env::temp_dir().join(format!("cheese-enrollment-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&root).unwrap();
+        let default = root.join("default.json");
+        let prior = root.join("prior.json");
+        std::fs::write(&default, r#"{"device_id":"personal"}"#).unwrap();
+        std::fs::write(&prior, r#"{"device_id":"revoked"}"#).unwrap();
+        let configs = vec![("default".into(), default.clone()), ("team-7".into(), prior.clone())];
+        assert_eq!(profile_for_team(&configs, &["personal".into()], 1).await, None);
+        assert_eq!(profile_for_team(&configs, &["revoked".into()], 7).await.as_deref(), Some("team-7"));
+        let fresh = profile_for_team(&configs, &[], 7).await;
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(fresh.as_deref(), Some("team-7-2"));
+    }
+
+    #[test]
+    fn claude_operations_select_the_enrollment_profile() {
+        for profile in [None, Some("research")] {
+            let command = claude_command(profile);
+            let args: Vec<_> = command.as_std().get_args().collect();
+            assert_eq!(args, vec!["--profile", profile.unwrap_or("default")]);
+        }
+    }
 
     #[test]
     fn reads_the_code_out_of_the_link_cheesehost_prints() {

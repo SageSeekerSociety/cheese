@@ -6,8 +6,8 @@ replied-to-me, unresolved failures, and `my_tasks` — both the caller's own
 underway tasks and the borrowed `filling_in` rows). Several of those helpers
 ask the same underlying question:
 
-- which 支线 belong to these rooms (`threads_of_rooms`, `moving_topics`,
-  `replied_to_me`, `threads_still_threads`);
+- which 支线 belong to these rooms (`threads_of_rooms`, `replied_to_me`,
+  `threads_still_threads`);
 - which underway tasks belong to these rooms and when each last spoke
   (`tasks_of_rooms` twice, `underway_counts`, `underway_with`,
   `underway_others`, `last_block_at_for_tasks` twice);
@@ -27,9 +27,11 @@ is preserved.
 
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import event
 
+from app.domain.agent.models import AgentTurn
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms, threads_still_threads
 from app.domain.event_author import AuthorType
@@ -43,7 +45,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
-from tests.integration.test_hot_path_queries import counting_sql
+from tests.support.counting_session import counting_sql
 
 EXPECTED_TOPIC_KEYS = {
     "accepted_at",
@@ -60,7 +62,6 @@ EXPECTED_TOPIC_KEYS = {
     "joined",
     "kind",
     "last_activity_at",
-    "last_output_at",
     "members_only",
     "moving",
     "my_tasks",
@@ -81,6 +82,7 @@ EXPECTED_RAIL_TASK_KEYS = {
     "accepted_at",
     "accepted_by",
     "agent_handle",
+    "agent_left_at",
     "awaits_me",
     "base_branch",
     "base_task_id",
@@ -97,13 +99,16 @@ EXPECTED_RAIL_TASK_KEYS = {
     "id",
     "incomplete_since",
     "last_activity_at",
-    "last_output_at",
     "moving",
     "number",
     "owner_handle",
     "pr_number",
     "pr_url",
     "presentation",
+    "progress_note",
+    "progress_set_at",
+    "progress_set_by",
+    "progress_state",
     "project_id",
     "reporter_handle",
     "reviewer_handle",
@@ -241,11 +246,49 @@ def _seed_populated_project(client) -> tuple[str, list[str]]:
     return pid, client.portal.call(_seed, uuid.UUID(pid))
 
 
-def test_topic_list_batches_threads_cards_tasks_and_questions_once(client):
+def _turn_running_elsewhere(client) -> None:
+    """An open, delivered turn in another project's channel, as other tests (or
+    other projects in production) leave behind: the sidebar reads every open
+    turn site-wide, so this one must not cost the list a `tasks` lookup."""
+    pid = post_project(client, json={"name": "Elsewhere"}, owner="bob").json()["data"][
+        "id"
+    ]
+    r = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "Busy"},
+        headers=session_auth_headers("bob"),
+    )
+    assert r.status_code == 200, r.text
+    room = uuid.UUID(r.json()["data"]["id"])
+
+    async def _insert() -> None:
+        started = datetime.now(UTC) - timedelta(minutes=1)
+        async with client.test_factory() as s:
+            s.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=room,
+                    continuation_id=uuid.uuid4(),
+                    author="bob",
+                    content="在别处跑",
+                    is_resume=False,
+                    resendable=True,
+                    started_at=started,
+                    delivered_at=started,
+                    agent_handle="cheese-seat-elsewhere",
+                )
+            )
+            await s.commit()
+
+    client.portal.call(_insert)
+
+
+def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monkeypatch):
     """Across a populated project, `GET /topics?project_id=` reads `topics`,
     `threads`, task `accept_cards`, underway `tasks`, and `awaiting_an_answer`
     `blocks` once each, while preserving the full response field set."""
     pid, room_ids = _seed_populated_project(client)
+    _turn_running_elsewhere(client)
     headers = session_auth_headers("alice")
 
     with counting_sql(client) as seen:
@@ -284,8 +327,8 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client):
     assert "topics.environment" not in topic_sql
     assert "topics.default_environment" not in topic_sql
 
-    # 2. `threads` is read once across threads_of_rooms, moving_topics,
-    #    replied_to_me, and threads_still_threads.
+    # 2. `threads` is read once across threads_of_rooms, replied_to_me, and
+    #    threads_still_threads.
     assert _count(seen, _THREADS_SELECT) == 1, [
         s for s in seen if _THREADS_SELECT.search(s)
     ]
@@ -305,7 +348,7 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client):
     ]
 
     # 5. Underway `tasks` (tasks_of_rooms, underway_counts, underway_with,
-    #    underway_others, last_block_at_for_tasks, moving_topics) is read once,
+    #    underway_others, last_block_at_for_tasks) is read once,
     #    and total `FROM tasks` queries are only 2 (_underway_for_rooms + unseen_deliveries).
     assert _count(seen, _UNDERWAY_TASKS_SELECT) == 1, [
         s for s in seen if _UNDERWAY_TASKS_SELECT.search(s)

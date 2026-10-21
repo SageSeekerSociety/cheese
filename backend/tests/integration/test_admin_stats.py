@@ -30,6 +30,7 @@ from sqlalchemy import select, update
 from app.api.routes import admin_stats
 from app.core.config import settings
 from app.domain.device.models import DeviceRow
+from app.domain.device.wiring import sql_device_service
 from app.domain.feedback.models import Feedback, FeedbackStatus, FeedbackTimeline
 from app.domain.machine.models import WarmMachine
 from app.domain.project.models import Project
@@ -39,6 +40,7 @@ from app.domain.usage.models import ResourceUsage
 from app.domain.user.models import User
 from tests.conftest import seed_user
 from tests.integration.conftest import a_team, post_project, session_auth_headers
+from tests.support.devices import enrollment_team
 
 #: 放进管理员名单的那个 handle。和其它反馈用例一样：平台管理员是平台级的事实，
 #: 和任何项目角色无关，所以它刻意不是任何东西的成员。
@@ -195,6 +197,7 @@ def _seed_machine_stock(client, owner_handle: str) -> None:
             ).scalar_one()
             session.add(
                 DeviceRow(
+                    team_id=await enrollment_team(sql_device_service(session), owner),
                     device_id="stats-device-1",
                     name="一台设备",
                     token="stats-token-1",

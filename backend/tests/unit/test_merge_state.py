@@ -602,6 +602,22 @@ class TestWhoseMove:
         assert v.state == "unstable"
         assert whose_move(v) == "agent"
 
+    def test_a_running_check_outside_the_required_list_leaves_it_to_the_human(self):
+        """unstable 是「可以采纳」：必跑那条已经绿了，还在跑的是非必跑检查。
+
+        它不挡合并，采纳按钮是亮的 —— 下一步在验收人手上，不是「等 CI」。真实
+        现场（2026-10-21，#4562）：两个 job 的每一步都绿了、run 也结束了，GitHub
+        却一直把它们报成 in_progress；写成 ci 会让那张卡永远显示「等检查」。
+        """
+        v = self._verdict(
+            github_mergeable_state="unstable",
+            github_mergeable=True,
+            check_runs=[_green("test"), _running("scope")],
+            required_checks=[RequiredCheck(name="test")],
+        )
+        assert v.state == "unstable"
+        assert whose_move(v) == "human"
+
     def test_required_check_missing_waits_on_ci(self):
         v = self._verdict(
             github_mergeable_state="unstable",

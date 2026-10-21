@@ -16,7 +16,7 @@ import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, Ro
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
 import type { ChannelEntry } from '@/types/channelDirectory'
-import type { AccountConnection, ModelConnection, ModelServiceDevice } from '@/types/modelConnections'
+import type { AccountConnection, ModelConnection } from '@/types/modelConnections'
 import type { ProgressItem } from '@/types/projectProgress'
 import type { User } from '@/types/users'
 import type RealNameView from '@/views/user/settings/RealNameView.vue'
@@ -138,7 +138,7 @@ export const SECURITY_PASSKEYS: PasskeyInfo[] = [
   { id: 'pk-1', createdAt: new Date(NOW - 30 * DAY), deviceType: 'multiDevice', backedUp: true },
 ]
 
-/** 一个已关联的第三方账号。 */
+/** 已关联的第三方账号：学校账号和 GitHub。 */
 const SECURITY_CONNECTIONS: InstanceType<typeof SecurityView>['$props']['connections'] = [
   {
     id: 1,
@@ -147,6 +147,16 @@ const SECURITY_CONNECTIONS: InstanceType<typeof SecurityView>['$props']['connect
     providerUserId: '2023010101',
     connectedAt: ago(90 * DAY),
     login: 'wangxiaoming@school.edu',
+    tokenExpires: ago(-DAY),
+    hasRefreshToken: true,
+  },
+  {
+    id: 2,
+    providerId: 'github_app',
+    providerName: 'GitHub',
+    providerUserId: '583231',
+    connectedAt: ago(60 * DAY),
+    login: 'wangxiaoming',
     tokenExpires: ago(-DAY),
     hasRefreshToken: true,
   },
@@ -180,6 +190,9 @@ const SECURITY_SESSIONS: SessionInfo[] = [
 
 /** 两步验证那一屏的两个登录方式摘要 + 三块清单。 */
 export const SECURITY_PROPS = {
+  username: 'wangxiaoming',
+  closingAccount: false,
+  closeError: '',
   webAuthnSupported: true,
   passkeys: SECURITY_PASSKEYS,
   addingPasskey: false,
@@ -206,6 +219,7 @@ export const SECURITY_PROPS = {
 export const SECURITY_DIALOGS = {
   showChangePassword: false,
   showTotp: false,
+  showCloseAccount: false,
   setupStep: 'qr' as const,
   verificationCode: '',
 }
@@ -220,9 +234,45 @@ export const DEVICE_TEAMS: MyTeam[] = [
 
 // ---- 模型连接（`ModelConnectionsView`）-------------------------------------
 
-/** 三种连接各一份：工作站上的 Claude 订阅、笔记本上的自定义模型服务、一台离线机器上的 API key。 */
+/** A full platform pool: names as the gateway labels them, a few carrying a trailing note. */
+export const PLATFORM_MODELS: { id: string; label: string }[] = [
+  'Claude Opus 4.8',
+  'Claude Sonnet 4.8',
+  'Claude Haiku 4.6',
+  'GPT-5.5',
+  'GPT-5.5 mini',
+  'Gemini 4 Pro',
+  'Gemini 4 Argon',
+  'Gemini 4 Flash',
+  'DeepSeek V4.1',
+  'DeepSeek V4.1 Flash',
+  'GLM-5.2',
+  'GLM-5.2 Air',
+  'Kimi K3',
+  'Kimi K3 Turbo',
+  'MiMo V2.6 Pro',
+  'MiMo V2.6 Flash（免费·限时，请求可能用于训练）',
+  'Qwen 4 Max',
+  'Qwen 4 Coder',
+  'Qwen 4 Coder Flash（免费·限时）',
+  'MiniMax M3',
+  'MiniMax M3 Lightning（免费·限时，请求可能用于训练）',
+  'Doubao Seed 2.5 Pro',
+  'Doubao Seed 2.5 Lite',
+  'Step 4',
+  'Hunyuan T2',
+  'ERNIE 5.5',
+  'Grok 5（免费·限时，请求可能用于训练）',
+].map((label) => ({ id: label.toLowerCase().replace(/[^a-z0-9.]+/g, '-'), label }))
+
+/** Team and personal subscriptions, including an offline storage computer. */
 export const MODEL_CONNECTIONS: ModelConnection[] = [
   {
+    id: 'dev-desk',
+    can_manage: true,
+    can_remove: false,
+    local_id: 'default',
+    allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-desk',
     device_name: '工作站',
     online: true,
@@ -230,56 +280,77 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     logged_in: true,
     auth_method: 'claude.ai',
     subscription_type: 'max',
-    model: null,
-    service_host: null,
     name: null,
     checked_at: ago(HOUR / 4),
     last_used_at: ago(2 * HOUR),
     revoking: false,
   },
   {
+    id: 'dev-laptop',
+    can_manage: false,
+    can_remove: true,
+    owner_user_id: 42,
+    owner_name: '王小明',
+    local_id: 'default',
+    allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-laptop',
-    device_name: '王小明的 MacBook',
+    device_name: 'credential-host-7c821a',
     online: true,
     installed: true,
     logged_in: true,
-    auth_method: 'model_service',
-    subscription_type: null,
-    model: 'kimi-k2',
-    service_host: 'api.moonshot.cn',
-    name: 'Kimi',
+    auth_method: 'claude.ai',
+    subscription_type: 'pro',
+    name: '王小明的 Claude',
     checked_at: ago(HOUR),
     last_used_at: null,
     revoking: false,
   },
   {
+    id: 'dev-lab',
+    can_manage: true,
+    can_remove: false,
+    local_id: 'default',
+    allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-lab',
     device_name: '实验室服务器',
     online: false,
     installed: true,
     logged_in: true,
-    auth_method: 'console',
-    subscription_type: null,
-    model: null,
-    service_host: null,
+    auth_method: 'claude.ai',
+    subscription_type: 'max',
     name: null,
     checked_at: ago(3 * DAY),
     last_used_at: ago(3 * DAY),
     revoking: false,
   },
-]
-
-/** 能改用自定义模型服务的设备：在线的那两台。 */
-export const MODEL_SERVICE_DEVICES: ModelServiceDevice[] = [
-  { device_id: 'dev-desk', name: '工作站' },
-  { device_id: 'dev-laptop', name: '王小明的 MacBook' },
+  {
+    id: 'login-desk-pro',
+    can_manage: true,
+    can_remove: false,
+    allowed_models: ['sonnet', 'opus', 'haiku'],
+    local_id: 'K3V7Q2M8XWZ4TN6PRJ5BHD2C7A',
+    device_id: 'dev-desk',
+    device_name: '工作站',
+    online: true,
+    installed: true,
+    logged_in: true,
+    auth_method: 'claude.ai',
+    subscription_type: 'pro',
+    name: '实验室的 Pro',
+    checked_at: ago(HOUR / 4),
+    last_used_at: null,
+    revoking: false,
+  },
 ]
 
 /** 保存在账号里的两份：一个起了名字的 API key，一个自定义模型服务。 */
 export const MODEL_HELD: AccountConnection[] = [
   {
     id: 'held-key',
+    can_manage: true,
+    can_remove: false,
     kind: 'api_key',
+    allowed_models: ['sonnet', 'opus'],
     name: '工作用',
     key_last4: 'Q7zK',
     service_host: null,
@@ -290,7 +361,10 @@ export const MODEL_HELD: AccountConnection[] = [
   },
   {
     id: 'held-glm',
+    can_manage: true,
+    can_remove: false,
     kind: 'model_service',
+    allowed_models: ['kimi-k2'],
     name: null,
     key_last4: '9f2c',
     service_host: 'open.bigmodel.cn',

@@ -10,9 +10,10 @@ The close can reach a backend that does not hold the session — the one taking
 over in a deploy — and the backend that does still stops the work.
 
 The owner is not the only one who closes a task: a task whose last step was
-accepted closes on its own when the turn writing it up never ends, and that
-close stops the write-up the same way. Other work running in the task is not
-the write-up, and the deadline does not close the task on it.
+accepted closes on its own at its deadline when its teammate's session read
+the instruction to write it up and is still at work, and that close stops the
+write-up the same way. A session at work that has not read that instruction is
+doing something else, and the deadline does not close the task on it.
 """
 
 import time
@@ -25,11 +26,11 @@ from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
-from app.domain.agent.models import AgentTurn
+from app.domain.agent.models import AgentTurn, SessionState
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.delivery.agent import record_task_instruction
 from app.domain.delivery.models import Delivery
-from app.domain.review import landing_watch
+from app.domain.review import pr_poll
 from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task
 from app.main import app
@@ -238,25 +239,36 @@ def _accepted_long_ago(client, task_id: uuid.UUID) -> None:
 
 
 def _is_the_write_up(client, task_id: uuid.UUID) -> None:
-    """The turn running in the task is the one told to write it up."""
+    """The session at work in the task has read the instruction to write it
+    up: its echo settled the instruction as ``received``."""
+
+    async def running_seat() -> str | None:
+        async with client.test_request_factory() as session:
+            return await session.scalar(
+                select(SessionState.agent_handle).where(
+                    SessionState.conversation_id == task_id,
+                    SessionState.worker_status == "running",
+                )
+            )
+
+    # Addressed to the seat at work there, as its runner registered it; the
+    # runner's report that it is at work lands on its own schedule.
+    _until(
+        lambda: client.portal.call(running_seat) is not None,
+        "the task's session is reported at work",
+    )
+    seat = client.portal.call(running_seat)
 
     async def mark() -> None:
         async with client.test_request_factory() as session:
-            turn = await session.scalar(
-                select(AgentTurn.id).where(
-                    AgentTurn.conversation_id == task_id,
-                    AgentTurn.stopped_at.is_(None),
-                )
-            )
-            assert turn is not None
             now = datetime.now(UTC)
             session.add(
                 Delivery(
                     event_id=uuid.uuid4(),
-                    recipient_handle="cheese",
+                    recipient_handle=seat,
                     conversation_id=task_id,
-                    state="sent",
-                    attempt_id=turn,
+                    state="received",
+                    attempt_id=uuid.uuid4(),
                     dedup_key=f"{uuid.uuid4()}:task",
                     type="room_notice",
                     payload={CLOSES_TASK: True, "content": "写总结"},
@@ -281,13 +293,13 @@ def test_a_task_closed_for_a_write_up_that_never_ended_stops_the_turn(client):
     task_id = uuid.UUID(task["id"])
     service = app.dependency_overrides[get_chat_service]()
     try:
-        # The turn writing the task up is still going fifty minutes on.
+        # The session writing the task up is still at work fifty minutes on.
         _is_the_write_up(client, task_id)
         _accepted_long_ago(client, task_id)
         assert _interrupts(channel, task_id) == []
 
         client.portal.call(
-            lambda: landing_watch.watch_landings(
+            lambda: pr_poll.sweep_closings(
                 service,
                 announce,
                 record_instruction=record_task_instruction,
@@ -315,7 +327,7 @@ def test_the_write_up_deadline_does_not_stop_other_work_in_the_task(client):
         _accepted_long_ago(client, task_id)
 
         client.portal.call(
-            lambda: landing_watch.watch_landings(
+            lambda: pr_poll.sweep_closings(
                 service,
                 announce,
                 record_instruction=record_task_instruction,

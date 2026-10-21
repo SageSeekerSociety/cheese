@@ -119,11 +119,16 @@ def blocks(record):
 class Session:
     """The runner at `state`, and the process that holds it."""
 
+    #: The epoch this fixture registers the runner under, as the platform
+    #: does before it asks it anything (`driven/lifecycle.py`).
+    EPOCH = 1
+
     def __init__(self, state, process, log):
         self.state = Path(state)
         self.process = process
         self.log = Path(log)
         self.call("ping", timeout=60)
+        self.call("register", {"epoch": self.EPOCH})
 
     @classmethod
     def start(cls, folder, command, env, cwd, name="runner"):
@@ -153,7 +158,11 @@ class Session:
         return RuntimeError(f"{why}\n{tail}")
 
     def call(self, method, params=None, timeout=660):
-        """One request on the runner's socket, as the connector relays it."""
+        """One request on the runner's socket, as the connector relays it,
+        carrying the registration everything but a greeting needs."""
+        params = dict(params or {})
+        if method not in ("ping", "register", "reply_check"):
+            params.setdefault("epoch", self.EPOCH)
         deadline = time.monotonic() + timeout
         while True:
             connection = socket.socket(socket.AF_UNIX)
@@ -181,7 +190,7 @@ class Session:
         """The journal from `after`, every page of it."""
         found = []
         while True:
-            page = self.call("events", {"after": after})["events"]
+            page = self.call("read", {"records_after": after})["records"]
             found += page
             if len(page) < PAGE:
                 return found

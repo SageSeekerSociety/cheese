@@ -59,6 +59,21 @@ def test_the_rest_of_the_real_ones():
     )
 
 
+def test_a_models_spent_upstream_cap_is_not_retryable():
+    """Our gateway's lifetime cap on an upstream key words itself like a rate
+    limit (`deploy/gateway/spend_cap.py`), which used to read as an overload
+    that clears up and offered a retry that could only be refused again."""
+    line = (
+        "API Error: Server is temporarily limiting requests (not your usage limit)"
+        " · gemini/gemini-4-argon has reached its spend cap: $1005.08 of $1000.00."
+        " Received Model Group=gemini-4-argon\nAvailable Model Group Fallbacks=None"
+        "（rate_limit）"
+    )
+    assert classify_cli_notice(line) == MODEL_LIMIT_REACHED_CODE
+    notice = cli_notice(line)
+    assert notice is not None and not notice[1].get("retryable")
+
+
 def test_the_metering_proxys_offline_egress_is_its_own_notice():
     """The proxy's 503 for an egress that does not answer is not an overloaded
     provider: waiting on the provider will not help, the machine has to come

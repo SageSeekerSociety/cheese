@@ -23,6 +23,7 @@ from app.domain.identity.handles import (
     looks_like_agent_handle,
 )
 from app.domain.identity.services import IdentityService
+from app.domain.session_record.service import read
 from app.domain.thread.models import Thread
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -32,6 +33,7 @@ from tests.integration.conftest import project_service, registered
 from tests.support.hang import HANG_S
 from tests.support.quoted_context import prompt_quote, slide_quote
 from tests.support.run_records import records_of
+from tests.support.session_records import assistant_texts
 from tests.support.threads import thread_in
 
 
@@ -484,7 +486,9 @@ async def test_queued_message_retains_selected_teammate(business_db_factory, tmp
     )
     assert prepared.agent.handle == "first"
     assert prepared.pending_ids == [original]
-    assert "For second" not in prepared.prompt_text
+    # 另一位座位的消息现在也读得到，但标成点给别人的，不在这轮要答的清单里。
+    assert "For second" in prepared.prompt_text
+    assert "[u → @cheese-" in prepared.prompt_text
 
 
 @pytest.mark.anyio
@@ -656,7 +660,7 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
     )
     # The default agent's turn is still held — Second's runs beside it: its
     # own session takes the prompt, and nothing is written mid-turn into the
-    # default one's (merge_into_running_turn only delivers to the seat the
+    # default one's (merge_into_running_session only delivers to the seat the
     # message named).
     async with asyncio.timeout(HANG_S):
         while screen.runs < 2:
@@ -906,7 +910,7 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
         return ChatService(
             work_runner=runner,
             session_factory=factory,
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=factory),
             base_system_prompt="You are Cheese.",
             workspace_root=str(tmp_path / "ws"),
         )
@@ -961,10 +965,8 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
     async with asyncio.timeout(HANG_S):
         while True:
             async with factory() as session:
-                said = {
-                    block.content
-                    for block in await BlockRepository(session).list_for_topic(topic_id)
-                }
+                kept = await read(session, topic_id)
+                said = set(assistant_texts(kept.items))
             if expected <= said:
                 break
             await asyncio.sleep(0.05)
@@ -982,7 +984,7 @@ async def test_execution_notes_are_retained_outside_public_replies(
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=stub_compute(ProcessNotesScreen()),
+        compute=stub_compute(ProcessNotesScreen(), sessions=factory),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -1001,15 +1003,18 @@ async def test_execution_notes_are_retained_outside_public_replies(
     await finish_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
+        kept = await read(session, tid)
     replies = [
         b.content
         for b in rows
         if b.kind == BlockKind.message and looks_like_agent_handle(b.author)
     ]
     assert replies == []
-    notes = [b for b in rows if (b.meta or {}).get("progress")]
-    assert [b.content for b in notes] == ["Read workspace files.", "The plan is ready."]
-    assert all(b.kind == BlockKind.event and b.meta["in_room"] is False for b in notes)
+    assert assistant_texts(kept.items) == [
+        "Read workspace files.",
+        "The plan is ready.",
+    ]
+    assert not [b for b in rows if (b.meta or {}).get("progress")]
 
 
 @pytest.mark.anyio
@@ -1022,7 +1027,7 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=stub_compute(agent),
+        compute=stub_compute(agent, sessions=factory),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -1068,7 +1073,9 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
     await finish_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    assert [b.content for b in rows if looks_like_agent_handle(b.author)] == ["done"]
+        kept = await read(session, topic_id)
+    assert assistant_texts(kept.items) == ["done"]
+    assert not [b for b in rows if looks_like_agent_handle(b.author)]
 
 
 class FailingScreen(StubChannel):
@@ -1405,7 +1412,6 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
             assert row.echoed_at is None
             assert row.execution_work_id is None
             assert row.settled_at is None
-            assert row.completed_at is None
             assert row.terminated_at is None
             assert await seat_has_unfinished_input(
                 session, topic_id, identity.recipient_handle
@@ -1506,7 +1512,6 @@ async def test_midturn_delivery_holds_no_topic_lock(
         images=None,
         *,
         register_input=None,
-        expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
     ):
@@ -1515,9 +1520,12 @@ async def test_midturn_delivery_holds_no_topic_lock(
         return True
 
     monkeypatch.setattr(svc._compute, "steer", slow_deliver)
-    svc.live.active_turn_ids[topic_id] = {uuid.uuid4()}
+    # A session at work in the room.
+    monkeypatch.setattr(
+        svc._compute, "working_seat", lambda *_a, **_k: ("cheese", "cheese")
+    )
     merge = asyncio.create_task(
-        svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+        svc.merge_into_running_session(topic_id, block_ids, "改一下配色", "u")
     )
     await asyncio.wait_for(in_flight.wait(), timeout=5)
     async with factory() as session:
@@ -1573,7 +1581,6 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         images=None,
         *,
         register_input,
-        expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
     ):
@@ -1586,9 +1593,9 @@ async def test_midturn_message_stays_pending_until_its_receipt(
             tid,
             "cheese",
             "stub-session",
-            f"session-{expected_work_id}",
+            f"session-{turn_id}",
             uuid.uuid4(),
-            expected_work_id,
+            turn_id,
         )
         await register_input(identity)
         minted.append(identity)
@@ -1598,10 +1605,13 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     monkeypatch.setattr(svc._compute, "steer", fake_deliver)
     turn_id = uuid.uuid4()
-    svc.live.active_turn_ids[topic_id] = {turn_id}
+    # A session at work in the room, on the work ``turn_id``.
+    monkeypatch.setattr(
+        svc._compute, "working_seat", lambda *_a, **_k: ("cheese", "cheese")
+    )
 
     assert (
-        await svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+        await svc.merge_into_running_session(topic_id, block_ids, "改一下配色", "u")
         is True
     )
     assert len(delivered_texts) == 1
@@ -1650,7 +1660,7 @@ class SlowToReplay(StubChannel):
         self.replayed = asyncio.Event()
 
     async def call(self, handle, method: str, params: dict) -> dict:
-        if method == "events" and handle.session.topic_id == self.slow:
+        if method == "read" and handle.session.topic_id == self.slow:
             await self.replayed.wait()
         return await super().call(handle, method, params)
 

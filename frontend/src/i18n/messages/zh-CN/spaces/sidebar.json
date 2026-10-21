@@ -6,5 +6,6 @@
   "manage": "管理",
   "members": "成员",
   "settings": "设置",
-  "tasks": "题目"
+  "tasks": "题目",
+  "newTasks": "上次查看后新发布 {n} 道题目"
 }

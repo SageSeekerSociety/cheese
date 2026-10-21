@@ -1,351 +1,382 @@
 <script setup lang="ts">
-// 发题页的画面。取数、上传、发布都在容器（`PublishTask.vue`）里，这里只吃 props、只往上
-// 发事件。
+// 发题页的画面：左边是那张表单（上面一层是芝士的指针和它填过的标记），右边停靠着芝士。
+// 取数、存草稿、发布、芝士的对话都在容器（`PublishTask.vue`）里，这里只吃 props、只往上
+// 发事件；芝士的面板由容器塞进 `agent` 插槽。
 //
-// 一页从上往下就是一道题：题目内容（右上角「从文件导入」「使用模板」）、参与、时间、
-// 分类与话题、更多设置。从文件里读出好几道时，上面多一排题目列表：点一道就在下面改它的
-// 名称和描述，其余设置这几道共用，发布按钮写明发几道。
+// 题目边写边存成草稿（`@/types/taskDrafts`）。顶栏的「草稿」列出我在这个空间的草稿，
+// 点哪份打开哪份；旁边写着存到哪了。
 import type { PickedAttachment } from '@/composables/useAttachmentUploads'
+import type { SaveState } from '@/composables/useTaskDraft'
 import type { NavTarget } from '@/lib/navTarget'
-import type { DomainGroup, SpaceCategory, SpaceTeaching, TaskFormSubmitData, Topic } from '@/types'
+import type {
+  DomainGroup,
+  SpaceCategory,
+  SpaceTeaching,
+  TaskDraftFields,
+  TaskDraftSummary,
+  TaskFormSubmitData,
+  Topic,
+} from '@/types'
 import type { SpaceMaterial, SpaceMaterialsState } from '@/types/spaces'
-import type { PublishDraft } from './publishDrafts'
+import type { StripItem } from './TaskDraftStrip.vue'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useDisplay } from 'vuetify'
 
-import { draftGaps } from './publishDrafts'
+import TaskDraftMenu from './TaskDraftMenu.vue'
+import TaskDraftStrip from './TaskDraftStrip.vue'
 
+import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
-import TaskFormContent from '@/components/tasks/form/TaskFormContent.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import { isTeachingBlank } from '@/lib/teaching'
 
-defineProps<{
-  /** 空间装好之前不挂表单（分类、域名组都挂在它上面）。 */
-  ready: boolean
-  listTo: NavTarget
-  formKey: number
-  initialData: Partial<TaskFormSubmitData>
-  classificationTopics: Topic[]
-  categories: SpaceCategory[]
-  selectedCategoryId?: number
-  domainGroups: DomainGroup[]
-  templates: { index: number; name: string; description: string }[]
-  importing: boolean
-  /** 读出的那份文件名；没导入过就是 `null`。 */
-  importedFile: string | null
-  attachments: PickedAttachment[]
-  uploading: boolean
-  maxFileBytes: number | null
-  materials: SpaceMaterial[]
-  materialsState: SpaceMaterialsState
-  libraryTo: string
-  publishing: boolean
-  /** 能当导师的人和默认的那一位（出题人自己，#3830）。 */
-  mentorOptions?: { title: string; value: string }[]
-  defaultMentor?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** 空间和草稿装好之前不挂表单（分类、域名组都挂在空间上）。 */
+    ready: boolean
+    listTo: NavTarget
+    formKey: number
+    initialData: Partial<TaskFormSubmitData>
+    classificationTopics: Topic[]
+    categories: SpaceCategory[]
+    selectedCategoryId?: number
+    domainGroups: DomainGroup[]
+    templates: { index: number; name: string; description: string }[]
+    attachments: PickedAttachment[]
+    uploading: boolean
+    maxFileBytes: number | null
+    materials: SpaceMaterial[]
+    materialsState: SpaceMaterialsState
+    libraryTo: string
+    publishing: boolean
+    /** 能当导师的人和默认的那一位（出题人自己，#3830）。 */
+    mentorOptions?: { title: string; value: string }[]
+    defaultMentor?: string
+    /** 我在这个空间的草稿，和眼前这份。 */
+    drafts: TaskDraftSummary[]
+    currentDraftId: number | null
+    saveState: SaveState
+    /** 芝士已经把眼前这份草稿发布了。 */
+    publishedHere?: boolean
+    /** 一份文件拆出的几道题：表单上方那一排；不是这种情况时是 null。 */
+    strip?: {
+      items: StripItem[]
+      source: string
+      flagged: boolean
+      publishing: boolean
+      note: { text: string; ok: boolean } | null
+    } | null
+    /** 芝士正在写的那一格（它的字段名）。 */
+    agentWriting?: string | null
+    /** 空间的 AI 队友辅导：和本题的同时生效，摆在本题设置底下。 */
+    spaceTeaching?: SpaceTeaching | null
+    agentName: string
+  }>(),
+  {
+    selectedCategoryId: undefined,
+    mentorOptions: () => [],
+    defaultMentor: undefined,
+    publishedHere: false,
+    strip: null,
+    agentWriting: null,
+    spaceTeaching: null,
+  }
+)
 
-const drafts = defineModel<PublishDraft[]>('drafts', { required: true })
 const teaching = defineModel<SpaceTeaching>('teaching', { required: true })
 /** 这道题单独写了 AI 指导；没有就沿用空间的默认。 */
 const teachingOwn = defineModel<boolean>('teachingOwn', { required: true })
 
+/** 题目和空间的辅导设置同时生效：这道题写了什么，就算「本题有自己的」。 */
+function setTeaching(value: SpaceTeaching) {
+  teaching.value = value
+  teachingOwn.value = !isTeachingBlank(value)
+}
+/** 芝士的面板开着（面板是全站那一个，不在这一页里）：开着时页头不再给打开它的按钮。 */
+const agentOpen = defineModel<boolean>('agentOpen', { default: false })
+
 const emit = defineEmits<{
   cancel: []
   'use-template': [index: number]
-  import: [file: File]
-  'discard-import': []
+  /** 「从文件导入」选好了文件：交给芝士去读、去填。 */
+  'import-files': [files: File[]]
   'add-attachments': [files: File[]]
   'remove-attachment': [id: number]
   submit: [data: TaskFormSubmitData]
+  change: [fields: TaskDraftFields]
+  'form-ready': [fields: TaskDraftFields]
+  'open-draft': [id: number]
+  'new-draft': []
+  'remove-draft': [id: number]
+  'publish-all': []
+}>()
+
+defineSlots<{
+  /** 芝士的面板。 */
+  agent: () => unknown
 }>()
 
 const { t } = useI18n()
+const { mdAndUp } = useDisplay()
 
-const form = ref<{ submit: () => void } | null>(null)
-const fileInput = ref<HTMLInputElement | null>(null)
+type FormHandle = InstanceType<typeof TaskForm>
+const form = ref<FormHandle | null>(null)
+const host = ref<HTMLElement | null>(null)
+const importInput = ref<HTMLInputElement | null>(null)
 
-/** 读出了不止一道：逐道改内容，其余共用。 */
-const batch = computed(() => drafts.value.length > 1)
-const current = ref(0)
-const currentDraft = computed(() => drafts.value[current.value])
-const picked = computed(() => drafts.value.filter((draft) => draft.picked))
+function onImport(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (files.length) emit('import-files', files)
+}
 
 /** 点过发布之后才标出缺的，打开页面不该满屏红字。 */
 const attempted = ref(false)
 const formInvalid = ref(0)
-const draftsInvalid = computed(() => picked.value.filter((draft) => draftGaps(draft).length > 0).length)
-const blocking = computed(() => (attempted.value ? formInvalid.value + draftsInvalid.value : 0))
-
-function updateDraft(index: number, patch: Partial<PublishDraft>) {
-  drafts.value = drafts.value.map((draft, i) => (i === index ? { ...draft, ...patch } : draft))
-}
-
-const draftName = computed({
-  get: () => currentDraft.value?.name ?? '',
-  set: (name: string | undefined) => updateDraft(current.value, { name: name ?? '' }),
-})
-const draftDescription = computed({
-  get: () => currentDraft.value?.description ?? { type: 'doc', content: [] },
-  set: (description) =>
-    updateDraft(current.value, {
-      description: typeof description === 'string' ? JSON.parse(description) : description,
-    }),
-})
-const draftNameControl = computed(() =>
-  attempted.value && currentDraft.value && !currentDraft.value.name.trim()
-    ? { 'error-messages': [t('tasks.form.validation.nameRequired')] }
-    : {}
-)
-
-function gapLabel(draft: PublishDraft): string | null {
-  const gaps = draftGaps(draft)
-  if (gaps.includes('name')) return t('spaces.detail.publishTask.drafts.missingName')
-  if (gaps.includes('description')) return t('spaces.detail.publishTask.drafts.missingDescription')
-  return null
-}
+const blocking = computed(() => (attempted.value ? formInvalid.value : 0))
 
 function publish() {
   attempted.value = true
   form.value?.submit()
 }
 
-function onSubmit(data: TaskFormSubmitData) {
-  if (batch.value && (picked.value.length === 0 || draftsInvalid.value > 0)) return
-  emit('submit', data)
-}
+const saveText = computed(() => {
+  if (props.publishedHere) return t('spaces.detail.publishTask.save.published')
+  switch (props.saveState) {
+    case 'saving':
+      return t('spaces.detail.publishTask.save.saving')
+    case 'saved':
+      return t('spaces.detail.publishTask.save.saved')
+    case 'failed':
+      return t('spaces.detail.publishTask.save.failed')
+    default:
+      return ''
+  }
+})
 
-function onFilePicked(event: Event) {
-  const target = event.target as HTMLInputElement
-  const file = target.files?.[0]
-  target.value = ''
-  if (file) emit('import', file)
-}
-
-const publishLabel = computed(() =>
-  batch.value
-    ? t('spaces.detail.publishTask.publishMany', { n: picked.value.length })
-    : t('spaces.detail.publishTask.publish')
-)
-
-function discardImport() {
-  current.value = 0
-  emit('discard-import')
-}
+defineExpose({
+  /** 表单：读现在的样子、填进几格。 */
+  form: {
+    values: () => form.value?.values() ?? {},
+    apply: async (fields: TaskDraftFields) => (await form.value?.apply(fields)) ?? {},
+  },
+  /** 标出这一道缺的格子（一次发几道、这道没发出去时）。 */
+  check: () => {
+    attempted.value = true
+    void form.value?.check()
+  },
+  /** 表单的外框：芝士那一层（全站的芝士宿主画）放在这里。 */
+  host,
+})
 </script>
 
 <template>
   <div class="pub">
-    <PageHeader show-on-mobile>
-      <nav class="pub__crumb">
-        <NavLink :to="listTo" class="pub__crumb-parent">{{ t('spaces.detail.allContests') }}</NavLink>
-        <v-icon size="16" class="pub__crumb-sep">mdi-chevron-right</v-icon>
-        <span class="pub__crumb-here">{{ t('tasks.publish.title') }}</span>
-      </nav>
-      <template #actions>
-        <span v-if="blocking" class="pub__blocking" data-testid="publish-blocking">{{
-          t('spaces.detail.publishTask.blocking', { n: blocking })
-        }}</span>
-        <span v-else class="pub__note">{{ t('spaces.detail.publishTask.needsReview') }}</span>
-        <BaseButton kind="ghost" :disabled="publishing" @click="emit('cancel')">{{ t('global.cancel') }}</BaseButton>
-        <BaseButton
-          kind="primary"
-          :loading="publishing"
-          :disabled="!ready || uploading || importing || (batch && picked.length === 0)"
-          data-testid="publish-submit"
-          @click="publish"
-          >{{ publishLabel }}</BaseButton
-        >
-      </template>
-    </PageHeader>
-
-    <div class="pub__page">
-      <!-- 从文件里读出了好几道：逐道勾、逐道改。 -->
-      <section v-if="batch" class="pub__drafts" data-testid="publish-drafts">
-        <div class="pub__drafts-head">
-          <v-icon size="16" class="pub__drafts-icon">mdi-file-document-outline</v-icon>
-          <span class="pub__drafts-source">{{
-            t('spaces.detail.publishTask.drafts.source', {
-              file: importedFile ?? '',
-              total: drafts.length,
-              picked: picked.length,
-            })
+    <div>
+      <PageHeader show-on-mobile class="pub__head">
+        <nav class="pub__crumb">
+          <NavLink :to="listTo" class="pub__crumb-parent">{{ t('spaces.detail.allContests') }}</NavLink>
+          <v-icon size="16" class="pub__crumb-sep">mdi-chevron-right</v-icon>
+          <span class="pub__crumb-here">{{ t('tasks.publish.title') }}</span>
+        </nav>
+        <TaskDraftMenu
+          :drafts="drafts"
+          :current-id="currentDraftId"
+          @open="emit('open-draft', $event)"
+          @new="emit('new-draft')"
+        />
+        <template #actions>
+          <span
+            v-if="saveText"
+            class="pub__saved"
+            :class="{ 'pub__saved--bad': saveState === 'failed' }"
+            data-testid="publish-save-state"
+            >{{ saveText }}</span
+          >
+          <span v-if="blocking" class="pub__blocking" data-testid="publish-blocking">{{
+            t('spaces.detail.publishTask.blocking', { n: blocking })
           }}</span>
-          <BaseButton kind="ghost" size="sm" :disabled="importing" @click="fileInput?.click()">{{
-            t('spaces.detail.publishTask.drafts.replace')
-          }}</BaseButton>
-          <BaseButton kind="ghost" size="sm" @click="discardImport">{{
-            t('spaces.detail.publishTask.drafts.discard')
-          }}</BaseButton>
-        </div>
-        <ul class="pub__draft-list">
-          <li
-            v-for="(draft, index) in drafts"
-            :key="draft.key"
-            class="pub__draft"
-            :class="{ 'pub__draft--current': index === current, 'pub__draft--off': !draft.picked }"
-          >
-            <v-checkbox-btn
-              :model-value="draft.picked"
-              density="compact"
-              :aria-label="
-                t('spaces.detail.publishTask.drafts.pick', {
-                  name: draft.name || t('spaces.detail.publishTask.drafts.untitled'),
-                })
-              "
-              @update:model-value="updateDraft(index, { picked: Boolean($event) })"
-            />
-            <button type="button" class="pub__draft-open" :aria-current="index === current" @click="current = index">
-              <span class="pub__draft-n t-num">{{ index + 1 }}</span>
-              <span class="pub__draft-name">{{ draft.name || t('spaces.detail.publishTask.drafts.untitled') }}</span>
-              <span
-                v-if="draft.picked && gapLabel(draft)"
-                class="pub__draft-gap"
-                :class="{ 'pub__draft-gap--error': attempted }"
-                >{{ gapLabel(draft) }}</span
-              >
-              <span class="pub__draft-page t-meta-read">{{
-                t('spaces.detail.publishTask.drafts.page', { n: draft.page })
-              }}</span>
-            </button>
-          </li>
-        </ul>
-      </section>
-
-      <TaskFormContent
-        v-if="batch && currentDraft"
-        :key="currentDraft.key"
-        v-model:name="draftName"
-        v-model:description="draftDescription"
-        :name-control="draftNameControl"
-        :title="t('spaces.detail.publishTask.drafts.content', { n: current + 1 })"
-      />
-
-      <TaskForm
-        v-if="ready"
-        ref="form"
-        :key="formKey"
-        :initial-data="initialData"
-        :classification-topics="classificationTopics"
-        :categories="categories"
-        :selected-category-id="selectedCategoryId"
-        :domain-groups="domainGroups"
-        :parameters-only="batch"
-        :teaching-custom="teachingOwn"
-        :mentor-options="mentorOptions"
-        :default-mentor="defaultMentor"
-        @invalid="formInvalid = $event"
-        @submit="onSubmit"
-      >
-        <template #content-actions>
-          <BaseButton
-            kind="secondary"
-            size="sm"
-            prepend-icon="mdi-tray-arrow-up"
-            :loading="importing"
-            data-testid="publish-import"
-            @click="fileInput?.click()"
-            >{{ t('spaces.detail.publishTask.import') }}</BaseButton
-          >
-          <v-menu v-if="templates.length" location="bottom end">
-            <template #activator="{ props: menu }">
-              <BaseButton v-bind="menu" kind="secondary" size="sm" append-icon="mdi-chevron-down">{{
-                t('spaces.detail.publishTask.useTemplate')
-              }}</BaseButton>
-            </template>
-            <v-list density="compact" min-width="240">
-              <v-list-item
-                v-for="template in templates"
-                :key="template.index"
-                :title="template.name"
-                :subtitle="template.description || undefined"
-                @click="emit('use-template', template.index)"
-              />
-            </v-list>
-          </v-menu>
-        </template>
-
-        <template #attachments>
-          <TaskAttachmentPicker
-            :files="attachments"
-            :uploading="uploading"
-            :max-file-bytes="maxFileBytes"
-            @add="emit('add-attachments', $event)"
-            @remove="emit('remove-attachment', $event)"
+          <span v-else class="pub__note">{{ t('spaces.detail.publishTask.needsReview') }}</span>
+          <AgentEntryButton
+            v-if="mdAndUp && !agentOpen"
+            :name="agentName"
+            data-testid="publish-agent-open"
+            @click="agentOpen = true"
           />
+          <BaseButton kind="ghost" :disabled="publishing" @click="emit('cancel')">{{ t('global.cancel') }}</BaseButton>
+          <BaseButton
+            kind="primary"
+            :loading="publishing"
+            :disabled="!ready || uploading || publishedHere"
+            data-testid="publish-submit"
+            @click="publish"
+            >{{ t('spaces.detail.publishTask.publish') }}</BaseButton
+          >
         </template>
+      </PageHeader>
 
-        <template v-if="batch" #shared>
-          <p class="pub__shared">{{ t('spaces.detail.publishTask.drafts.shared', { n: picked.length }) }}</p>
-          <div class="pub__shared-attachments">
-            <TaskAttachmentPicker
-              :files="attachments"
-              :uploading="uploading"
-              :max-file-bytes="maxFileBytes"
-              @add="emit('add-attachments', $event)"
-              @remove="emit('remove-attachment', $event)"
-            />
-          </div>
-        </template>
+      <div>
+        <div ref="host" class="pub__page">
+          <TaskDraftStrip
+            v-if="strip"
+            :items="strip.items"
+            :current-id="currentDraftId"
+            :source="strip.source"
+            :flagged="strip.flagged"
+            :publishing="strip.publishing"
+            :note="strip.note"
+            @open="emit('open-draft', $event)"
+            @remove="emit('remove-draft', $event)"
+            @publish-all="emit('publish-all')"
+          />
+          <TaskForm
+            v-if="ready"
+            ref="form"
+            :key="formKey"
+            :initial-data="initialData"
+            :classification-topics="classificationTopics"
+            :categories="categories"
+            :selected-category-id="selectedCategoryId"
+            :domain-groups="domainGroups"
+            :teaching-custom="teachingOwn"
+            :mentor-options="mentorOptions"
+            :default-mentor="defaultMentor"
+            :agent-writing="agentWriting"
+            @invalid="formInvalid = $event"
+            @submit="emit('submit', $event)"
+            @change="emit('change', $event)"
+            @ready="emit('form-ready', $event)"
+          >
+            <template #content-actions>
+              <BaseButton
+                kind="secondary"
+                size="sm"
+                prepend-icon="mdi-file-import-outline"
+                data-testid="publish-import"
+                @click="importInput?.click()"
+                >{{ t('spaces.detail.publishTask.importFile') }}</BaseButton
+              >
+              <input
+                ref="importInput"
+                type="file"
+                multiple
+                hidden
+                :aria-label="t('spaces.detail.publishTask.importFile')"
+                @change="onImport"
+              />
+              <v-menu v-if="templates.length" location="bottom end">
+                <template #activator="{ props: menu }">
+                  <BaseButton v-bind="menu" kind="secondary" size="sm" append-icon="mdi-chevron-down">{{
+                    t('spaces.detail.publishTask.useTemplate')
+                  }}</BaseButton>
+                </template>
+                <v-list density="compact" min-width="240">
+                  <v-list-item
+                    v-for="template in templates"
+                    :key="template.index"
+                    :title="template.name"
+                    :subtitle="template.description || undefined"
+                    @click="emit('use-template', template.index)"
+                  />
+                </v-list>
+              </v-menu>
+            </template>
 
-        <template #teaching>
-          <div class="pub__teaching" data-testid="publish-teaching">
-            <p class="pub__teaching-label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
-            <p class="pub__teaching-hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
-            <v-radio-group v-model="teachingOwn" hide-details density="compact" class="pub__choices">
-              <v-radio :value="false" :label="t('spaces.detail.publishTask.teaching.inherit')" />
-              <v-radio :value="true" :label="t('spaces.detail.publishTask.teaching.own')" />
-            </v-radio-group>
-            <TeachingFields
-              v-if="teachingOwn"
-              v-model="teaching"
-              class="pub__teaching-fields"
-              :materials="materials"
-              :materials-state="materialsState"
-              :library-to="libraryTo"
-            />
-          </div>
-        </template>
-      </TaskForm>
+            <template #attachments>
+              <TaskAttachmentPicker
+                :files="attachments"
+                :uploading="uploading"
+                :max-file-bytes="maxFileBytes"
+                @add="emit('add-attachments', $event)"
+                @remove="emit('remove-attachment', $event)"
+              />
+            </template>
 
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".pdf,application/pdf"
-        hidden
-        :aria-label="t('spaces.detail.publishTask.import')"
-        data-testid="publish-import-input"
-        @change="onFilePicked"
-      />
+            <template #teaching>
+              <div class="pub__teaching" data-testid="publish-teaching" data-agent-field="ai_guidance">
+                <p class="pub__teaching-label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
+                <p class="pub__teaching-hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
+                <TeachingFields
+                  :model-value="teaching"
+                  class="pub__teaching-fields"
+                  inherit
+                  :space-teaching="spaceTeaching"
+                  :materials="materials"
+                  :materials-state="materialsState"
+                  :library-to="libraryTo"
+                  @update:model-value="setTeaching"
+                />
+              </div>
+            </template>
+          </TaskForm>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
 .pub {
-  display: flex;
-  flex-direction: column;
   min-height: 100%;
   background: var(--surface);
 }
 
+/* 左边这一栏多宽，取决于两侧的侧栏和芝士：顶栏按自己的宽窄收，不按窗口。 */
+.pub__head {
+  container-type: inline-size;
+}
+
 .pub__crumb {
   display: flex;
+  flex: 0 1 auto;
   gap: 4px;
   align-items: center;
   min-width: 0;
+  overflow: hidden;
   font-size: 14px;
   line-height: var(--lh-14);
+  white-space: nowrap;
 }
 
 .pub__crumb-parent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--muted);
   text-decoration: none;
+}
+
+.pub__crumb-sep,
+.pub__crumb-here {
+  flex: none;
+}
+
+/* 窄的时候先让出说明，再让出上一级。 */
+@container (max-width: 760px) {
+  .pub__note {
+    display: none;
+  }
+}
+
+@container (max-width: 600px) {
+  .pub__crumb-parent,
+  .pub__crumb-sep {
+    display: none;
+  }
+}
+
+/* 手机上顶栏已经写着「发布题目」，这一行只留草稿和操作。 */
+@container (max-width: 480px) {
+  .pub__crumb {
+    display: none;
+  }
 }
 
 .pub__crumb-parent:hover {
@@ -361,166 +392,26 @@ function discardImport() {
   font-weight: 600;
 }
 
+.pub__saved,
 .pub__note {
-  color: var(--faint);
-  font-size: 12px;
-  line-height: var(--lh-12);
-}
-
-.pub__blocking {
-  color: var(--danger-ink);
-  font-size: 12px;
-  line-height: var(--lh-12);
-}
-
-.pub__page {
-  width: min(var(--page-w), 100%);
-  margin: 0 auto;
-  padding: 8px 16px 64px;
-}
-
-.pub__drafts {
-  margin-top: 16px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-}
-
-.pub__drafts-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 12px 8px 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--fill);
-}
-
-.pub__drafts-icon {
   color: var(--muted);
-}
-
-.pub__drafts-source {
-  flex: 1;
-  min-width: 0;
-  color: var(--text);
-  font-size: 14px;
-  line-height: var(--lh-14);
-}
-
-.pub__draft-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.pub__draft {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  padding-left: 8px;
-}
-
-.pub__draft :deep(.v-selection-control) {
-  flex: none;
-}
-
-.pub__choices :deep(.v-label) {
-  color: var(--text);
-  font-size: 14px;
-  line-height: var(--lh-14);
-  opacity: 1;
-}
-
-.pub__draft + .pub__draft {
-  border-top: 1px solid var(--line);
-}
-
-.pub__draft--current {
-  background: var(--accent-wash);
-}
-
-.pub__draft-open {
-  display: flex;
-  flex: 1;
-  gap: 12px;
-  align-items: center;
-  min-width: 0;
-  height: 44px;
-  padding: 0 16px 0 4px;
-  border: 0;
-  background: none;
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.pub__draft--current .pub__draft-name {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.pub__draft--off .pub__draft-name {
-  color: var(--faint);
-  text-decoration: line-through;
-}
-
-.pub__draft-n {
-  width: 20px;
-  color: var(--faint);
-  font-size: 12px;
-}
-
-.pub__draft-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 13px;
+  line-height: var(--lh-13);
   white-space: nowrap;
 }
 
-.pub__draft-gap {
-  flex: none;
-  padding: 0 6px;
-  border-radius: var(--radius-sm);
-  background: var(--warn-wash);
-  color: var(--warn-ink);
-  font-size: 12px;
-  line-height: var(--lh-12);
-}
-
-.pub__draft-gap--error {
-  background: var(--danger-wash);
+.pub__saved--bad,
+.pub__blocking {
   color: var(--danger-ink);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
-.pub__draft-page {
-  flex: none;
-  margin-left: auto;
-}
-
-.pub__shared {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin: 24px 0 0;
-  color: var(--faint);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: var(--lh-12);
-}
-
-.pub__shared::after {
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-  content: '';
-}
-
-.pub__shared-attachments {
-  padding: 24px 0;
-  border-bottom: 1px solid var(--line);
+.pub__page {
+  position: relative;
+  width: min(var(--page-w), 100%);
+  margin: 0 auto;
+  padding: 8px 16px 96px;
 }
 
 .pub__teaching-label {
@@ -536,6 +427,6 @@ function discardImport() {
 }
 
 .pub__teaching-fields {
-  margin-top: 12px;
+  margin-top: 4px;
 }
 </style>

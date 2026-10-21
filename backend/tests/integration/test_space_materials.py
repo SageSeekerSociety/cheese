@@ -96,9 +96,10 @@ class _Board:
             f"/spaces/{self.space_id}/materials", headers=_auth(token)
         )
 
-    def download(self, token: str, material_id: int):
+    def download(self, token: str, material_id: int, *, preview: bool = False):
         return self.client.get(
             f"/spaces/{self.space_id}/materials/{material_id}/download",
+            params={"preview": "true"} if preview else None,
             headers=_auth(token),
         )
 
@@ -123,23 +124,6 @@ class _Board:
             json={"teaching": {"materialIds": material_ids}},
             headers=_auth(token),
         )
-
-    def teach_category(self, token: str, material_ids: list[int]) -> int:
-        """新建一个项目集并让它引用这几份。返回项目集 id。"""
-        created = self.client.post(
-            f"/spaces/{self.space_id}/categories",
-            json={"name": f"集 {unique_int(1000, 9999)}"},
-            headers=_auth(token),
-        )
-        assert created.status_code == 201, created.text
-        category_id = created.json()["data"]["category"]["id"]
-        patched = self.client.patch(
-            f"/spaces/{self.space_id}/categories/{category_id}",
-            json={"teaching": {"materialIds": material_ids}},
-            headers=_auth(token),
-        )
-        assert patched.status_code == 200, patched.text
-        return category_id
 
     def teach_task(self, token: str, material_ids: list[int]) -> int:
         """在默认项目集下发一道题，并让它引用这几份。返回题目 id。"""
@@ -169,11 +153,6 @@ class _Board:
 
     def drop_task(self, token: str, task_id: int):
         return self.client.delete(f"/tasks/{task_id}", headers=_auth(token))
-
-    def drop_category(self, token: str, category_id: int):
-        return self.client.delete(
-            f"/spaces/{self.space_id}/categories/{category_id}", headers=_auth(token)
-        )
 
     def counts(self, token: str) -> dict:
         """清单里每一行的 `usedByCount`；成员那一侧没有这个键，于是值是 None。"""
@@ -232,6 +211,31 @@ class TestSpaceMaterialLibrary:
         listed = board.list(board.owner.token).json()["data"]["materials"]
         row = next(r for r in listed if r["id"] == material_id)
         assert row["downloadCount"] == 1
+
+    def test_a_preview_is_not_a_download(self, board: _Board) -> None:
+        material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]
+
+        got = board.download(board.member.token, material_id, preview=True)
+        assert got.status_code == 200, got.text
+        assert got.content == PDF_BYTES
+
+        listed = board.list(board.owner.token).json()["data"]["materials"]
+        row = next(r for r in listed if r["id"] == material_id)
+        assert row["downloadCount"] == 0
+
+    def test_a_preview_still_checks_the_tier(self, board: _Board) -> None:
+        material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]
+        board.set_visibility(board.owner.token, material_id, "admins")
+
+        got = board.download(board.member.token, material_id, preview=True)
+        assert got.status_code == 403
+
+    def test_each_row_names_its_uploader(self, board: _Board) -> None:
+        material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]
+
+        listed = board.list(board.member.token).json()["data"]["materials"]
+        row = next(r for r in listed if r["id"] == material_id)
+        assert row["uploaderName"]
 
     def test_admins_tier_is_hidden_from_members(self, board: _Board) -> None:
         material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]
@@ -432,18 +436,18 @@ class TestDeletingAMaterialOnABoard:
 class TestMaterialUsageCount:
     """清单里那一格「被几处引用」：只有能删的人看得到。
 
-    数的是这块板上**写下来的**引用：空间默认、项目集、题目各算一处，一处里的
-    同一份只算一次。项目那一层没有写入者（仓库里没有任何地方往
+    数的是这块板上**写下来的**引用：空间、每道题各算一处（两层同时生效，项目集
+    不再是一层），一处里的同一份只算一次。项目那一层没有写入者（仓库里没有任何地方往
     `Project.settings["teaching"]` 写），所以它不在数里 —— 判据钉的就是这个范围。
     """
 
-    def test_counts_come_from_the_three_written_layers(self, board: _Board) -> None:
+    def test_counts_come_from_the_space_and_its_tasks(self, board: _Board) -> None:
         three = board.upload(board.owner.token).json()["data"]["material"]["id"]
         once = board.upload(board.owner.token).json()["data"]["material"]["id"]
         never = board.upload(board.owner.token).json()["data"]["material"]["id"]
 
         assert board.teach_space(board.owner.token, [three]).status_code == 200
-        board.teach_category(board.owner.token, [three])
+        board.teach_task(board.owner.token, [three])
         board.teach_task(board.owner.token, [once, three])
 
         counts = board.counts(board.owner.token)
@@ -484,27 +488,19 @@ class TestMaterialUsageCount:
         assert counts[keeper] == 1  # 悬空那位没把它的数顶掉
 
     def test_soft_deleted_rows_stop_counting(self, board: _Board) -> None:
-        """撤下来的项目集、删掉的赛题，它们那一格 JSON 还在库里，但不该再算。
+        """删掉的赛题，那一格 JSON 还在库里，但不该再算。
 
-        老师在界面上看不见它们、也改不了，列着它们的 id 只会把这一格撑大。
+        老师在界面上看不见它、也改不了，列着它的 id 只会把这一格撑大。
         """
         in_task = board.upload(board.owner.token).json()["data"]["material"]["id"]
-        in_category = board.upload(board.owner.token).json()["data"]["material"]["id"]
         kept = board.upload(board.owner.token).json()["data"]["material"]["id"]
 
         task_id = board.teach_task(board.owner.token, [in_task, kept])
-        category_id = board.teach_category(board.owner.token, [in_category, kept])
         assert board.teach_space(board.owner.token, [kept]).status_code == 200
-        assert board.counts(board.owner.token) == {
-            in_task: 1,
-            in_category: 1,
-            kept: 3,
-        }
+        assert board.counts(board.owner.token) == {in_task: 1, kept: 2}
 
         assert board.drop_task(board.owner.token, task_id).status_code == 204
-        assert board.drop_category(board.owner.token, category_id).status_code == 204
 
         counts = board.counts(board.owner.token)
         assert counts[in_task] == 0  # 题删了，它那一处跟着不算
-        assert counts[in_category] == 0  # 项目集撤了，同上
-        assert counts[kept] == 1  # 只剩空间默认那一处
+        assert counts[kept] == 1  # 只剩空间那一处

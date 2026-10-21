@@ -116,9 +116,14 @@ export function pct(ratio: number): string {
   return `${Math.round(ratio * 100)}%`
 }
 
-/** 点数：10 点以下留一位小数，以上取整。 */
+/** 点数：10 点以下留一位小数，以上取整；非零的负数不被四舍五入抹成「-0」。 */
 export function fmtPoints(n: number, locale: string): string {
-  return new Intl.NumberFormat(locale, { maximumFractionDigits: Math.abs(n) < 10 ? 1 : 0 }).format(n)
+  const digits = Math.abs(n) < 10 ? 1 : 0
+  const format = (options: Intl.NumberFormatOptions) => new Intl.NumberFormat(locale, options).format(n)
+  if (n === 0) return format({ maximumFractionDigits: 0 })
+  // 欠 0.04 点按一位小数会写成「-0」：既不是 0，也没说欠了多少。留两位有效数字。
+  if (n < 0 && Math.abs(n) < 0.5 * 10 ** -digits) return format({ maximumSignificantDigits: 2 })
+  return format({ maximumFractionDigits: digits })
 }
 
 export function fmtMonthDay(iso: string, locale: string): string {

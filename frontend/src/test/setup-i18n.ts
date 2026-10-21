@@ -13,6 +13,8 @@ import { beforeAll } from 'vitest'
 // 文件之后——在这里先 import 一次 `@/i18n`，那把钉就钉了个空，按中文写夹具的用例会先
 // 拿到英文词。`beforeAll` 比用例自己的钩子先跑、又晚于用例文件的模块加载，两边都不
 // 挡住。
+// Cold locale compilation can exceed ten seconds on a busy CI runner. Bound
+// this preload separately so ordinary test deadlines stay unchanged.
 beforeAll(async () => {
   // 有的用例文件把整个 `@/i18n` 换成替身（只给一个 `t` 那种）：那种文件用自己那份假
   // i18n，不碰真语言包，替身里没有 `loadLocale` 就跳过。取包本身失败不吞：真的取不回
@@ -27,4 +29,4 @@ beforeAll(async () => {
     return
   }
   await Promise.all(loads)
-})
+}, 30_000)

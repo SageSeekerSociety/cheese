@@ -25,6 +25,7 @@ from app.domain.library import service as library
 from app.domain.textfile import content_version
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_project_roles import _invite
+from tests.support import library_uploads
 
 SECRET = "test-office-editor-secret"
 # 比默认值小得多，但整 MB：这里量的是那条界线在哪，不是那个数是多少 —— 超限的那几
@@ -250,12 +251,7 @@ def test_a_link_token_is_bound_to_its_file(client):
 
 def test_a_library_original_is_copied_into_the_room_before_editing(client):
     project, room = _room(client)
-    up = client.post(
-        f"/projects/{project}/library",
-        files={
-            "file": ("模板.docx", b"the user's template", "application/octet-stream")
-        },
-    )
+    up = library_uploads.put_in(client, project, "模板.docx", b"the user's template")
     assert up.status_code == 200, up.text
     library_path = f"library/{up.json()['data']['path']}"
 

@@ -18,19 +18,28 @@ Changing the grace period affects future archives only.
 
 ## Transcripts
 
-Transcripts are not uploaded. Every Claude Code session runs on the central
-session host (`AGENT_SESSION_DEVICE_ID`), so a room's transcripts are in its home
-there. When cleanup removes that home, it first compresses the home's
-`.claude/projects` tree — the main session files and each subagent's — into
+Every session runs on the central session host (`AGENT_SESSION_DEVICE_ID`), so a
+room's transcripts are there: Claude Code's in the room's home
+(`.claude/projects`, the main session files and each subagent's), Codex's and
+pi's under the resource's harness state (`~/.cheese/harness/<project>/<resource>/`,
+Codex's `CODEX_HOME/sessions`, pi's `sessions/` and each subagent's). When cleanup
+removes that home, it first compresses all of them into
 `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on the same host,
 readable only by the host user. A link in the tree is stored as a link and
 never followed. Other devices keep no transcripts.
 
+The archive is then sent to the private bucket (`TRANSCRIPT_S3_BUCKET`) under
+`transcripts/rooms/<project>/<room>/<resource>.tar.gz`, by a presigned PUT, and
+the backend checks the bucket holds it at the size and MD5 the host sent. That
+copy is kept for good; nothing deletes under `transcripts/rooms/` (Zhifei's
+ruling on #4398, 2026-10-19, which supersedes #1611's "not uploaded").
+
 The operation then waits in the `retained` state. Thirty days after the home was
 removed (`TRANSCRIPT_RETENTION` in `backend/app/domain/room_cleanup/retire.py`), the same
-timer deletes the archive and the operation becomes `complete`. The copy exists for
-debugging what an agent did after the fact; nothing reads it. Handing the work on
-does not need it: the room's chat and its action timeline stay with the room.
+timer deletes the host's archive and the operation becomes `complete`, but only
+once the bucket's copy is confirmed: an archive not yet sent (a send that failed,
+or one retained before sending existed) is sent first, and one that cannot be
+sent stays on the host and the operation is tried again later.
 
 Unarchiving a room while its transcripts are retained restores nothing. The room
 gets a new resource generation and its agents start new sessions, as after any

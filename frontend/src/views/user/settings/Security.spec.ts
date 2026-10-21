@@ -11,8 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Security from './Security.vue'
 
+import { listOAuthConnections } from '@/api'
+import { UserAuthApi } from '@/api/userAuth'
 import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
+import { goAuthorize } from '@/lib/desktopApp'
 
 const CHROME_ON_WINDOWS =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
@@ -45,7 +48,21 @@ vi.mock('@/api', () => ({
   listOAuthConnections: vi.fn().mockResolvedValue({ connections: [] }),
   deleteOAuthConnection: vi.fn(),
 }))
-vi.mock('@/services/account', () => ({ currentUserId: ref(7) }))
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
+    getGithubAppIntent: vi.fn(),
+    oauthLoginUrl: vi.fn(() => 'https://api.example.test/users/auth/oauth/login/github_app'),
+  },
+}))
+vi.mock('@/lib/desktopApp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktopApp')>()),
+  goAuthorize: vi.fn(),
+}))
+vi.mock('@/services/account', () => ({
+  currentUserId: ref(7),
+  currentUserName: ref('ada'),
+  default: { logout: vi.fn() },
+}))
 vi.mock('@/plugins/dialog', () => ({
   useDialog: () => ({ confirm: () => ({ wait: async () => true }) }),
 }))
@@ -68,7 +85,7 @@ beforeEach(() => {
   setLocale('en')
   vi.stubGlobal('visualViewport', new EventTarget())
   vi.mocked(UserApi.listSessions).mockResolvedValue({
-    sessions: [session('here', CHROME_ON_WINDOWS, true), session('phone', SAFARI_ON_IPHONE, false, 'oauth:github')],
+    sessions: [session('here', CHROME_ON_WINDOWS, true), session('phone', SAFARI_ON_IPHONE, false, 'oauth:github_app')],
   } as never)
 })
 afterEach(() => {
@@ -119,5 +136,47 @@ describe('signed-in devices', () => {
     await fireEvent.click(view.getByRole('button', { name: 'Sign out everywhere else' }))
 
     await waitFor(() => expect(UserApi.revokeOtherSessions).toHaveBeenCalledTimes(1))
+  })
+})
+
+function github(over: Record<string, unknown> = {}) {
+  return {
+    id: 5,
+    providerId: 'github_app',
+    providerName: 'GitHub',
+    providerUserId: '42',
+    connectedAt: '2026-08-16T00:00:00Z',
+    login: 'octocat',
+    tokenExpires: null,
+    hasRefreshToken: true,
+    ...over,
+  }
+}
+
+describe('the linked GitHub account', () => {
+  it('asks to renew the GitHub authorization when nothing can refresh it', async () => {
+    vi.mocked(UserAuthApi.getGithubAppIntent).mockResolvedValue({ intent: 'account-ticket' })
+    vi.mocked(listOAuthConnections).mockResolvedValue({
+      connections: [github({ tokenExpires: '2026-01-01T00:00:00Z', hasRefreshToken: false })],
+    })
+    const { findByRole } = await renderPage()
+
+    await fireEvent.click(await findByRole('button', { name: 'Renew GitHub authorization' }))
+
+    await waitFor(() =>
+      expect(goAuthorize).toHaveBeenCalledWith(
+        'https://api.example.test/users/auth/oauth/login/github_app?intent=account-ticket'
+      )
+    )
+  })
+
+  it('asks nothing while a renewal token can still refresh it', async () => {
+    vi.mocked(listOAuthConnections).mockResolvedValue({
+      connections: [github({ tokenExpires: '2026-01-01T00:00:00Z', hasRefreshToken: true })],
+    })
+    const { findByText, queryByRole } = await renderPage()
+
+    await findByText('@octocat')
+    expect(queryByRole('button', { name: 'Renew GitHub authorization' })).toBeNull()
   })
 })

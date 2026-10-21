@@ -43,6 +43,7 @@ from app.domain.task.services import (
     TaskSubmissionService,
 )
 from app.domain.task.submission_state import past_deadline
+from app.domain.task_notices import notices as task_notices
 from app.domain.team.services import TeamService
 
 router = APIRouter(prefix="/tasks")
@@ -270,7 +271,7 @@ async def post_task_submission_review(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    task, _ = await bind_review_path(
+    task, membership = await bind_review_path(
         session=db,
         task_id=task_id,
         participant_id=participant_id,
@@ -289,7 +290,25 @@ async def post_task_submission_review(
         score=payload.score,
         comment=payload.comment,
     )
+    await _tell_reviewed(db, task, membership, submission_id, review_dto, auth_user)
     return ok({"review": review_dto})
+
+
+async def _tell_reviewed(db, task, membership, submission_id: int, review: dict, who):
+    """The claimer hears the verdict (`task_notices.reviewed`)."""
+    if not review.get("reviewed"):
+        return
+    detail = review.get("detail") or {}
+    await task_notices.reviewed(
+        db,
+        task=task,
+        membership=membership,
+        submission_id=submission_id,
+        accepted=bool(detail.get("accepted")),
+        score=int(detail.get("score") or 0),
+        by=who.user_id,
+        at=datetime.now(UTC),
+    )
 
 
 @router.get(
@@ -337,6 +356,41 @@ async def get_task_submission_review(
     return ok({"review": review_dto})
 
 
+async def _update_task_submission_review(
+    *,
+    task_id: int,
+    participant_id: int,
+    submission_id: int,
+    payload: CreateSubmissionReviewRequest | PatchSubmissionReviewRequest,
+    review_service: TaskSubmissionReviewService,
+    auth_user: AuthUserInfo,
+    db,
+) -> dict:
+    """The one review update PATCH and PUT both perform.
+
+    PUT requires the whole review while PATCH fills in only what it is given;
+    that difference belongs to the request model. The path binding, the
+    permission check and the write stay here so the two verbs cannot drift.
+    """
+    task, membership = await bind_review_path(
+        session=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only the author or a board manager can update review")
+
+    review_dto = await review_service.patch_review(
+        submission_id=submission_id,
+        accepted=payload.accepted,
+        score=payload.score,
+        comment=payload.comment,
+    )
+    await _tell_reviewed(db, task, membership, submission_id, review_dto, auth_user)
+    return ok({"review": review_dto})
+
+
 @router.patch(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Re-Review Submission",
@@ -353,22 +407,15 @@ async def patch_task_submission_review(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    task, _ = await bind_review_path(
-        session=db,
+    return await _update_task_submission_review(
         task_id=task_id,
         participant_id=participant_id,
         submission_id=submission_id,
+        payload=payload,
+        review_service=review_service,
+        auth_user=auth_user,
+        db=db,
     )
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only the author or a board manager can update review")
-
-    review_dto = await review_service.patch_review(
-        submission_id=submission_id,
-        accepted=payload.accepted,
-        score=payload.score,
-        comment=payload.comment,
-    )
-    return ok({"review": review_dto})
 
 
 @router.put(
@@ -387,22 +434,15 @@ async def put_task_submission_review(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    task, _ = await bind_review_path(
-        session=db,
+    return await _update_task_submission_review(
         task_id=task_id,
         participant_id=participant_id,
         submission_id=submission_id,
+        payload=payload,
+        review_service=review_service,
+        auth_user=auth_user,
+        db=db,
     )
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only the author or a board manager can update review")
-
-    review_dto = await review_service.patch_review(
-        submission_id=submission_id,
-        accepted=payload.accepted,
-        score=payload.score,
-        comment=payload.comment,
-    )
-    return ok({"review": review_dto})
 
 
 @router.delete(

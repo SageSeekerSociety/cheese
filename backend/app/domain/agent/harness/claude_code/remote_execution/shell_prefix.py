@@ -33,7 +33,9 @@ from pathlib import Path
 
 if __package__:
     from app.domain.agent.executor_transport import (
+        DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         RemoteClient,
         session_path,
@@ -51,7 +53,9 @@ else:
     # the same module beside this script, which remains first on sys.path.
     sys.path.append(str(Path(__file__).resolve().parents[3]))
     from executor_transport import (
+        DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         RemoteClient,
         session_path,
@@ -81,6 +85,36 @@ FORWARDED_ENV = (
     "GIT_EDITOR",
     "NoDefaultCurrentDirectoryInExePath",
 )
+
+
+def bind_working_directory(body, value, *, spelled_later=False):
+    """``body`` with the session's short name bound in the shell that runs it.
+
+    Not in the command's environment: a build running natively on the executor
+    has no variable there, and a room's command must see exactly the environment
+    that one sees (the equivalence check holds the two equal). Bound as a shell
+    variable it is still there for what the line is told to write, `cd "$T"`.
+    The assignment stays on the same line so Bash reports the command's original line numbers.
+    ``value`` is the directory as the machine holds it (`outward`), so the line
+    bound here is the one the command's other paths are spelled with.
+
+    ``spelled_later`` is the placeholder a session names before its machine is
+    rented: the transport substitutes the machine's path into ``body`` after
+    this point, textually. Single quotes keep whatever it substitutes one word —
+    a machine path can have a space — and are not escaped, since an escaped
+    value would no longer match the placeholder it replaces. A placeholder that
+    itself has a quote cannot be spelled that way and is left unbound (the value
+    stays a directory this host does not hold, so binding it would be no better).
+    """
+    if value is None:
+        return body
+    if spelled_later:
+        if "'" in value:
+            return body
+        return f"{WORKING_DIRECTORY}='{value}'; {body}"
+    return f"{WORKING_DIRECTORY}={shlex.quote(value)}; {body}"
+
+
 # The build wraps each Bash command as
 # `source <snapshot> 2>/dev/null || true && <options> && eval '<command>'
 # < /dev/null && pwd -P >| <tmp>/claude-<hex>-cwd`. The snapshot is of this
@@ -363,9 +397,58 @@ def run_on_the_machine(target, command):
     env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
     if "CLAUDE_PROJECT_DIR" in os.environ:
         env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
+    # The short name is bound in the command's shell, not exported
+    # (`bind_working_directory`): this session's spelling of its directory goes
+    # through the same `outward` as every other path a command names, so the
+    # shell gets it whole. While the target still names the placeholder the
+    # machine has not been rented, and only the transport can spell the project
+    # — after this point, inside `body`; the binding quotes for that
+    # substitution rather than escaping a value that is about to be replaced.
+    short_name = os.environ.get(WORKING_DIRECTORY)
+    spelled_later = target.get("workspace") == DEFERRED_WORKSPACE
+    client = RemoteClient(target)
+    resolved = target.get("working_directory")
+    # A target with a lease can be for a machine the answer was not resolved
+    # on, and `acquire` drops the answer then: only a target with no lease to
+    # take is fixed enough to bind it before the command runs.
+    trusted = resolved if not target.get("lease_path") else None
+    if short_name is not None and trusted:
+        # The target file keeps the answer (`working_directory`): the launch's
+        # name was the placeholder, or the launch could not ask and a later
+        # command did. It is the session's directory from now on.
+        short_name = trusted
+        spelled_later = False
+    elif short_name is not None and not spelled_later:
+        placeholder = target.get("virtual_workspace")
+        if short_name == DEFERRED_WORKSPACE or (
+            placeholder and short_name == placeholder != target.get("workspace")
+        ):
+            if target.get("lease_path"):
+                # The session started before its machine was rented, so its
+                # name is the placeholder. It stays one here: the transport
+                # spells it after it takes the hands, where the checkout is
+                # known — a machine the session was moved to holds another one
+                # than the target file says.
+                spelled_later = True
+            else:
+                # No lease to take: where the machine holds the project is what
+                # this target says, so the checkout can be asked for here.
+                short_name = client.working_directory(notice=False)
+        elif target.get("checkout_pending"):
+            # The launch could not ask for the checkout; the machine is here.
+            short_name = client.working_directory(notice=False)
+        else:
+            short_name = outward(short_name)
+    if trusted and os.path.normpath(cwd) == os.path.normpath(
+        target.get("workspace") or ""
+    ):
+        # The build still stands at the project view while the session's own
+        # directory is somewhere else (a launch whose lookup failed, or a
+        # placeholder session just resolved): the command starts where the
+        # session is, as it would once it had cd'ed there itself.
+        cwd = resolved
     merge = _same_file(1, 2)
     command_id = "shell-" + uuid.uuid4().hex
-    client = RemoteClient(target)
 
     def call(operation, **params):
         return client.call(
@@ -403,7 +486,9 @@ def run_on_the_machine(target, command):
             started = call(
                 "start",
                 kind="bash" if bash else "sh",
-                body=outward(body),
+                body=bind_working_directory(
+                    outward(body), short_name, spelled_later=spelled_later
+                ),
                 cwd=cwd,
                 env=env,
                 merge=merge,
@@ -475,6 +560,10 @@ def run_on_the_machine(target, command):
         with contextlib.suppress(Exception):
             call("forget")
     code = answer["exit"]
+    if answer.get("disk"):
+        # The executor found its disk full as the command failed: most likely
+        # why, and nothing the command's own output says in so many words.
+        sys.stderr.write(answer["disk"] + "\n")
     if code < 0 and sys.platform == "win32":
         # No signal to end with here: the shell's way of saying it, 128 + n.
         return 128 - code

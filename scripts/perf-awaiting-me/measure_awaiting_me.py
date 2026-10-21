@@ -45,14 +45,14 @@ ROUNDS = int(os.environ.get("PERF_ROUNDS", "7"))
 PROFILE_ROUNDS = int(os.environ.get("PERF_PROFILE_ROUNDS", "5"))
 
 import app.models  # noqa: E402,F401 — register every table
-from app.api.routes.awaiting import waiting_items  # noqa: E402
+from app.api.awaiting_deps import waiting_items  # noqa: E402
 
 #: (bucket, dotted path) for every leaf fetch ``waiting_items`` performs. They
 #: do not nest, so charging each one is exclusive. A path here is the name
 #: ``waiting_items`` itself looks up, which is not always the one the leaf is
 #: defined under: it lives in ``app.api.awaiting_deps`` and imports
-#: ``threads_of_rooms``, ``running_tasks`` and ``listed_cards`` by name, so
-#: those three have to be patched on that module — patching the module they
+#: ``threads_of_rooms`` and ``listed_cards`` by name, so
+#: those two have to be patched on that module — patching the module they
 #: come from charges nothing and leaves their cost in 组装 DTO. Repository
 #: methods need no such care: the class object is the same one either way.
 #: ``address`` is imported by name the same way, but it is a judgement call, so
@@ -79,7 +79,6 @@ FETCH_LEAVES = [
     ),
     ("tasks.rows", "app.domain.room_task.repositories.TaskRepository.listed_by_ids"),
     ("topics.rows", "app.domain.topic.repositories.TopicRepository.listed_by_ids"),
-    ("running", "app.api.awaiting_deps.running_tasks"),
 ]
 
 
@@ -172,18 +171,11 @@ JUDGEMENT_TARGETS = [
 ]
 
 
-async def one_request(session_factory, chat) -> tuple[list, list[dict]]:
+async def one_request(session_factory) -> tuple[list, list[dict]]:
     async with session_factory() as db:
-        items = await waiting_items(db, chat, handle=VIEWER, user_id=None)
+        items = await waiting_items(db, handle=VIEWER, user_id=None)
         rows = [item.as_dict() for item in items]
     return items, rows
-
-
-def make_chat():
-    from types import SimpleNamespace
-
-    # ``waiting_items`` reads only ``chat.live.active_turn_ids``.
-    return SimpleNamespace(live=SimpleNamespace(active_turn_ids={}))
 
 
 def _serial_cpu(items: list) -> float:
@@ -201,11 +193,10 @@ async def main() -> None:
     # per request would charge connect+auth to every leaf and swamp the answer.
     engine = create_async_engine(DB_URL)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    chat = make_chat()
 
     # Warm up: import caches, statement compilation, page cache.
     for _ in range(2):
-        await one_request(session_factory, chat)
+        await one_request(session_factory)
 
     # —— pass 1: per-phase CPU ———————————————————————————————————————
     recorder = Recorder()
@@ -233,7 +224,7 @@ async def main() -> None:
         async with session_factory() as db:
             session_cpu = time.process_time() - start
             body_start = time.process_time()
-            items = await waiting_items(db, chat, handle=VIEWER, user_id=None)
+            items = await waiting_items(db, handle=VIEWER, user_id=None)
             # The route's last step, measured where the route does it.
             rows = [item.as_dict() for item in items]
             body_cpu = time.process_time() - body_start
@@ -278,7 +269,7 @@ async def main() -> None:
     profiler = cProfile.Profile()
     profiler.enable()
     for _ in range(PROFILE_ROUNDS):
-        await one_request(session_factory, chat)
+        await one_request(session_factory)
     profiler.disable()
     stream = io.StringIO()
     profiler.dump_stats("/tmp/awaiting-me.prof")

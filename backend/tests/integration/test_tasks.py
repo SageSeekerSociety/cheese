@@ -618,6 +618,11 @@ class _Screen(StubChannel):
 
 
 def _service(client, tmp_path, screen) -> ChatService:
+    from functools import partial
+
+    from app.domain.session_record import service as session_records
+
+    screen.host._records = partial(session_records.append, client.test_request_factory)
     return ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
@@ -668,7 +673,12 @@ def test_a_task_turn_answers_in_the_task(client, tmp_path):
     screen.reply = "任务里的回答"
     _turn(client, _service(client, tmp_path, screen), task["id"], "做吧")
 
-    replies = _task_contents(client, task["id"])
+    replies = [
+        str(i["record"])
+        for i in client.get(f"/topics/{task['id']}/session-records").json()["data"][
+            "items"
+        ]
+    ]
     assert any("任务里的回答" in r for r in replies), replies
     assert "任务里的回答" not in "".join(_room_contents(client, room_id))
 
@@ -687,28 +697,69 @@ def test_talking_in_the_room_does_not_reach_the_task(client):
 
 
 def _step(client, project_id, room_id, task_id, content) -> str:
-    """One step an AI session took, in the room's line or in a task's."""
-    from app.domain.block.models import BlockKind
-    from app.domain.block.repositories import BlockRepository
-    from app.domain.event_author import AuthorType
+    from datetime import UTC, datetime
+
+    from app.domain.session_record.models import SessionRecord
 
     author = room_agent_seat(client, room_id)
 
-    async def _add() -> str:
-        async with client.test_request_factory() as session:
-            block = await BlockRepository(session).add(
-                project_id=uuid.UUID(project_id),
-                conversation_id=uuid.UUID(task_id or room_id),
-                author=author,
-                author_type=AuthorType.participant,
-                content=content,
-                kind=BlockKind.event,
-                meta={"tool": "Bash", "output": f"{content} 的输出", "output_bytes": 9},
+    async def add():
+        async with client.test_request_factory() as db:
+            at = datetime.now(UTC)
+            call = str(uuid.uuid4())
+            entries = [
+                {
+                    "sequence": 1,
+                    "at": at.isoformat(),
+                    "record": {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": call,
+                                    "name": "Bash",
+                                    "input": {"command": content},
+                                }
+                            ]
+                        },
+                    },
+                },
+                {
+                    "sequence": 2,
+                    "at": at.isoformat(),
+                    "record": {
+                        "type": "user",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": call,
+                                    "content": f"{content} 的输出",
+                                }
+                            ]
+                        },
+                    },
+                },
+            ]
+            db.add(
+                SessionRecord(
+                    conversation_id=uuid.UUID(task_id or room_id),
+                    agent_handle=author,
+                    harness="claude_code",
+                    first_sequence=1,
+                    last_sequence=2,
+                    first_at=at,
+                    last_at=at,
+                    count=2,
+                    bytes=1,
+                    records=entries,
+                )
             )
-            await session.commit()
-            return str(block.id)
+            await db.commit()
+            return call
 
-    return client.portal.call(_add)
+    return client.portal.call(add)
 
 
 def _site(client, room_id, task_id=None, handle="alice") -> list[str]:
@@ -717,7 +768,11 @@ def _site(client, room_id, task_id=None, handle="alice") -> list[str]:
         headers=session_auth_headers(handle),
     )
     assert r.status_code == 200, r.text
-    return [b["content"] for b in r.json()["data"]["data"]]
+    return [
+        part.get("text") or part.get("input", {}).get("command", "")
+        for b in r.json()["data"]["data"]
+        for part in (b.get("meta") or {}).get("parts", [])
+    ]
 
 
 def test_a_tasks_site_shows_what_its_session_did_and_the_rooms_does_not(client):
@@ -737,20 +792,9 @@ def test_a_tasks_site_shows_what_its_session_did_and_the_rooms_does_not(client):
 def test_a_steps_output_is_read_through_the_conversation_it_belongs_to(client):
     project_id, room_id = _room(client)
     task = open_task(client, room_id)
-    step = _step(client, project_id, room_id, task["id"], "任务里的一步")
-    alice = session_auth_headers("alice")
-
-    through_task = client.get(
-        f"/topics/{task['id']}/transcript/{step}/output", headers=alice
-    )
-    assert through_task.status_code == 200, through_task.text
-    assert through_task.json()["data"]["output"] == "任务里的一步 的输出"
-    assert (
-        client.get(
-            f"/topics/{room_id}/transcript/{step}/output", headers=alice
-        ).status_code
-        == 404
-    )
+    _step(client, project_id, room_id, task["id"], "任务里的一步")
+    assert "任务里的一步 的输出" in _site(client, room_id, task["id"])
+    assert "任务里的一步 的输出" not in _site(client, room_id)
 
 
 # —— 摆出来的东西与预览 ——————————————————————————————————————————————————————

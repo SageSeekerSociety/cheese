@@ -56,6 +56,7 @@ def register_periodic_jobs(
             record_instruction=record_instruction,
             task_teammate=task_teammate,
         ),
+        forge_bound=True,
     )
     jobs.register(
         "task pr poll",
@@ -66,17 +67,20 @@ def register_periodic_jobs(
             record_instruction=record_instruction,
             task_teammate=task_teammate,
         ),
+        forge_bound=True,
     )
+    # A task's next branch is read from the forge when its teammate goes on.
     jobs.register(
-        "landing watch",
+        "task closing",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.watch_landings(
+        lambda: pr_poll.sweep_closings(
             chat,
             announce,
             record_instruction=record_instruction,
             task_teammate=task_teammate,
             machines=machines,
         ),
+        forge_bound=True,
     )
     # Drafts and cards watch the same repository state, but not on the same
     # clock: a draft PR nobody is waiting for can appear a few minutes later,
@@ -94,6 +98,7 @@ def register_periodic_jobs(
             record_instruction=record_instruction,
             quiet_window_s=settings.draft_pr_sweep_activity_window_s,
         ),
+        forge_bound=True,
     )
     jobs.register(
         "gate sweep",

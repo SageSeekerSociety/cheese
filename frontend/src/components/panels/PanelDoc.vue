@@ -243,6 +243,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :stop-agent="doc.stopAgent"
     :answer-to-comment="doc.answerToComment"
     :apply-doc-edits="doc.applyEdits"
+    :undo-agent-changes="doc.undoAgentChanges"
     :last-edit="doc.lastEdit.value"
     :name-of="doc.nameOf"
     :avatar-of="avatarOf"

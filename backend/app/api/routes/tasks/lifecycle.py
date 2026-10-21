@@ -4,16 +4,17 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
+from pydantic import BaseModel
 
-from app.api.response import ok
+from app.api.response import ok, typed_response
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 from app.api.routes.tasks._common import (
     PatchTaskParticipantRequest,
     PatchTaskRequest,
-    set_task_mentors,
 )
+from app.api.routes.tasks._writes import update_task
 from app.api.task_deps import (
     get_task_membership_service,
     get_task_service,
@@ -27,11 +28,6 @@ from app.api.task_serialization import (
     _membership_to_api_model,
     _submission_schema_to_api,
     _task_to_api_model,
-)
-from app.api.task_teaching import (
-    apply_task_teaching,
-    coerce_teaching,
-    validate_task_teaching,
 )
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
@@ -48,24 +44,20 @@ from app.domain.living_doc.overview import seed_overview
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
-    SpaceCategoryRepository,
-    SpaceDomainGroupDomainRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
 from app.domain.task.adapters import TaskTerms, as_brief, as_claim
 from app.domain.task.claims import own_claim
 from app.domain.task.inputs import (
-    map_approve_type,
     map_approve_type_to_int,
 )
+from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
     count_distinct_participants,
-    ensure_domain_groups_belong_to_space,
     ensure_task_readable,
-    validate_and_get_category_id,
 )
 from app.domain.task.visibility_service import resolve_user_email_domain
 from app.domain.team.repositories import TeamRepository
@@ -77,6 +69,82 @@ from app.domain.user.repositories import (
 )
 
 router = APIRouter(prefix="/tasks")
+
+
+class FoundTask(BaseModel):
+    """One 题目 the command palette found: enough to name it and open it."""
+
+    id: int
+    name: str
+    spaceId: int
+    spaceName: str
+    deadline: int | None = None
+
+
+class FoundTasks(BaseModel):
+    tasks: list[FoundTask]
+
+
+#: How many of the person's spaces the palette searches, newest first.
+SEARCH_SPACES = 20
+#: How many 题目 it takes from each.
+SEARCH_PER_SPACE = 5
+
+
+# Before ``/{taskId}``: the first route that matches the path answers.
+@router.get(
+    "/search",
+    summary="Search Tasks In My Spaces",
+    **typed_response(FoundTasks),
+)
+async def search_my_tasks(
+    q: Annotated[str, Query(max_length=200)] = "",
+    limit: Annotated[int, Query(ge=1, le=20)] = 8,
+    db=Depends(get_db),
+    service: TaskService = Depends(get_task_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    """题目 in the spaces the person is in whose name or intro has the words,
+    seen as each space's list shows them to that person (the command palette,
+    Ctrl+K)."""
+    words = q.strip()
+    if not words or auth_user.user_id <= 0:
+        return ok({"tasks": []})
+    spaces = await SpaceRepository(session=db).list_spaces(
+        limit=SEARCH_SPACES, member_user_id=auth_user.user_id
+    )
+    administered = await SpaceAdminRelationRepository(session=db).administered(
+        auth_user.user_id, [space.id for space in spaces]
+    )
+    domain = await resolve_user_email_domain(db, auth_user.user_id)
+    found: list[dict] = []
+    for space in spaces:
+        is_admin = space.id in administered
+        tasks = await service.enumerate_tasks(
+            space_id=space.id,
+            approved=0,
+            keywords=words,
+            current_user_id=auth_user.user_id,
+            viewer_user_id=auth_user.user_id,
+            viewer_email_domain=domain,
+            viewer_is_space_admin=is_admin,
+            apply_space_task_visibility=not is_admin,
+            visible_task_limit=space.visible_task_limit,
+            limit=SEARCH_PER_SPACE,
+        )
+        found += [
+            {
+                "id": t.id,
+                "name": t.name,
+                "spaceId": space.id,
+                "spaceName": space.name,
+                "deadline": int(t.deadline.timestamp() * 1000) if t.deadline else None,
+            }
+            for t in tasks
+        ]
+        if len(found) >= limit:
+            break
+    return ok({"tasks": found[:limit]})
 
 
 @router.get(
@@ -240,6 +308,13 @@ async def get_task(
     schema_entries = await service.list_submission_schema(task_id)
     task_dict["submissionSchema"] = _submission_schema_to_api(schema_entries)
 
+    # 评分要点：批改的人（出题人、空间管理员）总能读到；别人只在它公开时读到。
+    may_grade = auth_user.user_id > 0 and await may_teach_task(
+        session=db, task=task, user_id=auth_user.user_id
+    )
+    if task.rubric_public or may_grade:
+        task_dict["rubric"] = rubric_to_api(await service.list_rubric(task_id))
+
     # Fetch topics if queryTopics is true
     if queryTopics:
         topic_entities = await service.list_topics(task_id)
@@ -287,220 +362,10 @@ async def patch_task(
 
     当前实现对齐 Kotlin PatchTaskRequestDTO 的大部分字段，但暂不处理 submissionSchema。
     """
-    task = await service.get_task(task_id)
-    if task is None:
-        raise NotFoundError("Task not found")
-
-    # is_space_admin 仍单独保留：下面「审批/驳回」只认管理员，出题者不可自审 ——
-    # 那是一个比「管理员」更窄的问题，不能拿 may_teach_task 顶。
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    is_space_admin = (
-        await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
-    )
-
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only task owner or space admin can update this task")
-
-    # 「给 AI 队友的指导」(#944) 的引用先查再改：拒了就不该动这一行的任何一格
-    # （同一个请求里可能还带着改名），所以拦住的位置与 项目集 PATCH 一样靠前。
-    if payload.teaching is not None:
-        await validate_task_teaching(
-            db,
-            teaching=coerce_teaching(payload.teaching),
-            actor_user_id=auth_user.user_id,
-        )
-
-    # 基本字符串字段
-    if payload.name is not None:
-        task.name = payload.name
-    if payload.intro is not None:
-        task.intro = payload.intro
-    if payload.description is not None:
-        task.description = payload.description
-
-    # 布尔开关
-    if payload.resubmittable is not None:
-        task.resubmittable = payload.resubmittable
-    if payload.editable is not None:
-        task.editable = payload.editable
-    if payload.require_real_name is not None:
-        task.require_real_name = payload.require_real_name
-
-    # deadline / registrationStartAt / participantLimit 及其 hasXxx 标志
-    if payload.deadline is not None:
-        try:
-            task.deadline = datetime.fromtimestamp(
-                int(payload.deadline) / 1000.0, tz=UTC
-            )
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid deadline: {exc}") from exc
-    if payload.has_deadline is False:
-        task.deadline = None
-
-    if payload.registration_start_at is not None:
-        try:
-            task.registration_start_at = datetime.fromtimestamp(
-                int(payload.registration_start_at) / 1000.0, tz=UTC
-            )
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
-    if payload.has_registration_start is False:
-        task.registration_start_at = None
-
-    if payload.participant_limit is not None:
-        task.participant_limit = payload.participant_limit
-    if payload.has_participant_limit is False:
-        task.participant_limit = None
-
-    # 默认截止天数 / 排名
-    if payload.default_deadline is not None:
-        task.default_deadline = payload.default_deadline
-
-    if payload.rank is not None:
-        task.rank = payload.rank
-    if payload.has_rank is False:
-        task.rank = None
-
-    # 审批状态与驳回原因 — 需要 space admin 权限，任务创建者不可自审
-    if payload.approved is not None or payload.reject_reason is not None:
-        if not is_space_admin:
-            raise ForbiddenError("Only space admins can approve or reject tasks")
-        if payload.approved is not None:
-            next_approved = map_approve_type(payload.approved)
-            if next_approved == 0 and task.approved != 0:
-                if await service.has_prior_pending_task_for_creator(task):
-                    raise BadRequestError(
-                        "Creator has earlier pending tasks that must be reviewed first"
-                    )
-                if task.published_at is None:
-                    task.published_at = datetime.now(UTC)
-            task.approved = next_approved
-        if payload.reject_reason is not None:
-            task.reject_reason = payload.reject_reason
-        # 审核痕迹只在这里写：过了上面那道门才落，通过和驳回是同一次写入，落的是
-        # 审核人（不是出题人）与此刻。驳回后作者重新提交、再被审时覆盖成最新一次
-        # —— 「审没审过」看 approved，这两列说的是「上一次是谁、什么时候点的」。
-        task.reviewed_by = auth_user.user_id
-        task.reviewed_at = datetime.now(UTC)
-
-    if "ended_at" in payload.model_fields_set or payload.has_ended_at is not None:
-        if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-            raise ForbiddenError("Only task owner or space admin can update endedAt")
-        if payload.has_ended_at is False or (
-            "ended_at" in payload.model_fields_set
-            and payload.ended_at is None
-            and payload.has_ended_at is None
-        ):
-            task.ended_at = None
-        elif payload.ended_at is not None:
-            try:
-                task.ended_at = datetime.fromtimestamp(
-                    int(payload.ended_at) / 1000.0, tz=UTC
-                )
-            except (TypeError, ValueError) as exc:
-                raise BadRequestError(f"Invalid endedAt: {exc}") from exc
-        elif payload.has_ended_at is True:
-            task.ended_at = datetime.now(UTC)
-
-    # 团队大小限制，仅 TEAM 类型任务允许设置
-    min_team_size: int | None = task.min_team_size
-    max_team_size: int | None = task.max_team_size
-    if payload.min_team_size is not None:
-        min_team_size = payload.min_team_size
-    if payload.max_team_size is not None:
-        max_team_size = payload.max_team_size
-
-    if task.submitter_type != 1 and (
-        min_team_size is not None or max_team_size is not None
-    ):
-        raise BadRequestError(
-            "minTeamSize and maxTeamSize can only be set for TEAM type tasks."
-        )
-
-    task.min_team_size = min_team_size
-    task.max_team_size = max_team_size
-
-    # teamLockingPolicy
-    if payload.team_locking_policy is not None:
-        if payload.team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
-            raise BadRequestError(
-                f"Invalid teamLockingPolicy: {payload.team_locking_policy}"
-            )
-        task.team_locking_policy = payload.team_locking_policy
-
-    # accessControlEnabled + accessDomainGroupIds
-    if payload.access_control_enabled is not None:
-        task.access_control_enabled = payload.access_control_enabled
-
-    if payload.access_domain_group_ids is not None:
-        domain_repo = SpaceDomainGroupDomainRepository(session=db)
-
-        if task.access_control_enabled and payload.access_domain_group_ids:
-            await ensure_domain_groups_belong_to_space(
-                session=db,
-                space_id=task.space_id,
-                group_ids=payload.access_domain_group_ids,
-            )
-            groups_domains = await domain_repo.list_domains_for_groups(
-                payload.access_domain_group_ids
-            )
-            all_domains: list[str] = []
-            for gid in payload.access_domain_group_ids:
-                all_domains.extend(groups_domains.get(gid, []))
-            await service.replace_access_domains(
-                task_id=task.id, domains=list(dict.fromkeys(all_domains))
-            )
-        else:
-            await service.replace_access_domains(task_id=task.id, domains=[])
-
-    # categoryId 更新：需验证归属 space 且未归档/未删除
-    if payload.category_id is not None:
-        space_repo = SpaceRepository(session=db)
-        category_repo = SpaceCategoryRepository(session=db)
-        effective_category_id = await validate_and_get_category_id(
-            space_repo=space_repo,
-            category_repo=category_repo,
-            space_id=task.space_id,
-            category_id=payload.category_id,
-        )
-        task.category_id = effective_category_id
-
-    # submissionSchema: 覆盖更新（先删后插）。
-    if payload.submission_schema is not None:
-        await service.replace_submission_schema(task.id, payload.submission_schema)
-
-    # 话题列表：简单覆盖语义，先全部软删除，再插入新集合。
-    if payload.topics is not None:
-        await service.replace_topic_relations(task_id=task.id, topic_ids=payload.topics)
-
-    # 「给 AI 队友的指导」: 整份替换这道题的那一格，见 apply_task_teaching。
-    apply_task_teaching(task, coerce_teaching(payload.teaching))
-
-    if payload.mentors is not None:
-        await set_task_mentors(
-            db, task=task, handles=payload.mentors, creator_user_id=task.creator_id
-        )
-
-    task.updated_at = datetime.now(UTC)
-    task = await service.save(task)
-    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
-    # runs after the response has gone out, so a client told a task is approved
-    # could open the board on its next request and not find the task there yet.
-    # Same reason as the commit in ``create_task``.
-    await db.commit()
-
-    # Fetch submissionSchema for response
-    schema_entries = await service.list_submission_schema(task.id)
-    task_response = _task_to_api_model(task)
-    task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
-    task_response = (
-        await _enrich_task_models(db, [task_response], space_id=task.space_id)
-    )[0]
-
     return ok(
-        {
-            "task": task_response,
-        },
+        await update_task(
+            task_id, payload, db=db, service=service, user_id=auth_user.user_id
+        ),
         "Task updated successfully.",
     )
 
@@ -550,7 +415,12 @@ async def get_tasks(
         raise BadRequestError(f"Invalid sortBy: {sort_by}")
     if sort_order not in {"asc", "desc"}:
         raise BadRequestError(f"Invalid sortOrder: {sort_order}")
-    if lifecycle is not None and lifecycle not in {"ended", "recruiting", "notEnded"}:
+    if lifecycle is not None and lifecycle not in {
+        "ended",
+        "recruiting",
+        "closed",
+        "notEnded",
+    }:
         raise BadRequestError(f"Invalid lifecycle: {lifecycle}")
 
     # 将 approved 字符串映射到数据库中的 SMALLINT（ApproveType ordinal）。

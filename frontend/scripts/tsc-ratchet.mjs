@@ -6,8 +6,7 @@
 //
 // Failures print every diagnostic in full (to stderr with --json).
 //
-// `--project <tsconfig>` judges another project: the fast tier's changed-files
-// project (.github/scripts/ci_fast_checks.py), and the one-file fixtures the
+// `--project <tsconfig>` judges another project: the one-file fixtures the
 // tests run instead of type-checking the whole tree a second time.
 //
 // The parsing lives in tsc-ratchet-core.mjs and is unit-tested; this file is
@@ -59,7 +58,7 @@ if (run.status !== 0 && diagnostics.length === 0) {
     console.error(
       `vue-tsc was killed by ${run.signal}, most likely out of memory: a whole-tree check needs more than a 3 GiB sandbox has.`
     )
-    console.error('Run `task ci:fast` from the repo root instead: it type-checks only the files you changed.')
+    console.error("Leave the whole-tree check to the pull request's CI, which runs it on a runner with the memory.")
   }
   cannotJudge({ id: ID }, 'vue-tsc failed without reporting any diagnostic')
 }
@@ -70,7 +69,7 @@ const result = plainResult(counts)
 
 if (asJson) {
   // The human report is not on stdout here — the collector parses stdout — but
-  // on failure it goes to stderr, so a --json run (which is what ci:fast calls)
+  // on failure it goes to stderr, so a --json run
   // still prints where and how to fix it.
   const details = Object.entries(counts).map(([file, count]) => ({ file, count }))
   emit(verdict({ id: ID, result, details }))

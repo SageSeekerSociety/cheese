@@ -21,6 +21,7 @@ from tests.integration.conftest import (
 from tests.integration.test_accept_pr import (
     _give_card_a_pr,
     _rendered_head,
+    _rendered_revision,
     app_world,  # noqa: F401
 )
 
@@ -81,7 +82,11 @@ def _manifest(client, project_id: str) -> list[tuple[str, int]]:
 def _accept(client, card_id: str):
     return client.post(
         f"/accept-cards/{card_id}/accept",
-        json={"decided_by": "alice", "head_sha": _rendered_head(client, card_id)},
+        json={
+            "decided_by": "alice",
+            "head_sha": _rendered_head(client, card_id),
+            "deliverable_revision": _rendered_revision(client, card_id),
+        },
         headers=session_auth_headers("alice"),
     )
 

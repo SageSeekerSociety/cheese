@@ -1,31 +1,25 @@
-// 项目设置页「仓库」这一组的数据：上游仓库地址、仓库连接、提交署名、连接 GitHub
-// 账号，和两条回跳（`?github_install=` / `?github_account=`）带回来的结果。
+// 项目设置页「仓库」这一组的数据：上游仓库地址、仓库连接、提交署名、你自己的 GitHub
+// 账号（只读，管理在账号安全），和连接仓库回跳（`?github_install=`）带回来的结果。
 //
 // 拆自 `views/ProjectSettingsView.vue`（#2143，那一页 1041 行）：取数与保存在这一层，
 // 画在 `components/settings/*.vue`（只吃 props、只往上发事件），页面只接线。
 //
 // **这一组里有两条独立的加载**，各带自己的 loading/error：
 //
-//   1. 连接 GitHub 账号 —— 一次失败不能画成「未连接」，那是撒谎（见下面那段注释）；
+//   1. 你的 GitHub 账号 —— 一次失败不能画成「未关联」，那是撒谎；
 //   2. 分支保护 —— 在 `useBranchProtection` 里，GET 要问 GitHub，可能比这一页慢。
 //
-// **两条回跳各有一条 notice**，不是一条共用的：仓库流程和账号流程是两个区块、两颗
-// 按钮，共用一条会把一次动作的结果报在另一件事的标题下面（`githubSettingsSections.spec.ts`
-// 钉的就是这件事）。失败也落在自己那一条里，不落进页面级的 `error` —— 那一块会顶掉
-// 整页，上面没有按钮可以再试，也说不清是哪一次动作败了。
+// 连接仓库的结果落在仓库那一块自己的 notice 里，不落进页面级的 `error` —— 那一块会
+// 顶掉整页，上面没有按钮可以再试。
 import type { CommitCredit, CommitCreditMode, ForgeConnection, OAuthConnectionInfo } from '@/cx_types'
 
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { SudoCancelledError, withSudo } from '@/utils/sudo'
-
 import {
   connectGithubRepo as apiConnectGithubRepo,
-  deleteOAuthConnection,
   getCommitCredit,
   getForgeConnection,
-  getGithubAccountAuthorizeUrl,
   getUpstream,
   listOAuthConnections,
   setCommitCredit,
@@ -33,13 +27,13 @@ import {
 } from '@/api'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
-import { explainAccountLinkFailure, explainRepoInstallFailure, findGithubAccountConnection } from '@/lib/githubAccount'
+import { explainRepoInstallFailure, findGithubAccountConnection } from '@/lib/githubAccount'
 import { myId } from '@/me'
 
-/** 两条回跳共同的结果形状。error 也走这里：它落回发起它的那一块。 */
+/** 连接仓库那一块的结果。error 也走这里：它落回发起它的那一块。 */
 export type CallbackNotice = { type: 'success' | 'error' | 'info'; text: string }
 
-/** 连接 GitHub 账号那一块自己的四态。 */
+/** 你的 GitHub 账号那一行自己的三态。 */
 export type GithubAccountLoadState = 'loading' | 'loaded' | 'error'
 
 export function useProjectSettings(projectId: () => string) {
@@ -74,66 +68,30 @@ export function useProjectSettings(projectId: () => string) {
   }
 
   const connectingGithubRepo = ref(false)
-  const connectingGithubAccount = ref(false)
 
-  // Set from ?github_install=/&github_account= on the redirect back from our
-  // own callback routes (app/api/routes/github_install.py, github_account_link.py).
-  // TWO refs, not one: the 仓库 flow and the 账号 flow are separate sections with
-  // separate buttons, and a single shared notice rendered inside the 仓库 section
-  // put 「已连接 GitHub 账号。」 under the 「连接 GitHub 仓库」 heading — the result
-  // of one action announced above a different one.
-  // A failed click lands in its section's notice too, never in the page-level
-  // `error`: that one replaces the whole page with a banner, leaving no button
-  // to try again and no hint of which action it belongs to.
+  // Set from ?github_install= on the redirect back from github_install.py.
+  // A failed click lands here too, never in the page-level `error`: that one
+  // replaces the whole page with a banner, leaving no button to try again.
   const githubRepoNotice = ref<CallbackNotice | null>(null)
-  const githubAccountNotice = ref<CallbackNotice | null>(null)
 
-  // 连接 GitHub 账号 status: loaded independently from `load()` (its own
-  // loading/error state) so a failure here can't be mistaken for "not
-  // connected" — see the section's four-branch template below.
+  // The viewer's own GitHub account, loaded on its own so a failed read can't
+  // be mistaken for "not linked".
   const githubAccountLoadState = ref<GithubAccountLoadState>('loading')
-  const githubAccountLoadError = ref<string | null>(null)
   const githubAccountConn = ref<OAuthConnectionInfo | null>(null)
-  const disconnectingGithubAccount = ref(false)
 
   async function loadGithubAccountConnection() {
     const userId = myId()
     if (!userId) {
       githubAccountLoadState.value = 'error'
-      githubAccountLoadError.value = t('work.projectSettings.repoFlow.notSignedIn')
       return
     }
     githubAccountLoadState.value = 'loading'
-    githubAccountLoadError.value = null
     try {
       const { connections } = await listOAuthConnections(userId)
       githubAccountConn.value = findGithubAccountConnection(connections)
       githubAccountLoadState.value = 'loaded'
-    } catch (e) {
-      githubAccountLoadError.value = e instanceof Error ? e.message : t('work.projectSettings.githubAccount.loadFailed')
+    } catch {
       githubAccountLoadState.value = 'error'
-    }
-  }
-
-  // Unbinding needs the person to confirm who they are first.
-  async function disconnectGithubAccount() {
-    const userId = myId()
-    const connectionId = githubAccountConn.value?.id
-    if (!userId || connectionId === undefined) return
-    disconnectingGithubAccount.value = true
-    try {
-      await withSudo('oauth:unbind', async (sudoTicket) => {
-        await deleteOAuthConnection(userId, connectionId, sudoTicket)
-        githubAccountConn.value = null
-      })
-    } catch (e) {
-      if (e instanceof SudoCancelledError) return
-      githubAccountNotice.value = {
-        type: 'error',
-        text: e instanceof Error ? e.message : t('work.projectSettings.repoFlow.disconnectFailed'),
-      }
-    } finally {
-      disconnectingGithubAccount.value = false
     }
   }
 
@@ -204,29 +162,12 @@ export function useProjectSettings(projectId: () => string) {
     }
   }
 
-  // Same shape, but for the App's user-to-server "连接 GitHub 账号" — a
-  // separate identity link, not a repo connection (github_account_link.py).
-  async function connectGithubAccount() {
-    connectingGithubAccount.value = true
-    try {
-      const { url } = await getGithubAccountAuthorizeUrl(projectId())
-      if (goAuthorize(url)) connectingGithubAccount.value = false
-    } catch (e) {
-      githubAccountNotice.value = {
-        type: 'error',
-        text: e instanceof Error ? e.message : t('work.projectSettings.repoFlow.authUrlFailed'),
-      }
-      connectingGithubAccount.value = false
-    }
-  }
-
-  // The two callback routes redirect back to this exact page with a result in
+  // The install callback redirects back to this exact page with a result in
   // the query string (no session/cookie hand-off — this page is the only
   // signal). Read it once, show it, then strip it so a refresh doesn't repeat it.
   function consumeGithubCallbackNotice() {
     const install = route.query.github_install as string | undefined
-    const account = route.query.github_account as string | undefined
-    if (!install && !account) return
+    if (!install) return
 
     const reason = route.query.reason as string | undefined
     if (install === 'success') {
@@ -245,15 +186,10 @@ export function useProjectSettings(projectId: () => string) {
           holder: route.query.holder as string | undefined,
         }),
       }
-    } else if (account === 'success') {
-      githubAccountNotice.value = { type: 'success', text: t('work.projectSettings.repoFlow.accountConnected') }
-    } else if (account === 'error') {
-      githubAccountNotice.value = { type: 'error', text: explainAccountLinkFailure(reason) }
     }
 
-    const { github_install, github_account, repo: _repo, reason: _reason, holder: _holder, ...rest } = route.query
+    const { github_install, repo: _repo, reason: _reason, holder: _holder, ...rest } = route.query
     void github_install
-    void github_account
     void _repo
     void _reason
     void _holder
@@ -271,19 +207,13 @@ export function useProjectSettings(projectId: () => string) {
     attributionError,
     saveAttribution,
     connectingGithubRepo,
-    connectingGithubAccount,
     githubRepoNotice,
-    githubAccountNotice,
     githubAccountLoadState,
-    githubAccountLoadError,
     githubAccountConn,
-    disconnectingGithubAccount,
     loadGithubAccountConnection,
-    disconnectGithubAccount,
     load,
     saveUpstream,
     connectGithubRepo,
-    connectGithubAccount,
     consumeGithubCallbackNotice,
   }
 }

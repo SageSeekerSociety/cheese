@@ -35,30 +35,37 @@ import uuid
 from dataclasses import dataclass
 from typing import Protocol
 
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import hold
 from app.core.config import settings
-from app.core.errors import GatewayUnavailableError, NotFoundError
+from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
 from app.domain.agent.model_catalog import catalog, project_pool
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.queries import _model_policy_call, _Proposed
+from app.domain.agent.queries import _model_policy_call, _Proposed, task_credit_context
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
+from app.domain.agent.session_host.contract import EFFORT_ENV
 from app.domain.agent.supply import SUBSCRIPTION
-from app.domain.agent_instance.own import owned_instance
+from app.domain.agent_instance.own import owned_instance, unusable
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
+from app.domain.conversation.models import Conversation
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.ledger import Payer, payer_for_project, team_terms
 from app.domain.usage.model_access import overseas_approved
+from app.domain.usage.models import TaskGatewayAccount
+from app.domain.usage.services import UsageService
 
 logger = logging.getLogger(__name__)
 
@@ -204,16 +211,16 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
 
 def launch_env(configuration: dict, efforts: list[str] | tuple[str, ...]) -> dict:
     """The environment that carries a teammate's thinking effort and compaction
-    share into its Claude Code session.
+    share into its session.
 
     ``efforts`` are the ones the turn's model honours. An effort it does not is
-    left out rather than sent: Claude Code would pass it to a model that either
+    left out rather than sent: the harness would pass it to a model that either
     ignores it or refuses the request.
     """
     env: dict[str, str] = {}
     effort = configuration.get("effort")
     if isinstance(effort, str) and effort in efforts:
-        env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
+        env[EFFORT_ENV] = effort
     percent = configuration.get("compact_percent")
     if isinstance(percent, int) and not isinstance(percent, bool):
         env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(percent)
@@ -243,7 +250,7 @@ def _own_model_kwargs(agent, acting_agent, environment) -> dict:
     """A member's own Claude Code: the model it is set to when its owner's
     login can run it, else the account's default; no project catalogue, no
     tier gate and no gateway, which are about the project's credits."""
-    model = own_model(agent.configuration.get("model"))
+    model = own_model(agent.configuration.get("model") or "sonnet")
     env: dict[str, str] = {
         "CHEESE_AGENT_CONFIG": hashlib.sha256(
             json.dumps(
@@ -315,6 +322,10 @@ async def _model_kwargs(
                 else await agents.for_project(project)
             )
         owned = await owned_instance(session, agent.instance_id)
+        if owned is not None:
+            reason = await unusable(session, owned, project.settings)
+            if reason is not None:
+                raise ValidationError(reason)
     if owned is not None:
         return _own_model_kwargs(agent, acting_agent, environment), OWN_ROUTE
     # A saved teammate may override the project main model.
@@ -449,7 +460,21 @@ async def _model_kwargs(
     if routed:
         # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
         # the master key (containment), attributable + budget-capped.
-        override = await _gateway_project_env(service, sessions, gateway, project_id)
+        context = None
+        if topic_id is not None:
+            async with sessions() as session:
+                context = await task_credit_context(
+                    session, project_id, topic_id, [acting_agent or agent.handle]
+                )
+        if context is not None:
+            task_key = await _task_gateway_key(
+                sessions, gateway, project_id, context.task_id, context.owner_handle
+            )
+            override = {"ANTHROPIC_AUTH_TOKEN": task_key} if task_key else None
+        else:
+            override = await _gateway_project_env(
+                service, sessions, gateway, project_id
+            )
         if not override:
             raise GatewayUnavailableError(
                 "AI gateway could not provision a project-scoped key; "
@@ -466,12 +491,18 @@ async def project_gateway_key(
     project_id: uuid.UUID,
     *,
     dream: bool = False,
+    task_id: uuid.UUID | None = None,
+    credit_owner_handle: str | None = None,
 ) -> str | None:
     """The project's virtual gateway key, minted on first use — the same one
     a local sandbox turn runs on, or with ``dream`` the key its memory
     consolidation runs on. Public because the remote-machine LLM proxy
     (routes/llm_proxy.py) has to swap it in per request: a machine off the box
     never receives a provider credential, only its own scoped cheese token."""
+    if task_id is not None and credit_owner_handle is not None:
+        return await _task_gateway_key(
+            sessions, gateway, project_id, task_id, credit_owner_handle
+        )
     env = await _gateway_project_env(
         service,
         sessions,
@@ -480,6 +511,71 @@ async def project_gateway_key(
         slot=_DREAM_SLOT if dream else _ROOM_SLOT,
     )
     return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
+
+
+async def _task_gateway_key(
+    sessions: async_sessionmaker,
+    gateway: LlmGateway | None,
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    owner_handle: str,
+) -> str | None:
+    if gateway is None:
+        return None
+    async with sessions() as session:
+        account = await session.get(TaskGatewayAccount, (task_id, owner_handle))
+        target = await UsageService(session).task_gateway_budget(
+            project_id, task_id, owner_handle
+        )
+        if (
+            account is not None
+            and account.project_id == project_id
+            and account.gateway_key
+            and account.budget_usd == target
+        ):
+            return account.gateway_key
+    async with sessions() as session:
+        await session.execute(
+            insert(TaskGatewayAccount)
+            .values(
+                conversation_id=task_id,
+                owner_handle=owner_handle,
+                project_id=project_id,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[
+                    TaskGatewayAccount.conversation_id,
+                    TaskGatewayAccount.owner_handle,
+                ]
+            )
+        )
+        account = await session.scalar(
+            select(TaskGatewayAccount)
+            .where(
+                TaskGatewayAccount.conversation_id == task_id,
+                TaskGatewayAccount.owner_handle == owner_handle,
+                TaskGatewayAccount.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if account is None:
+            return None
+        if not account.gateway_key:
+            holder = hashlib.sha256(owner_handle.encode()).hexdigest()[:12]
+            account.gateway_key = await gateway.mint_project_key(
+                project_id, purpose=f"task-{task_id.hex}-{holder}"
+            )
+            if not account.gateway_key:
+                return None
+        target = await UsageService(session).task_gateway_budget(
+            project_id, task_id, owner_handle
+        )
+        if account.budget_usd != target:
+            if not await gateway.set_key_budget(account.gateway_key, target):
+                return None
+            account.budget_usd = target
+        await session.commit()
+        return account.gateway_key
 
 
 async def _gateway_project_env(
@@ -559,6 +655,38 @@ async def _gateway_project_env(
 
 
 @dataclass(frozen=True)
+class TaskGatewayKey:
+    project_id: uuid.UUID
+    task_id: uuid.UUID
+    owner_handle: str
+
+    async def read(
+        self, session: AsyncSession, *, for_update: bool = False
+    ) -> tuple[str, dict | None] | None:
+        statement = select(TaskGatewayAccount).where(
+            TaskGatewayAccount.project_id == self.project_id,
+            TaskGatewayAccount.conversation_id == self.task_id,
+            TaskGatewayAccount.owner_handle == self.owner_handle,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        row = await session.scalar(statement)
+        if row is None or not row.gateway_key:
+            return None
+        return row.gateway_key, row.checkpoint
+
+    async def advance(self, session: AsyncSession, checkpoint: dict) -> None:
+        account = await session.get(
+            TaskGatewayAccount, (self.task_id, self.owner_handle)
+        )
+        assert account is not None
+        account.checkpoint = checkpoint
+
+    async def payer(self, session: AsyncSession) -> Payer:
+        return await payer_for_project(session, self.project_id)
+
+
+@dataclass(frozen=True)
 class ProjectGatewayKey:
     """A project's key on the gateway, kept in the project's settings beside
     its checkpoint: the rooms' key, or with ``dream`` the memory
@@ -613,10 +741,19 @@ async def charge_turn_spend(
 ) -> list[AgentUsage] | None:
     """Charge what the project's key spent for a turn, one row per model,
     reading again once if the gateway has not logged it yet."""
+    async with sessions() as session:
+        execution = await CreditBudgets(session).execution(turn_id, project_id)
+        if topic_id is not None and await session.get(Conversation, topic_id) is None:
+            topic_id = None
+    key = (
+        TaskGatewayKey(project_id, execution.conversation_id, execution.owner_handle)
+        if execution is not None
+        else ProjectGatewayKey(project_id)
+    )
     return await settle(
         sessions,
         gateway,
-        ProjectGatewayKey(project_id),
+        key,
         Charge(
             model=settings.agent_model,
             topic_id=topic_id,

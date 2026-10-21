@@ -432,3 +432,38 @@ async def test_a_session_whose_work_is_not_kept_gets_a_token_that_only_reads(
         }
     }
     assert full_mint["body"] == {"permissions": _CHEESEX_APP_GRANTS}
+
+
+@pytest.mark.anyio
+async def test_a_session_whose_work_is_not_kept_may_rerun_ci_and_still_never_writes(
+    rsa_key_pem,
+):
+    """A routine watching a deployment from a 支线 reruns a flaky job itself
+    instead of handing it to a person: where the installation holds
+    `actions: write`, the token that keeps nothing carries it. Everything
+    else stays at read, so the repository itself refuses its pushes and its
+    pull requests; the token that keeps work is not touched."""
+    key_path, public = rsa_key_pem
+    mints: list[dict] = []
+    granted = _CHEESEX_APP_GRANTS | {"actions": "write", "issues": "write"}
+    minter = GitHubAppTokens(
+        app_id=4533864,
+        private_key_path=key_path,
+        installation_id=152342238,
+        transport=_github(mints, public, granted=granted),
+    )
+    await minter.read_token()
+    await minter.installation_token()
+
+    read_mint, full_mint = mints
+    assert read_mint["body"] == {
+        "permissions": {
+            "actions": "write",
+            "checks": "read",
+            "contents": "read",
+            "issues": "read",
+            "metadata": "read",
+            "pull_requests": "read",
+        }
+    }
+    assert full_mint["body"] == {"permissions": granted}

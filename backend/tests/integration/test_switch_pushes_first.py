@@ -48,6 +48,7 @@ from app.main import app
 from tests.delivery import delivery_task
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 
@@ -85,9 +86,10 @@ async def _room(client, *, on_cloud=False, in_task=False):
                 await devices.start(name),
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, owner.id),
             )
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=owner.id
+            await place_in_project_team(
+                devices, device.device_id, project_id, actor_user_id=owner.id
             )
             ids.append(device.device_id)
         old_device, new_device = ids
@@ -270,8 +272,7 @@ async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
     to do it."""
     room = await _room(client)
     remote = _machines(monkeypatch, online=False)
-    owner = await _owner_id(client)
-    sandbox = {"kind": "sandbox", "spec": f"devices_of:{owner}"}
+    sandbox = {"kind": "sandbox", "spec": "team_devices"}
 
     switched = client.put(room.path, headers=room.agent, json={"environment": sandbox})
 

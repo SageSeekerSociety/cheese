@@ -323,6 +323,10 @@ def test_a_say_key_or_parameter_mismatch_names_the_call_site(monkeypatch):
 
 def test_only_retired_notices_stored_on_old_rooms_are_historical():
     assert HISTORICAL_NOTICE_KEYS == {
+        "deployedTo",
+        "deployFailedTo",
+        "mainChecksFailed",
+        "mainChecksFailedReopened",
         "actorCheese",
         "askAnswerUndelivered",
         "askAnswerUndeliveredDetail",
@@ -338,9 +342,15 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "blockUpgradedRoomId",
         "labelUpgradedTo",
         "labelRoutineWork",
+        "labelRoutineToConfirm",
         "routineProposalConfirmed",
+        "routineProposalConfirmedBy",
         "routineProposalDeleted",
         "routineProposed",
+        "routineProposedBy",
+        "routineSummary",
+        "routineScopeUnset",
+        "routineOutputRoot",
         "skillProposalNotSaved",
         "skillProposalSaved",
         "skillProposed",
@@ -358,6 +368,8 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "computeCloudVm",
         "computeDevice",
         "policyResourceMachine",
+        "sandboxReleasedDiskFull",
+        "sandboxReleasedOverBudget",
     }
     assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
     assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()

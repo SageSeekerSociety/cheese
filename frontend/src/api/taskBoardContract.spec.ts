@@ -21,16 +21,6 @@ contractEnvironment()
 /** 一个方法一例。`name` 是 `TaskBoardApi` 上的方法名，`test.args` 原样传给它。 */
 const cases: { label: string; name: string; test: ContractCase }[] = [
   {
-    label: 'confirmFromPdf',
-    name: 'confirmFromPdf',
-    test: {
-      method: 'POST',
-      path: '/tasks/publish/from-pdf/confirm',
-      args: [{ drafts: [{ name: '题', intro: '', description: '', space: 7 }], taskOptions: {} }],
-      body: { drafts: [{ name: '题', intro: '', description: '', space: 7 }], taskOptions: {} },
-    },
-  },
-  {
     label: 'create',
     name: 'create',
     test: { method: 'POST', path: '/tasks', args: [{ name: '题' }], body: { name: '题' } },
@@ -233,40 +223,5 @@ describe('题目 browser contract', () => {
     await contractRequest(test, () =>
       (next[name as keyof typeof next] as (...args: unknown[]) => Promise<unknown>)(...args)
     )
-  })
-
-  // `previewFromPdf` 的多分体字段顺序是接口认的（spaceId 在 file 前），通用对拍器按
-  // 「file 在前」拼期望，替不了它，单列一例。
-  it('previewFromPdf keeps the multipart field order and returns the payload', async () => {
-    const captured: unknown[] = []
-    server.use(
-      http.post(`${newer}/tasks/publish/from-pdf/preview`, async ({ request }) => {
-        expect(request.headers.get('authorization')).toBe('Bearer contract-token')
-        expect(request.headers.get('content-type')).toContain('multipart/form-data; boundary=')
-        const form = await request.formData()
-        const entries = await Promise.all(
-          [...form.entries()].map(async ([key, value]) =>
-            typeof value === 'string'
-              ? [key, value]
-              : [key, { name: value.name, type: value.type, bytes: [...new Uint8Array(await value.arrayBuffer())] }]
-          )
-        )
-        captured.push(entries)
-        return HttpResponse.json(envelope({ drafts: [] }, 201), { status: 201 })
-      })
-    )
-    const { TaskBoardApi: next } = await import('./taskBoard')
-    const data = { spaceId: 7, file: uploadFile(), templateIndex: 2, maxTasks: 3, categoryId: 4, submitterType: 'USER' }
-    const res = await next.previewFromPdf(data as never)
-    expect(res).toEqual({ drafts: [] })
-    expect(captured).toHaveLength(1)
-    expect(captured[0]).toEqual([
-      ['spaceId', '7'],
-      ['file', { name: 'notes.pdf', type: 'application/pdf', bytes: [...new TextEncoder().encode('%PDF-1.7')] }],
-      ['templateIndex', '2'],
-      ['maxTasks', '3'],
-      ['categoryId', '4'],
-      ['submitterType', 'USER'],
-    ])
   })
 })

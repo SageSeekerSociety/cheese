@@ -40,6 +40,11 @@ async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
 
 
+async def user_by_id(session: AsyncSession, user_id: int) -> User | None:
+    """The live account with this id; None when there is none or it is closed."""
+    return await UserRepository(session).get_by_id(user_id)
+
+
 async def users_by_handle(
     session: AsyncSession, handles: Iterable[str]
 ) -> dict[str, User]:
@@ -248,6 +253,21 @@ async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> bo
     return True
 
 
+async def set_training_opt_out(
+    session: AsyncSession, user_id: int, opted_out: bool
+) -> User | None:
+    """记下这个人是否拒绝把自己的内容用于模型训练、提供给合作方；账号不在了返回
+    None。已经拒绝过的人再拒绝一次，保留第一次的时间：那是他提出的时间。"""
+    user = await UserRepository(session).get_by_id(user_id)
+    if user is None:
+        return None
+    if not opted_out:
+        user.training_opted_out_at = None
+    elif user.training_opted_out_at is None:
+        user.training_opted_out_at = datetime.now(UTC)
+    return user
+
+
 async def lookup_account(session: AsyncSession, q: str) -> dict | None:
     """``{id, handle, name, avatar_id}`` for an exact username or email, or None.
 
@@ -259,11 +279,12 @@ async def lookup_account(session: AsyncSession, q: str) -> dict | None:
     return {"id": user_id, "handle": handle, "name": name, "avatar_id": avatar_id}
 
 
-async def lookup_accounts(session: AsyncSession, qs: Sequence[str]) -> dict[str, str]:
-    """Each asked username or email, lowercased and stripped, -> the handle of
-    the one person it names, in one statement; see
-    ``UserRepository.lookup_accounts``. Values that name nobody are absent."""
-    return await UserRepository(session).lookup_accounts(qs)
+async def names_by_handles(
+    session: AsyncSession, handles: Sequence[str]
+) -> dict[str, str]:
+    """Handle → the name the person or AI teammate is shown by, in one
+    statement; see ``UserRepository.names_by_handles``."""
+    return await UserRepository(session).names_by_handles(handles)
 
 
 async def search_accounts(

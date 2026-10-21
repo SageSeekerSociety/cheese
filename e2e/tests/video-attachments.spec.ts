@@ -49,9 +49,11 @@ test('a video selected from the album uploads, persists and plays only on reques
   const name = `video-e2e-${Date.now()}.webm`;
   const album = page.locator('.composer-actions input[type="file"][accept]');
   await expect(album).toHaveAttribute('accept', 'image/*,video/*');
+  // 照片或视频在「+」里：先打开它，再从底部面板里挑那一项。
+  await page.getByLabel('更多操作', { exact: true }).click();
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.getByTitle('发送照片或视频', { exact: true }).click(),
+    page.getByRole('menuitem', { name: '发送照片或视频' }).click(),
   ]);
   const upload = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith('/attachments') && response.request().method() === 'POST');
@@ -113,9 +115,10 @@ for (const [suffix, mimeType] of [['avi', 'video/x-msvideo'], ['mkv', 'video/x-m
     // MIME-based classification and byte-for-byte download, not codec support.
     const content = Buffer.from(`download-only ${suffix} fixture`);
     const name = `video-download-e2e-${Date.now()}.${suffix}`;
+    await page.getByLabel('更多操作', { exact: true }).click();
     const [chooser] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.getByTitle('发送照片或视频', { exact: true }).click(),
+      page.getByRole('menuitem', { name: '发送照片或视频' }).click(),
     ]);
     const upload = page.waitForResponse((response) =>
       new URL(response.url()).pathname.endsWith('/attachments') && response.request().method() === 'POST');

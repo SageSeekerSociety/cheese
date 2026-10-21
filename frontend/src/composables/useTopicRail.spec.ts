@@ -127,7 +127,7 @@ describe('侧栏一行上的成员头像', () => {
 
     expect(rail.memberMarks(room)).toEqual([])
     // 头像不画了，但「在等谁、为什么」还挂在灯上（悬停那一句）。
-    expect(rail.lightOf('t-1')).toMatchObject({ kind: 'red', breathe: false, why: 'waiting' })
+    expect(rail.lightOf('t-1')).toMatchObject({ kind: 'red', why: 'waiting' })
     expect(rail.lightOf('t-1')?.title).toContain('小知')
     expect(rail.lightOf('t-1')?.title).toContain('报错')
   })
@@ -167,7 +167,7 @@ describe('侧栏自己的慢钟把红灯拨亮', () => {
 
     // 侧栏那只 10 秒的慢钟拨一下：now -> base+10s，坏了的时长 301s > 5 分钟。
     vi.advanceTimersByTime(10_000)
-    expect(rail.lightOf('t-stuck')).toEqual({ kind: 'red', breathe: false, why: 'unfinished' })
+    expect(rail.lightOf('t-stuck')).toEqual({ kind: 'red', why: 'unfinished' })
   })
 
   it('等队友也是同一只钟：等满五分钟前不红，钟走过去就红', async () => {
@@ -180,7 +180,7 @@ describe('侧栏自己的慢钟把红灯拨亮', () => {
     expect(rail.lightOf('t-wait')).toBeNull()
 
     vi.advanceTimersByTime(10_000)
-    expect(rail.lightOf('t-wait')).toMatchObject({ kind: 'red', breathe: false, why: 'waiting' })
+    expect(rail.lightOf('t-wait')).toMatchObject({ kind: 'red', why: 'waiting' })
     expect(rail.lightOf('t-wait')?.title).toContain('有人 @ 了小知')
   })
 
@@ -200,7 +200,7 @@ describe('侧栏自己的慢钟把红灯拨亮', () => {
     expect(rail.taskLight(task)).toBeNull()
 
     vi.advanceTimersByTime(10_000)
-    expect(rail.taskLight(task)).toEqual({ kind: 'red', breathe: false, why: 'unfinished' })
+    expect(rail.taskLight(task)).toEqual({ kind: 'red', why: 'unfinished' })
   })
 })
 
@@ -219,13 +219,38 @@ describe('交付被退回的任务行', () => {
       presentation: { column: 'needs_you', phrase: 'bounced' },
     } as RailTask
 
-    expect(rail.taskLight(task)).toEqual({ kind: 'red', breathe: false, why: 'bounced' })
+    expect(rail.taskLight(task)).toEqual({ kind: 'red', why: 'bounced' })
   })
 })
 
-// 收起来的折叠开关替里面的行说了它们的状态（`toggleTitle`）。两种红是两件事，收起来
-// 的那盏红说的是哪一件，开关就得说哪一件 —— 别把已经停下来报错的活说成还在跑。断的是
-// 那句话的关键含义（在跑 vs 停下报错），不是整句原文。
+// 有活在往前走：绿灯在闪，而且压过「做完了、还没看过」那一档——同一行两件事都成立时，
+// 先说「还在走」。
+describe('呼吸绿', () => {
+  beforeEach(() => setLocale('zh-CN'))
+
+  it('频道行有活在往前走：绿灯在闪', async () => {
+    const { rail } = await mountRail([topic('t-moving', { moving: true })])
+
+    expect(rail.lightOf('t-moving')).toEqual({ kind: 'green', breathe: true })
+  })
+
+  it('任务行的会话在跑或走在交付链路上：闪绿压过长绿', async () => {
+    const { rail } = await mountRail([topic('t-1', {})])
+    const task = {
+      id: 'k-1',
+      room_id: 't-1',
+      owner_handle: 'cheese-someone',
+      moving: true,
+      unseen_delivery: true,
+      presentation: { column: 'delivering', phrase: 'awaiting_checks' },
+    } as RailTask
+
+    expect(rail.taskLight(task)).toEqual({ kind: 'green', breathe: true })
+  })
+})
+
+// 收起来的折叠开关替里面的行说了它们的状态（`toggleTitle`）。收起来的那盏红说的是哪一
+// 件，开关就得说哪一件。断的是那句话的关键含义（停下报错），不是整句原文。
 describe('折叠开关替收起来的行说话', () => {
   beforeEach(() => {
     setLocale('zh-CN')
@@ -247,19 +272,14 @@ describe('折叠开关替收起来的行说话', () => {
     expect(title).toContain('报错')
   })
 
-  it('里面是「在跑却没动静」的红，开关照旧说它没动静（没被上一条带偏）', async () => {
-    const base = Date.now()
+  it('里面是「有活在往前走」的闪绿，开关说它在走，不说只是刚交付完', async () => {
     const { rail } = await mountRail([
       topic('p', {}),
-      topic('c-quiet', {
-        parent_id: 'p',
-        moving: true,
-        last_output_at: new Date(base - 10 * 60_000).toISOString(),
-      }),
+      // 子行还在往前走：收起来之后，父行的折叠开关要替它说这一件。
+      topic('c-moving', { parent_id: 'p', moving: true }),
     ])
 
     const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
-    expect(title).toContain('在跑')
-    expect(title).toContain('没动静')
+    expect(title).toContain('往前走')
   })
 })

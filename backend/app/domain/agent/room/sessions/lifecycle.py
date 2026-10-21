@@ -25,8 +25,14 @@ from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.driven.subscription import Seat
 from app.domain.agent.place import seat_key
+from app.domain.agent.platform_failures import (
+    RUNNER_REPLACED_CODE,
+    RUNNER_REPLACED_MESSAGE,
+)
+from app.domain.agent.reads import Read, Replaced
 from app.domain.agent.room import sessions as pkg
 from app.domain.agent.room.sessions.records import Clock, Live, _home
+from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.contract import Access, Owner
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.agent.session_host.host import RunnerUnsupported
@@ -179,16 +185,17 @@ async def recover(
                 svc.terminal_conversations.add((seat, resume_token))
             continue
         svc.found_conversations.add((seat, status.conversation))
+        if status.outdated:
+            # Its runner was the previous release's (``host.attach``): the
+            # conversation goes on in a runner this release starts, and what
+            # the old one held is settled once the room has the turn open.
+            svc.outdated[seat] = Live(session, ref, acting, status.conversation)
+            if status.working and status.work_id:
+                svc.work[seat] = uuid.UUID(status.work_id)
+            recovered.append(session)
+            continue
         try:
-            await svc._attach(
-                Live(
-                    session,
-                    ref,
-                    acting,
-                    status.conversation,
-                    status.takes_inputs,
-                )
-            )
+            await svc._attach(Live(session, ref, acting, status.conversation))
         except DeviceOffline:
             continue
         if status.working and status.work_id:
@@ -208,9 +215,15 @@ async def replay(svc: pkg.RoomSessions, session: SessionRef) -> None:
     on reading it. Returns once the tail is landed; raises what stopped the
     reading before it was."""
     seat = svc._seat_of(session)
-    if seat not in svc.live or (seat in svc.tasks and not svc.tasks[seat].done()):
+    if (outdated := svc.outdated.get(seat)) is not None:
+        # Forgotten only once it is settled: a settlement that fails is
+        # retried with the replay (`recovery`), and finds the seat still owed.
+        await _replaced(svc, outdated)
+        svc.outdated.pop(seat, None)
         return
-    svc._listen(seat, recovered=True)
+    if seat not in svc.live:
+        return
+    svc._listen(seat)
     reading = svc.tasks[seat]
     await svc.caught[seat].wait()
     failure = (
@@ -221,3 +234,34 @@ async def replay(svc: pkg.RoomSessions, session: SessionRef) -> None:
         # that disagrees with its inputs): the seat is not read on, and
         # whoever recovered it hears why.
         raise failure
+
+
+async def _replaced(svc: pkg.RoomSessions, live: Live) -> None:
+    """The seat's runner was the previous release's, and the next start
+    replaces it with one of this release's on the same conversation. What it
+    was written and never read is dropped, so the messages in it are offered
+    again; a turn it was in the middle of ends with the upgrade as its failure,
+    which the platform starts again by itself (``resumable_failures``)."""
+    seat = svc._seat_of(live.session)
+    await svc._hear(live.session, Read(None, Replaced(live.conversation)))
+    work = svc.work.get(seat)
+    if work is None:
+        return
+    await svc._consume(
+        live.session.project_id,
+        seat[0],
+        work,
+        AgentResult(
+            text=RUNNER_REPLACED_MESSAGE,
+            session_id=live.conversation,
+            is_error=True,
+            failure_code=RUNNER_REPLACED_CODE,
+            agent_handle=live.acting,
+            harness=svc.harness,
+        ),
+        f"{svc.harness}:{live.conversation}:replaced:{work}",
+        False,
+        False,
+    )
+    await svc._activity(live.session.project_id, seat, work, False)
+    svc.closed.add(work)

@@ -5,9 +5,10 @@ platform job, not the AI teammate's: one structured call to a small model
 through the gateway, off the agent's turn, at three moments —
 
 * **name**: a still-unnamed task gets its first real message from a person (in
-  parallel with the turn it starts), or its first turn ends — and for a task
+  parallel with the work it starts), or its session goes idle as its runner
+  reports it — and for a task
   turned from a message, that message is its first (`naming_material._origin`);
-* **calibrate**, once: the first turn ended, or three people's messages are in
+* **calibrate**, once: its session went idle, or three people's messages are in
   — the opening line is rarely the whole story;
 * **follow**: something suggests the task changed direction (its document was
   rewritten, work was handed in for acceptance) or many messages went by.
@@ -111,14 +112,14 @@ from app.domain.service_keys import KeySpec, service_key
 
 logger = logging.getLogger(__name__)
 
-Reason = Literal["message", "turn", "signal"]
+Reason = Literal["message", "idle", "signal"]
 Stage = Literal["name", "calibrate", "follow"]
 
 SETTINGS_KEY = "task_naming"
 MODES = ("auto", "manual")
 
 # The opening line has to say something before it is worth naming a task by:
-# 「在吗」「@芝士」 wait for the next message or the end of the first turn. What
+# 「在吗」「@芝士」 wait for the next message or the session going idle. What
 # counts is what `_said` has left, and a mention there is only the handle
 # (`naming_material._said`), so an `@` inside a sentence is not mistaken for a
 # mention and does not read as an empty opener.
@@ -202,7 +203,7 @@ async def _stage(session: AsyncSession, task: Task, reason: Reason) -> Asked:
         if not people:
             return Asked(why="no_person_in_the_task_yet")
         if (
-            reason == "turn"
+            reason == "idle"
             or len(people) > 1
             or any(len(_said(line.text)) >= _SUBSTANTIVE_CHARS for line in people)
         ):
@@ -210,7 +211,7 @@ async def _stage(session: AsyncSession, task: Task, reason: Reason) -> Asked:
         return Asked(why="opener_says_too_little")
 
     if not task.title_calibrated:
-        if reason == "turn":
+        if reason == "idle":
             return Asked(stage="calibrate")
         lines = await _conversation(session, task)
         if sum(line.person for line in lines) >= _CALIBRATE_AFTER_PEOPLE:

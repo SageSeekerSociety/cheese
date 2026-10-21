@@ -17,8 +17,10 @@ from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.project.services import ProjectService
 from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.model_access import ModelAccess, model_access
 from app.domain.usage.model_access import overseas_approved as _overseas_approved
@@ -49,6 +51,21 @@ class UsageService:
         payer = await ledger.payer_for_project(self._session, project_id)
         return (await self._summaries({project_id: payer}))[project_id]
 
+    async def task_gateway_budget(
+        self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+    ) -> float | None:
+        summary = await self.project_credits(project_id)
+        remaining = None if summary["unlimited"] else summary["credits_remaining"]
+        member = await CreditBudgets(self._session).member_remaining(
+            project_id, owner_handle
+        )
+        if member is not None:
+            remaining = member if remaining is None else min(remaining, member)
+        if remaining is None:
+            return None
+        spent = await self._repo.task_gateway_spend(project_id, task_id, owner_handle)
+        return round(spent + max(0.0, remaining) * CREDIT_USD, 4)
+
     async def plan_model_tiers(self, team_id: int) -> frozenset[str] | None:
         """The model tiers the team's plan allows; None is every tier."""
         return (await ledger.team_terms(self._session, team_id)).model_tiers
@@ -65,8 +82,22 @@ class UsageService:
     async def admit_project(self, project_id: uuid.UUID):
         """Whether a call in this project may run now: None, or the
         ``ledger.Refusal`` saying why not and until when."""
-        payer = await ledger.payer_for_project(self._session, project_id)
-        return await ledger.Ledger(self._session).admit(payer)
+        return (await self.admit_projects([project_id]))[project_id]
+
+    async def admit_projects(
+        self, project_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, ledger.Refusal | None]:
+        """`admit_project` for a batch: project id → ``ledger.Refusal`` or None.
+        Projects missing from the table raise, as the single form does."""
+        wanted = list(dict.fromkeys(project_ids))
+        projects = await ProjectService(self._session).get_projects_by_ids(wanted)
+        for pid in wanted:
+            if pid not in projects:
+                await ProjectService(self._session).get_or_404(pid)
+        payers = await ledger.payers_for_projects(
+            self._session, [projects[pid] for pid in wanted]
+        )
+        return await ledger.Ledger(self._session).admit_many(payers)
 
     async def project_credits_batch(self, projects: list) -> dict[uuid.UUID, dict]:
         """`project_credits` 的批量版：一批项目 → 各自的额度汇总，一条查询取回
@@ -77,12 +108,27 @@ class UsageService:
     async def _summaries(self, payers: dict) -> dict[uuid.UUID, dict]:
         balances = await ledger.Ledger(self._session).balances(payers)
         spent = await self._repo.gateway_spend(list(payers))
+        caps = await CreditBudgets(self._session).project_caps(list(payers))
         out = {}
         for key, balance in balances.items():
             summary = balance.summary()
             summary["gateway_budget_usd"] = _gateway_budget(
                 balance, spent.get(key, 0.0)
             )
+            if key in caps:
+                limit, used = caps[key]
+                remaining = max(0.0, limit - used)
+                if not balance.unlimited:
+                    remaining = min(remaining, max(0.0, balance.credits_remaining))
+                summary.update(
+                    unlimited=False,
+                    credits_total=limit,
+                    credits_used=used,
+                    credits_remaining=remaining,
+                    gateway_budget_usd=round(
+                        spent.get(key, 0.0) + remaining * CREDIT_USD, 4
+                    ),
+                )
             out[key] = summary
         return out
 

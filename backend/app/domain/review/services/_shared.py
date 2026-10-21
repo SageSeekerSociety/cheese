@@ -11,6 +11,7 @@ GitHub-enforcement cache. Nothing here owns state.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 import uuid
@@ -19,11 +20,13 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Final
 
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 from app.core.sentences import NoticeText, say
 from app.domain.block.repositories import BlockRepository as BlockRepository
+from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_ACCEPT_CONFLICT as EVENT_ACCEPT_CONFLICT,
 )
@@ -78,7 +81,9 @@ from app.domain.notice_meta import (
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository as ProjectRepository
 from app.domain.review.models import (
+    AcceptCard,
     AcceptStatus,
+    DeliverableKind,
 )
 from app.domain.topic.models import Topic
 from app.domain.topic.repositories import TopicRepository as TopicRepository
@@ -152,6 +157,47 @@ _MERGE_FAILED_MESSAGE = (
     "The card remains pending and the topic stays active; repair the workspace "
     "and retry."
 )
+
+
+async def _hold_deliverable(session: AsyncSession, card: AcceptCard) -> None:
+    """换交付物（`redeliver`）与采纳在同一张卡上排队，到本事务结束为止，然后把
+    卡重读一遍。
+
+    用的是按卡号的事务级 advisory 锁，不是这一行的 FOR UPDATE：采纳那条路上有
+    几处用新连接改这张卡（`pr_publish.record_pr` 之类），行锁拿在请求自己的事务
+    里，那几处就会等一个永远等不到的提交。"""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"accept-card-deliverable:{card.id}"},
+    )
+    await session.execute(
+        select(AcceptCard)
+        .where(AcceptCard.id == card.id)
+        .execution_options(populate_existing=True)
+    )
+
+
+def _deliverable_revision(project_id: uuid.UUID, card: AcceptCard) -> str | None:
+    """卡上交出去的那一份是哪一版：卡面带着它，采纳的请求要原样带回来。
+
+    待处理的卡交出去的文件或地址可以原地换（`redeliver`），而采纳的那一刻合的
+    必须是人看过的那一份 —— 和 PR 卡的 head 同一个道理（`_seen_head`），只是这
+    里没有 commit 可以对。文件看快照落盘的时刻和大小，地址看地址本身；交合并的
+    卡没有这一项，给 None。"""
+    if card.deliverable_kind is DeliverableKind.file:
+        try:
+            st = library.artifact_snapshot_path(
+                project_id, card.id, card.deliverable_name or ""
+            ).stat()
+            mark = f"{st.st_mtime_ns}:{st.st_size}"
+        except (OSError, ValidationError):
+            mark = "missing"
+    elif card.deliverable_kind is DeliverableKind.link:
+        mark = card.deliverable_url or ""
+    else:
+        return None
+    raw = f"{card.deliverable_kind.value}|{card.deliverable_name}|{mark}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def _stale_view_message(pr_number: int | None, action: str) -> str:
@@ -230,7 +276,11 @@ async def _github_enforces(repo: str, token: str | None) -> bool:
 # reads that as a failure and degrades to a local merge, and the card reaches
 # `accepted` having delivered nothing at all.
 _BLOCKED_BY_CARD_MESSAGES = {
-    AcceptStatus.pending: "已有待处理的验收卡，请改验收人而不是再递一张",
+    AcceptStatus.pending: (
+        "已有待处理的验收卡，不要再递一张：换交出去的文件或地址用 cheese_redeliver，"
+        "改标题或正文用 cheese_describe，代码的新提交用 cheese push-fix；"
+        "换验收人由人在卡上改"
+    ),
     AcceptStatus.pending_gate: "已有待处理的验收卡，请改验收人而不是再递一张",
     AcceptStatus.conflict: (
         "上一张验收卡卡在合并冲突上，解决冲突后由人重试采纳，不要再递一张"

@@ -50,7 +50,7 @@ from app.api.auth import (
     MediaActorResolverDep,
     remember_for_media,
 )
-from app.api.byte_response import media_bytes_response
+from app.api.byte_response import blob_response, media_bytes_response
 from app.api.inert_headers import INERT_HEADERS, NO_SNIFF
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
@@ -205,12 +205,10 @@ async def upload_attachment(
         name = clean_artifact_path(library_path)
         # 找一次它的字节：既确认它真的在，也把大小告诉输入栏。一个字节都不读、不写。
         ref = library.library_ref(name)
-        stored = await library_records.attachment_file(
-            db, topic.project_id, topic_id, ref
-        )
+        stored = await library_records.stored_file(db, topic.project_id, name)
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         mime = _EXT_MEDIA_MIME.get(suffix, "application/octet-stream")
-        return ok({"path": ref, "mime": mime, "bytes": stored.stat().st_size})
+        return ok({"path": ref, "mime": mime, "bytes": stored.size})
     else:
         assert file is not None
         mime = (
@@ -308,8 +306,8 @@ async def attachment_raw(
 ) -> Response:
     """Authorized raster images and video bytes, never executable HTML/SVG.
 
-    A room's own file is served from disk with byte ranges, so a player seeking
-    through a long recording reads only the part it shows. A video read with the
+    A room's own file and a library file are served with byte ranges, so a
+    player seeking through a long recording reads only the part it shows. A video read with the
     ``Authorization`` header leaves a cookie for this path behind
     (``remember_for_media``): the ``<video>`` element's own range requests
     cannot carry the header, and the cookie is how they prove the same viewer.
@@ -349,9 +347,19 @@ async def attachment_raw(
         stored = await library_records.attachment_file(
             db, topic.project_id, room_id, clean
         )
-        response: Response = FileResponse(
-            stored, media_type=media_type, headers=headers
-        )
+        response: Response
+        if isinstance(stored, library_records.Stored):
+            response = blob_response(
+                stored.location,
+                stored.key,
+                stored.size,
+                media_type,
+                headers,
+                request.headers.get("range"),
+                request.headers.get("if-range"),
+            )
+        else:
+            response = FileResponse(stored, media_type=media_type, headers=headers)
     else:
         data = await source_bytes(db, topic.project_id, room_id, clean, task, source)
         response = media_bytes_response(

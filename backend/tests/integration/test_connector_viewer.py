@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.common.auth import create_access_token, verify_access_token
 from app.domain.agent.device_hub import HubScreen, device_hub
+from app.domain.device.models import DeviceRow
 from app.domain.user.repositories import UserRepository
 from app.domain.user.sessions import SessionService
 from tests.conftest import seed_user
@@ -366,15 +367,15 @@ def test_a_screen_writes_nothing_into_another_projects_inbox(client):
         _unregister(screen)
 
 
-# --- 「我的设备」management CRUD ------------------------------------------------
+# --- Personal-team enrollment management -------------------------------------
 
 
-def _enroll_device(client, owner_token: str, project_id: str | None = None) -> dict:
+def _enroll_device(client, owner_token: str, team_id: int | None = None) -> dict:
     start = client.post("/connector/auth/device/start", json={"device_name": "macbook"})
     code = start.json()["device_code"]
     body: dict = {"device_code": code}
-    if project_id:
-        body["project_id"] = project_id
+    if team_id is not None:
+        body["team_id"] = team_id
     connect = client.post("/connector/connect", json=body, headers=_bearer(owner_token))
     assert connect.status_code == 200, connect.text
     return connect.json()
@@ -383,7 +384,7 @@ def _enroll_device(client, owner_token: str, project_id: str | None = None) -> d
 def test_my_devices_list_rename_and_unbind(client):
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     alice = _login_real(client, "alice")
-    enrolled = _enroll_device(client, alice, project_id=project["id"])
+    enrolled = _enroll_device(client, alice, team_id=project["team_id"])
     device_id = enrolled["device_id"]
 
     # List — the owner sees their compute device. It is pure compute, so the view
@@ -394,7 +395,7 @@ def test_my_devices_list_rename_and_unbind(client):
     assert any(d["device_id"] == device_id for d in devices)
     mine = next(d for d in devices if d["device_id"] == device_id)
     assert "agent_handle" not in mine
-    assert project["id"] in mine["project_ids"]
+    assert mine["team_id"] == project["team_id"]
 
     # Rename.
     renamed = client.patch(
@@ -534,37 +535,65 @@ def test_a_machine_learns_its_approval_was_withdrawn(client):
     )
 
 
-def test_the_owner_sees_claude_code_logged_in_once_they_log_in_on_the_machine(
-    client, monkeypatch
-):
-    """Logging in on the machine tells the server nothing; the owner's devices
-    page asks the machine, and sees the login without waiting for the machine
-    to connect again (#2991)."""
+def test_registered_login_refresh_is_visible_on_team_models(client, monkeypatch):
+    """A registered subscription reports its status on Models; probing an
+    execution device does not register a credential."""
     alice = _login_real(client, "alice")
     device_id = _enroll_device(client, alice)["device_id"]
-    answer = {"installed": True, "status": {"loggedIn": False}}
+    listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
+    mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
+    team_id = mine["team_id"]
+    models_path = f"/connector/teams/{team_id}/model-connections"
+
+    async def transport_token():
+        async with client.test_factory() as db:
+            device = await db.get(DeviceRow, device_id)
+            assert device is not None
+            return device.token
+
+    token = client.portal.call(transport_token)
+    login_id = "default"
+    status = {"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max"}
 
     async def exec_(device, argv, *, stdin, timeout):
+        answer = {"installed": True, "logins": [{"id": login_id, "status": status}]}
         return {"exit": 0, "stdout": json.dumps(answer) + "\n", "stderr": ""}
 
     monkeypatch.setattr(device_hub, "is_online", lambda device: device == device_id)
     monkeypatch.setattr(device_hub, "exec", exec_)
-    asked = client.post(
-        f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(alice)
-    )
-    assert asked.status_code == 200 and asked.json()["logged_in"] is False
+    asked = client.post("/connector/model-login/refresh", json={"token": token})
+    assert asked.status_code == 200, asked.text
+    assert client.get(models_path, headers=_bearer(alice)).json()["connections"] == []
 
-    answer["status"] = {"loggedIn": True, "subscriptionType": "max"}
-    asked = client.post(
-        f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(alice)
+    authorization = client.post(
+        f"/connector/teams/{team_id}/claude-login", headers=_bearer(alice)
     )
-    assert asked.status_code == 200 and asked.json()["logged_in"] is True
+    assert authorization.status_code == 200, authorization.text
+    registered = client.post(
+        "/connector/model-login/register",
+        json={
+            "ticket": authorization.json()["ticket"],
+            "transport_token": token,
+            "computer_name": "macbook",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    login_id = registered.json()["login_id"]
+    asked = client.post("/connector/model-login/refresh", json={"token": token})
+    assert asked.status_code == 200, asked.text
+    connections = client.get(models_path, headers=_bearer(alice)).json()["connections"]
+    assert len(connections) == 1
+    assert connections[0]["id"] == login_id
+    assert connections[0]["device_id"] == device_id
+    assert connections[0]["logged_in"] is True
+    assert connections[0]["subscription_type"] == "max"
     listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
     mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
-    assert mine["claude_code"]["logged_in"] is True
+    assert "claude_code" not in mine and "logins" not in mine
 
     bob = _login_real(client, "bob")
     theirs = client.post(
-        f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(bob)
+        f"/connector/teams/{team_id}/claude-logins/{login_id}/check",
+        headers=_bearer(bob),
     )
-    assert theirs.status_code == 404
+    assert theirs.status_code == 403

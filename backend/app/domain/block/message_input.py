@@ -198,10 +198,20 @@ QuotedContextIn = Annotated[
 
 
 class ChatAttachmentIn(BaseModel):
-    """A file uploaded beforehand, by path."""
+    """A file carried by the message.
+
+    A person's message names a file uploaded beforehand (`path`, `mime`); an
+    agent's message carries the bytes itself (`content_b64`, `name`), because
+    its file lives on the executor and the room has never seen it. The backend
+    reads the agent's bytes, keeps the ones that really are pictures under
+    `uploads/<random>/<name>`, and ignores the rest of what the caller said
+    about them.
+    """
 
     path: str = Field(min_length=1)
     mime: str = ""
+    name: str = Field(default="", max_length=255)
+    content_b64: str | None = None
 
 
 class ChatMessageIn(BaseModel):

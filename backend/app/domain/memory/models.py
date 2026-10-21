@@ -65,17 +65,6 @@ def project_scope_prefix(project_id: str | uuid.UUID) -> str:
     return f"{project_id}:"
 
 
-def project_of_scope(scope: scopes.MemoryScope, scope_id: str) -> uuid.UUID | None:
-    """The project a pool belongs to, read back out of its key; None for a
-    scope that is not keyed by a project, or a key that is not in that shape."""
-    if scope not in (scopes.MemoryScope.agent_project, scopes.MemoryScope.user):
-        return None
-    try:
-        return uuid.UUID(scope_id.split(":", 1)[0])
-    except ValueError:
-        return None
-
-
 def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> str:
     """scope_id for :attr:`scopes.MemoryScope.agent_project`.
 

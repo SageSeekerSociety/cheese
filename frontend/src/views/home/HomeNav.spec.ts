@@ -58,7 +58,7 @@ async function mount(overrides: Record<string, unknown> = {}) {
     history: createMemoryHistory(),
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
-      { path: '/spaces', name: 'HomeSpaces', component: blank },
+      { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
       {
@@ -69,6 +69,7 @@ async function mount(overrides: Record<string, unknown> = {}) {
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
           { path: 'docs', name: 'TeamsDetailDocs', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
+          { path: 'models', name: 'TeamsDetailModels', component: blank },
           { path: 'credits', name: 'TeamsDetailCredits', component: blank },
         ],
       },
@@ -178,8 +179,7 @@ describe('首页目录的画面', () => {
       expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/docs', '/teams/andy/compute']))
     )
     expect(hrefs()).not.toContain('/teams/andy/members')
-    // 自己的额度在个人设置里；团队才有「额度」这一页。
-    expect(hrefs()).not.toContain('/teams/andy/credits')
+    expect(hrefs()).toContain('/teams/andy/credits')
 
     const text = document.body.textContent ?? ''
     expect(text.indexOf('林夏')).toBeLessThan(text.indexOf('团队'))

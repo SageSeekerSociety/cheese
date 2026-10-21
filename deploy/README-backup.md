@@ -21,13 +21,24 @@ Docker volume. Everything else (R2 upload, verify, off-site) is shared.
 |---|---|---|
 | `db-backup.sh` (pg_dump -Fc + verify + prune + off-site) | on the box, `~/ops/db-backup.sh` (`cheese-db-backup.timer`) | hourly, :00 |
 | `r2-upload.py` (off-site DB dump copy to R2) | on the box, `~/ops/r2-upload.py` | each DB backup, right after local verify |
+| `r2-prune-dumps.py` (tiered local retention, R2-verified deletes) | on the box, `~/ops/r2-prune-dumps.py`, only where `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` | each DB backup, at the end |
 | `r2-sync-uploads.py` (incremental mirror of `uploads/` to R2) | on the box, `~/ops/r2-sync-uploads.py` (`cheese-uploads-mirror.timer`) | hourly, :30 |
-| `r2-sync-uploads.py` again, over the transcript archives (already `.tar.gz`, so mirrored as they are) | on the box, same script (`cheese-transcripts-mirror.timer`, `UPLOADS_PREFIX=transcripts`) | hourly, :45 |
+| `r2-sync-uploads.py` again, over the old transcript archives (already `.tar.gz`, so mirrored as they are; nothing writes new ones there: room cleanup uploads archived rooms' transcripts to the private bucket under `transcripts/rooms/`, see [`README-room-cleanup.md`](README-room-cleanup.md)) | on the box, same script (`cheese-transcripts-mirror.timer`, `UPLOADS_PREFIX=transcripts`) | hourly, :45 |
 | Backup freshness alert | `.github/workflows/backup-freshness.yml`, dev runner | daily; local DB > 26h, R2/ uploads markers and DB/tar objects > 6h fail |
 | Recovery proof | `.github/workflows/backup-restore-test.yml`, dev runner | weekly; local DB, R2 DB, uploads restore + verify |
 | Box-down alert | `.github/workflows/box-uptime.yml`, GitHub-hosted | hourly; fails if the box's runner is offline |
 
 Backups: `~/backups/cheese-<ts>.dump` (compressed custom format), 30-day retention.
+A box whose `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` (dev: `7`) thins
+instead with `r2-prune-dumps.py`: every dump for that many days, then one dump
+per day up to the 30 days (the day's last with a matching R2 copy). Any other
+dump is deleted only once R2 holds an object of the same size; a missing or
+mismatched copy is re-uploaded and read back first, and stays local if that
+fails (logged as `WARN`). Size is the check because the uploader records no
+checksum. The plain 30-day prune runs after it either way, and a pruner that
+fails outright (bad config, missing script) makes the unit exit non-zero. A box
+without the file (prod) keeps only the plain 30-day prune. The pruner needs
+`r2-common.py` next to it in `~/ops`.
 Each DB is on a **separate host** from its app box, so the DB dumps already
 survive a DB-host loss; the off-site R2 copy survives loss of the app box too.
 
@@ -67,8 +78,12 @@ uploads marker. No remote deletion or backup failure policy changes.
 
 Each verified dump is also pushed to Cloudflare R2 bucket `cheese-db-backups`
 (key `db/cheese-<ts>.dump`), so a copy survives loss of the app box itself.
-Off-site retention is a **30-day R2 bucket lifecycle rule** (server-side, so the
-box needs no delete permission). The upload uses a **scoped R2 API token** (Object
+Off-site retention of the dumps is the bucket's one lifecycle rule,
+`expire-db-dumps-30d`: objects under `db/` expire 30 days after upload (maxAge
+2592000 s, read from the Cloudflare API on 2026-10-19). It runs server-side, so
+the box needs no delete permission. The rule reaches `db/` and nothing else:
+nothing under `session-records/`, `transcripts/`, `archive/` or a `prod-*`
+prefix expires, and no rule may be added that reaches them. The upload uses a **scoped R2 API token** (Object
 Read & Write, that bucket only) stored in `~/ops/r2.env` (chmod 600, NOT in git —
 see `r2.env.example`). The off-site leg is best-effort: if it fails, the local
 backup still counts as a success and the failure is logged as `WARN` in

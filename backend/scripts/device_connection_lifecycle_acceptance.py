@@ -498,13 +498,14 @@ def image_owner(options, root: Path, *, start_runtime=True):
                 input="""
 INSERT INTO "user" (id,username,email,created_at,updated_at)
 VALUES (42,'acceptance','acceptance@example.test',now(),now());
-INSERT INTO device (device_id,name,token,owner_user_id,created_at)
-VALUES ('acceptance-machine','acceptance','acceptance',42,now());
 INSERT INTO team (id,name,intro,description,avatar_id,personal_owner_user_id,
                   created_at,updated_at)
 VALUES (nextval('team_seq'),'个人','','',1,42,now(),now());
 INSERT INTO team_user_relation (id,team_id,user_id,role,created_at,updated_at)
 SELECT nextval('team_user_relation_seq'),id,42,0,now(),now()
+FROM team WHERE personal_owner_user_id = 42;
+INSERT INTO device (device_id,name,token,owner_user_id,team_id,created_at)
+SELECT 'acceptance-machine','acceptance','acceptance',42,id,now()
 FROM team WHERE personal_owner_user_id = 42;
 INSERT INTO projects
  (id,name,owner_handle,team_id,ai_mode,settings,created_at,updated_at)
@@ -512,9 +513,6 @@ SELECT '11111111-1111-1111-1111-111111111111','Acceptance','acceptance',id,
        'off','{}',now(),now()
 FROM team WHERE personal_owner_user_id = 42;
 INSERT INTO hosted_device (device_id,owner_user_id) VALUES ('acceptance-machine',42);
-INSERT INTO device_project (id,device_id,project_id,created_at,updated_at)
-VALUES ('55555555-5555-5555-5555-555555555555','acceptance-machine',
-        '11111111-1111-1111-1111-111111111111',now(),now());
 INSERT INTO topics (id,project_id,title,kind,status,is_private,created_at,updated_at)
 VALUES ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111',
         'Acceptance','room','active',false,now(),now());
@@ -935,10 +933,15 @@ def image_acceptance(options, root: Path) -> int:
                     except httpx.HTTPStatusError as exc:
                         assert exc.response.status_code == 409
                         assert "X-Device-Id" not in exc.response.headers
-                        assert (
-                            exc.response.json()["error"]["message"]
-                            == "device calls are active"
-                        )
+                        async with httpx.AsyncClient(base_url=url, timeout=10) as probe:
+                            health = await probe.get("/healthz")
+                            assert health.status_code == 503
+                            assert health.json()["draining"] is True
+                            resumed = await backend._request(
+                                "POST", "/internal/device-connection/release-resume"
+                            )
+                            assert resumed.json() == {"draining": False}
+                            assert (await probe.get("/healthz")).status_code == 200
                     else:
                         raise AssertionError(
                             "owner accepted drain during an active call"

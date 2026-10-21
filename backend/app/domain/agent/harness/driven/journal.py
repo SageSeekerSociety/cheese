@@ -2,10 +2,9 @@
 
 The same journal serves both ends of the wire: the runner records into one on
 the session machine, and the backend mirrors it into another from a cursor.
-Each has three tables — the harness's records in arrival order, the inputs
-already accepted, and a key-value state that holds the cursors — and only the
-records table differs by harness, because only the harness knows what makes one
-of its records the same record twice.
+Each keeps records in arrival order, accepted inputs, cursor state, and image
+blobs with their record references. Only the records table differs by harness,
+because only the harness knows what makes one of its records the same twice.
 
 Two cursors live in the state table. ``received`` is how far the mirror has
 asked the other end; ``landed`` is how far the room has persisted. The first
@@ -17,6 +16,9 @@ import json
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+
+from app.core.journal_images import attached
+from app.core.journal_images import prune as prune_images
 
 PAGE = 256
 
@@ -45,6 +47,16 @@ class Journal:
         self.connection.executescript(
             self.schema
             + """
+            CREATE TABLE IF NOT EXISTS images (
+                sha256 TEXT PRIMARY KEY,
+                data BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS image_refs (
+                sequence INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                PRIMARY KEY (sequence, sha256)
+            );
+            CREATE INDEX IF NOT EXISTS image_refs_digest ON image_refs(sha256);
             CREATE TABLE IF NOT EXISTS inputs (
                 id TEXT PRIMARY KEY,
                 payload TEXT NOT NULL,
@@ -60,7 +72,12 @@ class Journal:
 
     def read(self, after: int = 0) -> list[dict]:
         return [
-            {"sequence": seq, "at": at, "record": json.loads(record)}
+            {
+                "sequence": seq,
+                "at": at,
+                "record": json.loads(record),
+                "images": attached(json.loads(record), self.connection),
+            }
             for seq, at, record in self.connection.execute(
                 f"SELECT sequence, recorded_at, {self.column} FROM {self.table} "
                 "WHERE sequence > ? ORDER BY sequence LIMIT ?",
@@ -109,7 +126,6 @@ class Journal:
             f"SELECT MIN(sequence) FROM {self.table} "
             "WHERE sequence > ? AND (recorded_at >= ? "
             f"OR json_extract({self.column}, '$.cheese.receipt') = 1 "
-            f"OR json_extract({self.column}, '$.cheese.work_completed') = 1 "
             f"OR ({self.turn_end}))",
             (after, before),
         ).fetchone()
@@ -121,11 +137,18 @@ class Journal:
         return count, last or after
 
     def prune(self, before: str) -> None:
+        """Drop what the room took before ``before``, and only what the raw
+        record has kept too, where a raw record is kept of this journal."""
+        through = int(self.recall("landed") or 0)
+        kept = self.recall("recorded")
+        if kept is not None:
+            through = min(through, int(kept))
         with self.connection:
             self.connection.execute(
                 f"DELETE FROM {self.table} WHERE sequence <= ? AND recorded_at < ?",
-                (int(self.recall("landed") or 0), before),
+                (through, before),
             )
+            prune_images(self.connection, self.table)
 
     def remember(self, key: str, value: str) -> None:
         with self.connection:

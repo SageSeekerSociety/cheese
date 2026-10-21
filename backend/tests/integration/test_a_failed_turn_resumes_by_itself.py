@@ -13,6 +13,7 @@ import json
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select, text
@@ -20,18 +21,41 @@ from sqlalchemy import select, text
 from app.api.deps import get_work_runner
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
-from app.domain.agent.models import TurnResume
+from app.domain.agent.input_registration import confirm_receipt
+from app.domain.agent.models import AgentTurn, TurnResume
+from app.domain.agent.platform_failures import (
+    RUNNER_REPLACED_CODE,
+    RUNNER_REPLACED_MESSAGE,
+)
+from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent.resumable_failures import (
+    POLICIES,
+    Policy,
+)
+from app.domain.agent.resumable_failures import (
+    RATE_LIMITED as RATE_KIND,
+)
+from app.domain.agent.run_records import for_site
 from app.domain.agent.service import AgentResult
-from app.domain.agent.turn_resume import RESUME_NOTE, after_failure, hand_due
+from app.domain.agent.turn.intake.messages import RunnerIntake
+from app.domain.agent.turn.state.live import LiveWork
+from app.domain.agent.turn_resume import (
+    RESUME_NOTE,
+    after_failure,
+    hand_due,
+)
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
+from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery
+from app.domain.delivery.receipts import register_input
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
-from tests.conftest import StubChannel, stub_compute
+from tests.conftest import StubChannel, drain_hooks, stub_compute
 from tests.integration.conftest import project_service, registered
 from tests.support.hang import HANG_S
 from tests.support.threads import thread_in
@@ -48,15 +72,24 @@ COOLING = (
     "API Error: Server is temporarily limiting requests (not your usage limit)"
     " · cheese: all Claude accounts are cooling down"
 )
+# Our gateway's lifetime cap on an upstream key (`deploy/gateway/spend_cap.py`),
+# in the words a turn ends with when it is reached.
+SPENT_CAP = (
+    "API Error: Server is temporarily limiting requests (not your usage limit)"
+    " · gemini/gemini-4-argon has reached its spend cap: $1005.08 of $1000.00."
+    " Received Model Group=gemini-4-argon\nAvailable Model Group Fallbacks=None"
+    "（rate_limit）"
+)
 
 
 class Seat(StubChannel):
     """The agent's session: its first ``failing`` turns fail with ``failure``,
     every later one ends normally. Records each input it is handed."""
 
-    def __init__(self, failure: str):
+    def __init__(self, failure: str, *, retrying: bool = False):
         super().__init__()
         self.failure = failure
+        self.retrying = retrying
         #: How many of its first turns fail.
         self.failing = 1
         self.handed: list[str] = []
@@ -66,6 +99,18 @@ class Seat(StubChannel):
         self.handed.append(prompt)
         self.starts(topic_id, agent=agent)
         self.acknowledges(topic_id, prompt, agent=agent)
+        if self.retrying:
+            self.record(
+                topic_id,
+                agent=agent,
+                type="system",
+                subtype="api_retry",
+                attempt=1,
+                max_retries=10,
+                retry_delay_ms=500,
+                error_status=429,
+                error="rate_limit",
+            )
         if len(self.handed) <= self.failing:
             self.record(
                 topic_id,
@@ -110,21 +155,12 @@ async def _resumes(factory, conversation) -> list[TurnResume]:
 async def _owed_resumes(
     factory, conversation, *, expected: bool = True
 ) -> list[TurnResume]:
-    """The resumes owed once the failure has landed. Scheduling follows the
-    failure card in the same step: where one is expected, wait for it as long
-    as for anything else; where none is, a moment after the card is enough."""
-    async with asyncio.timeout(HANG_S):
-        while not await _failure_card(factory, conversation):
-            await asyncio.sleep(0.05)
+    """The resumes owed once the failed turn has ended."""
     for _ in range(HANG_S * 10 if expected else 20):
         if rows := await _resumes(factory, conversation):
             return rows
         await asyncio.sleep(0.1)
     return []
-
-
-async def _failure_card(factory, conversation) -> bool:
-    return await _failure_cards(factory, conversation) > 0
 
 
 async def _failure_cards(factory, conversation) -> int:
@@ -141,10 +177,10 @@ async def _failure_cards(factory, conversation) -> int:
         )
 
 
-async def _first_turn_fails(factory, tmp_path, failure: str):
+async def _first_turn_fails(factory, tmp_path, failure: str, *, retrying=False):
     """A person gives the agent work and the turn ends on ``failure``."""
     _project, conversation, seat, _instance = await _room_with_agent(factory)
-    screen = Seat(failure)
+    screen = Seat(failure, retrying=retrying)
     runner = get_work_runner()
     chat = ChatService(
         work_runner=runner,
@@ -164,14 +200,40 @@ async def _first_turn_fails(factory, tmp_path, failure: str):
 
 
 @pytest.mark.anyio
-async def test_a_rate_limited_turn_resumes_by_itself(business_db_factory, tmp_path):
+async def test_a_rate_limited_turn_resumes_by_itself(
+    business_db_factory, tmp_path, monkeypatch
+):
     factory = business_db_factory
+    frames = []
+    broker = get_broker()
+    original_publish = broker.publish
+
+    async def capture(channel, frame):
+        frames.append(frame)
+        await original_publish(channel, frame)
+
+    monkeypatch.setattr(broker, "publish", capture)
     conversation, _seat, screen, runner, chat = await _first_turn_fails(
-        factory, tmp_path, RATE_LIMITED
+        factory, tmp_path, RATE_LIMITED, retrying=True
     )
     try:
         rows = await _owed_resumes(factory, conversation)
         assert len(rows) == 1, "the rate-limited turn left nothing to resume it"
+        assert await _failure_cards(factory, conversation) == 0
+        assert not [f for f in frames if f.get("type") == "error"]
+        async with factory() as session:
+            waiting = await for_site(session, conversation, since=None, until=None)
+        recovery_lines = [
+            r for r in waiting if r["meta"].get("event_type") == "turn_resume_wait"
+        ]
+        assert len(recovery_lines) == 1
+        assert [
+            r["meta"].get("event_type")
+            for r in waiting
+            if r["meta"].get("event_type") in ("api_retry", "turn_resume_wait")
+        ] == ["api_retry", "turn_resume_wait"]
+        assert recovery_lines[0]["meta"]["reason"] == "rate_limited"
+        assert recovery_lines[0]["meta"]["i18n"]["content"]["params"]["minutes"] >= 1
         [owed] = rows
         # It waits first: a request limited a moment ago is limited now.
         assert owed.due_at > datetime.now(UTC)
@@ -189,6 +251,27 @@ async def test_a_rate_limited_turn_resumes_by_itself(business_db_factory, tmp_pa
         assert len(screen.handed) == 2
         assert str(RESUME_NOTE) in screen.handed[-1]
         assert len(screen.sessions) == 1
+        await runner.drain(timeout_s=10)
+        # The resume's start is recorded when the session's read of it is
+        # reported; the resumed turn's own retry line arrives as a record after
+        # that read, on its own commit. Read the history once both have landed.
+        [(room_id, _)] = screen.sessions
+        await drain_hooks(screen, room_id)
+        async with factory() as session:
+            completed = await for_site(session, conversation, since=None, until=None)
+        assert [
+            r["meta"].get("event_type")
+            for r in completed
+            if r["meta"].get("event_type")
+            in ("api_retry", "turn_resume_wait", "turn_resume_started")
+        ] == [
+            "api_retry",
+            "turn_resume_wait",
+            "turn_resume_started",
+            "api_retry",
+        ]
+        assert await _failure_cards(factory, conversation) == 0
+        assert not [f for f in frames if f.get("type") == "error"]
         # Handed over once: the clock running again sends nothing more.
         assert await hand_due(factory, now=owed.due_at + timedelta(hours=1)) == 0
     finally:
@@ -205,6 +288,7 @@ async def test_a_refused_request_is_not_resumed(business_db_factory, tmp_path):
     try:
         # Sending the same conversation again is refused the same way.
         assert await _owed_resumes(factory, conversation, expected=False) == []
+        assert await _failure_cards(factory, conversation) == 1
         later = datetime.now(UTC) + timedelta(days=1)
         assert await hand_due(factory, now=later) == 0
         assert await dispatch_pending(factory, chat=chat, runner=runner) == 0
@@ -212,6 +296,207 @@ async def test_a_refused_request_is_not_resumed(business_db_factory, tmp_path):
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_spent_upstream_cap_is_not_resumed(business_db_factory, tmp_path):
+    """The gateway's lifetime cap on an upstream key refuses under the same
+    "temporarily limiting requests" wording as a rate limit, and used to be
+    resumed until the streak ran out: six rounds of ten retries, all refused
+    (2026-10-21)."""
+    factory = business_db_factory
+    conversation, _seat, screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, SPENT_CAP
+    )
+    try:
+        # Nothing about raising a cap happens by waiting: the seat stays idle
+        # and the room gets the failure card, which offers no retry.
+        assert await _owed_resumes(factory, conversation, expected=False) == []
+        assert await _failure_cards(factory, conversation) == 1
+        later = datetime.now(UTC) + timedelta(days=1)
+        assert await hand_due(factory, now=later) == 0
+        assert await dispatch_pending(factory, chat=chat, runner=runner) == 0
+        assert len(screen.handed) == 1
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_exhausted_resume_budget_shows_failure_card(
+    business_db_factory, tmp_path, monkeypatch
+):
+    monkeypatch.setitem(POLICIES, RATE_KIND, Policy(base_s=60, cap_s=1800, attempts=0))
+    factory = business_db_factory
+    conversation, _seat, _screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, RATE_LIMITED
+    )
+    try:
+        async with asyncio.timeout(HANG_S):
+            while await _failure_cards(factory, conversation) == 0:
+                await asyncio.sleep(0.05)
+        assert await _failure_cards(factory, conversation) == 1
+        async with factory() as session:
+            visible = await for_site(session, conversation, since=None, until=None)
+        assert [
+            r["meta"].get("event_type")
+            for r in visible
+            if r["meta"].get("event_type") == "turn_resume_stopped"
+        ] == ["turn_resume_stopped"]
+        assert not [
+            r for r in visible if r["meta"].get("event_type") == "turn_resume_wait"
+        ]
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_failed_resume_delivery_keeps_wait_and_appends_failure(
+    business_db_factory,
+):
+    from app.domain.agent.turn_resume import report_failed_deliveries
+
+    factory = business_db_factory
+    project, conversation, seat, _instance = await _room_with_agent(factory)
+    row = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=uuid.uuid4(),
+        result=_failed(RATE_LIMITED),
+        route="subscription",
+    )
+    assert row is not None
+    assert await hand_due(factory, now=row.due_at + timedelta(seconds=1)) == 1
+
+    async with factory() as session:
+        room = await room_of(session, conversation)
+        await TopicMemberService(session).remove(topic_id=room, handle=seat, actor="u")
+        await session.commit()
+
+    assert await dispatch_pending(factory, chat=None, runner=None) == 0
+    assert await report_failed_deliveries(factory) == 1
+    assert await report_failed_deliveries(factory) == 0
+    async with factory() as session:
+        delivery = await session.scalar(
+            select(Delivery).where(Delivery.event_id == row.id)
+        )
+        visible = await for_site(session, conversation, since=None, until=None)
+    assert delivery is not None
+    assert delivery.state == "failed"
+    assert [
+        r["meta"].get("event_type")
+        for r in visible
+        if r["meta"].get("event_type") in ("turn_resume_wait", "turn_resume_stopped")
+    ] == ["turn_resume_wait", "turn_resume_stopped"]
+    assert await _failure_cards(factory, conversation) == 1
+
+
+@pytest.mark.anyio
+async def test_an_unread_joined_resume_is_not_recorded_as_started(business_db_factory):
+    factory = business_db_factory
+    project, conversation, seat, _instance = await _room_with_agent(factory)
+    row = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=uuid.uuid4(),
+        result=_failed(RATE_LIMITED),
+        route="subscription",
+    )
+    assert row is not None
+    assert await hand_due(factory, now=row.due_at + timedelta(seconds=1)) == 1
+
+    attempt_id = uuid.uuid4()
+    async with factory() as session:
+        delivery = await session.scalar(
+            select(Delivery).where(Delivery.event_id == row.id)
+        )
+        assert delivery is not None
+        delivery.attempt_id = attempt_id
+        delivery.state = "sending"
+        delivery_id = delivery.id
+        identity = InputIdentity(
+            project_id=project,
+            conversation_id=conversation,
+            recipient_handle=seat,
+            harness="claude_code",
+            native_session_id="joined-resume",
+            input_id=uuid.uuid4(),
+            work_id=attempt_id,
+        )
+        await register_input(
+            session,
+            identity,
+            InputEffects(delivery_id=delivery_id, attempt_id=attempt_id),
+        )
+        await session.commit()
+
+    async def no_op(*_args):
+        return None
+
+    class AcceptedTransport:
+        session_factory = factory
+
+        async def join_running_session(self, _delivery_id, _attempt_id):
+            return True  # Transport accepted; the CLI has not echoed the input.
+
+    intake = SimpleNamespace(_wait_to_start=no_op, _wait_for_replay=no_op)
+    await RunnerIntake._run(
+        intake,
+        AcceptedTransport(),
+        conversation,
+        attempt_id,
+        author="platform",
+        content="resume",
+        addressed=None,
+        delivery_id=delivery_id,
+    )
+    async with factory() as session:
+        unread = await for_site(session, conversation, since=None, until=None)
+    assert [
+        r["meta"].get("event_type")
+        for r in unread
+        if r["meta"].get("event_type") in ("turn_resume_wait", "turn_resume_started")
+    ] == ["turn_resume_wait"]
+
+    receipt = InputReceipt(identity=identity, evidence="native_echo")
+    await confirm_receipt(factory, LiveWork(), receipt)
+    await confirm_receipt(factory, LiveWork(), receipt)
+    async with factory() as session:
+        seen = await for_site(session, conversation, since=None, until=None)
+    assert [
+        r["meta"].get("event_type")
+        for r in seen
+        if r["meta"].get("event_type") in ("turn_resume_wait", "turn_resume_started")
+    ] == ["turn_resume_wait", "turn_resume_started"]
+
+
+@pytest.mark.anyio
+async def test_a_resume_without_a_record_is_not_owed(business_db_factory, monkeypatch):
+    from app.domain.agent import turn_resume
+
+    factory = business_db_factory
+    project, conversation, seat, _instance = await _room_with_agent(factory)
+
+    async def record_unavailable(*_args, **_kwargs):
+        raise RuntimeError("run record unavailable")
+
+    monkeypatch.setattr(turn_resume, "record", record_unavailable)
+    with pytest.raises(RuntimeError, match="run record unavailable"):
+        await after_failure(
+            factory,
+            project_id=project,
+            conversation_id=conversation,
+            seat=seat,
+            failed_turn_id=uuid.uuid4(),
+            result=_failed(RATE_LIMITED),
+            route="subscription",
+        )
+    assert await _resumes(factory, conversation) == []
 
 
 @pytest.mark.anyio
@@ -233,6 +518,14 @@ async def test_a_person_speaking_takes_the_turn_back(business_db_factory, tmp_pa
         assert len(screen.handed) == 1
         [dropped] = await _resumes(factory, conversation)
         assert dropped.dropped_reason == "person_spoke"
+        async with factory() as session:
+            visible = await for_site(session, conversation, since=None, until=None)
+        assert [
+            r["meta"].get("event_type")
+            for r in visible
+            if r["meta"].get("event_type")
+            in ("turn_resume_wait", "turn_resume_stopped")
+        ] == ["turn_resume_wait", "turn_resume_stopped"]
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)
@@ -257,17 +550,13 @@ async def test_a_seat_that_fails_again_after_being_woken_still_resumes(
         await asyncio.wait_for(screen.handed_one.wait(), HANG_S)
         screen.handed_one.clear()
         await runner.drain(timeout_s=10)
-        async with asyncio.timeout(HANG_S):
-            while await _failure_cards(factory, conversation) < 2:
-                await asyncio.sleep(0.05)
-        # Scheduling follows the card in the same step; give it as long as
-        # anything else to land. Without the fix nothing ever changes here and
-        # the assertion below is what reports it.
+        # The next failure replaces the owed resume without posting a card.
         for _ in range(HANG_S * 10):
             rows = await _resumes(factory, conversation)
             if any(r.failed_at > first.failed_at for r in rows):
                 break
             await asyncio.sleep(0.1)
+        assert await _failure_cards(factory, conversation) == 0
 
         # Long after any backoff the second failure could have asked for.
         later = datetime.now(UTC) + timedelta(hours=2)
@@ -476,3 +765,70 @@ async def test_spent_subscription_accounts_resume_when_the_first_one_thaws(
     wait = (row.due_at - now).total_seconds()
     # After the first account thaws, not on a short backoff that fails again.
     assert thaw_in <= wait <= thaw_in + 5 * 60
+
+
+#: A rate limit whose service names a reset hours away.
+LIMITED_FOR_HOURS = (
+    "API Error: Server is temporarily limiting requests (not your usage limit)"
+    " · Rate limited. Please try again in 4 hours"
+)
+
+
+@pytest.mark.anyio
+async def test_an_upgrade_after_a_wake_up_resumes_at_once(business_db_factory):
+    """The seat was waiting out a rate limit when a teammate's delivery woke it,
+    which ends that wait. The upgrade then cuts the woken turn short: that turn
+    is resumed within seconds, not after the limit the wake-up already ended."""
+    factory = business_db_factory
+    project, conversation, _seat, instance = await _room_with_agent(factory)
+    seat = agent_instance_handle(instance)
+    t0 = datetime.now(UTC)
+    waiting = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=uuid.uuid4(),
+        result=_failed(LIMITED_FOR_HOURS),
+        route="subscription",
+        now=t0,
+    )
+    assert waiting is not None and waiting.due_at > t0 + timedelta(hours=1)
+    woken = uuid.uuid4()
+    async with factory() as session:
+        session.add(
+            AgentTurn(
+                id=woken,
+                conversation_id=conversation,
+                continuation_id=woken,
+                author="teammate",
+                agent_handle=seat,
+                content="go on",
+                started_at=t0 + timedelta(seconds=10),
+                delivered_at=t0 + timedelta(seconds=10),
+            )
+        )
+        await session.commit()
+    t1 = t0 + timedelta(seconds=60)
+
+    resumed = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=woken,
+        result=AgentResult(
+            text=RUNNER_REPLACED_MESSAGE,
+            session_id="s",
+            is_error=True,
+            failure_code=RUNNER_REPLACED_CODE,
+        ),
+        route="subscription",
+        now=t1,
+    )
+
+    assert resumed is not None and resumed.dropped_at is None
+    assert resumed.reason == "runner_replaced"
+    assert resumed.failed_turn_id == woken
+    assert resumed.due_at <= t1 + timedelta(seconds=10)
+    assert await hand_due(factory, now=t1 + timedelta(seconds=10)) == 1

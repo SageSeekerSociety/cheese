@@ -105,6 +105,8 @@
       <DesktopPhoneDialog />
     </template>
     <CommandPalette />
+    <!-- The person's own assistant: one panel for the whole app (stores/agent.ts). -->
+    <AgentHost />
     <DeviceConnect />
     <!-- 新手引导的后半程：一个浮窗一步步带着把第一件事做完（composables/useProjectTour.ts）。
          挂在最外层：任务页、支线里也要接着带。 -->
@@ -182,6 +184,7 @@ import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { t } from '@/i18n'
+import AgentHost from '@/layouts/AgentHost.vue'
 import { routeIds } from '@/lib/addresses'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { rememberRailCount } from '@/lib/bootShape'

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 )
 
 // After an uninstall the machine is the machine its owner lent us, with nothing
@@ -17,7 +19,9 @@ import (
 // on a machine that no longer had anything installed that could find it.
 func TestUninstallLeavesNothingBehind(t *testing.T) {
 	home := t.TempDir()
-	configDir := filepath.Join(t.TempDir(), "cheese")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	configDir := config.Dir()
 
 	// What a machine that has run rooms actually holds, spelled as the launcher
 	// writes it rather than as a single directory, so the assertion below is
@@ -29,6 +33,7 @@ func TestUninstallLeavesNothingBehind(t *testing.T) {
 		filepath.Join(home, ".cheese", "launch", "room.sh"),
 		filepath.Join(home, ".cheese", "executor-releases", "abc", "runtime.py"),
 		filepath.Join(home, ".cheese", "cheese-tunnel.token"),
+		filepath.Join(home, ".cheese", "claude-login", "model-service.json"),
 		filepath.Join(configDir, "config.json"),
 	}
 	for _, path := range written {
@@ -47,7 +52,8 @@ func TestUninstallLeavesNothingBehind(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := removeFootprint(configDir, home); err != nil {
+	cfgPath := filepath.Join(configDir, "config.json")
+	if err := removeFootprint(cfgPath, home, !otherEnrollments(cfgPath)); err != nil {
 		t.Fatalf("removeFootprint: %v", err)
 	}
 
@@ -56,7 +62,7 @@ func TestUninstallLeavesNothingBehind(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.Name() != filepath.Base(theirs) {
+		if entry.Name() != filepath.Base(theirs) && entry.Name() != "Library" {
 			t.Errorf("uninstall left %s behind in the home directory", entry.Name())
 		}
 	}

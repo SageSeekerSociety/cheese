@@ -70,6 +70,7 @@ export namespace UserAuthApi {
     | 'realname:view'
     | 'realname:update'
     | 'realname:delete'
+    | 'account:delete'
 
   export interface TOTPAuthResponseDataType extends AuthResponseDataType {
     requires2FA: boolean
@@ -210,7 +211,14 @@ export namespace UserAuthApi {
   export const getOAuthProviders = () =>
     axiosRequest<GetOAuthProvidersResponse>({ url: '/users/auth/oauth/providers', method: 'GET' })
 
-  export const redirectToOAuthLogin = (providerId: string, state?: string, accessType?: string) => {
+  export const getGithubAppIntent = (returnPath: string) =>
+    axiosRequest<{ intent: string }>({
+      url: '/users/auth/oauth/github-app/intent',
+      method: 'POST',
+      data: { returnPath },
+    })
+
+  export const oauthLoginUrl = (providerId: string, state?: string, accessType?: string) => {
     const params = new URLSearchParams()
     if (state) params.append('state', state)
     if (accessType) params.append('access_type', accessType)
@@ -218,8 +226,12 @@ export namespace UserAuthApi {
     const queryString = params.toString()
     const url = `/users/auth/oauth/login/${providerId}${queryString ? `?${queryString}` : ''}`
 
+    return `${API_BASE_URL}${url}`
+  }
+
+  export const redirectToOAuthLogin = (providerId: string, state?: string, accessType?: string) => {
     // 直接跳转到后端 OAuth 登录 URL
-    window.location.href = `${API_BASE_URL}${url}`
+    window.location.href = oauthLoginUrl(providerId, state, accessType)
   }
 
   // OAuth 验证 API

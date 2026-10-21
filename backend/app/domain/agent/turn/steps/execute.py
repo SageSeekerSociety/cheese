@@ -523,7 +523,7 @@ async def execute(
         rec["status"] = "crashed"
         rec["duration_s"] = round(time.monotonic() - t0, 1)
         logger.exception("turn %s failed for topic %s", turn_id, topic_id)
-        # The failure goes into the 现场 timeline as a persisted system event
+        # The failure goes into the room's conversation as a persisted system event
         # (scrolls with the flow, survives reload) — not just a transient
         # banner. No invented cause: the log has the real traceback.
         platform_failure = classify_platform_failure(exc)

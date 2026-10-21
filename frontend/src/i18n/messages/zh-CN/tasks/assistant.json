@@ -1,27 +1,121 @@
 {
   "ask": "问芝士",
   "close": "关闭",
-  "conversations": "这道题的对话",
   "failed": "芝士暂时答不上来，稍后再试。",
   "greeting": "关于这道题有什么想问的，都可以问我。",
   "hint": "回答由 AI 根据题目生成，可能有误，以题目原文和出题人的说明为准。",
   "label": "问芝士",
-  "listed": "{day} · {n} 个问题",
-  "newConversation": "新对话",
-  "noQuestions": "还没有提问",
   "placeholder": "问一个关于这道题的问题…",
   "queued": "正在排队，资源空出后自动开始",
-  "readingDocs": "正在查文档…",
-  "readingTasks": "正在看你参与的题…",
-  "reads": "芝士读过这道题的说明、要求和题目信息，不读附件。",
-  "send": "发送",
+  "reads": "芝士读过这道题的说明、要求和题目信息。",
   "starters": {
     "basics": "做这道题要先会什么？",
     "hard": "这道题难在哪里？",
     "start": "从哪里入手比较好？"
   },
-  "stop": "停止",
   "stopped": "已停止",
-  "thinking": "正在想…",
-  "today": "今天"
+  "today": "今天",
+  "steps": {
+    "folded": "{first}等 {n} 步",
+    "thinking": "思考中",
+    "thought": "思考了 {s} 秒",
+    "notFound": "内容不存在",
+    "denied": "没有权限",
+    "failed": "调用失败"
+  },
+  "changes": {
+    "title": "表单改动",
+    "created": "新建草稿",
+    "untitled": "未命名题目",
+    "undoOne": "撤销{field}",
+    "count": "已填写 {n} 处",
+    "undoAll": "全部撤销",
+    "empty": "已清空",
+    "rubric": "{n} 项，合计 {total} 分",
+    "yes": "是",
+    "no": "否",
+    "kept": "你改过，未修改",
+    "ordinal": "第 {n} 道",
+    "days": "{n} 天",
+    "none": "无",
+    "undoFailed": "撤销失败",
+    "changedCount": "改了 {n} 处",
+    "setting": {
+      "on": "开",
+      "off": "关",
+      "instant": "每条都发",
+      "digest": "汇总",
+      "daily": "每天",
+      "weekly": "每周",
+      "all": "所有新消息",
+      "mentions": "只在 {'@'}我和我参与的支线有回复时",
+      "mute": "静音"
+    }
+  },
+  "notes": {
+    "title": "待你确认"
+  },
+  "result": {
+    "saved": "已保存「{name}」的修改",
+    "published": "已发布「{name}」",
+    "pending": "待管理员审核",
+    "open": "查看题目"
+  },
+  "files": {
+    "failed": "文件上传失败",
+    "add": "添加文件"
+  },
+  "draft": {
+    "greeting": "描述想出的题目，或上传实验指导、讲义等文件，我会填写到表单中。",
+    "placeholder": "描述题目或输入修改要求",
+    "hint": "内容由 AI 生成，发布前核对一遍。",
+    "starters": {
+      "rubric": "起草提交内容和评分要点",
+      "harder": "难度提高一档",
+      "check": "以学生视角检查"
+    },
+    "editStarters": {
+      "later": "截止时间延后一周",
+      "rubric": "调整评分要点",
+      "check": "以学生视角检查"
+    }
+  },
+  "newTopic": "新话题",
+  "olderTopics": "更早的话题",
+  "dock": "固定到右侧",
+  "undock": "取消固定",
+  "anywhere": {
+    "greeting": "有什么想问的，或者要我做的事，都可以说。",
+    "placeholder": "输入问题或要做的事",
+    "hint": "回答由 AI 生成，可能有误。"
+  },
+  "project": {
+    "greeting": "我可以读这个项目里的频道和文档，起草要发的消息，或者把活派给项目里的 AI 队友。发出去之前都由你确认。",
+    "starters": {
+      "mine": "这里有什么需要我处理的？",
+      "recap": "总结这里最近的讨论",
+      "progress": "这个项目最近有什么进展？",
+      "handOff": "把这件事派给 AI 队友"
+    }
+  },
+  "proposal": {
+    "waiting": "待你确认",
+    "sent": "已发送到「{where}」",
+    "opened": "已开任务「{title}」",
+    "dismissed": "不用了",
+    "done": "已执行",
+    "to": "发到",
+    "channel": "频道",
+    "title": "标题",
+    "message": "内容",
+    "brief": "交代",
+    "what": "操作",
+    "why": "原因",
+    "send": "发送",
+    "openTask": "开任务",
+    "confirm": "确认",
+    "dismiss": "不用了",
+    "view": "查看",
+    "failed": "发送失败"
+  }
 }

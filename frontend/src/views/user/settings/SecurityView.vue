@@ -94,12 +94,28 @@
           <v-icon :icon="oauthProviderIcon(conn.providerId)" size="18" />
           {{ oauthProviderName(conn.providerId) }}
         </span>
-        <span class="srow__v">
-          <span v-if="conn.login" class="srow__strong">@{{ conn.login }}</span>
-          <template v-if="conn.connectedAt">{{
-            t('account.security.linkedOn', { date: formatDate(conn.connectedAt) })
-          }}</template>
+        <span class="srow__v" :class="{ 'srow__v--stack': conn.providerId === GITHUB_APP_PROVIDER_ID }">
+          <span class="srow__line">
+            <span v-if="conn.login" class="srow__strong">@{{ conn.login }}</span>
+            <template v-if="conn.connectedAt">{{
+              t('account.security.linkedOn', { date: formatDate(conn.connectedAt) })
+            }}</template>
+          </span>
+          <template v-if="conn.providerId === GITHUB_APP_PROVIDER_ID">
+            <span v-if="githubExpired(conn)" class="srow__note srow__note--danger">{{
+              t('account.security.githubExpired')
+            }}</span>
+            <span v-else class="srow__note">{{ t('account.security.githubUse') }}</span>
+          </template>
         </span>
+        <BaseButton
+          v-if="conn.providerId === GITHUB_APP_PROVIDER_ID && githubExpired(conn)"
+          kind="primary"
+          size="sm"
+          @click="emit('sign-in-github')"
+        >
+          {{ t('account.security.githubSignInAgain') }}
+        </BaseButton>
         <BaseButton kind="ghost" size="sm" :loading="unbinding === conn.id" @click="emit('unbind', conn)">
           {{ t('account.security.unlink') }}
         </BaseButton>
@@ -128,7 +144,7 @@
           <v-icon :icon="sessionIcon(session.userAgent)" size="18" />
           {{ deviceLabel(session.userAgent) }}
         </span>
-        <span class="srow__v srow__v--parts" :title="sessionDetails(session).join(' · ')">
+        <span class="srow__v srow__v--parts">
           <!-- The separator belongs to the part after it, so a wrapped row
                never leaves a dot alone at the end of a line; one that lands
                at the start of a line is clipped (see .srow__v--parts). -->
@@ -152,6 +168,17 @@
       </div>
       <div v-if="sessionsLoaded && !sessions.length" class="srow srow--empty">
         {{ t('account.security.noSessions') }}
+      </div>
+    </section>
+
+    <!-- Closing the account: last, and apart, because nothing below it comes back. -->
+    <section class="settings-card">
+      <h2 class="settings-card__title">{{ t('account.security.closeTitle') }}</h2>
+      <div class="srow">
+        <span class="srow__v">{{ t('account.security.closeNote') }}</span>
+        <BaseButton kind="danger" size="sm" @click="showCloseAccount = true">
+          {{ t('account.security.closeButton') }}
+        </BaseButton>
       </div>
     </section>
 
@@ -183,6 +210,31 @@
             <BaseButton kind="ghost" @click="showChangePassword = false">{{ t('account.cancel') }}</BaseButton>
             <BaseButton kind="primary" type="submit" :loading="changingPassword">
               {{ t('account.security.changePasswordSubmit') }}
+            </BaseButton>
+          </v-card-actions>
+        </v-form>
+      </v-card>
+    </v-dialog>
+
+    <!-- Closing the account: the username typed out, so a stray click does nothing -->
+    <v-dialog v-model="showCloseAccount" :max-width="DIALOG_WIDTH.sm" @after-leave="typedUsername = ''">
+      <v-card :title="t('account.security.closeDialogTitle')">
+        <v-form @submit.prevent="submitClose">
+          <v-card-text class="pt-2">
+            <p class="t-body mb-4">{{ t('account.security.closeDialogBody', { username }) }}</p>
+            <v-text-field
+              id="security-close-username"
+              v-model="typedUsername"
+              autocomplete="off"
+              :label="t('account.security.closeUsernameLabel')"
+            />
+            <p v-if="closeError" class="setup__error" role="alert">{{ closeError }}</p>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <BaseButton kind="ghost" @click="showCloseAccount = false">{{ t('account.cancel') }}</BaseButton>
+            <BaseButton kind="danger" type="submit" :disabled="!usernameMatches" :loading="closingAccount">
+              {{ t('account.security.closeConfirm') }}
             </BaseButton>
           </v-card-actions>
         </v-form>
@@ -290,13 +342,20 @@ import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import i18n, { t } from '@/i18n'
+import { GITHUB_APP_PROVIDER_ID, ownGithub } from '@/lib/githubAccount'
 import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
 import { deviceOf } from '@/views/user/settings/deviceName'
+
+/** Nothing renews this GitHub authorization: PRs fall back to the AI teammate. */
+const githubExpired = (conn: OAuthConnectionInfo) => ownGithub(conn, true).state === 'expired'
 
 /** Which half of turning two-step verification on is shown. */
 export type SetupStep = 'qr' | 'verify' | 'backup'
 
-defineProps<{
+const props = defineProps<{
+  /** The signed-in account's username: what closing it asks to be typed. */
+  username: string
+  closingAccount: boolean
   /** The browser can make passkeys at all; without it the row is inert. */
   webAuthnSupported: boolean
   passkeys: PasskeyInfo[]
@@ -324,6 +383,8 @@ defineProps<{
   qrCodeData: string
   verifyError: string
   backupCodes: string[]
+  /** Why the server refused to close the account, kept in the dialog until it closes. */
+  closeError: string
 }>()
 
 const emit = defineEmits<{
@@ -336,9 +397,12 @@ const emit = defineEmits<{
   'close-totp': []
   'change-password': [password: string]
   unbind: [conn: OAuthConnectionInfo]
+  /** GitHub's authorization ran out: authorize cheesex-app again. */
+  'sign-in-github': []
   'sign-out-device': [sessionId: string]
   'sign-out-others': []
   copy: [text: string]
+  'close-account': [username: string]
 }>()
 
 // Which dialog is open, and how far the two-step setup has got, are the
@@ -347,6 +411,16 @@ const showChangePassword = defineModel<boolean>('showChangePassword', { required
 const showTotp = defineModel<boolean>('showTotp', { required: true })
 const setupStep = defineModel<SetupStep>('setupStep', { required: true })
 const verificationCode = defineModel<string>('verificationCode', { required: true })
+const showCloseAccount = defineModel<boolean>('showCloseAccount', { required: true })
+
+const typedUsername = ref('')
+const usernameMatches = computed(
+  () => !!props.username && typedUsername.value.trim().toLowerCase() === props.username.toLowerCase()
+)
+
+function submitClose() {
+  if (usernameMatches.value) emit('close-account', typedUsername.value.trim())
+}
 
 // The change-password fields, their form, and the code being typed are this
 // side's; only what is sent up leaves them.
@@ -422,6 +496,29 @@ const sessionIcon = (userAgent: string) =>
   padding-left: 16px;
 }
 
+.srow__v--stack {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  row-gap: 2px;
+}
+
+.srow__line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.srow__note {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.srow__note--danger {
+  color: var(--danger-ink);
+}
+
 .srow--empty {
   display: block;
   font-size: 13px;
@@ -439,25 +536,16 @@ const sessionIcon = (userAgent: string) =>
    back into that space. A part that wraps to the start of a line pulls its
    separator past the left edge instead, where the clip hides it.
 
-   On the wide layout the row is one line: a device's details that wrap to a
-   second line push the row taller than the sign-out button beside it and the
-   button looks misaligned. So at sm (600px) and up the parts are laid out inline in a
-   single clipped line — anything past the edge is hidden and the full text is
-   on `title`. Below md the row has its own full-width line and wraps freely. */
+   The parts wrap at every width: a device's details run past one line in the
+   value column of a desktop settings page, and clipping them there cut off the
+   IP address at the end. The sign-out button stays centred on the taller row,
+   as on any other row whose value takes two lines. */
 .srow__v--parts {
   --sep: 20px;
 
   column-gap: 0;
   row-gap: 2px;
   overflow: hidden;
-}
-
-@media (min-width: 600px) {
-  .srow__v--parts {
-    display: block;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
 }
 
 .srow__part {

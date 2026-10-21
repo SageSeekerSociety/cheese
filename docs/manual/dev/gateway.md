@@ -86,7 +86,9 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `retry_stream.py` | `ClientOwnedStream` 让客户端活到流关闭，避免重试期间连接被提前回收 |
 | `patch_deepseek_images.py` | 上游只保留 user 消息里的图片；工具结果（Claude Code 读本地图片）在适配后是 tool 消息，补丁让它也保留图片 |
 | `patch_empty_anthropic_text.py` | 丢掉空的 system 文本块、剥掉嵌套 tool_result 里的空文本 |
+| `patch_hosted_vllm_reasoning.py` | 上游 `hosted_vllm/` 适配器删掉历史 assistant 消息的 `reasoning_content`；补丁让它留着。思考模式的模型要在工具调用的下一轮拿回这段推理，DeepSeek 缺了直接 400「`content[].thinking` … must be passed back」 |
 | `provider_http_timing.py` | 打 `provider_http_timing` 记录：DNS/TLS/超时/401·403/429/1113 配额/其它 HTTP 错误分类，未知的 500 不会被说成网络原因 |
+| `qwen_asr.py` | 不是补丁：经 LiteLLM 公开的 `custom_provider_map` 注册的 `qwen-asr/` 提供方。阿里百炼的 Qwen-Audio 语音识别只有原生接口，它把「最后一条 user 消息里带 `input_audio`」的对话请求转成百炼请求，system 消息作上下文、`vocabulary` 作热词；按百炼每秒 25 token 的口径把音频时长报成 prompt tokens，由这一行的单价计费 |
 | `check_config.py` | 用 config.yaml 建一个 Router，断言 thinking 与 effort 的转换行为 |
 
 ## 日志里有什么 {#logs}
@@ -164,16 +166,20 @@ GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
 - `--deployment <model_info.id>` 只打模型组里的一个部署：LiteLLM 把 `model` 是部署 id 的请求直接路由到那一个部署。按模型组生效的 pre-call 钩子（去掉计费行、会话亲和）这时不起作用，所以钉住部署时缓存未命中只记 warn。
 - 请求逐个发，一个模型几美分；有一项 fail 就退出码 1。失败原因里带供应商的报错原文和模型回答的片段，所以输出是给操作的人看的，别贴进共享日志。
 
-### 订阅与中转：同一个模型挂多条供给 {#supply-rows}
+### 免费、订阅与中转：同一个模型挂多条供给 {#supply-rows}
 
-一个模型组可以有多行（多个 deployment），路由器按 `litellm_params.order` 从小往大用：先用最小 `order` 里健康的，任何错误（配额用完的 429 在内，上下文超长与内容审查除外）都在同一个请求里落到下一档；没写 `order` 的行只在所有带 `order` 的都不健康时才用。所以「订阅额度优先、按量付费兜底」就是订阅那行 `order: 1`、官方 API 那行在后面。被 429 的行冷却约 5 秒后再试。
+一个模型组可以有多行（多个 deployment），路由器按 `litellm_params.order` 从小往大用：先用最小 `order` 里健康的，任何错误（配额用完的 429 在内，上下文超长与内容审查除外）都在同一个请求里落到下一档；只有所有带 `order` 的行都不健康时，才会使用没写 `order` 的行。被 429 的行冷却约 5 秒后重试。
+
+新发现可用的免费供给就接入；同一个模型的供给按免费、已购买的订阅额度、按量付费 API 的顺序设置 `order`。`deepseek-flash` 的自建供给（人大）排在最前面，免费供给接在它之后、官方按量付费 API 之前。人大那份只列不带日期的别名，版本核实不了，所以菜单名不写日期版本。
+
+接入前核对供应商当前价格，并用平台实际使用的 API 跑通请求和 `gateway_conformance.py` 的适用检查。仅在供应商客户端内免费的入口，要等平台 API 可用后再上架。
 
 有的上游要自己的请求头（`upstream_headers.py`），按行声明在 `model_info` 里，只发给声明了的那一行，同组兜底的官方行收不到：
 
 - `cheese_upstream_headers: {user-agent: cheese-gateway/1.0}`：原样发送的固定头。
 - `cheese_session_header: x-opencode-session`：用这个头名带上会话。值是 Claude Code 的 `X-Claude-Code-Session-Id`（校验同 `chatgpt_session.caller_session`）；调用方没有（pi 走 `/v1/chat/completions`、后端 `GatewayChat` 的功能）时，用「调用方虚拟 key + 第一条用户消息」的哈希，同一段对话每次相同、不同 key 永不相同；只有连用户消息都没有的请求才给随机值。声明了就一定发——OpenCode Go 缺这个头直接 400 `MissingSessionID`。
 
-上游只有 OpenAI 兼容的 `chat/completions`、没有 Anthropic Messages 时，前缀用 `hosted_vllm/`，`api_base` 写到 `/v1` 为止：`openai/` 会被翻成 Responses API（`/responses`），`custom_openai/` 会丢掉 reasoning effort、还把 OpenAI SDK 的名字拼进 User-Agent。`test_chat_route.py` 用假上游守着 thinking、工具调用、工具历史和图片两个方向都完整。有原生 Messages 的上游用 `anthropic/`，`api_base` 写到 `/v1` 之前（LiteLLM 自己拼 `/v1/messages`）。
+上游只有 OpenAI 兼容的 `chat/completions`、没有 Anthropic Messages 时，前缀用 `hosted_vllm/`，`api_base` 写到 `/v1` 为止：`openai/` 会被翻成 Responses API（`/responses`），`custom_openai/` 会丢掉 reasoning effort、还把 OpenAI SDK 的名字拼进 User-Agent。`test_chat_route.py` 用假上游守着 thinking、工具调用、工具历史和图片两个方向都完整，以及下一轮请求里 assistant 消息带回上一轮的推理。有原生 Messages 的上游用 `anthropic/`，`api_base` 写到 `/v1` 之前（LiteLLM 自己拼 `/v1/messages`）。
 
 这类行通常在管理页（数据库）加，不进 `config.yaml`，因为改 `config.yaml` 要发布网关、会打断正在流的会话。数据库行与 `config.yaml` 行可以同名同组，`model_info` 里的自定义键原样到达钩子。生效时间（2026-10-14 在固定版本上实测）：`POST /model/new` 和 `/model/delete` 一两秒内；改一行用 `PATCH /model/{id}/update`（约 1 秒）——`POST /model/update` 会丢掉 `order` 且不改 `model_info`；直接改库要等网关每 30 秒一次的轮询。
 

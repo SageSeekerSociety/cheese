@@ -8,6 +8,7 @@ about another.
 """
 
 import asyncio
+import re
 import time
 import uuid
 
@@ -110,6 +111,23 @@ def _heard(channel: StubChannel, room: str, text: str) -> str | None:
     )
 
 
+def _named_seat(channel: StubChannel, room: str, text: str) -> str:
+    """The seat ``text`` was addressed to, read off the line that carries it.
+
+    Both seats now read every message, so ``_heard`` cannot tell them apart.
+    The line the addressee got keeps the mention bare; the one every other seat
+    got marks it ``→ @seat``.
+    """
+    for prompts in _prompts(channel, room).values():
+        for prompt in prompts:
+            for line in prompt.splitlines():
+                if text in line:
+                    found = re.search(r"<@(cheese-[0-9a-f]+)>", line)
+                    if found:
+                        return found.group(1)
+    raise AssertionError(f"no prompt line carried {text!r}")
+
+
 def _turns(client, room: str) -> list[AgentTurn]:
     async def read() -> list[AgentTurn]:
         async with client.test_factory() as session:
@@ -149,8 +167,8 @@ def test_a_teammate_whose_session_is_gone_has_its_turn_closed(client):
         ),
         "the two ordinary turns never finished",
     )
-    first = _heard(before, room, "跑一下测试")
-    second = _heard(before, room, "编一下文档")
+    first = _named_seat(before, room, "跑一下测试")
+    second = _named_seat(before, room, "编一下文档")
     assert first != second
     fed = {turn.id for turn in _turns(client, room)}
 
@@ -181,6 +199,7 @@ def test_a_teammate_whose_session_is_gone_has_its_turn_closed(client):
     after.report_gone(topic, "second", before.sessions[(topic, second)].session_id)
     replaced = _service(client, after)
     assert client.portal.call(replaced.recover_sessions) == 1
+    client.portal.call(replaced.replays_settled)
     client.portal.call(runner.resume_orphans, replaced)
 
     still_open = {
@@ -206,14 +225,15 @@ def test_waiting_messages_for_two_teammates_both_get_their_turn(client):
 
     _until(
         lambda: (
-            _heard(channel, room, "修一下登录页") is not None
+            len(_prompts(channel, room)) == 2
+            and _heard(channel, room, "修一下登录页") is not None
             and _heard(channel, room, "看一下注册页") is not None
         ),
         "a waiting message never got its turn",
     )
-    assert _heard(channel, room, "修一下登录页") != _heard(
-        channel, room, "看一下注册页"
-    )
+    # 每个座位读自己的窗口，所以两条消息现在两位队友都读得到；要断言的是
+    # 两轮分别落在两个会话上，而不是「谁读到了哪一句」。
+    assert len(_prompts(channel, room)) == 2
 
 
 def test_a_waiting_message_is_not_held_back_by_another_teammates_turn(client):
@@ -240,7 +260,9 @@ def test_a_waiting_message_is_not_held_back_by_another_teammates_turn(client):
         lambda: _heard(channel, room, "看一下注册页") is not None,
         "the second teammate's message never got its turn",
     )
-    assert _heard(channel, room, "看一下注册页") != _heard(channel, room, "跑一下测试")
+    assert _named_seat(channel, room, "看一下注册页") != _named_seat(
+        channel, room, "跑一下测试"
+    )
 
 
 class NeverReady(StubChannel):
@@ -281,7 +303,7 @@ def test_two_teammates_prompts_that_never_arrived_are_both_sent_again(client):
         ),
         "a prompt that never arrived was not sent again",
     )
-    assert _heard(after, room, "跑一下测试") != _heard(after, room, "编一下文档")
+    assert len(_prompts(after, room)) == 2
 
 
 class _Deaf(StubChannel):
@@ -378,6 +400,7 @@ def test_an_unanswered_conversation_is_unknown_not_dead(client):
     assert client.portal.call(replaced.recover_sessions) == 1, (
         "只有 keeper 答了 ping，B 聋"
     )
+    client.portal.call(replaced.replays_settled)
     client.portal.call(runner.resume_orphans, replaced)
 
     b_sid = before.sessions[(topic, mate_b)].session_id
@@ -506,7 +529,7 @@ def test_a_tasks_message_naming_another_teammate_gets_its_turn(client):
         ),
         "a message a task held never got its turn",
     )
-    assert _heard(channel, task, "跑一下测试") != _heard(channel, task, "编一下文档")
+    assert len(_prompts(channel, task)) == 2
 
 
 def test_terminal_evidence_closes_rows_even_with_zero_recovered(client):

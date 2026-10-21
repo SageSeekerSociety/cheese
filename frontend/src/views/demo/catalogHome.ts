@@ -13,9 +13,10 @@
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `HOME_ENTRIES` 这个
  * 值，运行时不构成循环。
  */
-import type { Team, TeamMember } from '@/types'
+import type { SpaceLink, Team, TeamMember } from '@/types'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import CreateSpaceDialog from '@/views/home/CreateSpaceDialog.vue'
 import HomeHubView from '@/views/home/HomeHubView.vue'
 import HomeNav from '@/views/home/HomeNav.vue'
 import HomeSidebarView from '@/views/home/HomeSidebarView.vue'
@@ -48,7 +49,13 @@ const CREW = team('cheese-core', '芝士核心组', 'OWNER')
 const LAB = team('data-lab', '数据课第三组', 'MEMBER')
 const OWN = team('linxia', '林夏', 'OWNER', { personal: true })
 
-const SPACES = [{ id: 3, name: '数据分析课' }]
+const SPACES: SpaceLink[] = [{ id: 3, name: '数据分析课' }]
+/** 加入的一个，加上我建的、还没过审的两个。 */
+const SPACES_WITH_APPLICATIONS: SpaceLink[] = [
+  ...SPACES,
+  { id: 8, name: '操作系统 2026 秋', review: 'PENDING' },
+  { id: 9, name: '量子计算导论', review: 'REJECTED' },
+]
 
 /** 目录这一件要的那一份值，缺的都当「没有」。 */
 function navArgs(overrides: Record<string, unknown> = {}) {
@@ -60,6 +67,7 @@ function navArgs(overrides: Record<string, unknown> = {}) {
     transferring: null,
     transferCandidates: [] as TeamMember[],
     joinOpen: false,
+    createOpen: false,
     ...overrides,
   }
 }
@@ -98,6 +106,12 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         note: '自己名下那一个（`personal`）不当团队说：以自己的昵称单独一行，摆在「团队」小标题之上，展开后没有「成员」也没有「额度」，更没有那一行的 ⋯。',
         props: { teams: [OWN, CREW], currentHandle: 'linxia' },
         expect: '林夏',
+      },
+      {
+        name: '我建的空间还在审核或被驳回',
+        note: '还没过审的空间也在空间那一组里，右边一枚小标签说是「待审核」还是「已驳回」，点进去是那份申请（撤回，或者看原因、改了重新提交）。',
+        props: { spaces: SPACES_WITH_APPLICATIONS },
+        expect: '已驳回',
       },
       {
         name: '手上一个空间都没加入',
@@ -174,6 +188,36 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         note: '上一回没成的理由由外面给回来，画在输入框下面；画面上这一格留着不清，人还在这里改码。',
         props: { error: '邀请码无效、已过期或已达使用上限' },
         expect: '邀请码无效、已过期或已达使用上限',
+      },
+    ],
+  },
+  {
+    id: 'create-space-dialog',
+    title: 'CreateSpaceDialog',
+    about: '新建空间：头像、名称、简介。提交以后它是一份待平台管理员审核的申请，落到那份申请上。',
+    file: 'src/views/home/CreateSpaceDialog.vue',
+    component: CreateSpaceDialog,
+    needs: ['vuetify', 'i18n'],
+    teleport: true,
+    args: { modelValue: true },
+    states: [
+      {
+        name: '刚打开',
+        note: '三格都空着，名称没填时主按钮按不动。换头像、真去建、成了往哪跳都在 `useTeamNav`。',
+        props: {},
+        expect: '空间名称',
+      },
+      {
+        name: '正在提交',
+        note: '主按钮转圈，这时候关不掉。',
+        props: { busy: true },
+        expectSelector: '.v-btn--loading',
+      },
+      {
+        name: '没建成',
+        note: '上一回没成的那一句由外面给回来，画在表单底下；填好的字还在。',
+        props: { error: '创建失败，稍后重试' },
+        expect: '创建失败，稍后重试',
       },
     ],
   },

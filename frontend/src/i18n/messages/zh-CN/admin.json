@@ -110,7 +110,8 @@
       "waitingNote": "等得最久的已经 {for}",
       "failures": "provider 失败",
       "failuresNote": "{minutes} 分钟内 provider 弄坏的宿主机数；到 {limit} 台平台就停止开新机器，只每 {probe} 分钟试一台",
-      "hostsNote": "整机虚拟机也算在上限里；已放弃、释放中的不算"
+      "hostsNote": "整机虚拟机也算在上限里；已放弃、释放中的不算",
+      "warm": "温机另算：此刻 {n} 台，目标 {target} 台。"
     },
     "alert": {
       "notConfigured": "这个部署没有配置 MicroCloud，云端沙箱不可用",
@@ -120,6 +121,7 @@
     "hosts": "宿主机",
     "noHosts": "此刻一台宿主机都没有",
     "vm": "整机",
+    "warmChip": "温机",
     "col": {
       "host": "宿主机",
       "phase": "阶段",
@@ -185,15 +187,12 @@
       "hostsLostValue": "{n} 台（{error} · {away} · {never}）",
       "sandboxesLost": "随宿主机丢失的工作中沙箱"
     },
-    "warm": "温机池（目标 {target} 台）",
-    "noWarm": "此刻没有温机",
-    "warmAge": "已存在 {for}",
     "config": "每台宿主机放的沙箱数取两者中小的那个：每核 {perCore} 个，或内存放得下几个（每个 {memory} GB）；沙箱空闲 {sandboxIdle}后销毁，宿主机空闲 {hostIdle}后释放，整机虚拟机空闲 {vmIdle}后释放",
     "attempts": "尝试 {n} 次",
     "warmState": {
-      "preparing": "准备中",
-      "ready": "就绪",
-      "reserved": "已预定",
+      "preparing": "预热中",
+      "ready": "待领用",
+      "reserved": "领用中",
       "claimFailed": "领用失败",
       "deleting": "删除中",
       "cleanupFailed": "删除失败"
@@ -217,7 +216,7 @@
       "sandboxDisk": "磁盘 {used} / {cap} GB",
       "sandboxFiles": "文件 {used} / {cap}",
       "sandboxRead": "内存读数 {memory} · 磁盘读数 {disk}",
-      "foot": "用量每 {check}读一次，沙箱的磁盘每 {walk}读一次；宿主机的磁盘过 {disk}、inode 过 {inodes}、内存过 {memory}，连续两次读数都是，就发到告警群；沙箱用到上限的 {near} 标黄。"
+      "foot": "用量（含每个沙箱的磁盘）每 {check}读一次；宿主机的磁盘过 {disk}、inode 过 {inodes}、内存过 {memory}，连续两次读数都是，就发到告警群；沙箱用到上限的 {near} 标黄。"
     }
   }
 }

@@ -22,6 +22,7 @@ from app.domain.delivery.agent import (
     GIVE_UP_AFTER,
     dispatch_pending,
     instance_for_seat,
+    instances_for_seats,
     record_agent,
 )
 from app.domain.delivery.ledger import Ledger
@@ -190,14 +191,24 @@ async def deliver_due(
                 .with_for_update(skip_locked=True)
             )
         )
+        legacy_seats: dict[uuid.UUID, set[str]] = {}
+        for row in rows:
+            if (
+                row.agent_instance_id is None
+                and row.receiver_id is None
+                and how_it_arrives(row.recipient_handle) is Arrival.turn
+            ):
+                legacy_seats.setdefault(row.project_id, set()).add(row.recipient_handle)
+        instances = {
+            project: await instances_for_seats(session, project, seats)
+            for project, seats in legacy_seats.items()
+        }
         for row in rows:
             # Rows predating identity snapshots are resolved once, while still
             # pending. A completed legacy request is never selected or replayed.
             if row.agent_instance_id is None and row.receiver_id is None:
                 if how_it_arrives(row.recipient_handle) is Arrival.turn:
-                    agent = await instance_for_seat(
-                        session, row.project_id, row.recipient_handle
-                    )
+                    agent = instances[row.project_id].get(row.recipient_handle)
                     if agent is None:
                         continue
                     row.agent_instance_id = agent.id
@@ -246,8 +257,8 @@ async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int
         for row in rows:
             row.state = "failed"
             row.last_error = GAVE_UP
-            # A finished task waiting on this turn to be written up closes
-            # without it.
+            # A finished task waiting on this instruction to be written up
+            # closes without it.
             if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id:
                 await close_after_summary(
                     session, row.conversation_id, chat, machines=machines

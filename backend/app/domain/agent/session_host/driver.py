@@ -4,22 +4,26 @@ to do it with (``Wire``).
 A harness differs from the next in four things, and only in those: how its
 process is started on the session host, what its runner names the verbs of
 talking to it mid-work and of stopping it, how its records are read into the
-platform's events (its subscription), and the shape images travel in. The rest
-of driving a session — when to start it again, how a reading lands, when a
-session is gone — is the core's, the same for every harness (`host.py`).
+platform's events (from what its runner reports, ``Reports``, or from a mirror
+of its journal, ``Mirrors``), and the shape images travel in. The rest of
+driving a session — when to start it again, how a reading lands — is the
+core's (`host.py`); for a ``Reports`` harness, its runner says when the session
+is gone.
 """
 
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness import EventConsumer
 from app.domain.agent.harness import SessionRef as Seat
+from app.domain.agent.harness.driven.reporting import Hand, Reading
 from app.domain.agent.harness.driven.subscription import (
     Moved,
+    Records,
     SeatActivity,
     Subscription,
 )
@@ -32,11 +36,7 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
     StartRefused,
 )
-from app.domain.delivery.input_identity import (
-    CompletionConsumer,
-    ReceiptConsumer,
-    TerminationConsumer,
-)
+from app.domain.agent.session_state import SeatKey
 
 
 @dataclass(frozen=True)
@@ -51,11 +51,14 @@ class Launched:
     #: start from the same launch, while the runner answers, asks the host
     #: nothing.
     launch: str
-    #: The input protocol the runner speaks, for a harness that has one.
-    input_protocol: int | None = None
+    #: The lifecycle protocol its runner speaks (`driven/lifecycle.py`), for a
+    #: harness whose runner reports in it.
+    lifecycle: int | None = None
     #: The name its runner signs the record of its ending with, for a harness
     #: whose runner leaves one (`last_words`).
     name: str | None = None
+    #: The worker epoch it was registered under (`lifecycle`); 0 before it is.
+    epoch: int = 0
 
 
 @dataclass(frozen=True)
@@ -64,12 +67,18 @@ class Readers:
 
     consume: EventConsumer
     activity: SeatActivity
-    receipts: ReceiptConsumer
-    completions: CompletionConsumer
-    terminations: TerminationConsumer
     moved: Moved
-    #: The session's controls moved (Claude Code's).
+    #: The session's controls moved: its background tasks.
     announce: Callable[[], Awaitable[None]]
+    #: Every journal row, kept as the session's raw record.
+    records: Records | None
+    #: What a runner reported in the lifecycle protocol, for a harness whose
+    #: runner speaks it, and the registration its events are keyed under.
+    report: Hand
+    key: SeatKey
+    #: The epoch this process registered the session's runner under, as it
+    #: stands now (`lifecycle`).
+    epoch: Callable[[], int]
 
 
 def startup_refused(log: str, *, harness: str, timed_out: bool = False) -> StartRefused:
@@ -139,11 +148,8 @@ class Driver(Protocol):
     #: The runner method that takes the work away, and the key of its answer.
     stop: tuple[str, str]
     #: Whether the runner taking an input is the session reading it. False for
-    #: a harness whose records say when an input was read (its subscription's
-    #: ``receipt``).
+    #: a harness whose runner reports when an input was read (`lifecycle`).
     receipt_on_accept: bool
-    #: The mirror's file name.
-    mirror: str
 
     def working(self, status: dict) -> bool:
         """Whether a runner's ``ping`` says work is in flight."""
@@ -151,11 +157,6 @@ class Driver(Protocol):
 
     def conversation(self, status: dict) -> str:
         """The harness's id for the conversation, from a ``ping``."""
-        ...
-
-    def takes_inputs(self, status: dict) -> bool:
-        """Whether the runner can take an input whose receipt the platform
-        will read."""
         ...
 
     async def launch(
@@ -170,19 +171,6 @@ class Driver(Protocol):
         """Have the session's process running from this spec. ``known`` is the
         launch this process last left it running from, while its runner has
         answered every read since."""
-        ...
-
-    def subscription(
-        self,
-        seat: Seat,
-        acting: str,
-        mirror: Path,
-        call: Callable[[str, dict], Awaitable[dict]],
-        launched: Launched,
-        readers: Readers,
-    ) -> Subscription:
-        """The reading of ``seat``'s session, whose agent acts as ``acting``,
-        mirrored at ``mirror``."""
         ...
 
     def images(self, images: tuple[Image, ...]) -> list:
@@ -202,4 +190,48 @@ class Driver(Protocol):
         process is about to read without having started them: ``found`` is each
         one's host and access. Nothing to do for a harness whose sessions the
         host keeps by their state directory alone."""
+        ...
+
+
+@runtime_checkable
+class Reports(Protocol):
+    """A driver whose runner reports in the lifecycle protocol: its session is
+    read from what the runner reports, and no mirror is kept of it."""
+
+    def speaks(self, status: dict) -> bool:
+        """Whether the runner that answered ``status`` speaks the protocol
+        this release reads."""
+        ...
+
+    def reading(
+        self,
+        seat: Seat,
+        acting: str,
+        call: Callable[[str, dict], Awaitable[dict]],
+        launched: Launched,
+        readers: Readers,
+    ) -> Reading:
+        """The reading of ``seat``'s session, whose agent acts as ``acting``."""
+        ...
+
+
+@runtime_checkable
+class Mirrors(Protocol):
+    """A driver whose session is read from a mirror this side keeps of its
+    runner's journal."""
+
+    #: The mirror's file name.
+    mirror: str
+
+    def subscription(
+        self,
+        seat: Seat,
+        acting: str,
+        mirror: Path,
+        call: Callable[[str, dict], Awaitable[dict]],
+        launched: Launched,
+        readers: Readers,
+    ) -> Subscription:
+        """The reading of ``seat``'s session, whose agent acts as ``acting``,
+        mirrored at ``mirror``."""
         ...

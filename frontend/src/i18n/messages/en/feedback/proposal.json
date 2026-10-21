@@ -9,6 +9,7 @@
   "submit": "Submit feedback",
   "submitted": "Submitted",
   "userSaid": "What you said at the time",
+  "userSaidNothing": "The user didn't say anything about this ({name} noticed it on their own)",
   "view": "View this feedback",
   "why": "Why (and why this isn't the way you're using it)"
 }

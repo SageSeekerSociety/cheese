@@ -17,14 +17,12 @@ from app.domain.routine.models import RoutineTrigger
 
 #: A planned moment found later than this was missed (platform down), not late.
 MISSED_GRACE = timedelta(minutes=15)
-#: A queued run whose turn never began is reported as not started after this.
+#: A queued run its session never read is reported as not started after this.
 START_TIMEOUT = timedelta(hours=2)
-#: How long a delivered run may go without a report before it counts as failed.
-#: A turn row cannot say when the work ended: in a live session every input's
-#: row is delivered and stopped within milliseconds, and the business backend
-#: does not see whether the device's session is still busy. So the only clock
-#: is the longest a turn may run at all, plus a little for the report to land;
-#: a real failure is caught sooner by the room's own turn-failed notice.
+#: How long a run its session read may go without a report before it counts as
+#: failed: the longest a session may work on one thing at all, plus a little
+#: for the report to land. A real failure is caught sooner, by the runner
+#: reporting the work the run was read into failed.
 REPORT_TIMEOUT = timedelta(seconds=settings.agent_turn_hard_ceiling_s) + timedelta(
     minutes=5
 )

@@ -326,3 +326,68 @@ def test_duration_generation_without_samples_preserves_output(
     assert test_durations.main([str(tmp_path / "empty")]) == 1
     assert output.read_text() == "existing measurements\n"
     assert "cheese_nodeid" in capsys.readouterr().err
+
+
+def test_a_narrowed_integration_selection_keeps_every_other_layer(tmp_path):
+    """Only the named files' integration cases run; no other layer is narrowed."""
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\nmarkers =\n    integration\n    pure\n"
+    )
+    for name in ("test_named.py", "test_other.py"):
+        (tmp_path / name).write_text(
+            "import pytest\n"
+            "@pytest.mark.integration\n"
+            "def test_db(): pass\n"
+            "@pytest.mark.pure\n"
+            "def test_plain(): pass\n"
+        )
+    allowed = tmp_path / "files.json"
+    output = tmp_path / "selection"
+    for files, expected in (
+        (
+            ["test_named.py"],
+            {
+                "test_named.py::test_db",
+                "test_named.py::test_plain",
+                "test_other.py::test_plain",
+            },
+        ),
+        (
+            "all",
+            {
+                f"{f}::{t}"
+                for f in ("test_named.py", "test_other.py")
+                for t in ("test_db", "test_plain")
+            },
+        ),
+    ):
+        allowed.write_text(json.dumps(files))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "scripts.ci_shard",
+                "--ci-integration-files",
+                str(allowed),
+                "--ci-selection-output",
+                str(output),
+                "--collect-only",
+                "-q",
+                str(tmp_path / "test_named.py"),
+                str(tmp_path / "test_other.py"),
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                "PYTHONPATH": str(BACKEND),
+            },
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        manifest = json.loads((output / "selection-main.json").read_text())
+        assert set(manifest["selected"]) == expected, files

@@ -481,7 +481,7 @@ async def stamp_delivery_fact(
         logger.exception("could not stamp delivery for turn %s", turn_id)
 
 
-async def close_dead_turns(session_factory, turn_ids) -> None:
+async def close_dead_turns(session_factory, turn_ids) -> set[uuid.UUID]:
     """Close turns the orphan sweep found dead, and end the inputs they held.
 
     Nothing will ever report on those inputs: the session that took them is
@@ -492,9 +492,10 @@ async def close_dead_turns(session_factory, turn_ids) -> None:
     """
 
     async with session_factory() as session:
-        await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
-        await terminate_inputs_of_dead_works(session, turn_ids, reason="orphaned")
+        claimed = await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
+        await terminate_inputs_of_dead_works(session, claimed, reason="orphaned")
         await session.commit()
+        return claimed
 
 
 async def end_inputs_of_abandoned_work(session_factory, work_id) -> int:
@@ -503,7 +504,7 @@ async def end_inputs_of_abandoned_work(session_factory, work_id) -> int:
     The fact behind it is ``reads.Abandoned``, read from the seat that watched
     the session go: same remedy as :func:`close_dead_turns`, for the work no
     sweep reaches twice. A session that dies at its work reports neither a
-    completion nor a terminal — the runner that would have written one is the
+    read nor a drop for them — the runner that would have reported one is the
     process that is gone — and the death ends the turn's interval where the room
     heard it. ``open_turns`` reads open intervals only, so nothing left
     unfinished here holds its seat for good unless this ends it, and an

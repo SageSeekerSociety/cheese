@@ -61,7 +61,7 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 - 要手的动作是 `lease_path` 上一个 `POST`：平台先等有界的一段时间让机器准备，客户端再问到期限为止。拿到之后把机器名、代际写进配置，把凭据写进 `token_file`、目标写进 `target_file`（原子替换），并关掉旧连接。返回的是「这次的手跟之前是不是同一个租约」（`changed_lease`）——换了租约、且配了 `target_file` 时，会先把上下文树与仓库指令读回来，然后**主动抛一个错**，让调用方先读新可用仓库的说明再发下一个工具。
 - 换成新机器时工作区路径会重写：`file_path` / `path` / `notebook_path` / `command` / `body` / `cwd` 里原来的工作区前缀换成新的。**丢应答的调用不重放**（注释写得很直白：重连只给下一次调用用，这一次绝不重放）。
 - 项目 MCP 不走房间的机器：平台持有它的凭据、由平台发 `POST /topics/{id}/mcp/{name}`，所以不为它占一台机器。
-- 机器一侧的规矩在 `machine/session_work.py`：**这位队友自己的执行环境是唯一的来源**（`agent_environments`，见[每位队友一个执行环境](/dev/turn#seats-machine)）。规格是平台机器的沙箱，第一次要手时 `HostPool.place`（`machine/services.py`）把它放到任意一台还有空位的宿主机上，没有空位时领预热机器或现开一台，宿主机不属于房间、话题或会话；某个人的电脑这一规格，放在那个人接入项目、给得出沙箱的一台上（`environments.device_for_spec`）；不进沙箱的，就是选定的那台电脑。沙箱空闲后就销毁，什么都不留（`machine/lifecycle.py`），之后回合结束的 checkpoint 不再去问任何机器，执行路由直接答「没有要推的」（`routes/execution.py`，`sandbox_destroyed`），从没拿到过沙箱的会话也一样；下次要手时放进一个新沙箱，像任何新沙箱一样从任务分支和上一轮的快照开始，那次工具调用的结果告诉 agent 沙箱换了新的。规格是 `vm` 时，`place` 为这条会话现开一台虚拟机，那台虚拟机本身就是它的沙箱，执行器装上去时不再套 bubblewrap（`_sandboxed` 返回 False）；这台虚拟机会话闲置后推送、释放（`machine/cloud_vm.py`）。换执行环境只换这一位队友（`switch_environment`）：它先在离开的那台上做一次尽力而为的 checkpoint（`checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S = 150` 秒），推没推上去、那台够不够得着都照常换；它的机器还在分配中时不换，答「分配仍在进行」。
+- 机器一侧的规矩在 `machine/session_work.py`：**这位队友自己的执行环境是唯一的来源**（`agent_environments`，见[每位队友一个执行环境](/dev/turn#seats-machine)）。规格是平台机器的沙箱，第一次要手时 `HostPool.place`（`machine/services.py`）把它放到任意一台还有空位的宿主机上，没有空位时领预热机器或现开一台，宿主机不属于房间、频道或会话；某个人的电脑这一规格，放在那个人接入项目、给得出沙箱的一台上（`environments.device_for_spec`）；不进沙箱的，就是选定的那台电脑。沙箱空闲后就销毁，什么都不留（`machine/lifecycle.py`），之后回合结束的 checkpoint 不再去问任何机器，执行路由直接答「没有要推的」（`routes/execution.py`，`sandbox_destroyed`），从没拿到过沙箱的会话也一样；下次要手时放进一个新沙箱，像任何新沙箱一样从任务分支和上一轮的快照开始，那次工具调用的结果告诉 agent 沙箱换了新的。规格是 `vm` 时，`place` 为这条会话现开一台虚拟机，那台虚拟机本身就是它的沙箱，执行器装上去时不再套 bubblewrap（`_sandboxed` 返回 False）；这台虚拟机会话闲置后推送、释放（`machine/cloud_vm.py`）。换执行环境只换这一位队友（`switch_environment`）：它先在离开的那台上做一次尽力而为的 checkpoint（`checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S = 150` 秒），推没推上去、那台够不够得着都照常换；它的机器还在分配中时不换，答「分配仍在进行」。
 - 会话主机不能干项目的活：租约所在的机器就是会话进程所在的那台时，`_attempt` 抛 `ForbiddenError("Project tools cannot execute on the session host")`——两处（`_attempt` 里 lease 那一处、以及 777 行附近那一处）。房间正在跑任务且 `if_idle` 时整个不换（`SessionWorking`，「正在运行任务，稍后再换」）。
 
 ## 地点：我们的东西放在哪、能给什么 {#place}
@@ -77,6 +77,16 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 
 - 机器主人自己的 `~/.claude` 与平台无关：那是他的凭据、设置和全部会话记录，这里不写、不搬、不删。卸载只走足迹根目录。
 - 有六个程序 import 不到这个模块，各自带着一份抄本（环境运行器、清理脚本、执行器引导、会话转移、`backend/sandbox/cheese`、Go 写的连接器）；`backend/tests/unit/test_footprint_root.py` 把它们钉在这一份上。
+
+### Claude login directories {#claude-logins}
+
+Each device enrollment owns its Claude logins. Its root is `~/.cheese` for the default profile and `~/.cheese/profiles/<profile>` for a named profile. The first login lives at `<root>/logins/claude-login`; further logins live at `<root>/logins/claude-logins/<local_id>`. `cheesehost --profile <profile> claude login`, `status`, and `logout` operate only on that enrollment. The desktop bridge passes the same profile to the connector. Pinned binaries remain shared at `~/.cheese/claude/versions/`.
+
+On first start, the connector moves the old shared login directories into the single enrolled profile's store. If several profiles already exist, the original default profile inherits the old store. The move preserves local ids and removes the old directories. A destination that already exists is a login already moved: the old directory stays where it is and is reported on stderr. A session started before the move keeps its old `CLAUDE_CONFIG_DIR` and can recreate the old directory this way. The finished move is recorded in `~/.cheese/.claude-logins-migrated`, and later starts read no old directory, so a login logged out later never returns from one. A move that fails is reported and retried on the next start; it never stops the connector from starting. Subsequent starts read only the enrollment's store.
+
+On macOS, migration writes `<login>/keychain/security` to map the moved login's OAuth and Console service names to its original Keychain items. CLI commands, probes and session launches use this command, so a session started before migration still refreshes the same items used by the enrollment. `CLAUDE_SECURESTORAGE_CONFIG_DIR` points to the new login directory, keeping `.credentials.json` fallback there. No command reads the removed directories. New logins use their own Keychain items without a mapping.
+
+The backend probe resolves `CHEESE_PROFILE_ROOT` on the device, and session launches find the login files under that same root. `claude_logins` already identifies a login by `(device_id, local_id)`, so identical local ids in different enrollments remain separate without a database migration. Uninstall removes that enrollment's login files while retaining other profiles and shared binaries.
 
 ## 环境与工具的发放 {#toolchain}
 

@@ -2,9 +2,14 @@
 // 提交署名：这个项目的 PR 和提交算谁的。拆自 `views/ProjectSettingsView.vue`（#2143）。
 //
 // 两种：任务负责人（默认），或者 AI 队友。选中哪种、存没存上由页面管，这一件只画、
-// 只把选中的那一种报上去。
+// 只把选中的那一种报上去。署名给任务负责人时，下面多一行看的人自己的 GitHub 账号：
+// 他负责的任务用它创建 PR。账号在账号安全里管，这里只说状态、给一个连接入口。
 import type { CommitCreditMode } from '@/cx_types'
+import type { OwnGithub } from '@/lib/githubAccount'
+import type { NavTarget } from '@/lib/navTarget'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 
 defineOptions({ name: 'AttributionSettings' })
@@ -18,10 +23,16 @@ defineProps<{
   saving: boolean
   /** 上一次保存失败那句话。 */
   error: string | null
+  /** 看的人自己的 GitHub 账号。 */
+  github: OwnGithub
+  /** 账号安全那一页：GitHub 账号在那里管理。 */
+  manageTo: NavTarget
 }>()
 
 const emit = defineEmits<{
   save: [mode: CommitCreditMode]
+  /** 为看的人自己连接 GitHub，或续期已有的授权。 */
+  signInGithub: []
 }>()
 
 const items = [
@@ -58,8 +69,65 @@ const items = [
       <p class="t-body c-faint mt-2 settings-hint">
         {{ t('work.projectSettings.attribution.hint') }}
       </p>
+      <div v-if="mode === 'owner' && github.state !== 'unknown'" class="own-github" data-testid="own-github">
+        <div class="own-github__row">
+          <span class="t-body c-muted">{{ t('work.projectSettings.attribution.yourGithub') }}</span>
+          <span v-if="github.state === 'none'" class="t-body c-muted own-github__value">
+            {{ t('work.projectSettings.attribution.unlinked') }}
+          </span>
+          <span v-else class="t-body own-github__value own-github__login">@{{ github.login }}</span>
+          <BaseButton v-if="github.state === 'none'" kind="secondary" size="sm" @click="emit('signInGithub')">
+            {{ t('work.projectSettings.attribution.signIn') }}
+          </BaseButton>
+          <BaseButton v-else-if="github.state === 'expired'" kind="secondary" size="sm" @click="emit('signInGithub')">
+            {{ t('work.projectSettings.attribution.signInAgain') }}
+          </BaseButton>
+          <NavLink v-else :to="manageTo" class="t-body own-github__manage">
+            {{ t('work.projectSettings.attribution.manage') }}
+          </NavLink>
+        </div>
+        <span v-if="github.state === 'none'" class="t-body c-muted settings-hint">
+          {{ t('work.projectSettings.attribution.signInHint') }}
+        </span>
+        <span v-else-if="github.state === 'expired'" class="t-body settings-hint own-github__expired">
+          {{ t('work.projectSettings.attribution.expired', { agent: agentName }) }}
+        </span>
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped src="./settings-section.css"></style>
+<style scoped>
+.own-github {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.own-github__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.own-github__value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.own-github__login {
+  color: var(--ink);
+  font-weight: 600;
+}
+.own-github__manage {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.own-github__expired {
+  color: var(--danger-ink);
+}
+</style>

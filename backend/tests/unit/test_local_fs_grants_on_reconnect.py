@@ -29,12 +29,14 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 from app.domain.agent.harness.claude_code import owner_login
 from app.domain.device.models import DeviceRow, HostedDeviceRow
+from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import PushOutcome, push_grants
 from app.domain.local_fs.paths import Platform
 from app.domain.local_fs.records import GrantMode, GrantScope
 from app.domain.local_fs.wiring import sql_local_directory_service
 from app.domain.user.models import User
 from tests.support import wire
+from tests.support.devices import enrollment_team
 from tests.support.hang import HANG_S
 
 SECRET = "test-owner-secret"
@@ -100,6 +102,7 @@ async def _owner_of_the_machine(db_factory) -> int:
         await session.flush()
         session.add(
             DeviceRow(
+                team_id=await enrollment_team(sql_device_service(session), user.id),
                 device_id=MACHINE,
                 name=MACHINE,
                 token=f"tok-{uuid.uuid4().hex}",
@@ -135,7 +138,10 @@ async def _revoke(db_factory, link, owner: int, grant_id: uuid.UUID) -> PushOutc
     """What revoking does: record it, commit, push the set."""
     async with db_factory() as session:
         service = sql_local_directory_service(session)
-        assert await service.revoke(grant_id, owner_user_id=owner) is not None
+        assert (
+            await service.revoke(grant_id, actor_user_id=owner, device_id=MACHINE)
+            is not None
+        )
         await session.commit()
         return await push_grants(service, link, MACHINE)
 

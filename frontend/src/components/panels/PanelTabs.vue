@@ -306,6 +306,14 @@ const inkStyle = computed(() =>
   color: var(--ink);
 }
 
+/* 按下去就先变一下：这一格的内容可能还要等，先让人知道点到了。触屏上没有 hover，
+   不补这一档，点页签和点空白看起来一模一样。 */
+.tabbar__tab:active {
+  color: var(--ink);
+  background: var(--fill-2);
+  border-radius: var(--radius-sm);
+}
+
 /* 手机上一格页签至少 44px 高，手指点得中。栏会横向滚动，撑开的伪元素会被裁掉，
    所以是真的长高。 */
 .tabbar--phone .tabbar__tab {

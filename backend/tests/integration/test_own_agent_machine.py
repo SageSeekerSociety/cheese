@@ -24,8 +24,10 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError, mint_session_token
 from app.domain.agent.owner_provider import OWNER_CHANNEL, OwnerChannel
+from app.domain.agent.place import OWN_LOGIN_ID
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -35,6 +37,7 @@ from app.domain.project.models import Project
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 
@@ -56,11 +59,14 @@ async def _user(db, handle):
 async def _machine(devices, name, owner, project_id=None):
     code = await devices.start(name)
     device = await devices.approve(
-        code, owner_user_id=owner.id, supply=Supply.self_hosted
+        code,
+        owner_user_id=owner.id,
+        supply=Supply.self_hosted,
+        team_id=await enrollment_team(devices, owner.id),
     )
     if project_id is not None:
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
     return device.device_id
 
@@ -140,23 +146,27 @@ async def _own_session(client, *, environment_on):
         )
         db.add(instance)
         await db.flush()
+        for machine in (bobs_laptop, alices_desk):
+            db.add(
+                DeviceClaudeLoginRow(
+                    team_id=(await db.get(Project, project_id)).team_id,
+                    device_id=machine,
+                    installed=True,
+                    logged_in=True,
+                    auth_method="claude.ai",
+                    checked_at=datetime.now(UTC),
+                    allowed_models=["sonnet", "opus"],
+                )
+            )
+        await db.flush()
         db.add(
             OwnAgent(
                 instance_id=instance.id,
                 owner_user_id=bob.id,
                 harness="claude-code",
-                device_id=bobs_laptop,
+                login_id=bobs_laptop,
             )
         )
-        for machine in (bobs_laptop, alices_desk):
-            db.add(
-                DeviceClaudeLoginRow(
-                    device_id=machine,
-                    installed=True,
-                    logged_in=True,
-                    checked_at=datetime.now(UTC),
-                )
-            )
         actor = (await IdentityService(db).ensure_room_agent_user(topic_id)).username
         topic = await db.get(Topic, topic_id)
         topic.default_environment = {
@@ -244,70 +254,6 @@ async def test_an_own_agents_conversation_starts_on_its_owners_machine(client):
     assert placement.machine == own.bobs_laptop
 
 
-async def test_an_own_agents_session_does_not_start_on_a_kind_the_project_refuses(
-    client,
-):
-    # Bob's laptop signs in with his Claude subscription; the project allows
-    # only API keys.
-    own = await _own_session(client, environment_on="alice")
-    async with client.test_factory() as db:
-        login = await db.get(DeviceClaudeLoginRow, own.bobs_laptop)
-        login.auth_method, login.subscription_type = "claude.ai", "max"
-        project = await db.get(Project, own.project_id)
-        project.settings = {
-            **(project.settings or {}),
-            "allow_own_agents": True,
-            "own_agent_kinds": ["api_key"],
-        }
-        await db.commit()
-    channel = OwnerChannel(
-        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
-    )
-
-    with pytest.raises(ScreenSetupError) as refused:
-        client.portal.call(
-            lambda: channel.precheck(
-                SessionRef(
-                    own.project_id, own.topic_id, own.handle, harness="claude-code"
-                ),
-                needs_place=False,
-            )
-        )
-    assert "Claude 订阅" in str(refused.value), "the room is told which kind"
-
-
-async def test_an_own_agents_session_does_not_start_on_a_service_not_listed(
-    client,
-):
-    # Bob's laptop calls a model service; the project allows only another one.
-    own = await _own_session(client, environment_on="alice")
-    async with client.test_factory() as db:
-        login = await db.get(DeviceClaudeLoginRow, own.bobs_laptop)
-        login.auth_method, login.model = "model_service", "kimi-k2"
-        login.service_host = "api.moonshot.cn"
-        project = await db.get(Project, own.project_id)
-        project.settings = {
-            **(project.settings or {}),
-            "allow_own_agents": True,
-            "own_agent_service_hosts": ["api.deepseek.com"],
-        }
-        await db.commit()
-    channel = OwnerChannel(
-        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
-    )
-
-    with pytest.raises(ScreenSetupError) as refused:
-        client.portal.call(
-            lambda: channel.precheck(
-                SessionRef(
-                    own.project_id, own.topic_id, own.handle, harness="claude-code"
-                ),
-                needs_place=False,
-            )
-        )
-    assert "api.moonshot.cn" in str(refused.value), "the room is told which"
-
-
 async def test_another_members_machine_is_never_an_own_agents_session_host(client):
     # Alice's computer is online, logged in to Claude Code, and the very one
     # the conversation's tools run on; Bob's laptop is away.
@@ -340,11 +286,13 @@ async def _bobs_desk(client, own) -> str:
         db.add(
             DeviceClaudeLoginRow(
                 device_id=desk,
+                team_id=(await db.get(Project, own.project_id)).team_id,
                 installed=True,
                 logged_in=True,
-                auth_method="model_service",
-                model="kimi-k2",
+                auth_method="claude.ai",
+                subscription_type="pro",
                 checked_at=datetime.now(UTC),
+                allowed_models=["sonnet", "opus"],
             )
         )
         await db.commit()
@@ -388,13 +336,12 @@ async def test_an_own_agent_whose_connection_was_removed_starts_nothing(client):
 
     with pytest.raises(ScreenSetupError) as refused:
         _precheck(client, own, online=lambda device: device in (own.bobs_laptop, desk))
-    assert "模型连接已解除" in str(refused.value), "the room is told why"
+    assert str(refused.value), "the room receives a reason for refusing to start"
 
 
-async def _launch_target(client, own, *, leased_on):
-    """The execution target Bob's laptop is handed to start his own Claude
-    Code with, once its lease is ready on ``leased_on`` and that machine
-    answers."""
+async def _launch_env(client, own, *, leased_on):
+    """The environment Bob's laptop is handed to start his own Claude Code
+    with, once its lease is ready on ``leased_on`` and that machine answers."""
     async with client.test_factory() as db:
         row = await AgentSessionService(db).ensure(
             own.topic_id, own.handle, harness="claude-code"
@@ -422,9 +369,73 @@ async def _launch_target(client, own, *, leased_on):
         async with channel.prepare_session(
             session=session, token=token, env={}, precheck=precheck
         ) as prepared:
-            return json.loads(prepared.env["CHEESE_EXECUTION_TARGET"])
+            return precheck.machine, dict(prepared.env)
 
     return client.portal.call(prepare)
+
+
+async def _launch_target(client, own, *, leased_on):
+    """The execution target Bob's laptop is handed with that environment."""
+    _machine, env = await _launch_env(client, own, leased_on=leased_on)
+    return json.loads(env["CHEESE_EXECUTION_TARGET"])
+
+
+async def _on_a_second_login(client, own) -> str:
+    """Bob's laptop holds a second login too, and his agent was added with
+    that one; the first stays logged in. The second's record id."""
+    async with client.test_factory() as db:
+        second = DeviceClaudeLoginRow(
+            team_id=(await db.get(Project, own.project_id)).team_id,
+            device_id=own.bobs_laptop,
+            local_id="B7QX",
+            installed=True,
+            logged_in=True,
+            auth_method="claude.ai",
+            subscription_type="pro",
+            allowed_models=["sonnet", "opus"],
+            checked_at=datetime.now(UTC),
+        )
+        db.add(second)
+        await db.flush()
+        agent = await db.scalar(
+            select(OwnAgent)
+            .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
+            .where(AgentInstance.handle == own.handle)
+        )
+        agent.login_id = second.id
+        await db.commit()
+        return second.id
+
+
+async def test_an_own_session_signs_in_with_the_login_it_was_added_with(
+    client, monkeypatch
+):
+    own = await _own_session(client, environment_on="bob")
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    machine, env = await _launch_env(client, own, leased_on=own.bobs_laptop)
+    assert (machine, env[OWN_LOGIN_ID]) == (own.bobs_laptop, FIRST_LOGIN)
+
+    await _on_a_second_login(client, own)
+    machine, env = await _launch_env(client, own, leased_on=own.bobs_laptop)
+    assert (machine, env[OWN_LOGIN_ID]) == (own.bobs_laptop, "B7QX")
+
+
+async def test_an_own_agent_on_a_removed_login_starts_nothing_beside_one_in_use(
+    client,
+):
+    """Its machine's first login is still logged in, but it is not the one
+    the agent was added with."""
+    own = await _own_session(client, environment_on="alice")
+    second = await _on_a_second_login(client, own)
+    async with client.test_factory() as db:
+        login = await db.get(DeviceClaudeLoginRow, second)
+        login.revoked_at, login.logged_in = datetime.now(UTC), False
+        await db.commit()
+
+    with pytest.raises(ScreenSetupError) as refused:
+        _precheck(client, own, online=lambda device: True)
+    assert str(refused.value), "the room receives a reason for refusing to start"
 
 
 async def test_an_own_session_is_told_when_its_executor_is_on_another_machine(

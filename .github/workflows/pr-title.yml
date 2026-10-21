@@ -1,13 +1,12 @@
 name: PR title recheck
 
-# Ready PRs check the title in fast as well as CI required. Re-run a failed
-# fast job and its downstream aggregator; otherwise only the aggregator needs
-# the fresh title. No full suite is restarted for a title edit.
+# Ready PRs check the title in CI required. A title edit re-runs that job
+# alone; no suite is restarted for it.
 #
 # An edit while Required CI is running cannot re-run that run yet. Completion
 # recovers any attempt with a real title edit since the affected job started.
 # The next job starts after that edit, so an unchanged product failure does not
-# loop. Run display_title is not the title fast read; an A -> B -> A edit counts.
+# loop. Run display_title is not the title the job read; an A -> B -> A edit counts.
 # Forks and superseded heads/attempts stay untouched.
 on:
   pull_request:
@@ -102,9 +101,7 @@ jobs:
           if required is None:
               print("No CI required job that ran; leave draft or cancelled runs alone.")
               raise SystemExit(0)
-          fast = next((j for j in jobs if j["name"] == "fast"
-                       and j.get("conclusion") == "failure"), None)
-          job = fast or required
+          job = required
           if completed:
               started = timestamp(job["started_at"])
               changed = False

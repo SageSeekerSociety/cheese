@@ -279,3 +279,27 @@ def test_a_person_mentioned_by_a_teammate_is_told_the_teammates_own_name(client)
 
     [mention] = inbox(client, "bob", "MENTION")
     assert mention["contextMetadata"]["authorName"] == "评审"
+
+
+def test_retrying_an_agent_publication_reports_no_fuse(client, stub_hooks, monkeypatch):
+    """A retry of a publication that already woke its teammate must not count
+    itself against the hourly fuse and tell the room nobody was woken."""
+    monkeypatch.setattr(mention, "AGENT_MENTIONS_PER_HOUR", 1)
+    project_id, room_id, cheese, reviewer = _room_with_two_agents(client)
+    headers = _as(project_id, room_id, cheese)
+    body = {
+        "content": f"<@{reviewer}> 复核",
+        "request_id": str(uuid.uuid4()),
+    }
+    first = client.post(f"/topics/{room_id}/messages", json=body, headers=headers)
+    assert first.status_code == 200, first.text
+    retry = client.post(f"/topics/{room_id}/messages", json=body, headers=headers)
+    assert retry.status_code == 200, retry.text
+    wait_work_idle()
+
+    assert [d.recipient_handle for d in _deliveries(client, room_id)] == [reviewer]
+    blocks = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
+    fused = [
+        b for b in blocks if (b.get("meta") or {}).get("event_type") == "mention_fused"
+    ]
+    assert fused == []

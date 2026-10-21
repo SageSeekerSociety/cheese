@@ -271,6 +271,46 @@ def test_an_edit_notifies_only_whom_it_newly_mentions(client):
     assert len(_mentions(client, "bob")) == 1
 
 
+def test_an_edit_in_a_task_notifies_the_person_it_newly_names(client):
+    """A task's conversation is a conversation: its edit tells the person it
+    newly names, and stores the name the way sending the same text does."""
+    seed_user(client, "bob")
+    room, _ = _room(client)
+    task = open_task(client, room)
+    said = _say(client, task["id"], "alice", "谁看一下")
+    wait_work_idle()
+    assert _mentions(client, "bob") == []
+
+    _edit(client, said, "@bob 看一下", session_auth_headers("alice"))
+
+    assert len(_mentions(client, "bob")) == 1
+    assert _shown(client, task["id"], said)["content"] == "<@bob> 看一下"
+
+
+def test_an_edit_in_a_task_wakes_the_teammate_it_newly_names(client, stub_hooks):
+    """The seat an edit in a task newly names is delivered to and woken, the
+    way the same text sent to the task would have woken it."""
+    room = _two_teammates(client)
+    channel, other = room["channel"], room["other"]
+    task = open_task(client, channel)
+    said = _say(client, task["id"], "alice", "接口先别动")
+    wait_work_idle()
+    arrivals = _record_arrivals(stub_hooks)
+
+    _edit(client, said, f"<@{other}> 接口先别动", session_auth_headers("alice"))
+    wait_work_idle()
+
+    [row] = [
+        d
+        for d in _deliveries(client, task["id"])
+        if d.payload.get("eventType") == mention.BY_PERSON
+    ]
+    assert row.recipient_handle == other
+    assert row.payload["blockId"] == said
+    assert row.state == "received", row.last_error
+    assert any(agent == other for agent, _ in arrivals), arrivals
+
+
 def _two_teammates(client) -> dict:
     """A channel of alice's with two AI seats on it, and a 支线 of that channel.
 
@@ -475,17 +515,20 @@ class _Screen:
         images=None,
         *,
         register_input=None,
-        expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
     ):
         self.pushed.append(text)
         return True
 
+    def working_seat(self, topic_id, agent_handle=None):
+        """A session at work in the room, whichever seat is asked about."""
+        return "cheese", "cheese"
+
 
 @pytest.fixture
 def running_turn(client):
-    """A turn running in the room ``room``, and the screen it reads from."""
+    """A session at work in the room ``room``, and the screen it reads from."""
 
     def start(room: str) -> _Screen:
         screen = _Screen()
@@ -496,7 +539,7 @@ def running_turn(client):
             workspace_root="/tmp/message-edit-ws",
             compute=stub_compute(),
         )
-        service.live.active_turn_ids[uuid.UUID(room)] = {uuid.uuid4()}
+        service._compute.working_seat = screen.working_seat  # type: ignore[method-assign]
         service._compute.steer = screen.steer  # type: ignore[method-assign]
         app.dependency_overrides[get_chat_service] = lambda: service
         return screen
@@ -541,6 +584,34 @@ def test_an_edit_to_an_unread_message_needs_no_notice(client, running_turn):
     # The next turn reads the message itself, as it now reads.
     assert screen.pushed == []
     assert asyncio.run(_waiting_notices(client, room)) == []
+
+
+def _site_lines(client, room: str) -> list[str]:
+    """What a member of the room reads in 现场 that the platform wrote there."""
+    site = client.get(f"/topics/{room}/transcript", headers=session_auth_headers("bob"))
+    assert site.status_code == 200, site.text
+    return [i["content"] for i in site.json()["data"]["data"] if i.get("run_record")]
+
+
+def test_members_read_in_the_site_that_the_agent_was_told_of_an_edit(client):
+    room, _ = _room(client)
+    said = _say(client, room, "alice", "周五交初稿")
+    _read_by_a_turn(client, said)
+    assert not [line for line in _site_lines(client, room) if "alice" in line]
+
+    _edit(client, said, "周六交初稿", session_auth_headers("alice"))
+
+    assert len([line for line in _site_lines(client, room) if "alice" in line]) == 1
+
+
+def test_an_edit_nobody_had_read_leaves_the_site_as_it_was(client):
+    room, _ = _room(client)
+    said = _say(client, room, "alice", "周五交初稿")
+    before = _site_lines(client, room)
+
+    _edit(client, said, "周六交初稿", session_auth_headers("alice"))
+
+    assert _site_lines(client, room) == before
 
 
 def _visible(client, room: str) -> list[dict]:

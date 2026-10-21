@@ -103,18 +103,6 @@ class SqlLocalFsRepository(LocalFsRepository):
         rows = (await self._session.execute(ordered)).scalars()
         return [_to_grant(row) for row in rows]
 
-    async def list_grants_for_owner(
-        self, owner_user_id: int, *, include_revoked: bool = False
-    ) -> list[DirectoryGrant]:
-        query = select(LocalDirectoryGrantRow).where(
-            LocalDirectoryGrantRow.owner_user_id == owner_user_id
-        )
-        if not include_revoked:
-            query = query.where(LocalDirectoryGrantRow.revoked_at.is_(None))
-        ordered = query.order_by(LocalDirectoryGrantRow.key)
-        rows = (await self._session.execute(ordered)).scalars()
-        return [_to_grant(row) for row in rows]
-
     async def save_grant(self, grant: DirectoryGrant) -> None:
         row = await self._session.get(LocalDirectoryGrantRow, grant.id)
         if row is None:

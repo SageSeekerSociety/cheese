@@ -27,6 +27,14 @@ vi.mock('@/api', async () => {
     getProject: vi.fn().mockResolvedValue({ id: 'p1', my_role: 'admin', my_permissions: ['edit_settings'] }),
   }
 })
+vi.mock('@/api/ownAgents', () => ({
+  getOwnAgents: vi.fn().mockResolvedValue({
+    can_manage: false,
+    agents: [],
+    my_connections: [],
+    devices: [],
+  }),
+}))
 vi.mock('@/api/projectSkills', () => {
   const skill = {
     project_id: 'p1',

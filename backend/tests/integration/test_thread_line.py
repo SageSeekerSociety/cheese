@@ -11,21 +11,16 @@ main line is told without opening it.
 - a page of 支线 reads the messages they hang under once, however many there
   are: who took part comes from the same rows as what the message said;
 - a room's header asks three questions about its 支线 — the page's own list,
-  回复了我, 还在当支线用 — and none of them is asked twice: `moving_topics` is
-  handed the list the page already read.
+  回复了我, 还在当支线用 — and none of them is asked twice.
 """
 
 import re
 import uuid
-from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import event
 
-from app.domain.agent.liveness import moving_topics
-from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, BlockKind
-from app.domain.conversation.services import threads_of_rooms
 from app.domain.event_author import AuthorType
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.models import Thread
@@ -363,13 +358,10 @@ def _room_header(client, tid):
 @pytest.mark.parametrize("n", [3, 12])
 def test_a_rooms_header_reads_its_threads_no_more_than_three_times(client, n):
     """A room's header asks three separate questions about its 支线 — the page's
-    own list, 回复了我, 还在当支线用 — and the list it read is handed to
-    `moving_topics`, which used to ask the table a fourth time for the same
-    answer. Four was the count before that hand-down; the assertion says the
-    fourth read stays gone, and the same however many 支线 the room has.
+    own list, 回复了我, 还在当支线用 — and asks each once, however many 支线 the
+    room has.
 
-    This is one route's whole budget, not a statement about `moving_topics`:
-    a new question of the header that reads the room's 支线 itself is meant to
+    This is one route's whole budget: a new question of the header that reads the room's 支线 itself is meant to
     be shared with the rest, and this ceiling is where that gets noticed. A
     ceiling rather than the exact three, so merging two of the remaining
     questions into one query reads as the improvement it is."""
@@ -381,85 +373,6 @@ def test_a_rooms_header_reads_its_threads_no_more_than_three_times(client, n):
 
     # Both ends: a spelling of the query this pattern does not know would read
     # as zero and pass the ceiling. The floor only catches that total silence —
-    # a read rewritten in a spelling the pattern skips still hides the fourth
+    # a read rewritten in a spelling the pattern skips still hides an extra
     # read without making the count reach zero.
     assert 1 <= reads <= 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
-
-
-def _a_thread_in(client, tid):
-    """One 支线 of the room."""
-
-    async def _find() -> uuid.UUID:
-        async with client.test_factory() as s:
-            return await s.scalar(
-                select(Thread.id).where(Thread.room_id == uuid.UUID(tid))
-            )
-
-    return client.portal.call(_find)
-
-
-def _a_turn_in(client, thread_id):
-    """A turn delivered into the 支线 a moment ago — one still running."""
-    now = datetime.now(UTC)
-
-    async def _plant() -> None:
-        async with client.test_factory() as s:
-            s.add(
-                AgentTurn(
-                    id=uuid.uuid4(),
-                    conversation_id=thread_id,
-                    continuation_id=uuid.uuid4(),
-                    author="alice",
-                    content="开始吧",
-                    started_at=now,
-                    delivered_at=now,
-                )
-            )
-            await s.commit()
-
-    client.portal.call(_plant)
-
-
-def test_moving_names_the_same_rooms_handed_the_pages_read(client):
-    """`threads=` is a short-cut, not a second rule: handed the page's own read
-    of the room's 支线, `moving_topics` names exactly the rooms it names having
-    read them itself — including a room whose 支线 is where the turn runs."""
-    tid = _channel_with_threads(client, 3)
-    _a_turn_in(client, _a_thread_in(client, tid))
-
-    async def _both() -> tuple[set[uuid.UUID], set[uuid.UUID]]:
-        async with client.test_factory() as alone_session:
-            alone = await moving_topics(alone_session, [uuid.UUID(tid)], running=set())
-        async with client.test_factory() as handed_session:
-            handed = await moving_topics(
-                handed_session,
-                [uuid.UUID(tid)],
-                running=set(),
-                threads=await threads_of_rooms(handed_session, [uuid.UUID(tid)]),
-            )
-        return alone, handed
-
-    alone, handed = client.portal.call(_both)
-
-    assert alone == handed == {uuid.UUID(tid)}
-
-
-def test_moving_does_not_answer_for_a_room_it_was_not_asked_about(client):
-    """The page it is handed may cover more rooms than the question names (a
-    list's whole page). A turn running in another room's 支线 must not make this
-    room moving: only the rooms asked about are answered for."""
-    asked = _channel_with_threads(client, 1)
-    elsewhere = _channel_with_threads(client, 1)
-    _a_turn_in(client, _a_thread_in(client, elsewhere))
-
-    async def _moving() -> set[uuid.UUID]:
-        async with client.test_factory() as s:
-            threads = await threads_of_rooms(
-                s, [uuid.UUID(asked), uuid.UUID(elsewhere)]
-            )
-            assert len(threads) == 2
-            return await moving_topics(
-                s, [uuid.UUID(asked)], running=set(), threads=threads
-            )
-
-    assert client.portal.call(_moving) == set()

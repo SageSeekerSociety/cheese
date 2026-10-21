@@ -335,8 +335,9 @@ class SpaceMaterialService:
         await self._links.soft_delete(link)
 
     async def download(
-        self, *, space_id: int, user_id: int, material_id: int
+        self, *, space_id: int, user_id: int, material_id: int, counted: bool = True
     ) -> tuple[bytes, str, str]:
+        """取字节。``counted=False`` 是页面上的预览：判权限照旧，只是不记一次下载。"""
         await self._require_member(space_id=space_id, user_id=user_id)
         link = await self._links.get_live(space_id=space_id, material_id=material_id)
         if link is None:
@@ -356,8 +357,9 @@ class SpaceMaterialService:
             raise NotFoundError("Material file not found in storage")
 
         # 计数在取到字节之后才加：文件取不出来时不该记一笔「有人下载过」。
-        link.download_count += 1
-        await self._links.save(link)
+        if counted:
+            link.download_count += 1
+            await self._links.save(link)
 
         return content, material.name, meta.get("mime") or "application/octet-stream"
 

@@ -1,15 +1,16 @@
-// Package claudecode is the machine owner's own Claude Code, as the platform
-// runs it: the build the platform pins, logged in once under a directory of the
-// platform's own (`~/.cheese/claude-login`), apart from the owner's `~/.claude`.
+// Package claudecode runs the platform's pinned Claude Code. Each enrollment
+// keeps its own logins under its root's logins/ directory, apart from the
+// machine owner's ~/.claude and every other enrollment.
 //
-// The owner logs it in with `cheesehost claude login`. Every session of the
-// owner's Claude Code on this machine keeps its own config directory and reads
-// this one as its credential store, so a login here is the only one the
-// platform's sessions need and the owner's own Claude Code never sees it.
+// The owner adds one with the subscription command from the team's Models page.
+// Every session of the owner's Claude Code on this machine keeps its own config
+// directory and uses its login's directory as the credential store. The owner's
+// own Claude Code never sees these logins.
 package claudecode
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -27,13 +29,85 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 )
 
-// LoginDir is where the platform's Claude Code login lives on this machine.
-func LoginDir() (string, error) {
+// loginID is what a login may be called: the name of its directory, which a
+// session's launch puts into a path. The backend's copy is `login_kind.LOGIN_ID`,
+// held to this one by `backend/tests/unit/test_footprint_root.py`.
+var loginID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// LoginDir is where the login this machine calls id lives.
+func LoginDir(id string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("claude: locate home: %w", err)
 	}
-	return filepath.Join(home, place.Root, place.ClaudeLogin), nil
+	if id == place.FirstClaudeLogin {
+		return filepath.Join(home, place.CurrentRoot(), place.ClaudeLogin), nil
+	}
+	if !loginID.MatchString(id) {
+		return "", fmt.Errorf("claude: %q is not a login on this machine", id)
+	}
+	return filepath.Join(home, place.CurrentRoot(), place.ClaudeLogins, id), nil
+}
+
+// NewLogin makes the directory of a login this machine does not have yet: the
+// first one while there is none, else one with a new id.
+func NewLogin() (string, string, error) {
+	first, err := LoginDir(place.FirstClaudeLogin)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := os.Stat(first); errors.Is(err, os.ErrNotExist) {
+		return place.FirstClaudeLogin, first, os.MkdirAll(first, 0o700)
+	}
+	id := rand.Text()
+	dir, err := LoginDir(id)
+	if err == nil {
+		err = os.MkdirAll(dir, 0o700)
+	}
+	return id, dir, err
+}
+
+// Logins is every login this machine has, the first one first. Reading it
+// reads no credentials.
+func Logins() ([]string, error) {
+	first, err := LoginDir(place.FirstClaudeLogin)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	if info, err := os.Stat(first); err == nil && info.IsDir() {
+		ids = append(ids, place.FirstClaudeLogin)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(home, place.CurrentRoot(), place.ClaudeLogins))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("claude: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && loginID.MatchString(entry.Name()) {
+			ids = append(ids, entry.Name())
+		}
+	}
+	return ids, nil
+}
+
+// RemoveLogin forgets a login this machine was logged out of. The first one's
+// directory stays, as it did when a machine had only that one.
+func RemoveLogin(id string) error {
+	if id == place.FirstClaudeLogin {
+		return nil
+	}
+	dir, err := LoginDir(id)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("claude: %w", err)
+	}
+	return nil
 }
 
 // vendorPlatform names a machine the way Anthropic's builds are published, the
@@ -316,6 +390,8 @@ func Environment(base []string, loginDir string) []string {
 func Command(ctx context.Context, binary, loginDir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Env = Environment(os.Environ(), loginDir)
+	cmd.Env = append(cmd.Env, "CLAUDE_SECURESTORAGE_CONFIG_DIR="+loginDir,
+		"PATH="+filepath.Join(loginDir, place.ClaudeKeychain)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return cmd
 }
 

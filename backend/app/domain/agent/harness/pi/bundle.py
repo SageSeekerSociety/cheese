@@ -19,6 +19,8 @@ def build() -> bytes:
             # `RemoteClient`: every file, command, hook and MCP call of the
             # session goes to the room's machine, or the platform, through it.
             "domain/agent/executor_transport.py",
+            # What the transport reads from beside itself for a task's checkout.
+            "domain/agent/task_checkout.py",
             "domain/agent/pr_creation.py",
             # The input marker the runner reads back for exact attribution
             # (FB-56) — stdlib-only, so the machine needs nothing else.

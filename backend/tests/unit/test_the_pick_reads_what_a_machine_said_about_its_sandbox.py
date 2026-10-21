@@ -1,4 +1,4 @@
-"""Placing a sandbox on a person's computers reads what each machine said
+"""Placing a sandbox on team devices reads what each machine said
 about giving a session a sandbox.
 
 A machine that said it cannot make one is never where a sandbox goes. What a
@@ -12,7 +12,7 @@ import sys
 import uuid
 from types import SimpleNamespace
 
-from app.domain.agent.environment import devices_of
+from app.domain.agent.environment import TEAM_DEVICES
 from app.domain.agent.harness.claude_code import executor_launch
 from app.domain.device import sandbox
 from app.domain.device.memory_repository import InMemoryDeviceRepository
@@ -20,23 +20,29 @@ from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
 from app.domain.machine import environments
 from app.domain.machine.environments import device_for_spec
+from tests.support.devices import enrollment_team, place_in_project_team
 
 OWNER = 1
 
 
 async def _enrol(service: DeviceService, project_id: uuid.UUID, name: str) -> str:
     device = await service.approve(
-        await service.start(name), owner_user_id=OWNER, supply=Supply.self_hosted
+        await service.start(name),
+        owner_user_id=OWNER,
+        supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, OWNER),
     )
-    await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
+    await place_in_project_team(
+        service, device.device_id, project_id, actor_user_id=OWNER
+    )
     return device.device_id
 
 
 async def _place(service, project, held=None):
-    """Where a sandbox of ``OWNER``'s computers would go now."""
+    """Where a sandbox on this project's team devices would go now."""
     device = await device_for_spec(
         _Session(service),
-        spec=devices_of(OWNER),
+        spec=TEAM_DEVICES,
         project=SimpleNamespace(id=project, team_id=None),
         task=None,
         held=held,

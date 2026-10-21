@@ -278,6 +278,12 @@ export const ACCEPT_ENTRIES: CatalogEntry[] = [
         expect: 'docs: add a welcome note',
       },
       {
+        name: '负责人的 PR 由 AI 队友创建',
+        note: '只给任务负责人看：本该用他的 GitHub 账号创建的 PR，这次由 AI 队友创建了。还没连接 GitHub 时给连接入口；授权失效时提示重新授权。',
+        props: acceptHeadProps({ prChecks: { ...ACCEPT_CHECKS, owner_credit: 'none' } }),
+        expect: '连接 GitHub 后，之后的 PR 用你的账号创建',
+      },
+      {
         name: '检查还没绿',
         note: '「仍要采纳」和「检查通过后自动合并」只在这一档出现，收在「更多操作」里。',
         props: acceptHeadProps({ card: ACCEPT_BLOCKED, autoMergeVisible: true, forceMergeVisible: true }),

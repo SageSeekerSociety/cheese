@@ -1,33 +1,21 @@
 {
   "compute": {
     "loadFailed": "加载设备失败",
-    "addMachineFailed": "添加设备失败",
     "removeMachineFailed": "移出设备失败",
-    "selfHostedSection": "自有设备",
-    "addDevice": "添加自有设备",
-    "goToMyDevices": "先在「设置 → 设备」中接入电脑",
-    "selfHostedEmptyTitle": "还没有自有设备",
-    "deviceSummary": "{count} 台设备 · {online} 台在线",
+    "addDevice": "接入设备",
+    "selfHostedEmptyTitle": "暂无设备",
     "online": "在线",
     "offline": "离线",
-    "listSeparator": "、",
-    "screenRunning": "运行中 · {'@'}{name}",
-    "team": {
-      "removeDeviceConfirm": "确定把「{name}」移出这个团队吗？",
-      "subtitle": "团队的自有设备。项目给新 AI 队友设默认环境，频道里可以给每个 AI 队友更换。",
-      "selfHostedSubtitle": "把成员已接入的设备注册给团队，工作树与数据留在设备上。",
-      "allDevicesAdded": "你的设备都已在这个团队中",
-      "selfHostedEmptyHint": "接入后，团队内所有项目都可以使用。",
-      "remove": "移出团队"
-    },
-    "own": {
-      "subtitle": "你名下项目的自有设备。项目给新 AI 队友设默认环境，频道里可以给每个 AI 队友更换。",
-      "selfHostedSubtitle": "加到这里的设备，你名下的项目都能用，工作树与数据留在设备上。",
-      "allDevicesAdded": "你的设备都已加到这里",
-      "selfHostedEmptyHint": "接入后，你名下的所有项目都可以使用。",
-      "remove": "移出",
-      "removeDeviceConfirm": "确定移出「{name}」吗？移出后你名下的项目不能再用它。"
-    }
+    "ownership": "设备属于这个团队，由团队管理员管理",
+    "enrollHint": "每次接入只属于一个团队。同一台电脑接入另一个团队时，会创建独立的接入。",
+    "connectHere": "接入这台电脑",
+    "cliHint": "其他电脑：安装连接器后，在那台电脑的终端运行命令，并在批准时选择这个团队。",
+    "remove": "移除",
+    "removeConfirm": "移除「{name}」？此接入将失效，团队不再使用它。",
+    "downloadDesktop": "下载桌面端",
+    "rename": "重命名",
+    "renameTitle": "重命名设备",
+    "offlineSince": "离线 · 上次在线 {time}"
   },
   "members": {
     "invite": "邀请成员",

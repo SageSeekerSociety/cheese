@@ -1,4 +1,4 @@
-// 这间房此刻的动静：谁在打字、哪位队友在干活、干到哪一步、多久没新帧了。
+// 这间房此刻的动静：谁在打字、哪位队友在干活、干到哪一步。
 //
 // 状态本身见 room/composables/useRoomActivity 和 useLiveSteps，拼成输入框下面那一行
 // 的数据见 useActivityLines。往上递给页面（`activity` 事件）是这里的事，所以三件一起
@@ -31,7 +31,7 @@ export function usePanelActivity(deps: {
   runRecords: ReturnType<typeof useRunRecords>
 }) {
   // 此刻谁在这个房间里忙（打字的人、干活的队友）—— 见 room/composables/useRoomActivity；
-  // 拼成输入框下面那一行的数据见 useActivityLines（阶段、当前一步、多久没新帧）。
+  // 拼成输入框下面那一行的数据见 useActivityLines（阶段、当前一步）。
   const activity = useRoomActivity({ me: deps.author, send: deps.socket.sendOnSocket })
   const liveSteps = useLiveSteps()
   const activityLines = useActivityLines(

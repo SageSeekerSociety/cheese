@@ -3,7 +3,7 @@
 //
 // 多数题目一样都不用改，所以默认收起；收起时那一行写明现在设成了什么，不用点开就看得
 // 见。它只画：值都是 props 进来的，改一次往上报一次。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -14,6 +14,8 @@ const props = defineProps<{
   domainGroupItems: { title: string; value: number; subtitle: string }[]
   /** 这道题有没有单独写 AI 指导；收起时那一行要说。 */
   teachingCustom: boolean
+  /** 芝士正在写这里面的一格：展开，指针才找得到它。 */
+  reveal?: boolean
 }>()
 
 defineSlots<{
@@ -28,6 +30,13 @@ const requireRealName = defineModel<boolean | undefined>('requireRealName', { re
 const { t } = useI18n()
 
 const open = ref(false)
+watch(
+  () => props.reveal,
+  (reveal) => {
+    if (reveal) open.value = true
+  },
+  { immediate: true }
+)
 
 const access = computed({
   get: () => (accessControlEnabled.value ? 'domains' : 'all'),
@@ -60,7 +69,7 @@ const summary = computed(() => {
 
     <div v-if="open" class="tfm__body">
       <div class="tfm__row">
-        <BaseField :label="t('tasks.form.more.access')">
+        <BaseField data-agent-field="access" :label="t('tasks.form.more.access')">
           <v-radio-group v-model="access" hide-details density="compact" class="tf-choices">
             <v-radio value="all" :label="t('tasks.form.more.accessAll')" />
             <v-radio value="domains" :label="t('tasks.form.more.accessDomains')" />
@@ -94,6 +103,7 @@ const summary = computed(() => {
       <div class="tfm__row">
         <v-switch
           v-model="requireRealName"
+          data-agent-field="real_name"
           color="primary"
           density="compact"
           hide-details

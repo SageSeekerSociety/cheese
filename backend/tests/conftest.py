@@ -47,6 +47,7 @@ from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.util import LRUCache
 
 from scripts.assert_suite_ran import SuiteDidNotRun, read_quarantine
+from tests.support.counting_session import measures_query_counts
 
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
 # DURING `git commit`, which exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE for
@@ -145,8 +146,9 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef  # noqa: E402
 from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
     Journal as ClaudeJournal,
 )
-from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
+from app.domain.agent.harness.driven import lifecycle  # noqa: E402
+from tests.support.machine_path import resolved  # noqa: E402
 
 # NOTE: `app.main` is deliberately NOT imported at module scope. Importing it
 # assembles the whole FastAPI app (`_discover_routers()` imports every module
@@ -165,7 +167,7 @@ from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
 from tests.support.collab import install as install_collab  # noqa: E402
-from tests.support.seat_channel import SeatChannel  # noqa: E402
+from tests.support.seat_channel import EPOCHS, SeatChannel  # noqa: E402
 
 # Tests exercise the real authz enforcement regardless of the dev .env (which
 # ships it OFF for the conservative dogfood rollout): the .env value must not
@@ -427,7 +429,9 @@ class ScriptedSession(Runner):
             gone = (self.topic_id, self.actor, self.session_id) in self.channel.gone
             return {
                 "session_id": self.session_id,
-                "input_protocol": INPUT_PROTOCOL,
+                "lifecycle": lifecycle.PROTOCOL,
+                "launch": self.launch,
+                "worker_epoch": self.outbox.epoch,
                 "working": self.working,
                 "work_id": self.work if self.working else None,
                 "tasks": dict(self.tasks),
@@ -501,11 +505,18 @@ class StubChannel(SeatChannel):
     @alive.setter
     def alive(self, value: bool) -> None:
         # The agent process ending is something a runner hears at once
-        # (``Runner._announce_exit``): a read it holds is answered.
+        # (``Runner._announce_exit``): it reports it, and a read it holds is
+        # answered.
         self._alive = value
         if not value:
+            said = getattr(self, "ending", None) or ""
             for session in self.sessions.values():
-                session.announce()
+                # On the runner's own loop, as `record` plays a record: its
+                # journal belongs to that loop's thread.
+                if threading.get_ident() == session.thread:
+                    session._report_exit(None, said)
+                else:
+                    session.loop.call_soon_threadsafe(session._report_exit, None, said)
 
     # --- the channel -------------------------------------------------------
 
@@ -526,6 +537,9 @@ class StubChannel(SeatChannel):
                 launch.resume_session_id or self.new_session_id,
                 agent,
             )
+            # Named by the launch that started it, as the screen names a real
+            # runner (``CHEESE_RUNNER_LAUNCH``).
+            runner.launch = launch.launch_name or runner.launch
             self.sessions[key] = runner
         runner.placement = self.seats[key]
         runner.project_id = session.project_id
@@ -535,12 +549,14 @@ class StubChannel(SeatChannel):
         """The seat whose runner is at ``state``: kept on the runner, so a
         channel standing in for a restarted backend that took over the
         runners (``sessions``) reaches them where they are."""
+        # The connector reads both spellings of the root as one directory.
+        state = resolved(state)
         if state.startswith("$HOME/.cheese/gone/"):
             *_, agent, session_id = state.split("/")
             return SimpleNamespace(agent_handle=agent, gone=session_id)
         for runner in self.sessions.values():
             session, placed = runner.placement
-            if placed == state:
+            if resolved(placed) == state:
                 return SimpleNamespace(
                     session=session,
                     agent_handle=runner.actor,
@@ -650,6 +666,8 @@ class StubChannel(SeatChannel):
         return {}
 
     def unlanded(self, topic_id: uuid.UUID, session: ScriptedSession) -> bool:
+        """Whether the backend has yet to take something the runner holds: a
+        record past what it took, or an event it has not acknowledged."""
         # Its own connection: this is asked from the test's thread, and the
         # runner's belongs to the portal loop's.
         journal = ClaudeJournal(session.state / "records.sqlite")
@@ -657,25 +675,13 @@ class StubChannel(SeatChannel):
             written = journal.connection.execute(
                 "SELECT MAX(sequence) FROM records"
             ).fetchone()[0]
+            taken = int(journal.recall("records_taken") or 0)
+            events = journal.connection.execute(
+                "SELECT 1 FROM lifecycle WHERE epoch != 0 LIMIT 1"
+            ).fetchone()
         finally:
             journal.close()
-        if not written:
-            return False
-        mirror = self.mirror(topic_id, session.actor)
-        if mirror is None or not mirror.exists():
-            return True
-        journal = ClaudeJournal(mirror)
-        try:
-            return int(journal.recall("landed") or 0) < written
-        finally:
-            journal.close()
-
-    def mirror(self, topic_id: uuid.UUID, agent: str) -> Path | None:
-        """Where the backend mirrors the seat's journal."""
-        runner = self.sessions.get((topic_id, agent))
-        if runner is None:
-            return None
-        return self._mirror_of(runner.placement[0], agent)
+        return bool(written and taken < written) or events is not None
 
     # --- what the session prints ------------------------------------------
 
@@ -968,12 +974,16 @@ async def finish_turn(service, topic_id) -> None:
     await close_topic_subscriptions(service, topic_id)
 
 
-def stub_compute(channel: StubChannel | None = None) -> "ComputePool":
+def stub_compute(channel: StubChannel | None = None, *, sessions=None) -> "ComputePool":
     """A pool holding one screen, for the many tests that build a ChatService
     by hand. Pass the channel when the test asserts against it."""
     from app.domain.agent.compute import ComputePool
 
     screen = channel or StubChannel()
+    if sessions is not None:
+        from app.domain.session_record import service as session_records
+
+        screen.host._records = functools.partial(session_records.append, sessions)
     return ComputePool([screen.runtime])
 
 
@@ -1045,7 +1055,7 @@ def _host_git_and_pre_commit_isolated(monkeypatch, tmp_path_factory) -> None:
     environments and a sqlite store under it (default `~/.cache/pre-commit`),
     and two runs on one machine as one user — the self-hosted runners, or a hook
     beside a test on a laptop — lock each other out of the one store
-    (`.github/AGENTS.md`; `scripts/test_ci_fast.py` does this for its harness).
+    (`.github/AGENTS.md`).
     Each test gets one under this worker's temp instead.
 
     A test that means to run git or pre-commit against a configuration of its
@@ -1088,6 +1098,17 @@ def _session_tmp_per_test(monkeypatch, tmp_path_factory) -> None:
     monkeypatch.setattr(
         machine_launcher, "SESSION_TMP", str(tmp_path_factory.mktemp("var-tmp"))
     )
+
+
+@pytest.fixture(autouse=True)
+def _channels_per_test() -> None:
+    """``wait_work_idle`` asks every stub channel still alive whether a session
+    of its has something unlanded. A channel an earlier test built lives on
+    until the garbage collector breaks its reference cycles, and its rows went
+    with that test's database: a lifecycle event it never had acknowledged
+    would make every later wait in the worker pay the whole ceiling. Only the
+    channels this test builds are its to wait for."""
+    _CHANNELS.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -1476,6 +1497,13 @@ def client(
     # Taken now, not in teardown: by then the test may have replaced
     # `app.api.deps.get_work_runner` (monkeypatch undoes it after this fixture).
     work_runner = get_work_runner()
+    # Production wires this sink in get_session_host; the scripted host needs
+    # the same durable record path, using this client's isolated database.
+    from functools import partial
+
+    from app.domain.session_record import service as session_records
+
+    stub_hooks.host._records = partial(session_records.append, test_factory)
 
     async def override_get_db():
         async with test_factory() as session:
@@ -1493,6 +1521,7 @@ def client(
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([stub_hooks.runtime]),
     )
+    EPOCHS.sessions = test_factory
 
     def override_get_chat_service() -> ChatService:
         # ONE instance, like production's lru_cache. A per-request instance was
@@ -1535,6 +1564,7 @@ def client(
                     finally:
                         c.portal.call(app_engine.dispose)
     finally:
+        EPOCHS.sessions = None
         app.dependency_overrides.clear()
         # Leaving the app hands its work over and holds the runner's turns, which
         # is right for a process that exits next. This one goes on to run tests
@@ -2150,6 +2180,7 @@ _LAYER_CEILING_S = {"pure": 10, "contract": 15, "integration": 30}
 _CEILING = pytest.StashKey[tuple[str, float]]()
 _SETUP_S = pytest.StashKey[float]()
 
+
 # Tests that took over 60% of their layer's ceiling in some run, so variance
 # alone could push them over it. They are not checked against it until they are
 # fixed, and the list only shrinks: a fixed test leaves it in the same change,
@@ -2201,9 +2232,25 @@ def _layer_of(item: pytest.Item) -> str:
     return "integration"
 
 
+_READS_ONCE = pytest.mark.reads_once
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Give every collected test exactly one layer marker, and that layer's
     time ceiling unless the test is in the slow baseline.
+
+    Also give every test that counts SQL statements the ``reads_once`` marker,
+    derived from the file's name *or its code* (see
+    ``tests/support/counting_session.py``). Deriving it is the whole point: the
+    family had eighteen members under twelve different names and no marker, so
+    "where is the test that proves this endpoint reads once" was a search across
+    three different keyword spellings. A marker is one readable name for the
+    family: ``pytest -m reads_once``.
+
+    Content is checked as well as the name because the next test in the family
+    will be written by someone who did not know there was a naming convention.
+    The file read is per path, not per item, so the cost is one pass over the
+    test tree.
 
     The CI selections are the whole suite only if every test carries one and
     only one of the three markers: a test carrying none runs in no selection
@@ -2234,6 +2281,13 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
         layer = _layer_of(item)
         item.add_marker(layer)
+        path = os.fspath(item.path) if item.path is not None else ""
+        if (
+            path
+            and item.get_closest_marker("reads_once") is None
+            and measures_query_counts(path)
+        ):
+            item.add_marker(_READS_ONCE)
         if item.nodeid in quarantine:
             # The gate accepts this xfail only when its nodeid and issue
             # match the same quarantine list; other skips still fail.
@@ -2248,6 +2302,16 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         raise pytest.UsageError(
             "These tests declare their own layer:\n" + "\n".join(misfiled)
         )
+
+
+def _over_ceiling(layer: str, took: float, ceiling: float) -> str:
+    """The failure text for a test that outlived its layer's ceiling."""
+    return (
+        f"took {took:.1f} s with setup, over the {layer} layer's {ceiling:g} s"
+        " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
+        " for and give it a shorter timer or interval rather than adding it to"
+        " slow_tests.txt."
+    )
 
 
 @pytest.hookimpl(wrapper=True)
@@ -2266,12 +2330,7 @@ def pytest_runtest_makereport(
     took = item.stash.get(_SETUP_S, 0.0) + call.duration
     if took > ceiling:
         report.outcome = "failed"
-        report.longrepr = (
-            f"took {took:.1f} s with setup, over the {layer} layer's {ceiling:g} s"
-            " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
-            " for and give it a shorter timer or interval rather than adding it to"
-            " slow_tests.txt."
-        )
+        report.longrepr = _over_ceiling(layer, took, ceiling)
     return report
 
 
@@ -2492,9 +2551,12 @@ async def db_factory(_pg_schema):
     """
     engine = _production_test_engine(TEST_DATABASE_URL)
     await _clear_client_db()
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    EPOCHS.sessions = factory
     try:
-        yield async_sessionmaker(engine, expire_on_commit=False)
+        yield factory
     finally:
+        EPOCHS.sessions = None
         try:
             await _fail_on_background_work("db_factory")
         finally:
@@ -2591,6 +2653,7 @@ async def python_client(
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([stub_hooks.runtime]),
     )
+    EPOCHS.sessions = test_factory
 
     def override_get_chat_service() -> ChatService:
         # ONE instance, like production's lru_cache. A per-request instance was
@@ -2620,6 +2683,7 @@ async def python_client(
             c.collab = install_collab(monkeypatch, app)  # type: ignore[attr-defined]
             yield c
     finally:
+        EPOCHS.sessions = None
         app.dependency_overrides.clear()
         try:
             await _fail_on_background_work("python_client")
@@ -2736,8 +2800,9 @@ def seed_task_with_protocol(
     space admin and a filled form, and none of that is what the protocol tests
     are about. `override` populates the 赛题's own `protocol_override` (#370
     option (c)). `shell` and `override` carry the 壳 layer the same way, so a
-    项目集-level 壳 and a 赛题-level one are set up in one call. `teaching` is
-    the 课程级教学配置 (#8d772257), on the same row and by the same route.
+    项目集-level 壳 and a 赛题-level one are set up in one call. `teaching` lands
+    on the 项目集 row, which guidance no longer reads (e5f1a9c3d7b2): tests use
+    it only to show that; a 题目's own guidance goes in `override["teaching"]`.
     `space_teaching` is the OUTERMOST level of the same key (#944): the 空间
     default every 项目集 on the board inherits — set on the `Space` row this call
     creates, so it only applies when `space_id` is not passed.

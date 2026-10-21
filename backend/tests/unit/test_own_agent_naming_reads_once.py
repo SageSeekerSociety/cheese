@@ -3,7 +3,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.domain.agent_instance.models import OwnCallers
 from app.domain.agent_instance.own import connections, naming, ownership
 from app.domain.device.login_kind import ConnectionKind
 
@@ -28,10 +27,10 @@ class NamingDB:
             return Rows([(project_id, 7) for project_id in self.projects])
         instance = SimpleNamespace(configuration={}, display_name=None, created_at=None)
         self.instances.append(instance)
-        return Rows([(instance, "device-1", None, OwnCallers.owner)])
+        return Rows([(instance, "device-1", None)])
 
     async def get(self, _model, _user_id):
-        return SimpleNamespace(username="owner")
+        return SimpleNamespace(username="owner", team_id=3)
 
     async def flush(self):
         pass
@@ -59,6 +58,7 @@ async def test_rename_reads_each_owners_nickname_and_logins_once(monkeypatch):
                 model=None,
                 device_id="device-1",
                 device_name="工作机",
+                owner_user_id=7,
             )
         ]
 
@@ -68,15 +68,9 @@ async def test_rename_reads_each_owners_nickname_and_logins_once(monkeypatch):
     outputs = []
     for project_count in (3, 8):
         db = NamingDB(project_count)
-        await naming.rename_for_connection(db, device_id="device-1")
-        outputs.append(
-            [
-                (instance.display_name, instance.configuration["body"])
-                for instance in db.instances
-            ]
-        )
-        assert all(name == "机主的 Claude Code（Pro）" for name, _body in outputs[-1])
-        assert all("你是机主自己的 Claude Code" in body for _name, body in outputs[-1])
+        await naming.rename_for_connection(db, login_id="device-1")
+        outputs.append([instance.display_name for instance in db.instances])
+        assert all(name == "机主的 Claude Code（Pro）" for name in outputs[-1])
 
     assert login_calls == face_calls == 2
     assert outputs[0] == outputs[1][:3]

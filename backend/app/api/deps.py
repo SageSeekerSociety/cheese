@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Callable
-from functools import lru_cache
+from functools import lru_cache, partial
 
 from fastapi import Depends
 from redis.asyncio import Redis
@@ -33,12 +33,21 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.dashboard.user_statistics import UserStatisticsRepository
+from app.domain.delivery.ledger import deliver
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.discussion.reaction_services import DiscussionReactionService
+from app.domain.discussion.repositories import (
+    DiscussionReactionRepository,
+    DiscussionRepository,
+    ReactionTypeRepository,
+)
+from app.domain.discussion.services import DiscussionService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
+from app.domain.session_record import service as session_records
 from app.domain.space.services import SpaceLabels
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
@@ -58,6 +67,8 @@ __all__ = [
     "get_work_runner",
     "get_passkey_service",
     "get_user_realname_service",
+    "get_user_auth_service",
+    "get_discussion_service",
     "project_device_online",
     "team_device_online",
 ]
@@ -103,7 +114,8 @@ def _note_alive(conversation: uuid.UUID) -> None:
 
     Not a frame — it may come from a turn that has written nothing for half an
     hour — and that is the point: it is the one sign of life a quiet turn
-    leaves, and the sidebar's red light reads it to tell quiet from stopped.
+    leaves, and the stall verdict (`TopicService.stall_signal`, read by
+    `cheese status`) reads it to tell quiet from stopped.
     """
     get_broker().note_alive(str(conversation))
 
@@ -113,7 +125,11 @@ def get_session_host() -> SessionHost:
     """The sessions on the session host this process talks to — a room's, a
     person's 芝士, a document thread's. One per process, like the chat
     service: it remembers which sessions are running and where each is read."""
-    return SessionHost(device_hub, on_alive=_note_alive)
+    return SessionHost(
+        device_hub,
+        on_alive=_note_alive,
+        records=partial(session_records.append, async_session_factory),
+    )
 
 
 @lru_cache
@@ -199,6 +215,19 @@ async def get_user_auth_service(
         user_repo=user_repo,
         profile_repo=profile_repo,
         stats_repo=stats_repo,
+    )
+
+
+async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
+    reaction_service = DiscussionReactionService(
+        reaction_repo=DiscussionReactionRepository(session=db),
+        reaction_type_repo=ReactionTypeRepository(session=db),
+    )
+    return DiscussionService(
+        repo=DiscussionRepository(session=db),
+        reaction_service=reaction_service,
+        session=db,
+        deliver=deliver,
     )
 
 

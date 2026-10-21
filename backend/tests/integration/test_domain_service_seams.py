@@ -28,6 +28,7 @@ from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.integration.conftest import project_service, registered
+from tests.support.devices import enrollment_team
 
 pytestmark = pytest.mark.anyio
 
@@ -183,6 +184,7 @@ async def test_sql_device_service_persists_the_flow_in_the_database(
             code,
             owner_user_id=owner_id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(sql_device_service(session), owner_id),
         )
         await session.commit()
         device_id, token = device.device_id, device.token

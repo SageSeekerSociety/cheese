@@ -137,7 +137,7 @@ covers:
 
 ## 周期任务清单 {#periodic}
 
-`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 35 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
+`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 38 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
 
 登记名称重复、清单缺项或出现未列出的任务都会报错，防止巡检漏接后静默缺席。
 
@@ -148,15 +148,18 @@ covers:
 | forge event subscriptions | 固定 300s | 对账仓库 webhook 订阅 |
 | forge credential cache cleanup | 固定 3600s | 清过期的托管平台令牌缓存 |
 | pr poll / task pr poll | `accept_pr_poll_interval_s` | 镜像 PR 合并态、给没卡的任务补卡 |
+| task closing | `accept_pr_poll_interval_s` | 采纳后写总结的任务：AI 队友还在做别的就按下一步交付，写完或到点就关闭（`review/pr_poll.sweep_closings`） |
 | draft pr sweep | `draft_pr_sweep_interval_s` | 给有提交、还没 PR 的分支开 draft PR；周期这一拍只扫 `draft_pr_sweep_activity_window_s` 内动过的任务，事件和重连的补扫扫全部 |
 | orphan sweep | `orphan_sweep_interval_s` | 扫死了没带进程一起死的轮 |
 | chat progress reminder | `chat_progress_check_interval_s` | 提醒沉默的轮 |
+| task state reminder | `chat_progress_check_interval_s` | 会话还在跑、报的任务状态太久没更新时，叫它再报一次（`StaleProgressReminder`） |
 | gate sweep | `gate_sweep_interval_s` | 收超龄的闸门孤儿卡 |
 | cloud host pool sweep / cloud warm pool | `machine_enroll_interval_seconds` | 云主机池：同步宿主机状态、入网、按需扩容和释放空闲宿主机；维护预热池 |
-| sandbox disk guard | `sandbox_disk_check_s` | 读每台跑着沙箱的机器（平台云机和用户电脑）的磁盘余量，每个 home 占多少要走一遍文件，只在 `sandbox_disk_walk_s` 到了或余量低于下限时读：可用空间或 inode 低于下限时，云机不再接新沙箱、停掉占用最多的那个沙箱并告诉它的房间；删掉沙箱已经不在的残留 home |
+| sandbox disk guard | `sandbox_disk_check_s` | 读每台跑着沙箱的机器（平台云机和用户电脑）的磁盘余量，云机上每个 home 占多少从它的 project quota 读（一次 `statvfs`）：可用空间或 inode 低于下限时，云机不再接新沙箱（不停任何沙箱，每个沙箱有自己的上限）；删掉沙箱已经不在的残留 home；两分钟没调过工具的沙箱交还 page cache |
 | subscription usage ingest | `subscription_ingest_interval_s`，未设 `SUBSCRIPTION_USAGE_LOG` 时为 0 | 把计量代理的账本吃进 `resource_usage` |
 | backend error flush | `backend_error_flush_interval_s` | 把后端报错按窗口收口后记成运行记录 |
 | run record expiry | `run_record_expiry_interval_s` | 删掉超过 30 天的运行记录 |
+| session record seal / session record retention | `SEAL_EVERY_S` / `retention.EVERY_S` | 把会话记录封存进私有桶、读回核对后换掉行；删掉最后一条已超过 30 天的封存段的行，桶里的对象不删（[会话记录](/dev/session-records)） |
 | notification email drain / push drain | `notification_email_drain_interval_s` / `notification_push_drain_interval_s` | 那两条 Redis 队列的唯一消费者，不跑就一封邮件、一条推送都不发 |
 | delivery resend | `delivery_resend_interval_s` | 投递账本上「记下了没发出去」的行 |
 | docs question retention | 固定 86400s | 清过期的问芝士记录 |
@@ -166,7 +169,6 @@ covers:
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |
 | task deadline sweep | `task_deadline_sweep_interval_s` | 任务截止 |
 | memory dream | `memory_dream_sweep_interval_s` | 记忆整理 |
-| wake watch | `wake_watch_interval_s` | 盯叫醒链上那两拍（定时器每拍一条消息、看门狗原地改一条心跳），静满 60 分钟记一条运行记录，并点 #1343 那条线上的座位补一跳（`wake_watch_catchup` 关掉就只记不补） |
 
 `spawn()` 是不留句柄的那一类：任务可能被 GC 掉，所以平台持一个强引用集合 `_INFLIGHT`；`hold()` 给需要留句柄以便关停时取消的工作。两者的崩溃都记 ERROR 而不是 WARNING（告警只捡 ERROR）。
 
@@ -177,8 +179,7 @@ covers:
 结构由 Alembic 管，`lifespan` 里不建表。约定：
 
 - 迁移放在 `backend/alembic/versions/`，配置在 `backend/alembic.ini` 与 `backend/alembic/env.py`。
-- **一条链，一个 head**。并行开发各写一支会把链分叉，CI 的 `backend / static` job（`.github/workflows/test.yml`）跑 `uv run alembic heads` 数 `(head)` 的个数，不等于 1 就红，并提示「rechain 到当前 head 或跑 `alembic merge heads`」。
-- `backend/alembic/HEAD` 这个文件记着当前 head 的 revision id，由 pre-commit 的 `merging would not fork the alembic chain` 钩子（只对 `^backend/alembic/` 生效）维护 —— 它同时检查 HEAD 文件点的是链的 head、以及这次改动不会分叉。
+- **一条链，一个 head**。并行开发各写一支会把链分叉。`backend/alembic/HEAD` 这个文件记着当前 head 的 revision id；pre-commit 的 `merging would not fork the alembic chain` 钩子（`migration-fork`）检查 HEAD 文件点的是链的 head，并且这次改动合进当前的 main 后仍只有一个 head。CI 在 Repo Guards 里跑同一个钩子，分叉就红；修法是 `python3 .claude/scripts/check-migration-fork.py --rechain`，或手动把 `down_revision` 接到当前 head 上。
 
 退役的列也留在迁移里而不是删文件（例如 `971b4765fa69_drop_ccproxy_columns.py`），`downgrade` 可能只把空列加回来。
 

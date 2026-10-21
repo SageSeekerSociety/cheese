@@ -18,6 +18,9 @@ import type { useMessageReactions } from '../useMessageReactions'
 import type { useRoomResync } from '../useRoomResync'
 import type { useTimelineTasks } from '../useTimelineTasks'
 
+import { onScopeDispose, watch } from 'vue'
+import { useEventListener } from '@vueuse/core'
+
 import { useErrorFade } from '../../components/room/composables/useErrorFade'
 import { useRoomSocket } from '../../components/room/composables/useRoomSocket'
 import { runRecordOf, threadStatusOf } from '../../components/room/composables/useRunRecords'
@@ -118,6 +121,33 @@ export function usePanelSocket(deps: {
         void (deps.history.entered(topicId) ? deps.resync().resync(topicId) : deps.loadTopic(current))
     },
     errorMsg: deps.errorMsg,
+  })
+
+  // 「有一轮在跑」是这条连接自己记的账：turn_started 让它亮，turn_finished 让它灭。
+  // 现场页签上那个绿色的呼吸点、对话里的「芝士正在处理」读的都是它。一轮可能跑上
+  // 几分钟到几小时，而这期间只要结束的那一帧没送到（掉线重连的边界上、一条丢掉的
+  // 帧），页面就会一直显示有活在跑，直到下一次重连——可连接本身是好的，不会再重连。
+  // 所以只要还认为有活在跑，就隔一阵用 sync 对一次：服务端答的 room_state 和重连时
+  // 核对的是同一份事实，它说没有轮次了，就把亮着的那些撤掉。
+  const WORKING_VERIFY_MS = 30_000
+  let verifier: ReturnType<typeof setInterval> | null = null
+  function stopVerifier() {
+    if (verifier) clearInterval(verifier)
+    verifier = null
+  }
+  function verifyWorking() {
+    // 没连上时 `send` 自己就不发；这条只决定「还有没有必要问」。
+    if (deps.awaitingReply.value) sendOnSocket({ type: 'sync' })
+  }
+  watch(deps.awaitingReply, (working) => {
+    stopVerifier()
+    if (working) verifier = setInterval(verifyWorking, WORKING_VERIFY_MS)
+  })
+  onScopeDispose(stopVerifier)
+  // 后台标签页里的定时器会被浏览器降频甚至冻住。回到这个页面时马上对一次，不等
+  // 下一个间隔。
+  useEventListener(document, 'visibilitychange', () => {
+    if (!document.hidden) verifyWorking()
   })
 
   // 每次连上，broker 都会把一轮进行中的帧一次性重放出来——先进追赶模式，这一阵里

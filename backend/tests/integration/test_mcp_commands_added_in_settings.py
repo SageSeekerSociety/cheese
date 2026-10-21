@@ -10,7 +10,7 @@ The rules, stated before they were written:
   repository takes later is the repository's: the added one stops counting;
 - a command that cannot be parsed, or an environment variable that is not a
   name, is refused;
-- on a member's own computer its owner is asked like for any other command,
+- on a team's computer its administrators are asked like for any other command,
   and told it was added in settings, and by whom;
 - changing or removing it is done in settings, by whoever configures the
   project's AI teammates.
@@ -157,7 +157,7 @@ def test_a_command_that_cannot_run_as_written_is_refused(client, room, body):
     assert "pg" not in _servers(client, pid)
 
 
-def test_the_owner_is_told_the_command_was_added_in_settings(client, room):
+def test_the_team_admin_is_told_the_command_was_added_in_settings(client, room):
     pid, tid, session = room
     assert _add(client, pid, PG).status_code == 200
     device = _computer(client, pid, "dana")
@@ -175,7 +175,8 @@ def test_the_owner_is_told_the_command_was_added_in_settings(client, room):
     )
     assert reported.status_code == 200, reported.text
 
-    [asked] = _waiting(client, "dana")
+    assert _waiting(client, "dana") == []
+    [asked] = _waiting(client, "alice")
     assert asked["server"] == "pg"
     assert asked["source"] == "settings"
     assert asked["author"]["handle"] == "alice"

@@ -87,6 +87,14 @@ class NotificationType(str, Enum):
     #: 删公告连它发出去的这些一起撤回。
     SPACE_ANNOUNCEMENT = "SPACE_ANNOUNCEMENT"
 
+    #: 空间里一道题目上发生的、要领取者或出题人知道的事（`task_notices`）：领取
+    #: 通过或没通过、提交批改了、提交要求改了、个人提交期限改了、提交期限还剩三天、
+    #: 有人过了期限没交。说的话是 `payload.content`（带键），哪一种看
+    #: `payload.event`。
+    TASK_NOTICE = "TASK_NOTICE"
+    #: 提交期限只剩一天、还没交：和 `TASK_NOTICE` 分开，因为只有它推送。
+    TASK_DUE_SOON = "TASK_DUE_SOON"
+
     #: 平台报告自己的那三种（原 `AlertKind`）。值保持小写原样：`cheese_notify
     #: --kind` 和前端的 `NOTIF_KIND` 标签表按它写，存量行里也是这几个字。
     CHANGE_ALERT = "change_alert"  # 变更提醒

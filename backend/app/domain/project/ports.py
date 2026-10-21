@@ -206,7 +206,7 @@ class LibraryFiles(Protocol):
         """这个项目库里每一份的名字、存储和键。"""
         ...
 
-    def read_blob(self, location: str, key: str) -> bytes:
+    async def read_blob(self, location: str, key: str) -> bytes:
         """那双 ``(存储, 键)`` 底下的字节。"""
         ...
 

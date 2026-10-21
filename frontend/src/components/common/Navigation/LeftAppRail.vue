@@ -42,6 +42,7 @@
       @drag-end="clearDrag"
     ></RailItem>
     <template #append>
+      <AgentRailEntry />
       <v-menu
         v-if="userMenu.loggedIn.value"
         v-model="userMenu.menuOpen.value"
@@ -117,6 +118,7 @@ import RailItem from './RailItem.vue'
 import { NavBarProps, NavGenericItem } from './types'
 import UserMenuCard from './UserMenuCard.vue'
 
+import AgentRailEntry from '@/components/assistant/AgentRailEntry.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'

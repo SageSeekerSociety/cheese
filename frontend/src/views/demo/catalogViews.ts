@@ -12,6 +12,7 @@
  * 是 type-only 引用，`catalog.ts` 反过来要 `VIEW_ENTRIES` 这个值，运行时不构成循环。
  * 数据见 `catalogSharedFixtures.ts`。
  */
+import type { SpaceApplication } from '@/types'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
@@ -27,7 +28,7 @@ import { VIEW_ADMIN_STATS_ENTRIES } from './catalogViewAdminStats'
 import { VIEW_SETTINGS_WORKSPACE_ENTRIES } from './catalogViewSettingsWorkspace'
 
 import ArtifactVersionList from '@/views/artifact/ArtifactVersionList.vue'
-import SpaceReviewNoticeView from '@/views/spaces/detail/SpaceReviewNoticeView.vue'
+import SpaceApplicationView from '@/views/spaces/SpaceApplicationView.vue'
 import TeamProfile from '@/views/teams/TeamProfile.vue'
 import WelcomeView from '@/views/welcome/WelcomeView.vue'
 
@@ -36,6 +37,31 @@ const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 
 /** 「加入」这一趟接口由调用方给，预览站上走一遍就完：只看画出来的样子。 */
 const join = async () => {}
+
+/** 我建的、还没过审的两份申请：一份在等审，一份被驳回带原因。 */
+const APPLICATION_PENDING: SpaceApplication = {
+  id: 8,
+  avatarId: null,
+  name: '操作系统 2026 秋',
+  intro: '本科三年级必修课。五个实验从系统调用做到文件系统，基于 xv6。',
+  reviewStatus: 'PENDING',
+  description: '',
+  owner: 'linxia',
+  reviewReason: null,
+  reviewedBy: null,
+  reviewedAt: null,
+  createdAt: '2026-10-18T08:00:00Z',
+}
+const APPLICATION_REJECTED: SpaceApplication = {
+  ...APPLICATION_PENDING,
+  id: 9,
+  name: '量子计算导论',
+  intro: '介绍量子比特、量子门和基本量子算法，配合 Qiskit 做模拟实验。',
+  reviewStatus: 'REJECTED',
+  reviewReason: '空间名称请写明开课学期，简介里写清这门课面向哪个年级。',
+  reviewedBy: 'cheese',
+  reviewedAt: '2026-10-19T03:12:00Z',
+}
 
 export const VIEW_ENTRIES: CatalogEntry[] = [
   // 账号那一组整页（登录进门到设置密码的每一屏）单放一册，展开进来。
@@ -88,26 +114,25 @@ export const VIEW_ENTRIES: CatalogEntry[] = [
   {
     id: 'welcome-view',
     title: 'WelcomeView',
-    about: '新账号的新手引导：五个问题一屏一问，右边的「你的项目」随回答长出来；点「建好项目」才把回答交给页面去建。',
+    about: '新账号的新手引导：两个问题一屏一问，右边的「你的项目」随回答长出来；点「建好项目」才把回答交给页面去建。',
     file: 'src/views/welcome/WelcomeView.vue',
     component: WelcomeView,
     needs: UI_T_R,
     args: {
       me: { username: 'lin', nickname: '林小满', work_role: null, organization: null },
-      desktop: false,
       busy: false,
       failure: '',
     },
     states: [
       {
         name: '第一次进来',
-        note: '从称呼问起，名字预填账号上的昵称；不想答可以跳过引导。',
+        note: '从身份问起，称呼用账号上的昵称；不想答可以跳过引导。',
         props: {},
-        expect: '芝士怎么称呼你？',
+        expect: '你主要用知是做什么？',
       },
       {
         name: '从帮助菜单再走一遍',
-        note: '称呼答过了，从身份问起，上次选的身份已经按下。',
+        note: '上次选的身份已经按下，没有「跳过引导」。',
         props: {
           again: true,
           me: { username: 'lin', nickname: '林小满', work_role: 'teacher', organization: '中国人民大学' },
@@ -159,25 +184,37 @@ export const VIEW_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
-    id: 'space-review-notice',
-    title: 'SpaceReviewNoticeView',
+    id: 'space-application-view',
+    title: 'SpaceApplicationView',
     about:
-      '所有者打开自己那块还没过审的空间时看到的一屏：说清它在审核中还是被驳回了（驳回带原因），出去的路回空间列表 —— 「我的空间申请」在那里。',
-    file: 'src/views/spaces/detail/SpaceReviewNoticeView.vue',
-    component: SpaceReviewNoticeView,
-    needs: UI_T_R,
+      '我建的空间还没过审时，首页侧栏那一行点进来的一页：待审核时可以撤回；被驳回时看驳回原因、改了重新提交，或者删掉这份申请。取数、提交、确认都在容器 `SpaceApplication.vue`。',
+    file: 'src/views/spaces/SpaceApplicationView.vue',
+    component: SpaceApplicationView,
+    needs: ['vuetify', 'i18n'],
     states: [
       {
         name: '待审核',
-        note: '刚建好、还没人审：这里还发不了题，邀请码也还用不了。',
-        props: { status: 'PENDING' },
-        expect: '空间还在审核中',
+        note: '刚提交、还没人审：写名称和简介，能做的只有撤回。',
+        props: { application: APPLICATION_PENDING },
+        expect: '待平台管理员审核',
       },
       {
         name: '被驳回，带原因',
-        note: '审核人写了原因就照写，再说去哪里改了重交。',
-        props: { status: 'REJECTED', reason: '空间名称没说清是哪门课' },
-        expect: '空间名称没说清是哪门课',
+        note: '审核人写了原因就照写；下面是那份申请原来的样子，改了可以重新提交，也可以删掉。',
+        props: { application: APPLICATION_REJECTED },
+        expect: '简介里写清这门课面向哪个年级',
+      },
+      {
+        name: '重新提交没成',
+        note: '那一句画在表单底下，改过的字还在。',
+        props: { application: APPLICATION_REJECTED, error: '重新提交失败，稍后重试' },
+        expect: '重新提交失败，稍后重试',
+      },
+      {
+        name: '读不到这份申请',
+        note: '编号不对，或者已经撤回：说一句读不到，给一颗重试。',
+        props: { application: null, loadError: '无法读取这份申请' },
+        expect: '无法读取这份申请',
       },
     ],
   },

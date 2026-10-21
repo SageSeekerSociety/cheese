@@ -99,7 +99,7 @@ async def _say(
         params["platform_token"] = prompt.acting
     running.owed = True
     try:
-        await svc._wire().call(running.host, ref, method, params)
+        await svc._call(running, ref, method, params)
     except (DeviceOffline, DeviceCallError) as exc:
         # Nothing on the host took it: the host is not connected, or the
         # runner is not there to answer.

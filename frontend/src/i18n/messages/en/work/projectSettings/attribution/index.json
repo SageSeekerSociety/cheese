@@ -1,9 +1,16 @@
 {
   "agent": "AI teammate",
   "agentHint": "The PR and the commit are credited to {agent}, and the task owner is not named. The commit links to the task",
+  "expired": "Authorization expired: {agent} opens the PRs for the tasks you own for now",
   "hint": "Existing commits are unchanged",
   "label": "Credit to",
+  "signIn": "Connect GitHub",
+  "signInHint": "Once connected, PRs for the tasks you own are opened with your account",
+  "manage": "Manage in account security",
   "owner": "Task owner",
-  "ownerHint": "The PR is opened with the task owner's GitHub account, so the owner authors the commit and {agent} is a co-author. If the owner hasn't connected GitHub, {agent} opens the PR and the owner is a co-author",
-  "title": "Commit credit"
+  "ownerHint": "The PR is opened with the GitHub account the task owner connected, so the owner authors the commit and {agent} is a co-author. If the owner hasn't connected GitHub, {agent} opens the PR and the owner is a co-author",
+  "signInAgain": "Renew GitHub authorization",
+  "title": "Commit credit",
+  "unlinked": "GitHub not connected",
+  "yourGithub": "Your GitHub account"
 }

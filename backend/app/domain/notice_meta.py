@@ -66,7 +66,8 @@ EVENT_LIBRARY_SAVED: Final = "library_saved"
 EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 验收卡被作废 —— 不是驳回：没人对代码下过判断，卡只是被收尾了。
 EVENT_CARD_VOIDED: Final = "card_voided"
-#: 验收卡的描述被更正了 —— 这次改动会在 main 的历史里说什么，变了。
+#: 验收卡的描述或交付物被更正了 —— 这次改动会在 main 的历史里说什么，或者
+#: 验收人要审的那一份，变了。
 EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
 #: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
@@ -83,6 +84,9 @@ EVENT_MEMORY_ORGANIZING: Final = "memory_organizing"
 #: 芝士自己的事：一条记忆是 agent 写下的一份观察，没有人在等它，所以谁也不点。
 #: 改动本身收进 `detail`，按树的归属分别说进项目总览 / 本人的私聊。
 EVENT_MEMORY_CHANGED: Final = "memory_changed"
+#: Someone edited a message the room's agent had already read; the agent is told,
+#: and the members read the same line in 现场.
+EVENT_MESSAGE_EDITED: Final = "message_edited"
 #: A message written into the running session whose arrival is still being
 #: checked. It is not sent again.
 EVENT_DELIVERY_CHECKING: Final = "delivery_checking"
@@ -103,12 +107,12 @@ EVENT_TURN_QUEUED: Final = "turn_queued"
 EVENT_TOOLS_RECOVERED: Final = "tools_recovered"
 #: 话题的运行环境被重建 —— 会话和后台任务都断了，项目文件没事。
 EVENT_SANDBOX_REBUILT: Final = "sandbox_rebuilt"
-#: 任务合并后，包含这次合并的一次部署成功了（`review.landing_watch`）。
+#: 任务合并后，包含这次合并的一次部署成功了。合并后的观察已经删掉，只留给旧任务里的行。
 EVENT_DEPLOY_DONE: Final = "deploy_done"
-#: 任务合并后，包含这次合并的一次部署失败了。
+#: 任务合并后，包含这次合并的一次部署失败了。同上，只留给旧行。
 EVENT_DEPLOY_FAILED: Final = "deploy_failed"
-#: 任务合并到默认分支后，一项在合并前那个提交上通过的检查在合并提交上失败了：
-#: 交给任务的 AI 队友修，任务关了就重新打开（`review.landing_watch`）。
+#: 任务合并到默认分支后，合并提交上的一项检查失败了。合并后的观察已经删掉，
+#: 只留给旧任务里的行。
 EVENT_MAIN_CHECKS_FAILED: Final = "main_checks_failed"
 #: 一件活的提交并进了房间的分支 / 先排队 / 冲突了。
 EVENT_ROOM_MERGE: Final = "room_merge"
@@ -154,19 +158,15 @@ EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 EVENT_TIMED_DELIVERY: Final = "timed_delivery"
 #: 芝士把一次做法整理成了项目技能，等人确认后才保存、才下发。
 EVENT_SKILL_PROPOSED: Final = "skill_proposed"
-#: 叫醒链上该来的那一拍没来（`domain/wake_watch/`）：总调度的定时器或者看门狗的
-#: 心跳停了。判到停摆之后，观察者给那条线上的座位点一条补跳
-#: （`wake_watch/catchup.py`）—— 这一条事件就是那条投递带的。
-EVENT_WAKE_MISSED: Final = "wake_missed"
 #: 芝士在某人的邮箱里写好了一封草稿；发不发由邮箱主人确认。
 EVENT_MAIL_DRAFTED: Final = "mail_drafted"
 #: 那封草稿的下落：邮箱主人发出了、发送失败了，或者放弃了。房间里的确认卡片据此
 #: 改成终态。
 EVENT_MAIL_RESULT: Final = "mail_result"
-#: 一条周期任务或事件触发规则开始了一次执行；结果或失败原因随后另起一条。
+#: 一条例行事务开始了一次执行；结果或失败原因随后另起一条。
 EVENT_ROUTINE_RUN: Final = "routine_run"
 EVENT_ROUTINE_RESULT: Final = "routine_result"
-#: 芝士起草了一条周期任务/触发规则，等人确认后才会执行。
+#: 芝士起草了一条例行事务，等人确认后才会执行。
 EVENT_ROUTINE_PROPOSED: Final = "routine_proposed"
 #: 房间归档了，它里面还在执行的规则随之停下。规则自己的状态不变（取消归档后从下一
 #: 个时刻继续），所以这一行说的是房间带走了什么，不是规则被改成了什么。
@@ -174,6 +174,9 @@ EVENT_ROUTINE_STOPPED: Final = "routine_stopped"
 #: AI 服务的一次请求失败了，会话正在按它自己的退避重试。重试期间房间里没有任何
 #: 输出，不说一声就和「在想」分不出来。同一段连续的重试只占一行，次数原地更新。
 EVENT_API_RETRY: Final = "api_retry"
+EVENT_TURN_RESUME_WAIT: Final = "turn_resume_wait"
+EVENT_TURN_RESUME_STARTED: Final = "turn_resume_started"
+EVENT_TURN_RESUME_STOPPED: Final = "turn_resume_stopped"
 #: 会话在压缩上下文：对话太长，模型接下一句之前要先把前面的内容整理成摘要。这期间
 #: 房间里没有任何输出，也不回新消息，不说一声就和会话挂了分不出来。开始时落一行，
 #: 结束时同一行改成已完成或失败（`meta.state = "over"`）。
@@ -253,7 +256,6 @@ EVENT_TYPES: Final = frozenset(
         EVENT_DEPENDENCY_REJECTED,
         EVENT_POLICY_PROPOSAL,
         EVENT_TIMED_DELIVERY,
-        EVENT_WAKE_MISSED,
         EVENT_SKILL_PROPOSED,
         EVENT_MAIL_DRAFTED,
         EVENT_MAIL_RESULT,
@@ -287,11 +289,11 @@ RUN_RECORD_EVENTS: Final = frozenset(
         EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,
         EVENT_TIMED_DELIVERY,
-        EVENT_WAKE_MISSED,
         "cloud_startup",
         "cloud_provisioning",
         "sandbox_asleep",
         EVENT_MEMORY_CHANGED,
+        EVENT_MESSAGE_EDITED,
         "backend_error",
         "frontend_error",
     }

@@ -86,8 +86,13 @@ export interface FeedbackProposalPayload {
   session_id: string | null
   environment: string | null
   tags: string[]
-  /** 用户原话，或者那句「用户没有就这个问题说过话」。**必填**，见方案稿 §5.0。 */
-  user_said: string
+  /** 用户原话；用户没说过话时为 null，并且 `user_said_absent` 为 true。 */
+  user_said: string | null
+  /**
+   * 用户没有就这个问题说过话。比这个字段早的卡没有它，那时「没说过」写成
+   * `user_said` 里的一句约定好的话 —— 读的时候认那句话，见 AgentFeedbackCard。
+   */
+  user_said_absent?: boolean
   /** 服务端算的指纹，「不用」和去重都认它。 */
   fingerprint: string
 }

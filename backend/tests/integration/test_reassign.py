@@ -32,7 +32,7 @@ def test_reassign_changes_reviewer(client):
     card_id = _topic_and_card(client)
     r = client.post(
         f"/accept-cards/{card_id}/reassign",
-        json={"reviewer_handle": "mentor-1", "focus": "导师更合适"},
+        json={"reviewer_handle": "mentor-1"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
@@ -44,11 +44,39 @@ def test_reassigning_keeps_what_the_deliverer_asked_to_check(client):
     card_id = _topic_and_card(client)
     r = client.post(
         f"/accept-cards/{card_id}/reassign",
-        json={"reviewer_handle": "mentor-1", "focus": "导师更合适"},
+        json={"reviewer_handle": "mentor-1"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["focus"] == "最懂"
+
+
+def test_reassign_refuses_what_it_would_not_change(client):
+    """改验收人只换人。带着交付物、审阅重点这类字段来的请求过去照样 200，那几个字段
+    一个都没用上，调用方读到的却是「改成了」(FB-104)。现在整个请求被拒，卡原样。"""
+    p = post_project(client, json={"name": "P"}).json()["data"]
+    t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
+        "data"
+    ]
+    for handle in ("user-1", "alice", "mentor-1"):
+        join_project_team(client, p["id"], handle)
+    card_id = _make_card(client, t["id"], "user-1")
+
+    r = client.post(
+        f"/accept-cards/{card_id}/reassign",
+        json={
+            "reviewer_handle": "mentor-1",
+            "deliver": "channel-row-prototype.html",
+            "focus": "导师更合适",
+        },
+        headers=session_auth_headers("alice"),
+    )
+
+    # 请求体校验不过，平台统一答 400「请求参数不合法」（app/core/errors.py）。
+    assert r.status_code == 400, r.text
+    (card,) = client.get(f"/topics/{t['id']}/accept-card").json()["data"]["data"]
+    assert card["reviewer_handle"] == "user-1"
+    assert card["deliverable"]["kind"] == "merge"
 
 
 def test_cannot_reassign_decided_card(client):

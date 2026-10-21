@@ -16,9 +16,10 @@ import { computed, ref } from 'vue'
 
 import { useProjectAgents } from '@/composables/useProjectAgents'
 
+import OwnAgentsSettings from './OwnAgentsSettings.vue'
+
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
@@ -79,11 +80,6 @@ const deactivateTitle = computed(() =>
       })
     : ''
 )
-function openCreate() {
-  editing.value = null
-  editorOpen.value = true
-}
-
 function openEdit(agent: ProjectAgent) {
   editing.value = agent
   editorOpen.value = true
@@ -116,16 +112,6 @@ async function confirmDeactivate() {
         :loading="loading || refreshing"
         @click="refresh"
       />
-      <BaseButton
-        v-if="!backendMissing"
-        kind="primary"
-        size="sm"
-        prepend-icon="mdi-plus"
-        :disabled="loading"
-        @click="openCreate"
-      >
-        {{ t('work.projectSettings.agents.create') }}
-      </BaseButton>
     </div>
     <div class="page-section-body">
       <p class="t-body c-muted mb-6" style="max-width: 640px">
@@ -144,16 +130,7 @@ async function confirmDeactivate() {
         <v-progress-circular indeterminate color="primary" />
       </div>
 
-      <BaseEmptyState
-        v-else-if="!backendMissing && agents.length === 0"
-        size="compact"
-        icon="mdi-robot-outline"
-        :title="t('work.projectSettings.agents.empty')"
-      >
-        <BaseButton kind="primary" prepend-icon="mdi-plus" class="mt-4" @click="openCreate">
-          {{ t('work.projectSettings.agents.create') }}
-        </BaseButton>
-      </BaseEmptyState>
+      <OwnAgentsSettings :project-id="projectId" @added="refresh" />
 
       <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
         <div class="agent-head">

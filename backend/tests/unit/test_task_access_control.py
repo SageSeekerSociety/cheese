@@ -50,6 +50,7 @@ def _make_task(**overrides):
         "reject_reason": "",
         "team_locking_policy": "NO_LOCK",
         "access_control_enabled": False,
+        "rubric_public": True,
         "created_at": NOW,
         "updated_at": NOW,
         "deleted_at": None,

@@ -12,8 +12,9 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import SessionFactory
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.run_record.models import RunRecord
 from app.domain.run_record.service import (
@@ -70,7 +71,7 @@ async def _thread_room(session: AsyncSession, conversation_id) -> uuid.UUID | No
 
 
 async def record_now(
-    sessions: async_sessionmaker,
+    sessions: SessionFactory,
     *,
     conversation_id: uuid.UUID,
     content: str,
@@ -105,14 +106,14 @@ async def record_now(
 
 
 async def restate_now(
-    sessions: async_sessionmaker,
+    sessions: SessionFactory,
     record_id: uuid.UUID,
     *,
     content: str,
     meta: dict,
     channel: str | None = None,
 ) -> dict | None:
-    """Restate a record in place, committed and published."""
+    """Append the next status in a record's series, committed and published."""
     try:
         async with sessions() as session:
             kept = await restate(session, record_id, content=content, meta=meta)
@@ -135,8 +136,27 @@ async def for_site(
     since: datetime | None,
     until: datetime | None,
     author: str | None = None,
+    limit: int = 500,
+    before: tuple[datetime, str, str, int] | None = None,
 ) -> list[dict]:
     """The conversation's run records between two moments, as the 现场 reads
     them (oldest first). `author` keeps only that teammate's."""
-    kept = await of_conversation(session, conversation_id, since=since, until=until)
-    return [as_payload(r) for r in kept if author is None or r.seat == author]
+    upper = None
+    if before is not None:
+        at, source, seat, sequence = before
+        if source == "platform":
+            upper = (at, seat, uuid.UUID(int=sequence))
+        elif source < "platform":
+            upper = (at, "", uuid.UUID(int=0))
+        else:
+            upper = (at, "\U0010ffff", uuid.UUID(int=2**128 - 1))
+    kept = await of_conversation(
+        session,
+        conversation_id,
+        since=since,
+        until=until,
+        limit=limit,
+        seat=author,
+        before=upper,
+    )
+    return [as_payload(r) for r in kept if (author is None or r.seat == author)]

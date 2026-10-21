@@ -100,7 +100,10 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
     # The task's own session opens it, with the credential of its conversation.
     opened = client.post(route, headers=headers(writer, task.id))
     assert opened.status_code == 200, opened.text
-    expected = str(identity.agent_identity(writer["seat_handle"]))
+    # On the platform forge the commits are 芝士's, under the address of the
+    # agent that does the work: the project's account claims it.
+    writer_address = identity.agent_identity(writer["seat_handle"]).email
+    expected = f"{identity.CHEESE_NAME} <{writer_address}>"
     assert opened.json()["data"]["author"] == expected
 
     async def change_default():
@@ -120,7 +123,7 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
             who = await identity.attribution(session, topic, task_id=task.id)
             return who.author
 
-    assert str(client.portal.call(author)) == expected
+    assert client.portal.call(author).email == writer_address
 
 
 def test_historical_task_does_not_invent_an_agent_author(client):

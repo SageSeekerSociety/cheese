@@ -14,6 +14,7 @@ import uuid
 from sqlalchemy import select
 
 from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.session_host import host as session_host
 from app.domain.block.models import Block
 from app.domain.run_record.models import RunRecord
 from tests.conftest import wait_work_idle
@@ -91,36 +92,26 @@ def _retry(stub, topic, attempt: int) -> None:
     )
 
 
-def test_a_step_that_failed_reaches_the_socket_as_that_step_restated(
-    client, stub_hooks
-):
-    """The red mark is a change to a line already on the timeline, so it goes out
-    as that line again — same id, now failed — not as a line of its own."""
-
+def test_tool_output_does_not_create_or_rewrite_event_blocks(client, stub_hooks):
     def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.uses(topic, "Bash", command="pandoc a.md")
         stub_hooks.returns(topic, "Bash", "bash: pandoc: command not found", error=True)
-        stub_hooks.stops(topic, "没有 pandoc")
+        stub_hooks.stops(topic, "No pandoc")
 
     stub_hooks.emit_turn = turn
     room = _room(client)
     with room_socket(client, room, "alice") as ws:
-        post_message(client, room, "alice", {"content": "@芝士 转一下"})
+        post_message(client, room, "alice", {"content": "@芝士 convert"})
         frames = _until(ws, _done)
-
-    started = next(
+    assert not [
         f
         for f in frames
-        if f["type"] == "event_block" and (f["block"]["meta"] or {}).get("tool")
-    )
-    updated = [f for f in frames if f["type"] == "block_updated"]
-    # Restated, never added: every update is that one step (its failure, and
-    # then what it printed).
-    assert {f["block"]["id"] for f in updated} == {started["block"]["id"]}
-    assert updated[-1]["block"]["meta"]["failed"] is True
-    assert updated[-1]["block"]["meta"]["error"] == "bash: pandoc: command not found"
+        if f["type"] in ("event_block", "block_updated")
+        and (f["block"].get("meta") or {}).get("tool")
+    ]
+    assert not [b for b in _blocks(client, room) if (b.meta or {}).get("tool")]
 
 
 def test_a_streak_of_retries_is_one_line_that_counts_them(client, stub_hooks):
@@ -145,8 +136,8 @@ def test_a_streak_of_retries_is_one_line_that_counts_them(client, stub_hooks):
     wait_work_idle()
 
     retries = _recorded(client, room, "api_retry")
-    assert [b.meta["attempt"] for b in retries] == [3, 1]
-    assert "3/10" in retries[0].content
+    assert [b.meta["attempt"] for b in retries] == [1, 2, 3, 1]
+    assert "3/10" in retries[2].content
     assert retries[0].meta["max_attempts"] == 10
     assert "429" in retries[0].meta["detail"]
     # Both records belong to the turn and to the agent doing it, which is what
@@ -155,9 +146,8 @@ def test_a_streak_of_retries_is_one_line_that_counts_them(client, stub_hooks):
     assert all(b.seat is not None for b in retries)
 
     sent = record_frames(frames, "api_retry")
-    first = str(retries[0].id)
-    assert list(dict.fromkeys(r["id"] for r in sent)) == [first, str(retries[1].id)]
-    assert [r["meta"]["attempt"] for r in sent if r["id"] == first] == [1, 2, 3]
+    assert len({r["id"] for r in sent}) == 4
+    assert [r["meta"]["attempt"] for r in sent] == [1, 2, 3, 1]
 
 
 def test_a_retry_that_got_no_response_says_so(client, stub_hooks):
@@ -219,13 +209,14 @@ def test_a_compaction_says_so_while_it_runs_and_when_it_is_over(client, stub_hoo
     wait_work_idle()
 
     lines = _recorded(client, room, "context_compact")
-    assert len(lines) == 1
-    assert lines[0].meta["state"] == "over"
+    assert len(lines) == 2
+    assert lines[0].meta["state"] == "running"
+    assert lines[-1].meta["state"] == "over"
     assert "整理" in lines[0].content
     assert lines[0].turn_id is not None
 
     sent = record_frames(frames, "context_compact")
-    assert {r["id"] for r in sent} == {str(lines[0].id)}
+    assert len({r["id"] for r in sent}) == 2
     assert [r["meta"]["state"] for r in sent] == ["running", "over"]
 
 
@@ -250,7 +241,8 @@ def test_a_compaction_that_fails_says_why(client, stub_hooks):
         _until(ws, _done)
     wait_work_idle()
 
-    [line] = _recorded(client, room, "context_compact")
+    first, line = _recorded(client, room, "context_compact")
+    assert first.meta["state"] == "running"
     assert line.meta["state"] == "over"
     assert line.meta["detail"] == "prompt too long"
 
@@ -269,7 +261,8 @@ def test_a_turn_that_ends_mid_compaction_does_not_leave_it_running(client, stub_
         _until(ws, _done)
     wait_work_idle()
 
-    [line] = _recorded(client, room, "context_compact")
+    first, line = _recorded(client, room, "context_compact")
+    assert first.meta["state"] == "running"
     assert line.meta["state"] == "over"
 
 
@@ -296,6 +289,10 @@ def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
     """While the device is out of reach nothing the session does can arrive, so
     the 现场 records that it is waiting — once — and the same record says when
     the machine is back."""
+    # The waiting line is written once the runner's lease on the machine has
+    # lapsed (``host.LEASE_S``, two minutes). The behaviour under test is the
+    # record, not that wait: shorten it rather than paying it in the suite.
+    monkeypatch.setattr(session_host, "LEASE_S", 0.05)
     offline = {"now": False}
     reach = stub_hooks.call
 
@@ -318,7 +315,7 @@ def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
         post_message(client, room, "alice", {"content": "@芝士 编一下"})
         _until(
             ws,
-            lambda f: f["type"] == "event_block" and "make build" in str(f["block"]),
+            lambda f: f["type"] == "turn_started",
         )
         offline["now"] = True
         waiting = _until(
@@ -331,7 +328,12 @@ def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
         offline["now"] = False
         back = _until(
             ws,
-            lambda f: f["type"] == "run_record" and f["record"]["id"] == waiting["id"],
+            lambda f: (
+                f["type"] == "run_record"
+                and (f["record"].get("meta") or {}).get("event_type")
+                == "device_waiting"
+                and f["record"]["meta"].get("state") == "over"
+            ),
         )[-1]["record"]
         stub_hooks.returns(topic, "Bash", "built")
         stub_hooks.stops(topic, "编好了")
@@ -341,7 +343,8 @@ def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
     assert waiting["meta"]["state"] == "waiting"
     assert "offline" in waiting["meta"]["detail"]
     assert back["meta"]["state"] == "over"
-    assert len(_recorded(client, room, "device_waiting")) == 1
+    assert back["id"] != waiting["id"]
+    assert len(_recorded(client, room, "device_waiting")) == 2
 
 
 def test_a_socket_that_joins_mid_turn_learns_when_the_turn_started(client, stub_hooks):
@@ -367,65 +370,3 @@ def test_a_socket_that_joins_mid_turn_learns_when_the_turn_started(client, stub_
     assert active["turn_ids"] == [started["turn_id"]]
     assert set(active["since"]) == {started["turn_id"]}
     assert isinstance(active["since"][started["turn_id"]], float)
-
-
-def test_what_a_step_printed_is_kept_on_it_capped_and_redacted(client, stub_hooks):
-    """Opening a step shows what the command printed: its end, at most 8 KiB,
-    with credentials masked. The page and the socket say only that there is
-    output; the text is fetched for the one step being opened."""
-    printed = (
-        "\n".join(f"line {n}" for n in range(3000)) + "\ntoken ghp_abcdefghijklmnop"
-    )
-
-    def turn(topic, prompt, reply, agent=None):
-        stub_hooks.starts(topic)
-        stub_hooks.acknowledges(topic, prompt)
-        stub_hooks.uses(topic, "Bash", command="make test")
-        stub_hooks.returns(topic, "Bash", printed)
-        stub_hooks.stops(topic, "好了")
-
-    stub_hooks.emit_turn = turn
-    room = _room(client)
-    with room_socket(client, room, "alice") as ws:
-        post_message(client, room, "alice", {"content": "@芝士 跑测试"})
-        frames = _until(ws, _done)
-    wait_work_idle()
-
-    updated = [f["block"] for f in frames if f["type"] == "block_updated"]
-    assert len(updated) == 1
-    step_id = updated[0]["id"]
-    assert "output" not in updated[0]["meta"]
-    assert updated[0]["meta"]["output_bytes"] > 8 * 1024
-
-    page = client.get(
-        f"/topics/{room}/transcript", params={"limit": 50}, headers=_alice()
-    ).json()["data"]["data"]
-    listed = next(b for b in page if b["id"] == step_id)
-    assert "output" not in listed["meta"]
-
-    kept = client.get(
-        f"/topics/{room}/transcript/{step_id}/output", headers=_alice()
-    ).json()["data"]
-    assert len(kept["output"].encode()) <= 8 * 1024
-    assert kept["output"].endswith("token ***")
-    assert "line 2999" in kept["output"]
-    assert "line 0\n" not in kept["output"]
-    assert kept["bytes"] == updated[0]["meta"]["output_bytes"]
-
-
-def test_a_steps_output_is_read_only_through_its_own_room(client, stub_hooks):
-    """The output door is the transcript's door: someone else's room, or an id
-    that is not a step of this room, answers 404."""
-    room = _room(client)
-    other = _room(client)
-    stranger = str(uuid.uuid4())
-    response = client.get(
-        f"/topics/{other}/transcript/{stranger}/output", headers=_alice()
-    )
-    assert response.status_code == 404
-    assert (
-        client.get(
-            f"/topics/{room}/transcript/{stranger}/output", headers=_alice()
-        ).status_code
-        == 404
-    )

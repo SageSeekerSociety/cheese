@@ -47,6 +47,7 @@ from app.domain.usage.models import ComputeRun, ResourceUsage
 from tests.executor_release import running
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.microcloud import OFFERING, FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 LXC = {**OFFERING, "id": 1, "machineTypeName": "standard-lxc"}
 VM = {
@@ -197,7 +198,10 @@ def _up(case, seat) -> str:
             owner = await IdentityService(db).ensure_agent_user(handle=HOST_OWNER)
             devices = sql_device_service(db)
             device = await devices.approve(
-                await devices.start("pool"), owner_user_id=owner.id, supply=Supply.cloud
+                await devices.start("pool"),
+                owner_user_id=owner.id,
+                supply=Supply.cloud,
+                team_id=await enrollment_team(devices, owner.id),
             )
             repo = CloudHostRepository(db)
             home = await repo.current_home(seat.session)
@@ -209,7 +213,10 @@ def _up(case, seat) -> str:
             host.ai_status = AiStatus.disabled
             host.last_seen_at = datetime.now(UTC)
             await repo.mark_enrolled(
-                host, device_id=device.device_id, when=datetime.now(UTC)
+                host,
+                device_id=device.device_id,
+                when=datetime.now(UTC),
+                sandbox_disk_gb=None,
             )
             await db.commit()
             return device.device_id
@@ -561,6 +568,32 @@ def test_an_idle_vm_is_pushed_and_released(cloud):
     # The session's next tool call prepares a new one.
     assert _lease(case, seat, timeout=0.001).json()["data"]["preparing"]
     assert _host(case, seat).machine_id not in (None, machine)
+
+
+def test_recovering_vms_do_not_hide_an_unrelated_idle_vm(cloud):
+    case = cloud
+    seats = [_room(case, WHOLE_VM) for _ in range(cloud_vm.PER_SWEEP + 1)]
+    for index, seat in enumerate(seats):
+        _working(case, seat)
+        _idle_for(
+            case,
+            seat,
+            timedelta(seconds=settings.cloud_vm_idle_release_s + 600 - index * 60),
+        )
+    pending = {seat.room for seat in seats[:-1]}
+
+    async def sweep():
+        async with case.client.test_request_factory() as db:
+            lifecycle = SandboxLifecycle(
+                db,
+                hub=case.hub,
+                recovering=lambda conversation: conversation in pending,
+            )
+            return await cloud_vm.release_idle(db, lifecycle)
+
+    assert case.client.portal.call(sweep) == 1
+    assert all(_host(case, seat) is not None for seat in seats[:-1])
+    assert _host(case, seats[-1]) is None
 
 
 def test_a_background_command_keeps_a_vm_past_its_idle_release(cloud, monkeypatch):

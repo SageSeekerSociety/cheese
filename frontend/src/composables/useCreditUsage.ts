@@ -9,17 +9,22 @@ export function useCreditUsage(fetch: () => Promise<CreditUsage>) {
   const usage = ref<CreditUsage | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  let version = 0
 
   async function load() {
+    const current = ++version
+    usage.value = null
     loading.value = true
     error.value = null
     try {
-      usage.value = await fetch()
+      const data = await fetch()
+      if (current === version) usage.value = data
     } catch (e) {
+      if (current !== version) return
       usage.value = null
       error.value = e instanceof Error && e.message ? e.message : t('usage.loadFailed')
     } finally {
-      loading.value = false
+      if (current === version) loading.value = false
     }
   }
 

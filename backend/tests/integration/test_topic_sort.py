@@ -9,7 +9,7 @@ from sqlalchemy import inspect
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import post_project
-from tests.integration.test_hot_path_queries import counting_sql
+from tests.support.counting_session import counting_sql
 
 
 def _make_project(client) -> str:

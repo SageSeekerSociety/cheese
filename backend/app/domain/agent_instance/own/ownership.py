@@ -8,18 +8,17 @@ the connection that row names and what its owner is called.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_instance import account_connections
-from app.domain.agent_instance.models import AgentInstance, OwnAgent, OwnCallers
+from app.domain.agent_instance.models import AccountConnection, AgentInstance, OwnAgent
 from app.domain.agent_instance.own.connections import (
     Login,
-    _held,
-    logins,
-    logins_by_owners,
+    logins_by_teams,
 )
+from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.project.models import Project
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle
 
@@ -29,15 +28,16 @@ class Owned:
     instance_id: uuid.UUID
     owner_user_id: int
     harness: str
-    callers: OwnCallers = OwnCallers.owner
     #: The machine holding the model connection it runs on.
     device_id: str | None = None
-    #: Or the connection its owner's account holds.
+    #: Or the connection the team stores encrypted on the platform.
     account_connection_id: uuid.UUID | None = None
+    #: The login on that machine it runs on (`DeviceClaudeLoginRow.id`).
+    login_id: str | None = None
 
     @property
     def on_account(self) -> bool:
-        """It runs on a connection its owner's account holds, so on the
+        """It runs on a connection the team stores encrypted on the platform, so on the
         deployment's session host rather than its owner's machine."""
         return self.account_connection_id is not None
 
@@ -46,9 +46,9 @@ _OWNED = (
     AgentInstance.id,
     OwnAgent.owner_user_id,
     OwnAgent.harness,
-    OwnAgent.callers,
-    OwnAgent.device_id,
+    func.coalesce(DeviceClaudeLoginRow.host_id, DeviceClaudeLoginRow.device_id),
     OwnAgent.account_connection_id,
+    OwnAgent.login_id,
 )
 
 
@@ -63,6 +63,7 @@ async def owned_by_seat(
     rows = await db.execute(
         select(*_OWNED)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+        .outerjoin(DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id)
         .where(AgentInstance.project_id == project_id)
     )
     for row in rows:
@@ -83,6 +84,9 @@ async def owned_by_session(
         await db.execute(
             select(*_OWNED)
             .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+            .outerjoin(
+                DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id
+            )
             .where(
                 AgentInstance.project_id == project_id,
                 AgentInstance.handle == session_handle,
@@ -96,27 +100,34 @@ async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | No
     row = await db.get(OwnAgent, instance_id)
     if row is None:
         return None
+    login = await db.get(DeviceClaudeLoginRow, row.login_id) if row.login_id else None
     return Owned(
         row.instance_id,
         row.owner_user_id,
         row.harness,
-        row.callers,
-        row.device_id,
+        login.transport_id if login is not None else None,
         row.account_connection_id,
+        row.login_id,
     )
 
 
 async def owned_in_project(
     db: AsyncSession, project_id: uuid.UUID
-) -> list[tuple[AgentInstance, int, OwnCallers]]:
-    """This project's members' own agents, each with its owner's user id and who
-    may call it — those their owners removed included (``is_active`` false).
-    The callers column rides along because the row holding it is this
-    package's: a reader below that wants it calls this, not ``OwnAgent``."""
-    return [
-        (instance, owned.owner_user_id, owned.callers)
-        for instance, owned in await owned_rows_in_project(db, project_id)
-    ]
+) -> list[tuple[AgentInstance, int]]:
+    """The project's personal agents and their owners, including inactive ones."""
+    owner_id = func.coalesce(
+        AccountConnection.owner_user_id, DeviceClaudeLoginRow.owner_user_id
+    )
+    rows = await db.execute(
+        select(AgentInstance, owner_id)
+        .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+        .outerjoin(
+            AccountConnection, AccountConnection.id == OwnAgent.account_connection_id
+        )
+        .outerjoin(DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id)
+        .where(AgentInstance.project_id == project_id, owner_id.is_not(None))
+    )
+    return [(instance, owner) for instance, owner in rows]
 
 
 async def owned_rows_in_project(
@@ -126,6 +137,7 @@ async def owned_rows_in_project(
     rows = await db.execute(
         select(AgentInstance, *_OWNED[1:])
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+        .outerjoin(DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id)
         .where(AgentInstance.project_id == project_id)
         .order_by(AgentInstance.created_at)
     )
@@ -135,40 +147,52 @@ async def owned_rows_in_project(
 async def connection_of(db: AsyncSession, owned: Owned) -> Login | None:
     """The model connection a member's own agent runs on, while it is one:
     None once its owner removed it, logged it out, or the machine is gone."""
-    if owned.account_connection_id is not None:
-        row = await account_connections.owned(
-            db, owned.owner_user_id, owned.account_connection_id
-        )
-        return _held(row) if row is not None else None
-    if owned.device_id is None:
-        return None
-    for login in await logins(db, owned.owner_user_id):
-        if login.device_id == owned.device_id:
-            return login
-    return None
+    return (await connections_of(db, [owned]))[owned.instance_id]
 
 
 async def connections_of(
     db: AsyncSession, owners: list[Owned]
 ) -> dict[uuid.UUID, Login | None]:
-    """Resolve a page without rereading any owner's connections for each agent."""
-    by_owner = await logins_by_owners(db, {owned.owner_user_id for owned in owners})
-    connections: dict[tuple[int, bool, str | None], Login] = {
-        (owner_id, login.on_account, login.id): login
-        for owner_id, logins in by_owner.items()
+    teams: dict[uuid.UUID, int] = {
+        instance_id: team_id
+        for instance_id, team_id in (
+            await db.execute(
+                select(AgentInstance.id, Project.team_id)
+                .join(Project, Project.id == AgentInstance.project_id)
+                .where(AgentInstance.id.in_([o.instance_id for o in owners]))
+            )
+        ).all()
+    }
+    by_team = await logins_by_teams(db, set(teams.values()))
+    connections: dict[tuple[int | None, bool, str | None], Login] = {
+        (team_id, login.on_account, login.id): login
+        for team_id, logins in by_team.items()
         for login in logins
     }
-    return {
+    result = {
         owned.instance_id: connections.get(
             (
-                owned.owner_user_id,
+                teams.get(owned.instance_id),
                 owned.on_account,
                 str(owned.account_connection_id)
                 if owned.on_account
-                else owned.device_id,
+                else owned.login_id,
             )
         )
         for owned in owners
+    }
+    return {
+        owned.instance_id: (
+            login
+            if login is not None
+            and (
+                login.owner_user_id is None
+                or login.owner_user_id == owned.owner_user_id
+            )
+            else None
+        )
+        for owned in owners
+        for login in [result[owned.instance_id]]
     }
 
 
@@ -178,6 +202,17 @@ async def owner_of(db: AsyncSession, instance_id: uuid.UUID) -> tuple[str, str] 
 
     owned = await owned_instance(db, instance_id)
     if owned is None:
+        return None
+    credential_owner = await db.scalar(
+        select(AccountConnection.owner_user_id).where(
+            AccountConnection.id == owned.account_connection_id
+        )
+        if owned.on_account
+        else select(DeviceClaudeLoginRow.owner_user_id).where(
+            DeviceClaudeLoginRow.id == owned.login_id
+        )
+    )
+    if credential_owner is None:
         return None
     user = await db.get(User, owned.owner_user_id)
     if user is None:

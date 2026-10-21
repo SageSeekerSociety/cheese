@@ -100,6 +100,14 @@ def test_the_ceiling_reader_agrees_with_the_conftest_that_owns_it() -> None:
     assert test_durations._ceilings() == _LAYER_CEILING_S
 
 
+def test_the_over_ceiling_text_names_the_ceiling() -> None:
+    from tests.conftest import _over_ceiling
+
+    text = _over_ceiling("pure", 25.0, 10.0)
+    assert "25.0 s with setup" in text
+    assert "10 s" in text
+
+
 def test_the_report_runs_slowest_first_and_flags_what_a_fix_has_reached() -> None:
     first, second, *never = test_durations.listed_slow_tests()
     report = test_durations.slow_report([_run({first: 2.0, second: 8.0})])

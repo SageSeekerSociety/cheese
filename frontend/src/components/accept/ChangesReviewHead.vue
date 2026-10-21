@@ -59,12 +59,18 @@ const emit = defineEmits<{
   (e: 'void'): void
   (e: 'force-merge'): void
   (e: 'toggle-auto-merge', enabled: boolean): void
+  /** 连接 GitHub，或续期已有的授权。 */
+  (e: 'sign-in-github'): void
 }>()
 
 const showVoidInput = defineModel<boolean>('showVoidInput', { required: true })
 const voidNote = defineModel<string>('voidNote', { required: true })
 const showForceMergeInput = defineModel<boolean>('showForceMergeInput', { required: true })
 const forceMergeReason = defineModel<string>('forceMergeReason', { required: true })
+
+// 只给任务负责人看：本该用他的账号创建的 PR，这次由 AI 队友创建了。未用 GitHub
+// 登录或授权失效时给入口；已有登录连接时只说结果，不猜 PR 当时为什么没用它创建。
+const ownerCredit = computed(() => props.prChecks?.owner_credit ?? null)
 
 // 标题按被审阅的东西实际是什么说：交一次合并时是这次改动自己的标题（合并后的提交
 // 标题就是它）；交文件、交地址时是产物的名字和第几版。
@@ -295,6 +301,19 @@ const moreActions = computed<MenuAction[]>(() => {
       {{ card.deliverable.url }}
     </p>
     <div v-if="deliverableError" role="alert" class="review-head__error">{{ deliverableError }}</div>
+    <!-- The owner's own PR, opened by the AI teammate this time. -->
+    <div v-if="ownerCredit" class="review-head__credit" data-testid="owner-credit">
+      <span class="review-head__credit-text">{{
+        ownerCredit === 'none'
+          ? t('work.room.review.creditNotSignedIn', { agent: agentName })
+          : ownerCredit === 'expired'
+            ? t('work.room.review.creditExpired', { agent: agentName })
+            : t('work.room.review.creditByAgent', { agent: agentName })
+      }}</span>
+      <BaseButton v-if="ownerCredit !== 'ok'" kind="secondary" size="sm" @click="emit('sign-in-github')">
+        {{ ownerCredit === 'none' ? t('work.room.review.signInGithub') : t('work.room.review.signInGithubAgain') }}
+      </BaseButton>
+    </div>
 
     <!-- 冲突卡：芝士在处理，处理完可以重新采纳。 -->
     <p v-if="card.status === 'conflict'" class="review-head__line">
@@ -509,6 +528,22 @@ const moreActions = computed<MenuAction[]>(() => {
 .review-head__line {
   margin: 0;
   color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+.review-head__credit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--fill);
+}
+.review-head__credit-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  color: var(--text);
   font-size: 13px;
   line-height: var(--lh-13);
 }

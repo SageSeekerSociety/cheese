@@ -215,6 +215,7 @@ async def converse(
             roster=prepared.roster,
             topic_refs=prepared.topic_refs,
             consumed_ids=prepared.pending_ids + prepared.notice_ids,
+            read_through=prepared.read_through,
             turn_images=prepared.turn_images,
             replay_notice=prepared.replay_notice,
             resume_session_id=prepared.resume_session_id,

@@ -2,7 +2,7 @@
 
 本文件盯住的两件事，恰好是这条功能的验证底线：
 
-**界面拿到的指导 = 四层合成的结果。** `GET /tasks/{id}/inheritance` 报出来的
+**界面拿到的指导 = 合成的结果。** `GET /tasks/{id}/inheritance` 报出来的
 `teaching` 与拿同一组行跑一遍 ``protocol.resolve()`` 得到的逐字段相等
 (`test_the_screen_shows_the_composed_guidance_the_turn_will_read`)。这一条不能
 省：接口自己再拼一遍指导也「看起来对」，直到某一个字段的别名写错。等值断言把它
@@ -27,13 +27,9 @@ from app.domain.task.models import Task
 from app.domain.task.protocol import resolve
 from tests.conftest import seed_task_with_protocol, seed_user
 
-SPACE_WEEK = {"system_prompt": "板上默认：第 {current_week} 周。", "current_week": 1}
-CATEGORY_WEEK = {
-    "system_prompt": "项目集：第 {current_week} 周，只做 {allowed_topics}。",
-    "current_week": 3,
-    "allowed_topics": ["循环"],
-}
-TASK_WEEK = {"system_prompt": "这道题改成第 {current_week} 周。", "current_week": 5}
+SPACE_WEEK = {"mode": "guide", "system_prompt": "板上的要求。"}
+CATEGORY_WEEK = {"mode": "free", "system_prompt": "项目集上留下的旧配置。"}
+TASK_WEEK = {"mode": "spec", "system_prompt": "这道题的要求。"}
 
 PLAIN_MEMBER = "plain-member"
 
@@ -200,7 +196,7 @@ def _mark_unapproved(client: TestClient, task_id: int) -> None:
 def test_the_screen_shows_the_composed_guidance_the_turn_will_read(client: TestClient):
     """界面数据里的那一段指导，逐个字段等于 `protocol.resolve()` 的结果。
 
-    `teaching` 是四层里最具体的赢，`source` 是同一趟循环带出来的层名。断言两边
+    `teaching` 是空间和题目合起来的那一份，`source` 是同一趟读法带出来的。断言两边
     相等而不是各写一份期望值 —— 各写一份的话，两边一起错的时候测试还是绿的。
     """
     task_id = seed_task_with_protocol(
@@ -216,13 +212,14 @@ def test_the_screen_shows_the_composed_guidance_the_turn_will_read(client: TestC
     expected = _resolve_from_db(client, task_id)
 
     assert data["resourcePack"] == {"compute_credits": 500}
+    assert data["teaching"]["mode"] == expected.teaching.mode
     assert data["teaching"]["systemPrompt"] == expected.teaching.system_prompt
-    assert data["teaching"]["currentWeek"] == expected.teaching.current_week
-    assert data["teaching"]["allowedTopics"] == expected.teaching.allowed_topics
-    assert data["teaching"]["avoidInCode"] == expected.teaching.avoid_in_code
-    # 最具体的那层是题目，所以屏幕上的值和来源层都指向它。
-    assert data["teaching"]["currentWeek"] == 5
-    assert data["teaching"]["source"] == "task"
+    assert data["teaching"]["spacePrompt"] == expected.teaching.space_prompt
+    # 两层都说了：题目的方式生效，两份要求都在，项目集上的旧配置不读。
+    assert data["teaching"]["mode"] == "spec"
+    assert data["teaching"]["spacePrompt"] == "板上的要求。"
+    assert data["teaching"]["systemPrompt"] == "这道题的要求。"
+    assert data["teaching"]["source"] == "both"
 
 
 def test_dropping_the_task_layer_changes_what_the_screen_shows(client: TestClient):
@@ -239,21 +236,22 @@ def test_dropping_the_task_layer_changes_what_the_screen_shows(client: TestClien
     token = seed_user(client, "inheritance-mutation-task")
 
     before = _get(client, task_id=task_id, token=token)
-    assert before["teaching"]["currentWeek"] == 5
-    assert before["teaching"]["source"] == "task"
+    assert before["teaching"]["mode"] == "spec"
+    assert before["teaching"]["source"] == "both"
 
     _clear_task_override(client, task_id)
 
     after = _get(client, task_id=task_id, token=token)
-    assert after["teaching"]["currentWeek"] == 3
-    assert after["teaching"]["source"] == "category"
-    assert after["teaching"]["systemPrompt"] == CATEGORY_WEEK["system_prompt"]
+    assert after["teaching"]["mode"] == "guide"
+    assert after["teaching"]["source"] == "space"
+    assert after["teaching"]["systemPrompt"] == SPACE_WEEK["system_prompt"]
+    assert after["teaching"]["spacePrompt"] is None
 
 
 def test_dropping_the_space_layer_changes_what_the_screen_shows(client: TestClient):
     """变异验证：把空间那层去掉，屏幕上那项必须跟着变（值 + 来源层）。
 
-    这一层是 #944 新加的第四层 —— 少了这条，一个根本没读 `Space.teaching` 的实现
+    少了这条，一个根本没读 `Space.teaching` 的实现
     在只有空间配置时也「看起来」能用，直到有人发现清单永远是空的。
     """
     task_id = seed_task_with_protocol(client, space_teaching=SPACE_WEEK)
@@ -261,13 +259,13 @@ def test_dropping_the_space_layer_changes_what_the_screen_shows(client: TestClie
     space_id = _space_id_of(client, task_id)
 
     before = _get(client, task_id=task_id, token=token)
-    assert before["teaching"]["currentWeek"] == 1
+    assert before["teaching"]["mode"] == "guide"
     assert before["teaching"]["source"] == "space"
 
     _clear_space_teaching(client, space_id)
 
     after = _get(client, task_id=task_id, token=token)
-    assert after["teaching"]["currentWeek"] is None
+    assert after["teaching"]["mode"] is None
     assert after["teaching"]["systemPrompt"] is None
     assert after["teaching"]["source"] is None
 

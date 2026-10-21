@@ -41,6 +41,8 @@ _EXPECTED_PORTS = {
 _LIVE_PORTS = {
     "quiet_window_s": lambda: settings.draft_pr_sweep_activity_window_s,
 }
+
+
 _KEYWORD_PORTS = {
     "pr poll": (
         "settle_card",
@@ -48,7 +50,7 @@ _KEYWORD_PORTS = {
         "task_teammate",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
-    "landing watch": ("record_instruction", "task_teammate", "machines"),
+    "task closing": ("record_instruction", "task_teammate", "machines"),
     "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
 }
 
@@ -60,8 +62,7 @@ def _world():
         session_factory=chat_sessions,
         work_runner=Mock(name="the chat's work runner"),
         stop_work_in_closed_tasks=AsyncMock(),
-        remind_silent_turns=AsyncMock(),
-        remind_stale_checklists=AsyncMock(),
+        compute=SimpleNamespace(working_conversations=Mock(return_value=set())),
         sweep_memory_dreams=AsyncMock(),
     )
     runner = SimpleNamespace(
@@ -114,13 +115,20 @@ def _world():
             "sessions",
         ),
         ("quiet task reminder", "task_quiet.sweep.remind_quiet_tasks", "sessions"),
+        (
+            "task deadline reminder",
+            "task_notices.sweep.remind_deadlines",
+            "sessions",
+        ),
         ("pr poll", "review.pr_poll.poll_open_prs", ("chat", "announce")),
         ("task pr poll", "review.pr_poll.poll_uncarded_task_prs", ("chat", "announce")),
-        ("landing watch", "review.pr_poll.watch_landings", ("chat", "announce")),
+        ("task closing", "review.pr_poll.sweep_closings", ("chat", "announce")),
         ("draft pr sweep", "review.pr_poll.open_draft_prs", ("chat", "announce")),
         ("cloud warm pool", "machine.warm.sweep_warm_pool", "sessions"),
         ("sandbox disk guard", "machine.disk_guard.sweep", "sessions"),
         ("run record expiry", "run_record.service.purge_expired", "sessions"),
+        ("session record seal", "session_record.service.seal", "sessions"),
+        ("session record retention", "session_record.retention.sweep", "sessions"),
         (
             "notification email drain",
             "notification.maintenance.drain_email_queue",
@@ -148,7 +156,6 @@ def _world():
             "task.deadline_scheduler.sweep_expired_deadlines",
             "sessions",
         ),
-        ("ratchet ingest", "ratchet.ingest.ingest_snapshots", "sessions"),
         ("ci activity sweep", "ci_activity.ingest.sweep", "sessions"),
     ],
 )
@@ -243,8 +250,6 @@ async def test_machine_clocks_call_the_explicitly_supplied_sweeper(name, collabo
     ("name", "method"),
     [
         ("closed task stop", "stop_work_in_closed_tasks"),
-        ("chat progress reminder", "remind_silent_turns"),
-        ("checklist reminder", "remind_stale_checklists"),
         ("memory dream", "sweep_memory_dreams"),
     ],
 )
@@ -252,6 +257,13 @@ async def test_chat_clocks_call_the_supplied_chat(name, method):
     world = _world()
     await world.jobs[name]._job()
     getattr(world.chat, method).assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("name", ["chat progress reminder", "checklist reminder"])
+async def test_reminder_clocks_ask_the_supplied_chats_sessions(name):
+    world = _world()
+    await world.jobs[name]._job()
+    world.chat.compute.working_conversations.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
@@ -435,8 +447,6 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "delivery_overdue_check_interval_s",
         "task_deadline_sweep_interval_s",
         "memory_dream_sweep_interval_s",
-        "ratchet_ingest_interval_s",
-        "wake_watch_interval_s",
         "sandbox_disk_check_s",
         "draft_pr_sweep_interval_s",
         "ci_activity_sweep_interval_s",
@@ -450,38 +460,52 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("forge credential cache cleanup", 3600),
         ("forge orphan account sweep", 3600),
         ("quiet task reminder", 3600),
+        ("task deadline reminder", 3600),
         ("pr poll", 101),
         ("task pr poll", 101),
-        ("landing watch", 101),
-        ("draft pr sweep", 121),
+        ("task closing", 101),
+        ("draft pr sweep", 119),
         ("orphan sweep", 102),
         ("closed task stop", 103),
         ("queued message sweep", 104),
         ("chat progress reminder", 105),
         ("checklist reminder", 105),
+        ("task state reminder", 105),
         ("gate sweep", 106),
         ("cloud host pool sweep", 107),
         ("cloud sandbox lifecycle", 107),
         ("cloud compute metering", 107),
         ("cloud warm pool", 107),
-        ("sandbox disk guard", 120),
+        ("sandbox disk guard", 118),
         ("subscription usage ingest", 108),
         ("backend error flush", 109),
         ("run record expiry", 110),
+        ("session record seal", 60),
+        ("session record retention", 600),
+        ("retired site archive", 60),
         ("notification email drain", 111),
         ("notification push drain", 112),
         ("notification digest", 113),
         ("delivery resend", 114),
         ("docs question retention", 86400),
         ("turn resumes", 30),
+        ("failed turn resume deliveries", 30),
         ("timed deliveries", 30),
         ("overdue deliveries", 115),
         ("routines", 30),
         ("task deadline sweep", 116),
         ("memory dream", 117),
-        ("ratchet ingest", 118),
-        ("ci activity sweep", 122),
-        ("wake watch", 119),
+        ("ci activity sweep", 300),
     ]
     assert all(job.owner_only for job in world.jobs.values())
     world.get_runner.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("interval", "expected"), [(0, 0), (60, 300), (300, 300), (900, 900)]
+)
+def test_ci_reporting_never_polls_faster_than_five_minutes(
+    monkeypatch, interval, expected
+):
+    monkeypatch.setattr(settings, "ci_activity_sweep_interval_s", interval)
+    assert _world().jobs["ci activity sweep"].interval_seconds == expected

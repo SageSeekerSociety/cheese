@@ -19,6 +19,12 @@
 # dpkg's locks and not the lists lock `apt-get update` takes (Debian #1053726;
 # apt 3.0 still takes that one without waiting). So each apt command is
 # repeated while, and only while, what it lost on is one of apt's locks.
+#
+# A hosted runner is a fresh VM, so none of the above saves it an `apt-get
+# update`. With CHEESE_APT_DEBS naming a directory, packages found there as
+# .deb files are installed with dpkg first and apt is opened only for what
+# that left missing; and what apt downloads is kept there, which is how the
+# directory is filled (warm-caches.yml saves it, test.yml restores it).
 set -euo pipefail
 
 if [ "$#" -eq 0 ]; then
@@ -34,6 +40,22 @@ done
 if [ "${#missing[@]}" -eq 0 ]; then
   echo "ensure-apt: already installed: $*"
   exit 0
+fi
+
+debs="${CHEESE_APT_DEBS:-}"
+if [ -n "$debs" ] && compgen -G "$debs/*.deb" > /dev/null; then
+  if sudo env DEBIAN_FRONTEND=noninteractive dpkg -i "$debs"/*.deb > /dev/null 2>&1; then
+    still=()
+    for pkg in "${missing[@]}"; do
+      dpkg -s "$pkg" >/dev/null 2>&1 || still+=("$pkg")
+    done
+    if [ "${#still[@]}" -eq 0 ]; then
+      echo "ensure-apt: installed from $debs: ${missing[*]}"
+      exit 0
+    fi
+    missing=("${still[@]}")
+  fi
+  echo "ensure-apt: the packages in $debs did not cover ${missing[*]}; using apt"
 fi
 
 # Run `sudo apt-get "$@"`, waiting up to CHEESE_APT_WAIT_SECONDS for a lock that
@@ -103,5 +125,18 @@ echo "ensure-apt: installing ${missing[*]}"
 # as the same user, so a plain /tmp path is lockable by all of them.
 exec 9>"${CHEESE_APT_LOCK:-/tmp/cheese-ci-apt.lock}"
 flock 9
+keep=()
+if [ -n "$debs" ]; then
+  # As this user first: a `sudo mkdir -p` would create every missing parent as
+  # root too (~/.cache on a fresh runner), and later steps could not write there.
+  mkdir -p "$debs"
+  sudo mkdir -p "$debs/partial"
+  keep=(-o "Dir::Cache::archives=$debs" -o APT::Keep-Downloaded-Packages=true)
+fi
 apt_waiting update -qq
-apt_waiting install -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "${missing[@]}"
+apt_waiting install -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+  "${keep[@]}" "${missing[@]}"
+if [ -n "$debs" ]; then
+  sudo rm -rf "$debs/partial" "$debs/lock"
+  sudo chown -R "$(id -u):$(id -g)" "$debs"
+fi

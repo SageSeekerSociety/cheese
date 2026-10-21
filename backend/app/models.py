@@ -30,6 +30,7 @@ from app.domain.groups import models as groups  # noqa: F401
 from app.domain.idempotency import models as idempotency  # noqa: F401
 from app.domain.identity import models as identity  # noqa: F401
 from app.domain.integration import models as integration  # noqa: F401
+from app.domain.invite import models as invite  # noqa: F401
 from app.domain.legal import models as legal  # noqa: F401
 from app.domain.library import models as library  # noqa: F401
 from app.domain.living_doc import models as living_doc  # noqa: F401
@@ -51,11 +52,11 @@ from app.domain.project_skill import models as project_skill  # noqa: F401
 from app.domain.questions import models as questions  # noqa: F401
 from app.domain.remote_mcp import models as remote_mcp  # noqa: F401
 from app.domain.review import comment_models as review_comments  # noqa: F401
-from app.domain.review import landing_models as review_landings  # noqa: F401
 from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401
 from app.domain.routine import models as routine  # noqa: F401
 from app.domain.run_record import models as run_record  # noqa: F401
+from app.domain.session_record import models as session_record  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
@@ -65,5 +66,6 @@ from app.domain.thread import models as thread  # noqa: F401
 from app.domain.topic import models as topic  # noqa: F401
 from app.domain.usage import models as usage  # noqa: F401
 from app.domain.user import models as user  # noqa: F401
+from app.domain.voice import models as voice  # noqa: F401
 from app.domain.web_snippet import models as web_snippet  # noqa: F401
 from app.domain.webhook import models as webhook  # noqa: F401

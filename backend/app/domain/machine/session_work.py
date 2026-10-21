@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
 from app.core.sentences import say
-from app.domain.addressing import Event, Hand, address
+from app.domain.addressing import REASON_MACHINE_OWNER, Addressed, Recipient
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
@@ -38,7 +38,7 @@ from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.conversation.services import of_room, room_column, room_of
+from app.domain.conversation.services import of_room, room_of
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.device import sandbox as device_sandbox
@@ -54,6 +54,7 @@ from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
     DISK_FULL,
+    DISK_FULL_NOTICE,
     EXECUTOR_SETUP_FAILED,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
@@ -72,7 +73,8 @@ from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
-from app.domain.team.models import Team
+from app.domain.team.models import Team, TeamUserRelation
+from app.domain.team.protocol import TeamMemberRole
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.usage.compute import ComputeRefused
@@ -168,37 +170,6 @@ async def _session_author(db, project, handle: str) -> str:
     return await AgentInstanceService(db).ensure_identity(teammate)
 
 
-async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
-    """Who works on each of these devices now: every agent session whose lease
-    is there, in a room that is not archived, with its project, room and agent.
-    """
-
-    out: dict[str, list[dict]] = {device_id: [] for device_id in device_ids}
-    if not device_ids:
-        return out
-    on_device = AgentSession.work_lease["device_id"].as_string()
-    rows = await db.execute(
-        select(AgentSession, Topic, Project, on_device)
-        .select_from(AgentSession)
-        .join(Topic, Topic.id == room_column(AgentSession.conversation_id))
-        .join(Project, Project.id == Topic.project_id)
-        .where(on_device.in_(device_ids), Topic.status != TopicStatus.archived)
-        .order_by(Project.name, Topic.title, AgentSession.agent_handle)
-    )
-    for session, topic, project, device_id in rows:
-        out[device_id].append(
-            {
-                "project_id": str(project.id),
-                "project_name": project.name,
-                "topic_id": str(topic.id),
-                "topic_title": topic.title,
-                "agent_handle": session.agent_handle,
-                **await _agent_name(db, project, topic, session.agent_handle),
-            }
-        )
-    return out
-
-
 async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> None:
     """Tell a device's owner that an agent session started working on it,
     and whether it runs there over the whole machine (``whole``: a
@@ -213,12 +184,24 @@ async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> No
     # deferred-import: tests replace this name on app.domain.topic_membership.services
     from app.domain.topic_membership.services import TopicMemberService
 
-    owner = await db.get(User, device.owner_user_id)
-    if owner is None:
-        return
-    if owner.username in await TopicMemberService(db).people_in(
-        topic, team=project_team
-    ):
+    in_room = await TopicMemberService(db).people_in(topic, team=project_team)
+    admins = list(
+        await db.scalars(
+            select(User.username)
+            .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+            .where(
+                TeamUserRelation.team_id == device.team_id,
+                TeamUserRelation.deleted_at.is_(None),
+                TeamUserRelation.role.in_([TeamMemberRole.OWNER, TeamMemberRole.ADMIN]),
+            )
+        )
+    )
+    recipients = tuple(
+        Recipient(handle, REASON_MACHINE_OWNER)
+        for handle in admins
+        if handle not in in_room
+    )
+    if not recipients:
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)
@@ -251,7 +234,7 @@ async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> No
             },
             occurred_at=datetime.now(UTC),
         ),
-        address(Event(machine_owner=owner.username), Hand.participant),
+        Addressed(recipients),
     )
 
 
@@ -379,8 +362,8 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
         "CHEESE_AUTHOR": author,
         "CHEESE_PREVIEW_URL": ws_url(api, "/preview/tunnel"),
         "CHEESE_RESOURCE_ID": work_resource,
-        "GIT_AUTHOR_NAME": author,
-        "GIT_AUTHOR_EMAIL": f"{author}@agent.cheese.local",
+        # No GIT_AUTHOR_*: a task's checkout sets its own author (`cheese
+        # worktree`), and the environment would override it.
         **({"CHEESE_SITE_FORWARD": site} if site else {}),
     }
 
@@ -592,9 +575,8 @@ def _another_sandbox_wanted(environment: Sandbox | SelfHosted) -> bool:
     replaces them freely, so a room whose sandbox is on a machine it cannot
     work in — its disk full, say — asks for the spec it is already on to be
     given a sandbox somewhere else, and answering "you are already there"
-    leaves it on that machine for good. False for the others: a person's
-    computers (``devices_of``) and a self-hosted machine each name one machine,
-    and the one the session is on is the one it asks for."""
+    leaves it on that machine for good. A sandbox on team devices keeps its
+    existing directory, as does a session that chose one whole machine."""
     spec = spec_of(environment.spec) if isinstance(environment, Sandbox) else None
     return spec is not None and spec.platform
 
@@ -1011,6 +993,7 @@ async def _attempt(
     elif spec is not None and not spec.platform:
         selected = await device_for_spec(
             db,
+            agent_handle=row.agent_handle,
             spec=spec.name,
             project=project,
             task=task,
@@ -1268,6 +1251,7 @@ async def _install(
             author=actor_handle,
             work_resource=work_resource,
         )
+        disk_full_mb = None
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
                 info = await _start_executor(
@@ -1299,6 +1283,7 @@ async def _install(
                 }
                 target.pop("claim")
                 target.pop("claim_until")
+                disk_full_mb = info.get("disk_full_mb")
                 if setup.get("CHEESE_ENVIRONMENT"):
                     status = await environment_status(
                         hub, device_id, project_id, uuid.UUID(work_resource)
@@ -1332,41 +1317,32 @@ async def _install(
                 return _Preparing(say("environmentPreparing"), _another_attempt)
             # The host could not bring the session's executor up: its connector
             # went away, the install outlasted the deadline every call into a
-            # machine is given (`_start_executor`), the connector killed the
-            # install at that deadline and reported no exit status for it, or a
-            # write refused for want of space said so (`_out_of_space`). A
+            # machine is given (`_start_executor`), or the connector killed the
+            # install at that deadline and reported no exit status for it. A
             # whole VM is the session's own, waited for where it is; a shared
             # host is left when the pool has another that can run the sandbox,
             # so the next attempt is placed there instead of being pinned to
             # this one for the rest of the tool call.
-            full = _out_of_space(exc)
-            away = (
-                full
-                or isinstance(exc, (DeviceOffline, TimeoutError))
-                or (isinstance(exc, ExecutorSetupFailed) and exc.killed)
+            away = isinstance(exc, (DeviceOffline, TimeoutError)) or (
+                isinstance(exc, ExecutorSetupFailed) and exc.killed
             )
             if away and cloud_host_id is not None:
                 pool = HostPool(db, hub=hub)
-                if full and not cloud_vm:
-                    # What the machine ran out of is its disk, not this
-                    # session's share of it: no new sandbox is placed there
-                    # until a reading finds room again, and the guard reads a
-                    # marked host every minute even with nothing left on it.
-                    await pool.ran_out_of_space(cloud_host_id)
                 moved = not cloud_vm and await pool.leave_unusable(
                     session_id, cloud_host_id
                 )
                 await db.commit()
                 if moved:
                     return _Preparing(SANDBOX_PREPARING, _another_attempt)
-                if full:
-                    # Nowhere else to put it and no room here: say what is
-                    # wrong rather than leave every tool call of the turn
-                    # waiting on a machine that cannot take any of them.
-                    return {
-                        "unavailable": EXECUTOR_SETUP_FAILED.format(reason=DISK_FULL)
-                    }
                 return _CLOUD_PREPARING
+            if _out_of_space(exc):
+                # A write refused for want of space. On a host the sandbox's
+                # home is held to a quota of its own (`sandbox_host.py`), so the
+                # space that ran out is the session's: another host would give
+                # it an empty home and none of its work. The room is told, and
+                # its agent can make room where it is. A host whose disk as a
+                # whole runs short is the disk guard's to mark.
+                return {"unavailable": EXECUTOR_SETUP_FAILED.format(reason=DISK_FULL)}
             if isinstance(exc, ExecutorSetupFailed):
                 logger.warning("executor installation failed: %s", exc)
                 return {
@@ -1444,10 +1420,13 @@ async def _install(
             return _Preparing(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
             )
+        notices = [SANDBOX_LOST] * bool(lost)
+        if disk_full_mb is not None:
+            notices.append(DISK_FULL_NOTICE.format(mb=disk_full_mb))
         return {
             "target": target,
             "token": execution_token,
-            **({"notice": SANDBOX_LOST} if lost else {}),
+            **({"notice": "\n".join(notices)} if notices else {}),
         }
 
 

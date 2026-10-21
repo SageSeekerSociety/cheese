@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Row
+from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -213,3 +213,19 @@ async def accepted_by_task(
                 Returned(task_id=card.task_id, by=card.decided_by, at=at)
             )
     return found
+
+
+async def has_accepted(db: AsyncSession, handle: str) -> bool:
+    """Whether ``handle`` has ever accepted a delivery, in any project."""
+    return bool(
+        await db.scalar(
+            select(
+                select(AcceptCard.id)
+                .where(
+                    AcceptCard.decided_by == handle,
+                    AcceptCard.status == AcceptStatus.accepted,
+                )
+                .exists()
+            )
+        )
+    )

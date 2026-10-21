@@ -26,7 +26,12 @@ const { t } = useI18n()
 <template>
   <TaskFormSection :title="t('tasks.form.classify')">
     <div class="tf-grid">
-      <BaseField :label="t('tasks.form.category')" required :error="categoryIdControl['error-messages']?.[0]">
+      <BaseField
+        data-agent-field="category"
+        :label="t('tasks.form.category')"
+        required
+        :error="categoryIdControl['error-messages']?.[0]"
+      >
         <template #default="{ id, describedby, invalid, required }">
           <v-select
             :id="id"
@@ -47,7 +52,7 @@ const { t } = useI18n()
         </template>
       </BaseField>
 
-      <BaseField :label="t('tasks.form.topics')">
+      <BaseField data-agent-field="tags" :label="t('tasks.form.topics')">
         <template #default="{ id }">
           <v-autocomplete
             :id="id"

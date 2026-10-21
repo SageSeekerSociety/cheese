@@ -1,11 +1,6 @@
-"""一条消息只落一次 (dogfooding 2026-08): the same hook event reaches the persist
-path from two places — the turn's own attribution and the platform-unsolicited
-path — and both used to write.
+"""Concurrent assistant writes land one message per event identity.
 
-The tell in production is unmistakable: two blocks with the SAME `eid`, 14ms
-apart, identical text. `has_any_eid` is a SELECT followed by an INSERT, so two
-callers both read "not there" and both insert. Nothing about the check is wrong;
-it just cannot be the thing that decides.
+Distinct events keep their messages even when their text is identical.
 """
 
 import asyncio
@@ -41,9 +36,7 @@ async def _ai_messages(factory, topic_id: uuid.UUID) -> list[str]:
     return [
         b.content
         for b in blocks
-        if looks_like_agent_handle(b.author)
-        and b.kind == BlockKind.event
-        and (b.meta or {}).get("progress")
+        if looks_like_agent_handle(b.author) and b.kind == BlockKind.message
     ]
 
 

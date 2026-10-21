@@ -25,11 +25,10 @@ E2E_SHARD = re.compile(r"e2e-[1-9][0-9]*-of-[1-9][0-9]*")
 
 
 def _suite(value: str) -> str:
-    if value in ("remote-acceptance", "private-chat") or E2E_SHARD.fullmatch(value):
+    if value == "remote-acceptance" or E2E_SHARD.fullmatch(value):
         return value
     raise argparse.ArgumentTypeError(
-        f"unknown suite {value!r}: expected e2e-<i>-of-<n>, remote-acceptance"
-        " or private-chat"
+        f"unknown suite {value!r}: expected e2e-<i>-of-<n> or remote-acceptance"
     )
 
 

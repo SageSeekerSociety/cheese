@@ -14,6 +14,7 @@ from app.domain.agent.device_storage import list_device_storage
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 
@@ -25,6 +26,7 @@ async def _seed_device(
     owner = await IdentityService(session).ensure_agent_user()
     session.add(
         DeviceRow(
+            team_id=await enrollment_team(sql_device_service(session), owner.id),
             device_id=device_id,
             name=device_id,
             token=f"tok-{device_id}",
@@ -35,8 +37,8 @@ async def _seed_device(
     session.add(HostedDeviceRow(device_id=device_id, owner_user_id=owner.id))
     await session.flush()
     if project_id is not None:
-        await sql_device_service(session).assign_to_project(
-            device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            sql_device_service(session), device_id, project_id, actor_user_id=owner.id
         )
 
 

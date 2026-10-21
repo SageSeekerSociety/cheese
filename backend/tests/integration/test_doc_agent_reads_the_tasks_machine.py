@@ -28,6 +28,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 
@@ -58,9 +59,10 @@ async def _task(client, *, lease: bool) -> tuple[uuid.UUID, uuid.UUID, str]:
             await devices.start("ada"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
         topic = await db.get(Topic, room_id)
         assert topic is not None

@@ -168,6 +168,7 @@ class DeviceHub:
         device.heartbeats = False
         device.connection_generation += 1
         device.executor = False
+        device.profiles = False
         if name:
             device.name = name
         device.update_pushed = ""

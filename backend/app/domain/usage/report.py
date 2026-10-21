@@ -43,6 +43,7 @@ LINES = (LINE_COLLAB, LINE_ASK, LINE_WRITE, LINE_COMPUTE)
 TEAM_LINES = (LINE_COLLAB, LINE_COMPUTE)
 KIND_LINES: dict[str, str] = {
     "assistant": LINE_ASK,
+    "assistant_write": LINE_WRITE,
     "docs_ask": LINE_ASK,
     "task_pdf_draft": LINE_WRITE,
     SANDBOX: LINE_COMPUTE,
@@ -147,7 +148,8 @@ class UsageReport:
                 "project_id": str(p.project_id) if p.project_id else None,
                 "task_id": p.source_task_id,
                 "credits_total": p.credits_total,
-                "credits_remaining": max(0.0, p.credits_total - p.credits_used),
+                # An admitted call may overdraw; keep its debt against later grants.
+                "credits_remaining": p.credits_total - p.credits_used,
                 "remaining_ratio": 1.0 - _ratio(p.credits_used, p.credits_total),
                 "expires_at": p.expires_at.isoformat() if p.expires_at else None,
             }

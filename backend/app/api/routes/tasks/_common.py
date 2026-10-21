@@ -28,6 +28,7 @@ from app.domain.task.inputs import (
     map_submitter_type,
 )
 from app.domain.task.mentors import require_consent, set_mentors
+from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
     ensure_domain_groups_belong_to_space,
@@ -36,13 +37,6 @@ from app.domain.task.services import (
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
-
-
-class ConfirmTaskPublishFromPdfRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    drafts: list[dict]
-    task_options: dict = Field(alias="taskOptions")
 
 
 class CreateTaskRequest(BaseModel):
@@ -69,6 +63,9 @@ class CreateTaskRequest(BaseModel):
     submission_schema: list[dict] = Field(
         default_factory=list, alias="submissionSchema"
     )
+    # 评分要点：每行 ``{item, points, criteria}``，见 app.domain.task.rubric。
+    rubric: list[dict] = Field(default_factory=list)
+    rubric_public: bool = Field(default=True, alias="rubricPublic")
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
@@ -153,6 +150,9 @@ class PatchTaskRequest(BaseModel):
     team_locking_policy: str | None = Field(default=None, alias="teamLockingPolicy")
     category_id: int | None = Field(default=None, alias="categoryId")
     submission_schema: list[dict] | None = Field(default=None, alias="submissionSchema")
+    # 评分要点：给了就整份替换，省略不动。
+    rubric: list[dict] | None = None
+    rubric_public: bool | None = Field(default=None, alias="rubricPublic")
     topics: list[int] | None = None
     access_control_enabled: bool | None = Field(
         default=None, alias="accessControlEnabled"
@@ -215,6 +215,8 @@ async def _create_task_entity(
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
         submission_schema = payload.submission_schema or []
+        rubric_raw = payload.rubric
+        rubric_public = payload.rubric_public
         teaching = coerce_teaching(payload.teaching)
     else:
         # Dict path — used by PDF-based creation flow
@@ -308,6 +310,15 @@ async def _create_task_entity(
         # The PDF path carries `teaching` as free-form JSON, not a typed body.
         teaching = coerce_teaching(payload.get("teaching"))
 
+        rubric_raw = payload.get("rubric") or []
+        rubric_public = bool(payload.get("rubricPublic", True))
+
+    rubric = rubric_lines(
+        [e for e in rubric_raw if isinstance(e, dict)]
+        if isinstance(rubric_raw, list)
+        else []
+    )
+
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
 
@@ -343,9 +354,8 @@ async def _create_task_entity(
     # 发题的门是「本板的成员」，判据在 ``app.auth.space_access.may_publish_in_space``
     # —— 更早它是管理员专属（收权：那时的 ``POST /tasks`` 几乎不校验，任何登录用户
     # 拿着 space id 就能发），#1783 之后放开成任何人：发题是成员的能力，上不上板才是
-    # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里而不是两个
-    # 路由各写一遍，是因为 ``POST /tasks`` 与 PDF 批量发布
-    # （``publish/from-pdf/confirm``）都从这里走，漏掉任一条就等于少了半道门。
+    # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里，是因为
+    # ``POST /tasks`` 与草稿发布都从这里走，漏掉任一条就等于少了半道门。
     if not await may_publish_in_space(
         session=db, space_id=space_id, user_id=creator_user_id
     ):
@@ -388,6 +398,7 @@ async def _create_task_entity(
 
     # 题目级「给 AI 队友的指导」(#944)：整份替换，见 apply_task_teaching。
     apply_task_teaching(task, teaching)
+    task.rubric_public = rubric_public
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
     if access_control_enabled and access_domain_group_ids:
@@ -415,6 +426,8 @@ async def _create_task_entity(
     # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
     if submission_schema:
         await task_service.replace_submission_schema(task.id, submission_schema)
+    if rubric:
+        await task_service.replace_rubric(task.id, rubric)
 
     return task
 

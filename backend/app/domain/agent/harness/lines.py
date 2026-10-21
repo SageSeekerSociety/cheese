@@ -16,6 +16,7 @@ from app.core import raster_images
 from app.domain.agent.harness.notices import strip_platform_notice
 from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
+from app.domain.identity.handles import recipient_seat
 
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
@@ -102,11 +103,44 @@ def reply_quote(parent, *, recipient: str | None) -> str:
 
 
 def message_prompt_line(
-    author: str, content: str, quoted_context: dict | None = None
+    author: str,
+    content: str,
+    quoted_context: dict | None = None,
+    *,
+    addressed_to: str | None = None,
 ) -> str:
-    return f"[{author}]: {strip_platform_notice(content)}" + quoted_context_prompt(
+    """One line, speaker-labelled; ``→ @handle`` when it names somebody else.
+
+    A seat now reads what was said to the whole room, so most of what it reads
+    was not said to it. The arrow is what keeps 「read everything」 from turning
+    into 「answer everything」: the line itself says whose it was.
+    """
+    who = f"{author} → @{addressed_to}" if addressed_to else author
+    return f"[{who}]: {strip_platform_notice(content)}" + quoted_context_prompt(
         quoted_context
     )
+
+
+def addressee(b, *, recipient: str | None, recipient_instance_id=None) -> str | None:
+    """The seat a block names, when that is not the reader; else None.
+
+    ``recipient``/``recipient_instance_id`` are who is reading. A caller that
+    knows neither — a line injected into a running turn, which is by definition
+    for the seat it is injected into — gets no arrow: guessing from the block
+    alone would label the reader's own message as somebody else's.
+    """
+    if recipient is None and recipient_instance_id is None:
+        return None
+    recipient_meta = (b.meta or {}).get("agent_recipient")
+    if not recipient_meta:
+        return None
+    named_instance = recipient_meta.get("instance_id")
+    if named_instance is not None and recipient_instance_id is not None:
+        if str(named_instance) == str(recipient_instance_id):
+            return None
+    elif recipient_meta.get("handle") == recipient:
+        return None
+    return recipient_seat(recipient_meta)
 
 
 def prompt_line(
@@ -115,6 +149,7 @@ def prompt_line(
     embeds_images: bool,
     replied=None,
     recipient: str | None = None,
+    recipient_instance_id=None,
     gone: bool = False,
     undecodable: bool = False,
 ) -> str:
@@ -150,7 +185,12 @@ def prompt_line(
         )
     else:
         line = message_prompt_line(
-            b.author, b.content, (b.meta or {}).get("quoted_context")
+            b.author,
+            b.content,
+            (b.meta or {}).get("quoted_context"),
+            addressed_to=addressee(
+                b, recipient=recipient, recipient_instance_id=recipient_instance_id
+            ),
         )
     if replied is None:
         return line

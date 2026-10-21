@@ -3,10 +3,6 @@ import type { CreditUsage } from '@/lib/creditUsage'
 
 import { request } from '../api'
 
-export function getMyCreditUsage(): Promise<CreditUsage> {
-  return request<CreditUsage>('/users/me/credits/usage')
-}
-
 export function getTeamCreditUsage(teamId: number): Promise<CreditUsage> {
   return request<CreditUsage>(`/teams/${teamId}/credits/usage`)
 }

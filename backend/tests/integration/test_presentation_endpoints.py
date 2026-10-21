@@ -9,17 +9,16 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
-from app.domain.agent.models import AgentTurn
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.models import Task, TaskProgress, TaskStatus
 from app.domain.room_task.presentation import Building, Done, NeedsYou
 from app.domain.topic.models import Topic, TopicKind
 from tests.integration.conftest import a_team
 
 
 def _seeded(client) -> dict[str, str]:
-    """一个房间，四条活：正在跑一轮的、此刻没在跑的、等人验收的、关掉时留下了
+    """一个房间，四条活：队友说在做的、队友什么都没说的、等人验收的、关掉时留下了
     结论的。"""
     ids: dict[str, str] = {}
 
@@ -43,7 +42,12 @@ def _seeded(client) -> dict[str, str]:
                     **closed,
                 )
 
-            running = _task("在跑的活")
+            running = _task(
+                "队友说在做的活",
+                progress_state=TaskProgress.working,
+                progress_set_at=now,
+                progress_set_by="cheese",
+            )
             started = _task("停着的活")
             waiting = _task("等人验收的活")
             concluded = _task(
@@ -55,18 +59,6 @@ def _seeded(client) -> dict[str, str]:
             s.add_all([running, started, waiting, concluded])
             await s.flush()
 
-            # 任务自己的会话里有一轮送达了、还没停 —— 这就是「在跑」。
-            s.add(
-                AgentTurn(
-                    id=uuid.uuid4(),
-                    conversation_id=running.id,
-                    continuation_id=uuid.uuid4(),
-                    author="alice",
-                    content="开始吧",
-                    started_at=now,
-                    delivered_at=now,
-                )
-            )
             s.add(
                 AcceptCard(
                     topic_id=room.id,
@@ -100,7 +92,7 @@ def test_the_project_task_list_carries_the_board_cell(client):
         "column": "building",
         "phrase": Building.running,
     }
-    # 此刻没有一轮在跑，也还没递出交付：「做了一半停着」。
+    # 队友什么都没说过，也还没递出交付：「做了一半停着」。
     assert by_id[ids["started"]]["presentation"] == {
         "column": "building",
         "phrase": Building.started,
@@ -158,8 +150,8 @@ def test_a_room_carries_its_own_board_cell(client):
 
 
 def test_a_rooms_board_cell_does_not_follow_a_task_running_under_it(client):
-    """A task in the room is running; the room's own cell on the board is still
-    the room's: the task has a cell of its own."""
+    """A task in the room is being worked on; the room's own cell on the board is
+    still the room's: the task has a cell of its own."""
     ids = _seeded(client)
 
     listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
@@ -190,3 +182,73 @@ def test_a_rooms_own_card_reaches_the_room(client):
         "column": "needs_you",
         "phrase": NeedsYou.awaiting_review,
     }
+
+
+def _the_rooms_session_declares(client, room: str, status: str) -> None:
+    """The runner of the room's own line says its session is ``status``."""
+    from app.domain.agent import session_state
+
+    key = session_state.SeatKey(uuid.UUID(room), "cheese", "claude-code")
+
+    async def _declare() -> None:
+        await session_state.register(client.test_factory, key)
+        async with client.test_factory() as s:
+            await session_state.declare(s, key, status)
+            await s.commit()
+
+    client.portal.call(_declare)
+
+
+def test_a_rooms_board_cell_follows_its_session_as_its_runner_declares_it(client):
+    """「运行中」 is what the runner of the room's own line says of its session,
+    on the room's header and in the room list alike; no turn is in flight in
+    this process for it either way."""
+    ids = _seeded(client)
+
+    def cells() -> tuple[str, str]:
+        header = client.get(f"/topics/{ids['room']}").json()["data"]
+        listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]
+        row = next(t for t in listed["data"] if t["id"] == ids["room"])
+        return header["presentation"]["phrase"], row["presentation"]["phrase"]
+
+    _the_rooms_session_declares(client, ids["room"], "running")
+    assert cells() == (Building.running, Building.running)
+
+    _the_rooms_session_declares(client, ids["room"], "idle")
+    assert cells() == (Building.idle, Building.idle)
+
+
+def test_a_member_is_working_in_a_room_while_its_runner_says_its_session_runs(
+    client,
+):
+    """Who is at work in a room is what its sessions' runners declare, on the
+    room's header and in the room list alike, and in no other process's turn
+    books: no turn runs here for it."""
+    ids = _seeded(client)
+    seat = "cheese-0123456789ab"
+    from app.domain.agent import session_state
+
+    key = session_state.SeatKey(uuid.UUID(ids["room"]), seat, "claude-code")
+
+    def declares(status: str) -> None:
+        async def _declare() -> None:
+            await session_state.register(client.test_factory, key)
+            async with client.test_factory() as s:
+                await session_state.declare(s, key, status)
+                await s.commit()
+
+        client.portal.call(_declare)
+
+    def working() -> tuple[list[str], list[str]]:
+        header = client.get(f"/topics/{ids['room']}").json()["data"]
+        listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]
+        row = next(t for t in listed["data"] if t["id"] == ids["room"])
+        return (
+            [a["member"] for a in header["activity"] if a["kind"] == "working"],
+            [a["member"] for a in row["activity"] if a["kind"] == "working"],
+        )
+
+    declares("running")
+    assert working() == ([seat], [seat])
+    declares("idle")
+    assert working() == ([], [])

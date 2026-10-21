@@ -26,6 +26,7 @@ class AgentConfiguration(BaseModel):
     body: str = ""
     skills: list[str] = Field(default_factory=list)
     model: str | None = None
+    execution_device_id: str | None = Field(default=None, max_length=64)
     # How hard the model thinks (`gateway.EFFORTS`). None leaves it to the
     # model. Kept when the model changes: a model that does not honour it runs
     # at its own default (`launch_env`), and the choice is back when one does.

@@ -79,6 +79,7 @@ const CHANGES_BASE = {
   loading: false,
   refreshing: false,
   errorMsg: null,
+  liveFallback: 'none' as const,
   noRepo: false,
   fileDiffs: CHANGES_FILE_DIFFS,
   diffByPath: CHANGES_BY_PATH,

@@ -39,6 +39,13 @@ export function useTopicAddress(opts: { place: () => TopicPlace; desktop: Ref<bo
     const q = route.query.tab
     return typeof q === 'string' ? q : undefined
   })
+  // 一句话里提到某条规则时，那个名字是个链接（`?routine=<id>`，芝士自己写在话里）：
+  // 右栏切到「例行事务」，那一格等名单回来再选中这一条。和 `?tab=` 一样由地址说了
+  // 算；人从旧消息点过来时名单常常还在路上，所以落上去的事交给那一格自己。
+  const panelRoutineId = computed(() => {
+    const q = route.query.routine
+    return typeof q === 'string' && q ? q : null
+  })
   const phone = computed(() => !opts.desktop.value)
   // 页签和浏览器历史怎么对应（桌面 replace；手机上 Back 先回到对话）。
   const tabHistory = useRoomTabHistory(phone)
@@ -157,6 +164,7 @@ export function useTopicAddress(opts: { place: () => TopicPlace; desktop: Ref<bo
     unreadOnOpen,
     panelTab,
     onPanelTab,
+    panelRoutineId,
     phone,
     focusBlock,
     threadFocusBlock,

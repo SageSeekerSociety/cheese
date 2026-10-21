@@ -76,6 +76,10 @@ class WarmMachineOut(BaseModel):
     id: str
     state: str
     machine_id: int | None
+    hostname: str | None
+    cores: int | None
+    memory_mb: int | None
+    disk_gb: int | None
     ip: str | None
     online: bool
     created_at: str | None
@@ -114,7 +118,6 @@ class MachineConfigOut(BaseModel):
     sandbox_inode_budget: int
     near_cap: float
     check_s: int
-    walk_s: int
     alert_used: dict[str, float]
     history_step_s: int
 

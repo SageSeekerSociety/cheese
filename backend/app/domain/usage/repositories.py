@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.conversation.services import of_room
 from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
-from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage, call_count
+from app.domain.usage.models import NOT_MODEL_CALLS, ResourceUsage, call_count
 
-#: Rows of model calls. A compute charge (``usage.compute``) is a usage row
-#: too, for its credits, but it has no tokens and is no call: every count of
+#: Rows of model calls. A compute charge (``usage.compute``) or a search the
+#: platform ran (``usage.search``) is a usage row too, for its credits, but
+#: it has no tokens and is no call: every count of
 #: tokens, cost and calls below leaves it out, and only the credit reads of a
 #: team's spend take it in.
-MODEL_CALLS = ResourceUsage.route != COMPUTE_ROUTE
+MODEL_CALLS = ResourceUsage.route.notin_(NOT_MODEL_CALLS)
 
 
 def unpriced_tokens() -> Any:
@@ -63,6 +64,7 @@ class UsageRepository:
         route: str = "",
         turn_id: uuid.UUID | None = None,
         user_id: int | None = None,
+        credit_owner_handle: str | None = None,
         team_id: int | None = None,
         credits: float = 0.0,
         calls: int = 1,
@@ -88,6 +90,7 @@ class UsageRepository:
         row = ResourceUsage(
             project_id=project_id,
             user_id=user_id,
+            credit_owner_handle=credit_owner_handle,
             conversation_id=conversation_id,
             turn_id=turn_id,
             model=model,
@@ -143,6 +146,21 @@ class UsageRepository:
             .group_by(ResourceUsage.project_id)
         )
         return {pid: float(spent or 0.0) for pid, spent in rows}
+
+    async def task_gateway_spend(
+        self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+    ) -> float:
+        return float(
+            await self._session.scalar(
+                select(func.coalesce(func.sum(ResourceUsage.cost_usd), 0)).where(
+                    ResourceUsage.project_id == project_id,
+                    ResourceUsage.conversation_id == task_id,
+                    ResourceUsage.credit_owner_handle == owner_handle,
+                    ResourceUsage.route == "gateway",
+                )
+            )
+            or 0
+        )
 
     async def _agg(self, where) -> dict:
         # The public `turns` key is retained for wire compatibility, but its

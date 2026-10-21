@@ -16,6 +16,7 @@ import { useAcceptCardActions } from '@/composables/acceptCard/actions'
 import { useAcceptCardBar } from '@/composables/acceptCard/bar'
 import { useAcceptCards } from '@/composables/acceptCard/cards'
 import { useAcceptCardDerive } from '@/composables/acceptCard/derive'
+import { signInWithGithub } from '@/composables/useGithubSignIn'
 import { useReviewComments } from '@/composables/useReviewComments'
 
 import { myHandle } from '@/me'
@@ -173,6 +174,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     onAcceptCard: actions.onAcceptCard,
     onRevokeCard: actions.onRevokeCard,
     onForceMerge: actions.onForceMerge,
+    onSignInGithub: signInWithGithub,
     onToggleAutoMerge: actions.onToggleAutoMerge,
     onRejectCard: actions.onRejectCard,
     onVoidCard: actions.onVoidCard,

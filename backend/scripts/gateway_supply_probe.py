@@ -27,6 +27,9 @@ class ProbeFailure(Exception):
         # The provider's own error message, for an operator's tool that shows it
         # (gateway_conformance.py); this probe never emits it.
         self.detail = detail
+        # What an unparseable or oversized body looked like; emitted on the
+        # failed line so the next red run says what the gateway really sent.
+        self.received = None
         super().__init__(category)
 
 
@@ -139,19 +142,35 @@ def open_request(base, key, path, payload=None, headers=None, timeout=10):
         ) from error
 
 
-def read_json(response, limit=262144):
+def received_of(response, raw, key=""):
+    head = raw[:300].decode("utf-8", "replace")
+    if key:
+        head = head.replace(key, "***")
+    return {
+        "status": getattr(response, "status", None),
+        "content_type": (response.headers.get("Content-Type") or "")[:100],
+        "body_head": " ".join(head.split()),
+    }
+
+
+def read_json(response, limit=262144, key=""):
     raw = response.read(limit + 1)
+    failure = None
     if len(raw) > limit:
-        raise ProbeFailure("invalid_response")
-    try:
-        return json.loads(raw)
-    except ValueError as error:
-        raise ProbeFailure("invalid_response") from error
+        failure = ProbeFailure("invalid_response")
+    else:
+        try:
+            return json.loads(raw)
+        except ValueError as error:
+            failure = ProbeFailure("invalid_response")
+            failure.__cause__ = error
+    failure.received = received_of(response, raw, key)
+    raise failure
 
 
 def readiness(base, key):
     with open_request(base, key, "/health/readiness") as response:
-        state = read_json(response)
+        state = read_json(response, key=key)
     if (
         not isinstance(state, dict)
         or state.get("db") != "connected"
@@ -159,7 +178,10 @@ def readiness(base, key):
     ):
         raise ProbeFailure("gateway_dependency")
     with open_request(base, key, "/model/info") as response:
-        catalog = read_json(response)
+        # Every row carries its full litellm_params, so the catalog outgrows
+        # the default cap as models are added (46 rows were 290 KB); the same
+        # 8 MiB gateway_conformance.py reads it with.
+        catalog = read_json(response, limit=8 << 20, key=key)
     rows = catalog.get("data") if isinstance(catalog, dict) else None
     if not isinstance(rows, list) or not rows:
         raise ProbeFailure("invalid_catalog")
@@ -305,6 +327,9 @@ def main(argv=None):
             code=getattr(error, "code", None),
             call_id=getattr(error, "call_id", None) or call_id,
             elapsed_ms=round((time.monotonic() - started) * 1000),
+            **(
+                {"received": error.received} if getattr(error, "received", None) else {}
+            ),
         )
         return 1
 

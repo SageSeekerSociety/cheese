@@ -104,8 +104,10 @@ def _error_excerpt(lines: list[str]) -> str:
     return text
 
 
-async def _download_log_tail(client: httpx.AsyncClient, url: str) -> str:
-    """Stream `url` keeping only its last `_LOG_TAIL_BYTES`.
+async def _download_log_tail(
+    client: httpx.AsyncClient, url: str, *, keep_bytes: int = _LOG_TAIL_BYTES
+) -> str:
+    """Stream `url` keeping only its last ``keep_bytes`` (256 KiB by default).
 
     A sliding window rather than a read-then-cut: an Actions log has no size
     ceiling, the part worth reading is at the END, and a naive
@@ -120,8 +122,8 @@ async def _download_log_tail(client: httpx.AsyncClient, url: str) -> str:
         async for chunk in resp.aiter_bytes():
             downloaded += len(chunk)
             window.extend(chunk)
-            if len(window) > _LOG_TAIL_BYTES:
-                del window[: len(window) - _LOG_TAIL_BYTES]
+            if len(window) > keep_bytes:
+                del window[: len(window) - keep_bytes]
             if downloaded >= _LOG_DOWNLOAD_MAX_BYTES:
                 break
     return window.decode("utf-8", errors="replace")

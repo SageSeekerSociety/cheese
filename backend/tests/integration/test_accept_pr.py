@@ -38,7 +38,7 @@ from tests.integration.conftest import (
     room_text,
     session_auth_headers,
 )
-from tests.landing import summary_turn_ends
+from tests.landing import written_up
 from tests.machine_work import machine_commits
 from tests.support import git_store
 from tests.support.review_ports import task_teammate
@@ -101,6 +101,26 @@ def _rendered_head(client, card_id: str) -> str | None:
             return card.pr_head_sha
 
     return asyncio.run(_do())
+
+
+def _rendered_revision(client, card_id: str) -> str | None:
+    """卡面上交付物的那一版（payload 的 `deliverable.revision`），读法和浏览器
+    一样：从卡所在房间的卡列表里取。交合并的卡没有这一项，是 None。"""
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _room() -> str:
+        async with client.test_factory() as s:
+            card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
+            assert card is not None
+            return str(card.topic_id)
+
+    listed = client.get(
+        f"/topics/{asyncio.run(_room())}/accept-card",
+        headers=session_auth_headers("alice"),
+    )
+    assert listed.status_code == 200, listed.text
+    (card,) = [c for c in listed.json()["data"]["data"] if c["id"] == card_id]
+    return (card.get("deliverable") or {}).get("revision")
 
 
 def _seen(client, card_id: str, head_sha) -> str | None:
@@ -283,6 +303,7 @@ class FakeGitHubPrClient:
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
+        self.task_metadata_batches: list[tuple[int, ...]] = []
         self.status_tokens: list[str] = []
         self.head_sha_calls: list[int] = []
         self.check_state_tokens: list[str] = []
@@ -412,6 +433,27 @@ class FakeGitHubPrClient:
             ),
         )
 
+    async def task_pr_metadata(self, *, owner, repo, numbers, token):
+        # deferred-import: pre-batch revisions use this fake's single-PR operation.
+        from app.domain.review.github_pr.task_pr_metadata import (
+            TaskPrMetadata,
+            TaskPrMetadataFailure,
+        )
+
+        if self.status_delay_s:
+            await asyncio.sleep(self.status_delay_s)
+        if self.status_error is not None:
+            raise self.status_error
+        self.task_metadata_batches.append(tuple(numbers))
+        return {
+            number: (
+                TaskPrMetadata(number, pr["head_sha"], pr["state"], pr["merged"])
+                if (pr := self.prs.get(number)) is not None
+                else TaskPrMetadataFailure("missing_pr")
+            )
+            for number in numbers
+        }
+
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
         self.check_state_tokens.append(token)
         if self.check_state_error is not None:
@@ -465,6 +507,9 @@ class FakeGitHubPrClient:
         )
         return github_pr.MergeResult(sha=merge_sha)
 
+    async def branch_comparisons(self, *, owner, repo, pairs, token):
+        raise AssertionError("app_world must supply its Git-backed branch comparisons")
+
     async def compare_status(self, *, owner, repo, base, head, token) -> str | None:
         self.compare_status_calls.append((base, head))
         return self.compare_status_by_pair.get((base, head))
@@ -477,9 +522,6 @@ class FakeGitHubPrClient:
         if not with_comments:
             signals = [s for s in signals if s.kind != "comment"]
         return signals
-
-    async def check_run_names(self, *, owner, repo, ref, token) -> set[str]:
-        return {r["name"] for r in self._derived_check_runs(ref)}
 
     async def update_branch(self, *, owner, repo, number, token) -> bool:
         self.update_branch_calls.append(number)
@@ -648,6 +690,11 @@ def app_world(client, monkeypatch):
                 owner="owner", repo="repo", number=number, token="ghs_app_read"
             )
 
+        async def task_pr_metadata(self, numbers):
+            return await fake.task_pr_metadata(
+                owner="owner", repo="repo", numbers=numbers, token="ghs_app_write"
+            )
+
     async def _tokens_for_project(_project_id, _session):
         return _FakeTokens()
 
@@ -688,6 +735,47 @@ def app_world(client, monkeypatch):
             ("main", head), "ahead" if ahead else "identical"
         )
         return head
+
+    async def branch_comparisons(*, owner, repo, pairs, token):
+        from sqlalchemy import select
+
+        from app.domain.review.github_pr.protocol import BranchComparison
+        from app.domain.room_task.models import Task
+
+        async with client.test_request_factory() as session:
+            rows = (
+                await session.execute(
+                    select(Task.branch_name, Task.project_id).where(
+                        Task.branch_name.in_([branch for branch, _base in pairs])
+                    )
+                )
+            ).all()
+            projects = {branch: project_id for branch, project_id in rows}
+        result = {}
+        for branch, base in pairs:
+            project_id = projects.get(branch)
+            head = (
+                await pr_publish.branch_head(project_id, session, branch)
+                if project_id
+                else None
+            )
+            if head is None:
+                result[(branch, base)] = None
+                continue
+            path = git_store.path(project_id)
+            ahead = int(git_store.git(path, "rev-list", "--count", f"{base}..{head}"))
+            fake.compare_status_by_pair.setdefault(
+                (base, head), "ahead" if ahead else "identical"
+            )
+            status = await fake.compare_status(
+                owner=owner, repo=repo, base=base, head=head, token=token
+            )
+            result[(branch, base)] = BranchComparison(
+                head, int(status in ("ahead", "diverged"))
+            )
+        return result
+
+    monkeypatch.setattr(fake, "branch_comparisons", branch_comparisons)
 
     async def repository_data(project_id, session, path="", **kwargs):
         from urllib.parse import unquote
@@ -2205,7 +2293,9 @@ def test_poll_mirrors_the_merge_state_onto_the_card(client, app_world):
     assert card["pr_head_sha"] == head_sha
     mirror = card["merge_state"]
     assert mirror["state"] == "unstable"
-    assert mirror["who"] == "ci"
+    # 没配必跑名单，GitHub 说 unstable 就是「可以合」；还在跑的那个检查不挡
+    # 采纳，下一步在验收人手上（`whose_move` 的 unstable 那一档）。
+    assert mirror["who"] == "human"
     assert mirror["head_sha"] == head_sha
 
     fake.check_state_by_sha[head_sha] = ("success", "全绿")
@@ -2213,6 +2303,41 @@ def test_poll_mirrors_the_merge_state_onto_the_card(client, app_world):
     mirror = _cards(client, tid)[0]["merge_state"]
     assert mirror["state"] == "clean"
     assert mirror["who"] == "human"
+
+
+def test_a_running_check_outside_the_required_list_still_waits_on_the_reviewer(
+    client, app_world
+):
+    """必跑检查都绿了、只剩一条非必跑检查还在跑：卡可以采纳，验收人那行要亮黄灯。
+
+    GitHub 对这种情况报 unstable（可采纳），但 check runs 里还有 in_progress。
+    `whose_move` 若按「有检查在跑」把这一步交给 ci，`awaits_me` 就是 false，侧栏
+    那盏灯停在蓝色 —— 2026-10-21 的 #4562 正是这样：两个 job 的每一步都绿了、run
+    也结束了，GitHub 却一直把它们报成 in_progress。
+    """
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, required_checks=[{"name": "test"}])
+    fake.mergeable_state_by_number[number] = "unstable"
+    fake.check_runs_by_sha[head_sha] = [
+        {"name": "test", "status": "completed", "conclusion": "success"},
+        {"name": "scope", "status": "in_progress", "conclusion": None},
+    ]
+
+    _poll(client)
+
+    card = _cards(client, tid)[0]
+    assert card["merge_state"]["state"] == "unstable"
+    assert card["merge_state"]["who"] == "human"
+
+    row = {
+        item["id"]: item
+        for item in client.get(
+            f"/projects/{pid}/tasks", headers=session_auth_headers("alice")
+        ).json()["data"]["data"]
+    }[str(delivery_task_id(client, tid))]
+    assert row["presentation"] == {"column": "needs_you", "phrase": "awaiting_review"}
+    assert row["awaits_me"] is True
 
 
 def test_poll_never_merges_an_unarmed_card(client, app_world):
@@ -2257,12 +2382,12 @@ def test_poll_clean_notifies_the_reviewer_once_per_head(client, app_world):
 
     _poll(client)
     text = _card_events(client, cid)
-    assert "等 alice 采纳" in text
-    first = text.count("等 alice 采纳")
+    assert "等 <@alice> 采纳" in text
+    first = text.count("等 <@alice> 采纳")
 
     _poll(client)  # 同一个 head：不重复
     wait_work_idle()
-    assert _card_events(client, cid).count("等 alice 采纳") == first
+    assert _card_events(client, cid).count("等 <@alice> 采纳") == first
 
     new_sha = fake.push_new_commit(number)  # 新 head 转绿是新事实
     fake.check_state_by_sha[new_sha] = ("success", "全绿")
@@ -2272,11 +2397,11 @@ def test_poll_clean_notifies_the_reviewer_once_per_head(client, app_world):
 
     text = _card_events(client, cid)
     for _ in range(40):
-        if text.count("等 alice 采纳") >= first + 1:
+        if text.count("等 <@alice> 采纳") >= first + 1:
             break
         time.sleep(0.05)
         text = _card_events(client, cid)
-    assert text.count("等 alice 采纳") == first + 1
+    assert text.count("等 <@alice> 采纳") == first + 1
 
 
 def test_poll_red_checks_nudge_cheese_once_with_the_logs(client, app_world, stub_hooks):
@@ -2535,7 +2660,7 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     assert card["pr_head_sha"] == rejected["pr_head_sha"]
     assert card["pr_merged_at"] is not None
     # The task closes once its AI teammate has written it up.
-    summary_turn_ends(client, delivery_task_id(client, tid))
+    written_up(client, delivery_task_id(client, tid))
     assert _room_open_tree_branch(client, tid) is None
     assert _branch_of_record(client, tid) == branch
     assert fake.merge_calls == []
@@ -2574,9 +2699,7 @@ def test_the_merge_that_closed_a_task_does_not_close_it_again(client, app_world)
         headers=session_auth_headers("alice"),
     )
     assert rejected.status_code == 200, rejected.text
-    # 退回的那一轮（告诉队友去改）先跑完：生产上改完再交时它早就结束了。还开着的
-    # 一轮会让写总结那一轮结束时任务照规矩不关（`room_task.closing.unfinished`），
-    # CI 上它偶尔恰好卡在这个窗口里，断言就读到 open。
+    # 退回的那一轮（告诉队友去改）先跑完：生产上改完再交时它早就结束了。
     wait_work_idle()
     # 同一张 PR 上再递一张 —— 生产上这是改完又交的那一版。
     resent = _make_card(client, tid)
@@ -2586,7 +2709,7 @@ def test_the_merge_that_closed_a_task_does_not_close_it_again(client, app_world)
     accepted = _accept(client, resent)
     assert accepted.status_code == 200, accepted.text
     task_id = delivery_task_id(client, tid)
-    summary_turn_ends(client, task_id)
+    written_up(client, task_id)
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "closed"
 
@@ -3951,13 +4074,13 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(
     """
     from app.domain.review import pr_publish
 
-    async def _looks_ahead(_session, _task_id):
-        return True
+    async def _looks_ahead(_factory, candidates, _blocked):
+        return {task.task_id: True for task in candidates}
 
     # The unlocked pre-check already leaves a carded batch out. A card can
     # still be filed between that check and the lock, so this exercises the
     # locked path on its own.
-    monkeypatch.setattr(pr_publish, "_branch_ahead", _looks_ahead)
+    monkeypatch.setattr(pr_publish, "_github_draft_preflight", _looks_ahead)
     fake = sweeping["fake"]
     pid, tid = _room_with_work(client)
     cid = _make_card(client, tid)

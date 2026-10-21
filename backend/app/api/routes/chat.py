@@ -400,15 +400,15 @@ class _Room:
                 await open_turns_on(auth_session, self.topic_id),
                 card,
                 newest,
-                await self._snapshot(auth_session, chat_service, actor),
+                await self._snapshot(auth_session, actor),
             )
 
-    async def _snapshot(self, session, chat_service, actor) -> dict | None:
+    async def _snapshot(self, session, actor) -> dict | None:
         """The room as it is now (`room_snapshot`), read after the subscription
         is registered. A room that cannot be read whole still opens: the client
         asks for each piece itself, as it would without a snapshot."""
         try:
-            return await room_snapshot(session, chat_service, actor, self.topic_id)
+            return await room_snapshot(session, actor, self.topic_id)
         except Exception:
             _log.exception("chat_ws_snapshot_failed", topic=str(self.topic_id))
             await session.rollback()

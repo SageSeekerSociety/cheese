@@ -8,7 +8,9 @@
     ".pre-commit-config.yaml",
     ".github/scripts/ensure-apt.sh",
     ".github/scripts/allow-user-namespaces.sh",
-    ".github/workflows/test.yml"
+    ".github/workflows/test.yml",
+    ".github/scripts/backend_imports.py",
+    ".github/scripts/coverage_map.py"
   ],
   "frontend": [
     "frontend/**",
@@ -89,7 +91,6 @@
     "backend/uv.lock",
     "backend/.python-version",
     "backend/tests/**",
-    "backend/scripts/assert_suite_ran.py",
     "backend/scripts/device_connection_lifecycle_acceptance.py",
     "cli/**",
     "scripts/remote_execution/**",
@@ -114,6 +115,7 @@
     "backend/app/domain/agent/harness/claude_code/remote_execution/*",
     "backend/app/domain/agent/harness/claude_code/cli.py",
     "backend/app/domain/agent/executor_transport.py",
+    "backend/app/domain/agent/task_checkout.py",
     "backend/app/domain/agent/cli_worker.py",
     "backend/app/domain/agent/project_hooks.py",
     "backend/sandbox/cheese",
@@ -131,26 +133,11 @@
     "backend/app/domain/agent/harness/claude_code/remote_execution/*",
     "backend/app/domain/agent/harness/claude_code/cli.py",
     "backend/app/domain/agent/executor_transport.py",
+    "backend/app/domain/agent/task_checkout.py",
     "backend/app/domain/agent/cli_worker.py",
     "backend/app/domain/agent/project_hooks.py",
     "backend/sandbox/cheese",
     ".github/scripts/ensure-claude-cli.sh",
-    ".github/scripts/allow-user-namespaces.sh",
-    ".github/scripts/ensure-apt.sh",
     ".github/workflows/mcp-equivalence.yml"
-  ],
-  "cifast": [
-    ".cheese/pre-push",
-    ".github/scripts/ci-fast.py",
-    ".github/scripts/ci_fast_backend.py",
-    ".github/scripts/ci_fast_checks.py",
-    ".github/scripts/ci_fast_process.py",
-    ".github/scripts/ci_fast_pytest_plugin.py",
-    ".github/scripts/test_ci_fast.py",
-    ".github/scripts/required-ci.py",
-    ".github/scripts/required-ci-paths.json",
-    ".pre-commit-config.yaml",
-    "Taskfile.yml",
-    ".github/workflows/ci-fast.yml"
   ]
 }

@@ -61,17 +61,23 @@ def credit_mode(project_settings: dict) -> str:
 
 @dataclass(frozen=True)
 class Attribution:
-    """Who a delivery is credited to, resolved once for every text it writes."""
+    """Who a delivery is credited to, resolved once for every text it writes.
+
+    One rule decides every commit it touches: on GitHub the task owner authors
+    the work when the project credits owners and the task has one; otherwise
+    the AI teammate does. Everyone else credited — the owner when they are not
+    the author, the declared contributors, and the AI teammate when it is not
+    — is a `Co-authored-by`."""
 
     #: The task owner's handle: the human the work is for, or None when no
     #: human owns the task.
     owner_handle: str | None
-    #: The platform agent that wrote the work: the author of the commits on the
-    #: task branch.
+    #: The platform agent that wrote the work. It is never shown: the AI
+    #: teammate appears as `app` on GitHub and as 芝士 on the platform forge.
     author: GitIdentity | None
     #: `CREDIT_OWNER` or `CREDIT_AGENT`.
     mode: str = CREDIT_OWNER
-    #: The owner's git identity — their GitHub one when linked.
+    #: The owner's git identity — their GitHub one when signed in with it.
     owner: GitIdentity | None = None
     #: People the task declares as having written part of it.
     contributors: tuple[GitIdentity, ...] = ()
@@ -87,27 +93,66 @@ class Attribution:
     #: the App did (or there is no PR). GitHub makes the PR's opener the author
     #: of its squash commit, so this is who the landed commit is by.
     opened_by: str | None = None
-    #: The GitHub App's own identity, credited as a co-author when a human
-    #: opened the PR. None off GitHub.
+    #: The GitHub App's own identity — the AI teammate on GitHub, shown with
+    #: the App's logo. None off GitHub, or when it could not be read.
     app: GitIdentity | None = None
+    #: Where the project's code lives: `"github"`, `"forgejo"`, or None when
+    #: there is no repository.
+    lane: str | None = None
+
+    @property
+    def ai(self) -> GitIdentity | None:
+        """How the AI teammate is named in git on this project's forge.
+
+        On the platform forge it keeps its own address — each address there
+        belongs to exactly one account, and the project's account claims the
+        agent's (`project.forge.ensure_author_email`) — under the name 芝士
+        rather than an internal handle nobody can read."""
+        if self.lane == "github":
+            return self.app
+        if self.lane == "forgejo" and self.author is not None:
+            return GitIdentity(CHEESE_NAME, self.author.email)
+        return None
+
+    @property
+    def commit_author(self) -> GitIdentity | None:
+        """The author of the commits the agent makes on the task branch.
+
+        The owner only on GitHub: on the platform forge an author's address
+        has to be claimed by the project's account, and one person's address
+        cannot belong to every project they own a task in."""
+        if self.lane == "github" and self.mode == CREDIT_OWNER and self.owner:
+            return self.owner
+        return self.ai or self.author
+
+    @property
+    def commit_coauthors(self) -> tuple[GitIdentity, ...]:
+        """The co-authors of those commits."""
+        author = self.commit_author
+        return self._credited_besides(author.email if author else None)
 
     @property
     def coauthors(self) -> tuple[GitIdentity, ...]:
-        """Everyone credited besides the commit's author, author excluded.
+        """The co-authors of the commit that lands. On GitHub its author is
+        whoever opened the PR: a person (`opened_by`) or the App. The platform
+        forge keeps the branch's own author."""
+        if self.lane == "github":
+            landed = self.opened_by or (self.app.email if self.app else None)
+        else:
+            author = self.commit_author
+            landed = author.email if author else None
+        return self._credited_besides(landed)
 
-        In the owner mode the owner is credited here only when the commit is
-        not already theirs — the App had to open the PR. When a human opened
-        it, the App is credited instead, which is where GitHub shows its logo.
-        """
+    def _credited_besides(self, author_email: str | None) -> tuple[GitIdentity, ...]:
         credited: list[GitIdentity] = []
         if self.mode == CREDIT_OWNER and self.owner is not None:
             credited.append(self.owner)
         credited.extend(self.contributors)
-        if self.opened_by and self.app is not None:
-            credited.append(self.app)
+        if self.ai is not None:
+            credited.append(self.ai)
         unique: list[GitIdentity] = []
         for person in credited:
-            if person.email != self.opened_by and person not in unique:
+            if person.email != author_email and person not in unique:
                 unique.append(person)
         return tuple(unique)
 
@@ -298,12 +343,14 @@ async def attribution(
     task_id: uuid.UUID | None = None,
     opened_by: str | None = None,
     app: GitIdentity | None = None,
+    lane: str | None = None,
 ) -> "Attribution":
     """Resolve who this delivery is credited to.
 
-    `opened_by` and `app` describe the PR, which only the caller holding it
-    knows: the address of the human whose account opened it, and the GitHub
-    App's identity. Contributors and reporters come from task declarations."""
+    `lane`, `opened_by` and `app` describe the forge and the PR, which only
+    the caller holding them knows: where the code lives, the address of the
+    human whose account opened the PR, and the GitHub App's identity.
+    Contributors and reporters come from task declarations."""
     # deferred-import: tests replace this name on app.domain.topic_membership.services
     from app.domain.topic_membership.services import TopicMemberService
 
@@ -371,6 +418,7 @@ async def attribution(
         reporters=tuple(reporters),
         opened_by=opened_by,
         app=app,
+        lane=lane,
     )
 
 
@@ -394,7 +442,7 @@ async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
 
 
 def coauthored_by(identity: GitIdentity | None) -> str | None:
-    """Format a declared human code contributor as a Git trailer."""
-    if identity is None or identity == CHEESE_IDENTITY:
+    """Format a co-author as a Git trailer."""
+    if identity is None:
         return None
     return f"Co-authored-by: {identity.name} <{identity.email}>"

@@ -1,4 +1,4 @@
-"""Standing work: a confirmed rule wakes the room's teammate, once per moment or
+"""Standing work: a saved rule wakes the room's teammate, once per moment or
 event, and whoever set it hears how each run went."""
 
 import uuid
@@ -6,15 +6,13 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 
-from app.domain.agent.models import AgentTurn
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.routine import service as routine_service
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import REPORT_TIMEOUT, sweep
 from tests.integration.conftest import (
     post_project,
-    room_agent_seat,
     session_auth_headers,
 )
 
@@ -81,8 +79,7 @@ def _weekly(client, room, headers=None, **over):
     body = {
         "title": "每周进展",
         "instructions": "整理本周各房间的进展，列出完成、进行中和阻碍",
-        "context_scope": "本项目所有房间",
-        "output_dir": "周报",
+        "note": "结果按房间分开列，写完发在频道里",
         "trigger": "schedule",
         "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
         "timezone": "Asia/Shanghai",
@@ -109,80 +106,76 @@ def _runs(client, routine_id):
     return r.json()["data"]["data"]
 
 
-def test_an_ai_draft_runs_nothing_until_a_person_confirms_it(client):
+def test_a_teammates_rule_runs_from_the_moment_it_is_saved(client):
+    """Nobody confirms it: a rule an AI teammate creates is saved and running,
+    and its first moment comes the same way a person-made rule's does."""
     room = _room(client, _project(client))
-    drafted = _weekly(client, room, owner_handle=OWNER)
-    assert drafted.status_code == 200, drafted.text
-    routine = drafted.json()["data"]
-    assert routine["state"] == "draft"
-    assert routine["next_run_at"] is None
+    made = _weekly(client, room, owner_handle=OWNER)
+    assert made.status_code == 200, made.text
+    routine = made.json()["data"]
+    assert routine["state"] == "active"
+    assert routine["next_run_at"] is not None
+    assert routine["created_by"] == routine["agent_handle"], routine
 
-    refused = client.post(f"/routines/{routine['id']}/confirm")
-    assert refused.status_code == 403, "an AI teammate confirmed its own draft"
-
+    _make_due(client, routine["id"])
     (_, runner) = _sweep(client)
-    assert runner.submitted == []
-
-    confirmed = client.post(f"/routines/{routine['id']}/confirm", headers=PERSON)
-    assert confirmed.status_code == 200, confirmed.text
-    assert confirmed.json()["data"]["state"] == "active"
-    assert confirmed.json()["data"]["next_run_at"] is not None
+    assert len(runner.submitted) == 1
 
 
-def _draft_line(client, room: str, routine_id: str) -> dict:
-    blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
-    [line] = [
-        b
-        for b in blocks["data"]
-        if (b.get("meta") or {}).get("event_type") == "routine_proposed"
-        and b["meta"].get("routine_id") == routine_id
-    ]
-    return line
-
-
-def test_the_rooms_line_about_a_draft_says_how_a_person_decided(client):
+def test_a_rule_saved_without_a_trigger_waits_for_one(client):
+    """Two boxes left empty: the rule is saved, paused, due at no moment, and
+    the list says no moment has been chosen. Giving it one later starts it."""
     room = _room(client, _project(client))
-    kept = _weekly(client, room, owner_handle=OWNER).json()["data"]
-    line = _draft_line(client, room, kept["id"])
-    assert line["meta"]["who"] == "human", (
-        "a draft waiting on a person said 芝士 had it"
+    made = _weekly(
+        client, room, headers=PERSON, owner_handle=OWNER, trigger="", spec={}
     )
+    assert made.status_code == 200, made.text
+    routine = made.json()["data"]
+    assert routine["state"] == "paused"
+    assert routine["next_run_at"] is None
+    assert routine["trigger"] == ""
+    assert routine["trigger_text"]
 
-    client.post(f"/routines/{kept['id']}/confirm", headers=PERSON)
-    line = _draft_line(client, room, kept["id"])
-    assert "已确认" in line["content"], line["content"]
-    assert line["meta"]["state"] == "over"
-    assert not line["meta"]["who"]
+    asked = _deliveries(client, routine["agent_handle"])
+    assert len(asked) == 1 and routine["id"] in asked[0].content
 
-    dropped = _weekly(client, room, owner_handle=OWNER, title="每日站会").json()["data"]
+    # 恢复它没有意义：没有触发方式就没有「下一次」。
+    refused = client.post(f"/routines/{routine['id']}/resume", headers=PERSON)
+    assert refused.status_code == 422, refused.text
+
+    patched = client.patch(
+        f"/routines/{routine['id']}",
+        headers=PERSON,
+        json={
+            "trigger": "schedule",
+            "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    after = patched.json()["data"]
+    assert after["state"] == "active"
+    assert after["next_run_at"] is not None
+
+
+def test_a_teammates_rule_leaves_no_line_of_the_platforms_own_in_the_room(client):
+    """The teammate says it in its own words, in its own message; the platform
+    does not add a card of its own. Same on the way out: nothing to rewrite."""
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, owner_handle=OWNER).json()["data"]
+
+    def about_the_rule() -> list[dict]:
+        blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
+        return [
+            b
+            for b in blocks["data"]
+            if (b.get("meta") or {}).get("routine_id") == routine["id"]
+        ]
+
+    assert about_the_rule() == []
     assert (
-        client.delete(f"/routines/{dropped['id']}", headers=PERSON).status_code == 200
+        client.delete(f"/routines/{routine['id']}", headers=PERSON).status_code == 200
     )
-    line = _draft_line(client, room, dropped["id"])
-    assert "已删除" in line["content"], line["content"]
-    assert line["meta"]["state"] == "over"
-
-
-def test_the_rooms_line_about_a_draft_names_the_teammate_that_drafted(client):
-    """The line names the teammate by its handle, the way a mention chip does,
-    so a teammate called Nova is not announced as 「芝士」, before a person
-    decides and after."""
-    room = _room(client, _project(client))
-    seat = room_agent_seat(client, room)
-    kept = _weekly(client, room, owner_handle=OWNER).json()["data"]
-    dropped = _weekly(client, room, owner_handle=OWNER, title="每日站会").json()["data"]
-    for routine in (kept, dropped):
-        line = _draft_line(client, room, routine["id"])
-        assert line["content"].startswith(f"<@{seat}> "), line["content"]
-        assert "芝士" not in line["content"]
-
-    client.post(f"/routines/{kept['id']}/confirm", headers=PERSON)
-    client.delete(f"/routines/{dropped['id']}", headers=PERSON)
-    for routine in (kept, dropped):
-        line = _draft_line(client, room, routine["id"])
-        assert line["meta"]["state"] == "over"
-        assert line["content"].startswith(f"<@{seat}> "), line["content"]
-        assert "芝士" not in line["content"]
+    assert about_the_rule() == []
 
 
 def test_the_work_a_run_hands_over_is_labelled_with_the_teammates_name(client):
@@ -267,46 +260,55 @@ def test_a_report_settles_the_run_and_tells_the_owner(client):
     assert mine[0]["topic_id"] == room
 
 
-def _delivered_run(client, room, routine_id, delivered_ago):
-    """A run whose turn row was delivered `delivered_ago` and, as every input's
-    row in a live session is, stopped a few milliseconds later — long before the
-    work it carries ends."""
-    _make_due(client, routine_id)
+def _read_run(client, room, routine, read_ago, *, failure=None):
+    """A run whose input the teammate's session read ``read_ago``; ``failure``:
+    the work it was read into then failed, as its runner reported. Returns the
+    run and the work it was read into."""
+    _make_due(client, routine["id"])
     _sweep(client)
-    run = _runs(client, routine_id)[0]
+    run = _runs(client, routine["id"])[0]
 
-    async def delivered(session):
+    async def read(session):
         run_row = await session.get(RoutineRun, uuid.UUID(run["id"]))
         delivery = await session.scalar(
             select(Delivery).where(Delivery.event_id == run_row.delivery_event_id)
         )
-        at = datetime.now(UTC) - delivered_ago
+        at = datetime.now(UTC) - read_ago
         attempt = delivery.attempt_id or uuid.uuid4()
         delivery.attempt_id = attempt
-        delivery.state = "uncertain"
+        delivery.state = "received"
+        work = uuid.uuid4()
         session.add(
-            AgentTurn(
-                id=attempt,
+            NativeInput(
+                project_id=uuid.UUID(routine["project_id"]),
                 conversation_id=uuid.UUID(room),
-                continuation_id=attempt,
-                author="system",
-                content="",
-                started_at=at,
-                delivered_at=at,
-                stopped_at=at + timedelta(milliseconds=12),
+                recipient_handle=delivery.recipient_handle,
+                harness="claude-code",
+                native_session_id="sess-routine",
+                input_id=uuid.uuid4(),
+                work_id=work,
+                execution_work_id=work,
+                delivery_id=delivery.id,
+                attempt_id=attempt,
+                registered_at=at,
+                accepted_at=at,
+                echoed_at=at,
+                failed_at=datetime.now(UTC) if failure else None,
+                failure=failure,
             )
         )
-        return attempt
+        return work
 
-    return run, _db(client, delivered)
+    return run, _db(client, read)
 
 
-def test_a_stopped_turn_row_does_not_end_the_run(client):
-    """Seen on dev: the row stopped 12ms after delivery and the run was failed two
-    minutes later while the teammate was still writing the summary."""
+def test_a_run_its_session_read_is_running_until_it_reports(client):
+    """Seen on dev: the run was failed two minutes after it was handed over,
+    while the teammate was still writing the summary. Read is started; only a
+    report, a failure its runner reported, or the report clock ends it."""
     room = _room(client, _project(client))
     routine = _weekly(client, room, headers=PERSON).json()["data"]
-    run, _ = _delivered_run(client, room, routine["id"], timedelta(minutes=10))
+    run, _ = _read_run(client, room, routine, timedelta(minutes=10))
 
     _sweep(client)
     assert _runs(client, routine["id"])[0]["status"] == "running"
@@ -323,9 +325,7 @@ def test_no_report_past_the_turn_ceiling_fails_and_a_late_report_still_lands(cli
     project = _project(client)
     room = _room(client, project)
     routine = _weekly(client, room, headers=PERSON).json()["data"]
-    run, _ = _delivered_run(
-        client, room, routine["id"], REPORT_TIMEOUT + timedelta(minutes=1)
-    )
+    run, _ = _read_run(client, room, routine, REPORT_TIMEOUT + timedelta(minutes=1))
 
     _sweep(client)
     failed = _runs(client, routine["id"])[0]
@@ -354,15 +354,17 @@ def test_no_report_past_the_turn_ceiling_fails_and_a_late_report_still_lands(cli
     assert again.status_code >= 400, "a settled run took a second report"
 
 
-def test_a_turn_the_room_says_failed_fails_the_run_with_its_reason(client):
+def test_a_run_read_into_work_that_failed_fails_with_its_reason(client):
     from app.domain.block.models import Block, BlockKind
     from app.domain.event_author import AuthorType
 
     room = _room(client, _project(client))
     routine = _weekly(client, room, headers=PERSON).json()["data"]
-    _, attempt = _delivered_run(client, room, routine["id"], timedelta(minutes=1))
+    _, work = _read_run(
+        client, room, routine, timedelta(minutes=1), failure="api_error"
+    )
 
-    async def it_failed(session):
+    async def the_room_was_told(session):
         session.add(
             Block(
                 id=uuid.uuid4(),
@@ -373,15 +375,26 @@ def test_a_turn_the_room_says_failed_fails_the_run_with_its_reason(client):
                 kind=BlockKind.event,
                 content="本轮未完成：模型接口连续报错",
                 meta={"event_type": "turn_failed"},
-                turn_id=attempt,
+                turn_id=work,
             )
         )
 
-    _db(client, it_failed)
+    _db(client, the_room_was_told)
     _sweep(client)
     run = _runs(client, routine["id"])[0]
     assert run["status"] == "failed"
     assert "模型接口连续报错" in run["error"]
+
+
+def test_a_run_whose_session_failed_without_a_word_to_the_room_still_fails(client):
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    _read_run(client, room, routine, timedelta(minutes=1), failure="exited")
+
+    _sweep(client)
+    run = _runs(client, routine["id"])[0]
+    assert run["status"] == "failed"
+    assert "exited" in run["error"]
 
 
 def test_paused_rules_do_not_fire_and_resume_does_not_replay_the_missed_moment(client):
@@ -429,17 +442,62 @@ def test_an_edit_reaches_the_next_run(client):
     assert "整理本周各房间的进展" not in runner.submitted[0][1]["content"]
 
 
-def test_an_ai_edit_to_a_live_rule_waits_for_a_person_again(client):
+def test_an_ai_edit_to_a_live_rule_takes_effect_at_once(client):
     room = _room(client, _project(client))
     routine = _weekly(client, room, headers=PERSON).json()["data"]
     edited = client.patch(
         f"/routines/{routine['id']}", json={"instructions": "顺手把周报发给所有人"}
     )
     assert edited.status_code == 200, edited.text
-    assert edited.json()["data"]["state"] == "draft"
+    assert edited.json()["data"]["state"] == "active"
     _make_due(client, routine["id"])
     (_, runner) = _sweep(client)
-    assert runner.submitted == []
+    assert len(runner.submitted) == 1
+    assert "顺手把周报发给所有人" in runner.submitted[0][1]["content"]
+
+
+def _deliveries(client, recipient: str):
+    """Timed deliveries waiting for this recipient."""
+
+    async def read(session):
+        return list(
+            await session.scalars(
+                select(TimedDelivery).where(TimedDelivery.recipient_handle == recipient)
+            )
+        )
+
+    return _db(client, read)
+
+
+def test_a_rule_that_was_given_no_name_is_named_by_the_teammate(client):
+    """A name is a blank like any other: the rule is saved without one and the
+    room's teammate is handed a turn to name it, the way task titles are made."""
+    room = _room(client, _project(client))
+    made = client.post(
+        f"/topics/{room}/routines",
+        json={
+            "instructions": "每周一汇总各频道进展。写成三五条，附上各自的文件。",
+            "trigger": "schedule",
+            "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+        },
+        headers=PERSON,
+    )
+    assert made.status_code == 200, made.text
+    routine = made.json()["data"]
+    assert routine["title"] == ""
+    asked = _deliveries(client, routine["agent_handle"])
+    assert len(asked) == 1 and routine["id"] in asked[0].content
+
+
+def test_a_rule_has_to_say_what_it_should_do(client):
+    room = _room(client, _project(client))
+    refused = client.post(
+        f"/topics/{room}/routines",
+        json={"title": "每周进展", "instructions": "   "},
+        headers=PERSON,
+    )
+    assert refused.status_code >= 400, refused.text
+    assert "要它干什么" in refused.json()["message"], refused.json()
 
 
 def _close_task(client, project, room, title):
@@ -523,19 +581,6 @@ def test_a_turn_that_never_started_says_why(client):
         attempt = delivery.attempt_id or uuid.uuid4()
         delivery.attempt_id = attempt
         delivery.state = "uncertain"
-        now = datetime.now(UTC)
-        session.add(
-            AgentTurn(
-                id=attempt,
-                conversation_id=uuid.UUID(room),
-                continuation_id=attempt,
-                author="system",
-                content="",
-                started_at=now,
-                stopped_at=now,
-            )
-        )
-        await session.flush()
         session.add(
             Block(
                 id=uuid.uuid4(),
@@ -571,3 +616,72 @@ def test_a_routine_in_an_archived_project_runs_nothing(client):
     assert result["scheduled"] == 0
     assert runner.submitted == []
     assert _runs(client, routine["id"]) == []
+
+
+def _seed_runs(client, routine_id: str, statuses: list[str]) -> None:
+    """几次执行，一天一次，最早的在最前面 —— 记录的先后是有意义的，不用时钟凑。"""
+    base = datetime.now(UTC) - timedelta(days=len(statuses))
+
+    async def go(session):
+        for index, status in enumerate(statuses):
+            session.add(
+                RoutineRun(
+                    routine_id=uuid.UUID(routine_id),
+                    occurrence_key=f"seed-{index}",
+                    status=status,
+                    created_at=base + timedelta(days=index),
+                )
+            )
+
+    _db(client, go)
+
+
+def _listed(client, project_id: str) -> list[dict]:
+    r = client.get(f"/projects/{project_id}/routines", headers=PERSON)
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def test_the_list_carries_what_became_of_the_latest_run(client):
+    """行上那颗图形又要分得出「排队中」和「没能执行」，而规则自己那一行只有启用中 /
+    已暂停 —— 这后两档只能从最近一次执行看出来。整页一次问完，不是每行一次往返。"""
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    assert [r["last_run_status"] for r in _listed(client, routine["project_id"])] == [
+        None
+    ]
+
+    _seed_runs(client, routine["id"], ["failed", "succeeded", "queued"])
+
+    assert [r["last_run_status"] for r in _listed(client, routine["project_id"])] == [
+        "queued"
+    ]
+
+
+def test_a_page_of_records_counts_what_the_filter_keeps(client):
+    """执行记录那一页：倒着给、翻得动、筛得起，而「共 N 次」说的是筛过之后的全部 ——
+    不是这一页有几行。"""
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    _seed_runs(
+        client, routine["id"], ["failed", "succeeded", "failed", "succeeded", "queued"]
+    )
+
+    first = client.get(
+        f"/routines/{routine['id']}/runs?limit=2", headers=PERSON
+    ).json()["data"]
+    assert first["total"] == 5
+    assert [r["status"] for r in first["data"]] == ["queued", "succeeded"]
+
+    second = client.get(
+        f"/routines/{routine['id']}/runs?limit=2&offset=2", headers=PERSON
+    ).json()["data"]
+    assert {r["id"] for r in second["data"]}.isdisjoint(
+        {r["id"] for r in first["data"]}
+    )
+
+    missed = client.get(
+        f"/routines/{routine['id']}/runs?failed_only=true", headers=PERSON
+    ).json()["data"]
+    assert missed["total"] == 2
+    assert {r["status"] for r in missed["data"]} == {"failed"}
