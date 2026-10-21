@@ -71,7 +71,7 @@
       <template v-for="(m, i) in messages" :key="i">
         <p v-if="dayOf(i)" class="ap__day">{{ dayOf(i) }}</p>
         <div v-if="m.role === 'user'" class="ap__q">
-          <p class="ap__q-t">{{ m.text }}</p>
+          <p v-if="m.text" class="ap__q-t">{{ m.text }}</p>
           <p v-for="name in m.files ?? []" :key="name" class="ap__q-file">
             <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
           </p>
@@ -349,7 +349,8 @@ function listSubtitle(c: PanelConversation): string {
 
 function submit() {
   if (!ready.value) return
-  emit('send', draft.value.trim() || t('tasks.assistant.files.readThese'))
+  // 只附文件不打字也发：文件在这一页是什么意思，页面会告诉芝士。
+  emit('send', draft.value.trim())
   draft.value = ''
 }
 

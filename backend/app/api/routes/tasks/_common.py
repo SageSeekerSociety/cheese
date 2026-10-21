@@ -39,13 +39,6 @@ from app.domain.task.services import (
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 
 
-class ConfirmTaskPublishFromPdfRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    drafts: list[dict]
-    task_options: dict = Field(alias="taskOptions")
-
-
 class CreateTaskRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -361,9 +354,8 @@ async def _create_task_entity(
     # 发题的门是「本板的成员」，判据在 ``app.auth.space_access.may_publish_in_space``
     # —— 更早它是管理员专属（收权：那时的 ``POST /tasks`` 几乎不校验，任何登录用户
     # 拿着 space id 就能发），#1783 之后放开成任何人：发题是成员的能力，上不上板才是
-    # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里而不是两个
-    # 路由各写一遍，是因为 ``POST /tasks`` 与 PDF 批量发布
-    # （``publish/from-pdf/confirm``）都从这里走，漏掉任一条就等于少了半道门。
+    # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里，是因为
+    # ``POST /tasks`` 与草稿发布都从这里走，漏掉任一条就等于少了半道门。
     if not await may_publish_in_space(
         session=db, space_id=space_id, user_id=creator_user_id
     ):

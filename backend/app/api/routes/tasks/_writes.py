@@ -63,8 +63,7 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
     if payload.attachment_ids:
         # 材料是随题一起发出去的，所以挂在这里做：题目已经建好（``_create_task_entity``
         # 里 flush 过），权限那道门也已经在同一个请求里过了一次。文件先由调用者经
-        # ``POST /attachments`` 传上来，这里只认 id —— PDF 批量发布那条路（附件在服务
-        # 端手上）走的是 ``attach_uploaded_to_tasks``，同一批校验，只是能挂到多道题上。
+        # ``POST /attachments`` 传上来，这里只认 id。
         await _task_attachment_service(db).attach_uploaded(
             task=task,
             user_id=user_id,

@@ -44,6 +44,8 @@ interface StoredParts {
   steps?: { call: string; name: string; args: string; failed?: string; ms?: number }[]
   edits?: Record<string, unknown>[]
   published?: AssistantPublished[]
+  /** 问题带的文件名。 */
+  files?: string[]
 }
 
 /** 芝士往草稿里写的一次：改了哪几格（各自原来是什么），哪几格因为人改过而没动，以及
@@ -233,7 +235,7 @@ export function useAssistant(opts: AssistantOptions) {
 
   async function ask(question: string, fallback: string, files: { id: number; name: string }[] = []) {
     const text = question.trim()
-    if (!text || busy.value) return
+    if ((!text && !files.length) || busy.value) return
     notice.value = null
     creditRefused.value = false
     streaming.value = ''
@@ -272,8 +274,9 @@ export function useAssistant(opts: AssistantOptions) {
   }
 
   /** 存下的那一轮，读回成面板上的步骤、改动和结果。 */
-  function kept(parts: StoredParts): Pick<AssistantMessage, 'steps' | 'edits' | 'published'> {
+  function kept(parts: StoredParts): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'files'> {
     return {
+      ...(parts.files?.length ? { files: parts.files } : {}),
       steps: (parts.steps ?? []).map((step) => ({
         call: step.call,
         name: step.name,

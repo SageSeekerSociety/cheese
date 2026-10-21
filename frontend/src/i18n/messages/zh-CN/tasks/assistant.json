@@ -39,7 +39,9 @@
     "yes": "是",
     "no": "否",
     "kept": "你改过，未修改",
-    "ordinal": "第 {n} 道"
+    "ordinal": "第 {n} 道",
+    "days": "{n} 天",
+    "none": "无"
   },
   "notes": {
     "title": "待你确认"
@@ -51,7 +53,6 @@
     "open": "查看题目"
   },
   "files": {
-    "readThese": "读取附上的文件",
     "failed": "文件上传失败",
     "add": "添加文件"
   },

@@ -1208,7 +1208,11 @@ TASK_WRITE_DESCRIPTION = (
     "写一道题：写进草稿，用户在页面上同时看到每一格被填上。只改你给出的字段，"
     "没给的保持原样。三种写法：给 draft 改那份草稿；给 task 改已发布的题目"
     "（写进它的修改草稿，cheese_task_publish 之后才生效）；都不给就在 space 里"
-    "新建一份草稿（一份文件里有几道题，就分别新建几份，source 写文件名）。\n"
+    "新建一份草稿（source 写它来自的文件名）。\n"
+    "\n"
+    "写题目要具体：大学课程难度，要求、交付物、评分标准都能直接照着做。描述不要再用"
+    "题目名称起头，名称、截止时间、人数、分值这些表单上已有的格子也不要在描述里重复。"
+    "原文写明的设置（个人还是团队、几人、什么时候截止）照原文填。\n"
     "\n"
     "改草稿时带上读到的 version（当前页面或 cheese_task_get 里有）：用户在那之后"
     "改过的格子保持用户的版本，返回里会列出来。\n"
@@ -1220,15 +1224,21 @@ TASK_WRITE_DESCRIPTION = (
     "team_min、team_max 团队人数；difficulty 初级、中级或高级；participant_limit "
     "人数上限（0 是不限）；deadline 截止时间，写用户时区的「YYYY-MM-DD HH:MM」；"
     "days_to_submit 领取后几天内提交；category 分类名称；tags 标签名称；"
-    "real_name 是否要求实名。分类和标签只能用空间里已有的名称。\n"
+    "real_name 是否要求实名；registration_start 报名开始时间，格式同 deadline；"
+    "team_locking 队伍成员在报名通过后能否变更；mentors 导师，把他们加入每个领取者的"
+    "项目，写名字或账号，空列表是不设导师；access 只让这几个邮箱域名组的人领取，"
+    "空列表是空间全部成员都能领；attachments 题目附件，写用户交给你的文件 id，"
+    "新题目整组替换，已发布的题目保存时追加上去；ai_guidance 这道题单独给学生的 AI 队友的指导，空字符串是用空间的默认"
+    "指导。分类、标签、导师、邮箱域名组只能用当前页面里列着的。\n"
     "\n"
     "template 是空间里的一份模板名称（当前页面列着）：先按模板填好名称、详情和几项"
     "设置，再写同一次给出的其他字段，和用户点「使用模板」一样。用户要按模板出题时，"
-    "先只给 template 写一次，看返回的详情骨架，再在骨架的小标题下面填内容；草稿里"
-    "已经有模板的骨架时，也在小标题下面填，不要整篇换掉。\n"
+    "先只给 template 写一次，看返回的详情骨架和模板填了哪几格，再在骨架的小标题下面"
+    "填内容；草稿里已经有模板的骨架时，也在小标题下面填，不要整篇换掉。模板填的设置"
+    "只是起点，和原文不符的照原文改。\n"
     "\n"
     "notes 是写给用户、要他确认的地方，挂在对应的格子上，比如原文没写清、你推断"
-    "出来的截止时间。\n"
+    "出来的截止时间。要用户核对的写进 notes，不写在回复里。\n"
     "\n"
     '例：新建 {"space": 12, "source": "Lab3.pdf", "name": "Lab 3 缓存模拟器", '
     '"description": "用 C 写一个缓存模拟器……", "difficulty": "中级", '
@@ -1294,6 +1304,24 @@ TASK_WRITE_FIELDS = {
     "category": _text("分类名称"),
     "tags": {"type": "array", "items": {"type": "string"}},
     "real_name": {"type": "boolean"},
+    "registration_start": _text("YYYY-MM-DD HH:MM，用户时区；空字符串是立即开始"),
+    "team_locking": {"type": "string", "enum": ["允许变更", "报名通过后锁定"]},
+    "mentors": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "导师的名字或账号；空列表是不设导师",
+    },
+    "access": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "邮箱域名组名称；空列表是空间全部成员",
+    },
+    "attachments": {
+        "type": "array",
+        "items": {"type": "integer"},
+        "description": "用户交给你的文件 id，作为题目附件",
+    },
+    "ai_guidance": _text("这道题单独的 AI 队友指导；空字符串是用空间默认"),
     "notes": {
         "type": "array",
         "items": {
@@ -3577,6 +3605,13 @@ _TASK_FIELD_WORDS = {
     "categoryId": "category",
     "topics": "tags",
     "requireRealName": "real_name",
+    "registrationStartAt": "registration_start",
+    "teamLockingPolicy": "team_locking",
+    "mentors": "mentors",
+    "accessControlEnabled": "access",
+    "accessDomainGroupIds": "access",
+    "attachmentIds": "attachments",
+    "teaching": "ai_guidance",
 }
 
 
@@ -3595,11 +3630,13 @@ def _task_step(tool: str, args: dict, host) -> str:
             return f"已保存题目 {task.get('id')}「{task.get('name')}」的修改。"
         state = "已上线" if task.get("approved") == "APPROVED" else "待空间管理员审核"
         return f"已发布题目 {task.get('id')}「{task.get('name')}」，{state}。"
-    changed = [
-        _TASK_FIELD_WORDS[k]
-        for k in data.get("changed") or []
-        if k in _TASK_FIELD_WORDS
-    ]
+    changed = list(
+        dict.fromkeys(
+            _TASK_FIELD_WORDS[k]
+            for k in data.get("changed") or []
+            if k in _TASK_FIELD_WORDS
+        )
+    )
     said = (
         f"已新建草稿 {data.get('draft')}"
         if data.get("created")

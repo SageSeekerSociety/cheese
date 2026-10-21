@@ -25,6 +25,8 @@ import TaskFormParticipation from './form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from './form/TaskFormPrivacyDialog.vue'
 import TaskFormTime from './form/TaskFormTime.vue'
 
+import { MORE_FIELDS } from '@/lib/taskDraftAgent'
+
 const props = withDefaults(
   defineProps<{
     initialData?: Partial<TaskFormSubmitData> | null
@@ -41,6 +43,8 @@ const props = withDefaults(
     mentorOptions?: { title: string; value: string }[]
     /** 新发一道题时导师默认是谁。 */
     defaultMentor?: string
+    /** 芝士正在写的那一格（它的字段名）：收起的「更多设置」里的就展开。 */
+    agentWriting?: string | null
   }>(),
   {
     initialData: null,
@@ -52,6 +56,7 @@ const props = withDefaults(
     teachingCustom: false,
     mentorOptions: () => [],
     defaultMentor: undefined,
+    agentWriting: null,
   }
 )
 
@@ -227,6 +232,7 @@ defineExpose({
       v-model:require-real-name="requireRealName"
       :domain-group-items="domainGroupItems"
       :teaching-custom="teachingCustom"
+      :reveal="!!agentWriting && MORE_FIELDS.includes(agentWriting)"
     >
       <template v-if="$slots.teaching" #teaching><slot name="teaching" /></template>
     </TaskFormMore>

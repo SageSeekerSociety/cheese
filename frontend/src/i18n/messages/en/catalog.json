@@ -1631,6 +1631,10 @@
     "s3": {
       "name": "A finished turn",
       "note": "The steps fold into one line; the deadline in the changes card was undone (struck through); a 'Needs your check' card; the published result offers 'View task'."
+    },
+    "s4": {
+      "name": "Three tasks from one file",
+      "note": "A file handed over with nothing typed. The first task fills the open draft and is listed field by field; the other two are new drafts, one line each, opened by their names."
     }
   }
 }

@@ -52,6 +52,44 @@ describe('previewOf', () => {
   })
 })
 
+describe('previewOf：参与、时间和更多设置', () => {
+  const named = {
+    categories: [],
+    topics: [],
+    mentors: [{ handle: 'wangli', name: '王立' }],
+    domainGroups: [{ id: 3, name: '本校邮箱' }],
+  }
+
+  it('导师按名字或账号，访问范围按域名组名字，AI 指导写进本题单独的指导', () => {
+    const shown = previewOf(
+      {
+        draft: 41,
+        mentors: ['王立', '@wangli', '不认识的人'],
+        team_locking: '报名通过后锁定',
+        registration_start: '2026-11-01 08:00',
+        access: ['本校邮箱'],
+        ai_guidance: '先写需求说明',
+      },
+      named
+    )
+    expect(shown.fields).toMatchObject({
+      mentors: ['wangli', 'wangli'],
+      teamLockingPolicy: 'LOCK_ON_APPROVAL',
+      accessControlEnabled: true,
+      accessDomainGroupIds: [3],
+      teaching: { systemPrompt: '先写需求说明' },
+      teachingOwn: true,
+    })
+    expect(new Date(shown.fields.registrationStartAt as number).getHours()).toBe(8)
+    expect(shown.writing).toBe('ai_guidance')
+  })
+
+  it('空列表是全部成员能领，空指导回到空间默认', () => {
+    const shown = previewOf({ access: [], ai_guidance: '' }, named)
+    expect(shown.fields).toMatchObject({ accessControlEnabled: false, teaching: {}, teachingOwn: false })
+  })
+})
+
 describe('previewOf：只改详情里的一段', () => {
   const terms = { categories: [], topics: [] }
   const markdown = '用 C 写一个缓存模拟器。\n\n替换策略为 LRU。'

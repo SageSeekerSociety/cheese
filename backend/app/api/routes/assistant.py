@@ -21,7 +21,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.api.deps import get_consumptions, get_session_host
 from app.api.refusal import refuse
@@ -256,7 +256,9 @@ class FileIn(BaseModel):
 
 
 class AskIn(BaseModel):
-    question: str = Field(min_length=1, max_length=4000)
+    #: Empty when files are handed over alone: what they are for is then
+    #: what the page says a file there means.
+    question: str = Field(default="", max_length=4000)
     #: The page it is asked from; the conversation's own place when left out.
     page: PageIn | None = None
     #: Files handed over with it (uploaded with ``POST /attachments``); 芝士
@@ -266,10 +268,13 @@ class AskIn(BaseModel):
     @field_validator("question")
     @classmethod
     def _strip(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
+        return v.strip()
+
+    @model_validator(mode="after")
+    def _something(self) -> "AskIn":
+        if not self.question and not self.files:
             raise ValueError("empty question")
-        return v
+        return self
 
 
 @router.post("/conversations/{conversationId}/ask", dependencies=[ROUTE_DECIDES])

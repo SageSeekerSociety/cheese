@@ -17,7 +17,6 @@ from . import (
     drafts,
     lifecycle,
     participation,
-    publish_pdf,
     roster,
     submissions,
 )
@@ -27,7 +26,6 @@ router = APIRouter(tags=["Tasks"])
 router.include_router(create.router)
 router.include_router(drafts.router)
 router.include_router(attachments.router)
-router.include_router(publish_pdf.router)
 router.include_router(participation.router)
 router.include_router(lifecycle.router)
 router.include_router(roster.router)

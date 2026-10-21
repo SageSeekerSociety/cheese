@@ -346,6 +346,15 @@ async def _publish(db, service: TaskService, row, user_id: int) -> dict:
         answer = await update_task(
             task_id, changing, db=db, service=service, user_id=user_id
         )
+        # A published 题目's files are kept on it as they are uploaded; the
+        # ones 芝士 added to its changes go on when they are saved.
+        added = form.get("attachmentIds") or []
+        task = await service.get_task(task_id) if added else None
+        if task is not None:
+            await _task_attachment_service(db).attach_uploaded(
+                task=task, user_id=user_id, attachment_ids=added
+            )
+            await db.commit()
     published = answer["task"]["id"]
     if conversation is not None:
         await assistant.follow_task(db, conversation, published)
@@ -357,7 +366,9 @@ async def _publish(db, service: TaskService, row, user_id: int) -> dict:
 
 
 async def _space_terms(db, spaces: SpaceService, space_id: int, user_id: int):
-    return await drafts.terms(spaces, space_id, await _zone(db, user_id))
+    return await drafts.terms(
+        db, spaces, space_id, await _zone(db, user_id), user_id=user_id
+    )
 
 
 async def _draft_text(db, spaces: SpaceService, row, user_id: int) -> str:
@@ -488,7 +499,12 @@ async def agent_write(
         created = True
     terms = await _space_terms(db, spaces, row.space_id, user_id)
     args: dict[str, Any] = dict(body.model_extra or {})
-    fields = drafts.from_agent(args, terms, row.fields or {})
+    files = (
+        await _own_files(db, args["attachments"], user_id)
+        if "attachments" in args
+        else None
+    )
+    fields = drafts.from_agent(args, terms, row.fields or {}, files)
     written = drafts.cheese_writes(
         row, fields, read_at=None if created else body.version
     )
@@ -534,6 +550,31 @@ async def agent_write(
             ),
         }
     )
+
+
+async def _own_files(db, given, user_id: int) -> list[dict]:
+    """The files 芝士 attaches to a 题目: ones the person handed over, with the
+    name and size the page lists."""
+    files = _attachment_service(db)
+    out: list[dict] = []
+    for raw in given or []:
+        try:
+            file_id = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise BadRequestError(say("draftFileNotYours")) from exc
+        attachment = await files.get(file_id)
+        if not files.is_uploader(attachment, user_id):
+            raise ForbiddenError(say("draftFileNotYours"))
+        meta = attachment.meta or {}
+        if all(f["id"] != attachment.id for f in out):
+            out.append(
+                {
+                    "id": attachment.id,
+                    "name": str(meta.get("filename") or attachment.id),
+                    "size": int(meta.get("size") or 0),
+                }
+            )
+    return out
 
 
 class PublishIn(BaseModel):

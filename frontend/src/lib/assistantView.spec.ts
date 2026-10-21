@@ -48,7 +48,7 @@ describe('writesView', () => {
     ])
   })
 
-  it('一份文件拆成几道题：卡只画开着的那份，写明是第几道', () => {
+  it('一份文件拆成几道题：开着的那份展开，别的各收成一行，写明是第几道', () => {
     const view = writesView(
       [
         edit(1, 7, { name: 'A' }, { notes: [{ field: 'deadline', text: '按第 9 周换算' }] }),
@@ -60,8 +60,51 @@ describe('writesView', () => {
       (id) => (id === 7 ? 1 : 2)
     )
 
-    expect(view.changes.map((c) => [c.draft, c.ordinal])).toEqual([[7, 1]])
+    expect(view.changes.map((c) => [c.draft, c.ordinal, !!c.collapsed])).toEqual([
+      [7, 1, false],
+      [8, 2, true],
+    ])
     expect(view.changes[0].notes.map((n) => n.key)).toEqual(['deadline'])
+    expect(view.changes[1].notes).toEqual([])
+    expect(view.changes[1].canUndo).toBe(false)
+  })
+
+  it('改详情里的一段：卡上写改了的那一行，不写开头', () => {
+    const before = '## 背景\n\n实验室的服务跑在 K8s 上。\n\n## 要求\n\n交源码。'
+    const after = '## 背景\n\n实验室的服务跑在 K8s 上。\n\n## 要求\n\n交源码和 4–6 页报告。'
+    const one = {
+      ...edit(1, 7, {}),
+      changed: { descriptionMarkdown: { before, after }, description: { before, after } },
+    } as AssistantEdit
+
+    expect(writesView([one], terms, 7).changes[0].rows[0].value).toBe('交源码和 4–6 页报告。')
+  })
+
+  it('期限带单位，导师写名字，访问范围写域名组', () => {
+    const named = {
+      categories: [],
+      topics: [],
+      mentors: [{ handle: 'wangli', name: '王立' }],
+      domainGroups: [{ id: 3, name: '本校邮箱' }],
+    }
+    const view = writesView(
+      [
+        edit(1, 7, {
+          defaultDeadline: 30,
+          mentors: ['wangli'],
+          accessControlEnabled: true,
+          accessDomainGroupIds: [3],
+        }),
+      ],
+      named,
+      7
+    )
+
+    expect(view.changes[0].rows.map((r) => [r.key, r.value])).toEqual([
+      ['days_to_submit', t('tasks.assistant.changes.days', { n: 30 })],
+      ['mentors', '王立'],
+      ['access', '本校邮箱'],
+    ])
   })
 
   it('没有表单的页面：每份草稿各一张卡', () => {

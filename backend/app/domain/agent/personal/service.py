@@ -251,7 +251,9 @@ class AssistantConversations:
         self._s.add(row)
         conversation.last_active_at = datetime.now(UTC)
         if role == "user" and not conversation.title:
-            conversation.title = text.strip().splitlines()[0][:TITLE_CHARS]
+            words = text.strip() or "、".join((parts or {}).get("files") or [])
+            if words:
+                conversation.title = words.splitlines()[0][:TITLE_CHARS]
         await self._s.flush()
         return row
 
@@ -458,7 +460,14 @@ async def ask(
         store = AssistantConversations(session)
         conversation = await store.owned(user_id, conversation_id)
         before = await store.messages(conversation_id)
-        await store.append(conversation, "user", question)
+        # Files handed over alone are the whole question: they are kept
+        # with it, so the conversation shows them when it is read again.
+        await store.append(
+            conversation,
+            "user",
+            question,
+            parts={"files": [name for _, name in files]} if files else None,
+        )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         await session.commit()
 
@@ -475,7 +484,7 @@ async def ask(
         )
         # The page goes with the question itself: a preface is said only to a
         # session that has not been spoken to yet.
-        said = f"{page(context)}\n\n{question}" if context else question
+        said = "\n\n".join(part for part in (page(context), question) if part)
         if files:
             said += "\n\n附上的文件（用 cheese_file_read 读取）：\n" + "\n".join(
                 f"- {name}（文件 id {file_id}）" for file_id, name in files

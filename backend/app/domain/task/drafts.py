@@ -32,6 +32,7 @@ from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.task.models import TaskDraft
 from app.domain.task.task_service import TaskService
+from app.domain.user.models import User, UserProfile
 
 #: The form's fields, as the page and ``POST /tasks`` name them. Three are the
 #: page's own and never reach ``POST /tasks`` (``PAGE_ONLY``):
@@ -96,6 +97,12 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "category": ("categoryId",),
     "tags": ("topics",),
     "real_name": ("requireRealName",),
+    "registration_start": ("registrationStartAt",),
+    "team_locking": ("teamLockingPolicy",),
+    "mentors": ("mentors",),
+    "access": ("accessControlEnabled", "accessDomainGroupIds"),
+    "attachments": ("attachmentIds", "attachmentFiles"),
+    "ai_guidance": ("teaching", "teachingOwn"),
 }
 
 # i18n-data: what 芝士 writes and reads, matched against its words.
@@ -104,6 +111,8 @@ FORMS = {"个人": "USER", "团队": "TEAM"}
 DIFFICULTIES = {"初级": 1, "中级": 2, "高级": 3}
 # i18n-data: what a submission item is handed in as.
 KINDS = {"文件": "FILE", "文字": "TEXT"}
+# i18n-data: whether a team's members may change once it is approved.
+LOCKING = {"允许变更": "NO_LOCK", "报名通过后锁定": "LOCK_ON_APPROVAL"}
 
 _WHEN = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?\s*$")
 
@@ -118,6 +127,11 @@ class Space:
     categories: dict[str, int]
     tags: dict[str, int]
     zone: tzinfo
+    #: Who may be a mentor: the person writing and the space's admins, by
+    #: handle, each with the name they go by.
+    mentors: dict[str, str] = field(default_factory=dict)
+    #: The space's e-mail domain groups by name: who a 题目 may be limited to.
+    domain_groups: dict[str, int] = field(default_factory=dict)
     #: The space's 题目 templates (``Space.task_templates``): a name, what it is
     #: for, and the form it fills in.
     templates: tuple[dict, ...] = ()
@@ -148,14 +162,30 @@ class SpaceReads(Protocol):
 
     async def list_classification_topics(self, space_id: int) -> Any: ...
 
+    async def list_admins(self, space_id: int) -> Any: ...
 
-async def terms(spaces: SpaceReads, space_id: int, zone_name: str | None) -> Space:
-    """The space's categories and tags by name, and the person's clock."""
+    async def list_domain_groups(
+        self, *, space_id: int, actor_user_id: int | None
+    ) -> Any: ...
+
+
+async def terms(
+    session: AsyncSession,
+    spaces: SpaceReads,
+    space_id: int,
+    zone_name: str | None,
+    *,
+    user_id: int,
+) -> Space:
+    """The space's categories, tags, mentors and domain groups by name, and
+    the person's clock."""
     space = await spaces.get_space(space_id)
     if space is None:
         raise NotFoundError.for_resource("space", space_id)
     categories = await spaces.list_categories(space_id)
     tags = await spaces.list_classification_topics(space_id)
+    groups = await spaces.list_domain_groups(space_id=space_id, actor_user_id=user_id)
+    admins = [a.user_id for a in await spaces.list_admins(space_id)]
     try:
         zone: tzinfo = ZoneInfo(zone_name or DEFAULT_ZONE)
     except (ZoneInfoNotFoundError, ValueError):
@@ -166,12 +196,29 @@ async def terms(spaces: SpaceReads, space_id: int, zone_name: str | None) -> Spa
         categories={c.name: c.id for c in categories},
         tags={t.name: t.id for t in tags},
         zone=zone,
+        mentors=await _people(session, [user_id, *admins]),
+        domain_groups={g.name: g.id for g, _ in groups},
         templates=tuple(
             t
             for t in (getattr(space, "task_templates", None) or [])
             if isinstance(t, dict) and str(t.get("name") or "").strip()
         ),
     )
+
+
+async def _people(session: AsyncSession, user_ids: list[int]) -> dict[str, str]:
+    """Handle -> the name each goes by, in the order given."""
+    ids = list(dict.fromkeys(user_ids))
+    rows = await session.execute(
+        select(User.id, User.username, UserProfile.nickname)
+        .outerjoin(
+            UserProfile,
+            (UserProfile.user_id == User.id) & UserProfile.deleted_at.is_(None),
+        )
+        .where(User.id.in_(ids), User.deleted_at.is_(None))
+    )
+    found = {uid: (handle, nickname or handle) for uid, handle, nickname in rows}
+    return dict(found[uid] for uid in ids if uid in found)
 
 
 async def task_names(session: AsyncSession, rows: list[TaskDraft]) -> dict[int, str]:
@@ -188,9 +235,38 @@ async def context(
 ) -> str:
     """The draft as 芝士 is shown it: with a question asked on its page, and
     when it reads it."""
-    space = await terms(spaces, row.space_id, zone_name)
+    space = await terms(session, spaces, row.space_id, zone_name, user_id=row.user_id)
     names = await task_names(session, [row])
-    return agent_view(row, space, task_name=names.get(row.task_id or 0))
+    name = names.get(row.task_id or 0)
+    return scene(row, name) + "\n" + agent_view(row, space, task_name=name)
+
+
+def scene(draft: TaskDraft, task_name: str | None = None) -> str:
+    """What the page a draft is open on is for, and what a question asked
+    there means: told with the draft, so the rules stay the same on every
+    page."""
+    if draft.task_id:
+        lines = [
+            f"修改题目页：左边的表单是已发布题目「{task_name}」的修改（草稿 {draft.id}），"
+            "用户保存之前，学生看到的还是原来的题目。",
+            "- 用户说「这道题」「表单」，指这道题。",
+            "- 用户只附上文件、没说要做什么时，按文件内容修改这道题（给 draft），"
+            "不新建草稿。",
+            "- 用户说保存时，用 cheese_task_publish 保存修改。",
+        ]
+    else:
+        lines = [
+            f"发布题目页：左边是一份新题目的表单（草稿 {draft.id}），用户和你一起写这道题，"
+            "写好后发布。",
+            "- 用户说「这道题」「表单」，指这份草稿。",
+            "- 用户只附上文件、没说要做什么时，是要从文件导入题目：读完文件，把里面的"
+            "题目写进表单。",
+            "- 这份草稿尚未填写时，文件里的第一道题写进它（给 draft），不要另建；其余每道"
+            "题各新建一份草稿（给 space，source 写文件名）。草稿已经填写了，就不要覆盖它，"
+            "文件里的题都新建。",
+            "- 用户说发布时，用 cheese_task_publish 发布。",
+        ]
+    return "<这一页>\n" + "\n".join(lines) + "\n</这一页>"
 
 
 # --- reading and keeping -----------------------------------------------------
@@ -311,10 +387,13 @@ def cheese_writes(draft: TaskDraft, fields: dict, *, read_at: int | None) -> Wri
 # --- 芝士's words ------------------------------------------------------------
 
 
-def from_agent(args: dict, space: Space, current: dict) -> dict:
+def from_agent(
+    args: dict, space: Space, current: dict, files: list[dict] | None = None
+) -> dict:
     """What 芝士 asked to write, as form fields. Refuses, with what to write
     instead, a value the form would not take: a category the space does not
-    have, a deadline it cannot read."""
+    have, a deadline it cannot read. ``files`` are the attachments it named
+    (``attachments``), already found to be the person's: id, name and size."""
     out: dict = _template(args["template"], space) if "template" in args else {}
     if "name" in args:
         name = str(args["name"] or "").strip()
@@ -372,7 +451,65 @@ def from_agent(args: dict, space: Space, current: dict) -> dict:
         out["rubricPublic"] = bool(args["rubric_public"])
     if "real_name" in args:
         out["requireRealName"] = bool(args["real_name"])
+    if "registration_start" in args:
+        out["registrationStartAt"] = _deadline(args["registration_start"], space.zone)
+    if "team_locking" in args:
+        if args["team_locking"] not in LOCKING:
+            raise BadRequestError(say("draftLockingChoice"))
+        out["teamLockingPolicy"] = LOCKING[args["team_locking"]]
+    if "mentors" in args:
+        out["mentors"] = _mentors(args["mentors"], space)
+    if "access" in args:
+        ids = _groups(args["access"], space)
+        out["accessControlEnabled"] = bool(ids)
+        out["accessDomainGroupIds"] = ids
+    if "attachments" in args:
+        given = list(files or [])
+        out["attachmentIds"] = [f["id"] for f in given]
+        out["attachmentFiles"] = given
+    if "ai_guidance" in args:
+        text = str(args["ai_guidance"] or "").strip()
+        out["teaching"] = {"systemPrompt": text} if text else {}
+        out["teachingOwn"] = bool(text)
     return out
+
+
+def _mentors(given, space: Space) -> list[str]:
+    """Mentors by handle or by the name they go by; only the person and the
+    space's admins may be one."""
+    by_name = {name: handle for handle, name in space.mentors.items()}
+    out: list[str] = []
+    for raw in given or []:
+        word = str(raw or "").strip().lstrip("@")
+        handle = word if word in space.mentors else by_name.get(word)
+        if handle is None:
+            raise BadRequestError(
+                say("draftMentorChoice", name=word, names=_people_said(space))
+            )
+        if handle not in out:
+            out.append(handle)
+    return out
+
+
+def _groups(given, space: Space) -> list[int]:
+    names = [str(n).strip() for n in given or [] if str(n).strip()]
+    unknown = [n for n in names if n not in space.domain_groups]
+    if unknown:
+        raise BadRequestError(
+            say(
+                "draftAccessChoice",
+                unknown="、".join(unknown),
+                names="、".join(space.domain_groups) or "—",
+            )
+        )
+    return list(dict.fromkeys(space.domain_groups[n] for n in names))
+
+
+def _people_said(space: Space) -> str:
+    return (
+        "、".join(f"{name}（{handle}）" for handle, name in space.mentors.items())
+        or "—"
+    )
 
 
 def _description(args: dict, current: dict) -> str | None:
@@ -494,6 +631,8 @@ def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) 
     head = (
         f"草稿 {draft.id}（{task_name} 的未保存修改）"
         if draft.task_id
+        else f"草稿 {draft.id}（新题目，尚未填写）"
+        if blank(draft.fields or {})
         else f"草稿 {draft.id}（新题目）"
     )
     return _view(
@@ -622,6 +761,8 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
     forms = {v: k for k, v in FORMS.items()}
     levels = {v: k for k, v in DIFFICULTIES.items()}
     kinds = {v: k for k, v in KINDS.items()}
+    lockings = {v: k for k, v in LOCKING.items()}
+    group_by_id = {v: k for k, v in space.domain_groups.items()}
 
     def when(ms) -> str:
         if not ms:
@@ -639,16 +780,43 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         lines.append(
             f"team_min: {fields.get('minTeamSize') or ''}"
             f"  team_max: {fields.get('maxTeamSize') or ''}"
+            f"  team_locking: {lockings.get(str(fields.get('teamLockingPolicy')), '允许变更')}"
         )
     lines += [
         f"difficulty: {levels.get(int(fields.get('rank') or 0), '')}",
         f"participant_limit: {fields.get('participantLimit') or '不限'}",
+        "mentors: "
+        + "、".join(
+            f"{space.mentors.get(h, h)}（{h}）" for h in fields.get("mentors") or []
+        ),
+        f"registration_start: {when(fields.get('registrationStartAt'))}",
         f"deadline: {when(fields.get('deadline'))}",
         f"days_to_submit: {fields.get('defaultDeadline') or ''}",
         f"category: {by_id.get(int(fields.get('categoryId') or 0), '')}",
         "tags: "
         + "、".join(tag_by_id.get(t, str(t)) for t in fields.get("topics") or []),
+        "access: "
+        + (
+            "、".join(
+                group_by_id.get(g, str(g))
+                for g in fields.get("accessDomainGroupIds") or []
+            )
+            if fields.get("accessControlEnabled")
+            else "空间全部成员"
+        ),
         f"real_name: {'是' if fields.get('requireRealName') else '否'}",
+        "attachments: "
+        + "、".join(
+            f"{f.get('name')}（文件 id {f.get('id')}）"
+            for f in fields.get("attachmentFiles") or []
+            if isinstance(f, dict)
+        ),
+        "ai_guidance: "
+        + (
+            str((fields.get("teaching") or {}).get("systemPrompt") or "")
+            if fields.get("teachingOwn")
+            else "（用空间的默认指导）"
+        ),
         "submission:",
         *(
             f"  - {e.get('prompt')}（{kinds.get(e.get('type'), e.get('type'))}）"
@@ -664,6 +832,8 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         f"这个空间可选的分类：{_names(space.categories)}",
         f"这个空间可选的标签：{_names(space.tags)}",
         f"这个空间的模板：{_templates(space)}",
+        f"可以当导师的人：{_people_said(space)}",
+        f"这个空间的邮箱域名组：{_names(space.domain_groups)}",
         close_tag,
     ]
     return "\n".join(lines)
@@ -727,6 +897,17 @@ def published_form(draft: TaskDraft) -> dict:
     if not draft.fields.get("teachingOwn", False):
         fields.pop("teaching", None)
     return fields
+
+
+def blank(fields: dict) -> bool:
+    """Nothing of the 题目 is written yet: no name, no description, no
+    rubric — what the page starts a draft with is not writing."""
+    return not (
+        str(fields.get("name") or "").strip()
+        or markdown_of(fields).strip()
+        or _doc_text(fields.get("description")).strip()
+        or fields.get("rubric")
+    )
 
 
 def missing(draft: TaskDraft) -> list[str]:

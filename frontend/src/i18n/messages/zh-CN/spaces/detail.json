@@ -121,6 +121,7 @@
       "title": "AI 指导"
     },
     "useTemplate": "使用模板",
+    "importFile": "从文件导入",
     "draftsMenu": {
       "label": "草稿",
       "heading": "我在这个空间的草稿",

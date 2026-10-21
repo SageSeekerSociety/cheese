@@ -980,20 +980,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     authz_enforce_topic_access: bool = True
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
-    # (PDF task drafts, rank checks, email/notifications, real-name
-    # encryption) read these off settings. The merge dropped them, so those code
+    # (rank checks, email/notifications, real-name encryption) read these off
+    # settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
-    # The gateway model that turns an uploaded PDF into task drafts; each page
-    # is one call, charged to the publisher's personal credits.
-    task_draft_model: str = "deepseek-flash"
-    task_draft_max_tokens: int = 4096
-    task_draft_timeout_s: float = 300.0
-    pdf_import_max_pages: int = Field(default=20, ge=1, alias="PDF_IMPORT_MAX_PAGES")
-    pdf_import_max_concurrency: int = Field(
-        default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
-    )
-
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")
     email_smtp_port: int = Field(default=587, alias="EMAIL_SMTP_PORT")

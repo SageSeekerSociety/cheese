@@ -32,6 +32,7 @@
       v-for="change in changes"
       :key="change.id"
       class="at__card"
+      :class="{ 'at__card--one': change.collapsed }"
       :aria-label="t('tasks.assistant.changes.title')"
     >
       <header class="at__card-h">
@@ -42,16 +43,21 @@
           t('tasks.assistant.changes.ordinal', { n: change.ordinal })
         }}</span>
         <button
-          v-if="change.created"
+          v-if="change.created || change.collapsed"
           type="button"
-          class="at__link"
+          class="at__link at__card-name"
           data-user-content
+          :title="change.name || t('tasks.assistant.changes.untitled')"
           @click="emit('openDraft', change.draft)"
         >
           {{ change.name || t('tasks.assistant.changes.untitled') }}
         </button>
+        <span v-if="change.collapsed" class="at__grow" />
+        <span v-if="change.collapsed" class="at__card-no">{{
+          t('tasks.assistant.changes.count', { n: change.rows.length })
+        }}</span>
       </header>
-      <ul class="at__rows">
+      <ul v-if="!change.collapsed" class="at__rows">
         <li
           v-for="row in change.rows"
           :key="row.key"
@@ -290,8 +296,16 @@ function undoable(change: PanelChange): number {
 }
 
 .at__card-t {
+  flex-shrink: 0;
   font-weight: 600;
   color: var(--ink);
+}
+
+.at__card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .at__rows {
@@ -385,13 +399,19 @@ function undoable(change: PanelChange): number {
   text-decoration: underline;
 }
 
+.at__card--one .at__card-h {
+  border-bottom: 0;
+}
+
 .at__card--ask .at__card-h {
   background: var(--warn-wash);
 }
 
 .at__card-no {
+  flex-shrink: 0;
   font-size: 13px;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .at__result {
