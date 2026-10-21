@@ -9,7 +9,6 @@
 // 表单要的分类、话题、域名组、模板都从 pinia 的 `space` store 来，这一页自己装，**装完才
 // 挂表单**：`fetchCategories()` 在 `currentSpaceId` 为空时直接返回，装晚了分类下拉是空的。
 // `?categoryId=`（从某个分类的列表过来）在这里读。
-import type { AgentBox, AgentMarkSpot, AgentPointer } from '@/components/tasks/AgentLayer.vue'
 import type { SpaceTeaching, TaskDraft, TaskDraftFields, TaskDraftSummary, TaskFormSubmitData } from '@/types'
 import type { StripItem } from './TaskDraftStrip.vue'
 
@@ -20,7 +19,6 @@ import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
-import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSpaceData } from '@/composables/useSpaceData'
@@ -31,7 +29,7 @@ import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
 import { TaskDraftsApi } from '@/api/taskDrafts'
-import { fieldLabel } from '@/lib/assistantView'
+import { fieldLabel } from '@/lib/draftChangeView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { missingOf } from '@/lib/taskDraftAgent'
 import { mentorOptions } from '@/lib/taskMentors'
@@ -249,9 +247,9 @@ function pageApply(fields: TaskDraftFields): TaskDraftFields {
 
 const agent = useDraftAgent({
   draft,
+  host: () => (view.value?.host as unknown as HTMLElement | null) ?? null,
   terms,
   draftsChanged: () => void refreshDrafts(),
-  jump: (key) => layer.jump(key),
   openDraft: (id) => openOther(id),
   openTask: (id) => openTask(id),
   publishedHere: () => (publishedHere.value = true),
@@ -260,7 +258,6 @@ const agent = useDraftAgent({
     return at >= 0 && stripIds.value.length > 1 ? at + 1 : undefined
   },
 })
-const { assistant } = agent
 // 芝士读到的是这份草稿；面板在发布页给出题的问候和开场问题，能交文件（从文件导入）。
 useAgentContext(() => ({
   page: draft.id.value ? { kind: 'draft', id: draft.id.value } : null,
@@ -274,17 +271,6 @@ useAgentContext(() => ({
   hint: t('tasks.assistant.draft.hint'),
   canAttach: true,
 }))
-
-const host = computed(() => (view.value?.host as unknown as HTMLElement | null) ?? null)
-const layer = useAgentPointer({
-  host,
-  writing: draft.writing,
-  marks: draft.marks,
-  active: computed(() => assistant.busy.value),
-  descriptionEnd: () => view.value?.descriptionEnd() ?? null,
-  passage: draft.passage,
-  holding: draft.holding,
-})
 
 const { mdAndUp } = useDisplay()
 // 桌面上进这一页时，芝士停在右边就把它打开：表单和面板并排，芝士写进来看得见。
@@ -509,9 +495,6 @@ watch(
   { immediate: true }
 )
 
-const pointer = computed<AgentPointer | null>(() => layer.pointer.value)
-const outline = computed<AgentBox | null>(() => layer.outline.value)
-const marks = computed<AgentMarkSpot[]>(() => layer.marks.value)
 const ready = computed(() => spaceReady.value && draftReady.value)
 </script>
 
@@ -543,10 +526,6 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :current-draft-id="draft.id.value"
     :save-state="draft.saveState.value"
     :published-here="publishedHere"
-    :pointer="pointer"
-    :outline="outline"
-    :marks="marks"
-    :selection="layer.selection.value"
     :agent-writing="draft.writing.value"
     :space-teaching="spaceStore.currentSpace?.teaching ?? null"
     :strip="strip"
@@ -563,7 +542,6 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     @new-draft="newDraft"
     @remove-draft="removeDraft"
     @publish-all="publishAll"
-    @undo="agent.undoMark"
   >
   </PublishTaskView>
 </template>

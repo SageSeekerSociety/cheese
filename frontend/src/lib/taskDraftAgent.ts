@@ -5,11 +5,19 @@
 // 停在正在写的那一格。这只是预览：调用真正写进草稿以后，服务端推回来的「改动」才是
 // 定数，页面用它覆盖预览。所以这里只做页面能当场做的换算，拿不准的值（没写完的日期、
 // 空间里没有的分类）先不填，等服务端那一份。
+import type { TypistPace } from '@/lib/typist'
 import type { SpaceTeaching, TaskDraftField, TaskDraftFields, TaskSubmissionEntryType, TeachingMode } from '@/types'
 
 import dayjs from 'dayjs'
 
 /** 芝士的字段名，按表单从上到下的顺序，各落在表单的哪几格。 */
+/** `cheese_task_write` 的参数怎么放（`lib/typist.ts`）：详情、改详情时换上的那段、评分
+ *  标准写起来长；草稿 id、要替换的原文这些只用来定位。 */
+export const DRAFT_WRITE_PACE: TypistPace = {
+  long: ['description', 'replace', 'criteria'],
+  instant: ['find', 'draft', 'task', 'space', 'version', 'source', 'template'],
+}
+
 export const AGENT_FIELDS: Record<string, TaskDraftField[]> = {
   name: ['name'],
   description: ['description', 'descriptionMarkdown'],

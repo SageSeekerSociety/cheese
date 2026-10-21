@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createTypist } from './typist'
 
+import { DRAFT_WRITE_PACE } from '@/lib/taskDraftAgent'
+
 function record() {
   const shown: string[] = []
-  const typist = createTypist((_call, raw) => shown.push(raw), false)
+  const typist = createTypist((_call, raw) => shown.push(raw), DRAFT_WRITE_PACE, false)
   return { shown, typist, last: () => shown.at(-1) ?? '' }
 }
 
@@ -70,7 +72,7 @@ describe('createTypist', () => {
 
   it('换了一次调用，上一次的先整段放完', () => {
     const shown: [string, string][] = []
-    const typist = createTypist((call, raw) => shown.push([call, raw]), false)
+    const typist = createTypist((call, raw) => shown.push([call, raw]), DRAFT_WRITE_PACE, false)
     typist.feed('c1', '{"name":"abcdef"}')
     typist.feed('c2', '{')
 
@@ -79,7 +81,7 @@ describe('createTypist', () => {
 
   it('减少动态效果时到多少放多少', async () => {
     const shown: string[] = []
-    const typist = createTypist((_call, raw) => shown.push(raw), true)
+    const typist = createTypist((_call, raw) => shown.push(raw), DRAFT_WRITE_PACE, true)
     typist.feed('c1', '{"name":"abc"}')
 
     expect(shown).toEqual(['{"name":"abc"}'])

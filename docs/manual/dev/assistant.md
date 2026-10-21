@@ -11,9 +11,12 @@ covers:
   - backend/app/domain/agent/session_host/
   - frontend/src/components/assistant/AssistantPanel.vue
   - frontend/src/components/assistant/AssistantTurn.vue
-  - frontend/src/components/tasks/AgentLayer.vue
+  - frontend/src/components/agent/AgentLayer.vue
   - frontend/src/components/agent/AgentMark.vue
   - frontend/src/composables/useAgentPointer.ts
+  - frontend/src/lib/assistantView.ts
+  - frontend/src/lib/draftChangeView.ts
+  - frontend/src/lib/typist.ts
   - frontend/src/api/agentChanges.ts
   - frontend/src/stores/agentThread.ts
   - frontend/src/stores/agent.ts
@@ -43,6 +46,9 @@ covers:
 
 - `useAgentContext`：这一页是什么（`page`，芝士读到的「当前页面」），以及面板在这一页的问候、开场问题、输入框提示、能不能交文件。没登记的页面用通用的说法，不附「当前页面」。
 - `useAgentSurface`（可选）：芝士写进这一页时页面怎么动——`tool_args` 边到边填、`change` 定稿、`published` 之后、撤销，以及面板上那一轮怎么画（改动卡能不能撤销、第几道）。题目页登记了 `published`（芝士保存了这道题的修改，页面重读）；发布页和改题页由 `useDraftAgent` 登记整套。
+  - 有表单的页面在可写面里再说表单（`form`）：外框在哪、有哪几格（各叫什么、是不是打字写的）、芝士正在写哪格、哪几格标着「芝士已填写」、撤销标记怎么做。指针那一层（`components/agent/AgentLayer.vue`）由宿主画，送进表单的外框里（`Teleport`），页面不接线、不再自己挂 `useAgentPointer`。格子在页面上用 `data-agent-field` 标出来。
+
+面板上那一轮怎么画分两半：不管写的是什么都一样的那一半（面板拿的形状、每一步怎么说）在 `lib/assistantView.ts`；写进题目草稿的改动卡、发布的结果怎么说在 `lib/draftChangeView.ts`。
 
 桌面上面板默认停在右边（把页面挤窄，芝士往表单里写时并排看得见），可以取消固定，变成右下角的浮层；这一项记在浏览器里（`cheesex.agentDocked`）。发布页、改题页在桌面上打开时，停在右边的面板自动打开。手机上从底部升起。
 ## 会话 {#session}
@@ -122,10 +128,10 @@ covers:
 发布页、改题页上，表单跟着芝士动（`useTaskDraft`、`useDraftAgent`）：
 
 - `tool_args` 流进来时，页面把参数读成表单的几格先填上（`lib/taskDraftAgent.ts` 的 `previewOf`，只填能确定的值），这几格这时不算人改的；`change` 到了，用服务端的值覆盖预览，记成已存；`tool_failed` 就收回预览。只改详情里几处（`description_edits`）时，预览在现在的详情上把已经写出来的那几处换掉。
-- 参数常常一大块一起到，`lib/typist.ts` 按格子定节奏：边读那段 JSON 边认出在写哪个字段，一格的字每秒 60 个，字多就加快，短格子最多 1 秒、详情和评分标准最多 2 秒写完；换到下一格前停 0.22 秒，让指针先过去；定位用的字段（草稿 id、要替换的原文）一下子放完。调用结束、`change`、`published` 都排在放完之后。
+- 参数常常一大块一起到，`lib/typist.ts` 按格子定节奏（哪些参数长、哪些只用来定位由工具说，`cheese_task_write` 的是 `DRAFT_WRITE_PACE`）：边读那段 JSON 边认出在写哪个字段，一格的字每秒 60 个，字多就加快，短格子最多 1 秒、详情和评分标准最多 2 秒写完；换到下一格前停 0.22 秒，让指针先过去；定位用的字段（草稿 id、要替换的原文）一下子放完。调用结束、`change`、`published` 都排在放完之后。
 - 要整格重写、原来有字时，停的那一下把原来的字选中；改详情里的一段时，先选中原文，再跟着新文字走（`useAgentPointer` 在编辑器里找那段字，`AgentLayer` 画选中）。
 - 页面跟着芝士滚：换到一格时平滑滚进视野；字写到看不见的地方时立刻滚过去，先滚那一格自己（详情超过最大高度后在框里滚），再滚页面。人刚自己滚过就不跟。
-- 表单上一层是 `AgentLayer`：整张表单一个指针。写名称、详情时是带「芝士」名字的文字光标，停在字的末尾；写选项、数字、日期、列表时是箭头。正在写的那一格描着边，写过的格子标「芝士已填写」，人改过这一格后标记消失。位置由 `useAgentPointer` 量 `data-agent-field` 标着的那几格：芝士在答时每一帧都量，不在答时格子变了大小也量。描边只在换格子时滑过去，光标不带过渡，免得落在字后面。「芝士已填写 撤销」那一小行是 `AgentMark`，以后别的页面上芝士改过的地方也用它。
+- 表单上一层是 `AgentLayer`：整张表单一个指针。写打字的格子（名称、详情）时是带「芝士」名字的文字光标，停在字的末尾（输入框量字宽，编辑器读 TipTap 挂在 `.ProseMirror` 上的编辑器）；写选项、数字、日期、列表时是箭头。正在写的那一格描着边，写过的格子标「芝士已填写」，人改过这一格后标记消失。位置由 `useAgentPointer` 量 `data-agent-field` 标着的那几格：芝士在答时每一帧都量，不在答时格子变了大小也量。描边只在换格子时滑过去，光标不带过渡，免得落在字后面。「芝士已填写 撤销」那一小行是 `AgentMark`，以后别的页面上芝士改过的地方也用它。
 - 撤销一格走 `POST /assistant/changes/{id}/undo`：服务端放回芝士这一轮第一次改它之前的值，当作人改的存下，表单照着填回（`useTaskDraft.restored`），不再存一遍。对话里眼前这份草稿一轮只有一张改动卡，同一格写了几次只留最后一次。
 
 一份文件拆出几道题时，芝士在同一段对话里建的几份新题目草稿排在表单上方（`TaskDraftStrip`）：点了切换，对话还是那一段，不重读；芝士正在写的那份转圈，还没建好的先占一格。「全部发布」先存下眼前这份，再一份份发布（`POST /task-drafts/{id}/publish`）：草稿列表的 `missing`（后端 `drafts.missing`，名称、详情、参与方式、难度）不空的那份不发，标出缺几项，切过去时表单标出缺的格子。

@@ -503,14 +503,10 @@
     }
   },
   "publishTaskView": {
-    "about": "Publish page: the publish form on the left, saved as a draft as it is written; the header's Drafts lists my drafts in this space. Cheese is the app's one panel, docked on the right when this page opens on desktop; while it writes this draft, one named pointer on the form follows what it fills in.",
+    "about": "Publish page: the publish form on the left, saved as a draft as it is written; the header's Drafts lists my drafts in this space. Cheese is the app's one panel, docked on the right when this page opens on desktop. While it writes this draft, the app's Cheese host draws a named pointer on the form that follows what it fills in; this component does not draw it.",
     "s1": {
       "name": "Writing a draft",
       "note": "Default cell: the form, with 'Drafts 3' and 'Draft saved' in the header, and 'Needs admin review after publishing' beside the publish button."
-    },
-    "s2": {
-      "name": "Cheese filling in",
-      "note": "Cheese is writing the name: a named text caret sits after the words and the field is outlined; the description it already filled carries 'Filled by Cheese' and 'Undo' at its top right. The header says 'Saving…'."
     },
     "s3": {
       "name": "Space not ready",

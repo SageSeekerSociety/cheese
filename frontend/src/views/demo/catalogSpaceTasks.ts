@@ -201,9 +201,6 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       drafts: PUBLISH_DRAFTS,
       currentDraftId: 41,
       saveState: 'saved',
-      pointer: null,
-      outline: null,
-      marks: [],
       agentName: t('work.agentAvatar.defaultName'),
     },
     states: [
@@ -216,22 +213,6 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         props: {},
         expect: '草稿已保存',
-      },
-      {
-        get name() {
-          return t('catalog.publishTaskView.s2.name')
-        },
-        get note() {
-          return t('catalog.publishTaskView.s2.note')
-        },
-        // 芝士正在写名称：带名字的文字光标停在字后面，那一格描着边；描述已经填过。
-        props: {
-          saveState: 'saving',
-          pointer: { x: 180, y: 120, mode: 'caret', height: 22 },
-          outline: { x: 12, y: 96, w: 600, h: 48 },
-          marks: [{ key: 'description', label: t('tasks.form.description'), x: 620, y: 160 }],
-        },
-        expectSelector: '[data-testid="agent-mark-description"]',
       },
       {
         get name() {

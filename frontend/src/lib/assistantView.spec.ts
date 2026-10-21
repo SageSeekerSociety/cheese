@@ -2,7 +2,8 @@ import type { AssistantEdit } from '@/stores/agentThread'
 
 import { describe, expect, it } from 'vitest'
 
-import { stepError, writesView } from './assistantView'
+import { stepError } from './assistantView'
+import { writesView } from './draftChangeView'
 
 import { t } from '@/i18n'
 

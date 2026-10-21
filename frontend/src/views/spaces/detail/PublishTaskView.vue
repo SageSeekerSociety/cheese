@@ -5,7 +5,6 @@
 //
 // 题目边写边存成草稿（`@/types/taskDrafts`）。顶栏的「草稿」列出我在这个空间的草稿，
 // 点哪份打开哪份；旁边写着存到哪了。
-import type { AgentBox, AgentMarkSpot, AgentPointer } from '@/components/tasks/AgentLayer.vue'
 import type { PickedAttachment } from '@/composables/useAttachmentUploads'
 import type { SaveState } from '@/composables/useTaskDraft'
 import type { NavTarget } from '@/lib/navTarget'
@@ -33,7 +32,6 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
-import AgentLayer from '@/components/tasks/AgentLayer.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { isTeachingBlank } from '@/lib/teaching'
@@ -78,12 +76,6 @@ const props = withDefaults(
     agentWriting?: string | null
     /** 空间的 AI 队友辅导：和本题的同时生效，摆在本题设置底下。 */
     spaceTeaching?: SpaceTeaching | null
-    /** 芝士那一层。 */
-    pointer: AgentPointer | null
-    outline: AgentBox | null
-    marks: AgentMarkSpot[]
-    /** 芝士选中、要换掉的那段字。 */
-    selection?: AgentBox[]
     agentName: string
   }>(),
   {
@@ -92,7 +84,6 @@ const props = withDefaults(
     defaultMentor: undefined,
     publishedHere: false,
     strip: null,
-    selection: () => [],
     agentWriting: null,
     spaceTeaching: null,
   }
@@ -124,7 +115,6 @@ const emit = defineEmits<{
   'new-draft': []
   'remove-draft': [id: number]
   'publish-all': []
-  undo: [key: string]
 }>()
 
 defineSlots<{
@@ -172,18 +162,17 @@ const saveText = computed(() => {
 })
 
 defineExpose({
-  /** 表单：读现在的样子、填进几格、详情末尾在哪。 */
+  /** 表单：读现在的样子、填进几格。 */
   form: {
     values: () => form.value?.values() ?? {},
     apply: async (fields: TaskDraftFields) => (await form.value?.apply(fields)) ?? {},
   },
-  descriptionEnd: () => form.value?.descriptionEnd() ?? null,
   /** 标出这一道缺的格子（一次发几道、这道没发出去时）。 */
   check: () => {
     attempted.value = true
     void form.value?.check()
   },
-  /** 芝士那一层量位置用的外框。 */
+  /** 表单的外框：芝士那一层（全站的芝士宿主画）放在这里。 */
   host,
 })
 </script>
@@ -327,15 +316,6 @@ defineExpose({
               </div>
             </template>
           </TaskForm>
-
-          <AgentLayer
-            :pointer="pointer"
-            :outline="outline"
-            :marks="marks"
-            :selection="selection"
-            :name="agentName"
-            @undo="emit('undo', $event)"
-          />
         </div>
       </div>
     </div>

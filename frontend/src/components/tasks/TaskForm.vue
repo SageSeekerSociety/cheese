@@ -85,7 +85,6 @@ defineSlots<{
 const content = ref<{
   readText: () => string | undefined
   readMarkdown: () => string | undefined
-  endRect: () => { left: number; top: number; bottom: number } | null
 } | null>(null)
 
 const {
@@ -163,8 +162,6 @@ defineExpose({
     await nextTick()
     return current()
   },
-  /** 详情末尾在屏幕上的位置。 */
-  descriptionEnd: () => content.value?.endRect() ?? null,
 })
 </script>
 
