@@ -53,7 +53,8 @@ export type RedReason = 'unfinished' | 'waiting' | 'bounced'
  *  `lightTitle` 照用；没给就按 `kind` / `why` 说那句通用的。 */
 export type RowLight =
   | { kind: 'red'; why: RedReason; title?: string }
-  | { kind: 'yellow' | 'blue'; title?: string }
+  | { kind: 'yellow'; title?: string }
+  | { kind: 'blue'; title?: string }
   | { kind: 'green'; breathe: boolean; title?: string }
 
 /** 我负责的活那一盏灯：`lightOf` 不产它，调用方在前面几盏都不亮时盖上（见文件头）。 */

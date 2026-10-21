@@ -37,7 +37,6 @@ from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
-from app.domain.agent.session_state import running_conversations
 from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.agent_instance.adapters import project_team, room_teammate
 from app.domain.agent_session.services import AgentSessionService
@@ -385,7 +384,9 @@ async def list_topics(
     # 会话（`session_states`）。`presentation` 那一格读的是房间自己那条线：看板
     # 一格是房间自己的格子，它名下的活有它们自己的格子
     # （`test_a_rooms_board_cell_does_not_follow_a_task_running_under_it`）。
-    working = await topics_signals.at_work(db, room_ids, threads=room_threads)
+    working = await topics_signals.at_work(
+        db, room_ids, threads=room_threads, tasks=tasks_by_room
+    )
     running_ids = set(working.rooms)
     relevance = await service.relevance_for_topics(
         topics,
@@ -397,13 +398,10 @@ async def list_topics(
     live = await topics_signals.live_cards(db, [t.id for t in topics])
     cards = topics_signals.own_cards(live)
     # 侧栏的呼吸绿：房间里、支线里、名下的活里，任意一处有 runner 报着在跑的会话
-    # （`moving`，`TopicOut.moving`）。`at_work` 给前两处；名下活要自己接回来 ——
-    # 读的是全站那一小张在跑的会话，再在内存里挑，不为这一页绑一长串 id。
-    running = await running_conversations(db)
+    # （`moving`，`TopicOut.moving`）。三处都从 `at_work` 那一次读里来，不为这一页
+    # 多付一条查询。
     moving_ids = set(working.rooms) | set(working.threads)
-    moving_ids |= {
-        room_id for task_id, room_id in tasks_by_room.items() if task_id in running
-    }
+    moving_ids |= {tasks_by_room[task_id] for task_id in working.tasks}
     # 走在交付链路上的活也算：房间自己那条线闲着，名下的活在等 CI / 换基 / 修检查。
     moving_ids |= topics_signals.delivering_rooms(live)
     managed = (
@@ -447,6 +445,7 @@ async def list_topics(
         [t.id for t in topics],
         delivered_of=unseen.__contains__,
         incomplete_of=incomplete_tasks.get,
+        running_of=working.tasks.__contains__,
     )
     items = [
         {
@@ -573,8 +572,12 @@ async def get_topic(
         stuck_rooms=topics_signals.stuck_on_checks(live),
         threads=room_threads,
     )
-    # 同 `list_topics`：谁在这间房自己那条线上、和它的支线里干活。
-    working = await topics_signals.at_work(db, [topic.id], threads=room_threads)
+    # 同 `list_topics`：谁在这间房自己那条线上、和它的支线里干活；名下的活也交给
+    # 同一次读，免得为呼吸绿多查一条。
+    underway = await TaskService(db).tasks_of_rooms([topic.id])
+    working = await topics_signals.at_work(
+        db, [topic.id], threads=room_threads, tasks=underway
+    )
     running_ids = set(working.rooms)
     viewer = _viewer(actor)
     unseen = (
@@ -582,14 +585,10 @@ async def get_topic(
     )
     # 同 `list_topics`：这一间房里有没有人回复了我、而我还没处理（侧栏黄灯）。
     answered = await service.replied_to_me([topic.id], viewer) if viewer else set()
-    underway = await TaskService(db).tasks_of_rooms([topic.id])
     # 同 `list_topics`：侧栏的呼吸绿问的是这间房、它的支线、它名下的活里有没有会话
     # 在跑，或者有没有活走在交付链路上。
-    running = await running_conversations(db, [topic.id, *underway])
     moving_ids = set(working.rooms) | set(working.threads)
-    moving_ids |= {
-        room_id for task_id, room_id in underway.items() if task_id in running
-    }
+    moving_ids |= {underway[task_id] for task_id in working.tasks}
     moving_ids |= topics_signals.delivering_rooms(live)
     tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
     for task_id, room_id in underway.items():
@@ -603,6 +602,7 @@ async def get_topic(
         [topic.id],
         delivered_of=unseen.__contains__,
         incomplete_of=incomplete_tasks.get,
+        running_of=working.tasks.__contains__,
     )
     return ok(
         {
