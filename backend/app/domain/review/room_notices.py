@@ -48,7 +48,7 @@ from app.core.background import spawn
 from app.core.sentences import say
 from app.domain.addressing import Event
 from app.domain.deliverables import artifacts
-from app.domain.delivery_events import REPLACES, DeliveryEvent, SettleCard
+from app.domain.delivery_events import SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_READY,
     EVENT_ARTIFACT_DECLARED,
@@ -60,13 +60,12 @@ from app.domain.notice_meta import (
     WHO_HUMAN,
     notice,
 )
-from app.domain.notification.models import NotificationType
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
-from app.domain.review.ports import Announce, RecordInstruction
+from app.domain.review.ports import Announce
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.closing import Overdue
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.models import Task
 from app.domain.room_task.services import said_title
 from app.domain.topic.models import Topic
 from app.domain.webhook import service as webhook_service
@@ -397,53 +396,6 @@ def _note_poll_failed(card: AcceptCard, exc: BaseException) -> None:
         notes.NoteCode.poll_failed,
         f"无法读取 PR 状态，稍后自动重试：{detail}",
     )
-
-
-async def _record_task_nudge(
-    session: AsyncSession,
-    *,
-    topic,
-    task,
-    content,
-    headline,
-    meta,
-    announce: Announce,
-    record_instruction: RecordInstruction | None,
-    replaces: str | None = None,
-):
-    """Commit the task event and parent delivery with the source state.
-
-    ``replaces`` names what the instruction is the current state of; an earlier
-    one with the same name the agent has not been handed yet is dropped for it
-    (`delivery_events.REPLACES`)."""
-    block = await announce(
-        session,
-        place_id=topic.id,
-        task_id=task.id if task is not None else None,
-        content=headline,
-        meta=meta,
-    )
-    if (
-        block is not None
-        and task is not None
-        and task.status == TaskStatus.open
-        and record_instruction is not None
-    ):
-        await record_instruction(
-            session,
-            DeliveryEvent(
-                id=block.id,
-                type=NotificationType.ROOM_NOTICE,
-                payload={
-                    "projectId": str(topic.project_id),
-                    "topicId": str(topic.id),
-                    **({REPLACES: replaces} if replaces else {}),
-                },
-                occurred_at=block.created_at,
-            ),
-            task_id=task.id,
-            content=content,
-        )
 
 
 async def _note_outside_accept_txn(

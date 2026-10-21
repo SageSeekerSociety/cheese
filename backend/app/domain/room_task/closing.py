@@ -56,6 +56,7 @@ from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import CONSUMED_TURN_META_KEY, Block, BlockKind
 from app.domain.block.queries import queued_messages, read_failed_messages
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
+from app.domain.room_task import heard
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.ports import SweepCheckouts
@@ -411,6 +412,7 @@ async def close_after_summary(
         return None
     if await unfinished(session, task.id):
         return None
+    await heard.inform(session, task, heard.task_closed_by_platform())
     return await close_task(session, task, work, machines=machines)
 
 
@@ -449,6 +451,7 @@ async def close_overdue(
         left = await unfinished_work(session, task.id)
         if left and task.closing_since >= now - STOP_WORK_AFTER:
             continue
+        await heard.inform(session, task, heard.task_closed_by_platform())
         closed.append(
             Overdue(await close_task(session, task, work, machines=machines), left)
         )
