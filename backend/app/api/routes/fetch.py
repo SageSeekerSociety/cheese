@@ -13,7 +13,7 @@ means to fetch anything itself.
 """
 
 import uuid
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -62,7 +62,12 @@ class FetchIn(BaseModel):
 
 
 @router.post("/fetch", summary="Read a URL for an agent", dependencies=[ROUTE_DECIDES])
-async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
+async def read_url(
+    body: FetchIn,
+    db: DbSession,
+    actor: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
     # A signed-in person or an agent's scoped token; never anonymous. The
     # backend reads from inside the platform's network, so an open fetch is an
     # open door into it for anyone on the internet — `guard` keeps the reads to
@@ -70,23 +75,22 @@ async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
     # is no per-resource permission beyond that: no resource of ours is touched.
     # The topic still has to be passed: a scoped sandbox token only verifies
     # against the scope it was minted for.
-    await actor.require_verified_caller(topic_id=body.topic, project_id=body.project)
+    caller = await actor.require_verified_caller(
+        topic_id=body.topic, project_id=body.project
+    )
 
+    # Answering the prompt is a model call, so it is made on the caller's own
+    # gateway key, admitted and charged with the work's other model calls
+    # (`_caller_key`). Reading the page costs the payer nothing; a caller with
+    # no key, or a payer out of credits, still gets the page, just not an
+    # answer drawn from it.
     distill = None
-    if settings.anthropic_base_url and settings.anthropic_auth_token:
-        # `agent_model` and not `agent_haiku_model`. The haiku setting is an
-        # ALIAS the CLI resolves internally — it names what "haiku" should map
-        # to for a session, and its default names a model this gateway may not
-        # serve at all. Asking the gateway for it returned
-        # "Invalid model name passed in model=glm-4.5-air", the distillation
-        # failed, and every prompted fetch quietly returned the whole page
-        # instead of an answer. `agent_model` is the model this deployment
-        # actually runs, so it is the one that is certainly reachable.
-        distill = (
-            settings.anthropic_base_url,
-            settings.anthropic_auth_token,
-            model_roles.model("agent_model"),
+    if body.prompt and settings.anthropic_base_url:
+        spend = await _caller_key(
+            db, chat, actor, caller, topic=body.topic, project=body.project
         )
+        if spend.key:
+            distill = (settings.anthropic_base_url, spend.key, spend.model)
 
     outcome = await fetch_url(
         body.url,
@@ -122,7 +126,16 @@ class WebSearchOut(BaseModel):
     results: list[WebSearchResult]
 
 
-async def _search_key(
+class CallerKey(NamedTuple):
+    """The gateway key a caller's spend goes on, the model that key may call,
+    and why it may not spend now."""
+
+    key: str | None
+    model: str
+    refusal: Refusal | None = None
+
+
+async def _caller_key(
     db: AsyncSession,
     chat: ChatService,
     resolver: ActorResolver,
@@ -130,25 +143,34 @@ async def _search_key(
     *,
     topic: uuid.UUID | None,
     project: uuid.UUID | None,
-) -> tuple[str | None, Refusal | None]:
-    """The gateway key this caller's model calls are made on, which its search
-    is made on too, and why it may not spend now.
+) -> CallerKey:
+    """The gateway key this caller's model calls are made on — a search, and
+    the answer a prompted fetch draws from its page, are made on it too — and
+    why it may not spend now.
 
-    A person's own 芝士 (a delegated credential naming no agent) searches on
-    that person's key; whether they may spend was judged when they asked
-    (``assistant.ask``), as for its model calls. An agent searches on the key
+    A person's own 芝士 (a delegated credential naming no agent) spends on
+    that person's key, which is good for the assistant model alone
+    (``personal.keys``); whether they may spend was judged when they asked
+    (``assistant.ask``), as for its model calls. An agent spends on the key
     its model calls use, admitted as they are (``model_keys``): a room agent's
     scoped token names its project and, for a task, whose credits it spends; a
     project credential authenticates only for the project the request names;
-    a document question's answer is its project's work. Anyone else — a person
-    signed in, the global sandbox override — has no key and gets no search."""
+    a document question's answer is its project's work. Those keys take the
+    model this deployment runs (``agent_model``), never the haiku alias: that
+    names what a session maps "haiku" to and may not exist on the gateway, and
+    asking for it failed every distillation. Anyone else — a person
+    signed in, the global sandbox override — has no key."""
+    agent_model = model_roles.model("agent_model")
     delegation = resolver.delegation()
     claims: dict = {}
     if delegation is not None:
         if delegation.agent is None:
             if delegation.user_id is None:
-                return None, None
-            return await stored_key(db, delegation.user_id), None
+                return CallerKey(None, agent_model)
+            return CallerKey(
+                await stored_key(db, delegation.user_id),
+                model_roles.model("assistant_model"),
+            )
         named = uuid.UUID(delegation.project_id) if delegation.project_id else None
     elif actor.via == "cheese":
         claims = resolver.credential_claims() or {}
@@ -158,14 +180,14 @@ async def _search_key(
             or (await resolver.project_of_topic(topic) if topic else None)
         )
     else:
-        return None, None
+        return CallerKey(None, agent_model)
     owner = await ProjectService(db).get(named) if named else None
     if owner is None:
-        return None, None
+        return CallerKey(None, agent_model)
     context = await task_credit_context_of(db, owner, claims)
     refused = await credit_refusal(db, owner, context)
     if refused is not None:
-        return None, refused
+        return CallerKey(None, agent_model, refused)
     if context is not None:
         key = await chat.project_gateway_key(
             owner.id,
@@ -176,7 +198,7 @@ async def _search_key(
         key = await chat.project_gateway_key(
             owner.id, dream=await dreams(db, owner, claims)
         )
-    return key, None
+    return CallerKey(key, agent_model)
 
 
 @router.get(
@@ -198,7 +220,7 @@ async def web_search(
 
     The same caller rule as `/fetch`: a signed-in person or an agent's scoped
     token, which verifies only against the room it names. The search is made
-    on the caller's own gateway key (``_search_key``), so it is admitted,
+    on the caller's own gateway key (``_caller_key``), so it is admitted,
     priced and charged with that key's model calls: a payer out of credits is
     refused before DeepSeek is asked, and the key's spend, the search's
     included, is drained into credits when the turn or question is charged.
@@ -206,16 +228,14 @@ async def web_search(
     caller = await actor.require_verified_caller(topic_id=topic, project_id=project)
     if not settings.anthropic_base_url:
         raise SystemBusyError(say("webSearchNotConfigured"))
-    key, refused = await _search_key(
-        db, chat, actor, caller, topic=topic, project=project
-    )
-    if refused is not None:
-        return refuse(429, refused.message, refused.retry_after_s())
-    if not key:
+    spend = await _caller_key(db, chat, actor, caller, topic=topic, project=project)
+    if spend.refusal is not None:
+        return refuse(429, spend.refusal.message, spend.refusal.retry_after_s())
+    if not spend.key:
         raise ForbiddenError(say("webSearchNoKey"))
     try:
         found = await search_web(
-            q, gateway=settings.anthropic_base_url, key=key, limit=limit
+            q, gateway=settings.anthropic_base_url, key=spend.key, limit=limit
         )
     except SearchRefused:
         return refuse(429, say("webSearchBudgetSpent"))
