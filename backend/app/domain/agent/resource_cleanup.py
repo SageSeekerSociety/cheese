@@ -203,25 +203,58 @@ def proc_index(paths: list[Path]) -> set:
     process in another mount namespace names the room differently (a private
     session sees its directory as `/work`), and on a platform host the homes are
     also reachable through the data disk they are bound from; the inode is the
-    same in every case. `lsof +D` matches the same way."""
+    same in every case. `lsof +D` matches the same way.
+
+    The walk goes by directory descriptors and never follows a symlink below
+    the paths given: what is inside the room is the room's to change while it
+    is walked, and a directory it swaps for a link to `/usr/lib` must not make
+    every process with libc mapped one to end."""
     found = set()
-    stack = [str(path) for path in paths]
-    while stack:
-        directory = stack.pop()
-        try:
-            info = os.stat(directory, follow_symlinks=False)
-            entries = list(os.scandir(directory))
-        except OSError:
-            continue
+
+    def enter(descriptor: int) -> tuple:
+        """Index this directory and its files; the subdirectories it lists are
+        opened one at a time as the walk reaches them, so the descriptors held
+        open are as many as the tree is deep."""
+        info = os.fstat(descriptor)
         found.add((info.st_dev, info.st_ino))
-        for entry in entries:
+        subdirectories = []
+        for entry in os.scandir(descriptor):
             try:
+                if entry.is_dir(follow_symlinks=False):
+                    subdirectories.append(entry.name)
+                    continue
                 info = entry.stat(follow_symlinks=False)
             except OSError:
                 continue
             found.add((info.st_dev, info.st_ino))
-            if entry.is_dir(follow_symlinks=False):
-                stack.append(entry.path)
+        return descriptor, iter(subdirectories)
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    for path in paths:
+        try:
+            top = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
+        except OSError:
+            continue
+        stack = []
+        try:
+            stack.append(enter(top))
+        except OSError:
+            os.close(top)
+        while stack:
+            descriptor, pending = stack[-1]
+            name = next(pending, None)
+            if name is None:
+                os.close(descriptor)
+                stack.pop()
+                continue
+            try:
+                child = os.open(name, flags, dir_fd=descriptor)
+            except OSError:
+                continue  # gone, or now a link: nothing of the room's to follow
+            try:
+                stack.append(enter(child))
+            except OSError:
+                os.close(child)
     return found
 
 

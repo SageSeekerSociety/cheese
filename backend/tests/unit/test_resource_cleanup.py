@@ -359,7 +359,8 @@ def test_a_room_is_ended_on_a_machine_without_lsof(tmp_path, monkeypatch):
         tmp_path,
         "import mmap, time\n"
         f"with open({str(home / 'lib')!r}, 'rb') as f:\n"
-        "    m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ)\n"
+        # trackfd=False: the mapping alone holds the file, no descriptor.
+        "    m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ, trackfd=False)\n"
         "time.sleep(300)",
     )
     beside = _sleeper(neighbour, sleep)
@@ -413,6 +414,37 @@ def test_a_process_that_sees_the_room_elsewhere_still_holds_it(tmp_path):
         wait_for(lambda: elsewhere.pid in cleanup.holders([home, work]))
     finally:
         _stop(elsewhere)
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_directory_the_room_swaps_for_a_link_leads_nowhere(tmp_path, monkeypatch):
+    """What is inside the room is the room's to change while it is walked. A
+    directory swapped for a link to somewhere else once its parent was listed
+    must not make whatever is there part of the room — or every process with
+    something of it open one to end."""
+    home, work = cleanup.resource_paths(tmp_path, str(uuid.uuid4()), str(uuid.uuid4()))
+    (work / "a").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    (outside / "inner").mkdir(parents=True)
+    bystander = _sleeper(outside / "inner", "import time; time.sleep(300)")
+    listed = os.scandir
+
+    def swapping(path):
+        entries = list(listed(path))
+        if (work / "a").is_dir() and not (work / "a").is_symlink():
+            (work / "a").rename(work / "a.moved")
+            (work / "a").symlink_to(outside)
+        return iter(entries)
+
+    try:
+        monkeypatch.setattr(os, "scandir", swapping)
+        index = cleanup.proc_index([work])
+        monkeypatch.setattr(os, "scandir", listed)
+        place = (outside / "inner").stat()
+        assert (place.st_dev, place.st_ino) not in index
+        assert bystander.pid not in cleanup.proc_holders([work], index)
+    finally:
+        _stop(bystander)
 
 
 def test_a_safety_refusal_is_never_overruled_by_time(tmp_path):
