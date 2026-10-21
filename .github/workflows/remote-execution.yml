@@ -90,6 +90,7 @@ jobs:
         id: scratch
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_acceptance.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/remote-execution/private-ci-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Verify private turns through the runner
         id: private_terminal

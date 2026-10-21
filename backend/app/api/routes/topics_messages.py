@@ -82,6 +82,7 @@ from app.api.topics_deps import (
     BlockOut,
     BlockRepository,
     _actor_in_place,
+    reply_preview,
     require_person_speaks,
 )
 from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
@@ -197,6 +198,13 @@ async def send_chat_message(
     )
     stored = await BlockRepository(db).get(anchor_id)
     sent = BlockOut.model_validate(stored).model_dump(mode="json")
+    # The sender's own copy may be the first one the client sees. It carries the
+    # same one-line preview as the broadcast, or the cue would blink out when the
+    # parent is on a page this client never loaded.
+    if stored is not None and stored.reply_to is not None:
+        parent = await BlockRepository(db).get(stored.reply_to)
+        if parent is not None and parent.conversation_id == stored.conversation_id:
+            sent["reply_preview"] = reply_preview(parent)
     # Told to the sender alone, in this answer, and never stored: whom the
     # message names that the channel does not seat (Slack's "X isn't in this
     # channel"). The sender decides whether to add them.
@@ -290,10 +298,12 @@ async def _publish_as_agent(
 ) -> dict | None:
     """An agent's message: attributed to its live turn, never the start of one."""
     content = body.content.strip()
+    reply_parent = None
     if body.reply_to is not None:
         parent = await BlockRepository(db).get(body.reply_to)
         if parent is None or parent.conversation_id != place.conversation_id:
             raise ValidationError("reply_to must belong to this conversation")
+        reply_parent = parent
     content = await project_refs_text(db, place.project_id, place.room_id, content)
     prepared = (
         await asyncio.to_thread(_read_agent_attachments, body.attachments)
@@ -319,6 +329,15 @@ async def _publish_as_agent(
         ):
             raise ConflictError(say("chatPublicationIdReused"))
         block = previous.get("block")
+        # Older stored publications predate the preview; a retry still hands
+        # the caller the same one-line quote the live path carries.
+        if (
+            block is not None
+            and reply_parent is not None
+            and block.get("reply_to") is not None
+            and "reply_preview" not in block
+        ):
+            block["reply_preview"] = reply_preview(reply_parent)
         # The same frame a retry got before this check existed: the caller's
         # socket still sees the stored message come back, and the room's
         # timeline de-duplicates it by id.
