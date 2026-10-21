@@ -42,7 +42,6 @@
   "cheeseFeedbackPropose": "提交反馈提案",
   "cheeseFeedbackRelease": "放弃领取的反馈",
   "cheeseFetch": "读取网页",
-  "cheeseSearchWeb": "搜索网页",
   "cheeseFileRead": "读取文件",
   "cheeseGhToken": "获取 GitHub 令牌",
   "cheeseLibraryGet": "取用项目资料",
@@ -54,7 +53,6 @@
   "cheeseInbox": "查看待办",
   "cheeseInboxRespond": "答复待办",
   "cheeseRead": "读取",
-  "cheeseSearch": "搜索",
   "cheeseHelp": "查帮助文档",
   "cheeseMessageSend": "发消息",
   "cheeseTaskOpen": "开任务",
@@ -132,5 +130,6 @@
   "webFetch": "读取网页",
   "webSearch": "搜索网页",
   "write": "写入文件",
-  "writeFile": "写入文件"
+  "writeFile": "写入文件",
+  "cheeseWorkSearch": "搜工作内容"
 }

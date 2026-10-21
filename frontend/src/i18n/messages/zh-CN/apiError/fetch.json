@@ -1,4 +1,6 @@
 {
-  "webSearchNotConfigured": "这个部署没有配置网页搜索服务。知道网址的页面可以用 cheese_fetch 读。",
-  "webSearchUnavailable": "网页搜索服务暂时没有回答（{reason}），稍后再试。"
+  "webSearchNotConfigured": "这个部署没有接模型网关，网页搜索用不了。知道网址的页面可以直接读。",
+  "webSearchUnavailable": "网页搜索服务暂时没有回答（{reason}），稍后再试。",
+  "webSearchNoKey": "网页搜索记在工作的网关额度上，这个调用方没有：它只给房间里的 agent 和个人芝士用。",
+  "webSearchBudgetSpent": "这份工作的网关额度已经用完，网页搜索不再放行。"
 }

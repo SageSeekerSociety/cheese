@@ -324,6 +324,22 @@ _CHAT_READ = (
     "超出时结果末尾给出续读的调用，照抄它。"
 )
 
+#: 房间的 agent 和个人芝士用的是同一个搜网页工具，两张表放的是这同一条：pi 把两张表
+#: 按名字并成一张（`harness/pi/catalog.py` 的 `schemas_of`），同名就得是同一个东西。
+#: 搜索词只发给 DeepSeek——它本来就是模型的提供方，整段对话都在它那里——所以不像读网页
+#: 那样多出一个收件人，个人芝士搜网页不过授权判断（`cheese_web_fetch` 要过）。
+_WEB_SEARCH = _tool(
+    "cheese_web_search",
+    "让平台搜网页，返回前几条结果的标题、网址、摘要和日期。没有 WebSearch、或 "
+    "WebSearch 报错时用它，不要拿读网页的工具去打开搜索引擎的结果页（会被当成爬虫拦下）。"
+    "摘要不是原文，要引用就打开那一页读到原文。",
+    {
+        "query": _text("搜索词，最长 128 字；可用 site:、-site:、after:、before:"),
+        "limit": {"type": "integer", "description": "要几条，默认 8，最多 20"},
+    },
+    ["query"],
+)
+
 PLATFORM_TOOLS = ToolTable(
     (
         _tool(
@@ -811,19 +827,7 @@ PLATFORM_TOOLS = ToolTable(
             },
             ["url"],
         ),
-        _tool(
-            "cheese_search_web",
-            "让平台搜网页，返回前几条结果的标题、网址、摘要和日期。没有 WebSearch、或 "
-            "WebSearch 报错时用它，不要拿 cheese_fetch 去打开搜索引擎的结果页（会被当成"
-            "爬虫拦下）。摘要不是事实，要引用就用 cheese_fetch 打开那一页读到原文。",
-            {
-                "query": _text(
-                    "搜索词，最长 128 字；可用 site:、-site:、after:、before:"
-                ),
-                "limit": {"type": "integer", "description": "要几条，默认 8，最多 20"},
-            },
-            ["query"],
-        ),
+        _WEB_SEARCH,
         _tool(
             "cheese_docs_search",
             "按关键词检索知是的使用文档（怎么建项目、验收、设备、额度……），返回相关的页、"
@@ -1374,7 +1378,7 @@ DELEGATED_TOOLS = ToolTable(
             {"project": _text("只看这个项目的（项目短名）；省略看全部")},
         ),
         _tool(
-            "cheese_search",
+            "cheese_work_search",
             "按关键词搜用户能看到的工作内容：频道、消息、任务、文档段落、周报、资料库文件、"
             "产物，或一个空间里的题目和他的草稿。不给 where 搜他最近的几个项目；where "
             "给项目短名只搜那个项目，给 spaces/4 搜那个空间的题目（query 留空列出最近的"
@@ -1515,18 +1519,7 @@ DELEGATED_TOOLS = ToolTable(
             },
             ["url"],
         ),
-        _tool(
-            "cheese_web_search",
-            "搜网页，返回前几条结果的标题、网址、摘要和日期。摘要是搜索服务写的，要引用"
-            "就用 cheese_web_fetch 打开那一页读原文。搜索词里不要写进用户工作里的内容。",
-            {
-                "query": _text(
-                    "搜索词，最长 128 字；可用 site:、-site:、after:、before:"
-                ),
-                "limit": {"type": "integer", "description": "要几条，默认 8，最多 20"},
-            },
-            ["query"],
-        ),
+        _WEB_SEARCH,
         _tool(
             "cheese_project_search",
             "按关键词搜这个项目：频道名、消息、文档段落、评论、周报、任务卡、资料库文件名、"
@@ -1618,7 +1611,7 @@ DELEGATED_TOOLS = ToolTable(
 #: 文档检索不在其中：个人芝士没有话题，只读谁都能读的那些页。
 _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     "cheese_fetch",
-    "cheese_search_web",
+    "cheese_web_search",
     "platform_request",
     "cheese_docs_search",
     "cheese_docs_read",
@@ -2111,14 +2104,14 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": "/notifications/preferences/agent/set",
             "body": body,
         }
-    if tool == "cheese_search":
+    if tool == "cheese_work_search":
         where = (args.get("where") or "").strip().strip("/")
         space = re.fullmatch(r"spaces/(\d+)", where)
         if space:
             body = {"space": int(space.group(1)), "query": args.get("query") or ""}
             return {"method": "POST", "path": "/task-drafts/agent/search", "body": body}
         if not (args.get("query") or "").strip():
-            raise ValueError("cheese_search 需要 query（只有搜空间里的题目时可以留空）")
+            raise ValueError("cheese_work_search 需要 query（只有搜空间里的题目时可以留空）")
         body = {"query": args["query"], **({"project": where} if where else {})}
         return {"method": "POST", "path": "/assistant/agent/search", "body": body}
     if tool == "cheese_help":
@@ -2156,7 +2149,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_space_materials":
         body = {"space": args["space"], **_given(args, "material", "pages")}
         return {"method": "POST", "path": "/task-drafts/agent/materials", "body": body}
-    if tool == "cheese_search_web":
+    if tool == "cheese_web_search":
         query = {"q": args["query"], "topic": topic, "project": project}
         if args.get("limit"):
             query["limit"] = int(args["limit"])
@@ -3813,13 +3806,6 @@ def _web_fetch(args: dict, host):
     return _say_fetch(args, answered, host.environ) if answered is not None else said
 
 
-def _web_search(args: dict, host):
-    answered, said = _act(
-        {"kind": "web_search", **_given(args, "query", "limit")}, host
-    )
-    return _say_search(args, answered, host.environ) if answered is not None else said
-
-
 _STEPS = {
     "cheese_message_send": _acting("message", "where", "text"),
     "cheese_task_open": _acting("task", "where", "title", "text"),
@@ -3830,7 +3816,6 @@ _STEPS = {
         "channel", "where", "title", "text", "members_only"
     ),
     "cheese_web_fetch": _web_fetch,
-    "cheese_web_search": _web_search,
     "chat_send": _chat_send,
     "cheese_task": _task,
     "cheese_chat_get": _chat_get,
@@ -4117,7 +4102,7 @@ def _say_search(args, data, env) -> str:
             f"{n}. {r.get('title') or r.get('url')}{dated}\n   {r.get('url')}\n"
             f"   {(r.get('snippet') or '')[:_SEARCH_SNIPPET_CHARS]}"
         )
-    lines.append("\n摘要是搜索服务写的，要引用就用 cheese_fetch 打开那一页读原文。")
+    lines.append("\n摘要是搜索服务写的，要引用就打开那一页读原文。")
     return "\n".join(lines)
 
 
@@ -4348,7 +4333,7 @@ _SAY = {
     ),
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
-    "cheese_search_web": _say_search,
+    "cheese_web_search": _say_search,
     "cheese_docs_search": _say_docs_search,
     "cheese_docs_read": _say_docs_read,
     "cheese_project_search": _say_project_search,
@@ -4358,7 +4343,7 @@ _SAY = {
     "cheese_inbox": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_read": _say_read,
     "cheese_settings_set": lambda a, d, e: (d or {}).get("text") or "",
-    "cheese_search": lambda a, d, e: (
+    "cheese_work_search": lambda a, d, e: (
         _say_task_search(a, d, e)
         if "tasks" in (d or {})
         else (d or {}).get("text") or ""

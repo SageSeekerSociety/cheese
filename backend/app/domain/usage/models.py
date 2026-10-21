@@ -241,9 +241,16 @@ class ComputeGrant(UuidPk, Timestamps, Base):
 #: The ``route`` of a usage row that charges cloud compute rather than a model
 #: call (``usage.compute``): no tokens, and no part of any count of calls.
 COMPUTE_ROUTE = "compute"
-#: The ``route`` of a usage row that charges a web search the platform ran
-#: itself (``usage.search``): like a compute charge, credits and no call.
+#: The ``route`` of a usage row that charges web searches the platform asked
+#: for (`cheese_web_search`): like a compute charge, credits and no call. The
+#: searches are made on the caller's gateway key and drained with its model
+#: calls (``agent.gateway_spend``), which lands the gateway's search line
+#: (``GATEWAY_SEARCH_MODEL``) under this route and ``SEARCH_KIND``.
 SEARCH_ROUTE = "search"
+SEARCH_KIND = "web_search"
+#: The name the gateway gives its DeepSeek search tool's spend
+#: (deploy/gateway/deepseek_search.py, ``search_tools`` in config.yaml).
+GATEWAY_SEARCH_MODEL = "deepseek/search"
 #: The routes of rows that charge credits for something other than a model
 #: call.
 NOT_MODEL_CALLS = (COMPUTE_ROUTE, SEARCH_ROUTE)
@@ -413,7 +420,7 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     # The supply the traffic actually took (issue #218): "gateway" (LiteLLM),
     # "subscription" (metering proxy), "native" (profile-pinned credentials);
     # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``), "search"
-    # for a web search the platform ran (``SEARCH_ROUTE``).
+    # for web searches the platform asked the gateway for (``SEARCH_ROUTE``).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
     # The team that paid, and the credits charged for this row (#2397). Every
