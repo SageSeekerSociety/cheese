@@ -25,7 +25,7 @@ import type { RailMemberMark } from '@/lib/memberActivity'
 import type { RowLight } from '@/lib/roomLight'
 import type { VisibleRow } from '@/lib/topicTree'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailLight from './TopicRailLight.vue'
@@ -130,6 +130,31 @@ function onMenuToggle(open: boolean) {
   if (!open) menuPoint.value = null
   emit('update:menu-open', open)
 }
+
+// 点下去到新页面出来之间，这一行一直亮着。只靠按下的那一下不够：手指抬起后它又变回
+// 原样，等得久的人会以为没点到。选中态到了就熄；一直没选中（跳转被挡下）最多亮十秒。
+const pending = ref(false)
+let pendingTimer: number | undefined
+function choose(): void {
+  // 点的就是当前这一行：不跳转，也就没有「等它选中」这回事，别亮着不放。
+  if (props.selected) {
+    emit('select', props.row.topic.id)
+    return
+  }
+  pending.value = true
+  window.clearTimeout(pendingTimer)
+  pendingTimer = window.setTimeout(() => (pending.value = false), 10_000)
+  emit('select', props.row.topic.id)
+}
+watch(
+  () => props.selected,
+  (on) => {
+    if (!on) return
+    pending.value = false
+    window.clearTimeout(pendingTimer)
+  }
+)
+onBeforeUnmount(() => window.clearTimeout(pendingTimer))
 </script>
 
 <template>
@@ -147,6 +172,7 @@ function onMenuToggle(open: boolean) {
       'topic-row--tasks': !!taskCount,
       'topic-row--tasks-collapsed': !!taskCount && tasksCollapsed === true,
       'is-active': selected,
+      'is-pending': pending,
       'is-sub': row.depth > 0,
       'is-menu-open': menuOpen,
     }"
@@ -154,7 +180,7 @@ function onMenuToggle(open: boolean) {
       paddingInlineStart: 8 + row.depth * 20 + 'px',
       '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
     }"
-    @click="emit('select', row.topic.id)"
+    @click="choose"
     @mouseenter="emit('hover', row.topic.id)"
     @mouseleave="emit('leave')"
     @focusin="emit('hover', row.topic.id)"
@@ -365,6 +391,15 @@ function onMenuToggle(open: boolean) {
 }
 /* 选中的行 hover 不能倒退回 hover 档——否则鼠标一扫过，选中态反而变浅。 */
 .topic-row.is-active:hover {
+  background: var(--line-2);
+}
+/* 按下去那一帧就换底色。触屏上没有 hover，点了之后页面要等一下才换，中间这一下
+   要是也没有变化，看起来就像没点到。 */
+.topic-row:active {
+  background: var(--line-2);
+}
+/* 手指抬起之后到新页面出来之前，这一行保持亮着（见脚本里的 pending）。 */
+.topic-row.is-pending {
   background: var(--line-2);
 }
 

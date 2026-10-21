@@ -12,7 +12,7 @@
 import type { RowLight } from '@/lib/roomLight'
 import type { RailTask } from './moreTasks'
 
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailLight from './TopicRailLight.vue'
@@ -43,17 +43,42 @@ const emit = defineEmits<{
   // 毫秒，打开它就少等这一段。
   (e: 'press', task: { roomId: string; taskId: string }): void
 }>()
+
+// 点下去到任务页出来之间，这一行一直亮着：只靠按下的那一下，手指抬起后又变回原样，
+// 等得久的人会以为没点到（同 TopicRailRow）。
+const pending = ref(false)
+let pendingTimer: number | undefined
+function choose(): void {
+  // 点的就是当前这一行：不跳转，也就没有「等它选中」这回事，别亮着不放。
+  if (props.selected) {
+    emit('select', { roomId: props.task.room_id, taskId: props.task.id })
+    return
+  }
+  pending.value = true
+  window.clearTimeout(pendingTimer)
+  pendingTimer = window.setTimeout(() => (pending.value = false), 10_000)
+  emit('select', { roomId: props.task.room_id, taskId: props.task.id })
+}
+watch(
+  () => props.selected,
+  (on) => {
+    if (!on) return
+    pending.value = false
+    window.clearTimeout(pendingTimer)
+  }
+)
+onBeforeUnmount(() => window.clearTimeout(pendingTimer))
 </script>
 
 <template>
   <button
     type="button"
     class="rail-task"
-    :class="{ 'rail-task--selected': selected, 'rail-task--filled': fillingIn }"
+    :class="{ 'rail-task--selected': selected, 'rail-task--filled': fillingIn, 'rail-task--pending': pending }"
     :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
     :title="fillingIn ? t('work.sidebar.fillInTip') : undefined"
-    @click="emit('select', { roomId: task.room_id, taskId: task.id })"
+    @click="choose"
     @pointerdown="
       $event.pointerType === 'mouse' && $event.button === 0 && emit('press', { roomId: task.room_id, taskId: task.id })
     "
@@ -93,6 +118,16 @@ const emit = defineEmits<{
 }
 .rail-task:hover {
   background: var(--fill-2);
+  color: var(--ink);
+}
+/* 按下那一帧就换底色：触屏没有 hover，任务页又要等一下才出来。 */
+.rail-task:active {
+  background: var(--line-2);
+  color: var(--ink);
+}
+/* 手指抬起之后到任务页出来之前，这一行保持亮着。 */
+.rail-task--pending {
+  background: var(--line-2);
   color: var(--ink);
 }
 /* 选中沿用频道行那一档：底色 --line-2，标题再重一层。这条 rail 的底是 --canvas，
