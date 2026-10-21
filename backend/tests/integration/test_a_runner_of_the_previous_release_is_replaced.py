@@ -776,12 +776,9 @@ async def test_a_drain_left_by_another_runner_does_not_count_for_this_one(
     hub.ping = dict(IDLE)
 
     async def first_runner():
-        hub.old_ping = {**AT_WORK, "launch": "first"}
         first = _backend(client, hub, tmp_path)
         await _seated(client, project, topic)
-        await _started_as_this_release_would(
-            client, hub, tmp_path, ref(project, topic)
-        )
+        await _started_as_this_release_would(client, hub, tmp_path, ref(project, topic))
         hub.old = True
         hub.old_ping = {**AT_WORK, "launch": "first"}
         await first.recover_sessions()
