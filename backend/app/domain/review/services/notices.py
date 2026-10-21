@@ -54,14 +54,12 @@ from app.domain.review.room_notices import (
     _notify_ready as _notify_ready_from_room,
 )
 from app.domain.review.room_notices import (
-    _record_task_nudge as _record_task_nudge_from_room,
-)
-from app.domain.review.room_notices import (
     _settle_the_card as _settle_the_card_from_room,
 )
 from app.domain.review.room_notices import (
     _tell_the_reviewer as _tell_the_reviewer_from_room,
 )
+from app.domain.room_task import heard
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
@@ -199,12 +197,14 @@ async def _note_needs_human(
 async def _record_task_nudge(
     self: pkg.AcceptService, *, topic, task, content, headline, meta, replaces=None
 ):
-    return await _record_task_nudge_from_room(
+    """Wake the task's teammate with ``content`` and say ``headline`` where
+    people read it (`room_task.heard.act`)."""
+    return await heard.act(
         self._session,
         topic=topic,
         task=task,
-        content=content,
-        headline=headline,
+        said=content,
+        line=headline,
         meta=meta,
         replaces=replaces,
         announce=_announce_of(self),
@@ -281,10 +281,6 @@ async def _note_merge_blocked(
     )
 
 
-#: 任务已关闭时替代「照做」指令的那句话 —— 卡上的提示照旧，只是没人被叫起来。
-_CLOSED_TASK_ACTION = "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
-
-
 async def _note_merge_stop_and_wake(
     self: pkg.AcceptService,
     *,
@@ -318,7 +314,7 @@ async def _note_merge_stop_and_wake(
     await self._record_task_nudge(
         topic=topic,
         task=task,
-        content=f"{lead}{action if actionable else _CLOSED_TASK_ACTION}",
+        content=f"{lead}{action if actionable else heard.TASK_CLOSED}",
         headline=headline,
         meta=meta,
     )
@@ -471,8 +467,7 @@ async def _dispatch_nudges(
                 f"任务 {card.task_id}："
                 f'先执行 cd "$(cheese worktree {card.task_id})"。\n' + nudge.content
                 if actionable
-                else f"{nudge.event}。原任务已关闭或不存在；"
-                "如需继续修改，请由新任务承接。"
+                else f"{nudge.event}。{heard.TASK_CLOSED}"
             ),
             headline=nudge.event,
             meta=notice(

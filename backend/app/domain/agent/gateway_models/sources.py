@@ -25,15 +25,20 @@ from app.domain.agent.gateway_models._shared import (
     _MID_SYSTEM_FIELD,
     _WRITE_ERRORS,
 )
+from app.domain.agent.gateway_models.guards import _refuse_unserving_source
 from app.domain.agent.gateway_models_helpers import (
     _api_base_for,
     _bare_upstream,
     _prices_for_gateway,
+    _refuse_cleared_prices,
     _refuse_config_source,
     _require_price_when_selectable,
+    _require_prices,
+    _same_prices,
     _source_prices,
     _source_snapshot,
     _source_target,
+    _spend_cap,
     _translated_to_chat,
     _upstream_of,
     _validate_api_base,
@@ -123,6 +128,40 @@ async def _fold_system_messages(
             )
 
 
+async def _same_upstream_caps(
+    service: pkg.GatewayModelsService,
+    *,
+    upstream_model: str,
+    cap: float | None,
+    edited: str,
+) -> list[str]:
+    """The other runtime rows on ``upstream_model`` whose cap is not ``cap``.
+
+    spend_cap.py counts a row's cap against everything its upstream model has
+    been charged, whichever row or model name carried the calls, so one cap per
+    upstream is the only setting that means anything: two rows with different
+    caps would refuse at different totals of the same bill. A config.yaml row
+    cannot be rewritten from here, so one that disagrees refuses the edit.
+    """
+    stale: list[str] = []
+    for model in await service._require_models():
+        for source in model.sources:
+            if source.upstream_model != upstream_model or source.source_id == edited:
+                continue
+            if _spend_cap(source) == cap:
+                continue
+            if source.origin == "config":
+                raise BadRequestError(
+                    say(
+                        "sourceSpendCapInConfig",
+                        name=model.name,
+                        upstream=upstream_model,
+                    )
+                )
+            stale.append(source.source_id)
+    return stale
+
+
 async def add_source(
     service: pkg.GatewayModelsService,
     *,
@@ -139,6 +178,7 @@ async def add_source(
         _validate_api_base(api_base)
         free = bool(data.get("free"))
         prices = _source_prices(data.get("prices"), free)
+        _require_prices(prices, free)
         _require_price_when_selectable(model.selectable, prices, free)
         # 模型那一层的元数据从已有那一行抄：同组每一行必须一字不差。
         catalogue = dict(model.sources[0].catalogue if model.sources else {})
@@ -211,6 +251,16 @@ async def update_source(
             bare = _bare_upstream(source)
             kwargs["upstream_model"] = upstream_string(data["protocol"], bare)
         upstream_model = kwargs.get("upstream_model", source.upstream_model)
+        others: list[str] = []
+        if "spend_cap_usd" in data:
+            # Checked before anything is written: a refusal leaves every row as it was.
+            cap = data["spend_cap_usd"]
+            others = await _same_upstream_caps(
+                service, upstream_model=upstream_model, cap=cap, edited=source_id
+            )
+            kwargs["spend_cap_usd"] = cap or 0.0
+            # The audit names every row the edit wrote, not only the one asked for.
+            data["spend_cap_also_on"] = others
         api_base = data.get("api_base")
         if api_base is None and "upstream_model" in kwargs:
             # 换了协议：已存的地址也要按新协议的写法收一遍。
@@ -227,10 +277,18 @@ async def update_source(
             kwargs["api_key"] = data["api_key"]
         free = source.free if data.get("free") is None else bool(data["free"])
         prices = data.get("prices")
-        if prices is not None or data.get("free") is not None:
+        # Only a change is checked and written: a save that carries the prices
+        # as they are (the page used to send them on every save) must not be
+        # refused for a row priced before today's rules, nor rewrite it.
+        if free != source.free or (
+            prices is not None
+            and not _same_prices(_prices_for_gateway(prices), source.prices)
+        ):
             effective = _source_prices(
                 source.prices if prices is None else prices, free
             )
+            _refuse_cleared_prices(source.prices, effective)
+            _require_prices(effective, free)
             _require_price_when_selectable(model.selectable, effective, free)
             kwargs["prices"] = _prices_for_gateway(effective)
             kwargs["free"] = free
@@ -238,6 +296,10 @@ async def update_source(
             if data.get(field) is not None:
                 kwargs[field] = data[field]
         await service._admin.update_model(**kwargs)  # type: ignore[union-attr]
+        for other in others:
+            await service._admin.update_model(  # type: ignore[union-attr]
+                model_id=other, spend_cap_usd=kwargs["spend_cap_usd"]
+            )
         await service._after_write()
         return {"model": await service._read_back(name, {}, model.model_id)}
 
@@ -259,6 +321,7 @@ async def delete_source(
     async def work() -> dict:
         model, source = await service._current_source(name, source_id)
         _refuse_config_source(model, source)
+        await _refuse_unserving_source(service, model, source.source_id)
         await service._admin.delete_model(  # type: ignore[union-attr]
             source.source_id
         )
@@ -287,6 +350,8 @@ async def set_source_blocked(
     async def work() -> dict:
         model, source = await service._current_source(name, source_id)
         _refuse_config_source(model, source)
+        if blocked:
+            await _refuse_unserving_source(service, model, source.source_id)
         await service._admin.set_blocked(  # type: ignore[union-attr]
             source.source_id, blocked
         )

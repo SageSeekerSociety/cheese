@@ -11,7 +11,8 @@ The rules are the team's 《内测激励与裂变机制设计方案》:
 * An inviter is paid at most 1,500 credits a month through invitations; past
   that the points are still recorded.
 
-Every pack lasts 90 days and is spent after the month's plan credits. Each step
+Every pack lasts as long as any reward pack (``REWARD_LIFETIME``) and is
+spent after the month's plan credits. Each step
 is a ``CreditReward`` keyed by the invitee, so it pays once whatever retries.
 """
 
@@ -38,7 +39,6 @@ INVITER_CREDITS = 150
 INVITER_POINTS = 50
 INVITER_MONTHLY_CAP = 1500
 ACTIVATION_WINDOW = timedelta(days=7)
-PACK_LIFETIME = timedelta(days=90)
 
 
 async def personal_code(
@@ -110,7 +110,6 @@ async def on_onboarded(session: AsyncSession, user_id: int) -> None:
         credits=JOIN_CREDITS,
         reason="Invitation: first project",
         actor="system",
-        expires_at=now + PACK_LIFETIME,
     )
 
 
@@ -145,7 +144,6 @@ async def on_accepted(session: AsyncSession, handle: str | None) -> None:
         credits=ACTIVATED_CREDITS,
         reason="Invitation: first accepted delivery",
         actor="system",
-        expires_at=now + PACK_LIFETIME,
     )
     # Two friends getting started at once must not both fit under the cap:
     # the inviter's own code row is the lock their payouts queue on.
@@ -162,7 +160,6 @@ async def on_accepted(session: AsyncSession, handle: str | None) -> None:
         points=INVITER_POINTS,
         reason=f"Invitation: @{user.username} got started",
         actor="system",
-        expires_at=now + PACK_LIFETIME,
     )
 
 
@@ -246,7 +243,6 @@ async def overview(
         "unlocked": code.unlocked_at is not None,
         "unlock_uses": UNLOCKED_USES,
         "invite_credits": rewards["invite_credits"],
-        "points": rewards["points"],
         "invitees": people,
     }
 

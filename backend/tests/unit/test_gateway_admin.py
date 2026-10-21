@@ -173,24 +173,32 @@ async def test_a_half_priced_model_is_refused_as_a_menu_item():
             ),
         )
 
-    assert "刹车" in str(refused.value)  # 那句理由要给到人
+    assert "输入与输出单价" in str(refused.value)  # 那句理由要给到人
     assert gw.paths() == []  # 还没问网关就先拒了
 
 
 @pytest.mark.anyio
-async def test_an_unpriced_model_may_exist_so_long_as_it_is_not_offered():
-    """没价本身不是错 —— 错的是「没价还上架」。不上架的模型照常建。"""
+async def test_an_unpriced_model_is_refused_even_when_it_is_not_offered():
+    """不上架也要有价：平台按模型名的单价给它的全部用量计费（订阅的 Claude 模型就只
+    剩单价），没价的那部分按零记。只有声明出来的免费线路可以两向写 0。"""
     gw = _Gateway()
     service = GatewayModelsService(_StubDb(), gw.admin())
+
+    with pytest.raises(BadRequestError):
+        await service.add(
+            handle="admin",
+            payload=ModelCreate(
+                name="quiet", upstream_model="anthropic/x", selectable=False
+            ),
+        )
+    assert gw.paths() == []
 
     out = await service.add(
         handle="admin",
         payload=ModelCreate(
-            name="quiet", upstream_model="anthropic/x", selectable=False
+            name="quiet", upstream_model="anthropic/x", selectable=False, free=True
         ),
     )
-
-    assert "/model/new" in gw.paths()
     assert out["model"]["name"] == "quiet"
 
 
@@ -557,6 +565,7 @@ async def test_the_meters_chatgpt_entry_is_accepted_over_plain_http():
             upstream_model="openai/gpt-5.2-codex",
             api_base=METER_CHATGPT_BASE,
             api_key="sk-cheese-chatgpt-listener-key",
+            prices={"input": 1e-6, "output": 2e-6},
         ),
     )
 

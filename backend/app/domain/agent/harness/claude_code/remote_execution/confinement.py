@@ -255,13 +255,16 @@ def sandbox_argv(
     claude,
     sockets,
     fds,
+    programs=(),
     network=True,
 ):
     """`argv` run in a bubblewrap sandbox: the room's processes see the machine
     read-only, and of the owner's home only what is bound back below.
 
     Writable: the room's home and its project's package store. Read-only: the
-    machine's toolchain, the release store and the Claude build. Hidden: every
+    machine's toolchain, the release store, the Claude build, and `programs`,
+    what the connector placed under the owner's home for the room to run
+    where the system had none good enough (its git). Hidden: every
     other room, every other project's store, the owner's own files (the
     connector's credential is among them), the owner's runtime directory,
     whose user bus would start processes outside, and the Docker daemon's
@@ -359,6 +362,7 @@ def sandbox_argv(
         ("--ro-bind", toolchain),
         ("--ro-bind", releases),
         ("--ro-bind", claude.parent),
+        *(("--ro-bind", path) for path in programs if path.is_dir()),
     ):
         command += [option, str(path), str(path)]
     command += [

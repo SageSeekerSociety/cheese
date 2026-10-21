@@ -63,14 +63,6 @@
             {{ t('account.invites.earned.viewCredits') }}<v-icon icon="mdi-chevron-right" size="16" />
           </NavLink>
         </div>
-        <div class="srow">
-          <span class="srow__k">{{ t('account.invites.earned.points') }}</span>
-          <span class="srow__v"
-            ><span class="srow__strong t-num">{{
-              t('account.invites.earned.pointsValue', { n: invites.points })
-            }}</span></span
-          >
-        </div>
       </section>
 
       <section class="settings-card">

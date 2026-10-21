@@ -130,6 +130,11 @@ export function fmtMonthDay(iso: string, locale: string): string {
   return new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(new Date(iso))
 }
 
+/** 带年份的日期：一个额度包能用到明年，只写月日会读成今年、像是已经过期。 */
+export function fmtDate(iso: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(iso))
+}
+
 export function fmtResetAt(iso: string, locale: string): string {
   return new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(
     new Date(iso)

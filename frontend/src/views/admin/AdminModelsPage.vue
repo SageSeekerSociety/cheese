@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useAdminModels } from '@/composables/useAdminModels'
@@ -16,6 +17,7 @@ import AdminModelsHeader from '@/components/admin/models/AdminModelsHeader.vue'
 import AdminModelsTable from '@/components/admin/models/AdminModelsTable.vue'
 import AdminSourceFormDialog from '@/components/admin/models/AdminSourceFormDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import { perMillionUsd, PRICE_LABEL_KEY } from '@/lib/adminSources'
 
 // 管理后台的「模型管理」（`/admin/models`）。它管的是**网关那一侧的模型台账**，不是
 // 平台自己声明的东西 —— 页面上的每一行都来自 `GET /model/info`，每一处改动都落回网关。
@@ -106,6 +108,9 @@ const {
   openAddSource,
   openEditSource,
   onSourceSubmit,
+  priceChange,
+  confirmPriceChange,
+  closePriceChange,
   moveSource,
   sourceDeleteTarget,
   askSourceDelete,
@@ -124,6 +129,20 @@ const {
   auditExpanded,
   toggleAuditDiff,
 } = useAdminModels()
+
+/** 改价确认的正文：每一档「改前 → 改后」，再说一句从此全部用量都按新价计。 */
+const priceChangeBody = computed(() => {
+  const pending = priceChange.value
+  if (!pending) return ''
+  const lines = pending.changes.map((c) =>
+    t('models.priceChange.line', {
+      price: t(PRICE_LABEL_KEY[c.key]),
+      before: perMillionUsd(c.before),
+      after: perMillionUsd(c.after),
+    })
+  )
+  return [...lines, t('models.priceChange.effect', { name: pending.name })].join(' ')
+})
 </script>
 
 <template>
@@ -251,6 +270,17 @@ const {
       :saving="budgetSaving"
       :error="budgetError"
       @submit="onBudgetSubmit"
+    />
+
+    <!-- 改价确认：每一档改前 → 改后，并说清这个模型此后的全部用量都按新价计。 -->
+    <AdminModelsConfirmDialog
+      :model-value="!!priceChange"
+      :title="t('models.priceChange.title', { name: priceChange?.name ?? '' })"
+      :body="priceChangeBody"
+      :confirm-label="t('models.priceChange.confirm')"
+      :busy="sourceSaving"
+      @update:model-value="closePriceChange"
+      @confirm="confirmPriceChange"
     />
 
     <!-- 删除确认。说清后果（模型从网关移除、项目再也选不到它）。 -->

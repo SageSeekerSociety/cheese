@@ -2,8 +2,10 @@
 document toolchain, the forge CLIs, ripgrep for the search under pi's grep and
 find, browser automation, and the runtime the connector itself needs where
 the system lacks it (Python and a POSIX shell on Windows, a recent enough Python
-elsewhere), and on Linux the bwrap a room's sandbox is made with, which it
-places whatever the system has.
+elsewhere, and on Linux a recent enough tmux and git), and on Linux what a
+room's sandbox is made with, which it places whatever the system has: bwrap,
+and the host tools a platform host gives its sandboxes a network and a disk
+limit with.
 
 The single source for these — versions, where each artifact comes from, and its
 digest. It lives in the agent layer for the same reason claude's pin lives in
@@ -59,6 +61,11 @@ PBS_PYTHON_VERSION = "3.13.16"
 #: The bwrap a Linux connector places for its rooms' sandboxes, whatever the
 #: system has (`cli/internal/devenv`): built by `scripts/build-bubblewrap.sh`.
 BUBBLEWRAP_REVISION = "0.13.0-cheese.1"
+#: What else a Linux connector places (`cli/internal/devenv`), built by
+#: `scripts/build-host-tools.sh`: the host tools (ip, iptables, mkfs.xfs,
+#: xfs_quota) whatever the system has, and tmux and git where the system's are
+#: missing or too old.
+HOST_TOOLS_REVISION = "1"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -87,6 +94,10 @@ _FJ_BASE = (
 _BWRAP_BASE = (
     "https://github.com/SageSeekerSociety/cheese/releases/download/"
     f"bubblewrap-v{BUBBLEWRAP_REVISION}/bubblewrap-{BUBBLEWRAP_REVISION}"
+)
+_HOST_TOOLS_BASE = (
+    "https://github.com/SageSeekerSociety/cheese/releases/download/"
+    f"host-tools-v{HOST_TOOLS_REVISION}"
 )
 _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 
@@ -122,6 +133,44 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         f"{_BWRAP_BASE}-linux-arm64.tar.gz",
         "ef555f752c2a17c1fd74f989aae0933599bbec1e1f900c3d7a96ab748d64e056",
         96939,
+        ".tar.gz",
+    ),
+    # scripts/build-host-tools.sh; digests and sizes of release host-tools-v1,
+    # checked against the downloaded files on 2026-10-21.
+    ("host-tools", "linux-x64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/host-tools-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
+        "b22f51834f5955f231ad2357e49a533b4aeff583c0fa61198f77c190ade7c62e",
+        1245095,
+        ".tar.gz",
+    ),
+    ("host-tools", "linux-arm64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/host-tools-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
+        "1ce3d1e744578a15e280722a7977634983c9af7af1a3eb66d0432d1ff1e603d4",
+        1280585,
+        ".tar.gz",
+    ),
+    ("tmux", "linux-x64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/tmux-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
+        "27fcfe08922accd5102a996956d8d9a47c396eaf02be38e007f712eabf5fa988",
+        619760,
+        ".tar.gz",
+    ),
+    ("tmux", "linux-arm64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/tmux-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
+        "44f41b69fdc861127d5821ae1b6d30feb158861ad552ad65397d2c103f839011",
+        615904,
+        ".tar.gz",
+    ),
+    ("git", "linux-x64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/git-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
+        "357d3f2f25f7ac210bd5fee6aef2b2361c46b141789b8ae89b14c822331ac4cc",
+        7704815,
+        ".tar.gz",
+    ),
+    ("git", "linux-arm64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/git-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
+        "8b1dc80b3debcd11e673963104dbce20f7c194cfcc1c4237e341e3e090a4de52",
+        7958737,
         ".tar.gz",
     ),
     # scripts/build-forge-cli.sh applies the merged-status localization fix.

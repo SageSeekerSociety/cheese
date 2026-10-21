@@ -990,3 +990,26 @@ def test_help_searches_the_manual_or_reads_one_page_of_it():
     read = cheese.request_plan("cheese_help", {"page": "accept"}, {})
     assert (asked["path"], asked["body"]) == ("/docs/agent/search", {"query": "验收"})
     assert (read["path"], read["body"]) == ("/docs/agent/read", {"page": "accept"})
+
+
+# --- handing work in for review ---------------------------------------------
+
+
+def test_filing_a_card_says_what_it_did_to_the_task():
+    """Filing is the teammate's own change to its task, so the reply says what
+    the board now shows: the task waits on review, the state it reported is
+    gone, and it cannot report again until the card comes back."""
+    host = Host(
+        {("POST", f"/topics/{_ROOM}/accept-card"): {"reviewer_handle": "alice"}}
+    )
+
+    said = run(
+        "cheese_accept_request",
+        {"subject": "feat: add the report", "completes_task": True},
+        host,
+    )
+
+    assert "等审" in said
+    assert "清掉" in said
+    assert "cheese_task_state" in said
+    assert "退回或作废" in said

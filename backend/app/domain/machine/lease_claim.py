@@ -36,8 +36,7 @@ CLAIM_RENEW_S = 10.0
 # machine that never finishes preparing: the call that waited on it was the
 # last the session had. Kept well inside the 660 s one tool call has in full,
 # so the attempt fails and the session is placed again while its caller still
-# has time. Minutes, not seconds: a first install on a Cloud host may add
-# packages with apt-get (`bootstrap.sandbox_tools`).
+# has time.
 INSTALL_MOST_S = 120.0
 # The calls into the machine one installation makes one after another: the ping
 # and the prepare that decide how to start the executor, the install itself, and
