@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.notices import blocked_report_reminder
 from app.domain.agent.harness.prompt import (
     UNTITLED_TASK,
     build_session_opening,
@@ -168,6 +169,12 @@ async def converse(
         prompt_text = f"{platform_prompt(UNTITLED_TASK)}\n\n{prompt_text}"
     if is_resume:
         prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
+    if prepared.blocked_report and not platform_turn:
+        # 「卡住了」通常是它在轮次末尾报的；下一轮是有人说话才开的，正是它该
+        # 重新报一次的时候。只问人开的那一轮：平台自己叫起来的一轮不是在回谁。
+        prompt_text = (
+            f"{platform_prompt(blocked_report_reminder(language))}\n\n{prompt_text}"
+        )
     prompt_text = publication_prompt(prompt_text, language)
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=prompt_built "

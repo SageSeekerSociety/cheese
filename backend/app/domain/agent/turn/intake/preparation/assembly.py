@@ -59,7 +59,7 @@ from app.domain.memory.files_store import memory_index
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
-from app.domain.room_task.models import TaskStatus, TaskTitleSource
+from app.domain.room_task.models import TaskProgress, TaskStatus, TaskTitleSource
 from app.domain.room_task.place import PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.thread.services import thread_opening
@@ -411,6 +411,7 @@ async def prepare(
             contributors=task.contributor_handles or (),
             closed=task.status == TaskStatus.closed,
         ),
+        blocked_report=task is not None and task.progress_state is TaskProgress.blocked,
         acting_agent=acting_agent,
         agent=agent,
         agent_pool=agent_pool,

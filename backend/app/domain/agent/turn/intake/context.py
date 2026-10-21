@@ -144,6 +144,11 @@ class TurnContext:
     # `memory/instructions.py`）。None = 「这一轮没走注入那条路」。
     memory: MemoryIndex | None
     prior_progress: list[dict]
+    #: 这件任务上一次的进度上报是「卡住了」（`Task.progress_state`）。有人说话、
+    #: 这一轮开了，平台就在输入前面问它一句还卡不卡（`blocked_report_reminder`）：
+    #: 「卡住了」通常是它在轮次末尾报的，等有人回话时上一轮早就结束了，而那条
+    #: 只在会话还在跑时才发得出来的提醒正好够不着（`StaleProgressReminder`）。
+    blocked_report: bool
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
     # For a 支线: the message it hangs under and what the main line said just
