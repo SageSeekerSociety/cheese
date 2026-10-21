@@ -45,6 +45,8 @@ export interface GatewayPrices {
   output?: number | null
   cache_read?: number | null
   cache_creation?: number | null
+  /** 一小时缓存写入（Anthropic 与五分钟那档分开定价；订阅计费读它）。 */
+  cache_creation_1h?: number | null
 }
 
 export type GatewayCapabilities = Partial<

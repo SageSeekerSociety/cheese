@@ -27,7 +27,7 @@ _NAME_PATTERN = r"^[A-Za-z0-9._-]+$"
 
 
 class ModelPrices(BaseModel):
-    """一条模型的四个单价。
+    """一条模型的单价。
 
     用 `None` 表示「没定」，不是 0：0 是「定成免费」，`None` 是「这一栏空着」，网关的写
     接口也按这个区分（`GatewayAdmin._price_params` 只传真数字，`None` 一个都不发）。
@@ -38,6 +38,8 @@ class ModelPrices(BaseModel):
     output: float | None = None
     cache_read: float | None = None
     cache_creation: float | None = None
+    # The one-hour cache write (`cache_creation_input_token_cost_above_1hr`).
+    cache_creation_1h: float | None = None
 
 
 class ModelCapabilities(BaseModel):

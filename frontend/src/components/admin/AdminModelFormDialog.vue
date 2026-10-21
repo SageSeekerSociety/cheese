@@ -34,6 +34,7 @@ export interface ModelFormPayload {
       output?: number | null
       cache_read?: number | null
       cache_creation?: number | null
+      cache_creation_1h?: number | null
     }
     order?: number
     free?: boolean

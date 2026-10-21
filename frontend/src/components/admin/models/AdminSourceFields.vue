@@ -206,9 +206,25 @@ function headerRowBad(h: HeaderDraft): boolean {
         hide-details
         @update:model-value="patchPrice('cacheCreation', $event)"
       />
+      <v-text-field
+        :model-value="draft.prices.cacheCreation1h"
+        autocomplete="off"
+        type="number"
+        variant="outlined"
+        density="comfortable"
+        :label="t('models.price.cacheCreation1h')"
+        hide-details
+        @update:model-value="patchPrice('cacheCreation1h', $event)"
+      />
     </div>
     <p v-if="problems.free" class="asf__hint asf__hint--bad t-meta-read">
       {{ t('models.source.field.zeroNeedsFree') }}
+    </p>
+    <p v-if="problems.unpriced" class="asf__hint asf__hint--bad t-meta-read">
+      {{ t('models.source.field.needsPrices') }}
+    </p>
+    <p v-if="problems.cleared" class="asf__hint asf__hint--bad t-meta-read">
+      {{ t('models.source.field.priceCleared') }}
     </p>
 
     <!-- 消费上限只在编辑时给：加线路时服务端从同一上游的线路抄过来，这里填了也是另一个数。 -->

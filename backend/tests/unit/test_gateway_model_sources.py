@@ -447,7 +447,8 @@ async def test_a_reorder_naming_a_config_source_writes_nothing_at_all():
 
 @pytest.mark.anyio
 async def test_pausing_one_source_leaves_the_model_offered():
-    gw = _Gateway()
+    # Another offered model: pausing the last one is refused.
+    gw = _Gateway([_KIMI_CONFIG])
     service = _service(gw)
     await _two_runtime_sources(gw, service)
     first = gw.group("glm")[0]["model_info"]["id"]
@@ -842,7 +843,8 @@ async def test_a_source_ordered_after_the_others_needs_no_say_so():
 
 @pytest.mark.anyio
 async def test_a_source_added_to_a_paused_model_stays_paused():
-    gw = _Gateway()
+    # Another offered model: pausing the last one is refused.
+    gw = _Gateway([_KIMI_CONFIG])
     service = _service(gw)
     await _two_runtime_sources(gw, service)
     await service.set_blocked(handle="admin", name="glm", blocked=True)
@@ -1074,3 +1076,205 @@ async def test_a_cap_that_disagrees_with_a_config_row_on_its_upstream_is_refused
 def test_a_cap_must_be_a_positive_amount(cap):
     with pytest.raises(ValidationError):
         SourceUpdate(spend_cap_usd=cap)
+
+
+# --- What config.yaml's check held the file to, held at the write -------------
+
+
+@pytest.mark.anyio
+async def test_the_last_offered_model_cannot_be_paused_deleted_or_unlisted():
+    """With no offered model, every agent settings page is bare."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _two_runtime_sources(gw, service)
+    first, second = (r["model_info"]["id"] for r in gw.group("glm"))
+    await service.set_source_blocked(
+        handle="admin", name="glm", source_id=first, blocked=True
+    )
+    reset_cache()
+    before = len(gw.writes())
+
+    for attempt in (
+        lambda: service.set_blocked(handle="admin", name="glm", blocked=True),
+        lambda: service.delete(handle="admin", name="glm"),
+        lambda: service.update(
+            handle="admin", name="glm", payload=ModelUpdate(selectable=False)
+        ),
+        lambda: service.set_source_blocked(
+            handle="admin", name="glm", source_id=second, blocked=True
+        ),
+        lambda: service.delete_source(handle="admin", name="glm", source_id=second),
+    ):
+        with pytest.raises(BadRequestError):
+            await attempt()
+    assert len(gw.writes()) == before
+
+    # With another offered model the same pause goes through.
+    gw.rows.append(json.loads(json.dumps(_KIMI_CONFIG)))
+    reset_cache()
+    await service.set_blocked(handle="admin", name="glm", blocked=True)
+
+
+_CLAUDE_PRICES = {
+    "input": 2e-6,
+    "output": 1e-5,
+    "cache_read": 2e-7,
+    "cache_creation": 2.5e-6,
+    "cache_creation_1h": 4e-6,
+}
+
+
+async def _claude_price_row(service: GatewayModelsService) -> str:
+    """A subscription model's price row: unlisted, paused, no credential."""
+    await service.add(
+        handle="admin",
+        payload=ModelCreate(
+            name="claude-sonnet-5",
+            protocol="anthropic",
+            upstream_model="claude-sonnet-5",
+            prices=_CLAUDE_PRICES,
+        ),
+    )
+    reset_cache()
+    await service.set_blocked(handle="admin", name="claude-sonnet-5", blocked=True)
+    reset_cache()
+    return (await _listed(service, "claude-sonnet-5"))["sources"][0]["source_id"]
+
+
+@pytest.mark.anyio
+async def test_the_one_hour_cache_write_price_is_read_and_edited_on_the_page():
+    """Subscription billing reads it (`usage.pricing.Rate.cache_write_1h`)."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    source_id = await _claude_price_row(service)
+
+    (row,) = gw.group("claude-sonnet-5")
+    assert row["litellm_params"]["cache_creation_input_token_cost_above_1hr"] == 4e-6
+    assert "api_key" not in row["litellm_params"]
+    item = await _listed(service, "claude-sonnet-5")
+    assert item["sources"][0]["prices"]["cache_creation_1h"] == 4e-6
+
+    await service.update_source(
+        handle="admin",
+        name="claude-sonnet-5",
+        source_id=source_id,
+        payload=SourceUpdate(prices={**_CLAUDE_PRICES, "cache_creation_1h": 8e-6}),
+    )
+    assert (
+        gw.group("claude-sonnet-5")[0]["litellm_params"][
+            "cache_creation_input_token_cost_above_1hr"
+        ]
+        == 8e-6
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "prices",
+    [
+        {**_CLAUDE_PRICES, "output": None},
+        {**_CLAUDE_PRICES, "cache_creation_1h": None},
+        {"input": 2e-6, "output": 1e-5},
+    ],
+)
+async def test_a_price_a_row_has_can_be_changed_but_never_cleared(prices):
+    """Paused and unlisted or not, every price a row has is what usage under its
+    name is billed by; an edit that empties one is refused, nothing written."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    source_id = await _claude_price_row(service)
+    before = len(gw.writes())
+
+    with pytest.raises(BadRequestError):
+        await service.update_source(
+            handle="admin",
+            name="claude-sonnet-5",
+            source_id=source_id,
+            payload=SourceUpdate(prices=prices),
+        )
+    assert len(gw.writes()) == before
+
+
+@pytest.mark.anyio
+async def test_a_source_without_both_prices_is_refused_on_any_model():
+    """Not only on an offered model: an unlisted model is billed by its prices too."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    await _claude_price_row(service)
+    before = len(gw.writes())
+
+    with pytest.raises(BadRequestError):
+        await service.add_source(
+            handle="admin",
+            name="claude-sonnet-5",
+            payload=SourceCreate(
+                protocol="anthropic",
+                upstream_model="claude-sonnet-5",
+                order=5,
+                prices={"input": 2e-6},
+            ),
+        )
+    assert len(gw.writes()) == before
+
+
+@pytest.mark.anyio
+async def test_a_transcription_row_priced_on_input_only_is_kept_and_stays_editable():
+    """Speech to text charges for the audio in and nothing out: one zero is a
+    price. Saving the row with its prices as they are (the page sends them on
+    every save) rewrites nothing and is not refused."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    await service.add(
+        handle="admin",
+        payload=ModelCreate(
+            name="asr",
+            upstream_model="qwen-asr/flash",
+            prices={"input": 1.2394e-6, "output": 0},
+        ),
+    )
+    reset_cache()
+    source = gw.group("asr")[0]["model_info"]["id"]
+    before = len(gw.writes())
+
+    await service.update_source(
+        handle="admin",
+        name="asr",
+        source_id=source,
+        payload=SourceUpdate(
+            order=4, free=False, prices={"input": 1.2394e-6 * (1 + 1e-12), "output": 0}
+        ),
+    )
+
+    (sent,) = [json.loads(r.content) for r in gw.writes()[before:]]
+    assert sent["litellm_params"] == {"order": 4}
+    with pytest.raises(BadRequestError):
+        await service.add(
+            handle="admin",
+            payload=ModelCreate(
+                name="zeros", upstream_model="x/y", prices={"input": 0, "output": 0}
+            ),
+        )
+
+
+@pytest.mark.anyio
+async def test_a_row_priced_before_todays_rules_takes_an_unrelated_edit():
+    gw = _Gateway(
+        [
+            _KIMI_CONFIG,
+            {
+                "model_name": "legacy",
+                "litellm_params": {"model": "anthropic/legacy"},
+                "model_info": {"id": "rt-legacy", "db_model": True},
+            },
+        ]
+    )
+    service = _service(gw)
+
+    await service.update_source(
+        handle="admin",
+        name="legacy",
+        source_id="rt-legacy",
+        payload=SourceUpdate(order=2, free=False, prices={"input": None}),
+    )
+
+    assert gw.group("legacy")[0]["litellm_params"]["order"] == 2

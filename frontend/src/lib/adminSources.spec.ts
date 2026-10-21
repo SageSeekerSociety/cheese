@@ -2,7 +2,7 @@
  * 一条线路的草稿怎么变成请求体、什么样的草稿不放行。
  *
  * 钉的都是不读实现也说得出的规则：编辑时没填的凭据与没动过的请求头不能被当成「清空」
- * 发出去；零价只属于免费线路；认证头与带换行的值不能按线路写；「其他」协议发的是
+ * 发出去；两向都是 0 只属于免费线路；认证头与带换行的值不能按线路写；「其他」协议发的是
  * 完整模型串。
  */
 import type { SourceRow } from './adminModels'
@@ -18,6 +18,7 @@ import {
   draftValid,
   emptySourceDraft,
   mixesFreeAndPaid,
+  priceChanges,
   wouldLead,
 } from './adminSources'
 
@@ -82,7 +83,7 @@ describe('线路草稿 · 免费与零价', () => {
       ...emptySourceDraft(),
       upstream: 'm',
       free,
-      prices: { input, output, cacheRead: '', cacheCreation: '' },
+      prices: { input, output, cacheRead: '', cacheCreation: '', cacheCreation1h: '' },
     }
   }
 
@@ -93,20 +94,27 @@ describe('线路草稿 · 免费与零价', () => {
     expect(draftToFields(draft, 'add').prices).toMatchObject({ input: 0, output: 0 })
   })
 
-  it('没标免费的 0 价不放行', () => {
-    expect(draftProblems(priced('0', '2')).free).toBe(true)
-    expect(draftProblems(priced('1', '0')).free).toBe(true)
+  it('一向是 0 放行（语音转写的输出不收钱）；两向都是 0 要标免费', () => {
+    expect(draftValid(priced('1', '0'))).toBe(true)
+    expect(draftProblems(priced('0', '0')).free).toBe(true)
   })
 
-  it('两向都有价才算有价；只填一半不能上架', () => {
+  it('两向都 > 0 才能上架；只填一半、或一向是 0 不能', () => {
     expect(draftPriced(priced('1', '2'))).toBe(true)
     expect(draftPriced(priced('1', ''))).toBe(false)
+    expect(draftPriced(priced('1', '0'))).toBe(false)
   })
 })
 
 describe('线路草稿 · 请求头', () => {
   function withHeader(name: string, value: string) {
-    return { ...emptySourceDraft(), upstream: 'm', headersTouched: true, headers: [{ name, value }] }
+    return {
+      ...emptySourceDraft(),
+      upstream: 'm',
+      prices: { input: '1', output: '2', cacheRead: '', cacheCreation: '', cacheCreation1h: '' },
+      headersTouched: true,
+      headers: [{ name, value }],
+    }
   }
 
   it.each([
@@ -179,5 +187,52 @@ describe('线路草稿 · 新线路排在哪', () => {
   it('免费与付费混用要说出来', () => {
     expect(mixesFreeAndPaid([source({ free: false })], true)).toBe(true)
     expect(mixesFreeAndPaid([source({ free: false })], false)).toBe(false)
+  })
+})
+
+describe('线路草稿 · 每条线路都要有价', () => {
+  it('没标免费、输入或输出空着：不放行', () => {
+    const draft = { ...emptySourceDraft(), upstream: 'm' }
+    expect(draftProblems(draft).unpriced).toBe(true)
+    expect(draftValid(draft)).toBe(false)
+    expect(draftProblems({ ...draft, free: true }).unpriced).toBe(false)
+  })
+})
+
+describe('线路草稿 · 改价', () => {
+  it('列出改了的那几档，改前改后；没改的、没填的不列', () => {
+    const before = { input: 2e-6, output: 1e-5, cache_read: 2e-7 }
+    const changes = priceChanges(before, { input: 4e-6, output: 1e-5, cache_read: null, cache_creation_1h: 8e-6 })
+    expect(changes).toEqual([
+      { key: 'input', before: 2e-6, after: 4e-6 },
+      { key: 'cache_creation_1h', before: null, after: 8e-6 },
+    ])
+  })
+
+  it('价没动：什么都不列', () => {
+    const prices = { input: 2e-6, output: 1e-5 }
+    expect(priceChanges(prices, { ...prices })).toEqual([])
+  })
+})
+
+describe('线路草稿 · 编辑时价没动就不发', () => {
+  it('一条没价的老线路只改优先级：放行，请求里没有价也没有免费标记', () => {
+    const draft = { ...draftFromSource(source({ prices: {}, priced: false })), order: '3' }
+    expect(draftValid(draft)).toBe(true)
+    const fields = draftToFields(draft, 'edit')
+    expect(fields).not.toHaveProperty('prices')
+    expect(fields).not.toHaveProperty('free')
+  })
+
+  it('改了一档价：整份价连同免费标记一起发', () => {
+    const draft = draftFromSource(source())
+    const fields = draftToFields({ ...draft, prices: { ...draft.prices, input: '3' } }, 'edit')
+    expect(fields.prices?.input).toBeCloseTo(3e-6)
+    expect(fields.free).toBe(false)
+  })
+
+  it('清空一档已有的价：不放行', () => {
+    const draft = draftFromSource(source())
+    expect(draftProblems({ ...draft, prices: { ...draft.prices, output: '' } }).cleared).toBe(true)
   })
 })
