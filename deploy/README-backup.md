@@ -90,6 +90,11 @@ production's, so dev mirrors to its own prefix. Installed 2026-10-21 as
 Its first run uploaded 565 files (92.5 MB) to `r2://cheese-db-backups/dev-uploads/`
 with no failures.
 
+The freshness check's receipt reads the service's `ExecMainExitTimestamp`, and
+a oneshot service run by hand before its timer is enabled is unloaded once it
+exits and loses that timestamp. So the receipt works only from the first run
+after the timer is enabled.
+
 `UPLOADS_PREFIX` defaults to `prod-uploads`. Recovery refuses an existing
 destination, escaping object paths, empty mirrors and truncated downloads.
 Verification detects same-size corruption and never writes a mirror success
@@ -145,8 +150,9 @@ pg_restore --clean --if-exists --no-owner -d "$DBURL" ~/backups/cheese-<ts>.dump
 The weekly workflow runs three independent drills on the dev runner: the
 newest local DB dump, the latest R2 DB dump under the configured prefix, and
 restore plus byte verification of the configured uploads mirror: the prefix in
-`~/ops/r2.env` (`UPLOADS_PREFIX`, `prod-uploads` when unset), which on dev is
-production's `prod-uploads/`, not dev's own `dev-uploads/`. Failures in
+`~/ops/r2.env` (`UPLOADS_PREFIX`, `prod-uploads` when unset). On dev that is
+production's `prod-uploads/` on purpose: the dev runner is where the
+`prod-uploads` restore is proven (see Gaps below). Failures in
 one drill do not skip the other R2 drills. All recovery destinations are
 throwaway; the live DB and uploads directory are never opened for writing.
 
@@ -203,10 +209,7 @@ be "cleaned up" — in [`README-utf8-cutover.md`](README-utf8-cutover.md).
   `~/backups/.last-uploads-mirror-success`, refreshed from the dev unit's last
   successful exit; that unit mirrors `dev-uploads/`, and no check reads the
   age of `dev-uploads/` objects. The weekly uploads drill restores
-  `prod-uploads/`, so dev's own mirror has no scheduled restore proof. The
-  drill's dependency step still builds its environment with `python3 -m venv`,
-  which fails on the dev runner (no ensurepip); the backup and freshness
-  workflows moved to uv for that reason.
+  `prod-uploads/`, so dev's own mirror has no scheduled restore proof.
 - These jobs run on dev. The existing separate box uptime check is still needed
   to detect loss of the runner; R2 checks do not replace it.
 
