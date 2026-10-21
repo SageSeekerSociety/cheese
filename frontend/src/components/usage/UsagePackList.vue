@@ -11,6 +11,11 @@ defineProps<{ packs: UsagePack[] }>()
 
 const { t, locale } = useI18n()
 
+/** 透支时比例会小于 0，条画成空的那一头，不把它当宽度交给 CSS。 */
+function fill(pack: UsagePack): string {
+  return `${Math.min(100, Math.max(0, pack.remaining_ratio * 100))}%`
+}
+
 function name(pack: UsagePack): string {
   if (pack.source === 'admin_grant') return t('usage.packs.grant')
   if (pack.source === 'purchase') return t('usage.packs.purchase')
@@ -42,7 +47,7 @@ function meta(pack: UsagePack): string {
         <span class="upk__meta">{{ meta(pack) }}</span>
       </span>
       <span class="upk__bar" aria-hidden="true">
-        <span class="upk__fill" :style="{ width: `${pack.remaining_ratio * 100}%` }" />
+        <span class="upk__fill" :style="{ width: fill(pack) }" />
       </span>
       <span class="upk__left t-num">{{
         t('usage.packs.remaining', { n: fmtPoints(pack.credits_remaining, locale) })
