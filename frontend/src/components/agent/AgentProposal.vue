@@ -13,7 +13,7 @@
       <dt>{{ proposal.kind === 'task' ? t('tasks.assistant.proposal.channel') : t('tasks.assistant.proposal.to') }}</dt>
       <dd>{{ proposal.where }}</dd>
       <template v-if="proposal.kind === 'task'">
-        <dt>
+        <dt :class="{ 'aprop__at-field': pending }">
           <label :for="`aprop-title-${proposal.id}`">{{ t('tasks.assistant.proposal.title') }}</label>
         </dt>
         <dd>
@@ -28,7 +28,7 @@
           <span v-else>{{ proposal.title }}</span>
         </dd>
       </template>
-      <dt>
+      <dt :class="{ 'aprop__at-field': pending }">
         <label :for="`aprop-text-${proposal.id}`">{{
           proposal.kind === 'task' ? t('tasks.assistant.proposal.brief') : t('tasks.assistant.proposal.message')
         }}</label>
@@ -133,12 +133,17 @@ function send() {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 6px 12px;
-  align-items: baseline;
+  align-items: start;
   margin: 0;
 }
 
 .aprop__rows dt {
   color: var(--muted);
+}
+
+/* Level with the first line inside the field next to it (its border and padding). */
+.aprop__rows .aprop__at-field {
+  padding-top: 5px;
 }
 
 .aprop__rows dd {
