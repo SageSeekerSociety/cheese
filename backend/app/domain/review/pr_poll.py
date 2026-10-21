@@ -14,7 +14,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from sqlalchemy import or_, select
@@ -29,6 +29,7 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.oauth.services import handles_for_github_ids
 from app.domain.project.forge import (
     background_quota,
     quota_serves_background,
@@ -78,6 +79,14 @@ _transient_misses: dict[uuid.UUID, int] = {}
 # Keep the one-minute sweep within the forge API quota while covering old tasks.
 UNCARDED_TASKS_PER_TICK = 10
 _uncarded_task_cursor: uuid.UUID | None = None
+
+#: 「最近进展」只往回看 14 天（`project_progress.feed.WINDOW`）；合并人补录跟着
+#: 同一个窗口走，更早的卡已经不在那一屏上，不必再花 GitHub 配额。review 在
+#: 下面一层，读不到那个常量，所以这里重写一遍。
+MERGE_ACTOR_BACKFILL_WINDOW = timedelta(days=14)
+
+#: 一次补录最多补几张：上线时的那一次后台读，配额要留给还在走的卡。
+MERGE_ACTORS_PER_BACKFILL = 20
 
 #: The three words `_checks_state` folds a PR's check runs into.
 CHECKS_RUNNING = "running"
@@ -199,6 +208,17 @@ async def poll_open_prs(
         "cards_checked": sum(1 for failure in failures if failure is None),
         "errors": [failure for failure in failures if failure is not None],
     }
+
+
+async def _merged_by_name(session, status) -> str | None:
+    """Who to name as the person who merged: their platform handle when the
+    GitHub account is linked to one, else the login GitHub reported. None
+    when the read carries no merger (the batch metadata never does)."""
+    github_id = getattr(status, "merged_by_github_id", None)
+    if not github_id:
+        return None
+    linked = await handles_for_github_ids(session, [github_id])
+    return linked.get(github_id) or getattr(status, "merged_by_login", None)
 
 
 @dataclass(frozen=True)
@@ -340,6 +360,22 @@ async def poll_uncarded_task_prs(
                         sessions=sessions,
                     )
                     return checked, merged, None
+                if metadata is not None and await quota_serves_background(quota):
+                    # 批量元数据只说合没合，不说谁合的。总览那一行要显示
+                    # 合并人，所以在这个 PR 落地的那一拍多读一次；读不到就
+                    # 照旧没有经手人，不影响这次落地本身。
+                    try:
+                        fresh = await client.pr_status(number)
+                        # 只借它说合并人；落地用的是刚才那份元数据的事实。
+                        if fresh.merged:
+                            status = fresh
+                    except Exception as exc:
+                        logger.warning(
+                            "task %s: cannot read who merged PR #%s: %s",
+                            task_id,
+                            number,
+                            exc,
+                        )
                 async with sessions() as session:
                     task = await session.get(Task, task_id, with_for_update=True)
                     if (
@@ -367,7 +403,7 @@ async def poll_uncarded_task_prs(
                     await delivery_landed(
                         session,
                         task,
-                        by=None,
+                        by=await _merged_by_name(session, status),
                         head=status.head_sha,
                         pr_number=number,
                         completes=True,
@@ -440,6 +476,49 @@ async def poll_uncarded_task_prs(
         "tasks_checked": sum(1 for checked, _, _ in outcomes if checked),
         "tasks_merged": sum(1 for _, merged, _ in outcomes if merged),
         "errors": [failure for _, _, failure in outcomes if failure is not None],
+    }
+
+
+async def backfill_missing_merge_actors(chat: Chat) -> dict:
+    """Backfill who merged the cards that landed on GitHub before the poller
+    recorded it (`AcceptCard.merged_by`).
+
+    Every path but one now records the merger as it watches a merge; this runs
+    ONCE per process at takeover, never on a clock (the owner's call on
+    2026-10-21: checking every minute for a fact that stops changing is
+    waste). What it fills is the window the project overview still shows, so a
+    redeploy after the first one finds almost nothing. One GitHub read per
+    card, one card per transaction — a slow or failing forge read must not
+    hold another card's row or stop the rest."""
+    # deferred-import: tests replace this name on app.domain.review.services
+    from app.domain.review.services import AcceptService
+
+    sessions = chat.session_factory
+    since = datetime.now(UTC) - MERGE_ACTOR_BACKFILL_WINDOW
+    async with sessions() as session:
+        card_ids = await AcceptService(session).missing_merge_actor_card_ids(
+            since=since, limit=MERGE_ACTORS_PER_BACKFILL
+        )
+    slots = asyncio.Semaphore(PRS_AT_ONCE)
+
+    async def fill(card_id: uuid.UUID) -> bool:
+        async with slots:
+            async with sessions() as session:
+                try:
+                    filled = await AcceptService(session).fill_merged_by(card_id)
+                    await session.commit()
+                    return filled
+                except Exception as exc:  # one card must not stop the rest
+                    await session.rollback()
+                    logger.warning(
+                        "merger backfill failed for card %s: %s", card_id, exc
+                    )
+                    return False
+
+    outcomes = await asyncio.gather(*(fill(card_id) for card_id in card_ids))
+    return {
+        "cards_checked": len(card_ids),
+        "filled": sum(1 for filled in outcomes if filled),
     }
 
 

@@ -45,17 +45,18 @@ function mount() {
     ],
   })
   const rename = vi.fn()
+  const renameTask = vi.fn()
   let routes!: ReturnType<typeof useTopicRailRoutes>
   render(
     defineComponent({
       setup() {
-        routes = useTopicRailRoutes(() => 'project-a', { rename })
+        routes = useTopicRailRoutes(() => 'project-a', { rename, renameTask })
         return () => h('div')
       },
     }),
     { global: { plugins: [pinia, router] } }
   )
-  return { routes, rename, router, store: useWorkspaceStore() }
+  return { routes, rename, renameTask, router, store: useWorkspaceStore() }
 }
 
 beforeEach(() => {

@@ -8,17 +8,23 @@
 // 和数据那一半（`useTopicRail.ts`）分开，是为了让那一半能在一个没有路由的宿主里跑
 // 起来：折叠记忆、红灯、分组都不需要知道 URL 长什么样。
 import type { MenuCommand } from '../commands'
+import type { TaskActionTask } from '../commands/taskActions'
 import type { Topic } from '../cx_types'
 
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { taskRowActions } from '../commands/taskActions'
+import { copyTaskLink } from '../commands/taskLink'
 import { topicActions } from '../commands/topicActions'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
+import { myHandle } from '../me'
 
 export interface TopicRailRouteHandlers {
   /** 行菜单里的「重命名」：侧栏里是就地改，改怎么做由调用方决定。 */
   rename: (topic: Topic) => void
+  /** 任务行菜单里的「重命名」：同上，只是那一条属于一件任务。 */
+  renameTask: (task: TaskActionTask) => void
 }
 
 /**
@@ -64,5 +70,15 @@ export function useTopicRailRoutes(projectId: () => string | null, on: TopicRail
       .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
   }
 
-  return { routeName, openPage, prefetchPage, openProject, cancelPrefetch, actionsFor }
+  /** 侧栏里给一件任务做得了的事：和任务页右上角同一份清单，只留扫列表时敢点的
+   *  「重命名」「复制链接」（见 `commands/taskActions.ts`）。 */
+  function taskActionsFor(task: TaskActionTask): MenuCommand[] {
+    return taskRowActions(
+      task,
+      { rename: () => on.renameTask(task) },
+      { me: myHandle(), copyLink: () => copyTaskLink(router, task) }
+    )
+  }
+
+  return { routeName, openPage, prefetchPage, openProject, cancelPrefetch, actionsFor, taskActionsFor }
 }

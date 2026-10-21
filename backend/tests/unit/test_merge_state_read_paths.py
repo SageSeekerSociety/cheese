@@ -14,7 +14,7 @@ import pytest
 
 from app.domain.project.github_app import GitHubAppTokens
 from app.domain.review.github_pr import GitHubPRClient, HttpxGitHubPrClient
-from app.domain.review.github_pr_status import parse_pull_request_status
+from app.domain.review.github_pr_status import merge_actor, parse_pull_request_status
 
 
 @pytest.fixture
@@ -59,6 +59,40 @@ def test_parser_ignores_a_non_string_mergeable_state():
     status = parse_pull_request_status(_payload(mergeable_state=7))
 
     assert status.mergeable_state is None
+
+
+def test_parser_reads_who_merged():
+    status = parse_pull_request_status(
+        _payload(merged=True, merged_by={"id": 4242, "login": "octocat"})
+    )
+
+    assert (status.merged_by_github_id, status.merged_by_login) == ("4242", "octocat")
+
+
+def test_parser_keeps_a_merge_with_no_named_merger():
+    status = parse_pull_request_status(_payload(merged=True))
+
+    assert status.merged_by_github_id is None
+    assert status.merged_by_login is None
+
+
+def test_parser_ignores_merged_by_on_an_unmerged_pr():
+    """同 `merge_commit_sha`：GitHub 在开着的 PR 上也可能带着这个字段，
+    只有 `merged` 为真时它说的才是合并人。"""
+    status = parse_pull_request_status(
+        _payload(merged=False, merged_by={"id": 4242, "login": "octocat"})
+    )
+
+    assert status.merged_by_github_id is None
+
+
+def test_merge_actor_marks_a_named_nobody():
+    """`{}` 与 None 是两件事：问过了、没人，和还没问过。"""
+    from app.domain.review.github_pr_status import PullRequestStatus
+
+    status = PullRequestStatus(head_sha="deadbeef", state="closed", merged=True)
+
+    assert merge_actor(status) == {}
 
 
 # ---- 读路径一：HttpxGitHubPrClient（轮询）-----------------------------------

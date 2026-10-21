@@ -224,6 +224,27 @@ def _poll(client) -> dict:
     )
 
 
+def _backfill_merge_actors(client) -> dict:
+    """跑一次合并人补录（项目总览还看得到的那 14 天，上线时那一次）。"""
+    from app.domain.review import pr_poll
+
+    return client.portal.call(
+        lambda: pr_poll.backfill_missing_merge_actors(_chat_service())
+    )
+
+
+def _stored_merged_by(client, card_id: str) -> dict | None:
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _do():
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(_uuid.UUID(card_id))
+            assert card is not None
+            return card.merged_by
+
+    return asyncio.run(_do())
+
+
 def _room(client, topic_id: str) -> str:
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     return room_text(blocks)
@@ -333,6 +354,7 @@ class FakeGitHubPrClient:
             "merged": False,
             "merge_commit_sha": None,
             "merged_at": None,
+            "merged_by": None,
         }
         return head_sha
 
@@ -342,12 +364,14 @@ class FakeGitHubPrClient:
         *,
         merge_commit_sha: str | None = "human-merge-sha",
         merged_at: datetime | None = None,
+        merged_by: dict | None = None,
     ) -> None:
         self.prs[number].update(
             state="closed",
             merged=True,
             merge_commit_sha=merge_commit_sha,
             merged_at=merged_at,
+            merged_by=merged_by,
         )
 
     def close_unmerged(self, number: int) -> None:
@@ -431,6 +455,8 @@ class FakeGitHubPrClient:
             review_comment_count=sum(
                 1 for s in self.reviews_by_number.get(number, []) if s.kind == "comment"
             ),
+            merged_by_github_id=(pr.get("merged_by") or {}).get("github_id"),
+            merged_by_login=(pr.get("merged_by") or {}).get("login"),
         )
 
     async def task_pr_metadata(self, *, owner, repo, numbers, token):
@@ -2631,6 +2657,64 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
         is not None
     )
     assert delivered["accepted_at"] is None
+
+
+def test_poll_records_who_merged_a_pr_on_github(client, app_world):
+    """GitHub 上直接合掉的 PR：卡上留下那个账号，总览那一行才有人可显示。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.merge_externally(number, merged_by={"github_id": "4242", "login": "octocat"})
+
+    _poll(client)
+
+    assert _stored_merged_by(client, cid) == {
+        "github_id": "4242",
+        "login": "octocat",
+    }
+
+
+def test_poll_records_a_card_merged_by_nobody_named(client, app_world):
+    """问过了、GitHub 没报人：记 `{}`，补录不再反复问同一张卡。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.merge_externally(number)
+
+    _poll(client)
+
+    assert _stored_merged_by(client, cid) == {}
+
+
+def test_backfill_records_who_merged_a_card_merged_before_the_column(client, app_world):
+    """存量卡：补录扫到 14 天内、没有平台采纳人的卡，读一次 GitHub 补上。"""
+    from app.domain.review.models import AcceptStatus
+
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.merge_externally(number, merged_by={"github_id": "77", "login": "old-octo"})
+
+    async def _as_already_merged():
+        from app.domain.review.repositories import AcceptCardRepository
+
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(_uuid.UUID(cid))
+            assert card is not None
+            card.status = AcceptStatus.accepted
+            card.pr_merged_at = datetime.now(UTC)
+            card.decided_by = None
+            card.merged_by = None
+            await session.commit()
+
+    asyncio.run(_as_already_merged())
+
+    result = _backfill_merge_actors(client)
+
+    assert result["filled"] == 1
+    assert _stored_merged_by(client, cid) == {
+        "github_id": "77",
+        "login": "old-octo",
+    }
+    # 已有答案的卡不再问第二次。
+    assert _backfill_merge_actors(client)["cards_checked"] == 0
 
 
 def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(

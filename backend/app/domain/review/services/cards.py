@@ -560,6 +560,18 @@ async def open_pr_card_ids(
     return [c.id for c in cards]
 
 
+async def missing_merge_actor_card_ids(
+    self: pkg.AcceptService, *, since: datetime, limit: int
+) -> list[uuid.UUID]:
+    """已合并、但还没记下合并人的卡：轮询兜底要补的那一批。
+
+    只算平台没点过采纳的（`decided_by` 空）—— 点过采纳的，人就是决议人。
+    窗口由调用方给（项目总览只看最近一段），`merged_by` 非空的不再问：
+    问过 GitHub 的卡，不管是人是空，都有答案了（`github_pr_status.merge_actor`）。
+    """
+    return await self._repo.accepted_missing_merge_actor(since=since, limit=limit)
+
+
 async def anybody_still_waiting(
     self: pkg.AcceptService, place_ids: list[uuid.UUID]
 ) -> bool:
