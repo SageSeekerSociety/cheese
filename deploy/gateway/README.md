@@ -281,6 +281,17 @@ no price is not offered at all, unless its upstream is free and it says so with
 invoice; a model missing from the picker gets noticed, a brake that quietly
 stopped working does not.
 
+The other rules `check_config.py` used to hold the file to are held at the
+write as well. A paused and unlisted model (`price_only`: the subscription's
+Claude rows, which bill subscription usage by name) needs both an input and an
+output price, and the page edits its one-hour cache-write price. The last
+offered model cannot be paused, deleted or unlisted, and a model a platform
+model role runs on (voice input, the default model, ...) cannot be paused or
+deleted until the role points elsewhere. One rule is held by nothing:
+deepseek-flash's `max_input_tokens` must leave 128,000 output tokens inside
+DeepSeek's 1,048,576 window. The page does not write that key, so only a row
+written straight to the gateway can break it; check it there.
+
 Saving a different model refreshes the native session at the next task
 boundary; the scoped session credential carries the selected model's route.
 Auxiliary and subagent model aliases follow the selected API model. API-backed
