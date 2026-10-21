@@ -482,6 +482,7 @@ def _item_from_payload(
         "tier": data.get("tier") or "included",
         "overseas": bool(data.get("overseas")),
         "offered": selectable and priced,
+        "roles": [],
         # 网关还没读回这条新模型：`pending`。
         "blocked_reasons": [] if (selectable and priced) else ["pending"],
         "unpriced_reason": None if priced else "网关尚未读回单价",

@@ -18,8 +18,12 @@ from sqlalchemy import select
 from app.core.errors import BadRequestError
 from app.core.sentences import say
 from app.domain.agent.gateway_admin import UsageWindow
+from app.domain.agent.gateway_models import roles
 from app.domain.agent.gateway_models._shared import _MID_SYSTEM, _WRITE_ERRORS
-from app.domain.agent.gateway_models.guards import _refuse_unserving
+from app.domain.agent.gateway_models.guards import (
+    _refuse_unlisting,
+    _refuse_unserving,
+)
 from app.domain.agent.gateway_models_helpers import (
     _api_base_for,
     _daily_model_row,
@@ -80,6 +84,7 @@ async def listing(service: pkg.GatewayModelsService, *, days: int) -> dict:
     # 就没有「部分正确」可给：一张空表会被读成「这里一个模型都没有」。
     models = await service._require_models()
     usage = await service._usage_window(start, end)
+    await roles.refresh(service._db)
     return {
         "gateway": {
             "reachable": True,
@@ -98,6 +103,7 @@ async def detail(service: pkg.GatewayModelsService, *, name: str, days: int) -> 
     start, end, since, until = service._window(days)
     model = await service._current_model(name)
     usage = await service._usage_window(start, end)
+    await roles.refresh(service._db)
     return {
         "model": service._item(model, usage),
         "series": service._series(name, usage),
@@ -283,6 +289,8 @@ async def _update(service: pkg.GatewayModelsService, name: str, data: dict) -> d
     # 不变式永远看**合并之后**的样子：把已上架模型的单价删成一半，和一开始就
     # 没价，对刹车是同一种损坏。有几条线路就逐个看。
     selectable = bool(data.get("selectable", current.selectable))
+    if current.selectable and not selectable:
+        await _refuse_unlisting(service, current)
     if _offered(current) and not selectable:
         _require_another_offered(await service._require_models(), name)
     prices = data.get("prices")

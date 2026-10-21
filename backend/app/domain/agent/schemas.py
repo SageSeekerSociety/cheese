@@ -373,6 +373,13 @@ class BudgetUpdate(BaseModel):
     max_budget_usd: float | None
 
 
+class RoleUpdate(BaseModel):
+    """`PUT /admin/gateway/roles/{role}` 的体：`model` 为 null 是回到部署的默认值
+    （`Settings` 里那一项）。必须显式给，缺字段 400，免得「忘了传」被读成「清掉」。"""
+
+    model: str | None = Field(min_length=1, max_length=200)
+
+
 class BlockedUpdate(BaseModel):
     """`POST /admin/gateway/models/{name}/blocked` 的体。"""
 
@@ -432,6 +439,9 @@ class GatewayModelItemOut(BaseModel):
     priced: bool
     tier: str
     offered: bool
+    # The platform model roles that run on it (`app.core.model_roles`); while
+    # any does, it cannot be paused or deleted.
+    roles: list[str]
     blocked_reasons: list[str]
     unpriced_reason: str | None
     upstream: GatewayUpstreamOut
@@ -441,6 +451,24 @@ class GatewayModelItemOut(BaseModel):
     series: list[int]
     sources: list[GatewaySourceOut]
     config_yaml: str | None = None
+
+
+class PlatformRoleOut(BaseModel):
+    role: str
+    model: str | None
+
+
+class PlatformRoleItemOut(PlatformRoleOut):
+    """`fallback`：没人指过时读的 `Settings` 那一项；`chosen`：有人在页面上指过。
+    `offered_only`：只能指到上架的模型（项目默认会被提供给人选）。"""
+
+    fallback: str | None
+    chosen: bool
+    offered_only: bool
+
+
+class PlatformRolesOut(BaseModel):
+    roles: list[PlatformRoleItemOut]
 
 
 class GatewayModelWriteOut(BaseModel):

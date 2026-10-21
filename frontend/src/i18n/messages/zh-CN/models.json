@@ -13,7 +13,8 @@
     "budgetFailed": "额度设置失败，稍后重试",
     "section": {
       "budgets": "额度",
-      "audit": "最近操作"
+      "audit": "最近操作",
+      "roles": "平台模型角色"
     },
     "gateway": {
       "unconfigured": "这个部署没有配网关管理密钥，模型与额度都读写不了。",
@@ -155,6 +156,11 @@
     "unblocked": "已启用「{name}」",
     "budgetSet": "已更新「{name}」的额度",
     "dismiss": "关闭这条提示"
+  },
+  "caution": {
+    "title": "改动 {name} 之前",
+    "confirm": "继续",
+    "roles": "{name} 上跑着这些平台模型角色：{roles}。在它们被指到别的模型之前，停用、删除它都会被拒；在这里改它，这些角色也跟着变。"
   },
   "confirm": {
     "delete": {
@@ -339,5 +345,30 @@
     "line": "{price}（每百万 token）：{before} → {after}。",
     "effect": "确认后，{name} 此后的全部用量都按新价计费。",
     "confirm": "改价"
+  },
+  "roles": {
+    "hint": "平台自己挑模型的那几件事各跑在哪个模型上。改了立即生效，不用重新部署；项目自己设了默认模型、分身默认的，在那个项目里仍以项目的为准。",
+    "now": "现在：{model}",
+    "unset": "未设置：跟着项目的默认模型",
+    "fallback": "部署默认（{model}）",
+    "fallbackNone": "不设置（跟着项目的默认模型）",
+    "separator": "、",
+    "loadFailed": "读取平台模型角色失败",
+    "failed": "改角色失败",
+    "notice": {
+      "set": "{role} 已指到选中的模型"
+    },
+    "role": {
+      "agent_model": "默认模型",
+      "subagent_model": "分身默认",
+      "assistant_model": "个人芝士",
+      "docs_assistant_model": "问芝士（文档助手）",
+      "topic_naming_model": "话题命名",
+      "environment_diagnosis_model": "环境诊断（让芝士看看）",
+      "voice_asr_model": "语音输入：语音转文字",
+      "voice_polish_model": "语音输入：整理转写",
+      "memory_migration_model": "记忆迁移"
+    },
+    "retry": "重新读取角色"
   }
 }

@@ -23,14 +23,16 @@ from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
 from app.domain.agent.document import question
 from app.domain.agent.harness.prompt import WRITING
-from app.domain.agent.model_catalog import catalog
+from app.domain.agent.model_catalog import catalog, subagent_default
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.policy import gate
 from app.domain.project.services import ProjectService
 from app.domain.room_task import binding
 from app.domain.service_keys import gateway_base
 from app.domain.skill_library import SKILL_DIR, parse_frontmatter
+from app.domain.usage.services import UsageService
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +63,15 @@ async def _bind(session: AsyncSession, project_id: uuid.UUID) -> question.Bound 
     """这个项目写现状用哪个模型；不走网关、或者被额度和档位挡下，是 None。"""
     project = await ProjectService(session).get_or_404(project_id)
     configured = project.settings or {}
+    choices = catalog(configured)
+    usage = UsageService(session)
+    policy = gate.policy_of(
+        configured,
+        await usage.plan_model_tiers(project.team_id),
+        overseas_approved=await usage.overseas_approved(project.team_id),
+    )
     chosen = binding.resolve(
-        None,
-        catalog(configured),
-        default_model=configured.get("default_subagent_model")
-        or configured.get("default_model"),
+        None, choices, default_model=subagent_default(configured, choices, policy)
     )
     if chosen.supply != GATEWAY:
         return None

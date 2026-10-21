@@ -17,7 +17,7 @@ import logging
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import settings
+from app.core import model_roles
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import charge_new_spend
 from app.domain.agent.personal.billing import PersonalGatewayKey, gateway, person_charge
@@ -40,7 +40,7 @@ async def person_key(
     """The person's key for the assistant model as configured now, minted (or
     re-issued) on first use and committed at once; None when there is no
     gateway or it would not mint one."""
-    model = settings.assistant_model
+    model = model_roles.model("assistant_model")
     row = await session.get(AssistantGatewayKey, user_id)
     if row is not None and row.model == model:
         return row.key

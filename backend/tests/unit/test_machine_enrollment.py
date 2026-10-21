@@ -331,14 +331,15 @@ async def test_the_sweep_keeps_going_when_one_machine_fails(monkeypatch):
     assert result == {"enrolled": 1, "failed": 1}
 
 
-def test_the_script_resolves_the_download_target_on_the_machine():
+@pytest.mark.parametrize("sandbox_disk", [False, True])
+def test_the_script_downloads_no_connector(sandbox_disk):
+    """The connector reaches a cloud machine over the enrollment connection
+    (`run_bootstrap`); the public origin is a slow way round from inside the
+    cloud's network."""
     script = enrollment.bootstrap_script(
-        sandbox_disk=False, origin="https://x.test", token="T", device_id="D"
+        sandbox_disk=sandbox_disk, origin="https://x.test", token="T", device_id="D"
     )
-    # Guessing the architecture from here would break the moment a VM offering
-    # lands on arm — the machine is the only thing that knows.
-    assert "uname -m" in script
-    assert "linux-amd64" in script and "linux-arm64" in script
+    assert "/connector/latest/" not in script
 
 
 def test_the_script_never_puts_the_token_on_a_command_line():

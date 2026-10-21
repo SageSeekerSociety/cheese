@@ -6,7 +6,7 @@ share this setup.
 
 | Box | App host | DB host | R2 prefixes |
 |---|---|---|---|
-| dev/test | `cheese-dev-env1-app` (192.168.16.5) | `cheese-dev-env1-postgresql` (192.168.16.7) | `db/` |
+| dev/test | `cheese-dev-env1-app` (192.168.16.5) | `cheese-dev-env1-postgresql` (192.168.16.7) | `db/`, `dev-uploads/` |
 | **production** (`cheese.ruc.edu.cn`) | `cheese-prod-app` (192.168.16.8) | `cheese-prod-postgresql` (192.168.16.10) | `prod-db/`, `prod-uploads/` |
 | **etrip** (`etrip.cn`, Aliyun HK, Dockerized) | `etrip` (8.217.1.152) | in-container `cheese_prod_postgres` + `cheesex-pg` | `etrip/` |
 
@@ -22,11 +22,11 @@ Docker volume. Everything else (R2 upload, verify, off-site) is shared.
 | `db-backup.sh` (pg_dump -Fc + verify + prune + off-site) | on the box, `~/ops/db-backup.sh` (`cheese-db-backup.timer`) | hourly, :00 |
 | `r2-upload.py` (off-site DB dump copy to R2) | on the box, `~/ops/r2-upload.py` | each DB backup, right after local verify |
 | `r2-prune-dumps.py` (tiered local retention, R2-verified deletes) | on the box, `~/ops/r2-prune-dumps.py`, only where `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` | each DB backup, at the end |
-| `r2-sync-uploads.py` (incremental mirror of `uploads/` to R2) | on the box, `~/ops/r2-sync-uploads.py` (`cheese-uploads-mirror.timer`) | hourly, :30 |
+| `r2-sync-uploads.py` (incremental mirror of `uploads/` to R2) | on the box, `~/ops/r2-sync-uploads.py` (`cheese-uploads-mirror.timer`); on dev it mirrors `/home/nictheboy/shared/uploads` to `dev-uploads/` (see "The dev mirror" below) | hourly, :30 |
 | `r2-sync-uploads.py` again, over the old transcript archives (already `.tar.gz`, so mirrored as they are; nothing writes new ones there: room cleanup uploads archived rooms' transcripts to the private bucket under `transcripts/rooms/`, see [`README-room-cleanup.md`](README-room-cleanup.md)) | on the box, same script (`cheese-transcripts-mirror.timer`, `UPLOADS_PREFIX=transcripts`) | hourly, :45 |
 | Backup freshness alert | `.github/workflows/backup-freshness.yml`, dev runner | daily; local DB > 26h, R2/ uploads markers and DB/tar objects > 6h fail |
 | Recovery proof | `.github/workflows/backup-restore-test.yml`, dev runner | weekly; local DB, R2 DB, uploads restore + verify |
-| `gateway-db-backup.sh` (LLM gateway DB: pg_dump -Fc via `docker exec`, verify, keep newest 28, then `r2-upload.py` to `db/gateway-litellm-<ts>.dump`) | `.github/workflows/gateway-db-backup.yml`, dev runner; dumps in `~/backups/gateway/`, restore in [`gateway/README.md`](gateway/README.md#backups) | every 6h, :23 UTC |
+| `gateway-db-backup.sh` (LLM gateway DB: pg_dump -Fc via `docker exec`, verify, keep newest 8, then `r2-upload.py` to `db/gateway-litellm-<ts>.dump`) | `.github/workflows/gateway-db-backup.yml`, dev runner; dumps in `~/backups/gateway/`, restore in [`gateway/README.md`](gateway/README.md#backups) | every 6h, :23 UTC |
 | Box-down alert | `.github/workflows/box-uptime.yml`, GitHub-hosted | hourly; fails if the box's runner is offline |
 
 Backups: `~/backups/cheese-<ts>.dump` (compressed custom format), 30-day retention.
@@ -44,6 +44,16 @@ Each DB is on a **separate host** from its app box, so the DB dumps already
 survive a DB-host loss; the off-site R2 copy survives loss of the app box too.
 
 ### uploads/ (STORAGE_TYPE=local user files, e.g. PDF 赛题)
+
+Two settings decide where a user's bytes go, and they are separate:
+`STORAGE_TYPE` covers uploads served under `/uploads` (avatars, attachments,
+赛题 PDFs), written to `STORAGE_LOCAL_PATH` when it is `local`; `FILES_STORE`
+covers project files (the library, `app/core/blob_store.py`), which go to the
+files bucket when it is `bucket`. Dev runs `STORAGE_TYPE=local` and
+`FILES_STORE=bucket` (as of 2026-10-21): its uploads are on the box's disk, its
+new library files are in the files bucket. Nothing mirrors the files bucket
+(off-site copy of it is open under #2114), and switching `FILES_STORE` moved no
+existing bytes (#4545).
 
 Production stores uploaded files on the app box's disk (`backend/uploads/`, not
 in object storage). `r2-sync-uploads.py` mirrors them to R2 `prod-uploads/`
@@ -63,6 +73,27 @@ python3 deploy/r2-sync-uploads.py --restore /path/to/new-recovery/uploads \
 # Recheck an existing recovered copy without writing:
 python3 deploy/r2-sync-uploads.py --verify /path/to/new-recovery/uploads
 ```
+
+#### The dev mirror
+
+On dev the uploads are where the compose file mounts them into the backend,
+`/home/nictheboy/shared/uploads` (`UPLOADS_HOST_PATH`, mounted at
+`/data/uploads`), not `backend/uploads/`, which is the script's default source
+and holds only legacy files on dev. `prod-uploads/` in the shared bucket is
+production's, so dev mirrors to its own prefix. Installed 2026-10-21 as
+`/etc/systemd/system/cheese-uploads-mirror.service` and `.timer`:
+
+- service: oneshot, `User=nictheboy`, `Environment=UPLOADS_PREFIX=dev-uploads`,
+  `ExecStart=/home/nictheboy/cheese-backend-py/backend/.venv/bin/python /home/nictheboy/ops/r2-sync-uploads.py /home/nictheboy/shared/uploads`
+- timer: hourly at :30, `RandomizedDelaySec=120`, `Persistent=true`
+
+Its first run uploaded 565 files (92.5 MB) to `r2://cheese-db-backups/dev-uploads/`
+with no failures.
+
+The freshness check's receipt reads the service's `ExecMainExitTimestamp`, and
+a oneshot service run by hand before its timer is enabled is unloaded once it
+exits and loses that timestamp. So the receipt works only from the first run
+after the timer is enabled.
 
 `UPLOADS_PREFIX` defaults to `prod-uploads`. Recovery refuses an existing
 destination, escaping object paths, empty mirrors and truncated downloads.
@@ -118,7 +149,10 @@ pg_restore --clean --if-exists --no-owner -d "$DBURL" ~/backups/cheese-<ts>.dump
 
 The weekly workflow runs three independent drills on the dev runner: the
 newest local DB dump, the latest R2 DB dump under the configured prefix, and
-restore plus byte verification of the configured uploads mirror. Failures in
+restore plus byte verification of the configured uploads mirror: the prefix in
+`~/ops/r2.env` (`UPLOADS_PREFIX`, `prod-uploads` when unset). On dev that is
+production's `prod-uploads/` on purpose: the dev runner is where the
+`prod-uploads` restore is proven (see Gaps below). Failures in
 one drill do not skip the other R2 drills. All recovery destinations are
 throwaway; the live DB and uploads directory are never opened for writing.
 
@@ -138,7 +172,7 @@ hours. No R2 config is an explicit skip; partial config, missing markers,
 invalid timestamps, stale objects, wrong prefixes or failed R2 reads are red.
 
 The CI changes do **not** install scripts into any box's `~/ops`. For the
-unchanged dev writer, CI reads `cheese-uploads-mirror.service`'s last completed
+dev writer, CI reads `cheese-uploads-mirror.service`'s last completed
 successful exit (`Result=success`, normal exit, status 0). It records the
 service's exit timestamp as the uploads marker, not the check's timestamp.
 Stopped, failed or never-run services cannot create a fresh receipt. This
@@ -171,6 +205,11 @@ be "cleaned up" — in [`README-utf8-cutover.md`](README-utf8-cutover.md).
   age/size checks, not scheduled full schema recovery. etrip's main DB uses
   ParadeDB pg16, unlike dev's pg17. Its uploads tar gets an age/size check, not
   archive extraction verification. No etrip or prod box script changes here.
+- On dev the freshness check's uploads marker is the default
+  `~/backups/.last-uploads-mirror-success`, refreshed from the dev unit's last
+  successful exit; that unit mirrors `dev-uploads/`, and no check reads the
+  age of `dev-uploads/` objects. The weekly uploads drill restores
+  `prod-uploads/`, so dev's own mirror has no scheduled restore proof.
 - These jobs run on dev. The existing separate box uptime check is still needed
   to detect loss of the runner; R2 checks do not replace it.
 

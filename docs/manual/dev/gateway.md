@@ -30,6 +30,12 @@ covers:
 | 归属 | 一个项目一把虚拟 key，花销可归因，沙箱手里永远不是上游 key |
 | 刹车 | 那把 key 上的 `max_budget`，花超了网关直接拒，而不是等到发票上才发现 |
 
+## 平台付钱的调用都从这里走 {#platform-paid}
+
+平台付钱的模型调用和网页搜索，都在付钱那一方的虚拟 key 上经网关发出：项目的、任务的、个人芝士的。网关按那把 key 的预算准入、给这次调用定价，花销再按 key 抽进额度（见[记账口径](#accounting)）。会话里的订阅模型走计量代理，平台的 Claude 订阅凭证只在那里（见[计量代理](/dev/metering-proxy)）。
+
+后端代码不直接调用模型或搜索的服务商，也不把平台付钱的服务商凭据交给会话：那样的调用没有人定价、记不到任何人头上，也不受任何预算约束。唯一直接调用服务商的，是用别人自己账户的调用：成员或团队自己的 API key 或模型服务（`backend/app/domain/agent_instance/account_connections.py`），由他们自己付钱。
+
 ## 独立的一摞 {#stack}
 
 - 它有自己的一套 compose，故意的：`deploy-docker.sh` 只认一个 compose 文件、只拉起 `backend frontend`，而那个文件跟生产共用。**应用发布不碰网关，重启网关也不会重启应用。**
@@ -142,6 +148,27 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 docker exec -i cheese-gateway-litellm-blue-1 python - /app/config.yaml < deploy/gateway/check_config.py   # 或正在服务的 green
 ```
 
+### 平台模型角色 {#roles}
+
+平台自己挑模型的那几件事叫「平台模型角色」，在模型管理页的「平台模型角色」一段里各选一个网关模型，改了立即生效，不用重新部署后端：
+
+| 角色 | 用在哪 | 没人指过时读的设置项 |
+|---|---|---|
+| `agent_model` | 没设默认模型的项目跑在它上面；网关从没答过话时目录只剩它 | `AGENT_MODEL` |
+| `subagent_model` | 没设分身默认、且有权用这个模型的项目，分身默认跑它。有没有权和它自己的轮次过同一道闸门（`policy.gate.check`：团队方案的档位、管理员的境外开通、项目自己的档位策略）；没权的项目照旧跟着项目的默认模型 | 无：不设就跟着项目的默认模型 |
+| `assistant_model` | 个人芝士、助手的动作闸门 | `ASSISTANT_MODEL` |
+| `docs_assistant_model` | 问芝士 | `DOCS_ASSISTANT_MODEL` |
+| `topic_naming_model` | 话题命名 | `TOPIC_NAMING_MODEL` |
+| `environment_diagnosis_model` | 让芝士看看（环境搭建失败的诊断） | `ENVIRONMENT_DIAGNOSIS_MODEL` |
+| `voice_asr_model` / `voice_polish_model` | 语音输入的转写与整理 | `VOICE_ASR_MODEL` / `VOICE_POLISH_MODEL` |
+| `memory_migration_model` | 旧记忆表的迁移 | `MEMORY_MIGRATION_MODEL` |
+
+- 选择存在平台库的 `platform_model_roles` 里，审计记在 `gateway_admin_audit`（动作 `role.set`）。读的一方在 `app.core.model_roles`，后台每 30 秒从库里刷新一次，写的那个进程写完当场刷新。项目自己设了默认模型、分身默认的，在那个项目里仍以项目的为准。
+- 默认模型与分身默认只能指到上架的模型（它们要提供给项目选），指着它们的模型也不能下架；其余角色只能指到在用、计价的模型：两向都写了价、至少一向 > 0，或者是免费线路（语音转写跑在一个不上架、输出价为 0 的模型上）。
+- 这些工作各用一把平台自己铸的虚拟 key，key 只放行一个模型（`service_keys.KeySpec`）。改角色时服务层先把 key 放宽到新旧两个模型，存好选择；等每个进程都读到新选择（30 秒刷新之后再过 15 秒）再收窄到新模型，所以没有一刻哪个进程用的模型被 key 拒掉。收窄没做成（进程退出、网关拒绝）时 key 多放行一个模型，只记日志。
+- 模型列表里每个模型带着跑在它上面的角色（`roles`）。有角色时停用、删除它，或停用、删除它最后一条在用的线路，服务层都拒绝，要先把角色指走；页面在编辑、停用、删除这个模型之前弹框列出这些角色。没人指过的角色读设置项，那个值也算「跑在它上面」：部署之后 `deepseek-flash`、`qwen-audio-asr`、`glm-5.2` 这几个设置项默认值指着的模型，同样不能直接停用或删除。
+- `agent_haiku_model`、`agent_sonnet_model`、`agent_opus_model` 不是角色：现在的执行通道都自己写模型环境变量，并把这三个别名清掉（`screen_model_env.py`），它们只在没有通道的那条老路上还会被读到。
+
 价格用人民币rate 除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率（`kimi-k3`、`mimo-v2.6-pro` 的注释里都写了各自的原始人民币价）。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，发布带它的配置前要在网关 `.env` 里备好 `MOONSHOT_API_KEY`。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
 
 ## 上线前：跑一遍一致性套件 {#conformance}
@@ -190,7 +217,7 @@ GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
 
 网关数据库是管理页加的模型和价格、每个项目的虚拟 key 与预算、花销日志的唯一一份；`config.yaml` 只能找回随镜像发的那几个基线模型。
 
-- **Gateway DB backup** 工作流（`.github/workflows/gateway-db-backup.yml`）在 dev runner 上每 6 小时跑一次（UTC 00:23、06:23、12:23、18:23），也可以手动触发。它调 `deploy/gateway-db-backup.sh`：用容器自己的 `pg_dump -Fc` 转储 `litellm`，`pg_restore --list` 读回来、必须列出 `LiteLLM_ProxyModelTable` 和 `LiteLLM_VerificationToken` 的数据，过了才改名成 `~/backups/gateway/gateway-litellm-<UTC 时间>.dump`。本机留最新 28 份（7 天）。
+- **Gateway DB backup** 工作流（`.github/workflows/gateway-db-backup.yml`）在 dev runner 上每 6 小时跑一次（UTC 00:23、06:23、12:23、18:23），也可以手动触发。它调 `deploy/gateway-db-backup.sh`：用容器自己的 `pg_dump -Fc` 转储 `litellm`，`pg_restore --list` 读回来、必须列出 `LiteLLM_ProxyModelTable` 和 `LiteLLM_VerificationToken` 的数据，过了才改名成 `~/backups/gateway/gateway-litellm-<UTC 时间>.dump`。本机留最新 8 份（2 天；2026-10-21 一份约 0.85 GB）。
 - 每份随后用 `deploy/r2-upload.py` 传到 R2 的 dev 前缀下（`db/gateway-litellm-<UTC 时间>.dump`），桶的生命周期规则 30 天后删。数据库和本机那几份在同一台机器上，所以上传失败整次运行就算失败。
 - 恢复命令（看内容、只捞回几行、整库替换）见 `deploy/gateway/README.md` 的 Backups 一节。整库恢复会丢掉转储之后写进去的一切：花销、新项目的 key、模型改动。
 

@@ -14,6 +14,7 @@ import AdminModelsBudgets from '@/components/admin/models/AdminModelsBudgets.vue
 import AdminModelsConfirmDialog from '@/components/admin/models/AdminModelsConfirmDialog.vue'
 import AdminModelsFlash from '@/components/admin/models/AdminModelsFlash.vue'
 import AdminModelsHeader from '@/components/admin/models/AdminModelsHeader.vue'
+import AdminModelsRoles from '@/components/admin/models/AdminModelsRoles.vue'
 import AdminModelsTable from '@/components/admin/models/AdminModelsTable.vue'
 import AdminSourceFormDialog from '@/components/admin/models/AdminSourceFormDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -128,6 +129,16 @@ const {
   onBudgetSubmit,
   auditExpanded,
   toggleAuditDiff,
+  cautionTarget,
+  cautionBody,
+  confirmCaution,
+  closeCaution,
+  roles,
+  rolesLoading,
+  rolesError,
+  roleBusy,
+  loadRoles,
+  setRole,
 } = useAdminModels()
 
 /** 改价确认的正文：每一档「改前 → 改后」，再说一句从此全部用量都按新价计。 */
@@ -191,6 +202,23 @@ const priceChangeBody = computed(() => {
             @delete="askDelete"
             @tier="setTier"
             @overseas="setOverseas"
+          />
+        </section>
+
+        <!-- 平台模型角色段：平台自己挑模型的那几件事各跑在哪个模型上，改了立即生效。 -->
+        <section class="amd__section">
+          <div class="amd__sectiontools">
+            <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.roles') }}</h2>
+          </div>
+
+          <AdminModelsRoles
+            :roles="roles"
+            :models="models?.models ?? []"
+            :loading="rolesLoading"
+            :error="rolesError"
+            :busy="roleBusy"
+            @retry="loadRoles"
+            @set="setRole"
           />
         </section>
 
@@ -270,6 +298,17 @@ const priceChangeBody = computed(() => {
       :saving="budgetSaving"
       :error="budgetError"
       @submit="onBudgetSubmit"
+    />
+
+    <!-- 动「别处在用」的模型之前：列出跑在它上面的平台模型角色，确认后才打开表单或下一步的确认。 -->
+    <AdminModelsConfirmDialog
+      :model-value="!!cautionTarget"
+      :title="t('models.caution.title', { name: cautionTarget?.name ?? '' })"
+      :body="cautionBody"
+      :confirm-label="t('models.caution.confirm')"
+      :busy="false"
+      @update:model-value="closeCaution"
+      @confirm="confirmCaution"
     />
 
     <!-- 改价确认：每一档改前 → 改后，并说清这个模型此后的全部用量都按新价计。 -->
