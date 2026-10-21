@@ -231,7 +231,6 @@ export function useRoomRoster(options: {
     if (name) return name
     return options.closed?.().has(handle) ? t('account.closedUser') : handle
   }
-  }
   // 真头像加载失败过的 URL —— 退回彩色首字母，不留破图。
   //
   // 失败记录**只留一份**，在 `utils/avatarFailures` 里（UserAvatar 也读同一份）。
