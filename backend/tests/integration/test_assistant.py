@@ -78,7 +78,8 @@ def _chat():
 class Gateway:
     """The script: each model request takes the next step; a step is
     ``("tool", name, args)``, ``("text", answer)``, or ``("held", first,
-    rest)``: ``first`` is streamed, then nothing until ``release`` is set."""
+    rest)``: ``first`` is streamed, then nothing until ``release`` is set. A
+    tool or text step may end with the reasoning streamed before it."""
 
     def __init__(self) -> None:
         self.script: list[tuple] = []
@@ -236,6 +237,13 @@ class Gateway:
                         c["usage"] = usage
                     return f"data: {json.dumps(c)}\n\n".encode()
 
+                thought = (
+                    [chunk({"role": "assistant", "reasoning_content": step[3]})]
+                    if step[0] == "tool" and len(step) > 3
+                    else [chunk({"role": "assistant", "reasoning_content": step[2]})]
+                    if step[0] == "text" and len(step) > 2
+                    else []
+                )
                 if step[0] == "tool":
                     call = {
                         "index": 0,
@@ -256,7 +264,9 @@ class Gateway:
                         *(chunk({"content": p}) for p in (step[1][:4], step[1][4:])),
                         chunk({}, finish="stop"),
                     ]
-                data = b"".join([*parts, chunk(None, usage=USAGE), b"data: [DONE]\n\n"])
+                data = b"".join(
+                    [*thought, *parts, chunk(None, usage=USAGE), b"data: [DONE]\n\n"]
+                )
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
                 self.send_header("content-length", str(len(data)))
@@ -584,6 +594,33 @@ def test_an_older_conversation_goes_on_from_what_was_said_in_it(client, gateway)
         "还有呢？",
         "好的。",
     ]
+
+
+def test_each_model_call_begins_with_the_whole_of_the_one_before(client, gateway):
+    """The prompt cache matches on the start of a request, byte for byte: every
+    call of a conversation sends the one before it unchanged and adds to its
+    end, its tools and rules too, also after its session exits and starts
+    again on what it kept."""
+    me = _auth(client, "asker")
+    task_id = _task(client)
+    conversation = _start(client, task_id, me)
+    gateway.script = [
+        ("tool", "cheese_task_get", {"task": task_id}, "先读题目。"),
+        ("text", "要先会 PyTorch。", "读完了。"),
+    ]
+    assert _ask(client, conversation, "做这道题要先会什么？", me).status_code == 200
+    stop_all(gateway.host.home)
+    gateway.script = [("text", "从 0.1 起步。", "想一想。")]
+    assert _ask(client, conversation, "学习率设多少？", me).status_code == 200
+
+    calls = gateway.requests
+    assert len(calls) == 3
+    for before, after in zip(calls, calls[1:], strict=False):
+        assert after["tools"] == before["tools"]
+        kept = after["messages"][: len(before["messages"])]
+        assert kept == before["messages"], json.dumps(
+            [before["messages"], kept], ensure_ascii=False, indent=1
+        )
 
 
 def test_a_conversation_is_its_owners_alone(client, gateway):
