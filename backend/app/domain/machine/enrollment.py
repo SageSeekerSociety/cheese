@@ -487,7 +487,9 @@ async def run_bootstrap(
         # and a connector's self-update still download it over HTTP.
         connector = connector_build.binary_path(f"linux-{arch}")
         if connector is None:
-            raise EnrollmentError(f"the platform serves no connector for linux-{arch}")
+            raise EnrollmentError(  # i18n-exempt: an enrollment failure, kept on the host row for operators
+                f"the platform serves no connector for linux-{arch}"
+            )
         if progress:
             await progress(say("cloudStepConnector"))
         await push(connector, ".local/bin/cheesehost")
