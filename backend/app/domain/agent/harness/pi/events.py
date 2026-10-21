@@ -118,15 +118,18 @@ class Assembler:
 
     def _accumulate(self, message: dict) -> None:
         usage = message.get("usage") or {}
+        read = int(usage.get("cacheRead", 0))
+        written = int(usage.get("cacheWrite", 0))
+        prompt = int(usage.get("input", 0)) + read + written
         self.spent = AgentUsage(
             model=message.get("responseModel") or message.get("model") or "",
-            input_tokens=self.spent.input_tokens
-            + int(usage.get("input", 0))
-            + int(usage.get("cacheRead", 0))
-            + int(usage.get("cacheWrite", 0)),
+            input_tokens=self.spent.input_tokens + prompt,
             output_tokens=self.spent.output_tokens + int(usage.get("output", 0)),
             cost_usd=self.spent.cost_usd
             + float((usage.get("cost") or {}).get("total", 0.0)),
+            cache_read_tokens=self.spent.cache_read_tokens + read,
+            cache_write_tokens=self.spent.cache_write_tokens + written,
+            calls=(*self.spent.calls, (prompt, read)) if prompt else self.spent.calls,
         )
 
     def _pos_of(self, entry_id: str) -> int:
