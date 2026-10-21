@@ -255,6 +255,48 @@ def test_sandboxes_cannot_reach_each_other(rooms, machine_service):
     )
 
 
+@pytest.fixture
+def ahead_of_the_sandboxes():
+    """Puts a chain that accepts everything at the top of the machine's
+    FORWARD, ahead of the sandboxes' own, as Docker's restart puts its rules
+    there; taken out again afterwards."""
+    iptables = ["sudo", "-n", f"{sandbox_host.TOOLS}/xtables-nft-multi", "iptables"]
+    chain = "CHEESE-TEST-AHEAD"
+
+    def insert():
+        subprocess.run([*iptables, "-N", chain], check=True)
+        subprocess.run([*iptables, "-A", chain, "-j", "ACCEPT"], check=True)
+        subprocess.run([*iptables, "-I", "FORWARD", "1", "-j", chain], check=True)
+
+    yield insert
+    subprocess.run([*iptables, "-D", "FORWARD", "-j", chain], capture_output=True)
+    subprocess.run([*iptables, "-F", chain], capture_output=True)
+    subprocess.run([*iptables, "-X", chain], capture_output=True)
+
+
+@with_sandbox_host
+def test_sandboxes_stay_apart_after_another_firewall_goes_first(
+    rooms, machine_service, ahead_of_the_sandboxes
+):
+    """A rule something else put ahead of the sandboxes' own, as Docker does
+    each time its daemon starts, decides for no sandbox once the next one
+    starts: two sandboxes still cannot reach each other."""
+    api = f"http://127.0.0.1:{machine_service(b'backend')}"
+    first = rooms(api)
+    first.bash(
+        "setsid nohup python3 -m http.server 8000 >/dev/null 2>&1 </dev/null &"
+        " for i in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/8000) 2>/dev/null"
+        " && break; sleep 0.1; done"
+    )
+    ahead_of_the_sandboxes()
+
+    second = rooms(api)
+
+    assert second.python(DIAL + f"print(dial('{first.address()}', 8000))").strip() == (
+        "unreachable"
+    )
+
+
 @with_sandbox_host
 def test_a_sandbox_over_its_memory_is_killed_and_the_machine_is_not(
     rooms, machine_service, monkeypatch
