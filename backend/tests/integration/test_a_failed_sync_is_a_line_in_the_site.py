@@ -68,7 +68,9 @@ def test_the_failed_sync_is_beside_the_turn_and_not_a_message(client):
         f"/topics/{task_id}/blocks", headers=session_auth_headers("alice")
     )
     assert room.status_code == 200, room.text
-    assert all(text not in (b.get("content") or "") for b in room.json()["data"]["data"])
+    assert all(
+        text not in (b.get("content") or "") for b in room.json()["data"]["data"]
+    )
 
 
 def test_only_this_place_s_own_credential_may_write_one(client):

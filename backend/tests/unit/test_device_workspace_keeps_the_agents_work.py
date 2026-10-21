@@ -531,10 +531,7 @@ def test_failed_push_is_shown_in_the_site(device):
     (report,) = [
         json.loads(line) for line in (home / "posted.jsonl").read_text().splitlines()
     ]
-    assert (
-        report["path"]
-        == f"/topics/{os.environ['CHEESE_TOPIC']}/session-records"
-    )
+    assert report["path"] == f"/topics/{os.environ['CHEESE_TOPIC']}/session-records"
     assert report["token"] == "test-secret"
     assert report["body"]["subtype"] == "sync_failed"
     assert tasks[task]["branch"] in report["body"]["text"]
