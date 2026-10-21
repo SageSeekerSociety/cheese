@@ -492,11 +492,11 @@ def test_a_sandboxed_process_listening_in_the_room_under_another_name_holds_it()
     """A sandbox has its own network and mount namespaces and names the room
     differently; a socket it listens on in the room holds the room all the
     same."""
-    room = _short_room()
-    alias = _short_room()
     probe = subprocess.run(["unshare", "-rmn", "true"], capture_output=True)
     if probe.returncode != 0:
         pytest.skip("no unprivileged namespaces here")
+    room = _short_room()
+    alias = _short_room()
     sandboxed = subprocess.Popen(
         [
             "unshare",
@@ -559,37 +559,45 @@ def test_a_room_too_deep_to_walk_is_never_taken_for_one_nothing_holds(tmp_path):
         _stop(holding)
 
 
+#: A FUSE mount whose daemon never answers: this process mounts it, holds a
+#: descriptor on it, and never reads a request off /dev/fuse. Run inside a
+#: user and mount namespace of its own, so no privilege is needed.
+_HUNG_MOUNT = (
+    "import ctypes, os, sys, time\n"
+    "device = os.open('/dev/fuse', os.O_RDWR)\n"
+    "options = f'fd={device},rootmode=40000,user_id=0,group_id=0'.encode()\n"
+    "libc = ctypes.CDLL(None, use_errno=True)\n"
+    "if libc.mount(b'hung', sys.argv[1].encode(), b'fuse', 0, options):\n"
+    "    sys.exit(ctypes.get_errno())\n"
+    "print(os.open(sys.argv[1], os.O_PATH), flush=True)\n"
+    "time.sleep(300)\n"
+)
+
+
 @pytest.mark.skipif(
-    not os.path.exists("/dev/fuse") or not hasattr(os, "geteuid") or os.geteuid(),
+    not os.path.isdir("/proc") or not os.access("/dev/fuse", os.R_OK | os.W_OK),
     reason="mounts a FUSE filesystem",
 )
 def test_a_mount_that_stopped_answering_does_not_hold_up_the_scan(tmp_path):
     """Some process on the machine has a file open on a mount whose server has
-    stopped answering (a hung NFS share, a FUSE daemon that is stuck). Finding
-    what holds a room elsewhere still finishes."""
-    import ctypes
-
+    stopped answering (a FUSE daemon that is stuck). Finding what holds a room
+    elsewhere still finishes."""
+    probe = subprocess.run(["unshare", "-rm", "true"], capture_output=True)
+    if probe.returncode != 0:
+        pytest.skip("no unprivileged namespaces here")
     room = tmp_path / "room"
     room.mkdir()
     mount = tmp_path / "hung"
     mount.mkdir()
-    # A FUSE mount whose daemon never answers: nothing ever reads this.
-    device = os.open("/dev/fuse", os.O_RDWR)
-    libc = ctypes.CDLL(None, use_errno=True)
-    options = f"fd={device},rootmode=40000,user_id=0,group_id=0".encode()
-    assert libc.mount(b"hung", str(mount).encode(), b"fuse", 0, options) == 0
-    stuck = _sleeper(
-        tmp_path,
-        f"import os, time; f = os.open({str(mount)!r}, os.O_PATH); time.sleep(300)",
+    stuck = subprocess.Popen(
+        ["unshare", "-rm", sys.executable, "-c", _HUNG_MOUNT, str(mount)],
+        stdout=subprocess.PIPE,
+        text=True,
     )
     answers = []
     try:
-        wait_for(
-            lambda: any(
-                os.readlink(fd.path) == str(mount)
-                for fd in os.scandir(f"/proc/{stuck.pid}/fd")
-            )
-        )
+        held = stuck.stdout.readline().strip()
+        assert held, f"the mount failed: exit {stuck.wait(timeout=5)}"
         scan = threading.Thread(
             target=lambda: answers.append(cleanup.holders([room])), daemon=True
         )
@@ -597,9 +605,67 @@ def test_a_mount_that_stopped_answering_does_not_hold_up_the_scan(tmp_path):
         scan.join(timeout=10)
         assert answers == [[]], "the scan waited on the mount that stopped answering"
     finally:
-        os.close(device)  # aborts the mount, releasing anything waiting on it
+        # Ending the daemon aborts its mount, releasing anything waiting on it.
         _stop(stuck)
-        subprocess.run(["umount", "-l", str(mount)])
+
+
+#: The seccomp filter some container runtimes install: statx refused with
+#: EPERM, everything else allowed. Installed after the imports, which stat.
+_REFUSE_STATX = (
+    "import ctypes, json, os, sys, struct\n"
+    "from pathlib import Path\n"
+    "from app.domain.agent import resource_cleanup as cleanup\n"
+    "number = int(sys.argv[2])\n"
+    "program = b''.join(struct.pack('=HBBI', *op) for op in (\n"
+    "    (0x20, 0, 0, 0), (0x15, 0, 1, number),\n"
+    "    (0x06, 0, 0, 0x00050000 | 1), (0x06, 0, 0, 0x7FFF0000)))\n"
+    "code = ctypes.create_string_buffer(program)\n"
+    "class Program(ctypes.Structure):\n"
+    "    _fields_ = [('len', ctypes.c_ushort), ('filter', ctypes.c_void_p)]\n"
+    "fprog = Program(4, ctypes.addressof(code))\n"
+    "libc = ctypes.CDLL(None, use_errno=True)\n"
+    "assert libc.prctl(38, 1, 0, 0, 0) == 0\n"
+    "assert libc.prctl(22, 2, ctypes.byref(fprog), 0, 0) == 0\n"
+    "try:\n"
+    "    print(json.dumps(cleanup.holders([Path(sys.argv[1])])))\n"
+    "except RuntimeError as refusal:\n"
+    "    print(json.dumps(str(refusal)))\n"
+)
+_STATX_CALL = {"x86_64": 332, "aarch64": 291}
+
+
+@pytest.mark.skipif(
+    not os.path.isdir("/proc") or os.uname().machine not in _STATX_CALL,
+    reason="installs a seccomp filter by syscall number",
+)
+def test_a_machine_that_refuses_the_lookup_is_never_told_the_room_is_free(tmp_path):
+    """Where every lookup of a process's files is refused (a seccomp profile
+    that answers statx with EPERM), the scan refuses too: a room with a process
+    working in it is never reported as held by nothing."""
+    room = tmp_path / "room"
+    room.mkdir()
+    working = _sleeper(room, "import time; time.sleep(300)")
+    try:
+        wait_for(lambda: os.path.samefile(f"/proc/{working.pid}/cwd", room))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                _REFUSE_STATX,
+                str(room),
+                str(_STATX_CALL[os.uname().machine]),
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPATH": str(Path(cleanup.__file__).parents[3])},
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        answer = json.loads(result.stdout)
+        assert answer != [], "the room was reported free"
+        assert isinstance(answer, str) or working.pid in answer
+    finally:
+        _stop(working)
 
 
 @pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")

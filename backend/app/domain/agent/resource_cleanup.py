@@ -285,37 +285,77 @@ def proc_index(paths: list[Path]) -> set:
 
 #: statx(2), which can be told to answer from what the kernel already knows
 #: of a file (`AT_STATX_DONT_SYNC`) instead of asking its filesystem: a
-#: process may have a file open on an NFS or FUSE mount that has stopped
-#: answering, and a plain stat of it waits for that mount for as long as it is
-#: hung. The device and inode never need asking for.
+#: process may have a file open on a FUSE mount whose daemon has stopped
+#: answering, and a plain stat of it waits for that daemon for as long as it is
+#: stuck. The device and inode never need asking for. (On NFS, following the
+#: /proc link can still revalidate the file with its server first.)
+#:
+#: Called by its number rather than through libc's wrapper, which glibc has
+#: only from 2.28 and musl only from 1.2.5; the kernel has had the call since
+#: 4.11. The numbers are each architecture's own (`asm/unistd.h`).
+_STATX_NUMBER = {
+    "x86_64": 332,
+    "i386": 383,
+    "i686": 383,
+    "aarch64": 291,
+    "arm64": 291,
+    "riscv64": 291,
+    "loongarch64": 291,
+    "armv7l": 397,
+    "armv6l": 397,
+    "ppc64le": 383,
+    "ppc64": 383,
+    "s390x": 379,
+}
 _STATX_DONT_SYNC = 0x4000
 _STATX_TYPE_INO = 0x0001 | 0x0100
 _AT_FDCWD = -100
+#: What statx answers when it cannot look at anything at all (an old kernel, a
+#: seccomp profile that refuses it), as against at this one file: taking those
+#: for "nothing here" would report every room free.
+_STATX_UNUSABLE = {errno.ENOSYS, errno.EPERM, errno.EINVAL, errno.EFAULT}
 
 
 def _statx():
+    """A lookup of (device, inode, mode) by path that never waits on the
+    filesystem the path leads into. It answers None when this one file cannot
+    be looked at (gone, or another user's process), and raises when statx
+    cannot be used here at all."""
+    number = _STATX_NUMBER.get(os.uname().machine)
+    if number is None:
+        raise RuntimeError(
+            "could not establish whether the resource has active writers: "
+            f"no statx call known for {os.uname().machine}"
+        )
     libc = ctypes.CDLL(None, use_errno=True)
-    libc.statx.argtypes = [
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_int,
-        ctypes.c_uint,
-        ctypes.c_char_p,
-    ]
-    return libc.statx
-
-
-def _identity(path: str, statx) -> tuple | None:
-    """(device, inode, mode) of what `path` leads to, without waiting on the
-    filesystem it is on; None when it cannot be looked at."""
+    libc.syscall.restype = ctypes.c_long
     buffer = ctypes.create_string_buffer(256)
-    if statx(_AT_FDCWD, os.fsencode(path), _STATX_DONT_SYNC, _STATX_TYPE_INO, buffer):
+
+    def statx(path: str) -> tuple | None:
+        answer = libc.syscall(
+            ctypes.c_long(number),
+            ctypes.c_int(_AT_FDCWD),
+            ctypes.c_char_p(os.fsencode(path)),
+            ctypes.c_int(_STATX_DONT_SYNC),
+            ctypes.c_uint(_STATX_TYPE_INO),
+            buffer,
+        )
+        if answer == 0:
+            # struct statx: stx_mode at 28, stx_ino at 32, stx_dev_major and
+            # stx_dev_minor at 136.
+            (mode,) = struct.unpack_from("=H", buffer, 28)
+            (inode,) = struct.unpack_from("=Q", buffer, 32)
+            major, minor = struct.unpack_from("=II", buffer, 136)
+            return os.makedev(major, minor), inode, mode
+        failure = ctypes.get_errno()
+        if failure in _STATX_UNUSABLE:
+            raise RuntimeError(
+                "could not establish whether the resource has active writers: "
+                f"statx: {os.strerror(failure)}"
+            )
         return None
-    # struct statx: stx_mode at 28, stx_ino at 32, stx_dev_major/minor at 136.
-    (mode,) = struct.unpack_from("=H", buffer, 28)
-    (inode,) = struct.unpack_from("=Q", buffer, 32)
-    major, minor = struct.unpack_from("=II", buffer, 136)
-    return os.makedev(major, minor), inode, mode
+
+    return statx
 
 
 def _bound_sockets(pid: Path, cache: dict) -> dict:
@@ -370,14 +410,14 @@ def _holds(pid: Path, index: set, statx, sockets: dict) -> bool:
     except OSError:
         pass
     for link in links:
-        found = _identity(link, statx)
+        found = statx(link)
         if found is not None and found[:2] in index:
             return True
     if held:
         for inode, path in _bound_sockets(pid, sockets).items():
             if inode not in held:
                 continue
-            found = _identity(f"{pid}/root{path}", statx)
+            found = statx(f"{pid}/root{path}")
             if found and stat.S_ISSOCK(found[2]) and found[:2] in index:
                 return True
     try:
