@@ -1600,7 +1600,7 @@
     "about": "AI teammates in project settings choose a team connection, one of its models, and an execution device."
   },
   "assistantPanel": {
-    "about": "The person's own Cheese panel. There is one for the whole app, held by the app shell. Its head says who is answering and whose it is; each turn lists the tools Cheese used, one step a row, folded to one row when done; what it wrote into a draft is a card whose fields can be undone; what it left for the person to confirm and what it published are a card each. Earlier topics sit above, set apart by New topic.",
+    "about": "The app's one Cheese panel, held by the app shell; its header just says Cheese. Each step of a turn is one line, folded into one when the answer is done; what it wrote into a draft is a card where every field can be undone; a message or task it drafted for the person is a card waiting for them, which they can edit and only then send; things left for the person to confirm and published results are cards too. Earlier topics sit above, set apart by New topic.",
     "s1": {
       "name": "Publish page, nothing asked yet",
       "note": "An empty conversation: one line on what it can do, a few starters below, and a button to add files beside the box."
@@ -1620,6 +1620,10 @@
     "s5": {
       "name": "Earlier topics",
       "note": "What was said before New topic sits above, to read only; Earlier topics reads further back. On desktop the panel can be pinned to the right or unpinned."
+    },
+    "s6": {
+      "name": "Drafting in a project",
+      "note": "Asked in a channel what needs the person: Cheese read the history and drafted a reply (waiting, editable, with Send and Set aside) and a task (already opened, with View)."
     }
   },
   "myDraftsView": {

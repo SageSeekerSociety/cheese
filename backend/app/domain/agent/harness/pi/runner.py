@@ -78,6 +78,26 @@ def _said(text: str) -> dict:
     return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
 
 
+#: How a delegated credential begins (``app.core.sandbox_auth``).
+DELEGATED_PREFIX = "cxdg_"
+
+
+def _scope_of(token: str) -> dict[str, str]:
+    """The project a delegated credential names, as the tools read it
+    (``CHEESE_PROJECT``). Read, not verified: the backend verifies the
+    credential on every request it is sent with; this only says where to send
+    them."""
+    if not token.startswith(DELEGATED_PREFIX):
+        return {}
+    body = token.removeprefix(DELEGATED_PREFIX).rpartition(".")[0]
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except (ValueError, TypeError):
+        return {}
+    project = claims.get("p") if isinstance(claims, dict) else None
+    return {"CHEESE_PROJECT": str(project)} if project else {}
+
+
 class Runner(runner.Runner[Journal]):
     def __init__(self, state: Path, *, idle_exit_s: float = runner.IDLE_EXIT_S):
         super().__init__(state, Journal, "entries.sqlite", idle_exit_s=idle_exit_s)
@@ -613,6 +633,10 @@ class Runner(runner.Runner[Journal]):
             call_id,
             self.doc_versions,
         )
+        # A person's 芝士 asked from a project's page acts in that project: its
+        # session has no project of its own, the question's credential does.
+        for name, value in _scope_of(self.platform_token).items():
+            host.environ.setdefault(name, value)
         try:
             text = catalog.run_platform_tool(tool, arguments, host)
         except Exception as error:  # the agent reads the reason

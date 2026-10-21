@@ -166,6 +166,49 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         expect: '更早的话题',
       },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s6.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s6.note')
+        },
+        // 在项目的频道里问：芝士读了记录，起草一条回复和一个任务，都等人确认。
+        props: {
+          messages: [
+            { role: 'user', text: '我三天没看，有什么需要我处理的？', at: '2026-10-21T08:00:00Z' },
+            {
+              role: 'assistant',
+              text: '和你有关的有两件：李老师问演示视频能否由你负责；路线规划超时还没有人认领。',
+              at: '2026-10-21T08:00:12Z',
+              steps: [
+                { key: 'c1', verb: '搜索聊天记录', arg: '演示视频', state: 'done' },
+                { key: 'c2', verb: '起草消息', arg: '', state: 'done' },
+                { key: 'c3', verb: '起草任务', arg: '排查路线规划超时', state: 'done' },
+              ],
+              proposals: [
+                {
+                  id: 1,
+                  kind: 'message',
+                  state: 'pending',
+                  where: '综合',
+                  text: '@李老师 演示视频我来负责，11月7日前给出初版。',
+                },
+                {
+                  id: 2,
+                  kind: 'task',
+                  state: 'sent',
+                  where: '综合',
+                  title: '排查路线规划超时',
+                  text: '复现超时，超时 3 秒后重试一次，补测试。',
+                  task: 't-1',
+                },
+              ],
+            },
+          ],
+        },
+        expect: '待你确认',
+      },
     ],
   },
   {

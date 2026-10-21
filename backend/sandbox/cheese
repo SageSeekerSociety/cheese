@@ -1427,6 +1427,32 @@ DELEGATED_TOOLS = ToolTable(
             ["file"],
         ),
         _tool(
+            "cheese_message_draft",
+            "替用户起草一条要发到项目里的消息：发到一个频道、任务或支线（topic，"
+            "编号见当前页面或聊天记录）。不会发出去：面板里出现一张卡片，用户看过、"
+            "可以改，点了才以他的名义发出。用户让你回复、通知、催一下别人时用它；"
+            "起草完一句话说写了什么，不要说已经发了。",
+            {
+                "topic": _text("频道、任务或支线的编号"),
+                "text": _text("消息正文，用户的口吻，Markdown"),
+            },
+            ["topic", "text"],
+        ),
+        _tool(
+            "cheese_task_draft",
+            "替用户起草一个任务，交给项目的 AI 队友去做：开在一个频道里（topic 给频道，"
+            "或频道里任何一处的编号），标题和交代写清楚要做什么、做到什么算完。"
+            "不会开出去：面板里出现一张卡片，用户确认后以他的名义开任务，交代作为第一条"
+            "消息发进去，AI 队友随之开始做。要改项目里的文档、代码，或做要花时间的活时用它，"
+            "你自己不动手。",
+            {
+                "topic": _text("频道的编号，或频道里任何一处的编号"),
+                "title": _text("任务标题，一句话"),
+                "text": _text("交代：要做什么、依据什么、做到什么算完"),
+            },
+            ["topic", "title", "text"],
+        ),
+        _tool(
             "cheese_space_materials",
             "空间资料库：不给 material 列出提问人能看的资料（id、名称、大小）；"
             "给 material 读那一份的文字，PDF 用 pages 分段读。",
@@ -1861,6 +1887,17 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_task_publish":
         body = {"draft": args["draft"]}
         return {"method": "POST", "path": "/task-drafts/agent/publish", "body": body}
+    if tool == "cheese_message_draft":
+        body = {"kind": "message", "topic": args["topic"], "text": args["text"]}
+        return {"method": "POST", "path": "/assistant/proposals", "body": body}
+    if tool == "cheese_task_draft":
+        body = {
+            "kind": "task",
+            "topic": args["topic"],
+            "title": args["title"],
+            "text": args["text"],
+        }
+        return {"method": "POST", "path": "/assistant/proposals", "body": body}
     if tool == "cheese_file_read":
         body = {"file": args["file"], **_given(args, "pages")}
         return {"method": "POST", "path": "/task-drafts/agent/file", "body": body}
@@ -3956,6 +3993,14 @@ _SAY = {
     "cheese_memory_read": _say_memory_read,
     "cheese_attachment_read": _say_attachment_read,
     "cheese_my_tasks": _say_my_tasks,
+    "cheese_message_draft": lambda a, d, e: (
+        f"已起草发到「{(d or {}).get('topicName')}」的消息，等用户在面板里确认发送；"
+        "还没有发出去。"
+    ),
+    "cheese_task_draft": lambda a, d, e: (
+        f"已起草任务「{(d or {}).get('title')}」，开在频道「{(d or {}).get('channelName')}」，"
+        "等用户在面板里确认；还没有开。"
+    ),
     "cheese_task_search": _say_task_search,
     "cheese_task_get": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_file_read": _say_document,

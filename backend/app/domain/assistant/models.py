@@ -134,3 +134,37 @@ class AssistantChange(Timestamps, Base):
     undone: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
+
+
+class AssistantProposal(Timestamps, Base):
+    """Something a 芝士 drafted for the person to send, which nobody else sees
+    until they do (``assistant.proposals``): a message to a channel or a task,
+    or a task to open in a channel with what it is for.
+
+    ``work`` is the answer it was drafted in. ``state`` is ``pending`` until the
+    person sends it (``sent``, with what was made in ``result``) or puts it
+    aside (``dismissed``). Sending is the person's own act, through the routes
+    they would use by hand; 芝士 cannot send.
+    """
+
+    __tablename__ = "assistant_proposals"
+    __table_args__ = (
+        Index("ix_assistant_proposals_work", "work", "id"),
+        # The person's own, and gone with their account.
+        Index("ix_assistant_proposals_user_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "user.id", ondelete="CASCADE", name="fk_assistant_proposals_user_id_user"
+        ),
+        nullable=False,
+    )
+    work: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

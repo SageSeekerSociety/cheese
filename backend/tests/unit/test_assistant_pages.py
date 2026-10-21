@@ -15,9 +15,10 @@ def test_the_request_names_exactly_the_pages_there_are_readers_for() -> None:
 
 
 def test_a_conversation_defaults_to_the_page_it_was_started_on() -> None:
-    assert pages.home_page("task", "7") == ("task", 7)
-    assert pages.home_page("draft", "12") == ("draft", 12)
-    # A place no page reads, or an id that is not one, is no page.
+    assert pages.home_page("task", "7") == ("task", "7")
+    assert pages.home_page("draft", "12") == ("draft", "12")
+    # Only a 题目 or a draft was ever a place a conversation started on; an id
+    # that is not one is no page.
     assert pages.home_page("project", "3") is None
     assert pages.home_page("task", "abc") is None
 

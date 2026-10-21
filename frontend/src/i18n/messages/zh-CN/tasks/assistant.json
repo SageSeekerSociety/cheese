@@ -68,7 +68,6 @@
       "check": "以学生视角检查"
     }
   },
-  "personal": "个人",
   "newTopic": "新话题",
   "olderTopics": "更早的话题",
   "dock": "固定到右侧",
@@ -77,5 +76,30 @@
     "greeting": "有什么想问的，或者要我做的事，都可以说。",
     "placeholder": "输入问题或要做的事",
     "hint": "回答由 AI 生成，可能有误。"
+  },
+  "project": {
+    "greeting": "我可以读这个项目里的频道和文档，起草要发的消息，或者把活派给项目里的 AI 队友。发出去之前都由你确认。",
+    "starters": {
+      "mine": "这里有什么需要我处理的？",
+      "recap": "总结这里最近的讨论",
+      "progress": "这个项目最近有什么进展？",
+      "handOff": "把这件事派给 AI 队友"
+    }
+  },
+  "proposal": {
+    "waiting": "待你确认",
+    "sent": "已发送到「{where}」",
+    "opened": "已开任务「{title}」",
+    "dismissed": "不用了",
+    "to": "发到",
+    "channel": "频道",
+    "title": "标题",
+    "message": "内容",
+    "brief": "交代",
+    "send": "发送",
+    "openTask": "开任务",
+    "dismiss": "不用了",
+    "view": "查看",
+    "failed": "发送失败"
   }
 }

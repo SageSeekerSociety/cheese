@@ -10,10 +10,8 @@
   >
     <header class="ap__head">
       <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" :state="busy ? 'think' : null" /></span>
-      <!-- Who is answering, and whose it is: two parts side by side, never one sentence. -->
       <span class="ap__who">
         <span class="ap__name">{{ t('work.agentAvatar.defaultName') }}</span>
-        <span class="ap__scope">{{ t('tasks.assistant.personal') }}</span>
       </span>
       <span class="ap__grow" />
       <BaseButton
@@ -61,6 +59,7 @@
               :steps="m.steps ?? []"
               :changes="m.changes ?? []"
               :results="m.results ?? []"
+              :proposals="m.proposals ?? []"
             >
               <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
               <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
@@ -100,6 +99,11 @@
             :steps="m.steps ?? []"
             :changes="m.changes ?? []"
             :results="m.results ?? []"
+            :proposals="m.proposals ?? []"
+            :sending="sendingProposal"
+            @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
+            @dismiss-proposal="(id) => emit('dismissProposal', id)"
+            @open-place="(task) => emit('openPlace', task)"
             @undo="(id, key) => emit('undo', id, key)"
             @undo-all="(rows) => emit('undoAll', rows)"
             @jump="(key) => emit('jump', key)"
@@ -123,6 +127,11 @@
           :steps="steps"
           :changes="changes"
           :results="results"
+          :proposals="proposals"
+          :sending="sendingProposal"
+          @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
+          @dismiss-proposal="(id) => emit('dismissProposal', id)"
+          @open-place="(task) => emit('openPlace', task)"
           @undo="(id, key) => emit('undo', id, key)"
           @undo-all="(rows) => emit('undoAll', rows)"
           @jump="(key) => emit('jump', key)"
@@ -187,7 +196,7 @@
 // 个人芝士在一个地方的面板（#2285）：这里的几段对话、当前这段的内容、输入框。题目页、
 // 发布页、改题页用的都是它；芝士每一轮做的事（调的工具、写进草稿的改动、发布的结果）
 // 由 `AssistantTurn` 画。只拿 props、只发事件：说话、换对话、撤销、交文件都由外面那一层去做。
-import type { PanelChange, PanelResult, PanelStep } from '@/lib/assistantView'
+import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { RefNames } from '@/lib/refChip'
 
@@ -225,6 +234,7 @@ export interface PanelMessage {
   steps?: PanelStep[]
   changes?: PanelChange[]
   results?: PanelResult[]
+  proposals?: PanelProposal[]
 }
 
 /** 要随下一个问题交给芝士的文件。 */
@@ -256,6 +266,10 @@ const props = withDefaults(
     steps?: PanelStep[]
     changes?: PanelChange[]
     results?: PanelResult[]
+    /** 这一轮替人起草、等人确认的消息和任务。 */
+    proposals?: PanelProposal[]
+    /** 正在发出的那一件。 */
+    sendingProposal?: number | null
     /** 空对话上面那一行（芝士读了什么）；空串就不显示。 */
     context?: string
     greeting?: string
@@ -281,6 +295,8 @@ const props = withDefaults(
     steps: () => [],
     changes: () => [],
     results: () => [],
+    proposals: () => [],
+    sendingProposal: null,
     context: undefined,
     greeting: undefined,
     starters: undefined,
@@ -300,6 +316,9 @@ const emit = defineEmits<{
   stop: []
   close: []
   undo: [changeId: number, key: string]
+  sendProposal: [id: number, edited: { title?: string; text: string }]
+  dismissProposal: [id: number]
+  openPlace: [task: string]
   undoAll: [rows: { change: number; key: string }[]]
   jump: [key: string]
   openDraft: [draftId: number]
@@ -428,13 +447,6 @@ watch(
   font-weight: 600;
   line-height: var(--lh-14);
   color: var(--ink);
-  white-space: nowrap;
-}
-
-.ap__scope {
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--muted);
   white-space: nowrap;
 }
 

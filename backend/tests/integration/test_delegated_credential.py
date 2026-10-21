@@ -267,3 +267,35 @@ def test_an_expired_or_forged_credential_is_none(client):
         content=b'{"model":"m","messages":[]}',
     )
     assert model.status_code in (401, 403)
+
+
+def test_a_persons_own_cheese_in_a_project_reads_it_and_still_reaches_their_own(
+    client,
+):
+    """A person's 芝士 asked from a project's page carries that project: it reads
+    the project's channels as the person, still reaches the routes that name no
+    project (their own drafts and 题目), and no other project. An agent's
+    credential still reaches only its room."""
+    from tests.integration.test_message_edit import _room
+
+    room, project = _room(client)
+    other, _ = _room(client)
+    alice = _user_id(client, "alice")
+
+    def personal(project_id: str) -> str:
+        return mint_delegated_credential(
+            user_id=alice,
+            handle="alice",
+            work=str(uuid.uuid4()),
+            project_id=project_id,
+            ttl_s=300,
+        )
+
+    token = personal(project)
+    assert client.get(f"/topics/{room}/history", headers=_as(token)).status_code == 200
+    assert client.get("/tasks/joined", headers=_as(token)).status_code == 200
+    assert client.get(f"/topics/{other}/history", headers=_as(token)).status_code == 403
+
+    task, seat, _ = _document(client)
+    agent = _credential(client, task, agent=seat)
+    assert client.get("/tasks/joined", headers=_as(agent)).status_code == 403

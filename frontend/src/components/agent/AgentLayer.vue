@@ -51,7 +51,6 @@
 //
 // 位置都由外面量好交进来（相对这一层的左上角）；这里只画、只往上报撤销。
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
 
 import AgentMark from '@/components/agent/AgentMark.vue'
 
@@ -97,8 +96,6 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{ undo: [key: string] }>()
-
-const { t } = useI18n()
 
 /** 描边正从一格滑到另一格。只在这时带过渡：同一格里每一帧都在重量，带过渡就会慢半拍。 */
 const gliding = ref(false)

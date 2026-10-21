@@ -11,7 +11,7 @@ import { toast } from 'vuetify-sonner'
 
 import { ApiError } from '@/api'
 import { t } from '@/i18n'
-import { stepView } from '@/lib/assistantView'
+import { proposalView, stepView } from '@/lib/assistantView'
 import { fieldLabel, panelMessages, resultView, writesView } from '@/lib/draftChangeView'
 import { partialValue } from '@/lib/partialJson'
 import { AGENT_FIELDS, DRAFT_WRITE_PACE } from '@/lib/taskDraftAgent'
@@ -155,6 +155,7 @@ export function useDraftAgent(options: DraftAgentOptions) {
       steps: assistant.steps.value.map(stepView),
       ...writesView(assistant.edits.value, terms(), draft.id.value ?? null, undoable, options.ordinal),
       results: assistant.published.value.map(resultView),
+      proposals: assistant.proposals.value.map(proposalView),
     }),
     undo: (change, key) => void undo(change, key),
     undoAll: (rows) => void undoAll(rows),

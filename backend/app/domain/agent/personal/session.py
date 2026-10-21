@@ -84,6 +84,15 @@ TOOLS = (
     "cheese_my_tasks",
     "cheese_docs_search",
     "cheese_docs_read",
+    # In a project (asked from one of its pages): read it, and draft what the
+    # person would say there. Nothing here changes the project.
+    "cheese_chat_list",
+    "cheese_chat_search",
+    "cheese_chat_get",
+    "cheese_doc_get",
+    "cheese_project_search",
+    "cheese_message_draft",
+    "cheese_task_draft",
 )
 
 

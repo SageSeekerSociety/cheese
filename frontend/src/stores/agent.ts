@@ -11,15 +11,17 @@
 // `useScreenHeader` 一个做法）。宿主状态放在模块里，不放在外壳组件里：外壳在落地页和
 // 应用之间会重新挂载，芝士答到一半不该跟着丢。换页时芝士照样答完。
 import type { AgentFormField } from '@/composables/useAgentPointer'
-import type { PanelChange, PanelResult, PanelStep } from '@/lib/assistantView'
-import type { AssistantPage } from '@/stores/agentThread'
+import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
+import type { AssistantPage, AssistantProposal } from '@/stores/agentThread'
 
 import { computed, onActivated, onDeactivated, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
+import { AgentProposalsApi, ApiError, createRoomTask } from '@/api'
 import { AttachmentsApi } from '@/api/attachments'
+import { postChatMessage } from '@/api/messages'
 import { t } from '@/i18n'
-import { stepView } from '@/lib/assistantView'
+import { proposalView, stepView } from '@/lib/assistantView'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 import { panelMessages, resultView, writesView } from '@/lib/draftChangeView'
 import { type AssistantHooks, createAssistant } from '@/stores/agentThread'
@@ -44,6 +46,7 @@ export interface AgentPanelView {
   steps: PanelStep[]
   changes: PanelChange[]
   results: PanelResult[]
+  proposals: PanelProposal[]
 }
 
 /** 芝士往里写的一张表单：宿主在它上面画一层，整张表单一个指针（`AgentLayer`）。 */
@@ -144,8 +147,7 @@ export const agentOpen = ref(false)
 const DOCKED_KEY = 'cheesex.agentDocked'
 export const agentDocked = ref(storageGet(DOCKED_KEY) !== 'false')
 watch(agentDocked, (value) => void storageSet(DOCKED_KEY, String(value)))
-/** 这一页能叫出个人芝士：登录了，而且不在项目里（项目里是项目自己的芝士）。外壳里的宿主
- *  按路由写它，入口按它画。 */
+/** 能叫出芝士：登录了。外壳里的宿主写它，入口按它画。 */
 export const agentAvailable = ref(false)
 
 export function openAgent() {
@@ -216,6 +218,7 @@ export function plainView(): AgentPanelView {
     steps: thread.steps.value.map(stepView),
     ...writesView(thread.edits.value, NO_TERMS, null, () => false),
     results: thread.published.value.map(resultView),
+    proposals: thread.proposals.value.map(proposalView),
   }
 }
 
@@ -230,3 +233,62 @@ export function earlierView() {
 }
 
 export const agentView = computed<AgentPanelView>(() => agentSurface.value?.view?.() ?? plainView())
+
+// ---- 芝士起草、等人确认的事 ----------------------------------------------------------
+
+/** 正在发出的那一件。 */
+export const sendingProposal = ref<number | null>(null)
+/** 已经开出、交代还没发进去的任务：再点一次不再开一个。 */
+const opened = new Map<number, string>()
+
+function proposalById(id: number): AssistantProposal | undefined {
+  const thread = agentThread
+  return (
+    thread.proposals.value.find((p) => p.id === id) ??
+    thread.messages.value.flatMap((m) => m.proposals ?? []).find((p) => p.id === id)
+  )
+}
+
+/** 人确认了芝士起草的那件事：以他的名义发出去——发消息，或开任务、把交代作为第一条消息
+ *  发进去（任务的 AI 队友随之开始做）——再记下发出了。消息带着起草时定下的请求号：重发
+ *  只落一条。 */
+export async function sendProposal(id: number, edited: { title?: string; text: string }) {
+  const p = proposalById(id)
+  if (!p || p.state !== 'pending' || sendingProposal.value !== null) return
+  sendingProposal.value = id
+  try {
+    let result: Record<string, string>
+    if (p.kind === 'task') {
+      const task = opened.get(id) ?? (await createRoomTask(p.channel ?? '', edited.title)).id
+      opened.set(id, task)
+      const posted = await postChatMessage(task, { content: edited.text, request_id: p.request })
+      result = { task, topic: task, message: posted.id }
+    } else {
+      const posted = await postChatMessage(p.topic ?? '', { content: edited.text, request_id: p.request })
+      result = { topic: p.topic ?? '', message: posted.id }
+    }
+    await AgentProposalsApi.settle(id, 'sent', result)
+    opened.delete(id)
+    agentThread.settleProposal(id, 'sent', result)
+  } catch (error) {
+    toast.error(error instanceof ApiError ? error.message : t('tasks.assistant.proposal.failed'))
+  } finally {
+    sendingProposal.value = null
+  }
+}
+
+/** 人说不用了。 */
+export async function dismissProposal(id: number) {
+  try {
+    await AgentProposalsApi.settle(id, 'dismissed')
+    agentThread.settleProposal(id, 'dismissed')
+  } catch (error) {
+    toast.error(error instanceof ApiError ? error.message : t('tasks.assistant.proposal.failed'))
+  }
+}
+
+/** 芝士起草、人开出的那个任务在哪个项目里。 */
+export function projectOfOpenedTask(task: string): string | null {
+  const all = [...agentThread.proposals.value, ...agentThread.messages.value.flatMap((m) => m.proposals ?? [])]
+  return all.find((p) => p.result?.task === task)?.project ?? null
+}

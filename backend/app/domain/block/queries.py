@@ -186,6 +186,16 @@ async def latest_preview(
     return BlockOut.model_validate(block) if block is not None else None
 
 
+async def latest_messages(
+    db: AsyncSession, conversation_id: uuid.UUID, limit: int
+) -> list[Block]:
+    """The conversation's latest ``limit`` messages, oldest first."""
+    page = await BlockRepository(db).page_for_topic(
+        conversation_id, limit=limit, kinds=[BlockKind.message]
+    )
+    return list(page.items)
+
+
 async def newest_shown_seq(db: AsyncSession, conversation_id: uuid.UUID) -> int | None:
     """The number (`Block.seq`) of the last block stored in this conversation
     that the room shows (`shown`); None for one that shows nothing yet."""
