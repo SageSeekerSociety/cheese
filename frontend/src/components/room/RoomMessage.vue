@@ -15,6 +15,7 @@ import type { RefNames } from '../../lib/refChip'
 import { computed, ref } from 'vue'
 
 import { useMessageFold } from '../../composables/useMessageFold'
+import { isAgentHandle } from '../../lib/authorship'
 import {
   artifactKind,
   artifactName,
@@ -114,6 +115,15 @@ const personLabel = computed(() =>
 const personName = computed(() =>
   props.faceStatus ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceStatus }) : props.authorName
 )
+
+// 反应条悬停时列的是谁点的：写房间给的名字，不写 handle。芝士的署名是管道
+// （`cheese-<hex>`），摆到屏幕上读的人只当成乱码；名册还没到、或者认不出这一位时
+// 写「芝士」，和消息署名的兜底一样。人查不到名字时照旧显示 handle。
+function reactionAuthors(authors: string[]): string[] {
+  return authors.map(
+    (handle) => props.refs.mentionNames[handle] || (isAgentHandle(handle) ? t('work.room.defaultAgentName') : handle)
+  )
+}
 
 // 读屏停在这一条上时听到的：谁、几点（还没送出去的那条是送达状态），再是正文开头一段。
 // 行只能被脚本聚焦（tabindex=-1）：时间线让当前那一条成为 Tab 停靠点（useTimelineKeys）。
@@ -402,7 +412,7 @@ const told = computed(() => toldByMessage(props.refs))
           type="button"
           class="rx-chip"
           :class="{ 'rx-chip--mine': r.authors.includes(viewer) }"
-          :title="r.authors.join(t('work.room.roster.listSeparator'))"
+          :title="reactionAuthors(r.authors).join(t('work.room.roster.listSeparator'))"
           @click="emit('react', block, r.emoji)"
         >
           <span class="rx-emoji">{{ r.emoji }}</span>
