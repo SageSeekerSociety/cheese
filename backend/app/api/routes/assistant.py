@@ -27,9 +27,9 @@ from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.assistant_deps import ProjectPages
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_consumptions, get_session_host
-from app.api.doc_access import reach
 from app.api.refusal import refuse
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok, typed_response
@@ -253,33 +253,6 @@ class PageIn(BaseModel):
         return str(v)
 
 
-class _ProjectPages:
-    """Whether the asker may open a project's page, judged by the request's
-    own resolver as opening that page is (``pages.PageAccess``) — as a read,
-    since asking only reads where it looks."""
-
-    def __init__(self, db, resolver: ActorResolver) -> None:
-        self._db = db
-        self._resolver = resolver.for_reading()
-
-    async def topic(self, topic_id: uuid.UUID):
-        place = await place_or_404(self._db, topic_id)
-        actor = await self._resolver.resolve(
-            topic_id=place.conversation_id, project_id=place.project_id
-        )
-        await self._resolver.authorize_topic(
-            actor, project_id=place.project_id, room=place.room
-        )
-        return place
-
-    async def document(self, document_id: uuid.UUID) -> None:
-        await reach(self._db, self._resolver, document_id)
-
-    async def project(self, project_id: uuid.UUID) -> None:
-        actor = await self._resolver.resolve(project_id=project_id)
-        await self._resolver.authorize_project(actor, project_id=project_id)
-
-
 async def _page(
     db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo, resolver
 ) -> pages.Shown:
@@ -291,7 +264,7 @@ async def _page(
         user_id=auth.user_id,
         timezone=zones.get(auth.user_id),
         spaces=spaces,
-        access=_ProjectPages(db, resolver),
+        access=ProjectPages(db, resolver),
     )
     return await pages.render(reader, page.kind, page.id)
 

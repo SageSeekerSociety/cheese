@@ -180,16 +180,18 @@ class ActorResolver:
             raise ForbiddenError("This question may only be answered, not act")
         if topic_id is not None and project_id is None:
             project_id = await self.project_of_topic(topic_id)
-        if claims.project_id is None:
+        if claims.agent is None and claims.topic_id is None:
+            # A person's own 芝士 (no agent, no room) reads and acts wherever the
+            # person may, as them: the route judges the person, the credential
+            # holds it to no project. The project it was minted in is only
+            # where the question was asked.
+            pass
+        elif claims.project_id is None:
             if topic_id is not None or project_id is not None:
                 raise ForbiddenError(say("tokenOtherProject"))
         elif project_id is None and topic_id is None:
-            # A person's own 芝士 asked from a project's page (no agent, no
-            # room: the project only) is let into that project besides what it
-            # always reaches: their own drafts, the docs. One minted for a room
-            # has nothing here to hold it to.
-            if claims.agent is not None or claims.topic_id is not None:
-                raise ForbiddenError("This credential is restricted to one room")
+            # One minted for a room has nothing here to hold it to.
+            raise ForbiddenError("This credential is restricted to one room")
         else:
             if project_id is not None and str(project_id) != claims.project_id:
                 raise ForbiddenError(say("tokenOtherProject"))

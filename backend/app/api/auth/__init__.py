@@ -69,6 +69,11 @@ DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.topics.read_chat_history": False,
     "app.api.routes.topics.read_chat_message": False,
     "app.api.routes.assistant.propose": True,
+    # A person's own 芝士, wherever the person may: what waits on them, a
+    # thing by its ref, a web page.
+    "app.api.routes.assistant_agent.agent_inbox": False,
+    "app.api.routes.assistant_agent.agent_read": False,
+    "app.api.routes.fetch.read_url": False,
 }
 
 

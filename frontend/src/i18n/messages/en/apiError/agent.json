@@ -24,6 +24,7 @@
   "assistantProposalNeedsText": "The message is empty",
   "assistantProposalNeedsTitle": "A task needs a title and a brief",
   "assistantProposalSettled": "This draft has already been handled",
+  "assistantRefUnknown": "\"{ref}\" is not a reference. A project's things are its short name and a path, such as ml-course/channels/3, ml-course/tasks/12, ml-course/tasks/12/review or ml-course/docs/5; the project itself is its short name.",
   "assistantFailed": "Cheese can't answer right now. Try again later.",
   "assistantNotOpen": "Cheese isn't available yet. Try again later.",
   "assistantStillAnswering": "The last question is still being answered. Ask again when it's done.",

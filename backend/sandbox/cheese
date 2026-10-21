@@ -1354,6 +1354,30 @@ TASK_WRITE_FIELDS = {
 DELEGATED_TOOLS = ToolTable(
     (
         _tool(
+            "cheese_inbox",
+            "等用户处理的事，和他「待办」页上的一样：待他审阅的改动、要他回答的问题、"
+            "要他决定的提醒、邀请和申请、出的题目上待批准的领取和待评审的提交。每件写"
+            "明是什么、在哪、什么时候，以及读它或答复它用的编号。最近的在前。",
+            {"project": _text("只看这个项目的（项目短名）；省略看全部")},
+        ),
+        _tool(
+            "cheese_read",
+            "给编号读一样东西。编号就是它页面地址里 /projects/ 后面那段：项目 "
+            "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它的审阅卡 "
+            "ml-course/tasks/12/review，文档 ml-course/docs/5；项目以外的：题目 "
+            "spaces/4/tasks/87，草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
+            "（列出全部）和 spaces/4/materials/9。编号从当前页面、待办和别的读取结果里来。"
+            "长的分段读：结果末尾写着下一段的 page。",
+            {
+                "ref": _text("编号"),
+                "page": {
+                    "type": "integer",
+                    "description": "第几段（消息从最新往前数第几页；PDF 每段 20 页），默认 1",
+                },
+            },
+            ["ref"],
+        ),
+        _tool(
             "cheese_project_search",
             "按关键词搜这个项目：频道名、消息、文档段落、评论、周报、任务卡、资料库文件名、"
             "产物。只搜提问人能看的频道。返回每条命中在哪个频道、谁写的和一段摘录。"
@@ -1675,6 +1699,67 @@ def _canvas_change(change) -> dict:
     return out
 
 
+#: What lives outside projects, read where the publish page's tools read it.
+_READ_ELSEWHERE = (
+    (re.compile(r"spaces/(\d+)/tasks/(\d+)"), "problem"),
+    (re.compile(r"spaces/(\d+)/materials/(\d+)"), "material"),
+    (re.compile(r"spaces/(\d+)"), "materials"),
+    (re.compile(r"drafts/(\d+)"), "draft"),
+    (re.compile(r"files/(\d+)"), "file"),
+)
+#: How many pages of a PDF one read says.
+_PDF_PAGES = 20
+
+
+def _read_kind(ref: str):
+    """Which of `_READ_ELSEWHERE` ``ref`` is, with its numbers; None for a
+    project's own things, which `/assistant/agent/read` reads."""
+    text = ref.strip().strip("/")
+    for pattern, kind in _READ_ELSEWHERE:
+        m = pattern.fullmatch(text)
+        if m:
+            return kind, [int(g) for g in m.groups()]
+    return None
+
+
+def _pdf_pages(page: int) -> str:
+    return f"{(page - 1) * _PDF_PAGES + 1}-{page * _PDF_PAGES}"
+
+
+def _read_plan(args: dict) -> dict:
+    page = args.get("page") or 1
+    if not isinstance(page, int) or page < 1:
+        raise ValueError("page 是从 1 开始的整数")
+    found = _read_kind(args["ref"])
+    if found is None:
+        body = {"ref": args["ref"], "page": page}
+        return {"method": "POST", "path": "/assistant/agent/read", "body": body}
+    kind, ids = found
+    if kind == "problem":
+        body = {"task": ids[1]}
+        return {"method": "POST", "path": "/task-drafts/agent/read", "body": body}
+    if kind == "draft":
+        body = {"draft": ids[0]}
+        return {"method": "POST", "path": "/task-drafts/agent/read", "body": body}
+    if kind == "file":
+        body = {"file": ids[0], "pages": _pdf_pages(page)}
+        return {"method": "POST", "path": "/task-drafts/agent/file", "body": body}
+    body = {"space": ids[0]}
+    if kind == "material":
+        body.update(material=ids[1], pages=_pdf_pages(page))
+    return {"method": "POST", "path": "/task-drafts/agent/materials", "body": body}
+
+
+def _say_read(args: dict, data, environ) -> str:
+    found = _read_kind(args["ref"])
+    kind = found[0] if found else None
+    if kind == "file":
+        return _say_document(args, data, environ)
+    if kind in ("material", "materials"):
+        return _say_materials(args, data, environ)
+    return (data or {}).get("text") or ""
+
+
 def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     """The one backend request a platform tool is, as data.
 
@@ -1872,6 +1957,14 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             raise ValueError("Missing CHEESE_TOPIC")
         query = urllib.parse.urlencode({"path": path})
         return {"method": "GET", "path": f"/topics/{topic}/preview/file?{query}"}
+    if tool == "cheese_inbox":
+        return {
+            "method": "POST",
+            "path": "/assistant/agent/inbox",
+            "body": _given(args, "project"),
+        }
+    if tool == "cheese_read":
+        return _read_plan(args)
     if tool == "cheese_my_tasks":
         return {"method": "GET", "path": "/tasks/joined"}
     if tool == "cheese_task_search":
@@ -3742,18 +3835,31 @@ def _say_document(args, data, env):
     if data.get("pages"):
         head += f"（共 {data['pages']} 页，这里是第 {data.get('first')}–{data.get('last')} 页）"
     tail = ""
+    reading = "ref" in args
     if data.get("pages") and data.get("last", 0) < data["pages"]:
-        tail += f"\n\n还有第 {data['last'] + 1} 页起没有读：用 pages 接着读。"
+        tail += (
+            f"\n\n还有第 {data['last'] + 1} 页起没有读：读同一个编号，"
+            f"page={(args.get('page') or 1) + 1}。"
+            if reading
+            else f"\n\n还有第 {data['last'] + 1} 页起没有读：用 pages 接着读。"
+        )
     if data.get("cut"):
-        tail += "\n\n文字太长，后面截掉了：缩小 pages 的范围再读。"
+        tail += (
+            "\n\n文字太长，后面截掉了。"
+            if reading
+            else "\n\n文字太长，后面截掉了：缩小 pages 的范围再读。"
+        )
     return Said(f"{head}\n\n{data.get('text') or ''}{tail}", data.get("images") or [])
 
 
 def _say_materials(args, data, env):
     data = data or {}
     if "materials" in data:
+        found = _read_kind(args["ref"]) if "ref" in args else None
         rows = [
-            f"- 资料 {m.get('id')}：{m.get('name')}"
+            f"- {m.get('name')}（spaces/{found[1][0]}/materials/{m.get('id')}）"
+            if found
+            else f"- 资料 {m.get('id')}：{m.get('name')}"
             for m in data.get("materials") or []
         ]
         return "\n".join(rows) or "这个空间的资料库是空的。"
@@ -3993,6 +4099,8 @@ _SAY = {
     "cheese_memory_read": _say_memory_read,
     "cheese_attachment_read": _say_attachment_read,
     "cheese_my_tasks": _say_my_tasks,
+    "cheese_inbox": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_read": _say_read,
     "cheese_message_draft": lambda a, d, e: (
         f"已起草发到「{(d or {}).get('topicName')}」的消息，等用户在面板里确认发送；"
         "还没有发出去。"
