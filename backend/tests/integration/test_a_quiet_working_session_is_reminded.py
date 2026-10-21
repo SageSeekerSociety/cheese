@@ -266,3 +266,67 @@ async def _platform_work_after_an_answer(client, room):
         assert told == []
     finally:
         await _put_down(channel, session)
+
+
+def test_a_long_silence_is_still_reminded_after_many_notices(client, room, monkeypatch):
+    """A session that read a person's question and has said nothing since keeps
+    being reminded however many notices it read in the meantime — its own
+    reminders, the platform's other notices, a teammate's words — all read into
+    the same work."""
+    monkeypatch.setattr(settings, "chat_progress_reminder_after_s", THRESHOLD)
+    client.portal.call(_silent_through_notices, client, room)
+
+
+async def _silent_through_notices(client, room):
+    project, topic, _seat = room
+    channel = _KeepsWorking()
+    service, session, work, acting = await _at_work(client, room, channel)
+    told: list[str] = []
+
+    async def notice(topic_id, text, **_kwargs):
+        told.append(text)
+        return True
+
+    service.notify_running_session = notice  # type: ignore[method-assign]
+    quiet = QuietSessionReminders(service, service.compute)
+    try:
+        asked_at = datetime.now(UTC)
+
+        def read(blocks, at, *, own_work):
+            return NativeInput(
+                project_id=project,
+                conversation_id=topic,
+                recipient_handle=acting,
+                harness=CLAUDE_CODE,
+                native_session_id="sess-quiet",
+                input_id=uuid.uuid4(),
+                work_id=work if own_work else uuid.uuid4(),
+                # A notice steered into running work is read into that work.
+                execution_work_id=work,
+                block_ids=blocks,
+                registered_at=at,
+                accepted_at=at,
+                echoed_at=at,
+            )
+
+        async with client.test_factory() as db:
+            asked = Block(
+                project_id=project,
+                conversation_id=topic,
+                author="alice",
+                author_type=AuthorType.participant,
+                kind=BlockKind.message,
+                content="首页为什么这么慢？",
+                created_at=asked_at,
+            )
+            db.add(asked)
+            await db.flush()
+            db.add(read([str(asked.id)], asked_at, own_work=True))
+            for n in range(30):
+                db.add(read([], asked_at + timedelta(seconds=n + 1), own_work=False))
+            await db.commit()
+
+        assert await quiet.silence(asked_at + timedelta(seconds=THRESHOLD + 60)) == 1
+        assert len(told) == 1 and "chat_send" in told[0]
+    finally:
+        await _put_down(channel, session)
