@@ -97,6 +97,7 @@ covers:
 | `cheese_channel_create` | 新建频道 | 经授权判断，`POST /topics` |
 | `cheese_settings_set` | 改他自己的通知设置或某个频道的提醒 | 直接改，可撤销：`/notifications/preferences/agent/set`、`/assistant/agent/notify` |
 | `cheese_web_fetch` | 读一个网页 | 经授权判断，`POST /fetch` |
+| `cheese_web_search` | 搜网页 | 经授权判断，`GET /web-search`；搜到结果才按次扣他的额度 |
 | `cheese_problem_write` | 写题目草稿 | `POST /task-drafts/agent/write`：见[题目草稿](#drafts) |
 | `cheese_problem_publish` | 发布草稿，和人点「发布」「保存更改」同一条路 | `POST /task-drafts/agent/publish` |
 

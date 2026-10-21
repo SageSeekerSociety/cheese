@@ -83,6 +83,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_task_state: 'toolLabels.cheeseTaskState',
   cheese_push_fix: 'toolLabels.cheesePushFix',
   cheese_fetch: 'toolLabels.cheeseFetch',
+  cheese_search_web: 'toolLabels.cheeseSearchWeb',
   cheese_docs_search: 'toolLabels.cheeseDocsSearch',
   cheese_docs_read: 'toolLabels.cheeseDocsRead',
   // 个人芝士的工具（backend/sandbox/cheese 的 DELEGATED_TOOLS）。
@@ -98,6 +99,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_channel_create: 'toolLabels.cheeseChannelCreate',
   cheese_settings_set: 'toolLabels.cheeseSettingsSet',
   cheese_web_fetch: 'toolLabels.cheeseWebFetch',
+  cheese_web_search: 'toolLabels.cheeseWebSearch',
   cheese_my_tasks: 'toolLabels.cheeseMyTasks',
   cheese_task_search: 'toolLabels.cheeseTaskSearch',
   cheese_task_get: 'toolLabels.cheeseTaskGet',
