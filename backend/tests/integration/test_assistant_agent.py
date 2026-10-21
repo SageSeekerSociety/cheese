@@ -366,3 +366,44 @@ def test_the_persons_own_settings_change_at_once_and_undo_from_the_panel(client)
         ]
         is True
     )
+
+
+def test_the_person_sets_their_rules_and_sees_what_was_done_for_them(
+    client, monkeypatch
+):
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    me = {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
+    rules = client.get("/assistant/rules", headers=me).json()["data"]
+    assert set(rules["ask"]) == set(gate.CATEGORIES)
+    # Messages to everyone she lets through; she asks about channels.
+    saved = client.put(
+        "/assistant/rules",
+        json={"ask": ["remove_member"], "allowText": "", "askText": "建频道先问我"},
+        headers=me,
+    )
+    assert saved.json()["data"]["ask"] == ["remove_member"]
+    token = _acting(client, "alice", _asked_in(client, "alice", "在综合频道说一声收到"))
+    # 芝士 cannot change them.
+    assert (
+        client.put("/assistant/rules", json={"ask": []}, headers=_as(token)).status_code
+        == 401
+    )
+    keeper = _Gatekeeper("放")
+
+    async def looks(session):
+        return keeper
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+    client.post(
+        "/assistant/agent/act",
+        json={"kind": "message", "where": f"{slug}/channels/{number}", "text": "收到"},
+        headers=_as(token),
+    )
+    assert "要先问：建频道先问我" in keeper.shown[0]
+
+    done = client.get("/assistant/activity", headers=me).json()["data"]["items"]
+    assert [(i["kind"], i["verdict"], i["stage"]) for i in done] == [
+        ("message", "allowed", "quick")
+    ]
+    assert "收到" in done[0]["summary"]

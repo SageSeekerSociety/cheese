@@ -290,3 +290,38 @@ async def keep(
         )
     await session.flush()
     return row
+
+
+async def save_rules(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    ask: list[str],
+    allow_text: str,
+    ask_text: str,
+) -> AssistantRules:
+    """The person's rules, as they set them on their settings page; the
+    caller commits."""
+    row = await session.get(AssistantRules, user_id)
+    if row is None:
+        row = AssistantRules(
+            user_id=user_id, ask=ask, allow_text=allow_text, ask_text=ask_text
+        )
+        session.add(row)
+    else:
+        row.ask, row.allow_text, row.ask_text = ask, allow_text, ask_text
+    await session.flush()
+    return row
+
+
+async def recent(
+    session: AsyncSession, user_id: int, *, limit: int
+) -> list[AssistantGateCheck]:
+    """What the gate did for the person lately, newest first."""
+    rows = await session.scalars(
+        select(AssistantGateCheck)
+        .where(AssistantGateCheck.user_id == user_id)
+        .order_by(AssistantGateCheck.id.desc())
+        .limit(limit)
+    )
+    return list(rows)

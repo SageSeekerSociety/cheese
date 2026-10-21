@@ -30,6 +30,7 @@
   "assistantInviteThenAdmin": "不在项目里的人要先以成员身份邀请，加入后才能设为管理员",
   "assistantSettingValue": "{name}只能是：{choices}",
   "assistantSettingUnknown": "没有这一项设置；能改的是 {keys}",
+  "assistantRuleUnknown": "没有「{rule}」这一类",
   "assistantFailed": "芝士暂时答不上来，稍后再试。",
   "assistantNotOpen": "芝士暂未开放，稍后再试。",
   "assistantStillAnswering": "上一个问题还在回答，等它答完再问。",

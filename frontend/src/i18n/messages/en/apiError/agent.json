@@ -30,6 +30,7 @@
   "assistantInviteThenAdmin": "Invite someone outside the project as a member first; they can be made an admin once they join",
   "assistantSettingValue": "{name} takes: {choices}",
   "assistantSettingUnknown": "No such setting; the ones that can be changed are {keys}",
+  "assistantRuleUnknown": "There is no \"{rule}\" kind",
   "assistantFailed": "Cheese can't answer right now. Try again later.",
   "assistantNotOpen": "Cheese isn't available yet. Try again later.",
   "assistantStillAnswering": "The last question is still being answered. Ask again when it's done.",

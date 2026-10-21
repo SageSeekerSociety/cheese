@@ -23,7 +23,7 @@ import uuid
 from dataclasses import replace
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -39,9 +39,7 @@ from app.auth.core import AuthUserInfo
 from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.errors import (
-    NotFoundError,
-)
+from app.core.errors import BadRequestError, NotFoundError
 from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.personal import pages
@@ -55,7 +53,7 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.assistant import changes, proposals
+from app.domain.assistant import changes, gate, proposals
 from app.domain.space.services import SpaceService
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -512,4 +510,73 @@ async def settle_proposal(
     )
     return ok(
         {"id": row.id, "kind": row.kind, "state": row.state, "result": row.result}
+    )
+
+
+# What a person tells their 芝士 about acting for them, and what it did: the
+# person's own, on their settings page. Not opened to 芝士's credential, so it
+# cannot change its own rules.
+
+
+class RulesIn(BaseModel):
+    ask: list[str] = Field(default_factory=list, max_length=len(gate.CATEGORIES))
+    allowText: str = Field(default="", max_length=2000)
+    askText: str = Field(default="", max_length=2000)
+
+
+def _rules_out(row) -> dict:
+    return {
+        "ask": [c for c in row.ask if c in gate.CATEGORIES],
+        "allowText": row.allow_text,
+        "askText": row.ask_text,
+        "categories": [{"code": c, "label": t} for c, t in gate.CATEGORIES.items()],
+    }
+
+
+@router.get("/rules")
+async def get_rules(db: DbSession, auth: AuthUser) -> dict:
+    """What the person told their 芝士 to ask first and may simply do."""
+    return ok(_rules_out(await gate.rules_of(db, auth.user_id)))
+
+
+@router.put("/rules", dependencies=[ROUTE_DECIDES])
+async def put_rules(body: RulesIn, db: DbSession, auth: AuthUser) -> dict:
+    unknown = [c for c in body.ask if c not in gate.CATEGORIES]
+    if unknown:
+        raise BadRequestError(say("assistantRuleUnknown", rule=unknown[0]))
+    row = await gate.save_rules(
+        db,
+        auth.user_id,
+        ask=list(dict.fromkeys(body.ask)),
+        allow_text=body.allowText.strip(),
+        ask_text=body.askText.strip(),
+    )
+    await db.commit()
+    return ok(_rules_out(row))
+
+
+@router.get("/activity")
+async def get_activity(
+    db: DbSession,
+    auth: AuthUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 30,
+) -> dict:
+    """What 芝士 did for the person, or put to them to confirm, newest first,
+    and why."""
+    rows = await gate.recent(db, auth.user_id, limit=limit)
+    return ok(
+        {
+            "items": [
+                {
+                    "id": r.id,
+                    "kind": r.kind,
+                    "summary": r.summary,
+                    "verdict": r.verdict,
+                    "stage": r.stage,
+                    "reason": r.reason,
+                    "at": r.created_at.isoformat(),
+                }
+                for r in rows
+            ]
+        }
     )
