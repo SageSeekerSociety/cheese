@@ -288,6 +288,9 @@ def test_sandboxes_stay_apart_after_another_firewall_goes_first(
         " for i in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/8000) 2>/dev/null"
         " && break; sleep 0.1; done"
     )
+    assert first.python(DIAL + "print(dial('127.0.0.1', 8000))").strip() != (
+        "unreachable"
+    )
     ahead_of_the_sandboxes()
 
     second = rooms(api)
