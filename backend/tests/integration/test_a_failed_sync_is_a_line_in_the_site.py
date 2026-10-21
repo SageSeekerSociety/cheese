@@ -16,6 +16,11 @@ The one failure that does stay in the room is a PR already in the merge queue:
 retrying cannot help there, and a person has to decide.
 """
 
+import asyncio
+import uuid
+from datetime import UTC, datetime
+
+from app.domain.session_record.models import SessionRecord
 from tests.integration.conftest import (
     open_task,
     post_project,
@@ -25,6 +30,38 @@ from tests.integration.conftest import (
 )
 
 BROWSER = {"X-Cheese-Token": ""}
+
+
+def _seed_turn(client, task_id: str, turn: uuid.UUID, seat: str) -> None:
+    """The harness's own record of a turn, as the runner journals it."""
+
+    async def write() -> None:
+        at = datetime.now(UTC)
+        async with client.test_factory() as session:
+            session.add(
+                SessionRecord(
+                    conversation_id=uuid.UUID(task_id),
+                    turn_id=turn,
+                    agent_handle=seat,
+                    harness="claude-code",
+                    first_sequence=1,
+                    last_sequence=1,
+                    first_at=at,
+                    last_at=at,
+                    count=1,
+                    bytes=1,
+                    records=[
+                        {
+                            "sequence": 1,
+                            "at": at.isoformat(),
+                            "record": {"type": "assistant"},
+                        }
+                    ],
+                )
+            )
+            await session.commit()
+
+    asyncio.run(write())
 
 
 def _a_task(client) -> tuple[str, str, str, str]:
@@ -45,9 +82,18 @@ def _post(client, task_id: str, headers: dict, text: str):
 
 def test_the_failed_sync_is_a_platform_line_in_the_site_and_not_a_message(client):
     project_id, _, task_id, seat = _a_task(client)
+    turn = uuid.uuid4()
+    _seed_turn(client, task_id, turn, seat)
     text = "有改动没能推回 task/72508bfc——它还留在那台机器上"
 
-    posted = _post(client, task_id, task_agent_headers(project_id, task_id, seat), text)
+    # The machine sends no turn header; even a caller that does must not move
+    # the line into that turn — it is not reliably the turn the sync belongs to.
+    posted = _post(
+        client,
+        task_id,
+        {**task_agent_headers(project_id, task_id, seat), "X-Cheese-Turn": str(turn)},
+        text,
+    )
     assert posted.status_code == 200, posted.text
 
     site = client.get(

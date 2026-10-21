@@ -537,7 +537,9 @@ def test_failed_push_is_shown_in_the_site(device):
     ]
     assert report["path"] == f"/topics/{os.environ['CHEESE_TOPIC']}/session-records"
     assert report["token"] == "test-secret"
-    assert report["turn"] == os.environ["CHEESE_TURN"]
+    # Even with CHEESE_TURN set, no turn goes with a note written after the
+    # turn: the header would name the wrong 过程.
+    assert report["turn"] is None
     assert report["body"]["subtype"] == "sync_failed"
     assert tasks[task]["branch"] in report["body"]["text"]
 

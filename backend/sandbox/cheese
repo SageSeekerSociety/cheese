@@ -5084,7 +5084,12 @@ def _report_sync_failure(
 
 
 def _tell_site(content: str) -> bool:
-    """Put `content` in 现场 as the machine's own status line; whether it arrived."""
+    """Put `content` in 现场 as the machine's own status line; whether it arrived.
+
+    No turn header on purpose: this runs after the turn, and the id `CHEESE_TURN`
+    would carry (when anything sets it) names that ended turn or a newer one. A
+    note with no turn is drawn as a platform line; a guessed one would file the
+    failure under the wrong 过程."""
     body = {"subtype": "sync_failed", "text": content}
     req = urllib.request.Request(
         f"{API}/topics/{TOPIC}/session-records",
@@ -5093,8 +5098,6 @@ def _tell_site(content: str) -> bool:
     )
     req.add_header("Content-Type", "application/json")
     req.add_header("X-Cheese-Token", TOKEN)
-    if TURN:
-        req.add_header("X-Cheese-Turn", TURN)
     try:
         with urllib.request.urlopen(req, timeout=30):
             pass
