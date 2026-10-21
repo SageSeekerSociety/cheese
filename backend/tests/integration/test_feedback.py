@@ -2413,8 +2413,8 @@ def test_a_screen_credential_on_the_admin_list_is_refused(client, monkeypatch):
             "/admin/feedback", headers={"X-Cheese-Screen": screen.token}
         )
         assert refused.status_code == 403, refused.text
-        # 拒的是凭证，说出口的也得是凭证——写「agent 不能」会把「按种类拒」重新钉回来。
-        assert "凭证" in refused.json()["message"]
+        # 拒的是这个授权，说出口的也得是授权——写「AI 队友不能」会把「按种类拒」重新钉回来。
+        assert "授权" in refused.json()["message"]
 
         # A write route too: every handler in the module goes through one helper,
         # and this is what says the helper is actually on them.
@@ -2448,7 +2448,7 @@ def test_an_agent_on_the_admin_list_is_refused_on_its_own_session(client, monkey
 
     refused = client.get("/admin/feedback", headers=session_auth_headers(agent))
     assert refused.status_code == 403, refused.text
-    assert "agent" in refused.json()["message"]
+    assert "AI 队友" in refused.json()["message"]
 
     # The control: a person on the same list gets in, so what refused the call
     # above is the binding and not the list.

@@ -93,3 +93,10 @@ it('a card waiting on your review says which version it is', async () => {
   expect(view.getByText('登录表单加「记住我」')).toBeTruthy()
   expect(view.container.textContent).toContain('第 2 版')
 })
+
+// 项目给队友改过名，卡住那一句就叫它改过的名字，不叫默认的「芝士」。
+it('a stuck task names the teammate by the name its project gave it', async () => {
+  const view = await mount({ ...ownerItem('blocked'), detail: '', agentName: '小研', agentNameSource: 'human' })
+  expect(view.getByText('小研卡住了，打开看看它需要什么')).toBeTruthy()
+  expect(view.queryByText('芝士卡住了，打开看看它需要什么')).toBeNull()
+})

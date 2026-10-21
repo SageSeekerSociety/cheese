@@ -36,6 +36,7 @@ from app.domain.addressing import (
     Event,
     address,
 )
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms
 from app.domain.notification.services import (
@@ -267,8 +268,18 @@ async def waiting_items(
     topics = [rooms[tid] for tid in topic_ids if tid in rooms]
 
     items: list[awaiting.WaitingItem] = []
+    # 卡住的那几行要叫得出做它的队友：它没留话时，第二行写「某某卡住了」。只为这几
+    # 行去问 —— 一屏卡住的任务通常只有一两件，不为整份清单装配每一位队友。
+    teammates = AgentInstanceService(db)
     for task, shown, reason, detail in left:
         room = rooms.get(task.room_id)
+        named = (
+            await teammates.for_task_by_id(
+                task.project_id, task.room_id, task.agent_handle
+            )
+            if shown.phrase == presentation.NeedsYou.blocked.value
+            else None
+        )
         items.append(
             awaiting.WaitingItem(
                 project_id=task.project_id,
@@ -284,6 +295,8 @@ async def waiting_items(
                 block_id=questions[task.id][1] if reason == "asked" else None,
                 detail=_one_line(detail),
                 **_reviewed(reason, task_cards.get(task.id)),
+                agent_name=None if named is None else named.display_name,
+                agent_name_source=None if named is None else str(named.name_source),
             )
         )
 

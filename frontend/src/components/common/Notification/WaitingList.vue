@@ -59,7 +59,7 @@
                 v-else-if="item.phrase === 'blocked'"
                 class="waiting__detail t-body"
                 data-testid="waiting-blocked"
-                >{{ t('work.taskState.blockedFallback', { name: agentName }) }}</span
+                >{{ t('work.taskState.blockedFallback', { name: teammateOf(item) }) }}</span
               >
               <span v-if="item.topicId" class="waiting__where" :data-user-content="item.topicTitle || undefined">
                 # {{ topicTitle({ title: item.topicTitle }) }}
@@ -254,7 +254,10 @@ const props = defineProps<{
 
 // 卡住了没留话时那一句点做它的 AI 队友的名字。清单跨项目，每一行不带它叫什么，所以说
 // 默认名（和名册还没到时一样）。
-const agentName = computed(() => teammateName(null, 'default'))
+/** 做这件任务的队友叫什么：后端给了它的名字就照它叫（改过名的项目叫改过的名字）。 */
+function teammateOf(item: WaitingWork): string {
+  return teammateName(item.agentName, item.agentNameSource ?? 'default') || teammateName(null, 'default')
+}
 
 const emit = defineEmits<{
   retry: []
@@ -296,7 +299,7 @@ function stateOf(item: WaitingWork): TaskState | null {
   if (item.phrase === 'decision' || item.phrase === 'change_alert') return null
   return taskState(
     { id: item.taskId, presentation: { column: 'needs_you', phrase: item.phrase } },
-    { viewer: '', agentName: agentName.value }
+    { viewer: '', agentName: teammateOf(item) }
   )
 }
 
