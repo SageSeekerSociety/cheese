@@ -7,8 +7,8 @@
 - **未读角标**不能算任务。每条任务里说一句话就把房间标成未读，红点会立刻变成噪音，
   而任务里的话本来只在负责人、协作者和 AI 队友之间。
 
-任务自己有角标，只亮给负责人和协作者，只算人说的话：AI 队友每一步都说话，算进来
-红点就没人看了；它需要人的时候，任务行上有自己的那颗点。
+任务自己有角标，只亮给负责人和协作者，人和 AI 说的话都算：AI 的汇报也是任务里的人
+要读的新内容。它需要人的时候，任务行上另有自己的那颗点，不靠未读数字代替。
 
 写成一个文件是因为它们最可能的坏法是「顺手统一」：下一个人看到两处相似的查询、
 一处带 `task_id IS NULL` 一处不带，很容易以为是漏了。
@@ -190,7 +190,8 @@ def test_a_task_lights_its_own_badge_only_for_those_taking_part(client):
     assert _unread(client, p["id"], task_id, "carol") == 1
 
 
-def test_the_ai_teammate_talking_in_a_task_does_not_light_it(client):
+def test_the_ai_teammate_talking_in_a_task_lights_it(client):
+    """AI 队友在任务里说的话也算新消息，负责人和协作者都看得到。"""
     p = _project(client)
     room_id = _room(client, p["id"])
     _join(client, room_id, "bob")
@@ -198,7 +199,8 @@ def test_the_ai_teammate_talking_in_a_task_does_not_light_it(client):
     _set_collaborators(client, task_id, "alice", ["bob"])
 
     _seed_agent_line(client, p["id"], task_id)
-    assert _unread(client, p["id"], task_id, "bob") == 0
+    assert _unread(client, p["id"], task_id, "alice") == 1
+    assert _unread(client, p["id"], task_id, "bob") == 1
 
 
 def test_opening_a_task_clears_its_badge(client):
