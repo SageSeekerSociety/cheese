@@ -15,6 +15,7 @@ import RenderReactionNotification from '@/components/common/Notification/renders
 import RenderReplyNotification from '@/components/common/Notification/renders/RenderReplyNotification.vue'
 import RenderRoomNoticeNotification from '@/components/common/Notification/renders/RenderRoomNoticeNotification.vue'
 import RenderSpaceAnnouncementNotification from '@/components/common/Notification/renders/RenderSpaceAnnouncementNotification.vue'
+import RenderTaskNotification from '@/components/common/Notification/renders/RenderTaskNotification.vue'
 import RenderTeamInvitationAcceptedNotification from '@/components/common/Notification/renders/RenderTeamInvitationAcceptedNotification.vue'
 import RenderTeamInvitationCanceledNotification from '@/components/common/Notification/renders/RenderTeamInvitationCanceledNotification.vue'
 import RenderTeamInvitationDeclinedNotification from '@/components/common/Notification/renders/RenderTeamInvitationDeclinedNotification.vue'
@@ -37,6 +38,8 @@ const notificationRendererRegistry: Partial<Record<NotificationType, Component>>
   ROOM_NOTICE: RenderRoomNoticeNotification,
   DEVICE_IN_USE: RenderDeviceInUseNotification,
   SPACE_ANNOUNCEMENT: RenderSpaceAnnouncementNotification,
+  TASK_NOTICE: RenderTaskNotification,
+  TASK_DUE_SOON: RenderTaskNotification,
 }
 
 /** 画这一类的组件；认不出的类型（服务端多了一种、这一版前端还不认识）用默认的那一个。 */
@@ -53,6 +56,17 @@ const NOTICE_ICONS: Record<string, string> = {
   main_checks_failed: 'mdi-alert-circle-outline',
   policy_proposal: 'mdi-shield-check-outline',
   routine_run: 'mdi-repeat',
+}
+
+// 题目上的事一个类别码走完，具体是哪件看 `event`（后端 `task_notices`）。
+const TASK_ICONS: Record<string, string> = {
+  claimApproved: 'mdi-check-circle-outline',
+  claimRejected: 'mdi-close-circle-outline',
+  reviewed: 'mdi-clipboard-check-outline',
+  requirementsChanged: 'mdi-file-document-edit-outline',
+  deadlineMoved: 'mdi-calendar-clock',
+  dueSoon: 'mdi-alarm',
+  missed: 'mdi-account-clock-outline',
 }
 
 /** 没有人可画时，这一条左边那个小图标。 */
@@ -80,6 +94,10 @@ export function getNotificationIcon(notification: Notification): string {
       return 'mdi-laptop'
     case 'SPACE_ANNOUNCEMENT':
       return 'mdi-bullhorn-outline'
+    case 'TASK_DUE_SOON':
+      return 'mdi-alarm'
+    case 'TASK_NOTICE':
+      return TASK_ICONS[String(notification.contextMetadata?.event ?? '')] ?? 'mdi-trophy-outline'
     default:
       return 'mdi-bell-outline'
   }

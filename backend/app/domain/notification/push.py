@@ -49,6 +49,7 @@ PUSHABLE: Final = frozenset(
         NotificationType.ROOM_NOTICE,
         NotificationType.CHEESE_QUESTION,
         NotificationType.TEAM_JOIN_REQUEST,
+        NotificationType.TASK_DUE_SOON,
     }
 )
 
@@ -193,6 +194,12 @@ def push_link(payload: dict[str, Any]) -> str:
     topic_id = payload.get("topicId")
     task_id = payload.get("taskId")
     thread_id = payload.get("threadId")
+    # A space's 题目 (`task_notices`): its page. Its id is `spaceTaskId`, not
+    # `taskId`, which names a project's task.
+    if (space_id := payload.get("spaceId")) and (
+        space_task := payload.get("spaceTaskId")
+    ):
+        return f"/spaces/{space_id}/tasks/{space_task}"
     if project_id and topic_id:
         if task_id:
             return f"/projects/{project_id}/topics/{topic_id}/tasks/{task_id}"

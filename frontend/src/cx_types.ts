@@ -6,7 +6,7 @@ import type { EnvironmentFailure } from './types/environment'
 export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
 export type { DeviceScreen } from './types/deviceSessions'
-export type { WaitingAsk, WaitingFace, WaitingItem, WaitingRun, WaitingWork } from './types/waiting'
+export type { WaitingAsk, WaitingFace, WaitingItem, WaitingRun, WaitingTask, WaitingWork } from './types/waiting'
 // 下面这四节领域类型搬去了 ./types/ 里各自一个模块（采纳卡/验收、资源池市场/节点看板/
 // 算力额度、self-hosted 设备连接器、反馈）。这里只把名字转出去，`@/cx_types` 对外的
 // 名字一个都没变 —— 模式同下面 profile 那一节；搬出去是因为本文件顶在行数上限上。

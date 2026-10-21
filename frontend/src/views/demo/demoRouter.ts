@@ -69,6 +69,7 @@ const catalogTargets = [
   { path: '/plans', name: 'CreditPlans', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },
+  { path: '/spaces/:spaceId/tasks/:taskId/submissions', name: 'TasksSubmissions', component: blank },
   { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
   { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
   { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },

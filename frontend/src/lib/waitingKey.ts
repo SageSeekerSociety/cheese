@@ -4,5 +4,7 @@ import type { WaitingItem } from '@/cx_types'
 export function waitingKey(item: WaitingItem): string {
   return item.kind === 'work'
     ? `work:${item.topicId}:${item.taskId ?? ''}:${item.blockId ?? ''}:${item.alertId ?? ''}`
-    : `${item.kind}:${item.id}`
+    : item.kind === 'task_queue'
+      ? `task_queue:${item.taskId}`
+      : `${item.kind}:${item.id}`
 }

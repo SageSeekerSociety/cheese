@@ -151,3 +151,26 @@ export function teamRequestCanceledNotification(withCanceler: boolean): Notifica
     applicationId: 'app-1',
   })
 }
+
+/** 空间里一道题目上的事（后端 `task_notices`）：句子带键，按读者的语言说。 */
+export function taskNotification(event: 'reviewed' | 'dueSoon'): Notification {
+  const task = '基于 eBPF 的容器网络延迟分析工具'
+  const said =
+    event === 'reviewed'
+      ? { key: 'spaceTaskReviewPassed', params: { task, score: 88 } }
+      : { key: 'spaceTaskDueTomorrow', params: { task } }
+  return notif(
+    event === 'reviewed' ? 'TASK_NOTICE' : 'TASK_DUE_SOON',
+    {},
+    {
+      spaceId: 7,
+      spaceName: '系统与网络实验室',
+      spaceTaskId: 88,
+      taskName: task,
+      event,
+      message: said,
+      // 后端存下的中文原句：预览站不加载句子目录，按它显示。
+      content: event === 'reviewed' ? `「${task}」的提交已通过，88 分` : `「${task}」距提交截止不到 24 小时，尚未提交`,
+    }
+  )
+}

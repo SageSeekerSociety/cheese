@@ -59,6 +59,7 @@ from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
 )
+from app.domain.task_notices import notices as task_notices
 from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.services import team_service
 from app.domain.usage.adapters import ComputeCredits
@@ -414,6 +415,8 @@ async def patch_task_participant(
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
+    approved_before = membership.approved
+    deadline_before = membership.deadline
     updated = await membership_service.update_membership(
         membership=membership,
         task=task,
@@ -431,6 +434,22 @@ async def patch_task_participant(
         overview=seed_overview,
         task_terms=TaskTerms(db),
     ).activate_participation(task=as_brief(task), claim=as_claim(updated))
+    # The claimer hears the decision, and a moved deadline on a claim already
+    # approved (one being approved now gets its deadline with the decision).
+    now = datetime.now(UTC)
+    if updated.approved != approved_before and updated.approved in (0, 1):
+        await task_notices.claim_decided(
+            db,
+            task=task,
+            membership=updated,
+            approved=updated.approved == 0,
+            by=auth_user.user_id,
+            at=now,
+        )
+    elif updated.approved == 0 and updated.deadline != deadline_before:
+        await task_notices.personal_deadline_changed(
+            db, task=task, membership=updated, by=auth_user.user_id, at=now
+        )
     # Commit before answering: the participant told they are approved can reload
     # the task on their next request and must see it as theirs (download and
     # submit). Same reason as the commit in ``create_task``.
