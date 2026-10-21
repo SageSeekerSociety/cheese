@@ -237,6 +237,24 @@ async def test_a_source_added_beside_a_config_model_carries_the_models_metadata(
 
 
 @pytest.mark.anyio
+async def test_a_source_added_beside_a_row_that_cannot_search_is_not_marked_so():
+    # Whether a deployment runs web search is a fact about its server (RUC's vLLM
+    # does not), measured per row; a new route must not inherit "cannot search",
+    # or the gateway never sends a search to it.
+    config = json.loads(json.dumps(_KIMI_CONFIG))
+    config["model_info"]["supports_web_search"] = False
+    gw = _Gateway([config])
+    service = _service(gw)
+
+    await service.add_source(
+        handle="admin", name="kimi-k3", payload=SourceCreate(**_GO)
+    )
+
+    _, new_row = gw.group("kimi-k3")
+    assert "supports_web_search" not in new_row["model_info"]
+
+
+@pytest.mark.anyio
 async def test_the_listing_shows_every_source_in_the_order_the_gateway_tries_them():
     config = json.loads(json.dumps(_KIMI_CONFIG))
     config["litellm_params"]["order"] = 2
