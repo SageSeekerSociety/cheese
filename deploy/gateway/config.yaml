@@ -54,8 +54,14 @@
 #                              model has cost this much in all, by the gateway's
 #                              own ledger (spend_cap.py).
 #
-# A selectable model with no price is not offered — see the pricing note below
-# for why a missing price is worse than a missing model.
+# A selectable model with no price is not offered: a call to it could not be
+# charged, which is worse than a model nobody can pick.
+#
+# Prices are USD, the unit the ledger and every key's budget are in. A provider
+# that bills our account in CNY (DeepSeek, Zhipu, Moonshot, Xiaomi) is priced
+# from its Chinese price list, converted at RMB 7.1/USD, and the line says so
+# with the page and the date it was read; its English USD list is a different
+# price for a different account and is not what we pay.
 #
 # Provider credentials stay in the gateway; callers use project-scoped keys so
 # every configured upstream is metered against the same project budget.
@@ -209,9 +215,9 @@ model_list:
       # holds only while RUC's cache hits as DeepSeek's does, which needs
       # Claude Code's billing line kept out of the prompt
       # (system_billing_line.py).
-      input_cost_per_token: 0.0000003
-      output_cost_per_token: 0.0000012
-      cache_read_input_token_cost: 0.000000006
+      input_cost_per_token: 0.00000028169
+      output_cost_per_token: 0.0000011268
+      cache_read_input_token_cost: 0.0000000056338
     # Each row merges its own copy: LiteLLM writes the deployment id into
     # model_info, and one mapping shared by alias gives every key the same id,
     # so a 429 on one key cools them all down.
@@ -298,21 +304,25 @@ model_list:
       cheese_selectable: true
       cheese_label: DeepSeek V4.1 Flash
       cheese_efforts: [low, high]
-      # Official peak rates bound the budget estimate; off-peak billing is half.
-      # https://api-docs.deepseek.com/quick_start/pricing/
-      input_cost_per_token: 0.0000003
-      output_cost_per_token: 0.0000012
-      cache_read_input_token_cost: 0.000000006
+      # Peak rates of the Chinese price list bound the budget estimate
+      # (https://api-docs.deepseek.com/zh-cn/quick_start/pricing, read
+      # 2026-10-21; off-peak billing is half): per million tokens ¥2 input,
+      # ¥8 output, ¥0.04 cache hit, ÷ 7.1 = $0.28169 / $1.1268 / $0.0056338.
+      input_cost_per_token: 0.00000028169
+      output_cost_per_token: 0.0000011268
+      cache_read_input_token_cost: 0.0000000056338
       # Each search this API runs for Claude Code's WebSearch is billed on its
-      # own: $0.75 per 1,000 successful requests, the USD price DeepSeek's
-      # English page lists (https://api-docs.deepseek.com/guides/search/, read
-      # 2026-10-21; the Chinese page lists the CNY account's ¥5), so
-      # 0.00075 a search, counted per search by patch_deepseek_search_cost.py.
-      # LiteLLM reads the medium size; DeepSeek has one price for all three.
+      # own: ¥5 per 1,000 successful requests on the Chinese list
+      # (https://api-docs.deepseek.com/zh-cn/guides/search/, read 2026-10-21),
+      # ÷ 7.1 = $0.000704 a search, counted per search by
+      # patch_deepseek_search_cost.py. The platform's own searches
+      # (search_tools below, deepseek_search.py) cost the same; test_deepseek_search.py
+      # holds the two together. LiteLLM reads the medium size; DeepSeek has one
+      # price for all three.
       search_context_cost_per_query:
-        search_context_size_low: 0.00075
-        search_context_size_medium: 0.00075
-        search_context_size_high: 0.00075
+        search_context_size_low: 0.000704
+        search_context_size_medium: 0.000704
+        search_context_size_high: 0.000704
       # This deployment's alias supports native thinking/effort. Without these
       # capabilities LiteLLM 1.96 drops thinking when Claude Code sends effort.
       supports_reasoning: true
@@ -466,6 +476,16 @@ model_list:
       cache_creation_input_token_cost_above_1hr: 0.000002
     model_info:
       blocked: true
+
+# The platform's own web search (backend `/web-search`, the agents'
+# `cheese_web_search`), asked on the caller's virtual key at
+# /v1/search/deepseek-search, so it is admitted, logged and drained like that
+# key's model calls. DeepSeek's search API as a provider: deepseek_search.py.
+search_tools:
+  - search_tool_name: deepseek-search
+    litellm_params:
+      search_provider: deepseek
+      api_key: os.environ/DEEPSEEK_API_KEY
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
