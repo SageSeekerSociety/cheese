@@ -223,6 +223,7 @@ def proc_index(paths: list[Path]) -> set:
     found = set()
 
     def unreadable(path: str, error: OSError) -> RuntimeError:
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
         return RuntimeError(
             "could not establish whether the resource has active writers: "
             f"cannot read {path}: {error.strerror or error}"
@@ -323,6 +324,7 @@ def _statx():
     cannot be used here at all."""
     number = _STATX_NUMBER.get(os.uname().machine)
     if number is None:
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
         raise RuntimeError(
             "could not establish whether the resource has active writers: "
             f"no statx call known for {os.uname().machine}"
@@ -349,6 +351,7 @@ def _statx():
             return os.makedev(major, minor), inode, mode
         failure = ctypes.get_errno()
         if failure in _STATX_UNUSABLE:
+            # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
             raise RuntimeError(
                 "could not establish whether the resource has active writers: "
                 f"statx: {os.strerror(failure)}"
