@@ -163,6 +163,7 @@ def prepare(run_dir: Path, *, database: str | None = None) -> Platform:
     home = run_dir / "host"
     _one_key(key)
     _no_forge()
+    _the_only_backend()
     _serve_the_host(home)
     server = _serve(port)
     return Platform(base, database, key, settings.assistant_model, home, server)
@@ -191,6 +192,20 @@ def _one_key(key: str) -> None:
     for module in list(sys.modules.values()):
         if getattr(module, "service_key", None) is original:
             module.service_key = service_key  # type: ignore[attr-defined]
+
+
+def _the_only_backend() -> None:
+    """The eval's backend owns the platform's standing work for the whole run.
+    A backend holds that on a connection to its database; the eval drops and
+    remakes the database before every task, which cuts that connection, and a
+    backend that finds its hold gone shuts itself down for the one that took
+    over. Here there is no other."""
+    from app.core.ownership import Ownership
+
+    async def still_held(self) -> bool:
+        return True
+
+    Ownership.still_held = still_held  # type: ignore[method-assign]
 
 
 def _no_forge() -> None:

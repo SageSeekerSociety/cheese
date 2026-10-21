@@ -322,7 +322,8 @@ TASKS: list[Task] = [
             ),
             (
                 "开了免打扰",
-                lambda o: (o.prefs or {}).get("quiet_hours_enabled") is True,
+                # No saved row is the defaults: quiet hours 22:00–08:00, on.
+                lambda o: (o.prefs or {}).get("quiet_hours_enabled", True) is True,
             ),
         ),
         points="把课题组综合频道的提醒改成仅 @ 我；免打扰时段从 22:00 开始（默认已是 22:00–08:00，应确认已是或保持）。",
