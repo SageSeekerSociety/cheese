@@ -6,6 +6,7 @@ import http.server
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -13,6 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -440,6 +442,223 @@ def test_a_directory_the_room_swaps_for_a_link_leads_nowhere(tmp_path, monkeypat
         monkeypatch.setattr(os, "scandir", swapping)
         index = cleanup.proc_index([work])
         monkeypatch.setattr(os, "scandir", listed)
+        place = (outside / "inner").stat()
+        assert (place.st_dev, place.st_ino) not in index
+        assert bystander.pid not in cleanup.proc_holders([work], index)
+    finally:
+        _stop(bystander)
+
+
+def _short_room():
+    """A room whose path leaves a socket inside it within the 108 bytes a
+    unix socket's name may have; `tmp_path` alone is longer than that."""
+    return Path(tempfile.mkdtemp(prefix="r", dir="/tmp"))
+
+
+_LISTEN = (
+    "import os, socket, sys, time\n"
+    "s = socket.socket(socket.AF_UNIX)\n"
+    "s.bind(sys.argv[1])\n"
+    "s.listen()\n"
+    "os.chdir('/')\n"
+    "time.sleep(300)\n"
+)
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_process_whose_only_hold_is_a_socket_it_listens_on_holds_the_room():
+    """gpg-agent with its home in the room works from `/` and holds nothing of
+    the room but the socket it listens on there; it holds the room, and is
+    ended with it, as lsof had it."""
+    room = _short_room()
+    listening = subprocess.Popen(
+        [sys.executable, "-c", _LISTEN, str(room / "S.agent")], cwd="/"
+    )
+    try:
+        wait_for(lambda: (room / "S.agent").exists())
+        wait_for(lambda: listening.pid in cleanup.holders([room]))
+        with pytest.raises(cleanup.StillRunning):
+            cleanup.check_no_writers([room])
+        cleanup.end_holders([room])
+        assert listening.wait(timeout=15) != 0
+        cleanup.check_no_writers([room])
+    finally:
+        _stop(listening)
+        shutil.rmtree(room, ignore_errors=True)
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_sandboxed_process_listening_in_the_room_under_another_name_holds_it():
+    """A sandbox has its own network and mount namespaces and names the room
+    differently; a socket it listens on in the room holds the room all the
+    same."""
+    room = _short_room()
+    alias = _short_room()
+    probe = subprocess.run(["unshare", "-rmn", "true"], capture_output=True)
+    if probe.returncode != 0:
+        pytest.skip("no unprivileged namespaces here")
+    sandboxed = subprocess.Popen(
+        [
+            "unshare",
+            "-rmn",
+            "sh",
+            "-c",
+            f'mount --bind {room} {alias} && exec "$0" -c "$1" {alias}/S',
+            sys.executable,
+            _LISTEN,
+        ],
+        cwd="/",
+    )
+    try:
+        wait_for(lambda: (room / "S").exists())
+        wait_for(lambda: sandboxed.pid in cleanup.holders([room]))
+    finally:
+        _stop(sandboxed)
+        shutil.rmtree(room, ignore_errors=True)
+        shutil.rmtree(alias, ignore_errors=True)
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_room_too_deep_to_walk_is_never_taken_for_one_nothing_holds(tmp_path):
+    """A room nested deeper than the walk has descriptors for is refused, not
+    reported free while a process holds a file at its bottom."""
+    import resource
+
+    home, work = cleanup.resource_paths(tmp_path, str(uuid.uuid4()), str(uuid.uuid4()))
+    work.mkdir(parents=True)
+    depth = 300
+    descriptor = os.open(work, os.O_RDONLY)
+    for _ in range(depth):
+        os.mkdir("d", dir_fd=descriptor)
+        inner = os.open("d", os.O_RDONLY, dir_fd=descriptor)
+        os.close(descriptor)
+        descriptor = inner
+    os.close(descriptor)
+    leaf = str(work / "/".join(["d"] * depth) / "leaf")
+    Path(leaf).write_text("")
+    holding = _sleeper(tmp_path, f"f = open({leaf!r}); import time; time.sleep(300)")
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    try:
+        wait_for(
+            lambda: any(
+                os.readlink(fd.path) == leaf
+                for fd in os.scandir(f"/proc/{holding.pid}/fd")
+            )
+        )
+        resource.setrlimit(
+            resource.RLIMIT_NOFILE, (len(os.listdir("/proc/self/fd")) + 100, hard)
+        )
+        try:
+            found = cleanup.holders([home, work])
+        except RuntimeError:
+            found = None
+        finally:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+        assert found is None or holding.pid in found
+    finally:
+        _stop(holding)
+
+
+@pytest.mark.skipif(
+    not os.path.exists("/dev/fuse") or not hasattr(os, "geteuid") or os.geteuid(),
+    reason="mounts a FUSE filesystem",
+)
+def test_a_mount_that_stopped_answering_does_not_hold_up_the_scan(tmp_path):
+    """Some process on the machine has a file open on a mount whose server has
+    stopped answering (a hung NFS share, a FUSE daemon that is stuck). Finding
+    what holds a room elsewhere still finishes."""
+    import ctypes
+
+    room = tmp_path / "room"
+    room.mkdir()
+    mount = tmp_path / "hung"
+    mount.mkdir()
+    # A FUSE mount whose daemon never answers: nothing ever reads this.
+    device = os.open("/dev/fuse", os.O_RDWR)
+    libc = ctypes.CDLL(None, use_errno=True)
+    options = f"fd={device},rootmode=40000,user_id=0,group_id=0".encode()
+    assert libc.mount(b"hung", str(mount).encode(), b"fuse", 0, options) == 0
+    stuck = _sleeper(
+        tmp_path,
+        f"import os, time; f = os.open({str(mount)!r}, os.O_PATH); time.sleep(300)",
+    )
+    answers = []
+    try:
+        wait_for(
+            lambda: any(
+                os.readlink(fd.path) == str(mount)
+                for fd in os.scandir(f"/proc/{stuck.pid}/fd")
+            )
+        )
+        scan = threading.Thread(
+            target=lambda: answers.append(cleanup.holders([room])), daemon=True
+        )
+        scan.start()
+        scan.join(timeout=10)
+        assert answers == [[]], "the scan waited on the mount that stopped answering"
+    finally:
+        os.close(device)  # aborts the mount, releasing anything waiting on it
+        _stop(stuck)
+        subprocess.run(["umount", "-l", str(mount)])
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_link_the_room_holds_to_a_file_elsewhere_leads_nowhere(tmp_path):
+    """A file of the room swapped for a link to a file elsewhere does not make
+    that file part of the room, nor the process that has it open a holder."""
+    home, work = cleanup.resource_paths(tmp_path, str(uuid.uuid4()), str(uuid.uuid4()))
+    work.mkdir(parents=True)
+    outside = tmp_path / "outside.log"
+    outside.write_text("")
+    (work / "log").write_text("")
+    (work / "log").unlink()
+    (work / "log").symlink_to(outside)
+    bystander = _sleeper(
+        tmp_path, f"f = open({str(outside)!r}); import time; time.sleep(300)"
+    )
+    try:
+        wait_for(
+            lambda: any(
+                os.readlink(fd.path) == str(outside)
+                for fd in os.scandir(f"/proc/{bystander.pid}/fd")
+            )
+        )
+        index = cleanup.proc_index([work])
+        place = outside.stat()
+        assert (place.st_dev, place.st_ino) not in index
+        assert bystander.pid not in cleanup.proc_holders([work], index)
+    finally:
+        _stop(bystander)
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_directory_two_levels_down_swapped_for_a_link_leads_nowhere(
+    tmp_path, monkeypatch
+):
+    """The same holds below the room's first level: a directory inside one of
+    its directories, swapped for a link once its parent was listed, leads
+    nowhere."""
+    home, work = cleanup.resource_paths(tmp_path, str(uuid.uuid4()), str(uuid.uuid4()))
+    (work / "a" / "b").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    (outside / "inner").mkdir(parents=True)
+    bystander = _sleeper(outside / "inner", "import time; time.sleep(300)")
+    listed = os.scandir
+    first = (work / "a").stat()
+
+    def swapping(path):
+        entries = list(listed(path))
+        here = os.stat(path)
+        if (here.st_dev, here.st_ino) == (first.st_dev, first.st_ino):
+            (work / "a" / "b").rename(work / "a" / "b.moved")
+            (work / "a" / "b").symlink_to(outside)
+        return iter(entries)
+
+    try:
+        monkeypatch.setattr(os, "scandir", swapping)
+        index = cleanup.proc_index([work])
+        monkeypatch.setattr(os, "scandir", listed)
+        assert (work / "a" / "b").is_symlink(), "the swap did not happen"
         place = (outside / "inner").stat()
         assert (place.st_dev, place.st_ino) not in index
         assert bystander.pid not in cleanup.proc_holders([work], index)
