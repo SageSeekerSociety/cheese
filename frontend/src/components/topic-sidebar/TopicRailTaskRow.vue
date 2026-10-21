@@ -49,6 +49,11 @@ const emit = defineEmits<{
 const pending = ref(false)
 let pendingTimer: number | undefined
 function choose(): void {
+  // 点的就是当前这一行：不跳转，也就没有「等它选中」这回事，别亮着不放。
+  if (props.selected) {
+    emit('select', { roomId: props.task.room_id, taskId: props.task.id })
+    return
+  }
   pending.value = true
   window.clearTimeout(pendingTimer)
   pendingTimer = window.setTimeout(() => (pending.value = false), 10_000)

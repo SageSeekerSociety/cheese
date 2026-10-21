@@ -36,6 +36,11 @@ const emit = defineEmits<{
 const pendingKey = ref<string | null>(null)
 let pendingTimer: number | undefined
 function openPage(key: string): void {
+  // 点的就是当前这一页：不跳转，也就没有「等它选中」这回事，别亮着不放。
+  if (props.routeName === key) {
+    emit('open-page', key)
+    return
+  }
   pendingKey.value = key
   window.clearTimeout(pendingTimer)
   pendingTimer = window.setTimeout(() => (pendingKey.value = null), 10_000)
