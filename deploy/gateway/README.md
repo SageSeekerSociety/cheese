@@ -358,12 +358,24 @@ that bills searches bills each one on top of the tokens. A row prices them in
 `model_info.search_context_cost_per_query` (USD per search, the same in all
 three sizes), and the search cost lands in the call's spend, so it is charged
 in credits and counted by the key's budget like the tokens are. DeepSeek's
-official row carries $0.00075 a search ($0.75 per 1,000 successful requests).
+official row carries $0.000704 a search: ¥5 per 1,000 successful requests on
+the Chinese price list, at RMB 7.1/USD, since our account is billed in CNY.
 The pinned LiteLLM prices one search per answer for `deepseek` however many
 the answer reports; `patch_deepseek_search_cost.py` makes it count
 `usage.server_tool_use.web_search_requests`, as it does for Anthropic, and
 `test_deepseek_search_cost.py` holds the charge to tokens plus each search. A
 row that cannot search needs no price.
+
+The platform's own web search (`cheese_web_search`, backend `/web-search`) is
+asked here too, at `/v1/search/deepseek-search` on the caller's own virtual
+key: `search_tools` in `config.yaml` names DeepSeek's search API, which the
+pinned LiteLLM has no provider for, so `deepseek_search.py` is one and
+`patch_deepseek_search_provider.py` registers it. Each search that found
+something is priced at the same $0.000704 and logged on the key as model
+`deepseek/search`, so the key's budget refuses it past its grant and the
+backend drains it into credits with the key's model calls; a search that found
+nothing costs nothing, as DeepSeek bills it. `test_deepseek_search.py` holds
+both.
 
 ## Prices for subscription models
 
@@ -415,7 +427,7 @@ container's own `pg_dump -Fc`, reads the archive back with `pg_restore --list`,
 which must list the data of `LiteLLM_ProxyModelTable` and
 `LiteLLM_VerificationToken`, and only then renames it to
 `~/backups/gateway/gateway-litellm-<UTC timestamp>.dump`. The box keeps the
-newest 28 dumps (7 days). Each dump is then copied to the R2 bucket under the
+newest 8 dumps (2 days; a dump was 0.85 GB on 2026-10-21). Each dump is then copied to the R2 bucket under the
 dev prefix (`db/gateway-litellm-<UTC timestamp>.dump`, `deploy/r2-upload.py`),
 where the bucket's lifecycle rule deletes it after 30 days. The database and
 its local dumps are on the same box, so a failed upload fails the run. The

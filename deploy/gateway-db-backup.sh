@@ -20,7 +20,9 @@ CONTAINER="${GATEWAY_DB_CONTAINER:-cheese-gateway-litellm-db-1}"
 DB_USER="${GATEWAY_DB_USER:-litellm}"
 DB_NAME="${GATEWAY_DB_NAME:-litellm}"
 BACKUP_DIR="${GATEWAY_BACKUP_DIR:-$HOME/backups/gateway}"
-KEEP="${GATEWAY_BACKUP_KEEP:-28}"
+# Two days of dumps on the box (about 6.8 GB at the 0.85 GB a dump was on
+# 2026-10-21, on a disk then 88% full); R2 keeps every dump 30 days.
+KEEP="${GATEWAY_BACKUP_KEEP:-8}"
 # The tables whose loss the backup exists for: model rows and virtual keys.
 REQUIRED_TABLES=(LiteLLM_ProxyModelTable LiteLLM_VerificationToken)
 

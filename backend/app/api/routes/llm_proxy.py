@@ -162,6 +162,7 @@ async def _bind_requested_subagent_model(
     choices: dict[str, dict],
     requested: str,
     parent_handle: str | None,
+    policy: gate.Policy,
 ):
     """分身指定了模型时的绑定：翻译成目录 id，校验它在项目模型目录内。
 
@@ -197,6 +198,7 @@ async def _bind_requested_subagent_model(
         parent_id,
         settings_.get("default_model"),
         settings_.get("default_subagent_model"),
+        model_catalog.subagent_default(settings_, choices, policy),
     ):
         if isinstance(configured, str) and configured and configured in choices:
             allowed.add(configured)
@@ -358,14 +360,27 @@ async def admission(
         if agent is None:
             agent = await agents.for_project(project)
     choices = model_catalog.catalog(project.settings if project else None)
+    # What the project's subagents may run without asking: the gate below
+    # judges the bound model by it, and the platform subagent default is only
+    # offered to a project entitled to it by the same gate.
+    policy = (
+        gate.policy_of(
+            project.settings,
+            await UsageService(db).plan_model_tiers(project.team_id),
+            overseas_approved=await UsageService(db).overseas_approved(project.team_id),
+        )
+        if project is not None and is_subagent
+        else None
+    )
     try:
-        if project is not None and is_subagent and requested:
+        if project is not None and policy is not None and requested:
             bound = await _bind_requested_subagent_model(
                 agents,
                 project,
                 choices,
                 requested,
                 claims.get("a"),
+                policy,
             )
         else:
             bound = binding.resolve(
@@ -373,13 +388,14 @@ async def admission(
                 choices,
                 agent_model=agent.configuration.get("model") if agent else None,
                 default_model=(
-                    (project.settings or {}).get("default_subagent_model")
-                    if project and is_subagent
-                    else None
+                    model_catalog.subagent_default(project.settings, choices, policy)
+                    if policy is not None
+                    else (project.settings or {}).get("default_model")
                 )
-                or ((project.settings or {}).get("default_model") if project else None),
+                if project
+                else None,
             )
-        if is_subagent and project:
+        if policy is not None and project is not None:
             choice = choices[bound.model]
             place = claims.get("t")
             try:
@@ -397,13 +413,7 @@ async def admission(
                     approver=project.owner_handle or "",
                     overseas=choice["overseas"],
                 ),
-                gate.policy_of(
-                    project.settings,
-                    await UsageService(db).plan_model_tiers(project.team_id),
-                    overseas_approved=await UsageService(db).overseas_approved(
-                        project.team_id
-                    ),
-                ),
+                policy,
                 actor=claims.get("a") or "",
             )
             if outcome is not None:

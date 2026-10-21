@@ -17,6 +17,7 @@ jobs:
     env:
       CHEESE_R2_ENV: /home/nictheboy/ops/r2.env
       CHEESE_BACKUP_DIR: /home/nictheboy/backups
+      UV: /home/nictheboy/.local/bin/uv
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Prove stale off-site and uploads markers fail the check
@@ -57,12 +58,13 @@ jobs:
         run: python3 deploy/r2-check.py local --max-age-hours 6
       - name: Prepare read-only R2 check dependencies
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
+      # uv, not `python3 -m venv`: the box's python3 has no ensurepip (no
+      # python3.X-venv package), so a venv cannot be made that way. uv makes
+      # its environments itself, and caches them. Called by absolute path: the
+      # runner service's PATH is not the login shell's.
         run: |
-          python3 -m venv "$RUNNER_TEMP/r2-check-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          "$RUNNER_TEMP/r2-check-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/pip" install --disable-pip-version-check boto3==1.40.61
+          [ -x "$UV" ] || { echo "::error::uv is not at $UV on this runner"; exit 1; }
+          "$UV" run --no-project --with boto3==1.40.61 python3 -c 'import boto3'
       - name: Fail if dev, prod, or either etrip DB or etrip uploads tar is stale (> 6h)
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
-        run: '"$RUNNER_TEMP/r2-check-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python" deploy/r2-check.py remote --max-age-hours 6'
-      - name: Remove R2 check environment
-        if: ${{ always() }}
-        run: rm -rf -- "$RUNNER_TEMP/r2-check-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        run: '"$UV" run --no-project --with boto3==1.40.61 python3 deploy/r2-check.py remote --max-age-hours 6'
