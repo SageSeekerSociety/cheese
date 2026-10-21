@@ -48,6 +48,7 @@ from app.domain.block.models import (
     BlockKind,
     checklist_text,
 )
+from app.domain.block.queries import reply_previews
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import MemberWait, MemberWaits
@@ -874,6 +875,16 @@ async def read_chat_history(
         }
         for b in included
     }
+    # A reply whose parent is on an older page carries one line of it, so the
+    # cue does not vanish just because the reader has not paged back that far.
+    # Parents already in this page are left to the full block; the parent itself
+    # is never added to the page.
+    previews = await reply_previews(db, result.items)
+    page_ids = {b.id for b in result.items}
+    for b in included:
+        preview = previews.get(b.id)
+        if preview is not None and b.reply_to not in page_ids:
+            serialized[b.id]["reply_preview"] = preview
     return ok(
         {
             "data": [serialized[b.id] for b in result.items],
@@ -900,6 +911,9 @@ async def read_chat_message(
     also = await _opening_ids(db, place.conversation_id)
     block = await _history_block(repo, place.conversation_id, block_id, also)
     item = BlockOut.model_validate(block).model_dump(mode="json")
+    preview = (await reply_previews(db, [block])).get(block.id)
+    if preview is not None:
+        item["reply_preview"] = preview
     item["reactions"] = await repo.reactions_for_block(block_id)
     return ok(item)
 

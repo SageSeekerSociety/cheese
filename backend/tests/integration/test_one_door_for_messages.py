@@ -201,6 +201,8 @@ def test_a_reply_threads_under_its_parent(client):
         client, topic_id, "alice", {"content": "回复", "reply_to": parent["id"]}
     )
     assert child["reply_to"] == parent["id"]
+    assert child["reply_preview"]["id"] == parent["id"]
+    assert child["reply_preview"]["content"] == "根消息"
 
 
 def test_an_image_alone_is_a_message(client):

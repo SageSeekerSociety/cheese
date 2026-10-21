@@ -176,6 +176,16 @@ export interface ChecklistMeta {
   result: string | null
 }
 
+/** A reply's parent when the reader's page does not hold it: one line, not the block. */
+export interface ReplyPreview {
+  id: string
+  kind: string
+  author_type: AuthorType
+  author: string
+  content: string
+  mime_type?: string | null
+}
+
 export interface Block {
   id: string
   // The conversation it was said in: a room's id, or a task's.
@@ -189,6 +199,9 @@ export interface Block {
   // this page is still sending.
   seq?: number
   reply_to?: string | null
+  // What the parent said, when the page does not carry the parent itself. The
+  // cue draws this line; the parent never enters the timeline.
+  reply_preview?: ReplyPreview
   anchor_quote?: string | null
   // Render-by-type: mimeType of an artifact block (set on kind=artifact).
   mime_type?: string | null
