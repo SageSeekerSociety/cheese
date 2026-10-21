@@ -61,7 +61,7 @@ fetch() { # url sha256
 # Every program shipped must load no shared library: a machine gets the file.
 static() {
   for program in "$@"; do
-    if readelf -d "$program" 2>/dev/null | grep -q NEEDED; then
+    if ! readelf -h "$program" >/dev/null || readelf -d "$program" | grep -q NEEDED; then
       echo "$program is not static" >&2
       exit 1
     fi
@@ -73,7 +73,9 @@ fetch "https://mirrors.edge.kernel.org/pub/linux/utils/net/iproute2/iproute2-$ip
 (
   cd "iproute2-$iproute2_version"
   ./configure --libbpf_force off
-  make -j"$(nproc)" SUBDIRS="lib ip" LDFLAGS=-static
+  # SHARED_LIBS=n: a link kind (veth) is found in a table compiled in, where
+  # a static binary cannot look itself up with dlopen.
+  make -j"$(nproc)" SUBDIRS="lib ip" SHARED_LIBS=n LDFLAGS=-static
 )
 
 # --- iptables (nf_tables backend), and the libnftnl it needs --------------
@@ -194,7 +196,15 @@ archive
 
 package="$work/git-$revision"
 mv "$work/git-root" "$package"
-rm -rf "$package/share/man" "$package/share/gitweb" "$package/share/perl5"
+# What a room's git does: no server side, no mail, and no dumb-HTTP push.
+rm -rf "$package/share/man" "$package/share/gitweb" "$package/share/perl5" \
+  "$package/bin/git-shell" "$package/bin/scalar" \
+  "$package/libexec/git-core/git-daemon" "$package/libexec/git-core/git-http-backend" \
+  "$package/libexec/git-core/git-imap-send" "$package/libexec/git-core/git-http-push" \
+  "$package/libexec/git-core/git-http-fetch" "$package/libexec/git-core/git-shell" \
+  "$package/libexec/git-core/scalar"
+find "$package/libexec" -type f -perm -u+x -exec sh -c \
+  'readelf -h "$1" >/dev/null 2>&1 && strip "$1"' _ {} \;
 mkdir -p "$package/licenses"
 license "git-$git_version" COPYING
 license "curl-$curl_version" COPYING

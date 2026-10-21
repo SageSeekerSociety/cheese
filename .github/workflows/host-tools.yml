@@ -11,6 +11,7 @@ on:
     paths:
       - scripts/build-host-tools.sh
       - .github/workflows/host-tools.yml
+      - backend/app/domain/agent/harness/claude_code/remote_execution/sandbox_host.py
   workflow_dispatch: {}
 
 permissions:
@@ -64,7 +65,7 @@ jobs:
             '-A CHEESE-SBX-POST -s 10.200.0.0/16 ! -o chs+ -j MASQUERADE' 'COMMIT' \
             | sudo "$xt" iptables-restore --noflush
           sudo "$xt" iptables-save -t filter | grep -q 'cheese-sandbox test'
-          sudo "$xt" iptables-save -t nat | grep -q 'MASQUERADE'
+          sudo "$xt" iptables-save -t nat | grep -q -- '-A CHEESE-SBX-POST -s 10.200.0.0/16 ! -o chs+ -j MASQUERADE'
           # The system's own iptables reads the same rules: one nf_tables view.
           sudo iptables-save -t nat | grep -q 'CHEESE-SBX-POST'
           sudo "$ip" link del chs0
@@ -93,21 +94,32 @@ jobs:
           sudo "$TOOLS/bin/xfs_quota" -x -c 'report -p -b' /mnt/cheese-test
       - name: tmux and git, as a user
         run: |
-          export PATH="$PLACED/tmux/bin:$PLACED/git/bin:$PATH"
-          tmux -V
-          tmux -S "$RUNNER_TEMP/tmux.sock" new-session -d -s probe 'sleep 30'
-          tmux -S "$RUNNER_TEMP/tmux.sock" list-panes -a -F '#{session_name} #{pane_dead} #{pane_dead_time}'
-          tmux -S "$RUNNER_TEMP/tmux.sock" kill-server
-          git --version
-          git clone -q --depth 1 --filter=blob:none https://github.com/SageSeekerSociety/cheese "$RUNNER_TEMP/clone"
-          git -C "$RUNNER_TEMP/clone" rev-parse --path-format=absolute --git-common-dir
-      # Static: the same files run on distributions the build never saw,
-      # including one whose CA bundle is not where Debian keeps it.
+          tmux="$PLACED/tmux/bin/tmux -S $RUNNER_TEMP/tmux.sock"
+          $tmux new-session -d -s keep 'sleep 30'
+          # A screen whose program ended stays, marked dead with its time:
+          # what the connector reads to close it.
+          $tmux set-option -g remain-on-exit on
+          $tmux new-session -d -s dead 'exit 3'
+          sleep 1
+          $tmux list-panes -t dead -F '#{pane_dead} #{pane_dead_time}' | grep -Eq '^1 [0-9]+$'
+          $tmux kill-server
+          git="$PLACED/git/bin/git"
+          "$git" --version | grep -q '^git version 2\.56\.'
+          "$git" clone -q --depth 1 --filter=blob:none https://github.com/SageSeekerSociety/cheese "$RUNNER_TEMP/clone"
+          test "$("$git" -C "$RUNNER_TEMP/clone" rev-parse --path-format=absolute --git-common-dir)" = "$RUNNER_TEMP/clone/.git"
+      # Static: the same files run on distributions the build never saw, and
+      # git's https finds each one's CA certificates where it keeps them. A
+      # cloud image carries those; Ubuntu's container image does not, so it is
+      # given them first.
       - name: On other distributions
         run: |
-          for image in fedora:42 almalinux:9 alpine:3.22 ubuntu:20.04 archlinux:latest; do
+          for image in fedora:42 almalinux:9 alpine:3.22 ubuntu:20.04 opensuse/leap:15.6; do
             echo "== $image"
-            docker run --rm -v "$PLACED:/placed:ro" "$image" sh -c '
+            prepare=true
+            case "$image" in
+              ubuntu:*) prepare="apt-get update -qq && apt-get install -y -qq ca-certificates >/dev/null" ;;
+            esac
+            docker run --rm -v "$PLACED:/placed:ro" "$image" sh -c "$prepare"' &&
               /placed/host-tools/bin/ip -V &&
               /placed/host-tools/bin/xtables-nft-multi iptables-restore --version &&
               /placed/host-tools/bin/mkfs.xfs -V &&
@@ -139,6 +151,6 @@ jobs:
           recipe=scripts/build-host-tools.sh
           revision=$(sed -n 's/^revision=//p' "$recipe")
           versions=$(sed -n 's/^\([a-z0-9]*\)_version=\(.*\)/\1 \2/p' "$recipe" | paste -sd, - | sed 's/,/, /g')
-          gh release create "host-tools-v$revision" dist/* \
+          gh release create "host-tools-v$revision" dist/* --target "$GITHUB_SHA" \
             --title "host tools $revision" \
-            --notes "Built statically against musl in Alpine 3.22 by \`$recipe\` for cheesehost to place on Linux machines: $versions. Sources are the upstream release tarballs, each checked against the SHA-256 in the recipe. Each archive carries the licenses of what it contains under \`licenses/\`."
+            --notes "Built statically against musl in Alpine 3.22 by \`$recipe\` for cheesehost to place on Linux machines: $versions. Sources are the upstream release tarballs, each checked against the SHA-256 in the recipe. Each archive carries the licenses of the programs it contains under \`licenses/\`."
