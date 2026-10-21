@@ -420,6 +420,9 @@ class DelegatedClaims:
     #: Whether the answer is shown to every reader of the document, not only
     #: the asker: then it reads only what all of them may.
     shown_to_readers: bool = False
+    #: A person's own 芝士: the conversation the question was asked in, whose
+    #: words its gate reads (`assistant.gate`).
+    conversation: str | None = None
 
 
 def mint_delegated_credential(
@@ -433,9 +436,11 @@ def mint_delegated_credential(
     topic_id: str | None = None,
     read_only: bool = True,
     shown_to_readers: bool = False,
+    conversation: str | None = None,
 ) -> str:
     now = int(time.time())
     payload = {
+        **({"c": conversation} if conversation else {}),
         "u": user_id,
         "h": handle,
         "a": agent,
@@ -504,6 +509,7 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
         work=work,
         read_only=payload.get("ro") is not False,
         shown_to_readers=payload.get("sh") is True,
+        conversation=payload["c"] if isinstance(payload.get("c"), str) else None,
     )
 
 
