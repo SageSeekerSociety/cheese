@@ -210,13 +210,23 @@ def _guest_with_claude(tmp_path):
     return home
 
 
+@pytest.mark.parametrize(
+    ("machine", "target"),
+    [("x86_64", "linux-amd64"), ("aarch64", "linux-arm64")],
+)
 async def test_the_machine_runs_the_connector_the_platform_serves_for_it(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, machine, target
 ):
     """A cloud machine gets the connector over the enrollment connection, the
     build the origin serves for its architecture, before the script runs."""
     home = _guest_with_claude(tmp_path)
     fake_transports(tmp_path / "bin", home)
+    # The guest's architecture, whatever this machine's is.
+    uname = tmp_path / "bin" / "uname"
+    uname.write_text(
+        f'#!/bin/sh\n[ "$1" = -m ] && echo {machine} || exec /usr/bin/uname "$@"\n'
+    )
+    uname.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
     seen = []
 
@@ -230,7 +240,7 @@ async def test_the_machine_runs_the_connector_the_platform_serves_for_it(
         script='"$HOME/.local/bin/cheesehost"',
         progress=progress,
     )
-    assert output == f"served {GUEST_TARGET}"
+    assert output == f"served {target}"
     assert "正在下载连接器" in seen
 
 
