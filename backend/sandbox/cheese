@@ -3155,6 +3155,13 @@ def _accept_request(args: dict, host) -> str:
     lines = [
         f"已把验收卡递给 {reviewer}" + (f"，本次更新《{named}》。" if named else "。")
     ]
+    # 递卡改了任务在看板上的样子，而这是它自己做的事：平台不会再另外告诉它，
+    # 所以就在这里说（`room_task.heard`）。
+    lines.append(
+        "看板上这件任务现在显示「等审」；你之前用 cheese_task_state 报的状态和说明"
+        "已经清掉。卡在等审阅的时候 cheese_task_state 报不了；卡被退回或作废，"
+        "平台会叫你，任务回到「在做」，那时再接着报。"
+    )
     # 新建的那一次把 id 说出来：往后交付这一项就用它，而这里是它第一次存在的地方。
     if args.get("new_artifact") and art.get("id"):
         lines.append(f"这一项的 id 是 {art['id']}，以后交付它用 artifact={art['id']}。")
