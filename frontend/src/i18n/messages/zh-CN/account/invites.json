@@ -1,0 +1,36 @@
+{
+  "title": "邀请好友",
+  "lede": "好友用你的邀请码注册，完成新手引导并建好第一个项目，得 50 点；注册 7 天内首次采纳交付，好友再得 100 点，你得 150 点和 50 积分。",
+  "loadFailed": "无法读取邀请信息",
+  "retry": "重试",
+  "code": {
+    "title": "我的邀请码与余量",
+    "label": "邀请码",
+    "remaining": "剩余 {left} / {total} 个名额",
+    "unlockHint": "你首次采纳交付后，再增加 {n} 个名额",
+    "copyCode": "复制邀请码",
+    "copyLink": "复制注册链接",
+    "copied": "邀请码已复制"
+  },
+  "earned": {
+    "title": "累计获得激励",
+    "credits": "额度",
+    "creditsValue": "{n} 点",
+    "points": "贡献积分",
+    "pointsValue": "{n} 积分",
+    "note": "邀请所得额度每月最多 1,500 点，超出部分只记积分。额度 90 天内有效，在当月方案额度用完后使用。",
+    "viewCredits": "查看个人额度"
+  },
+  "people": {
+    "title": "我邀请的人",
+    "empty": "暂无受邀好友",
+    "registeredOn": "{date} 注册",
+    "stage": {
+      "registered": "已注册 · 待建项目",
+      "onboarded": "待首次采纳",
+      "activated": "已激活 · +{n} 点",
+      "activatedNoCredits": "已激活",
+      "lapsed": "已过 7 天"
+    }
+  }
+}

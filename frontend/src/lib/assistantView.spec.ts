@@ -113,4 +113,22 @@ describe('writesView', () => {
 
     expect(view.changes.map((c) => c.draft)).toEqual([7, 8])
   })
+
+  it('改的是自己的通知设置：一张卡，卡头写改了什么，每一项能撤销，不受页面上有没有表单影响', () => {
+    const setting = {
+      ...edit(9, 0, {}),
+      kind: 'settings',
+      title: '通知设置',
+      undoable: true,
+      changed: { push: { label: '推送通知', before: 'on', after: 'off' } },
+    } as unknown as AssistantEdit
+    const view = writesView([edit(1, 7, { name: 'A' }), setting], terms, 7, () => false)
+
+    expect(view.changes).toHaveLength(2)
+    const card = view.changes[1]
+    expect(card.title).toBe('通知设置')
+    expect(card.rows.map((r) => [r.label, r.value])).toEqual([['推送通知', t('tasks.assistant.changes.setting.off')]])
+    expect(card.canUndo).toBe(true)
+    expect(card.collapsed).toBeFalsy()
+  })
 })

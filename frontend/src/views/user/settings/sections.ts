@@ -16,6 +16,8 @@ export function settingsGroups(): SettingsGroup[] {
         item('UserSettingsRealName', t('account.settings.realName'), 'mdi-account-card'),
         item('UserSettingsSecurity', t('account.security.title'), 'mdi-lock'),
         item('UserSettingsNotifications', t('account.settings.notifications'), 'mdi-bell-outline'),
+        item('UserSettingsAssistant', t('account.settings.assistant'), 'mdi-shield-check-outline'),
+        item('UserSettingsInvites', t('account.settings.invites'), 'mdi-account-plus-outline'),
       ],
     },
     {

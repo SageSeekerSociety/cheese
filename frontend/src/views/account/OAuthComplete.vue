@@ -12,6 +12,7 @@
     :provider-name="providerName"
     :step="step"
     :require-invite-code="requireInviteCode"
+    :preset-invite-code="presetInviteCode"
     :registration-config-ready="registrationConfigReady"
     :creating="creating"
     :binding="binding"
@@ -37,6 +38,7 @@ import { toast } from 'vuetify-sonner'
 import { useConsentDocuments } from '@/composables/useConsentDocuments'
 
 import { emailCodeMessage } from './attemptWait'
+import { inviteCodeFor } from './inviteCode'
 import OAuthCompleteView from './OAuthCompleteView.vue'
 import { oauthProviderName } from './oauthProvider'
 
@@ -66,6 +68,9 @@ let createValues: OAuthCreateValues | null = null
 let consentGiven: { documents: AcceptedDocuments; method: ConsentMethod } | null = null
 const requireInviteCode = ref(false)
 const registrationConfigReady = ref(false)
+// The provider's round trip drops the sign-up page's `?code=`; the code it carried
+// was kept in this tab (./inviteCode.ts) and is filled in here.
+const presetInviteCode = inviteCodeFor(route.query.code)
 
 const { documents: consentDocuments, loadError: consentLoadError, load: loadConsentDocuments } = useConsentDocuments()
 // 同意要交后端当前的协议版本；一进页面就取，提交时 `confirm()` 才有东西可交。
@@ -133,9 +138,8 @@ const submitCreate = () => {
     consentPrivacy: consentGiven.documents.privacy,
     consentMethod: consentGiven.method,
   }
-  if (requireInviteCode.value) {
-    requestData.inviteCode = createValues.inviteCode.trim()
-  }
+  const inviteCode = createValues.inviteCode.trim()
+  if (inviteCode) requestData.inviteCode = inviteCode
   if (createValues.setPassword) {
     requestData.password = createValues.password
   }

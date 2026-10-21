@@ -1,4 +1,5 @@
 {
+  "assistant": "芝士",
   "back": "返回设置",
   "close": "关闭设置",
   "closeHint": "关闭设置（Esc）",
@@ -9,6 +10,7 @@
     "app": "桌面端",
     "devices": "设备与连接"
   },
+  "invites": "邀请好友",
   "notifications": "通知",
   "realName": "实名信息",
   "title": "个人设置"

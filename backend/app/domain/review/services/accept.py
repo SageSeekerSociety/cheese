@@ -28,6 +28,7 @@ from app.domain.review.models import (
 )
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.usage import referrals
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
@@ -190,6 +191,7 @@ async def _accept_discussion(
     notes.clear(card)
     await self._stamp_delivery(card, topic, by=decided_by, at=now)
     await self._mark_task_merged(card)
+    await referrals.on_accepted(self._session, decided_by)
     await self._session.flush()
     await self._session.refresh(card)
     return card
@@ -556,6 +558,7 @@ async def _finish_pr_accept(
     notes.record(card, None, f"{headline}；{settled}" if headline else settled)
     # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
     await self._stamp_delivery(card, topic, by=by, at=now)
+    await referrals.on_accepted(self._session, by)
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (

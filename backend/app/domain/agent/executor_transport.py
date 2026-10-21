@@ -710,6 +710,9 @@ class RemoteClient:
                             if os.environ.get("CHEESE_TURN")
                             else {}
                         ),
+                        # What a person's 芝士 does for them once its gate let
+                        # it (`assistant.passes`).
+                        **({"X-Cheese-Pass": args["pass"]} if args.get("pass") else {}),
                     },
                 )
                 response = connection.getresponse()

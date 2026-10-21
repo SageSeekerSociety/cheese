@@ -326,6 +326,10 @@
     "pageTitle": "Shared document",
     "updated": "Updated {time}",
     "gone": "This share link no longer works",
-    "loadFailed": "Failed to load the document"
+    "loadFailed": "Failed to load the document",
+    "colophon": {
+      "brand": "Cheese · where people and AI teammates work together",
+      "seats": "{name} has {n} invited seats left · Join with this link"
+    }
   }
 }

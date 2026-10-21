@@ -1,6 +1,7 @@
 """/oauth/create is account registration too: when the deployment requires an
 invite code, an account created through a provider needs one as well."""
 
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -129,3 +130,58 @@ def test_code_is_ignored_when_not_required(
     _loc, params = _create(api_client, _portal, "uid-invite-open", "oauth_invite_open")
     assert params["created"] == "true"
     assert _use_count(db_session, _portal, invite_code) == 0
+
+
+def test_an_open_signup_through_a_provider_credits_the_friend_who_invited(
+    api_client: TestClient, db_session, _portal, monkeypatch
+):
+    from app.domain.invite.models import InviteReferral
+    from app.domain.usage import referrals
+    from app.domain.user.models import User
+
+    monkeypatch.setattr(settings, "require_invite_code", False)
+
+    async def _friend_code() -> tuple[int, str]:
+        now = datetime.now(UTC)
+        friend = User(
+            username="oauth_inviter",
+            email="oauth-inviter@example.com",
+            created_at=now,
+            updated_at=now,
+        )
+        db_session.add(friend)
+        await db_session.flush()
+
+        async def never() -> bool:
+            return False
+
+        code = await referrals.personal_code(db_session, friend, has_accepted=never)
+        await db_session.commit()
+        return friend.id, code.code
+
+    friend_id, code = _portal.call(_friend_code)
+    _loc, params = _create(
+        api_client, _portal, "uid-invited", "oauth_invited", inviteCode=code
+    )
+    assert params["created"] == "true"
+
+    async def _inviter_of_new_account() -> int | None:
+        return await db_session.scalar(
+            select(InviteReferral.inviter_user_id)
+            .join(User, User.id == InviteReferral.invitee_user_id)
+            .where(User.username == "oauth_invited")
+        )
+
+    assert _portal.call(_inviter_of_new_account) == friend_id
+
+
+def test_an_open_signup_through_a_provider_lets_a_used_up_code_through(
+    api_client: TestClient, invite_code: str, db_session, _portal, monkeypatch
+):
+    monkeypatch.setattr(settings, "require_invite_code", False)
+    _create(api_client, _portal, "uid-first", "oauth_first", inviteCode=invite_code)
+    _loc, params = _create(
+        api_client, _portal, "uid-late", "oauth_late", inviteCode=invite_code
+    )
+    assert params["created"] == "true"
+    assert _account_exists(db_session, _portal, "oauth_late")

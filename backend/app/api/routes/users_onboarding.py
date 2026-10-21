@@ -41,6 +41,7 @@ from app.domain.agent_instance.adapters import default_teammate
 from app.domain.living_doc.overview import seed_overview
 from app.domain.project.protection import BRANCH_PROTECTION_KEY
 from app.domain.project.services import ProjectService
+from app.domain.usage import referrals
 from app.domain.user.about import WorkRole, record_guide_answers
 
 # The signed-in user answers for themselves and makes their own project:
@@ -101,6 +102,9 @@ async def finish_onboarding(
 
     if user.onboarded_at is None:
         user.onboarded_at = datetime.now(UTC)
+    # An invited newcomer's first project pays their 50 credits; anyone else's
+    # finish leaves the invitation ledger alone.
+    await referrals.on_onboarded(session, user.id)
     # The page opens the project as soon as this answer arrives; the
     # request-scoped commit would land only after the response is sent.
     await session.commit()

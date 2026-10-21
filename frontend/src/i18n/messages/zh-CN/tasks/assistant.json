@@ -38,7 +38,19 @@
     "ordinal": "第 {n} 道",
     "days": "{n} 天",
     "none": "无",
-    "undoFailed": "撤销失败"
+    "undoFailed": "撤销失败",
+    "changedCount": "改了 {n} 处",
+    "setting": {
+      "on": "开",
+      "off": "关",
+      "instant": "每条都发",
+      "digest": "汇总",
+      "daily": "每天",
+      "weekly": "每周",
+      "all": "所有新消息",
+      "mentions": "只在 {'@'}我和我参与的支线有回复时",
+      "mute": "静音"
+    }
   },
   "notes": {
     "title": "待你确认"
@@ -91,13 +103,17 @@
     "sent": "已发送到「{where}」",
     "opened": "已开任务「{title}」",
     "dismissed": "不用了",
+    "done": "已执行",
     "to": "发到",
     "channel": "频道",
     "title": "标题",
     "message": "内容",
     "brief": "交代",
+    "what": "操作",
+    "why": "原因",
     "send": "发送",
     "openTask": "开任务",
+    "confirm": "确认",
     "dismiss": "不用了",
     "view": "查看",
     "failed": "发送失败"

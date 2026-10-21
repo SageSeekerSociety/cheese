@@ -60,11 +60,30 @@ export const DOC_SHARE_ENTRIES: CatalogEntry[] = [
         title: '组会纪要',
         content: '## 本周进展\n\n- 数据清洗完成\n- 下周开始标注\n',
         updated_at: '2026-10-17T10:00:00Z',
+        shared_by: { handle: 'alice', nickname: '爱丽丝', code: 'K7Q2M9', seats_left: 0 },
       },
       error: '',
     },
     states: [
-      { name: '一份文档', note: '正文和文档里读起来一样。', props: {}, expect: '数据清洗完成' },
+      {
+        name: '一份文档',
+        note: '正文和文档里读起来一样；分享人的名额用完时，页脚只指向知是首页。',
+        props: {},
+        expect: '数据清洗完成',
+      },
+      {
+        name: '分享人还有受邀名额',
+        note: '页脚右侧写明谁的名额、还剩几个，链接带着邀请码进注册页。',
+        props: {
+          doc: {
+            title: '组会纪要',
+            content: '## 本周进展\n\n- 数据清洗完成\n',
+            updated_at: '2026-10-17T10:00:00Z',
+            shared_by: { handle: 'alice', nickname: '爱丽丝', code: 'K7Q2M9', seats_left: 2 },
+          },
+        },
+        expect: '凭此链接进入',
+      },
       {
         name: '链接已失效',
         note: '停止分享以后再打开：只有一句话。',
