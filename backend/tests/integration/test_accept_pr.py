@@ -2662,9 +2662,7 @@ def test_the_merge_that_closed_a_task_does_not_close_it_again(client, app_world)
         headers=session_auth_headers("alice"),
     )
     assert rejected.status_code == 200, rejected.text
-    # 退回的那一轮（告诉队友去改）先跑完：生产上改完再交时它早就结束了。还在干活
-    # 的会话会让任务照规矩不关（`room_task.closing.unfinished`），CI 上它偶尔恰好
-    # 卡在这个窗口里，断言就读到 open。
+    # 退回的那一轮（告诉队友去改）先跑完：生产上改完再交时它早就结束了。
     wait_work_idle()
     # 同一张 PR 上再递一张 —— 生产上这是改完又交的那一版。
     resent = _make_card(client, tid)
