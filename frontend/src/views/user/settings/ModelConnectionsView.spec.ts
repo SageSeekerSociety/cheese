@@ -124,6 +124,21 @@ describe('ModelConnectionsView', () => {
     expect(within(row('login-b')).getByRole('button', REMOVE())).toBeTruthy()
   })
 
+  it('tells two logins on one computer apart by the Claude account each one is', async () => {
+    mount([
+      connection('login-a', { device_id: 'desk', account_email: 'alice@example.com' }),
+      connection('login-b', { device_id: 'desk', account_email: 'alice@work.example', account_org: 'Work Inc' }),
+    ])
+    expect(summary('login-a').textContent).toContain('alice@example.com')
+    expect(summary('login-b').textContent).toContain('alice@work.example')
+    expect(summary('login-a').textContent).not.toContain('alice@work.example')
+
+    await expand('login-b')
+    const detail = row('login-b').querySelector('.mc-body') as HTMLElement
+    expect(detail.textContent).toContain('alice@work.example')
+    expect(detail.textContent).toContain('Work Inc')
+  })
+
   it('removes only after confirming, and only the connection asked for', async () => {
     const view = mount([connection('desk'), connection('laptop')])
     await expand('laptop')

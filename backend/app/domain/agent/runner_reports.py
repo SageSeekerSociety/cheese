@@ -122,13 +122,13 @@ async def apply(chat, report: Report) -> Applied | bool:
         elif not new:
             pass
         elif isinstance(fact, SessionRunning):
-            await session_state.declare(db, key, RUNNING, report.at)
+            await session_state.declare(db, key, RUNNING)
             if report.of_this_registration:
                 # The seat's current session is at work: the task's teammate is
                 # back, whatever an earlier session's exit said.
                 await note_agent_back(db, report.conversation_id)
         elif isinstance(fact, SessionIdle):
-            await session_state.declare(db, key, IDLE, report.at)
+            await session_state.declare(db, key, IDLE)
             if fact.failure is not None and fact.result.session_id:
                 await fail_read_inputs(
                     db,

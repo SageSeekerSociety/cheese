@@ -14,7 +14,7 @@ Hidden tool, narration and subagent event-block writes and mutations are removed
 
 ## Data deletion: release two
 
-No deployed data was changed. Release two deletes exactly the rows the removed 现场 writers produced, identified by what each one stored, never by visibility alone:
+Release two deletes exactly the rows the removed 现场 writers produced, identified by what each one stored, never by visibility alone:
 
 ```sql
 kind = 'event'
@@ -22,11 +22,11 @@ AND meta::jsonb @> '{"in_room": false}'
 AND (meta::jsonb ? 'tool' OR meta::jsonb ? 'subagent' OR meta::jsonb @> '{"progress": true}')
 ```
 
-These are tool steps (with the output, failure and calls written onto them), subagent conclusions and narration. Hidden event blocks that are still written fall outside it: agent notices for an edited message (`block/editing.py`) and for memory changes (`agent/queries.py`), which agents read back as input (`block/history.py`), and the line beside a message whose @ names nobody (`agent/mentions.py`). `backend/tests/integration/test_retired_site_rows_are_only_the_removed_kinds.py` writes both sets through the real writers and holds the predicate to them.
+These are tool steps (with the output, failure and calls written onto them), subagent conclusions and narration. Hidden event blocks that are still written fall outside it: agent notices for an edited message (`block/editing.py`) and for memory changes (`agent/queries.py`), which agents read back as input (`block/history.py`). The line beside a message whose @ names nobody (`agent/mentions.py`) is a run record, not a block. `backend/tests/integration/test_retired_site_rows_are_only_the_removed_kinds.py` writes both sets through the real writers and holds the predicate to them.
 
 `scripts/dev/count-retired-site.py` holds the predicate, runs in a read-only transaction and reports the retired rows by kind, the hidden rows kept, and `run_records` counted by kind. No `run_records` writer was removed; platform statuses still use the table, so none of its rows is retired.
 
-The read-only dev recount with this predicate: `retired_site_rows` 1,139,401; `hidden_rows_kept` 352; every `run_records` kind is one a live writer still produces. The product owner approved deleting the 1,139,401 retired rows in release two.
+The read-only dev recount with this predicate: `retired_site_rows` 1,139,401; `hidden_rows_kept` 352; every `run_records` kind is one a live writer still produces. The product owner approved deleting the 1,139,401 retired rows in release two. The recount on 2026-10-20, after release one reached dev: `retired_site_rows` 1,141,809, `hidden_rows_kept` 352. The newest retired row was written at 06:18:42 UTC, during the deploy that carried release one, and none since.
 
 Release one removes readers/writers and adds only the conversation launch boundary. Release two removes the retired rows in bounded, committed periodic batches after the preceding release has stopped producing them. Agent traces are kept forever, so the release-two job must, for each batch, in this order:
 
@@ -34,7 +34,7 @@ Release one removes readers/writers and adds only the conversation launch bounda
 2. Read each object back and verify it against what was exported.
 3. Only then delete exactly the rows that object holds.
 
-Nothing deletes those archive objects. The database dumps on R2 are not that copy: `db/` has a 30-day lifecycle rule. Release one does not implement the job. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule.
+Nothing deletes those archive objects, and they sit outside `db/`, the one prefix the bucket's lifecycle rule (`expire-db-dumps-30d`, 30 days) expires. The database dumps under `db/` are therefore not that copy. The job is `app/domain/session_record/retired_site.py` (periodic job `retired site archive`); each batch it deletes is recorded in `site_event_archives` in the same transaction. More than 10,000 rows must not be removed by a blocking migration. `blocks` and `run_records` are shared tables; no table or column is exclusive to the retired mechanism, so there is no schema drop to schedule.
 
 ## Sources adopted
 

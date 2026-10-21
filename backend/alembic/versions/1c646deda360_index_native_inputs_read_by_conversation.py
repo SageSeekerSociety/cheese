@@ -1,7 +1,7 @@
 """native_inputs: when a conversation last read an input
 
 Revision ID: 1c646deda360
-Revises: b7d2e94a1c05
+Revises: 2fe2a1b8a751
 Create Date: 2026-10-20
 
 `(conversation_id, echoed_at)`: a failure in a room clears once a session
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "1c646deda360"
-down_revision: str | Sequence[str] | None = "b7d2e94a1c05"
+down_revision: str | Sequence[str] | None = "2fe2a1b8a751"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

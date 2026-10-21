@@ -319,8 +319,9 @@ class Task(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     # Its last delivery landed and its AI teammate is writing it up: the task
-    # closes when that turn ends (`room_task.closing`). Shown as accepted
-    # meanwhile; still open, so the turn can run and write the task document.
+    # closes when the teammate closes it, or at the deadline
+    # (`room_task.closing`). Shown as accepted meanwhile; still open, so the
+    # teammate can write the task document.
     closing_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

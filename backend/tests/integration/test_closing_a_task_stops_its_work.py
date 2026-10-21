@@ -242,16 +242,25 @@ def _is_the_write_up(client, task_id: uuid.UUID) -> None:
     """The session at work in the task has read the instruction to write it
     up: its echo settled the instruction as ``received``."""
 
-    async def mark() -> None:
+    async def running_seat() -> str | None:
         async with client.test_request_factory() as session:
-            # Addressed to the seat at work there, as its runner registered it.
-            seat = await session.scalar(
+            return await session.scalar(
                 select(SessionState.agent_handle).where(
                     SessionState.conversation_id == task_id,
                     SessionState.worker_status == "running",
                 )
             )
-            assert seat is not None
+
+    # Addressed to the seat at work there, as its runner registered it; the
+    # runner's report that it is at work lands on its own schedule.
+    _until(
+        lambda: client.portal.call(running_seat) is not None,
+        "the task's session is reported at work",
+    )
+    seat = client.portal.call(running_seat)
+
+    async def mark() -> None:
+        async with client.test_request_factory() as session:
             now = datetime.now(UTC)
             session.add(
                 Delivery(

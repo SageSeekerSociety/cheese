@@ -181,10 +181,12 @@ def _offset(key: SeatKey, epoch: int):
     )
 
 
-async def declare(
-    session: AsyncSession, key: SeatKey, status: str, at: datetime
-) -> None:
-    """What the runner declared the session to be doing, as of ``at``."""
+async def declare(session: AsyncSession, key: SeatKey, status: str) -> None:
+    """What the runner declared the session to be doing. ``changed_at`` is
+    when the platform applied it, on the clock that stamps an input's read
+    (`delivery.receipts`): reports apply in the order the runner made them, so
+    a read stamped after this was read in what the session did from here on,
+    however far the runner's own clock is from the platform's."""
     state = await session.scalar(
         select(SessionState).where(*_key(key)).with_for_update()
     )
@@ -192,7 +194,7 @@ async def declare(
         return
     if state.worker_status != status:
         state.worker_status = status
-        state.changed_at = at
+        state.changed_at = datetime.now(UTC)
 
 
 async def exited(
@@ -212,7 +214,8 @@ async def exited(
         return False
     if state.worker_status != IDLE:
         state.worker_status = IDLE
-        state.changed_at = at
+        # The platform's clock, as `declare`'s.
+        state.changed_at = datetime.now(UTC)
     state.exited_at = at
     return True
 

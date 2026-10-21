@@ -30,9 +30,10 @@ task machine.
 5. Acceptance checks the reviewer, required approvals, project policy and the
    revision shown in the browser, then calls the forge's merge API.
 6. A successful merge records delivery. A step that is not the task's last
-   moves the task onto a new branch from the latest code; the last one gives
-   the task's AI teammate one turn to update the task document and post a
-   summary, and the task closes when that turn ends (`room_task.closing`).
+   moves the task onto a new branch from the latest code; the last one asks
+   the task's AI teammate to update the task document, post a summary and
+   close the task with `cheese_close_task`; without that, the deadline closes
+   it (`room_task.closing`).
    A last step whose AI teammate is, when it lands or while it is written up,
    working on something a person or itself began after its card went up, or
    has a message waiting for it in the task, lands as a step instead: that

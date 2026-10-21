@@ -57,5 +57,6 @@
   "connection": "Model connection",
   "removePersonal": "Remove from team",
   "owner": "Member owner",
+  "loginAccount": "Signed-in account",
   "personalHint": "Personal connections create only their owner's assistant. Ownership is prompt guidance; other members can still call it. Changes affect every team using this connection."
 }
