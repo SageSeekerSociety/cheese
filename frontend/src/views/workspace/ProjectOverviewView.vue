@@ -160,7 +160,11 @@ const people = computed(() => {
 })
 // 状态那一格和全部任务、频道里的卡是同一个记号（`lib/taskState.ts`）。
 function stateOf(task: RoomTask): TaskState {
-  return taskState(task, { viewer: props.me, nameOf })
+  return taskState(task, {
+    viewer: props.me,
+    nameOf,
+    agentName: (task.agent_handle && props.names[task.agent_handle]) || props.agentName || '',
+  })
 }
 </script>
 

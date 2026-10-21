@@ -92,7 +92,7 @@ function marker(line: Extract<Line, { kind: 'marker' }>): TaskLine {
         presentation: done ? { column: 'done', phrase: 'accepted' } : { column: 'building', phrase: 'running' },
         session_running: !done,
       },
-      { viewer: '' }
+      { viewer: '', agentName: t('publicSite.room.agent') }
     ),
     mine: false,
     accepted: null,

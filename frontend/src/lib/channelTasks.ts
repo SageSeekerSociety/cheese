@@ -53,7 +53,7 @@ export function taskLine(
   task: ChannelTask,
   viewer: string,
   nameOf: (handle: string) => string,
-  agentName?: string
+  agentName: string
 ): TaskLine {
   const mine = !!task.waiting_on && task.waiting_on === viewer
   const open = task.status !== 'closed'

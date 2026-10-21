@@ -213,7 +213,7 @@ function splitTask(split: SplitLine): TaskLine {
         presentation: split.done ? { column: 'done', phrase: 'accepted' } : { column: 'building', phrase: 'running' },
         session_running: !split.done,
       },
-      { viewer: '' }
+      { viewer: '', agentName: names.value[defaultAgent.value] ?? '' }
     ),
     mine: false,
     accepted: null,

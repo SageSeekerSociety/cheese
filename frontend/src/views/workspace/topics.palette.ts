@@ -32,12 +32,13 @@ function awaitsYou(topic: Topic): boolean {
 }
 
 // 行尾写这个话题此刻走到哪：和看板同一个词，后端算好的，这里不推。只有要人动手的
-// 那一列着暖色，已完成的着绿色。
+// 那一列着暖色，已完成的着绿色。那个词说到队友时写项目给它起的名字：话题行上没有
+// 房间自己那位是谁，用项目默认那位。
 function badgeOf(topic: Topic): PaletteItem['badge'] {
   const shown = topic.presentation
   if (shown)
     return {
-      text: phraseLabel(shown.phrase),
+      text: phraseLabel(shown.phrase, useWorkspaceStore().agentName),
       tone: shown.column === 'needs_you' ? 'warn' : shown.column === 'done' ? 'ok' : undefined,
     }
   if (awaitsYou(topic)) return { text: t('navigation.palette.awaiting'), tone: 'warn' }

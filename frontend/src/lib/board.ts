@@ -19,22 +19,34 @@ export function columnLabel(column: BoardColumn): string {
 }
 
 /** 卡面上那一句，按当前语言现取。后端给的是码（`presentation.phrase`）；这一版
- *  不认识的码（后端先发了新短语）照原样写出来，不写成空白。 */
-export function phraseLabel(phrase: BoardPhrase): string {
-  return i18n.global.te(`work.board.phrase.${phrase}`, 'zh-CN') ? t(`work.board.phrase.${phrase}`) : phrase
+ *  不认识的码（后端先发了新短语）照原样写出来，不写成空白。
+ *
+ *  有几句说的是做这件事的那位队友（「{agent}在做」）：项目可以给它改名，所以名字由
+ *  调用方给（任务的 `agent_handle` 在名册上叫什么，没有就是项目默认那位）。还说不出是
+ *  哪位的调用方不给，才写默认名。 */
+export function phraseLabel(phrase: BoardPhrase, agent?: string): string {
+  return i18n.global.te(`work.board.phrase.${phrase}`, 'zh-CN')
+    ? t(`work.board.phrase.${phrase}`, { agent: agent || t('work.room.defaultAgentName') })
+    : phrase
 }
 
 /** 等的是**看的这个人**时卡面那一句：「待审阅」对他说成「待你审阅」。没有专门说法的
  *  照通用那一句。 */
-export function myPhraseLabel(phrase: BoardPhrase): string {
-  return i18n.global.te(`work.board.mine.${phrase}`, 'zh-CN') ? t(`work.board.mine.${phrase}`) : phraseLabel(phrase)
+export function myPhraseLabel(phrase: BoardPhrase, agent?: string): string {
+  return i18n.global.te(`work.board.mine.${phrase}`, 'zh-CN')
+    ? t(`work.board.mine.${phrase}`)
+    : phraseLabel(phrase, agent)
 }
 
 /** 一件任务的那一句，按看的人说：在等的就是他，用 `myPhraseLabel`。页头、频道概览
  *  和频道里的卡说的是同一件事，对同一个人不能一处「待审阅」一处「待你审阅」。 */
-export function taskPhraseLabel(task: Pick<RoomTask, 'presentation' | 'waiting_on'>, viewer: string): string {
+export function taskPhraseLabel(
+  task: Pick<RoomTask, 'presentation' | 'waiting_on'>,
+  viewer: string,
+  agent?: string
+): string {
   const { phrase } = task.presentation
-  return task.waiting_on && task.waiting_on === viewer ? myPhraseLabel(phrase) : phraseLabel(phrase)
+  return task.waiting_on && task.waiting_on === viewer ? myPhraseLabel(phrase, agent) : phraseLabel(phrase, agent)
 }
 
 /** 色点长什么样。

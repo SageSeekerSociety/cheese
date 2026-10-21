@@ -42,6 +42,8 @@ const props = defineProps<{
    *  见 `PreviewRegionPick`。 */
   pickTarget: 'runtime' | 'region' | null
   pickOn: boolean
+  /** 这间房的队友叫什么：连不上时那句话请它去查。 */
+  agentName: string
 }>()
 
 const emit = defineEmits<{
@@ -130,7 +132,11 @@ const emit = defineEmits<{
     <div v-if="navigationError || previewError || previewReadError" role="alert" class="px-3 py-2 text-error">
       {{ navigationError || previewError || previewReadError }}
       <div v-if="previewAppNote && !previewUrl">
-        {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
+        {{
+          t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable', {
+            agent: agentName,
+          })
+        }}
       </div>
       <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
       <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{

@@ -37,7 +37,7 @@ const BLOCKS = [said('a', 'first'), said('b', 'second'), said('c', 'third')]
 /** 一件等看的人审阅的任务，卡上那一格的状态。 */
 const REVIEW = taskState(
   { id: 'task', presentation: { column: 'needs_you', phrase: 'awaiting_review' }, waiting_on: 'lin' },
-  { viewer: 'lin' }
+  { viewer: 'lin', agentName: '芝士' }
 )
 
 function mount(overrides: Record<string, unknown> = {}) {

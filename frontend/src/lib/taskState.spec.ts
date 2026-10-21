@@ -65,8 +65,10 @@ describe('卡住', () => {
     expect(taskState(task('blocked', { progress_note: null }), ctx).line).toBe('小研卡住了，打开看看它需要什么')
   })
 
-  it('不知道队友叫什么时用默认名', () => {
-    expect(taskState(task('blocked'), { viewer: 'chenmo' }).line).toBe('芝士卡住了，打开看看它需要什么')
+  it('项目给队友改过名，状态标签也叫它的名字，不叫默认的「芝士」', () => {
+    const label = taskState(task('running'), ctx).label
+    expect(label).toContain('小研')
+    expect(label).not.toContain('芝士')
   })
 })
 

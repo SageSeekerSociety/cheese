@@ -117,8 +117,8 @@ export function firstSight(key: string): boolean {
 export interface StateContext {
   /** 看的人的 handle：等的是他就写「待你审阅」「待你回答」。 */
   viewer: string
-  /** 做这件任务的 AI 队友叫什么；空的时候用默认名。 */
-  agentName?: string
+  /** 做这件任务的 AI 队友叫什么（项目里给它起的名字）：标签和卡住那一句都点它的名。 */
+  agentName: string
   /** handle → 名字。 */
   nameOf?: (handle: string) => string
   /** 现在几点（毫秒）；不给就是此刻。 */
@@ -154,7 +154,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       break
     }
     case 'blocked':
-      line = note || t('work.taskState.blockedFallback', { name: ctx.agentName || t('work.room.defaultAgentName') })
+      line = note || t('work.taskState.blockedFallback', { name: ctx.agentName })
       break
     case 'asking':
       line = answersMine
@@ -191,7 +191,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     kind,
     icon,
     tone: look.tone,
-    label: phraseLabel(phrase),
+    label: phraseLabel(phrase, ctx.agentName),
     live,
     attention: kind === 'blocked' || kind === 'asking' ? `${row.id}:${phrase}:${row.progress_set_at ?? ''}` : null,
     line,
