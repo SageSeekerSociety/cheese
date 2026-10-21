@@ -4,13 +4,16 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 
 import ComputeView from './ComputeView.vue'
 
 import i18n, { setLocale } from '@/i18n'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 it('keeps a failed read distinct from an empty list and allows retry', async () => {
   setLocale('zh-CN')
   const view = render(ComputeView, {
@@ -34,6 +37,10 @@ it('keeps a failed read distinct from an empty list and allows retry', async () 
 })
 
 it('says when an offline device was last online', () => {
+  // Local noon: three hours earlier is still today in every time zone. Read in the
+  // first three hours of a day, it is yesterday, and the line says so instead.
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 9, 21, 12))
   setLocale('zh-CN')
   const view = render(ComputeView, {
     props: {
