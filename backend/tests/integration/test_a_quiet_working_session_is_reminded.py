@@ -292,7 +292,7 @@ async def _silent_through_notices(client, room):
     try:
         asked_at = datetime.now(UTC)
 
-        def read(blocks, at, *, own_work):
+        def read(blocks, at):
             return NativeInput(
                 project_id=project,
                 conversation_id=topic,
@@ -300,8 +300,9 @@ async def _silent_through_notices(client, room):
                 harness=CLAUDE_CODE,
                 native_session_id="sess-quiet",
                 input_id=uuid.uuid4(),
-                work_id=work if own_work else uuid.uuid4(),
-                # A notice steered into running work is read into that work.
+                # Each arrived on an input of its own and was read into the
+                # work in flight: the runner stamps that work on the read.
+                work_id=uuid.uuid4(),
                 execution_work_id=work,
                 block_ids=blocks,
                 registered_at=at,
@@ -321,9 +322,9 @@ async def _silent_through_notices(client, room):
             )
             db.add(asked)
             await db.flush()
-            db.add(read([str(asked.id)], asked_at, own_work=True))
+            db.add(read([str(asked.id)], asked_at))
             for n in range(30):
-                db.add(read([], asked_at + timedelta(seconds=n + 1), own_work=False))
+                db.add(read([], asked_at + timedelta(seconds=n + 1)))
             await db.commit()
 
         assert await quiet.silence(asked_at + timedelta(seconds=THRESHOLD + 60)) == 1
