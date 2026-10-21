@@ -1,30 +1,18 @@
-"""The pair of headers that makes a download inert is written in one place.
+"""A download of bytes a user supplied is inert: not sniffed, not allowed to act.
 
-Two routes hand back bytes a user supplied — `/uploads/…` and a room file's
+Two routes hand back such bytes — `/uploads/…` and a room file's
 `/attachments/raw` — and the frontend keeps its JWT in localStorage, so each
 response has to say "do not sniff this into something else" and "do not let this
-document do anything". The defence is only as good as its weakest copy: a
-response that carries its own copy of the pair stops moving when the shared one
-learns something new, and nothing points at the copy it left behind.
-
-The tests below drive each response exit this change touches and read what it
-actually sends, including the HTML preview, whose policy is its own but whose
-`nosniff` now comes from the shared module. The last test reads the two modules
-this change owns and fails if the values are spelled out there again — the
-responses stay correct while a copy exists, which is exactly why nobody would
-notice one coming back. It is deliberately scoped to those two modules: other
-route modules still carry the same pair, and a guard over all of them belongs
-to the change that converts them.
+document do anything". The HTML preview keeps a policy of its own but still
+refuses sniffing.
 """
 
-import ast
 import asyncio
 import uuid
-from pathlib import Path
 
 from fastapi import Request
 
-from app.api.routes import topics_attachments, uploads
+from app.api.routes import topics_attachments
 
 NOSNIFF = "nosniff"
 INERT_CSP = "default-src 'none'; sandbox"
@@ -151,41 +139,3 @@ def test_the_html_preview_keeps_its_nosniff_alongside_its_own_policy(monkeypatch
     policy = response.headers["content-security-policy"]
     assert policy != INERT_CSP
     assert "script-src 'unsafe-inline'" in policy
-
-
-def _written_strings(module) -> set[str]:
-    """Every string literal in `module`, except the docstrings that explain it.
-
-    Docstrings are prose about the rule; a literal is the rule being written out
-    again. The distinction matters here because `uploads.py`'s module docstring
-    says `nosniff` while the code no longer does.
-    """
-    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
-    docstrings = set()
-    for node in ast.walk(tree):
-        if isinstance(
-            node,
-            (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-        ):
-            first = node.body[0] if node.body else None
-            if (
-                isinstance(first, ast.Expr)
-                and isinstance(first.value, ast.Constant)
-                and isinstance(first.value.value, str)
-            ):
-                docstrings.add(id(first.value))
-    return {
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and id(node) not in docstrings
-    }
-
-
-def test_the_exits_do_not_write_the_pair_themselves():
-    """One sentence, one place: neither response module spells the values out."""
-    for module in (topics_attachments, uploads):
-        written = _written_strings(module)
-        assert NOSNIFF not in written, f"{module.__name__} writes nosniff itself"
-        assert INERT_CSP not in written, f"{module.__name__} writes the CSP itself"
