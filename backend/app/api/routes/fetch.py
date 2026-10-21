@@ -118,24 +118,35 @@ class WebSearchOut(BaseModel):
 
 
 async def _search_payer(
-    db: AsyncSession, resolver: ActorResolver, actor: Actor
+    db: AsyncSession,
+    resolver: ActorResolver,
+    actor: Actor,
+    *,
+    topic: uuid.UUID | None,
+    project: uuid.UUID | None,
 ) -> Payer | None:
     """Who pays for this caller's search: whoever pays for the work's model
     calls, read from what the credential says rather than from the query.
 
     A delegated credential reaches this route only as a person's own 芝士,
     through its gate (``GATED_ROUTES``), and that person pays, as for its
-    model calls. A room agent's scoped token names its project. A person
-    signed in pays themselves. The global sandbox override names nobody and
-    is charged to nobody."""
+    model calls. An agent pays from its project: a room agent's scoped token
+    names it, and a project agent credential authenticates only for the
+    project the request names (the resolver checked the two match), so that
+    one. A person signed in pays themselves. The global sandbox override names
+    nobody and is charged to nobody."""
     delegation = resolver.delegation()
     if delegation is not None:
         if delegation.user_id is None:
             return None
         return await payer_for_person(db, delegation.user_id)
-    project = resolver.credential_project()
-    if project is not None:
-        return await payer_for_project(db, project)
+    if actor.via == "cheese":
+        named = (
+            resolver.credential_project()
+            or project
+            or (await resolver.project_of_topic(topic) if topic else None)
+        )
+        return None if named is None else await payer_for_project(db, named)
     if actor.via == "token" and actor.user_id is not None:
         return await payer_for_person(db, actor.user_id)
     return None
@@ -166,7 +177,7 @@ async def web_search(
     caller = await actor.require_verified_caller(topic_id=topic, project_id=project)
     if not settings.deepseek_api_key:
         raise SystemBusyError(say("webSearchNotConfigured"))
-    payer = await _search_payer(db, actor, caller)
+    payer = await _search_payer(db, actor, caller, topic=topic, project=project)
     if payer is not None:
         refused = await search_refusal(db, payer)
         if refused is not None:

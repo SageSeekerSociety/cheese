@@ -1,6 +1,7 @@
 """A platform web search is admitted and paid for like the work that asked.
 
-A room's agent searches on its project. A person's own 芝士 searches only
+A room's agent, or an agent holding the project's credential, searches on
+its project. A person's own 芝士 searches only
 through its gate, as it reads a web page: a query can carry the person's work
 off the platform, so without the pass the gate hands back the route refuses
 it. Either way a payer out of credits is refused before the search service is
@@ -21,6 +22,7 @@ from tests.integration.conftest import free_plan_credits, room_agent_headers
 from tests.integration.test_assistant import _ledger_user
 from tests.integration.test_assistant_agent import _acting, _asked_in, _Gatekeeper
 from tests.integration.test_message_edit import _room
+from tests.integration.test_project_agent_credential import _issued_token, _project
 
 ONE_SEARCH = 0.75 / 1000 / 0.01
 PAGE = Result("T", "https://t.example/", "s")
@@ -139,3 +141,32 @@ def test_a_rooms_agent_searches_directly_on_its_project(client, deepseek):
     assert deepseek.asked == ["栅格布局"]
     after = _remaining(client, lambda s: payer_for_project(s, uuid.UUID(project)))
     assert before - after == pytest.approx(ONE_SEARCH)
+
+
+def test_an_agent_holding_the_projects_credential_searches_on_the_project(
+    client, deepseek
+):
+    project = _project(client, "alice")
+    headers = {"X-Cheese-Token": _issued_token(client, project)}
+    before = _remaining(client, lambda s: payer_for_project(s, uuid.UUID(project)))
+
+    r = client.get(
+        "/web-search", params={"q": "栅格布局", "project": project}, headers=headers
+    )
+
+    assert r.status_code == 200, r.text
+    after = _remaining(client, lambda s: payer_for_project(s, uuid.UUID(project)))
+    assert before - after == pytest.approx(ONE_SEARCH)
+
+
+def test_an_agent_whose_project_is_out_of_credits_is_refused(client, deepseek):
+    free_plan_credits(client, 0.0)
+    project = _project(client, "alice")
+    headers = {"X-Cheese-Token": _issued_token(client, project)}
+
+    r = client.get(
+        "/web-search", params={"q": "栅格布局", "project": project}, headers=headers
+    )
+
+    assert r.status_code == 429 and "额度已用完" in r.json()["message"]
+    assert deepseek.asked == []
