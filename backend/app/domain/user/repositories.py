@@ -95,35 +95,6 @@ class UserRepository:
         user_id, username, nickname, avatar_id = row
         return user_id, username, nickname or username, avatar_id
 
-    async def lookup_accounts(self, qs: Sequence[str]) -> dict[str, str]:
-        """Batch ``lookup_account``: each asked username or email, case aside,
-        → the handle of the one person it names. Asked values that name nobody
-        are absent.
-
-        One statement for the whole list, so inviting ten people is not ten
-        round-trips. Same rules as ``lookup_account``: exact, deleted and AI
-        accounts never returned. Should one value be someone's username and
-        another person's email, the username wins.
-        """
-        wanted = {q.strip().lower() for q in qs} - {""}
-        if not wanted:
-            return {}
-        stmt = select(User.username, User.email).where(
-            User.deleted_at.is_(None),
-            or_(
-                func.lower(User.username).in_(wanted),
-                func.lower(User.email).in_(wanted),
-            ),
-            ~exists().where(AgentBinding.user_id == User.id),
-        )
-        by_email: dict[str, str] = {}
-        by_username: dict[str, str] = {}
-        for username, email in (await self._session.execute(stmt)).all():
-            by_email[email.lower()] = username
-            by_username[username.lower()] = username
-        found = {**by_email, **by_username}
-        return {q: found[q] for q in wanted if q in found}
-
     async def get_by_handles(self, handles: Sequence[str]) -> dict[str, User]:
         """Batch handle → user. Roster-wide lookups run on every agent turn, so
         they must not go N+1 over ``get_by_handle``."""

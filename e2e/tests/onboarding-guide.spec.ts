@@ -40,14 +40,10 @@ test("a new account is guided into its first project", async ({ page }) => {
 
   await page.goto("/");
   await expect(page).toHaveURL(/\/welcome/, { timeout: 30_000 });
-  await expect(page.getByRole("heading", { name: "芝士怎么称呼你？" })).toBeVisible();
-  const next = page.getByRole("button", { name: "继续" });
-  await next.click();
+  await expect(page.getByRole("heading", { name: "你主要用知是做什么？" })).toBeVisible();
   await page.getByRole("button", { name: /上课、做课程项目/ }).click();
-  await next.click();
+  await page.getByRole("button", { name: "继续" }).click();
   await page.getByRole("button", { name: /写课程报告或论文初稿/ }).click();
-  await next.click();
-  await next.click();
   // Nothing is made until the person says so.
   expect(await projects()).toEqual([]);
   await page.getByRole("button", { name: "建好项目" }).click();
@@ -55,9 +51,9 @@ test("a new account is guided into its first project", async ({ page }) => {
   await expect(page).toHaveURL(/\/projects\/.+\/channels\//, { timeout: 30_000 });
   await expect(page.locator(".composer-input .ProseMirror").first()).toContainText(/先给我看提纲/);
   // The guide carries on in the project, one step at a time, and can be skipped.
-  await expect(page.getByText("1/10")).toBeVisible();
+  await expect(page.getByText("1/7")).toBeVisible();
   await page.getByRole("button", { name: "跳过导览" }).click();
-  await expect(page.getByText("1/10")).toBeHidden();
+  await expect(page.getByText("1/7")).toBeHidden();
   expect((await projects()).map((p) => p.name)).toEqual(["课程报告"]);
 
   // Coming back goes to the project, not to the guide again.

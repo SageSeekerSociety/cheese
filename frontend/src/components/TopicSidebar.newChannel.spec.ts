@@ -1,5 +1,5 @@
 // 「新建频道」在侧栏上的入口：频道那一组标题右边常驻一颗 ＋，点它就地在侧栏弹对话框；
-// 项目里还没有别的频道时，这一组下面把话说出来并给一颗主按钮。外部成员两样都没有。
+// 只有「综合」时不另外催人建频道，入口仍是那颗 ＋。外部成员没有 ＋。
 //
 // 这一层不认识 store，所以它只发一个 `new-channel` 事件——对话框开在哪、东西建到哪，
 // 是外面的事（`ProjectSidebar.vue`）。
@@ -99,23 +99,15 @@ describe('侧栏「新建频道」入口', () => {
     expect(onNewChannel).toHaveBeenCalled()
   })
 
-  it('一个别的频道都还没有：把话说出来，并给一颗主按钮', async () => {
-    const { container, onNewChannel } = mount({ topics: onlyRoot })
-    const empty = container.querySelector('[data-testid="no-other-channels"]')
-    expect(empty).not.toBeNull()
-    expect(empty!.textContent).toContain('还没有别的频道')
-    await fireEvent.click(empty!.querySelector('button')!)
-    expect(onNewChannel).toHaveBeenCalled()
+  // 一个简单的项目只有「综合」就够了：不因为没有别的频道就催人去建，入口只有标题旁的 ＋。
+  it('只有「综合」时不催人建频道，入口仍是标题旁的 ＋', () => {
+    const { container, getAllByRole } = mount({ topics: onlyRoot })
+    expect(container.querySelector('[data-testid="new-channel-entry"]')).not.toBeNull()
+    expect(getAllByRole('button').filter((b) => b.textContent?.includes('新建频道'))).toHaveLength(0)
   })
 
-  it('已经有别的频道：不说「还没有别的频道」', () => {
-    const { container } = mount()
-    expect(container.querySelector('[data-testid="no-other-channels"]')).toBeNull()
-  })
-
-  it('外部成员：＋ 和主按钮都不给', () => {
+  it('外部成员：不给 ＋', () => {
     const { container } = mount({ canCreate: false, topics: onlyRoot })
     expect(container.querySelector('[data-testid="new-channel-entry"]')).toBeNull()
-    expect(container.querySelector('[data-testid="no-other-channels"]')).toBeNull()
   })
 })
