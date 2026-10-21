@@ -1,0 +1,4 @@
+{
+  "webSearchNotConfigured": "This deployment has no web search service configured. Read a page whose address you know with cheese_fetch.",
+  "webSearchUnavailable": "The web search service did not answer ({reason}). Try again shortly."
+}

@@ -302,10 +302,13 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			}
 			// The service does not start without somewhere to keep its screens,
 			// and a service that exits at once would still be reported connected;
-			// asked before the approval, which it would otherwise waste.
-			if err := host.CanHostScreens(); err != nil {
-				return fmt.Errorf("this machine cannot run the connector yet: %w\n"+
-					"Install tmux (on a Mac: brew install tmux), or connect a Mac with the desktop app, which brings its own", err)
+			// asked before the approval, which it would otherwise waste. On Linux
+			// the platform places a tmux where the system has none new enough,
+			// once logged in (`devenv`), and it is asked after that.
+			if runtime.GOOS != "linux" {
+				if err := host.CanHostScreens(); err != nil {
+					return noScreens(err)
+				}
 			}
 			cfg, _ := config.Load(*cfgPath)
 			if cfg != nil && cfg.Token != "" && serverArg != "" && cfg.Base != serverArg {
@@ -331,14 +334,18 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			}
 			// What the server's commands need and this system lacks (on Windows:
 			// python3 and a POSIX shell; elsewhere a python3 new enough for the
-			// session's runner) is placed now, so the first command sent to a
+			// session's runner, and on Linux also tmux, git and what a sandbox is
+			// made with: `devenv`) is placed now, so the first command sent to a
 			// machine announced as ready finds it. Windows cannot run anything
 			// without it; elsewhere the service tries again when it starts.
 			if err := devenv.Ensure(context.Background(), cfg.Base, os.Stdout); err != nil {
 				if runtime.GOOS == "windows" {
 					return fmt.Errorf("prepare this machine: %w", err)
 				}
-				ui.Warn("Could not prepare Python for sessions yet: %v", err)
+				ui.Warn("Could not prepare this machine's runtime for sessions yet: %v", err)
+			}
+			if err := host.CanHostScreens(); err != nil {
+				return noScreens(err)
 			}
 			// The install's own refusals (a binary it could never self-update,
 			// #501; a machine-wide connector already installed) are the whole
@@ -761,4 +768,11 @@ func confirm(q string) bool {
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	line = strings.ToLower(strings.TrimSpace(line))
 	return line == "y" || line == "yes"
+}
+
+// noScreens is why `link connect` stops on a machine with no tmux to keep
+// screens in.
+func noScreens(err error) error {
+	return fmt.Errorf("this machine cannot run the connector yet: %w\n"+
+		"Install tmux (on a Mac: brew install tmux), or connect a Mac with the desktop app, which brings its own", err)
 }

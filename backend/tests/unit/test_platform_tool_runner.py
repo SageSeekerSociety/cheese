@@ -580,6 +580,66 @@ def test_a_page_that_could_not_be_read_says_how_each_rung_failed():
         run("cheese_fetch", {"url": "https://example.test"}, host)
 
 
+def test_a_web_search_names_the_room_and_lists_what_it_found():
+    host = Host(
+        {
+            ("GET", "/web-search"): {
+                "results": [
+                    {
+                        "title": "Grid",
+                        "url": "https://x.example/grid",
+                        "snippet": "24 列",
+                        "date": "2026-10-17T08:00:00Z",
+                    }
+                ]
+            }
+        }
+    )
+    said = run("cheese_search_web", {"query": "栅格 布局", "limit": 3}, host)
+    query = parse_qs(urlsplit(host.requests[0]["path"]).query)
+    assert query == {
+        "q": ["栅格 布局"],
+        "topic": [_ROOM],
+        "project": ["project-1"],
+        "limit": ["3"],
+    }
+    assert "1. Grid（2026-10-17）\n   https://x.example/grid\n   24 列" in said
+
+
+def test_a_web_search_with_no_results_says_so():
+    host = Host({("GET", "/web-search"): {"results": []}})
+    assert "没有搜到「冷门词」" in run("cheese_search_web", {"query": "冷门词"}, host)
+
+
+def test_a_persons_cheese_searches_only_with_the_pass_its_gate_hands_back():
+    call = {"method": "GET", "path": "/web-search?q=DeepSeek"}
+    host = Host(
+        {
+            ("POST", "/assistant/agent/act"): {
+                "done": True,
+                "pass": "p-1",
+                "calls": [call],
+            },
+            ("GET", "/web-search"): {
+                "results": [{"title": "T", "url": "https://t.example/", "snippet": "s"}]
+            },
+        }
+    )
+    said = run("cheese_web_search", {"query": "DeepSeek"}, host)
+    asked, searched = host.requests
+    assert asked["body"] == {"kind": "web_search", "query": "DeepSeek"}
+    assert searched["path"] == call["path"] and searched["pass"] == "p-1"
+    assert "1. T\n   https://t.example/\n   s" in said
+
+
+def test_a_search_the_gate_stops_is_not_made():
+    host = Host(
+        {("POST", "/assistant/agent/act"): {"done": False, "reason": "你没有提到要搜"}}
+    )
+    said = run("cheese_web_search", {"query": "我的项目代号"}, host)
+    assert len(host.requests) == 1 and "你没有提到要搜" in said
+
+
 def test_a_room_tool_refuses_without_a_room():
     host = Host(environ={"CHEESE_TOPIC": ""})
     with pytest.raises(cheese.PlatformToolError, match="CHEESE_TOPIC"):

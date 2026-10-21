@@ -3,7 +3,7 @@
 A search Claude Code's WebSearch makes is run by the model's upstream and
 priced by the gateway inside the model call it rides on (``deploy/gateway/
 README.md``, "Prices for web searches"). A search the platform asks a search
-service for directly (``cheese_search``) rides on no model call, so it is
+service for directly (``cheese_search_web``, ``cheese_web_search``) rides on no model call, so it is
 charged here: one usage row per search (route ``search``) and its deduction,
 written together by ``Ledger.record``, to the payer of the work that asked —
 the same payer that work's model calls are charged to: a room agent's search
