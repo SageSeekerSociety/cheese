@@ -61,7 +61,7 @@ _AI_COPY: dict[str, tuple[str, str]] = {
         "原生 Claude Opus，仅团队 dogfooding 使用，不对外开放。",
     ),
 }
-_TIER_PRICE = {"byo": "自带凭证", "testing": "仅团队内测"}
+_TIER_PRICE = {"byo": "自带 API 密钥", "testing": "仅团队内测"}
 
 
 def ai_listings(
