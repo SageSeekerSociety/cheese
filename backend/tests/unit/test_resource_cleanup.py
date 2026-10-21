@@ -326,6 +326,127 @@ def test_a_room_that_will_not_leave_is_ended_once_the_grace_has_run_out(tmp_path
             squatter.wait(timeout=5)
 
 
+def _sleeper(cwd, *args):
+    return subprocess.Popen([sys.executable, "-c", *args], cwd=cwd)
+
+
+def _stop(*processes):
+    for process in processes:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_room_is_ended_on_a_machine_without_lsof(tmp_path, monkeypatch):
+    """A Linux machine need not have lsof (the Debian cloud image behind the VM
+    offering has none), and what still holds a room is found and ended all the
+    same: a process working inside it, one holding a file of it open, and one
+    that only has a file of it mapped. A process in the room's neighbour, whose
+    name merely starts the same, is left alone."""
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home, work = cleanup.resource_paths(tmp_path, project, resource)
+    home.mkdir(parents=True)
+    work.mkdir(parents=True)
+    (home / "log").write_text("")
+    (home / "lib").write_bytes(b"x" * 4096)
+    neighbour = home.parent / (home.name + "-other")
+    neighbour.mkdir()
+    sleep = "import time; time.sleep(300)"
+    working = _sleeper(work, sleep)
+    holding = _sleeper(tmp_path, f"f = open({str(home / 'log')!r}); {sleep}")
+    mapping = _sleeper(
+        tmp_path,
+        "import mmap, time\n"
+        f"with open({str(home / 'lib')!r}, 'rb') as f:\n"
+        # trackfd=False: the mapping alone holds the file, no descriptor.
+        "    m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ, trackfd=False)\n"
+        "time.sleep(300)",
+    )
+    beside = _sleeper(neighbour, sleep)
+    empty = tmp_path / "bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    room = [home, work]
+    try:
+        wait_for(
+            lambda: (
+                {working.pid, holding.pid, mapping.pid} <= set(cleanup.holders(room))
+            )
+        )
+        assert beside.pid not in cleanup.holders(room)
+        with pytest.raises(cleanup.StillRunning):
+            cleanup.check_no_writers(room)
+
+        cleanup.end_holders(room)
+
+        for process in (working, holding, mapping):
+            assert process.wait(timeout=15) != 0
+        assert beside.poll() is None, "the neighbour's process was ended"
+        cleanup.check_no_writers(room)
+    finally:
+        _stop(working, holding, mapping, beside)
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_process_that_sees_the_room_elsewhere_still_holds_it(tmp_path):
+    """A process in a mount namespace of its own can see the room under another
+    name (a private session works in it as `/work`); it holds the room all the
+    same."""
+    home, work = cleanup.resource_paths(tmp_path, str(uuid.uuid4()), str(uuid.uuid4()))
+    work.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.mkdir()
+    probe = subprocess.run(["unshare", "-rm", "true"], capture_output=True, text=True)
+    if probe.returncode != 0:
+        pytest.skip("no unprivileged mount namespaces here")
+    elsewhere = subprocess.Popen(
+        [
+            "unshare",
+            "-rm",
+            "sh",
+            "-c",
+            f"mount --bind {work} {alias} && cd {alias} && exec sleep 300",
+        ]
+    )
+    try:
+        # unshare and sh both exec, so the sleep keeps the pid started here.
+        wait_for(lambda: elsewhere.pid in cleanup.holders([home, work]))
+    finally:
+        _stop(elsewhere)
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_directory_the_room_swaps_for_a_link_leads_nowhere(tmp_path, monkeypatch):
+    """What is inside the room is the room's to change while it is walked. A
+    directory swapped for a link to somewhere else once its parent was listed
+    must not make whatever is there part of the room — or every process with
+    something of it open one to end."""
+    home, work = cleanup.resource_paths(tmp_path, str(uuid.uuid4()), str(uuid.uuid4()))
+    (work / "a").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    (outside / "inner").mkdir(parents=True)
+    bystander = _sleeper(outside / "inner", "import time; time.sleep(300)")
+    listed = os.scandir
+
+    def swapping(path):
+        entries = list(listed(path))
+        if (work / "a").is_dir() and not (work / "a").is_symlink():
+            (work / "a").rename(work / "a.moved")
+            (work / "a").symlink_to(outside)
+        return iter(entries)
+
+    try:
+        monkeypatch.setattr(os, "scandir", swapping)
+        index = cleanup.proc_index([work])
+        monkeypatch.setattr(os, "scandir", listed)
+        place = (outside / "inner").stat()
+        assert (place.st_dev, place.st_ino) not in index
+        assert bystander.pid not in cleanup.proc_holders([work], index)
+    finally:
+        _stop(bystander)
+
+
 def test_a_safety_refusal_is_never_overruled_by_time(tmp_path):
     """Only "still running" ages into force; a socket of another user does not."""
     project, resource, operation = (str(uuid.uuid4()) for _ in range(3))
