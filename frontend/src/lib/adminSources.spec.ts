@@ -18,6 +18,7 @@ import {
   draftValid,
   emptySourceDraft,
   mixesFreeAndPaid,
+  priceChanges,
   wouldLead,
 } from './adminSources'
 
@@ -106,7 +107,13 @@ describe('线路草稿 · 免费与零价', () => {
 
 describe('线路草稿 · 请求头', () => {
   function withHeader(name: string, value: string) {
-    return { ...emptySourceDraft(), upstream: 'm', headersTouched: true, headers: [{ name, value }] }
+    return {
+      ...emptySourceDraft(),
+      upstream: 'm',
+      prices: { input: '1', output: '2', cacheRead: '', cacheCreation: '', cacheCreation1h: '' },
+      headersTouched: true,
+      headers: [{ name, value }],
+    }
   }
 
   it.each([
@@ -179,5 +186,30 @@ describe('线路草稿 · 新线路排在哪', () => {
   it('免费与付费混用要说出来', () => {
     expect(mixesFreeAndPaid([source({ free: false })], true)).toBe(true)
     expect(mixesFreeAndPaid([source({ free: false })], false)).toBe(false)
+  })
+})
+
+describe('线路草稿 · 每条线路都要有价', () => {
+  it('没标免费、输入或输出空着：不放行', () => {
+    const draft = { ...emptySourceDraft(), upstream: 'm' }
+    expect(draftProblems(draft).unpriced).toBe(true)
+    expect(draftValid(draft)).toBe(false)
+    expect(draftProblems({ ...draft, free: true }).unpriced).toBe(false)
+  })
+})
+
+describe('线路草稿 · 改价', () => {
+  it('列出改了的那几档，改前改后；没改的、没填的不列', () => {
+    const before = { input: 2e-6, output: 1e-5, cache_read: 2e-7 }
+    const changes = priceChanges(before, { input: 4e-6, output: 1e-5, cache_read: null, cache_creation_1h: 8e-6 })
+    expect(changes).toEqual([
+      { key: 'input', before: 2e-6, after: 4e-6 },
+      { key: 'cache_creation_1h', before: null, after: 8e-6 },
+    ])
+  })
+
+  it('价没动：什么都不列', () => {
+    const prices = { input: 2e-6, output: 1e-5 }
+    expect(priceChanges(prices, { ...prices })).toEqual([])
   })
 })

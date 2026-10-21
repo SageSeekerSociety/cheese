@@ -121,8 +121,6 @@ export interface GatewayModelInfo {
   selectable: boolean
   priced: boolean
   offered: boolean
-  /** 停用且未上架：只为单价而在（订阅计费按这个名字的单价记账）。 */
-  price_only?: boolean
   blocked_reasons: string[]
   unpriced_reason: string | null
   upstream: GatewayUpstream

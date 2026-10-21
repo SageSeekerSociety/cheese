@@ -220,6 +220,9 @@ function headerRowBad(h: HeaderDraft): boolean {
     <p v-if="problems.free" class="asf__hint asf__hint--bad t-meta-read">
       {{ t('models.source.field.zeroNeedsFree') }}
     </p>
+    <p v-if="problems.unpriced" class="asf__hint asf__hint--bad t-meta-read">
+      {{ t('models.source.field.needsPrices') }}
+    </p>
 
     <!-- 消费上限只在编辑时给：加线路时服务端从同一上游的线路抄过来，这里填了也是另一个数。 -->
     <v-text-field

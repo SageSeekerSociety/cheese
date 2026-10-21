@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from app.core.errors import BadRequestError
-from app.core.sentences import say
+from app.core.sentences import listing, say
 from app.domain.agent.gateway_admin import (
     SPEND_CAP,
     AdminKey,
@@ -125,26 +125,35 @@ def _offered(model: AdminModel) -> bool:
     return model.selectable and model.priced and not model.blocked
 
 
-def _price_only(model: AdminModel) -> bool:
-    """Paused and unlisted: nobody picks or calls it, and what is left of it is
-    its price. The backend still bills by that price under the model's name
-    (``usage.pricing``: the metering proxy's subscription usage is priced from
-    ``/model/info``), so a price-only model is held to an offered model's
-    price rule. The subscription's Claude models are rows of this kind."""
-    return model.blocked and not model.selectable
-
-
-def _needs_price(model: AdminModel) -> bool:
-    """Must every serving row of ``model`` be priced both ways: an offered model's
-    brake reads the price, and a price-only model is nothing but its price."""
-    return model.selectable or _price_only(model)
-
-
 def _require_another_offered(models: list[AdminModel], name: str) -> None:
     """A write that stops ``name`` being offered must leave some model offered:
     with none, every agent settings page is bare."""
     if not any(m.name != name and _offered(m) for m in models):
         raise BadRequestError(say("gatewayLastOfferedModel", name=name))
+
+
+def _require_prices(prices: dict | None, free: bool) -> None:
+    """Every row carries both token prices, offered or not: the platform bills
+    usage under a model's name by them (``usage.pricing``), the subscription's
+    Claude models included. The one exception is the declared free row, whose
+    two prices ``_source_prices`` has already written as 0."""
+    if free:
+        return
+    prices = prices or {}
+    if not (
+        _price_is_positive(prices.get("input"))
+        and _price_is_positive(prices.get("output"))
+    ):
+        raise BadRequestError(say("sourceNeedsPrices"))
+
+
+def _refuse_cleared_prices(current: dict, new: dict) -> None:
+    """A price a row has can be changed, never emptied. Emptying one would leave
+    whatever reads it charging the token at another rate (an absent cache price
+    falls back to the input price) or at nothing."""
+    gone = [key for key in _PRICE_KEYS if key in current and new.get(key) is None]
+    if gone:
+        raise BadRequestError(say("sourcePriceCleared", prices=listing(gone)))
 
 
 def _source_prices(prices: dict | None, free: bool) -> dict:
@@ -444,7 +453,6 @@ def _item_from_payload(
         "tier": data.get("tier") or "included",
         "overseas": bool(data.get("overseas")),
         "offered": selectable and priced,
-        "price_only": False,
         # 网关还没读回这条新模型：`pending`。
         "blocked_reasons": [] if (selectable and priced) else ["pending"],
         "unpriced_reason": None if priced else "网关尚未读回单价",

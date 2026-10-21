@@ -432,9 +432,6 @@ class GatewayModelItemOut(BaseModel):
     priced: bool
     tier: str
     offered: bool
-    # Paused and unlisted: there only for its prices, which bill usage reported
-    # under its name (the subscription's Claude models).
-    price_only: bool
     blocked_reasons: list[str]
     unpriced_reason: str | None
     upstream: GatewayUpstreamOut

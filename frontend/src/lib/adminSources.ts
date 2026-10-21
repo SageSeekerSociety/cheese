@@ -5,7 +5,7 @@
 // （`backend/app/domain/agent/schemas.py`、`gateway_models/`）同一套规则，写在界面上
 // 是为了省一次往返，判据仍以服务端为准。
 
-import type { GatewayProtocol, GatewaySourceFields } from '@/api/admin/gateway'
+import type { GatewayPrices, GatewayProtocol, GatewaySourceFields } from '@/api/admin/gateway'
 import type { SourceRow } from './adminModels'
 
 import { apiBaseAllowed } from '@/utils/apiBase'
@@ -103,8 +103,8 @@ export function draftFromSource(source: SourceRow): SourceDraft {
     existingHeaderNames: [...source.header_names],
     sessionHeader: source.session_header ?? '',
     makePrimary: false,
-    spendCap: source.spend_cap_usd === null ? '' : String(source.spend_cap_usd),
-    spendCapWas: source.spend_cap_usd,
+    spendCap: source.spend_cap_usd == null ? '' : String(source.spend_cap_usd),
+    spendCapWas: source.spend_cap_usd ?? null,
   }
 }
 
@@ -185,6 +185,8 @@ export interface DraftProblems {
   prices: boolean
   /** 免费线路填了非零价，或没标免费却把输入 / 输出写成 0。 */
   free: boolean
+  /** 没标免费，输入或输出却空着：每条线路都要两向有价（服务端同一条）。 */
+  unpriced: boolean
   headers: boolean
   sessionHeader: boolean
   spendCap: boolean
@@ -214,6 +216,7 @@ export function draftProblems(draft: SourceDraft): DraftProblems {
     free: draft.free
       ? !((input === null || zero(input)) && (output === null || zero(output)))
       : !(positiveOrEmpty(input) && positiveOrEmpty(output)),
+    unpriced: !draft.free && (input === null || output === null),
     headers:
       draft.headersTouched &&
       (draft.headers.some((h) => headerNameProblem(h.name) !== null || !headerValueOk(h.value)) ||
@@ -264,4 +267,42 @@ export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): Gateway
   const cap = spendCapUsd(draft.spendCap)
   if (mode === 'edit' && cap !== undefined && cap !== draft.spendCapWas) out.spend_cap_usd = cap
   return out
+}
+
+/** 改价确认里的一项：哪一档价，改前改后（每 token，`null` 是原来没有这一档）。 */
+export interface PriceChange {
+  key: keyof GatewayPrices
+  before: number | null
+  after: number
+}
+
+const PRICE_ORDER: (keyof GatewayPrices)[] = ['input', 'output', 'cache_read', 'cache_creation', 'cache_creation_1h']
+
+/** 价 → 词条。写成字面量表，不在模板里拼键：键要能被静态找到。 */
+export const PRICE_LABEL_KEY: Record<keyof GatewayPrices, string> = {
+  input: 'models.price.input',
+  output: 'models.price.output',
+  cache_read: 'models.price.cacheRead',
+  cache_creation: 'models.price.cacheCreation',
+  cache_creation_1h: 'models.price.cacheCreation1h',
+}
+
+/** 这次提交改了哪几档价。没填的（`null`）不算改：服务端不许清空一档已有的价，
+ *  那由它拒并说原因，这里只列真会写下去的新价。 */
+export function priceChanges(before: GatewayPrices, after: GatewayPrices | undefined): PriceChange[] {
+  if (!after) return []
+  const out: PriceChange[] = []
+  for (const key of PRICE_ORDER) {
+    const next = after[key]
+    if (next === null || next === undefined) continue
+    const prev = before[key] ?? null
+    if (prev !== null && Math.abs(prev - next) <= 1e-15) continue
+    out.push({ key, before: prev, after: next })
+  }
+  return out
+}
+
+/** 每 token → 「每百万 token 的美元」那一格的字。 */
+export function perMillionUsd(v: number | null): string {
+  return v === null ? '—' : `$${Number((v * 1_000_000).toFixed(6))}`
 }

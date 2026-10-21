@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -24,12 +23,13 @@ from app.domain.agent.gateway_models.guards import _refuse_unserving
 from app.domain.agent.gateway_models_helpers import (
     _api_base_for,
     _daily_model_row,
-    _needs_price,
     _offered,
     _prices_for_gateway,
+    _refuse_cleared_prices,
     _refuse_config_write,
     _require_another_offered,
     _require_price_when_selectable,
+    _require_prices,
     _source_prices,
     _translated_to_chat,
     _upstream_of,
@@ -210,7 +210,7 @@ async def _add(service: pkg.GatewayModelsService, name: str, data: dict) -> dict
     selectable = bool(data.get("selectable"))
     free = bool(data.get("free"))
     prices = _source_prices(data.get("prices"), free)
-    _require_price_when_selectable(selectable, prices, free)
+    _require_prices(prices, free)
 
     models = await service._require_models()
     if any(m.name == name for m in models):
@@ -285,13 +285,14 @@ async def _update(service: pkg.GatewayModelsService, name: str, data: dict) -> d
     selectable = bool(data.get("selectable", current.selectable))
     if _offered(current) and not selectable:
         _require_another_offered(await service._require_models(), name)
-    needs_price = _needs_price(replace(current, selectable=selectable))
     prices = data.get("prices")
     for source in current.sources:
-        effective = (
-            source.prices if prices is None else _source_prices(prices, source.free)
-        )
-        _require_price_when_selectable(needs_price, effective, source.free)
+        if prices is None:
+            _require_price_when_selectable(selectable, source.prices, source.free)
+            continue
+        effective = _source_prices(prices, source.free)
+        _refuse_cleared_prices(source.prices, effective)
+        _require_prices(effective, source.free)
 
     wanted = (data.get("capabilities") or {}).get(_MID_SYSTEM)
     if wanted is not False and any(

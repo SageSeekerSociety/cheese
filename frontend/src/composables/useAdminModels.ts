@@ -28,7 +28,6 @@ import type { ModelRow } from '@/lib/adminModels'
 import { onMounted, ref } from 'vue'
 
 import { useAdminModelsBudget } from '@/composables/adminModels/budget'
-import { useAdminModelsCaution } from '@/composables/adminModels/caution'
 import { useAdminModelsDerive } from '@/composables/adminModels/derive'
 import { useAdminModelsReads } from '@/composables/adminModels/reads'
 import { WINDOWS } from '@/composables/adminModels/shared'
@@ -103,6 +102,9 @@ export function useAdminModels() {
     openAddSource,
     openEditSource,
     onSourceSubmit,
+    priceChange,
+    confirmPriceChange,
+    closePriceChange,
     moveSource,
     sourceDeleteTarget,
     askSourceDelete,
@@ -113,11 +115,6 @@ export function useAdminModels() {
     closeSourceBlock,
     confirmSourceBlock,
   } = useAdminModelsSources({ writeError, notice, load, drawerReload })
-
-  // 动「别处在用」的模型之前先说清楚（`adminModels/caution.ts`）：下面这些入口都过它。
-  const { cautionTarget, cautionBody, heed, confirmCaution, closeCaution } = useAdminModelsCaution(models)
-  const byRow = (row: ModelRow) => row.name
-  const byName = (name: string) => name
 
   const { budgetOpen, budgetProject, budgetSaving, budgetError, openBudget, onBudgetSubmit } = useAdminModelsBudget({
     loadProjects,
@@ -177,20 +174,20 @@ export function useAdminModels() {
     formSaving,
     formError,
     openAdd,
-    openEdit: heed(byRow, openEdit),
+    openEdit,
     onFormSubmit,
     deleteTarget,
     deleting,
-    askDelete: heed(byRow, askDelete),
+    askDelete,
     closeDelete,
     confirmDelete,
     blockTarget,
     blocking,
-    askBlock: heed(byRow, askBlock),
+    askBlock,
     closeBlock,
     confirmBlock,
-    setTier: heed(byRow, setTier),
-    setOverseas: heed(byRow, setOverseas),
+    setTier,
+    setOverseas,
     // 详情抽屉
     drawerOpen,
     drawerName,
@@ -205,16 +202,19 @@ export function useAdminModels() {
     sourceSaving,
     sourceError,
     sourceBusy,
-    openAddSource: heed(byName, openAddSource),
-    openEditSource: heed(byName, openEditSource),
+    openAddSource,
+    openEditSource,
     onSourceSubmit,
-    moveSource: heed(byName, moveSource),
+    priceChange,
+    confirmPriceChange,
+    closePriceChange,
+    moveSource,
     sourceDeleteTarget,
-    askSourceDelete: heed(byName, askSourceDelete),
+    askSourceDelete,
     closeSourceDelete,
     confirmSourceDelete,
     sourceBlockTarget,
-    askSourceBlock: heed(byName, askSourceBlock),
+    askSourceBlock,
     closeSourceBlock,
     confirmSourceBlock,
     // 额度段
@@ -224,11 +224,6 @@ export function useAdminModels() {
     budgetError,
     openBudget,
     onBudgetSubmit,
-    // 动「别处在用」的模型之前的那一问
-    cautionTarget,
-    cautionBody,
-    confirmCaution,
-    closeCaution,
     // 审计段
     auditExpanded,
     toggleAuditDiff,

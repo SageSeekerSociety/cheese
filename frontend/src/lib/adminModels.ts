@@ -37,8 +37,6 @@ export interface ModelRow {
   selectable: boolean
   priced: boolean
   offered: boolean
-  /** 停用且未上架：只为单价而在（订阅计费按这个名字的单价记账）。 */
-  price_only?: boolean
   /** 没上架的原因码（`blocked` / `unlisted` / `unpriced` / `pending`），`blockedReasonText` 按读者的语言说。 */
   blocked_reasons: string[]
   unpriced_reason: string | null

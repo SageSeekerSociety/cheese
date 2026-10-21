@@ -156,11 +156,6 @@
     "budgetSet": "Updated the limit for “{name}”",
     "dismiss": "Dismiss this notice"
   },
-  "caution": {
-    "title": "Before you change {name}",
-    "confirm": "Continue",
-    "priceOnly": "{name} is paused and unlisted: it is here for its prices, which bill the subscription usage reported under this name. A price you change here changes what that usage costs."
-  },
   "confirm": {
     "delete": {
       "title": "Delete model",
@@ -312,7 +307,8 @@
       "makePrimary": "Make it the primary source",
       "fallback": "It goes after the existing sources as a fallback: it is used only when the ones ahead are unavailable.",
       "mixedFree": "This model will have both free and paid sources: it is billed at the paid price, traffic on the free source included.",
-      "headersPublic": "Header values aren't secret: unless the name contains key, token, secret, auth, password, credential or cookie, any caller holding a project key can read them from the gateway. Put the upstream credential in the API key."
+      "headersPublic": "Header values aren't secret: unless the name contains key, token, secret, auth, password, credential or cookie, any caller holding a project key can read them from the gateway. Put the upstream credential in the API key.",
+      "needsPrices": "Both an input and an output price are needed: the platform bills all of a model's usage by them. For an upstream that charges nothing, turn on Free source."
     },
     "confirm": {
       "delete": {
@@ -336,5 +332,11 @@
       "unblocked": "Resumed a source of {name}",
       "reordered": "Changed the source priorities of {name}"
     }
+  },
+  "priceChange": {
+    "title": "Change the prices of {name}",
+    "line": "{price} per million tokens: {before} → {after}.",
+    "effect": "From now on all usage of {name} is charged at the new prices.",
+    "confirm": "Change prices"
   }
 }
