@@ -185,9 +185,16 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
     service._session = SimpleNamespace(
         flush=AsyncMock(), refresh=AsyncMock(), get=AsyncMock(return_value=None)
     )
+    # What an acceptance pays an invited newcomer is the invitation ledger's
+    # rule (tests/integration/test_invite_referrals.py); here only that it is told.
+    from app.domain.usage import referrals
+
+    told = AsyncMock()
+    monkeypatch.setattr(referrals, "on_accepted", told)
     topic = SimpleNamespace(id=card.topic_id, project_id=_pid())
     got = await service._accept_github(card, topic, "alice", seen_head=None)
     assert got is card
+    told.assert_awaited_once_with(service._session, "alice")
     assert card.status == AcceptStatus.accepted
     assert card.decided_by == "alice"
     published.assert_not_awaited()

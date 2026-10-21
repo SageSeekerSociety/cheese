@@ -192,17 +192,16 @@ async def overview(session: AsyncSession, user: User, *, has_accepted: bool) -> 
         )
     }
     faces = await faces_by_handle(session, [u.username for u in invitees.values()])
-    paid = dict(
-        (
-            await session.execute(
-                select(CreditReward.key, CreditReward.credits).where(
-                    CreditReward.key.in_(
-                        [f"invite:referrer:{r.invitee_user_id}" for r in rows]
-                    )
+    paid: dict[str, int] = {
+        key: credits
+        for key, credits in await session.execute(
+            select(CreditReward.key, CreditReward.credits).where(
+                CreditReward.key.in_(
+                    [f"invite:referrer:{r.invitee_user_id}" for r in rows]
                 )
             )
-        ).all()
-    )
+        )
+    }
     rewards = await CreditIncentives(session).rewards(user.id)
     now = datetime.now(UTC)
     people = []
