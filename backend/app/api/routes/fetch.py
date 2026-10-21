@@ -33,7 +33,7 @@ from app.core.config import settings
 from app.core.errors import ForbiddenError, SystemBusyError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.personal.keys import stored_key
+from app.domain.agent.personal.keys import stored_key_and_model
 from app.domain.fetch.search import MAX_QUERY_CHARS, SearchRefused, SearchUnavailable
 from app.domain.fetch.search import search as search_web
 from app.domain.fetch.service import fetch as fetch_url
@@ -149,7 +149,7 @@ async def _caller_key(
     why it may not spend now.
 
     A person's own 芝士 (a delegated credential naming no agent) spends on
-    that person's key, which is good for the assistant model alone
+    that person's key, with the one model that key was minted for
     (``personal.keys``); whether they may spend was judged when they asked
     (``assistant.ask``), as for its model calls. An agent spends on the key
     its model calls use, admitted as they are (``model_keys``): a room agent's
@@ -165,12 +165,14 @@ async def _caller_key(
     claims: dict = {}
     if delegation is not None:
         if delegation.agent is None:
-            if delegation.user_id is None:
-                return CallerKey(None, agent_model)
-            return CallerKey(
-                await stored_key(db, delegation.user_id),
-                model_roles.model("assistant_model"),
+            stored = (
+                await stored_key_and_model(db, delegation.user_id)
+                if delegation.user_id is not None
+                else None
             )
+            if stored is None:
+                return CallerKey(None, agent_model)
+            return CallerKey(*stored)
         named = uuid.UUID(delegation.project_id) if delegation.project_id else None
     elif actor.via == "cheese":
         claims = resolver.credential_claims() or {}

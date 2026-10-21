@@ -9,6 +9,7 @@ with no answer drawn from it — and no model is asked. A fetch without a
 prompt makes no model call at all.
 """
 
+import asyncio
 import inspect
 
 import pytest
@@ -16,6 +17,7 @@ import pytest
 from app.api.routes import fetch as fetch_route
 from app.domain.agent.chat import ChatService
 from app.domain.assistant import gate
+from app.domain.assistant.models import AssistantGatewayKey
 from app.domain.fetch.service import FetchOutcome
 from tests.conftest import seed_user
 from tests.integration.conftest import free_plan_credits, room_agent_headers
@@ -59,6 +61,16 @@ def reader(monkeypatch):
     return service
 
 
+def _minted_for(client, user_id: int, model: str) -> None:
+    async def mint() -> None:
+        async with client.test_factory() as s:
+            row = await s.get(AssistantGatewayKey, user_id)
+            row.model = model
+            await s.commit()
+
+    asyncio.run(mint())
+
+
 def test_a_rooms_agent_is_answered_on_its_projects_key_with_the_model_it_runs(
     client, reader
 ):
@@ -81,6 +93,7 @@ def test_a_persons_cheese_is_answered_on_their_own_key_through_its_gate(
     client, reader, monkeypatch
 ):
     user_id, headers = _own(client, "alice", "帮我看看这一页讲了什么")
+    _minted_for(client, user_id, "the-model-the-key-was-minted-for")
 
     async def looks(session):
         return _Gatekeeper("放")
@@ -103,9 +116,10 @@ def test_a_persons_cheese_is_answered_on_their_own_key_through_its_gate(
 
     assert r.status_code == 200, r.text
     assert r.json()["data"]["text"] == "the answer"
-    # Its key is good for the assistant model alone, so that is what it asks.
+    # Its key is good for the one model it was minted for, so that is what it
+    # asks — even when the assistant model changed while this answer ran.
     assert reader.answered_on == [
-        (GATEWAY, f"sk-person-{user_id}", "the-assistant-model")
+        (GATEWAY, f"sk-person-{user_id}", "the-model-the-key-was-minted-for")
     ]
 
 
