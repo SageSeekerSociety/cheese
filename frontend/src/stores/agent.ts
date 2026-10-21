@@ -168,8 +168,8 @@ export interface AgentFile {
   uploading: boolean
 }
 
-/** 先传上去，下一个问题带上它们。 */
-export const agentFiles = ref<AgentFile[]>([])
+/** 先传上去，下一个问题带上它们。浅的：传完按那一行本身找回它，行不能被换成代理。 */
+export const agentFiles = shallowRef<AgentFile[]>([])
 
 export async function attachToAgent(picked: File[]) {
   for (const file of picked) {
