@@ -142,10 +142,17 @@ export function useRoomRoster(options: {
     // 已停用的也不列：停用就是为了挡住新的活，补全菜单是派活的入口。
     //
     // 这些人 @ 得到：频道人人能读，被 @ 的人收得到通知，在支线里回得了话。只是他们
-    // 没加入这个频道，所以排在频道里的人后面。名册没到时说不准谁在谁不在，那一刻不分。
+    // 没加入这个频道，所以排在频道里的人后面。名册没到时说不准谁在谁不在，那一刻不分
+    // ——私密频道例外：宁可少列，也不把频道外的人放进来。
+    //
+    // 私密频道只有名册上的人看得到。别人的私人 Claude Code 不在名册上，@ 它会让它
+    // 入座、读到这里的内容，等于把频道外的人拉进来；主人自己在频道里时不算，他的
+    // 助手本来就在替一个能看的人干活。公开频道照旧，项目里的人都能 @ 它。
+    const privateChannel = !!options.topic()?.members_only
     const rest = options
       .members()
       .filter((m) => !inRoom.has(m.user_handle) && (!m.agent || m.owner_handle) && m.active !== false)
+      .filter((m) => !privateChannel || !m.agent || inRoom.has(m.owner_handle ?? ''))
       .map((m) => ({
         handle: m.user_handle,
         label: m.name || m.user_handle,
