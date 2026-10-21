@@ -221,7 +221,9 @@ async def note_machine_record(
     The sync that pushes a turn's work runs after the turn has ended, so its
     failure is not in the agent's journal — and posting it into the room as a
     chat message told a person to do something only the machine could. Here it
-    is what it is: one status record in 现场, beside the turn it belongs to.
+    is what it is: one status record in 现场, beside the turn whose checkpoint
+    ran it. That is the conversation the credential was minted for; a sibling
+    task's branch may be what failed, and the text names it.
     """
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:

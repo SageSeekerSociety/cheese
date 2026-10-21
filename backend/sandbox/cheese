@@ -5049,10 +5049,13 @@ def _report_sync_failure(
     success the work is already visible in the branch, and a note per turn
     saying so would be noise that trains people to skip it.
 
-    An ordinary failed push is a line in 现场: it belongs beside the turn whose
-    work it is, and nobody in the room can do anything about it. The queue case
-    is different — retrying cannot help and a person has to choose — so that
-    one is still said in the room.
+    An ordinary failed push is a line in the 现场 of the conversation whose
+    checkpoint ran — the only conversation this credential may write, and the
+    turn the sync belongs to. It names the branch, which is how a sibling
+    task's commit is identified when a room's `sync --all` picked it up: a
+    task credential may not write into another task's conversation. The queue
+    case is different — retrying cannot help and a person has to choose — so
+    that one is still said in the room.
     """
     if not (API and TOPIC and TOKEN):
         return  # A human using the CLI directly already receives its exit status.
@@ -5067,7 +5070,7 @@ def _report_sync_failure(
         delivered = _tell_room(content)
     else:
         content = (
-            f"这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
+            f"有改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
             "看不到它；若机器被回收，改动会丢失。"
         )
         delivered = _tell_site(content)
