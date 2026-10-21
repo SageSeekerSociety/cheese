@@ -29,6 +29,14 @@
       <v-list-item :to="{ name: 'UserPage', params: { handle: menu.currentUser.value?.username } }">
         <v-list-item-title>{{ t('navigation.userMenu.profile') }}</v-list-item-title>
       </v-list-item>
+      <!-- 邀请好友：剩几个名额写在这一行上，用完了只写名字。设置里那一栏照旧留着。 -->
+      <v-list-item :to="{ name: 'UserSettingsInvites' }">
+        <v-list-item-title>{{
+          menu.inviteSeatsLeft.value
+            ? t('navigation.userMenu.invitesWithSeats', { n: menu.inviteSeatsLeft.value })
+            : t('navigation.userMenu.invites')
+        }}</v-list-item-title>
+      </v-list-item>
       <v-list-item :to="{ name: 'UserSettings' }">
         <v-list-item-title>{{ t('navigation.userMenu.settings') }}</v-list-item-title>
       </v-list-item>

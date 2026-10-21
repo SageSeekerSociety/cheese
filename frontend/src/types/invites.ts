@@ -20,7 +20,6 @@ export interface MyInvites {
   unlocked: boolean
   unlock_uses: number
   invite_credits: number
-  points: number
   invitees: Invitee[]
 }
 

@@ -288,12 +288,14 @@ class AcceptService:
         card_id: uuid.UUID,
         reviewer_handle: str | None = None,
         admits_reviewer: ReviewerAdmission,
+        by: str,
     ) -> AcceptCard:
         return await reviewers.reassign(
             self,
             card_id=card_id,
             reviewer_handle=reviewer_handle,
             admits_reviewer=admits_reviewer,
+            by=by,
         )
 
     def _forbid_ai(self, project: Project | None, handle: str, action: str) -> None:

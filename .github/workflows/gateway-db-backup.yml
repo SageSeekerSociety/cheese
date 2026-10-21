@@ -1,0 +1,60 @@
+name: Gateway DB backup
+
+# The gateway's database is the only copy of the runtime model rows, their
+# prices and the per-project virtual keys, and it sits on the same box as its
+# local dumps: the R2 copy is what survives losing the box, so a failed upload
+# fails the run. Restore: deploy/gateway/README.md, "Backups".
+on:
+  schedule:
+    - cron: '23 */6 * * *' # every 6 hours, clear of the hourly app DB backup at :00
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Its own group, not the release's `gateway-dev`: a group holds one pending run,
+# so a queued backup would cancel a pending release.
+concurrency:
+  group: gateway-db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 30
+    env:
+      GATEWAY_BACKUP_DIR: /home/nictheboy/backups/gateway
+      CHEESE_R2_ENV: /home/nictheboy/ops/r2.env
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Dump, verify and prune the local copies
+        id: dump
+        run: |
+          path="$(bash deploy/gateway-db-backup.sh)"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+      - name: Prepare the R2 upload dependency
+        run: |
+          VENV="$RUNNER_TEMP/gateway-backup-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          python3 -m venv "$VENV"
+          "$VENV/bin/pip" install --disable-pip-version-check boto3==1.40.61
+      - name: Copy the dump off-site to R2
+        env:
+          DUMP: ${{ steps.dump.outputs.path }}
+        # The uploader's output goes to the box's log only: this repository's
+        # Actions logs are public and an SDK error can carry the endpoint URL.
+        run: |
+          VENV="$RUNNER_TEMP/gateway-backup-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          set -a
+          # shellcheck disable=SC1090
+          . "$CHEESE_R2_ENV"
+          set +a
+          if "$VENV/bin/python" deploy/r2-upload.py "$DUMP" >>"$GATEWAY_BACKUP_DIR/backup.log" 2>&1; then
+            echo "uploaded $(basename "$DUMP") to R2"
+          else
+            echo "::error::R2 upload failed (details in $GATEWAY_BACKUP_DIR/backup.log on the box); the local dump $DUMP is kept"
+            exit 1
+          fi
+      - name: Remove the upload environment
+        if: ${{ always() }}
+        run: rm -rf -- "$RUNNER_TEMP/gateway-backup-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"

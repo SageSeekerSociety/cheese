@@ -16,7 +16,8 @@ from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
 )
-from app.domain.room_task.models import Task
+from app.domain.room_task import heard
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -119,10 +120,12 @@ async def reassign(
     card_id: uuid.UUID,
     reviewer_handle: str | None = None,
     admits_reviewer: ReviewerAdmission,
+    by: str,
 ) -> AcceptCard:
     """改验收人 (spec §4.4): anyone can re-route a pending accept card to a
     different reviewer — or, naming nobody, back to the project's default
-    one, which is the same ladder 递卡 climbs."""
+    one, which is the same ladder 递卡 climbs. ``by`` is who did; the task's
+    teammate hears it in its next input (`room_task.heard`)."""
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending:
         raise ValidationError(say("reviewEndedNoReassign"))
@@ -131,7 +134,13 @@ async def reassign(
         await self._projects.get(topic.project_id), reviewer_handle
     )
     await self._require_reviewer_in_room(topic, reviewer, admits_reviewer)
+    moved = card.reviewer_handle != reviewer
     card.reviewer_handle = reviewer
+    task = await self._session.get(Task, card.task_id) if card.task_id else None
+    if moved and task is not None and task.status == TaskStatus.open:
+        await heard.inform(
+            self._session, task, heard.reviewer_changed(by=by, reviewer=reviewer)
+        )
     await self._session.flush()
     await self._session.refresh(card)
     return card

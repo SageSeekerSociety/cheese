@@ -71,6 +71,8 @@
       "light": "Light",
       "dark": "Dark"
     },
+    "invites": "Invite friends",
+    "invitesWithSeats": "Invite friends · {n} left",
     "archivedProjects": "Archived projects",
     "download": "Download apps",
     "usePhone": "Use on your phone"

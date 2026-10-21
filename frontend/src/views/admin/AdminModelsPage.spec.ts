@@ -390,6 +390,8 @@ describe('模型管理 · 写失败', () => {
     await page.findByText('models.dialog.add.title')
     await fireEvent.update(page.getByLabelText('models.dialog.field.name'), 'glm-4.7-x')
     await fireEvent.update(page.getByLabelText('models.dialog.field.upstreamModel'), 'anthropic/glm-4.7')
+    await fireEvent.update(page.getByLabelText('models.price.input'), '1')
+    await fireEvent.update(page.getByLabelText('models.price.output'), '2')
     await fireEvent.click(page.getByRole('button', { name: 'models.dialog.create' }))
 
     expect(await page.findByText(/缺输出单价/)).toBeTruthy()
@@ -549,6 +551,24 @@ describe('模型管理 · 线路', () => {
     await page.findByText('mimo-go')
     return page
   }
+
+  it('改一条线路的价：先列出改前改后，取消什么都不发，确认才写', async () => {
+    const page_ = await openDrawer()
+    await fireEvent.click(await page_.findByRole('button', { name: 'models.source.action.edit' }))
+    await page_.findByText('models.source.dialog.editTitle')
+    await fireEvent.update(page_.getByLabelText('models.price.input'), '3')
+    await fireEvent.click(page_.getByRole('button', { name: 'models.dialog.save' }))
+
+    expect(await page_.findByText(/models\.priceChange\.line/)).toBeTruthy()
+    expect(updateGatewaySource).not.toHaveBeenCalled()
+    await fireEvent.click(page_.getByRole('button', { name: 'models.dialog.cancel' }))
+    expect(updateGatewaySource).not.toHaveBeenCalled()
+
+    await fireEvent.click(page_.getByRole('button', { name: 'models.dialog.save' }))
+    await fireEvent.click(await page_.findByRole('button', { name: 'models.priceChange.confirm' }))
+    await waitFor(() => expect(updateGatewaySource).toHaveBeenCalledTimes(1))
+    expect(updateGatewaySource.mock.calls[0][2].prices.input).toBeCloseTo(3e-6)
+  })
 
   it('删除线路先确认，确认之后才删那一条', async () => {
     const page = await openDrawer()
