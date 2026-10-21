@@ -446,15 +446,12 @@ async def _model_kwargs(
         return kwargs, supply
     pool_route = True
     if profiles is not None:
-        profile = profiles.resolve(
-            project.settings if project else None,
-            project.owner_handle if project else None,
-        )
+        profile = profiles.resolve(project.settings if project else None)
         kwargs["env"].update(profile.full_env())
         kwargs["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
         kwargs["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
-        # Only the pool profile routes through the gateway; the testing
-        # (native Claude) profiles pin their own base_url + credentials.
+        # Only the pool profile routes through the gateway; a profile with its
+        # own base_url and credentials (a project's own) does not.
         pool_route = profile.base_url == settings.anthropic_base_url
     routed = pool_route and gateway is not None
     if routed:
