@@ -474,6 +474,8 @@ export interface ProjectMemberRow {
   // 队友自己的 handle（`cheese-kimi` 这种）：它的会话、轮次按这个记，消息的收件人也
   // 写这个。只知道这个 handle 的地方靠它找到这一行。人没有这一项。
   instance_handle?: string
+  // 成员自己的私人助手归谁（主人的 handle）。项目自己的队友和人都没有这一项。
+  owner_handle?: string | null
   [key: string]: unknown
 }
 
