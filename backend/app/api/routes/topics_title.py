@@ -25,6 +25,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
+from app.domain.room_task import heard
 from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
@@ -76,12 +77,22 @@ async def set_title(
             raise UnprocessableEntityError(
                 say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(title))
             )
+        previous = task.title
         TaskService(db).rename(
             task,
             title[:80],
             by=actor.handle,
             by_person=not own_session,
         )
+        if not own_session and task.title != previous:
+            # Its own session named it, and read that in the tool's reply.
+            await heard.inform(
+                db,
+                task,
+                heard.task_renamed(
+                    by=actor.handle, title=task.title, previous=previous
+                ),
+            )
         # The task as its page holds it, board line included: the page writes
         # this answer over what it has, and a task without its line drew no
         # header until the next reload.

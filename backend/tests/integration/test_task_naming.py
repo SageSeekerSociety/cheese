@@ -179,6 +179,10 @@ def _history(client, task_id: str) -> list[tuple[str, str, str]]:
 
 
 def _events(client, conversation_id: str) -> list[Block]:
+    """The events people in the conversation see. A line the room does not
+    show (``in_room: false``) is not said to them: the platform tells the
+    task's teammate a rename that way."""
+
     async def read():
         async with client.test_factory() as s:
             rows = await s.scalars(
@@ -187,7 +191,7 @@ def _events(client, conversation_id: str) -> list[Block]:
                     Block.kind == BlockKind.event,
                 )
             )
-            return list(rows)
+            return [b for b in rows if (b.meta or {}).get("in_room") is not False]
 
     return asyncio.run(read())
 

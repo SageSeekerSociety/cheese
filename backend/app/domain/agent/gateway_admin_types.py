@@ -51,6 +51,9 @@ _PRICE_FIELDS = {
     "output": "output_cost_per_token",
     "cache_read": "cache_read_input_token_cost",
     "cache_creation": "cache_creation_input_token_cost",
+    # The one-hour cache write, which Anthropic prices apart from the 5-minute one;
+    # subscription billing reads it (``usage.pricing.Rate.cache_write_1h``).
+    "cache_creation_1h": "cache_creation_input_token_cost_above_1hr",
 }
 
 # 能力位同理:网关用 supports_*/adaptive 一整套名字,页面只关心这几件。
@@ -138,7 +141,7 @@ class AdminModel:
     upstream_model: str
     api_base: str | None
     provider: str
-    prices: dict[str, float]  # input/output/cache_read/cache_creation,缺的键不出现
+    prices: dict[str, float]  # 键见 _PRICE_FIELDS,缺的键不出现
     capabilities: dict[str, bool]  # 键见 _CAPABILITY_FIELDS
     supports_notes: str | None  # 缺价的原因等人话,priced=False 时给出
     # 这个模型的全部线路,按网关试它们的先后排好。模型那一层的字段读自

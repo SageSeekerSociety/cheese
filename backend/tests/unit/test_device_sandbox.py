@@ -229,6 +229,25 @@ def test_a_session_on_a_persons_machine_sees_the_system_and_none_of_their_home(
 
 
 @sandboxed
+def test_a_room_runs_the_git_cheesehost_placed_and_nothing_else_it_placed(owner, rooms):
+    """On a machine whose own git was missing or too old, cheesehost placed one
+    under the owner's home (`cli/internal/devenv`): a room's turn needs it. The
+    rest of what it placed there is the connector's, not the room's."""
+    runtime = owner / ".cheese/runtime"
+    for tool in ("git", "tmux"):
+        path = runtime / tool / "bin" / tool
+        path.parent.mkdir(parents=True)
+        path.write_text(f"#!/bin/sh\necho placed {tool}\n")
+        path.chmod(0o755)
+
+    room = rooms()
+
+    path = f"{runtime}/git/bin:{runtime}/tmux/bin:$PATH"
+    assert room.bash(f'PATH="{path}"; git') == "placed git"
+    assert room.bash(f'ls "{runtime}/tmux" >/dev/null 2>&1 || echo hidden') == "hidden"
+
+
+@sandboxed
 def test_the_teardown_ends_everything_the_sandbox_started(rooms):
     """A session's processes are its sandbox's descendants, whatever pid files
     it wrote: the teardown ends them all with the sandbox, reading only what

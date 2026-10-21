@@ -38,7 +38,7 @@
 │   ├── 环境 environment.md
 │   ├── 自有设备 devices.md
 │   ├── 额度 quota.md
-│   ├── 额度奖励与积分 rewards.md
+│   ├── 额度奖励 rewards.md
 │   ├── 反馈中心 feedback.md
 │   ├── 发布成果 sites.md
 │   ├── 连接与集成 connections.md
@@ -117,7 +117,7 @@
 | `environment.md` | 两种环境与沙箱规格、每位 AI 队友的环境和项目 → 频道 → 任务三层的新会话默认、项目的环境分布、环境准备失败、云端资源紧张 | 接入设备和隔离归 `devices.md`；计费归 `quota.md` |
 | `devices.md` | 接入 Mac / Windows 电脑和服务器、网页批准、设备的团队归属、隔离环境与整台电脑、用自己的 Claude Code、设备离线 | 环境的选择归 `environment.md`；不能把选择设备写成选择本地目录 |
 | `quota.md` | 团队「额度」页、个人团队「额度」、耗尽提示和当前可操作范围 | 设备连接归 `devices.md`；不编造自行调整或发放额度入口 |
-| `rewards.md` | 额度奖励与积分的区别、内测体验额度、反馈奖励、邀请好友（个人邀请码、名额、双方奖励、邀请进度、分享文档的注册链接）、额度奖励的使用顺序与有效期、查看位置、每月上限 | 额度的扣除和用完归 `quota.md`；提交反馈归 `feedback.md`；空间邀请码归 `spaces.md` |
+| `rewards.md` | 额度奖励是什么、内测体验额度、反馈奖励、邀请好友（个人邀请码、名额、双方奖励、邀请进度、分享文档的注册链接）、额度奖励的使用顺序与有效期、查看位置、每月上限 | 额度的扣除和用完归 `quota.md`；提交反馈归 `feedback.md`；空间邀请码归 `spaces.md` |
 | `sites.md` | 导出与发布中的 Site 发布、发布结果与管理入口、当前能力和限制 | 普通文件下载归 `files.md`；不承诺整个项目导出 |
 | `account.md` | 创建账号、登录方式、第一次用第三方账号登录、添加邮箱、通行密钥、密码与安全、两步验证、桌面端登录、个人资料与个人主页、实名信息、界面语言与外观 | 通知设置归 `inbox.md`；设备归 `devices.md`；额度归 `quota.md` |
 | `connections.md` | 个人连接（邮箱、飞书）与项目连接（GitHub、MCP 服务）：在哪里管理、用谁的账号、连接状态、芝士能做什么、断开 | 连接 GitHub 仓库的步骤归 `projects.md`；完整的 Notion 流程归 `connect-a-service.md` |

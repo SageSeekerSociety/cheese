@@ -108,7 +108,10 @@ class PlanWindowUse(Base):
 class CreditReward(Timestamps, Base):
     """One campaign participation, accepted feedback or invitation step can
     issue one pack. ``points`` is the contribution score the same event earns:
-    it only ever adds up, and it is still recorded when no credits are paid."""
+    it only ever adds up, and it is still recorded when no credits are paid.
+    Nobody is shown points yet: the team took them off every page until they
+    lead to something (a ranking, a perk), and keeps recording them so that
+    day starts from the full history."""
 
     __tablename__ = "credit_rewards"
 

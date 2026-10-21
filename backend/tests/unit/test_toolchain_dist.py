@@ -136,6 +136,8 @@ def test_a_font_is_the_same_file_on_every_platform():
 
 # The connector's own runtime on Windows, which no other machine is sent.
 WINDOWS_RUNTIME = {"python", "git"}
+# What a Linux connector places for its rooms and for itself (`devenv`).
+LINUX_RUNTIME = {"bubblewrap", "host-tools", "tmux", "git"}
 
 
 def test_every_binary_tool_is_pinned_for_every_platform_we_serve():
@@ -146,7 +148,7 @@ def test_every_binary_tool_is_pinned_for_every_platform_we_serve():
     tools = {
         tool
         for tool, _ in toolchain.ARTIFACTS
-        if tool not in ("font-sans", "font-serif", "bubblewrap")
+        if tool not in ("font-sans", "font-serif", *LINUX_RUNTIME)
         and tool not in WINDOWS_RUNTIME
     }
     assert tools, "the table must actually carry the binaries"
@@ -155,13 +157,17 @@ def test_every_binary_tool_is_pinned_for_every_platform_we_serve():
             assert toolchain.resolve(tool, platform), f"{tool} has no {platform}"
 
 
-def test_bubblewrap_is_served_to_linux_machines_only():
-    """The sandbox a Linux machine makes for a room; macOS has its own and
-    Windows none."""
-    for platform in ("linux-x64", "linux-arm64"):
-        assert toolchain.resolve("bubblewrap", platform), platform
-    for platform in ("darwin-x64", "darwin-arm64", "windows-x64"):
-        assert toolchain.resolve("bubblewrap", platform) is None, platform
+def test_what_a_linux_connector_places_is_served_to_linux_machines():
+    """The sandbox and host tools a Linux machine makes a room's sandbox with,
+    and the tmux and git it falls back on; macOS has its own sandbox and
+    takes tmux and git from the system, and Windows has its own git."""
+    for tool in LINUX_RUNTIME:
+        for platform in ("linux-x64", "linux-arm64"):
+            assert toolchain.resolve(tool, platform), (tool, platform)
+        for platform in ("darwin-x64", "darwin-arm64"):
+            assert toolchain.resolve(tool, platform) is None, (tool, platform)
+    for tool in LINUX_RUNTIME - WINDOWS_RUNTIME:
+        assert toolchain.resolve(tool, "windows-x64") is None, tool
 
 
 def test_windows_is_served_the_tools_it_places_and_its_own_runtime():
@@ -171,7 +177,7 @@ def test_windows_is_served_the_tools_it_places_and_its_own_runtime():
         assert toolchain.resolve(tool, "windows-x64"), f"{tool} has no windows-x64"
     for tool in WINDOWS_RUNTIME:
         assert toolchain.resolve(tool, "windows-x64"), tool
-    for platform in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"):
+    for platform in ("darwin-x64", "darwin-arm64"):
         assert toolchain.resolve("git", platform) is None, platform
 
 

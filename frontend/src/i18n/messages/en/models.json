@@ -83,6 +83,7 @@
     "output": "Output",
     "cacheRead": "Cache read",
     "cacheCreation": "Cache write",
+    "cacheCreation1h": "Cache write (1 hour)",
     "unpriced": "Unpriced"
   },
   "usage": {
@@ -288,7 +289,9 @@
       "apiBaseKeep": "Leave empty to keep the saved upstream address.",
       "free": "Free source",
       "freeHint": "The upstream doesn't charge per token (a free model, a flat subscription): input and output are priced at 0, which is not the same as unpriced.",
-      "zeroNeedsFree": "An input or output price of 0 is only allowed on a free source, and a free source's input and output prices can only be 0.",
+      "zeroNeedsFree": "Input and output both at 0 is a free source: turn on Free source. A free source's input and output prices can only be 0.",
+      "spendCap": "Spend cap (USD)",
+      "spendCapHint": "The most this upstream model may be charged in total, across every source on it: once the gateway's own ledger reaches it, calls are refused. Saving it here sets it on every runtime source on the same upstream. Leave empty for no cap.",
       "headers": "Static headers",
       "existingHeaders": "Current: {names} (values aren't shown; setting them again replaces the whole set)",
       "noHeaders": "No headers.",
@@ -304,7 +307,9 @@
       "makePrimary": "Make it the primary source",
       "fallback": "It goes after the existing sources as a fallback: it is used only when the ones ahead are unavailable.",
       "mixedFree": "This model will have both free and paid sources: it is billed at the paid price, traffic on the free source included.",
-      "headersPublic": "Header values aren't secret: unless the name contains key, token, secret, auth, password, credential or cookie, any caller holding a project key can read them from the gateway. Put the upstream credential in the API key."
+      "headersPublic": "Header values aren't secret: unless the name contains key, token, secret, auth, password, credential or cookie, any caller holding a project key can read them from the gateway. Put the upstream credential in the API key.",
+      "needsPrices": "Write both an input and an output price (one of them may be 0, such as a transcription model's output): the platform bills all of a model's usage by them. For an upstream that charges nothing, turn on Free source.",
+      "priceCleared": "A price this source has can be changed, not cleared."
     },
     "confirm": {
       "delete": {
@@ -328,5 +333,11 @@
       "unblocked": "Resumed a source of {name}",
       "reordered": "Changed the source priorities of {name}"
     }
+  },
+  "priceChange": {
+    "title": "Change the prices of {name}",
+    "line": "{price} per million tokens: {before} → {after}.",
+    "effect": "From now on all usage of {name} is charged at the new prices.",
+    "confirm": "Change prices"
   }
 }

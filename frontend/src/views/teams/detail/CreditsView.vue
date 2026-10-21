@@ -60,14 +60,6 @@ const REWARD_LABEL: Record<CreditRewards['items'][number]['kind'], string> = {
   invite: 'usage.rewards.invite',
 }
 
-/** 一条奖励得了什么：额度、积分，或两样都有（邀请奖励过了当月上限时只有积分）。 */
-function gainText(item: CreditRewards['items'][number]): string {
-  const parts = []
-  if (item.credits || !item.points) parts.push(t('usage.rewards.gain', { n: item.credits }))
-  if (item.points) parts.push(t('usage.rewards.gainPoints', { n: item.points }))
-  return parts.join(' · ')
-}
-
 /** 方案之外的额度还剩多少点。 */
 const otherCredits = computed(() =>
   (props.usage?.packs ?? []).filter((p) => !p.project_id).reduce((sum, p) => sum + p.credits_remaining, 0)
@@ -136,13 +128,13 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
           {{ t('usage.rewards.earned', { n: rewards.feedback_credits })
           }}<template v-if="rewards.invite_credits">
             · {{ t('usage.rewards.inviteEarned', { n: rewards.invite_credits }) }}</template
-          ><template v-if="rewards.points"> · {{ t('usage.rewards.pointsEarned', { n: rewards.points }) }}</template>
+          >
         </p>
         <ul v-if="rewards?.items.length" class="usv__history">
           <li v-for="(item, index) in rewards.items" :key="index">
             <span>{{ t(REWARD_LABEL[item.kind]) }}</span
             ><time>{{ new Date(item.created_at).toLocaleDateString(locale) }}</time
-            ><strong>{{ gainText(item) }}</strong>
+            ><strong>{{ t('usage.rewards.gain', { n: item.credits }) }}</strong>
           </li>
         </ul>
         <BaseEmptyState v-else-if="rewards" size="inline" :title="t('usage.rewards.empty')" />
