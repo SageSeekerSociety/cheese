@@ -187,10 +187,6 @@
   },
   "stepOf": "Step {n} of {total}",
   "guide": {
-    "library": {
-      "title": "Library",
-      "text": "Accepted results go to the library, along with the project’s material."
-    },
     "send": {
       "title": "Hand off to {agent}",
       "text": "Your first request is already in the box, and Hand off to {agent} is on. Fill in the rest and send it from here."
@@ -220,6 +216,10 @@
       "title": "Accept",
       "text": "{agent} has delivered. Look at the result: accept it to add it to the project, or send it back with a reason.",
       "textWaiting": "When it is done, {agent} hands the result to you to review and the review card appears here. You can leave and will be notified."
+    },
+    "overview": {
+      "title": "Overview",
+      "text": "Accepted results show up here: a new version of the project under What was made, and the acceptance under Recent progress."
     }
   }
 }

@@ -78,17 +78,17 @@ describe('新手引导的后半程', () => {
     noteFacts(none)
     guide.stop.value = at('accept')
     const accepted = { ...none, asked: true, accepted: true }
-    guide.settle({ facts: accepted, has: onPage('page-project-library') })
-    expect(guide.current.value?.key).toBe('library')
+    guide.settle({ facts: accepted, has: onPage('page-workspace-overview') })
+    expect(guide.current.value?.key).toBe('overview')
     guide.next()
     expect(guide.done.value).toBe(true)
     expect(guide.active.value).toBe(false)
   })
 
-  it('skips the library stop where the channel page has no sidebar (a phone)', () => {
+  it('skips the overview stop where the channel page has no sidebar (a phone)', () => {
     const guide = useProjectTour()
     noteFacts(none)
-    guide.stop.value = at('library')
+    guide.stop.value = at('overview')
     guide.settle({ facts: { ...none, asked: true, accepted: true }, has: onPage('composer-input', 'composer-send') })
     expect(guide.done.value).toBe(true)
   })

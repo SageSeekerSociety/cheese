@@ -2,8 +2,8 @@
 //
 // 第一步就是人来要做的那件事：把输入框里的第一件事交给芝士。之后每一步要人真的做了
 // 才往下走：点开芝士回复的那条支线、打开它建的任务、采纳第一份交付（服务端记下了
-// 合并）。界面上的地方不先讲，用到时才讲：采纳以后，最后一步指向资料库，成果就放在
-// 那里，点「下一步」走完。做没做到看两样：服务端的事实（上手的 `asked` / `accepted`，
+// 合并）。界面上的地方不先讲，用到时才讲：采纳以后，最后一步指向总览，采纳的结果
+// 在「做出了什么」里成了项目的一个新版本，点「下一步」走完。做没做到看两样：服务端的事实（上手的 `asked` / `accepted`，
 // ChatPanel 问来后写进来）和页面上出现了什么（`v-guide-anchor` 登记的控件：支线开着、
 // 任务页开着）。
 //
@@ -66,7 +66,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     waiting: ['task-page', 'timeline'],
     done: (c) => c.facts.accepted,
   },
-  { key: 'library', anchors: ['page-project-library'] },
+  { key: 'overview', anchors: ['page-workspace-overview'] },
 ]
 
 /** 介绍步的目标在侧栏上；在频道页上找不到（手机上没有侧栏）就跳过。 */
