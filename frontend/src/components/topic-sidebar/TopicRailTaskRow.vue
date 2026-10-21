@@ -26,7 +26,7 @@ const props = withDefaults(
     selected: boolean
     /** 这一行此刻画哪盏灯（父级带钟算的）；不亮是 null。 */
     light?: RowLight | null
-    /** 任务里别人说了几句我还没读（只对负责人和协作者算，只算人说的）。 */
+    /** 任务里别人说了几句我还没读（只对负责人和协作者算，人和 AI 都算）。 */
     unread?: number
     // 它的频道在树里的第几层：竖线跟着频道的图标列走。
     depth?: number
@@ -84,12 +84,9 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
     "
   >
     <!-- 任务名是人起的（占位名除外，那是界面上的字）。 -->
-    <span
-      class="rail-task__title"
-      :class="{ 'rail-task__title--unread': unread > 0 }"
-      :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
-      >{{ taskTitle(task) }}</span
-    >
+    <span class="rail-task__title" :data-user-content="task.title_source === 'placeholder' ? undefined : ''">{{
+      taskTitle(task)
+    }}</span>
     <TopicRailBadge v-if="unread > 0" :count="unread" />
     <TopicRailLight v-if="light" :light="light" />
   </button>
@@ -132,8 +129,7 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
 }
 /* 选中沿用频道行那一档：底色 --line-2，标题再重一层。这条 rail 的底是 --canvas，
    --fill 在它上面只有 1.027:1，拿它当选中等于没画（同 TopicRailRow.vue 那段注释）。
-   字重落在行上、由标题继承：未读那颗 650 比它重，选中一行未读的任务仍是未读的样子。
-   选中的行不复用 hover 档——否则鼠标一扫过，选中态反而变浅。 */
+   字重落在行上、由标题继承。选中的行不复用 hover 档——否则鼠标一扫过，选中态反而变浅。 */
 .rail-task--selected,
 .rail-task--selected:hover {
   background: var(--line-2);
@@ -157,9 +153,6 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.rail-task__title--unread {
-  font-weight: 650;
 }
 /* 借来凑数的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
    自己再抬一次——上面那两条改的是行盒的颜色，标题自己有颜色时继承不到。 */
