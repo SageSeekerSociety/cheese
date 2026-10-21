@@ -27,13 +27,19 @@ from app.domain.agent import initial_admission
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.driven.runner import LONG_POLL
-from app.domain.agent.models import TurnResume
+from app.domain.agent.models import AgentTurn, TurnResume
 from app.domain.agent.room import sessions as room_sessions
 from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.contract import SessionError
 from app.domain.agent.turn_resume import after_failure, hand_due
 from app.domain.agent_instance.models import AgentInstance
-from app.domain.block.models import Block, BlockKind, consumed_turn
+from app.domain.block.models import (
+    PROMPTED_TURN_META_KEY,
+    Block,
+    BlockKind,
+    consumed_turn,
+    prompted_turn,
+)
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.input_identity import InputEffects, InputIdentity
 from app.domain.delivery.receipts import held_blocks, register_input
@@ -78,6 +84,8 @@ class OldRunnerHub(ReleaseHub):
         self.interrupted = 0
         # What the interrupt fails with, when the connection to it breaks.
         self.interrupt_fails: Exception | None = None
+        # What the work it interrupts had read by then.
+        self.read_before_interrupt: list[str] = []
         self.told: list[tuple[str, str]] = []
 
     async def call_executor(self, device_id, state, method, params, timeout=None):
@@ -99,7 +107,7 @@ class OldRunnerHub(ReleaseHub):
                 cut = {
                     "work": self.old_ping.get("work_id"),
                     "failure": {"kind": "interrupted"},
-                    "inputs": [],
+                    "inputs": list(self.read_before_interrupt),
                 }
                 self.old_ping = {
                     **self.old_ping,
@@ -183,6 +191,37 @@ async def _seated(client, project, topic) -> str:
     return acting
 
 
+async def _prompted(client, session, work: uuid.UUID) -> uuid.UUID:
+    """A person's message that started ``work``: fed to its prompt, which the
+    transport accepted, and not yet read."""
+    block = Block(
+        id=uuid.uuid4(),
+        project_id=session.project_id,
+        conversation_id=session.conversation_id,
+        kind=BlockKind.message,
+        author_type=AuthorType.participant,
+        author="alice",
+        content="check the build",
+        meta={"consumed_turn": None, PROMPTED_TURN_META_KEY: str(work)},
+    )
+    now = datetime.now(UTC)
+    async with client.test_request_factory() as db:
+        db.add(block)
+        db.add(
+            AgentTurn(
+                id=work,
+                conversation_id=session.conversation_id,
+                continuation_id=work,
+                author="alice",
+                content="check the build",
+                started_at=now,
+                delivered_at=now,
+            )
+        )
+        await db.commit()
+    return block.id
+
+
 async def _resumes(client, topic, work=WORK) -> list[TurnResume]:
     async with client.test_request_factory() as db:
         return list(
@@ -217,8 +256,9 @@ async def test_an_idle_old_runner_is_replaced_at_once(
     center,
     tmp_path,
 ):
-    """Nobody writes to the room: its old runner is replaced all the same, and
-    the message it was written and never read is offered again."""
+    """Nobody writes to the room: its old runner is replaced all the same. The
+    message it was written and never read is offered again; the one it read
+    before the deploy finished is not."""
     project, topic = room
     hub = OldRunnerHub()
     hub.ping = dict(IDLE)
@@ -227,8 +267,20 @@ async def test_an_idle_old_runner_is_replaced_at_once(
         session = ref(project, topic)
         old = await _started_as_this_release_would(client, hub, tmp_path, session)
         block = await _unread_input(client, session)
-        # The deploy: the runner on the host is the previous release's.
+        answered, answered_input = await _written(client, session)
+        # The deploy: the runner on the host is the previous release's, idle
+        # after a work that read one of the two.
         hub.old = True
+        hub.old_ping = {
+            **OLD_PING,
+            "endings": [
+                {
+                    "work": str(uuid.uuid4()),
+                    "failure": None,
+                    "inputs": [str(answered_input)],
+                }
+            ],
+        }
         service = _backend(client, hub, tmp_path)
         await service.recover_sessions()
 
@@ -244,6 +296,8 @@ async def test_an_idle_old_runner_is_replaced_at_once(
             )
             kept = await db.get(Block, block)
             assert kept is not None and consumed_turn(kept) is None
+            read = await db.get(Block, answered)
+            assert read is not None and consumed_turn(read) is not None
         assert hub.interrupted == 0
         await service.stop_listening(0)
 
@@ -470,6 +524,13 @@ async def test_past_the_cap_the_old_runners_turn_is_interrupted_and_resumed(
                     )
                 )
                 await db.commit()
+        steered = None
+        if not was_a_resume:
+            # A message steered to it before the deploy, which the work reads
+            # at a tool boundary before it is told to stop. (A person's message
+            # read ends a resume streak, so not in the case that keeps one.)
+            steered, steered_input = await _written(client, session)
+            hub.read_before_interrupt = [str(steered_input)]
         hub.old = True
         # A runner of a later protocol holds a registration of its own.
         hub.old_ping = {**AT_WORK, "worker_epoch": 7}
@@ -493,6 +554,11 @@ async def test_past_the_cap_the_old_runners_turn_is_interrupted_and_resumed(
         # The streak carries on as it stood: the upgrade is not one more
         # failure for the agent's next resume to count against.
         assert resume.attempt == (1 if was_a_resume else 0)
+        # What it read before it stopped is not offered again.
+        if steered is not None:
+            async with client.test_request_factory() as db:
+                read = await db.get(Block, steered)
+                assert read is not None and consumed_turn(read) is not None
 
     client.portal.call(exercise)
 
@@ -531,6 +597,9 @@ async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
         session = ref(project, topic)
         taken, taken_input = await _written(client, session)
         block = await _unread_input(client, session)
+        # And the message the failed work was started with, which it failed
+        # before reading.
+        prompt = await _prompted(client, session, WORK)
         hub.old_ping = {
             **OLD_PING,
             "worker_epoch": 7,
@@ -560,6 +629,11 @@ async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
             assert kept is not None and consumed_turn(kept) is None
             read = await db.get(Block, taken)
             assert read is not None and consumed_turn(read) is not None
+            # The failed work did not hear its own prompt: the message is no
+            # longer counted as that work's.
+            opening = await db.get(Block, prompt)
+            assert opening is not None and prompted_turn(opening) is None
+            assert consumed_turn(opening) is None
             assert not await held_blocks(
                 db, project_id=project, topic_id=topic, recipient_handle=AGENT
             )
@@ -628,6 +702,43 @@ async def test_an_interrupt_that_cannot_be_delivered_still_ends_the_drain(
         assert [row.reason for row in rows] == ["runner_replaced"]
 
     client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_the_cap_counts_from_when_the_drain_began_across_backends(
+    client,
+    room,  # noqa: F811
+    center,
+    tmp_path,
+    monkeypatch,
+):
+    """A backend takes the seat over in the middle of a drain: it goes on
+    counting the cap from when the drain began, not from when it found the
+    runner, so a chain of deploys cannot keep an old runner draining for ever."""
+    monkeypatch.setattr(settings, "runner_drain_s", 4.0)
+    project, topic = room
+    hub = OldRunnerHub()
+    hub.ping = dict(IDLE)
+
+    async def first():
+        first_backend = await _drain_one(client, hub, tmp_path, project, topic)
+        await asyncio.sleep(3.0)
+        assert hub.interrupted == 0
+        # The next deploy: this backend lets go of the seat.
+        await first_backend.stop_listening(0)
+
+    async def second():
+        second_backend = _backend(client, hub, tmp_path)
+        await second_backend.recover_sessions()
+        # Its own count would reach the cap 4 s from now; the drain's reaches
+        # it within about 1 s.
+        async with asyncio.timeout(2.5):
+            while hub.interrupted == 0:
+                await asyncio.sleep(0.05)
+        await second_backend.stop_listening(0)
+
+    client.portal.call(first)
+    client.portal.call(second)
 
 
 @pytest.mark.anyio

@@ -283,6 +283,22 @@ class AgentSessionService:
             placed_before=placed_before,
         )
 
+    async def drain(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> datetime:
+        """When the drain of this session's runner began; see the repository."""
+        return await self._repo.drain(
+            conversation_id=conversation_id, agent_handle=agent_handle, harness=harness
+        )
+
+    async def drained(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """The drain of this session's runner is over; see the repository."""
+        await self._repo.drained(
+            conversation_id=conversation_id, agent_handle=agent_handle, harness=harness
+        )
+
     async def has_run(self, room_id: uuid.UUID) -> bool:
         """Whether ANY agent has ever run here — what the compute pin freezes on."""
         return await self._repo.has_any(room_id)

@@ -190,13 +190,12 @@ class Report:
 class Replaced:
     """The process holding native session ``conversation`` was replaced by one
     of this release's (a runner another release started). The platform's
-    inputs its runner reported its works read (``read``, by input id) were read,
-    into the work ``read_into`` names when it was doing one; whatever else it
-    was written and has no record of reading, it never will read."""
+    inputs its runner reported its works read (``read``: each work's id and the
+    input ids it read) were read, into that work; whatever else it was written
+    and has no record of reading, it never will read."""
 
     conversation: str
-    read_into: uuid.UUID | None = None
-    read: tuple[str, ...] = ()
+    read: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)

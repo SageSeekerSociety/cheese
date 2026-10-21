@@ -148,6 +148,9 @@ TALKING_S = 300.0
 # finishing is done (``lifecycle._drain``). Its messages wait on the answer, so
 # it is asked often; a ping is the cheapest call a runner answers.
 DRAIN_POLL_S = 5.0
+# How long a drain that interrupted its runner at the cap goes on asking it how
+# the interrupted work ended, before settling without that answer.
+DRAIN_STOP_WAIT_S = 60.0
 
 
 class RoomSessions:

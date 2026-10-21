@@ -23,7 +23,7 @@ from app.domain.agent.harness.driven.subscription import (
     TOOL_RETURNED,
     TOOL_STARTED,
 )
-from app.domain.agent.session_host.contract import Access
+from app.domain.agent.session_host.contract import Access, Ending
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 
 
@@ -85,11 +85,11 @@ class Outdated:
     working: bool
     #: The room's work it was doing then, which it is left to finish.
     work: uuid.UUID | None
-    #: When this process found it, on the monotonic clock: the drain's cap runs
-    #: from here.
-    found: float
     #: The registration it holds, for the interrupt the cap falls back to.
     epoch: int = 0
+    #: How its last few works ended, as its ping last said
+    #: (``SessionStatus.endings``).
+    endings: tuple[Ending, ...] = ()
     #: The room was told a message waits for it.
     told: bool = False
     #: Somebody took its work away (a Stop, a closed task, the agent removed

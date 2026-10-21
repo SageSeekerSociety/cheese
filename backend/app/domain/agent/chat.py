@@ -344,8 +344,7 @@ class ChatService(
         harness: str,
         native: str,
         *,
-        read: tuple[str, ...] = (),
-        read_into: uuid.UUID | None = None,
+        read: tuple[tuple[str, tuple[str, ...]], ...] = (),
     ) -> None:
         """The process holding native session ``native`` was replaced
         (`runner_reports.replaced`)."""
@@ -356,7 +355,6 @@ class ChatService(
             harness,
             native,
             read=read,
-            read_into=read_into,
         )
 
     async def result_landed(self, report: Report) -> None:

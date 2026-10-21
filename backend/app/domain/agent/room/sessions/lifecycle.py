@@ -219,8 +219,8 @@ async def recover(
                 access,
                 working=status.working,
                 work=work,
-                found=time.monotonic(),
                 epoch=status.epoch,
+                endings=status.endings,
             )
             if work is not None:
                 svc.work[seat] = work
@@ -291,15 +291,15 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
     is replaced, and its work ends the way its ping's ``endings`` say it did:
     as finished, or, when it ended in a failure, started again on the new
     runner (``runner_replaced``). Gone, its work is started again too. Still
-    at work past ``settings.runner_drain_s`` from when this process found it,
-    its work is interrupted and started again, the way every replacement went
-    before there was a drain. A runner that cannot be asked is waited for to
-    the same cap. Work somebody stopped meanwhile (``RoomSessions.interrupt``)
-    ends as stopped."""
+    at work ``settings.runner_drain_s`` after the drain began (a moment kept
+    with the seat, so a backend taking over counts from it too), its work is
+    interrupted, the drain waits up to ``DRAIN_STOP_WAIT_S`` for the runner to
+    say how that ended, and the work is started again, the way every
+    replacement went before there was a drain. A runner that cannot be asked
+    is waited for to the same cap. Work somebody stopped meanwhile
+    (``RoomSessions.interrupt``) ends as stopped."""
     live = outdated.live
-    # How its works ended, as it last said: what they read is recorded as read
-    # whatever ends the drain.
-    endings: tuple[Ending, ...] = ()
+    began: datetime | None = None
     logger.info(
         "runner_drain_started topic=%s seat=%s conversation=%s work=%s cap_s=%.0f",
         seat[0],
@@ -308,9 +308,16 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
         outdated.work,
         settings.runner_drain_s,
     )
+
+    def drained_for() -> float:
+        return (datetime.now(UTC) - began).total_seconds() if began else 0.0
+
+    reason = ""
+    interrupted_at: datetime | None = None
     while True:
-        await asyncio.sleep(pkg.DRAIN_POLL_S)
         try:
+            if began is None:
+                began = await svc.channel.drain_started(live.session)
             status = await svc.host.attach(live.ref, outdated.access)
         except Exception:  # a drain that died would hold the seat's messages for good
             logger.exception(
@@ -318,15 +325,21 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
             )
             status = None
         if status is not None and status.endings:
-            endings = status.endings
+            outdated.endings = status.endings
         if status is not None and not status.alive:
-            reason = "gone"
+            reason = reason or "gone"
             break
         if status is not None and not status.working:
-            mine = [e for e in endings if e.work == str(outdated.work)]
-            reason = "failed" if any(e.failed for e in mine) else "drained"
+            if not reason:
+                failed = any(e.failed for e in _own(outdated))
+                reason = "failed" if failed else "drained"
             break
-        if time.monotonic() - outdated.found >= settings.runner_drain_s:
+        if interrupted_at is not None:
+            if (datetime.now(UTC) - interrupted_at).total_seconds() >= (
+                pkg.DRAIN_STOP_WAIT_S
+            ):
+                break
+        elif began is not None and drained_for() >= settings.runner_drain_s:
             try:
                 interrupted = await svc.host.stop(
                     live.ref, host=outdated.access.host, epoch=outdated.epoch
@@ -345,20 +358,22 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
                 seat[1],
                 live.conversation,
                 outdated.work,
-                time.monotonic() - outdated.found,
+                drained_for(),
                 interrupted,
             )
             reason = "timed_out"
-            break
+            if not interrupted:
+                break
+            # Asked again until it says how the work it was told to stop
+            # ended, and what it read before that.
+            interrupted_at = datetime.now(UTC)
+        await asyncio.sleep(pkg.DRAIN_POLL_S)
     if outdated.stopped:
         reason = "stopped"
     while True:
         try:
             await _replaced(
-                svc,
-                outdated,
-                failed=reason in ("gone", "failed", "timed_out"),
-                read=tuple(i for ending in endings for i in ending.inputs),
+                svc, outdated, failed=reason in ("gone", "failed", "timed_out")
             )
             break
         except Exception:  # the database away for a moment: settle again
@@ -374,37 +389,34 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
         seat[1],
         live.conversation,
         reason,
-        time.monotonic() - outdated.found,
+        drained_for(),
     )
 
 
-async def _replaced(
-    svc: pkg.RoomSessions,
-    outdated: Outdated,
-    *,
-    failed: bool,
-    read: tuple[str, ...] = (),
-) -> None:
+def _own(outdated: Outdated) -> list[Ending]:
+    """The endings its ping gave for the work it was found doing."""
+    return [e for e in outdated.endings if e.work == str(outdated.work)]
+
+
+async def _replaced(svc: pkg.RoomSessions, outdated: Outdated, *, failed: bool) -> None:
     """Settle a seat whose runner is another release's, and have one of this
     release's take its place on the same conversation.
 
-    The inputs its ping says its works read (``read``) are recorded as read,
-    into the work it was doing, since offering them again would have them answered
-    twice; whatever else it was written and has no record of reading is
-    dropped, so the messages in it are offered again. What waited for it goes
-    ahead. Work it
-    finished ends as finished; work it did not (``failed``: it ended in a
-    failure, was interrupted at the drain's cap, or its process went) ends
-    with the upgrade as its failure, which the platform starts again by
-    itself (``resumable_failures``). The new runner is started as soon as the
-    seat is quiet (``prewarm_due``), or by the next start."""
+    The inputs its ping says its works read (``Outdated.endings``) are
+    recorded as read, each into the work that read it, since offering them
+    again would have them answered twice; whatever else it was written and
+    has no record of reading is dropped, so the messages in it are offered
+    again. What waited for it goes ahead. Work it finished ends as finished;
+    work it did not (``failed``: it ended in a failure, was interrupted at the
+    drain's cap, or its process went) ends with the upgrade as its failure,
+    which the platform starts again by itself (``resumable_failures``). The
+    new runner is started as soon as the seat is quiet (``prewarm_due``), or by
+    the next start."""
     live = outdated.live
     seat = svc._seat_of(live.session)
     outdated.settling = True
-    await svc._hear(
-        live.session,
-        Read(None, Replaced(live.conversation, read_into=outdated.work, read=read)),
-    )
+    read = tuple((e.work, e.inputs) for e in outdated.endings if e.inputs)
+    await svc._hear(live.session, Read(None, Replaced(live.conversation, read=read)))
     if (work := outdated.work) is not None:
         await svc._consume(
             live.session.project_id,
@@ -417,7 +429,8 @@ async def _replaced(
                 failure_code=RUNNER_REPLACED_CODE if failed else None,
                 agent_handle=live.acting,
                 harness=svc.harness,
-                inputs_read=bool(read),
+                # What this work itself read, by its own ending.
+                inputs_read=any(e.inputs for e in _own(outdated)),
             ),
             f"{svc.harness}:{live.conversation}:replaced:{work}",
             False,
@@ -425,6 +438,7 @@ async def _replaced(
         )
         await svc._activity(live.session.project_id, seat, work, False)
         svc.closed.add(work)
+    await svc.channel.drain_ended(live.session)
     svc.outdated.pop(seat, None)
     svc.replace_due[seat] = live
     svc._went_quiet(live.session)

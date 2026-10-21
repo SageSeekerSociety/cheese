@@ -8,6 +8,7 @@ from sqlalchemy import (
     exists,
     func,
     select,
+    update,
 )
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -152,6 +153,42 @@ class AgentSessionRepository:
             return
         row.runtime_location = {**row.runtime_location, "let_go": True}
         await self._session.flush()
+
+    async def drain(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> datetime:
+        """When the drain of this session's runner began: now, unless one is
+        already under way (``AgentSession.drain_started_at``)."""
+        started = await self._session.scalar(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(
+                drain_started_at=func.coalesce(
+                    AgentSession.drain_started_at, func.now()
+                )
+            )
+            .returning(AgentSession.drain_started_at)
+        )
+        # A seat recovery found has its row; one deleted since starts now.
+        return started or datetime.now(UTC)
+
+    async def drained(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """The drain of this session's runner is over: it was replaced."""
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(drain_started_at=None)
+        )
 
     async def _upsert(
         self,

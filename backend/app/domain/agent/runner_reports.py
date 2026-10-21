@@ -193,22 +193,22 @@ async def replaced(
     harness: str,
     native: str,
     *,
-    read: tuple[str, ...] = (),
-    read_into: uuid.UUID | None = None,
+    read: tuple[tuple[str, tuple[str, ...]], ...] = (),
 ) -> None:
     """The process holding native session ``native`` was replaced by one of
     this release's: what it was written and never read is dropped as its
     runner would have dropped it at its exit, and the seat may take what was
-    waiting for it. The inputs its runner reported its work read (``read``)
-    are recorded as read, into ``read_into``; only the rest is dropped."""
+    waiting for it. The inputs its runner reported its works read (``read``)
+    are recorded as read, each into the work that read it; only the rest is
+    dropped."""
     async with chat.session_factory() as db:
-        if read:
+        for work, input_ids in read:
             await read_inputs_of_session(
                 db,
                 harness=harness,
                 native_session_id=native,
-                input_ids=read,
-                work_id=read_into,
+                input_ids=input_ids,
+                work_id=uuid.UUID(work),
             )
         await drop_unread_of_session(
             db, harness=harness, native_session_id=native, reason=RUNNER_REPLACED_CODE

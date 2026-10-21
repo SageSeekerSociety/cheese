@@ -79,8 +79,7 @@ class RoomBooks(Protocol):
         harness: str,
         native: str,
         *,
-        read: tuple[str, ...] = (),
-        read_into: uuid.UUID | None = None,
+        read: tuple[tuple[str, tuple[str, ...]], ...] = (),
     ) -> None: ...
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None: ...
@@ -129,7 +128,6 @@ def reader(chat: RoomBooks) -> RoomReader:
                 session.harness,
                 event.conversation,
                 read=event.read,
-                read_into=event.read_into,
             )
         elif isinstance(event, Writing):
             await publish_live(
