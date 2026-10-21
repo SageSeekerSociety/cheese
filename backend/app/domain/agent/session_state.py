@@ -18,6 +18,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.agent.harness import HARNESSES
 from app.domain.agent.harness.driven.lifecycle import IDLE, RUNNING, StaleEpoch
 from app.domain.agent.models import SessionOffset, SessionState
 
@@ -233,3 +234,11 @@ async def running_conversations(
             return set()
         query = query.where(SessionState.conversation_id.in_(set(conversation_ids)))
     return set(await session.scalars(query.distinct()))
+
+
+def reports_lifecycle(harness: str) -> bool:
+    """Whether ``harness``'s runner reports in the lifecycle protocol
+    (`Harness.reports_lifecycle`): its sessions have a state here, it ends
+    stuck work on its own clocks, and an input's read is its echo rather than
+    the runner taking it."""
+    return HARNESSES[harness].reports_lifecycle

@@ -37,6 +37,7 @@ from app.domain.agent.harness.prompt import (
     stale_checklist_reminder,
     stale_progress_reminder,
 )
+from app.domain.agent.session_state import reports_lifecycle
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.models import NativeInput
@@ -85,9 +86,7 @@ def _read_at():
     """When the session read an input: its echo for a harness whose runner
     reports reads (`Harness.reports_lifecycle`), and the runner taking it for
     one whose acceptance is the read (`Driver.receipt_on_accept`)."""
-    reporting = [
-        name for name, harness in HARNESSES.items() if harness.reports_lifecycle
-    ]
+    reporting = [name for name in HARNESSES if reports_lifecycle(name)]
     return case(
         (NativeInput.harness.in_(reporting), NativeInput.echoed_at),
         else_=NativeInput.accepted_at,
