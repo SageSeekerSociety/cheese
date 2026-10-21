@@ -54,6 +54,10 @@ export interface SourceDraft {
   spendCap: string
   /** 编辑时这条线路现有的上限：没改就不发，免得一次无关的编辑去改同一上游的别的线路。 */
   spendCapWas: number | null
+  /** 编辑时这条线路现有的单价与免费标记：价没改就不发，一次只改优先级的保存不该去重验
+   *  单价（一条没价的老线路照样能改别的）。加线路时是 null。 */
+  pricesWas: GatewayPrices | null
+  freeWas: boolean | null
 }
 
 export function emptySourceDraft(order = ORDER_MIN): SourceDraft {
@@ -72,6 +76,8 @@ export function emptySourceDraft(order = ORDER_MIN): SourceDraft {
     makePrimary: false,
     spendCap: '',
     spendCapWas: null,
+    pricesWas: null,
+    freeWas: null,
   }
 }
 
@@ -105,6 +111,8 @@ export function draftFromSource(source: SourceRow): SourceDraft {
     makePrimary: false,
     spendCap: source.spend_cap_usd == null ? '' : String(source.spend_cap_usd),
     spendCapWas: source.spend_cap_usd ?? null,
+    pricesWas: { ...source.prices },
+    freeWas: source.free,
   }
 }
 
@@ -183,10 +191,13 @@ export interface DraftProblems {
   apiBase: boolean
   order: boolean
   prices: boolean
-  /** 免费线路填了非零价，或没标免费却把输入 / 输出写成 0。 */
+  /** 免费线路填了非零价，或没标免费却把输入、输出都写成 0（那就是免费，要明说）。 */
   free: boolean
-  /** 没标免费，输入或输出却空着：每条线路都要两向有价（服务端同一条）。 */
+  /** 动了价、没标免费，输入或输出却空着：每条线路两向都要写价（一向可以是 0，比如语音
+   *  转写的输出），服务端同一条。没动价的编辑不查：一条没价的老线路照样能改优先级。 */
   unpriced: boolean
+  /** 编辑时把一档已有的价清空了：价只能改，不能清空（服务端同一条）。 */
+  cleared: boolean
   headers: boolean
   sessionHeader: boolean
   spendCap: boolean
@@ -206,7 +217,6 @@ export function draftProblems(draft: SourceDraft): DraftProblems {
     .map(perToken)
     .some((v) => v === undefined)
   const zero = (v: number | null | undefined) => v === 0
-  const positiveOrEmpty = (v: number | null | undefined) => v === null || (v !== undefined && v > 0)
   const names = draft.headers.map((h) => h.name.trim().toLowerCase())
   return {
     upstream: draft.upstream.trim() === '',
@@ -215,8 +225,11 @@ export function draftProblems(draft: SourceDraft): DraftProblems {
     prices: anyPriceInvalid,
     free: draft.free
       ? !((input === null || zero(input)) && (output === null || zero(output)))
-      : !(positiveOrEmpty(input) && positiveOrEmpty(output)),
-    unpriced: !draft.free && (input === null || output === null),
+      : zero(input) && zero(output),
+    unpriced: pricesTouched(draft) && !draft.free && (input === null || output === null),
+    cleared:
+      draft.pricesWas !== null &&
+      PRICE_ORDER.some((key) => draft.pricesWas?.[key] != null && draftPrices(draft)[key] === null),
     headers:
       draft.headersTouched &&
       (draft.headers.some((h) => headerNameProblem(h.name) !== null || !headerValueOk(h.value)) ||
@@ -242,20 +255,34 @@ export function draftPriced(draft: SourceDraft): boolean {
 /** 草稿 → 请求体。`mode = 'edit'` 时没填的凭据 / 地址、没动过的请求头、没改的消费上限
  *  都不发（不发 = 不动），凭据还要显式声明 `api_key_unchanged`。免费线路不发输入输出价：
  *  服务端写 0。 */
+/** 草稿里的单价，按要提交的样子（每 token；空是 null）。免费线路的输入、输出是 0。 */
+export function draftPrices(draft: SourceDraft): Required<GatewayPrices> {
+  return {
+    input: draft.free ? 0 : perToken(draft.prices.input) ?? null,
+    output: draft.free ? 0 : perToken(draft.prices.output) ?? null,
+    cache_read: perToken(draft.prices.cacheRead) ?? null,
+    cache_creation: perToken(draft.prices.cacheCreation) ?? null,
+    cache_creation_1h: perToken(draft.prices.cacheCreation1h) ?? null,
+  }
+}
+
+/** 编辑时动没动价或免费标记；加线路时总算动了（定价就是这一步）。 */
+export function pricesTouched(draft: SourceDraft): boolean {
+  if (draft.pricesWas === null) return true
+  return draft.free !== draft.freeWas || priceChanges(draft.pricesWas, draftPrices(draft)).length > 0
+}
+
 export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): GatewaySourceFields {
   const out: GatewaySourceFields = {
     protocol: draft.protocol === 'other' ? null : draft.protocol,
     upstream_model: draft.upstream.trim(),
     order: Number(draft.order),
-    free: draft.free,
-    prices: {
-      input: draft.free ? 0 : perToken(draft.prices.input) ?? null,
-      output: draft.free ? 0 : perToken(draft.prices.output) ?? null,
-      cache_read: perToken(draft.prices.cacheRead) ?? null,
-      cache_creation: perToken(draft.prices.cacheCreation) ?? null,
-      cache_creation_1h: perToken(draft.prices.cacheCreation1h) ?? null,
-    },
     session_header: draft.sessionHeader.trim(),
+  }
+  // 价没动就整份不发（不发 = 不动）：发了，服务端就按现在的规则重验这一行的价。
+  if (mode === 'add' || pricesTouched(draft)) {
+    out.free = draft.free
+    out.prices = draftPrices(draft)
   }
   if (draft.apiBase.trim()) out.api_base = draft.apiBase.trim()
   if (draft.apiKey.trim()) out.api_key = draft.apiKey.trim()

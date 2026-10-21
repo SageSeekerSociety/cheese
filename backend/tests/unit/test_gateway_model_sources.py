@@ -1215,3 +1215,66 @@ async def test_a_source_without_both_prices_is_refused_on_any_model():
             ),
         )
     assert len(gw.writes()) == before
+
+
+@pytest.mark.anyio
+async def test_a_transcription_row_priced_on_input_only_is_kept_and_stays_editable():
+    """Speech to text charges for the audio in and nothing out: one zero is a
+    price. Saving the row with its prices as they are (the page sends them on
+    every save) rewrites nothing and is not refused."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    await service.add(
+        handle="admin",
+        payload=ModelCreate(
+            name="asr",
+            upstream_model="qwen-asr/flash",
+            prices={"input": 1.2394e-6, "output": 0},
+        ),
+    )
+    reset_cache()
+    source = gw.group("asr")[0]["model_info"]["id"]
+    before = len(gw.writes())
+
+    await service.update_source(
+        handle="admin",
+        name="asr",
+        source_id=source,
+        payload=SourceUpdate(
+            order=4, free=False, prices={"input": 1.2394e-6 * (1 + 1e-12), "output": 0}
+        ),
+    )
+
+    (sent,) = [json.loads(r.content) for r in gw.writes()[before:]]
+    assert sent["litellm_params"] == {"order": 4}
+    with pytest.raises(BadRequestError):
+        await service.add(
+            handle="admin",
+            payload=ModelCreate(
+                name="zeros", upstream_model="x/y", prices={"input": 0, "output": 0}
+            ),
+        )
+
+
+@pytest.mark.anyio
+async def test_a_row_priced_before_todays_rules_takes_an_unrelated_edit():
+    gw = _Gateway(
+        [
+            _KIMI_CONFIG,
+            {
+                "model_name": "legacy",
+                "litellm_params": {"model": "anthropic/legacy"},
+                "model_info": {"id": "rt-legacy", "db_model": True},
+            },
+        ]
+    )
+    service = _service(gw)
+
+    await service.update_source(
+        handle="admin",
+        name="legacy",
+        source_id="rt-legacy",
+        payload=SourceUpdate(order=2, free=False, prices={"input": None}),
+    )
+
+    assert gw.group("legacy")[0]["litellm_params"]["order"] == 2

@@ -133,18 +133,46 @@ def _require_another_offered(models: list[AdminModel], name: str) -> None:
 
 
 def _require_prices(prices: dict | None, free: bool) -> None:
-    """Every row carries both token prices, offered or not: the platform bills
+    """Every row writes both token prices, offered or not: the platform bills
     usage under a model's name by them (``usage.pricing``), the subscription's
-    Claude models included. The one exception is the declared free row, whose
-    two prices ``_source_prices`` has already written as 0."""
+    Claude models included. One direction may be 0 (a transcription model
+    charges for audio in and nothing out), not both: that is a free row, and a
+    free row says so (``cheese_free``, both written as 0 by ``_source_prices``).
+    An offered model is held to more, both > 0 (``_require_price_when_selectable``).
+    """
     if free:
         return
     prices = prices or {}
-    if not (
-        _price_is_positive(prices.get("input"))
-        and _price_is_positive(prices.get("output"))
+    written = [prices.get("input"), prices.get("output")]
+    if any(v is None for v in written) or not any(
+        _price_is_positive(v) for v in written
     ):
         raise BadRequestError(say("sourceNeedsPrices"))
+
+
+def _same_prices(a: dict, b: dict) -> bool:
+    """The same prices, to a float's rounding: the page round-trips a rate
+    through a per-million text, which is not always the same float back."""
+    if a.keys() != b.keys():
+        return False
+    return all(abs(a[k] - b[k]) <= 1e-9 * max(abs(a[k]), abs(b[k]), 1e-12) for k in a)
+
+
+def _billable(model: AdminModel) -> bool:
+    """Is every serving row's usage billed: free, or both prices written with at
+    least one > 0 (the rule ``_require_prices`` holds every write to). Looser than
+    ``priced``, which an offered model needs: an unlisted transcription model
+    with output priced at 0 is billable without being offerable."""
+    live = [s for s in model.sources if not s.blocked] or list(model.sources)
+    return bool(live) and all(
+        s.free
+        or (
+            "input" in s.prices
+            and "output" in s.prices
+            and (s.prices["input"] > 0 or s.prices["output"] > 0)
+        )
+        for s in live
+    )
 
 
 def _refuse_cleared_prices(current: dict, new: dict) -> None:
@@ -157,23 +185,24 @@ def _refuse_cleared_prices(current: dict, new: dict) -> None:
 
 
 def _source_prices(prices: dict | None, free: bool) -> dict:
-    """一条线路要写进网关的单价，按「零只属于免费」这条规则收一遍。
+    """一条线路要写进网关的单价，按「两向都是零只属于免费」这条规则收一遍。
 
     免费线路：输入、输出必须是 0，没填就写成 0 —— 写出来的 0 才是价（`declared_free`），
-    缺着的会被网关当成没价。不免费的线路：输入或输出写 0 就拒，那是一道看起来定了价、
-    其实按零计费的刹车。与 `deploy/gateway/check_config.py` 同一条规则。缓存那两项
+    缺着的会被网关当成没价。不免费的线路：输入、输出都写 0 就拒，那是没说出口的免费。
+    一向是 0 可以（语音转写按音频收输入、输出不收钱）；上架的模型另有更严的一条，两向都
+    要 > 0（`_require_price_when_selectable`），否则一半流量按零计、刹车失效。缓存那几项
     不在此列：不少上游缓存写入本来就不收钱（MiMo 的 `cache_creation` 就是 0）。
     """
     out = dict(prices or {})
-    for field in ("input", "output"):
-        value = out.get(field)
-        if free:
+    if free:
+        for field in ("input", "output"):
+            value = out.get(field)
             if value is None:
                 out[field] = 0.0
             elif value != 0:
                 raise BadRequestError(say("sourceFreeNeedsZeroPrices"))
-        elif value is not None and value == 0:
-            raise BadRequestError(say("sourceZeroPriceNeedsFree"))
+    elif out.get("input") == 0 and out.get("output") == 0:
+        raise BadRequestError(say("sourceZeroPriceNeedsFree"))
     return out
 
 

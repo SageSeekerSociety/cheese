@@ -32,7 +32,9 @@ from app.domain.agent.gateway_models_helpers import (
     _prices_for_gateway,
     _refuse_cleared_prices,
     _refuse_config_source,
+    _require_price_when_selectable,
     _require_prices,
+    _same_prices,
     _source_prices,
     _source_snapshot,
     _source_target,
@@ -177,6 +179,7 @@ async def add_source(
         free = bool(data.get("free"))
         prices = _source_prices(data.get("prices"), free)
         _require_prices(prices, free)
+        _require_price_when_selectable(model.selectable, prices, free)
         # 模型那一层的元数据从已有那一行抄：同组每一行必须一字不差。
         catalogue = dict(model.sources[0].catalogue if model.sources else {})
         # A cap and a cache rule belong to the upstream model: another row
@@ -274,12 +277,19 @@ async def update_source(
             kwargs["api_key"] = data["api_key"]
         free = source.free if data.get("free") is None else bool(data["free"])
         prices = data.get("prices")
-        if prices is not None or data.get("free") is not None:
+        # Only a change is checked and written: a save that carries the prices
+        # as they are (the page used to send them on every save) must not be
+        # refused for a row priced before today's rules, nor rewrite it.
+        if free != source.free or (
+            prices is not None
+            and not _same_prices(_prices_for_gateway(prices), source.prices)
+        ):
             effective = _source_prices(
                 source.prices if prices is None else prices, free
             )
             _refuse_cleared_prices(source.prices, effective)
             _require_prices(effective, free)
+            _require_price_when_selectable(model.selectable, effective, free)
             kwargs["prices"] = _prices_for_gateway(effective)
             kwargs["free"] = free
         for field in ("order", "upstream_headers", "session_header"):
