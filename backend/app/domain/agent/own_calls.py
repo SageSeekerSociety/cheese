@@ -51,15 +51,12 @@ async def seat_if_named(
         # 它入座、读到这里的内容，等于把频道外的人拉进来。所以只认主人自己也在频道
         # 里的那几位；主人不在，点名和没点一样。
         people = set(await members.people_handles(topic.id))
-        owners = dict(
-            (
-                await session.execute(
-                    select(OwnAgent.instance_id, User.username)
-                    .join(User, User.id == OwnAgent.owner_user_id)
-                    .where(OwnAgent.instance_id.in_(list(seats)))
-                )
-            ).all()
+        rows = await session.execute(
+            select(OwnAgent.instance_id, User.username)
+            .join(User, User.id == OwnAgent.owner_user_id)
+            .where(OwnAgent.instance_id.in_(list(seats)))
         )
+        owners = {instance: username for instance, username in rows.all()}
         seats = {own: seat for own, seat in seats.items() if owners.get(own) in people}
     for seat in seats.values():
         already = seat in await members.agent_handles(topic.id)
