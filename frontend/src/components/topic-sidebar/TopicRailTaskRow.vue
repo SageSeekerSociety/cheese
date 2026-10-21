@@ -14,7 +14,6 @@ import type { RailTask } from './moreTasks'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailLight from './TopicRailLight.vue'
 
 import { t } from '@/i18n'
@@ -75,7 +74,7 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
     type="button"
     class="rail-task"
     :class="{ 'rail-task--selected': selected, 'rail-task--filled': fillingIn, 'rail-task--pending': pending }"
-    :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
+    :style="{ '--task-indent': 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
     :title="fillingIn ? t('work.sidebar.fillInTip') : undefined"
     @click="choose"
@@ -84,10 +83,12 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
     "
   >
     <!-- 任务名是人起的（占位名除外，那是界面上的字）。 -->
-    <span class="rail-task__title" :data-user-content="task.title_source === 'placeholder' ? undefined : ''">{{
-      taskTitle(task)
-    }}</span>
-    <TopicRailBadge v-if="unread > 0" :count="unread" />
+    <span
+      class="rail-task__title"
+      :class="{ 'rail-task__title--unread': unread > 0 }"
+      :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
+      >{{ taskTitle(task) }}</span
+    >
     <TopicRailLight v-if="light" :light="light" />
   </button>
 </template>
@@ -101,6 +102,7 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
   width: 100%;
   min-height: 32px;
   padding-block: 0;
+  padding-inline-start: calc(var(--task-indent) + 20px);
   padding-inline-end: 12px;
   border: 0;
   border-radius: var(--radius-md);
@@ -154,6 +156,10 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 未读只给名称加粗，不再另挂数字。 */
+.rail-task__title--unread {
+  font-weight: 650;
+}
 /* 借来凑数的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
    自己再抬一次——上面那两条改的是行盒的颜色，标题自己有颜色时继承不到。 */
 .rail-task--filled .rail-task__title {
@@ -162,5 +168,19 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
 .rail-task--filled:hover .rail-task__title,
 .rail-task--filled.rail-task--selected .rail-task__title {
   color: var(--ink);
+}
+.topic-rail--page .rail-task {
+  padding-inline-start: calc(var(--task-indent) + 76px);
+}
+.topic-rail--page .rail-task::before {
+  left: calc(var(--guide-x) + 14px);
+}
+@media (hover: none) {
+  .rail-task {
+    padding-inline-start: calc(var(--task-indent) + 76px);
+  }
+  .rail-task::before {
+    left: calc(var(--guide-x) + 14px);
+  }
 }
 </style>
