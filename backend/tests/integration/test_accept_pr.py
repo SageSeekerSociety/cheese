@@ -2345,12 +2345,12 @@ def test_poll_clean_notifies_the_reviewer_once_per_head(client, app_world):
 
     _poll(client)
     text = _card_events(client, cid)
-    assert "等 alice 采纳" in text
-    first = text.count("等 alice 采纳")
+    assert "等 <@alice> 采纳" in text
+    first = text.count("等 <@alice> 采纳")
 
     _poll(client)  # 同一个 head：不重复
     wait_work_idle()
-    assert _card_events(client, cid).count("等 alice 采纳") == first
+    assert _card_events(client, cid).count("等 <@alice> 采纳") == first
 
     new_sha = fake.push_new_commit(number)  # 新 head 转绿是新事实
     fake.check_state_by_sha[new_sha] = ("success", "全绿")
@@ -2360,11 +2360,11 @@ def test_poll_clean_notifies_the_reviewer_once_per_head(client, app_world):
 
     text = _card_events(client, cid)
     for _ in range(40):
-        if text.count("等 alice 采纳") >= first + 1:
+        if text.count("等 <@alice> 采纳") >= first + 1:
             break
         time.sleep(0.05)
         text = _card_events(client, cid)
-    assert text.count("等 alice 采纳") == first + 1
+    assert text.count("等 <@alice> 采纳") == first + 1
 
 
 def test_poll_red_checks_nudge_cheese_once_with_the_logs(client, app_world, stub_hooks):

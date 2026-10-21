@@ -36,12 +36,14 @@ def test_a_ready_pr_line_names_its_sentence_and_the_notification_carries_it(
     keys = line["meta"]["i18n"]
     assert keys["content"] == {
         "key": "acceptReady",
-        "params": {"pr": number, "reviewer": "alice"},
+        # The reviewer is a <@handle> token: each reader's screen draws the
+        # name the roster gives them, not the login name.
+        "params": {"pr": number, "reviewer": "<@alice>"},
     }
     assert keys["detail_label"] == {"key": "labelNextStep", "params": {}}
     assert keys["detail"]["key"] == "acceptReadyDetail"
     # The Chinese line is still what is stored: agents and push read it.
-    assert line["content"] == f"PR #{number} 可以合并了，等 alice 采纳"
+    assert line["content"] == f"PR #{number} 可以合并了，等 <@alice> 采纳"
 
     (row,) = _notices(client, alice, "accept_ready")
     assert row["contextMetadata"]["message"] == keys["content"]
@@ -54,8 +56,8 @@ def test_a_filed_card_line_names_its_sentence(client, app_world):
     (line,) = _events(client, tid, "card_filed")
     content = line["meta"]["i18n"]["content"]
     assert content["key"] == "cardFiled"
-    assert content["params"] == {"task": "Test delivery", "reviewer": "alice"}
-    assert line["content"] == "《Test delivery》已提交，待 alice 审阅"
+    assert content["params"] == {"task": "Test delivery", "reviewer": "<@alice>"}
+    assert line["content"] == "《Test delivery》已提交，待 <@alice> 审阅"
 
 
 def test_a_filed_merge_names_the_task_not_the_project(client, app_world):

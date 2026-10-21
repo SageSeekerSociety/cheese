@@ -373,7 +373,7 @@ async def redeliver(
     await self._tell_the_reviewer(
         card,
         topic,
-        say("cardRedelivered", actor=actor),
+        say("cardRedelivered", actor=f"<@{actor}>"),
         meta=notice(
             EVENT_CARD_REDESCRIBED,
             severity=SEVERITY_INFO,

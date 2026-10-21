@@ -546,9 +546,9 @@ async def reject_card(
             f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
         headline=(
-            say("cardRejectedFixing", who=decided_by)
+            say("cardRejectedFixing", who=f"<@{decided_by}>")
             if actionable
-            else say("cardRejectedClosed", who=decided_by)
+            else say("cardRejectedClosed", who=f"<@{decided_by}>")
         ),
         meta=notice(
             EVENT_CARD_REJECTED,
