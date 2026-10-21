@@ -503,4 +503,22 @@ describe('名册一打开先有内容', () => {
       else delete scope.cancelIdleCallback
     }
   })
+
+  // 频道详情的「设置」里那一份一挂上就是开着的：没有「变成开」的那一下，补行也得跑。
+  it('一挂上就开着的名单，剩下的行照样补上', async () => {
+    server.rows = manyMembers(30)
+    render(Roster, {
+      props: {
+        topicId: 't1',
+        projectId: 'p1',
+        projectMembers: PROJECT_MEMBERS,
+        me: 'alice',
+        canManage: true,
+        open: true,
+      },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await settle()
+    expect(document.querySelectorAll('.roster__item')).toHaveLength(30)
+  })
 })

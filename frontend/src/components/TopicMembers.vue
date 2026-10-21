@@ -114,16 +114,22 @@ watch(
   }
 )
 
-watch(open, (value) => {
-  stopFilling()
-  readEnv?.()
-  readEnv = null
-  if (!value) return
-  shownRows.value = FIRST_ROWS
-  if (members.value.length > FIRST_ROWS) fillRows = whenIdle(fillRest)
-  // 每位队友跑在哪个环境，是面板开着之后才要看的：排在建行后面，别和第一帧抢。
-  readEnv = whenIdle(loadMachines)
-})
+// `immediate`：频道详情的「设置」里那一份一挂上就是开着的，那一次没有「变成开」的
+// 变化可等。没这一项，从那里进来的名单会永远只挂着前几行。
+watch(
+  open,
+  (value) => {
+    stopFilling()
+    readEnv?.()
+    readEnv = null
+    if (!value) return
+    shownRows.value = FIRST_ROWS
+    if (members.value.length > FIRST_ROWS) fillRows = whenIdle(fillRest)
+    // 每位队友跑在哪个环境，是面板开着之后才要看的：排在建行后面，别和第一帧抢。
+    readEnv = whenIdle(loadMachines)
+  },
+  { immediate: true }
+)
 
 onBeforeUnmount(() => {
   stopFilling()
