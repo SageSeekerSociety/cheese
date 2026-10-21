@@ -273,6 +273,7 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
     by_call: dict[str, dict] = {}
     edits: list[dict] = []
     published: list[dict] = []
+    proposed: list[dict] = []
     reasoning: dict | None = None
 
     def ms(position: str) -> int:
@@ -309,11 +310,18 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             edits.append(data)
         elif event == "published":
             published.append(data)
+        elif event == "proposal":
+            proposed.append(data)
     if reasoning is not None:
         reasoning.pop("from")
-    if not (steps or edits or published):
+    if not (steps or edits or published or proposed):
         return None
-    return {"steps": steps, "edits": edits, "published": published}
+    return {
+        "steps": steps,
+        "edits": edits,
+        "published": published,
+        **({"proposals": proposed} if proposed else {}),
+    }
 
 
 #: What a question to a person's 芝士 is, to the questions the platform reads
@@ -436,6 +444,7 @@ async def ask(
     context: str = "",
     kind: str = billing.ASKING,
     files: list[tuple[int, str]] | None = None,
+    project: uuid.UUID | None = None,
 ) -> Consumption:
     """Ask ``question`` in the conversation; the answer is read to its end in
     the background (``Answers``), and what its readers see of it is the
@@ -449,7 +458,8 @@ async def ask(
     ``started`` (`personal.session`). ``context`` is the page the person has
     open, when the conversation has not been told it yet (``page_to_say``);
     ``kind`` the line its spend is charged under (``billing``); ``files`` the
-    ones handed over with it, as (id, name)."""
+    ones handed over with it, as (id, name); ``project`` the one the page is
+    in, which its tools are let into as the person (and into no other)."""
     work = uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
@@ -469,11 +479,12 @@ async def ask(
     async def said() -> Prompt:
         # What its tools act with while answering: this person's own
         # permissions, for no longer than the answer may take from when the
-        # session is there.
+        # session is there, and in the project of the page if it is in one.
         acting = mint_delegated_credential(
             user_id=user_id,
             handle=handle or str(user_id),
             work=str(work),
+            project_id=None if project is None else str(project),
             ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
             read_only=False,
         )

@@ -64,6 +64,11 @@ DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.tasks.drafts.agent_publish": True,
     "app.api.routes.tasks.drafts.agent_file": False,
     "app.api.routes.tasks.drafts.agent_materials": False,
+    # A person's own 芝士 in a project: it reads the channels the person may,
+    # and drafts what they would say there; the person sends it.
+    "app.api.routes.topics.read_chat_history": False,
+    "app.api.routes.topics.read_chat_message": False,
+    "app.api.routes.assistant.propose": True,
 }
 
 

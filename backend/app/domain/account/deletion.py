@@ -44,6 +44,7 @@ from app.domain.assistant.models import (
     AssistantChange,
     AssistantConversation,
     AssistantGatewayKey,
+    AssistantProposal,
 )
 from app.domain.device.models import DeviceRow
 from app.domain.integration.models import Integration
@@ -243,6 +244,9 @@ async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
     )
     await session.execute(
         delete(AssistantChange).where(AssistantChange.user_id == user_id)
+    )
+    await session.execute(
+        delete(AssistantProposal).where(AssistantProposal.user_id == user_id)
     )
     await session.execute(
         delete(Notification).where(

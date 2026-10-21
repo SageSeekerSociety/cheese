@@ -21,14 +21,15 @@ import logging
 import time
 import uuid
 from dataclasses import replace
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_consumptions, get_session_host
+from app.api.doc_access import reach
 from app.api.refusal import refuse
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok, typed_response
@@ -39,6 +40,8 @@ from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import (
+    AuthenticationRequiredError,
+    BadRequestError,
     NotFoundError,
 )
 from app.core.redis import get_redis_client
@@ -54,7 +57,8 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.assistant import changes
+from app.domain.assistant import changes, proposals
+from app.domain.room_task.place import place_or_404
 from app.domain.space.services import SpaceService
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -159,6 +163,16 @@ async def read_conversation(
             if isinstance(e.get("id"), int)
         ],
     )
+    drafted = await proposals.now_of(
+        db,
+        auth.user_id,
+        [
+            d["id"]
+            for m in messages
+            for d in (m.parts or {}).get("proposals") or []
+            if isinstance(d.get("id"), int)
+        ],
+    )
     if people.available():
         spawn(
             _prestart(people, conversation_session(auth.user_id, row.id)),
@@ -179,7 +193,7 @@ async def read_conversation(
                     "text": m.text,
                     "stopped": m.stopped,
                     "at": m.created_at.isoformat(),
-                    **({"parts": _undone_now(m.parts, undone)} if m.parts else {}),
+                    **({"parts": _now(m.parts, undone, drafted)} if m.parts else {}),
                 }
                 for m in messages
             ],
@@ -187,17 +201,31 @@ async def read_conversation(
     )
 
 
-def _undone_now(parts: dict, undone: dict[int, list]) -> dict:
-    """A kept answer's parts, its changes saying what is undone of them now."""
-    if not parts.get("edits"):
-        return parts
-    return {
-        **parts,
-        "edits": [
+def _now(
+    parts: dict,
+    undone: dict[int, list],
+    drafted: dict[int, tuple[str, dict | None]],
+) -> dict:
+    """A kept answer's parts as they stand now: what is undone of its changes,
+    and whether what it drafted was sent."""
+    out = dict(parts)
+    if parts.get("edits"):
+        out["edits"] = [
             {**e, "undone": undone[e["id"]]} if e.get("id") in undone else e
             for e in parts["edits"]
-        ],
-    }
+        ]
+    if parts.get("proposals"):
+        out["proposals"] = [
+            {
+                **d,
+                "state": drafted[d["id"]][0],
+                **({"result": drafted[d["id"]][1]} if drafted[d["id"]][1] else {}),
+            }
+            if d.get("id") in drafted
+            else d
+            for d in parts["proposals"]
+        ]
+    return out
 
 
 async def _prestart(
@@ -212,14 +240,49 @@ async def _prestart(
 
 
 class PageIn(BaseModel):
-    """The page a question is asked from: which kind of page, and which one.
-    The kinds are the pages 芝士 knows how to read (``pages.PAGES``)."""
+    """The page a question is asked from: which kind of page, and which one
+    (a number, or a project's page's UUID). The kinds are the pages 芝士 knows
+    how to read (``pages.PAGES``)."""
 
     kind: pages.PageKind
-    id: int = Field(ge=1)
+    id: str = Field(min_length=1, max_length=64)
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _text(cls, v):
+        return str(v)
 
 
-async def _page(db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo) -> str:
+class _ProjectPages:
+    """Whether the asker may open a project's page, judged by the request's
+    own resolver as opening that page is (``pages.PageAccess``) — as a read,
+    since asking only reads where it looks."""
+
+    def __init__(self, db, resolver: ActorResolver) -> None:
+        self._db = db
+        self._resolver = resolver.for_reading()
+
+    async def topic(self, topic_id: uuid.UUID):
+        place = await place_or_404(self._db, topic_id)
+        actor = await self._resolver.resolve(
+            topic_id=place.conversation_id, project_id=place.project_id
+        )
+        await self._resolver.authorize_topic(
+            actor, project_id=place.project_id, room=place.room
+        )
+        return place
+
+    async def document(self, document_id: uuid.UUID) -> None:
+        await reach(self._db, self._resolver, document_id)
+
+    async def project(self, project_id: uuid.UUID) -> None:
+        actor = await self._resolver.resolve(project_id=project_id)
+        await self._resolver.authorize_project(actor, project_id=project_id)
+
+
+async def _page(
+    db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo, resolver
+) -> pages.Shown:
     """The page, written out for 芝士; it takes the same judgment as opening
     the page."""
     zones = await timezones_by_ids(db, [auth.user_id])
@@ -228,6 +291,7 @@ async def _page(db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo) -> s
         user_id=auth.user_id,
         timezone=zones.get(auth.user_id),
         spaces=spaces,
+        access=_ProjectPages(db, resolver),
     )
     return await pages.render(reader, page.kind, page.id)
 
@@ -274,6 +338,7 @@ async def ask(
     people: People,
     questions: Questions,
     spaces: Spaces,
+    resolver: ActorResolverDep,
 ):
     """Answer one question, streamed as server-sent events: ``answering`` (the
     question's id, to read on from elsewhere), then ``queued`` (waiting for the
@@ -282,7 +347,8 @@ async def ask(
     question's stream (``id``)."""
     row = await _owned(db, auth.user_id, conversation_id)
     shown = body.page or _page_of(row)
-    context = "" if shown is None else await _page(db, spaces, shown, auth)
+    page = None if shown is None else await _page(db, spaces, shown, auth, resolver)
+    context = "" if page is None else page.text
 
     rates = Rates.of(settings.assistant_model, await pricing.model_rates())
     key = await person_key(db, auth.user_id, async_session_factory)
@@ -317,6 +383,7 @@ async def ask(
             context=said,
             files=[(f.id, f.name) for f in body.files],
             kind=pages.billed_as(None if shown is None else shown.kind),
+            project=None if page is None else page.project,
         )
     except BaseException:
         await slot.release()
@@ -436,4 +503,116 @@ async def redo_change(
             part=body.part,
             redo=True,
         )
+    )
+
+
+class ProposeIn(BaseModel):
+    """What a person's 芝士 drafts (``cheese_message_draft``,
+    ``cheese_task_draft``): a message to ``topic`` (a channel, a task or a
+    支线), or a task to open in the channel ``topic`` is in."""
+
+    kind: Literal["message", "task"]
+    topic: uuid.UUID
+    text: str = Field(default="", max_length=8000)
+    title: str = Field(default="", max_length=300)
+
+
+def _where(place) -> str:
+    """How the place is named on a card: a channel by its name, a task or a
+    支线 by its title."""
+    if place.task is not None:
+        return place.task.title
+    if place.thread is not None:
+        return place.thread.title
+    return place.room.title
+
+
+@router.post("/proposals", include_in_schema=False, dependencies=[ROUTE_DECIDES])
+async def propose(
+    body: ProposeIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    questions: Questions,
+) -> dict:
+    """Keep what 芝士 drafted for the person to send, and show it on the
+    question's stream as a card (``proposal``). Nothing is sent: the person
+    sends it, as themself. Where it would go has to be somewhere the person
+    may speak, in the project the question was asked from."""
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    place = await place_or_404(db, body.topic)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
+    await resolver.authorize_topic(actor, project_id=place.project_id, room=place.room)
+    text, title = body.text.strip(), body.title.strip()
+    if body.kind == "message":
+        if not text:
+            raise BadRequestError(say("assistantProposalNeedsText"))
+        payload = {
+            "topic": str(place.conversation_id),
+            "topicName": _where(place),
+            "text": text,
+        }
+    else:
+        if not title or not text:
+            raise BadRequestError(say("assistantProposalNeedsTitle"))
+        payload = {
+            "channel": str(place.room_id),
+            "channelName": place.room.title,
+            "title": title,
+            "brief": text,
+        }
+    payload["project"] = str(place.project_id)
+    row = await proposals.propose(
+        db, user_id=claims.user_id, work=claims.work, kind=body.kind, payload=payload
+    )
+    await db.commit()
+    shown = proposals.view(row)
+    try:
+        asked = await questions.get(claims.work)
+    except RuntimeError:  # no Valkey: nobody to tell
+        asked = None
+    if asked is not None and asked.kind == assistant.KIND:
+        await questions.publish(asked, "proposal", shown)
+    return ok(shown)
+
+
+class SettleIn(BaseModel):
+    #: ``sent`` once the person sent it, with what was made; ``dismissed``
+    #: when they put it aside.
+    state: Literal["sent", "dismissed"]
+    result: dict | None = None
+
+
+class ProposalOut(BaseModel):
+    id: int
+    kind: str
+    state: str
+    result: dict | None = None
+
+
+@router.post(
+    "/proposals/{proposalId}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ProposalOut),
+)
+async def settle_proposal(
+    proposal_id: Annotated[int, Path(alias="proposalId", ge=1)],
+    body: SettleIn,
+    db: DbSession,
+    auth: AuthUser,
+) -> dict:
+    """The person sent what 芝士 drafted (through the routes they would use by
+    hand), or put it aside."""
+    row = await proposals.settle(
+        db,
+        user_id=auth.user_id,
+        proposal_id=proposal_id,
+        state=body.state,
+        result=body.result,
+    )
+    return ok(
+        {"id": row.id, "kind": row.kind, "state": row.state, "result": row.result}
     )

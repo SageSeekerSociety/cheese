@@ -23,6 +23,7 @@ of those replacements in silence; the facade is the only place a replacement is
 seen (``app/domain/review/services`` reads its own patch points the same way).
 """
 
+import copy
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
@@ -111,6 +112,14 @@ class ActorResolver:
         self._screen_token = screen_token
         self._credentials = ProjectAgentCredentialService(session)
 
+    def for_reading(self) -> "ActorResolver":
+        """The same caller, judged as a read: for a request that changes
+        something of its own (asking 芝士) but only reads where it looks (the
+        page it was asked from, which an archived project still shows)."""
+        reader = copy.copy(self)
+        reader._writes = False
+        return reader
+
     def credential_conversation(self) -> uuid.UUID | None:
         """The conversation the presented credential was minted in: a room, or
         a task its session works — where what the agent does elsewhere in the
@@ -175,8 +184,12 @@ class ActorResolver:
             if topic_id is not None or project_id is not None:
                 raise ForbiddenError(say("tokenOtherProject"))
         elif project_id is None and topic_id is None:
-            # Minted for a room, and this route names none to hold it to.
-            raise ForbiddenError("This credential is restricted to one room")
+            # A person's own 芝士 asked from a project's page (no agent, no
+            # room: the project only) is let into that project besides what it
+            # always reaches: their own drafts, the docs. One minted for a room
+            # has nothing here to hold it to.
+            if claims.agent is not None or claims.topic_id is not None:
+                raise ForbiddenError("This credential is restricted to one room")
         else:
             if project_id is not None and str(project_id) != claims.project_id:
                 raise ForbiddenError(say("tokenOtherProject"))
