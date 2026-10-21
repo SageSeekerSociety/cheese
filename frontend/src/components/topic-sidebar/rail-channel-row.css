@@ -1,0 +1,106 @@
+/* Namespace shared rules so both channel components can render independently. */
+.rail-channel {
+  position: relative;
+  min-height: 36px;
+  margin-block: 2px;
+}
+
+/* Attribute selectors address Vuetify's internal BEM classes. */
+.rail-channel [class~='v-list-item__content'] {
+  min-width: 0;
+  padding-block: 0;
+}
+
+.rail-channel [class~='v-list-item__append'] {
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.rail-channel [class~='v-list-item__prepend'] {
+  gap: 0;
+}
+
+/* Two independent 16px controls and a 4px gap, regardless of which are present. */
+.rail-channel .row-leading {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  width: 36px;
+}
+
+.rail-channel .row-actions {
+  display: flex;
+  position: relative;
+  flex: none;
+  align-items: center;
+  width: 32px;
+  min-height: 30px;
+  color: var(--muted);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-standard);
+}
+
+.rail-channel .row-actions .v-btn {
+  width: 32px;
+  height: 30px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.rail-channel .row-actions .v-btn .v-icon {
+  font-size: 16px;
+}
+
+.rail-channel-page {
+  min-height: 44px;
+}
+
+.rail-channel-page .row-actions,
+.rail-channel-page .row-actions .v-btn,
+.rail-channel.rail-channel-page .row-slot {
+  width: 44px;
+  min-height: 44px;
+}
+
+/* Touch controls reserve two independent 44px targets and their gap. */
+.rail-channel-page .row-leading {
+  width: 92px;
+}
+
+@media (hover: none) {
+  .rail-channel .row-leading {
+    width: 92px;
+  }
+
+  .rail-channel {
+    min-height: 44px;
+  }
+
+  .rail-channel .row-actions {
+    pointer-events: auto;
+    opacity: 1;
+  }
+
+  .rail-channel .row-actions,
+  .rail-channel .row-actions .v-btn,
+  .rail-channel .row-leading .row-slot {
+    width: 44px;
+    min-height: 44px;
+  }
+}
+
+.rail-channel-page .row-actions,
+.rail-channel:hover .row-actions,
+.rail-channel:focus-visible .row-actions,
+.rail-channel:has(:focus-visible) .row-actions,
+.rail-channel.is-menu-open .row-actions {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.rail-channel .row-actions .v-btn:hover {
+  color: var(--text);
+  background: var(--fill-2);
+}

@@ -68,8 +68,46 @@ DELEGATED_ROUTES: dict[str, bool] = {
     # and drafts what they would say there; the person sends it.
     "app.api.routes.topics.read_chat_history": False,
     "app.api.routes.topics.read_chat_message": False,
-    "app.api.routes.assistant.propose": True,
+    # A person's own 芝士, wherever the person may: what waits on them, a
+    # thing by its ref, a web page.
+    "app.api.routes.assistant_agent.agent_inbox": False,
+    "app.api.routes.assistant_agent.agent_read": False,
+    "app.api.routes.project_context.agent_search": False,
+    # What it does that others see goes through its gate first, which hands
+    # back a pass for the routes in `GATED_ROUTES`.
+    "app.api.routes.assistant_agent.agent_act": True,
+    # What is the person's own — their notification settings, how much of a
+    # channel reaches them — it changes directly, as a change they can undo.
+    "app.api.routes.assistant_agent.agent_notify": True,
+    "app.api.routes.notification_preferences.agent_read_preferences": False,
+    "app.api.routes.notification_preferences.agent_set_preference": True,
 }
+
+
+#: The routes a person's own 芝士 reaches only with a pass its gate issued for
+#: that call (`assistant.gate`, `assistant.passes`): what others see — a
+#: message, a task, a decision, a member, a channel — and reading a web page,
+#: which can carry what it read out in its address. The pass is the gate's
+#: verdict; without one the route refuses the credential.
+GATED_ROUTES: frozenset[str] = frozenset(
+    {
+        "app.api.routes.topics_messages.send_chat_message",
+        "app.api.routes.topics_tasks.create_task",
+        "app.api.routes.accept.accept_card",
+        "app.api.routes.accept.reject_card",
+        "app.api.routes.alerts.resolve_notification",
+        "app.api.routes.members.respond_to_invitation",
+        "app.api.routes.members.respond_to_transfer",
+        "app.api.routes.members.invite_member",
+        "app.api.routes.members.remove_member",
+        "app.api.routes.members.set_member_role",
+        "app.api.routes.topic_members.add_topic_member",
+        "app.api.routes.topic_members.remove_topic_member",
+        "app.api.routes.topics.create_topic",
+        "app.api.routes.local_mcp.decide",
+        "app.api.routes.fetch.read_url",
+    }
+)
 
 
 def _bearer(header: str | None) -> str | None:
@@ -101,6 +139,7 @@ def _resolver_for(
         screen_token=request.headers.get("x-cheese-screen") or "",
         writes=request.method not in ("GET", "HEAD", "OPTIONS"),
         endpoint=_endpoint_name(request),
+        gate_pass=request.headers.get("x-cheese-pass") or "",
     )
 
 
