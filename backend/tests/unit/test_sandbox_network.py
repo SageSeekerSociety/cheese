@@ -976,7 +976,7 @@ def test_the_sandbox_rules_come_first_again_after_docker_restarts():
     start puts ours back on top, once, and leaves Docker's in place."""
     wanted = sandbox_host.rules(["10.53.0.1"], [18080])
     saved = _applied("", sandbox_host.restore(wanted, ""))
-    for (table, chain), lines in DOCKER_AHEAD.items():
+    for (table, _), lines in DOCKER_AHEAD.items():
         saved = _insert_first(saved, table, lines)
 
     again = _applied(saved, sandbox_host.restore(wanted, saved))
