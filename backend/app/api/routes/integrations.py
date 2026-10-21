@@ -55,7 +55,6 @@ from app.domain.notice_meta import (
 )
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -81,11 +80,8 @@ class _Teammates:
         self._db = db
 
     async def name_of(self, project_id: uuid.UUID, seat: str) -> str:
-        project = await ProjectRepository(self._db).get(project_id)
-        named = (
-            None
-            if project is None
-            else await AgentInstanceService(self._db).for_seat_handle(project, seat)
+        named = await AgentInstanceService(self._db).for_seat_handle_in(
+            project_id, seat
         )
         if named is not None and str(named.name_source) != "default":
             return named.display_name

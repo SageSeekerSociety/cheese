@@ -327,6 +327,16 @@ class AgentInstanceService:
             raise NotFoundError(say("projectNotFound"))
         return await self.for_handle(project, handle)
 
+    async def for_seat_handle_in(
+        self, project_id: uuid.UUID, handle: str | None
+    ) -> ResolvedAgent | None:
+        """`for_seat_handle`，但按 id 找项目那一行 —— 给只拿得到 id 的调用方（路由层
+        为一句给人看的话叫出队友的名字）。项目不在了就是 None，和不是队友同一个答案。"""
+        project = await self._session.get(Project, project_id)
+        if project is None:
+            return None
+        return await self.for_seat_handle(project, handle)
+
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
         """The role instructions saved on this agent."""
         return agent.configuration.get("body") or None
