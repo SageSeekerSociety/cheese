@@ -16,6 +16,16 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
 /**
+ * 头像图片的缓存版本。变一次，所有人手里的旧图作废一次 —— 头像带一年
+ * `max-age`（见 `backend/app/api/routes/avatars.py`），地址不变的话浏览器
+ * 根本不会再来问。
+ *
+ * 2：上传与发出时都把广色域（Display P3）换算成 sRGB。旧图里的色彩配置会让
+ * 一部分手机整屏偏色，而缓存在本地的旧图不会自己换掉（2026-10-21）。
+ */
+const AVATAR_CACHE_VERSION = 2
+
+/**
  * 头像素材的地址。素材 id 为空（null / undefined / 0 / 空串）时返回**空串**，
  * 由调用方决定这一格画什么 —— 通常是 `components/common/UserAvatar.vue` 的彩色首字母。
  *
@@ -27,7 +37,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
  * 不代表本人选过它（见 `composables/useChosenAvatar.ts`）。
  */
 export const getAvatarUrl = (avatar?: string | number | null) => {
-  return avatar ? `${API_BASE}/avatars/${avatar}` : ''
+  return avatar ? `${API_BASE}/avatars/${avatar}?v=${AVATAR_CACHE_VERSION}` : ''
 }
 
 export const getFullAttachmentUrl = (attachmentUrl: string) => {
