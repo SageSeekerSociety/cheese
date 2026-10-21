@@ -206,6 +206,16 @@ class AcceptCard(UuidPk, Timestamps, Base):
     pr_merged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 是谁在 GitHub 上合的：`{"github_id": "...", "login": "..."}`，GitHub
+    # 报的那个账号。`decided_by` 说的是「平台上的谁采纳了这次交付」，人在
+    # GitHub 上直接合的时候它是空的；这一列补的就是那个人 —— 项目总览的
+    # 「最近进展」用它把经手人补上（`project_progress.feed`）。
+    #
+    # 存原始 id + 登录名、显示时才换成平台 handle：谁后来才把 GitHub 账号
+    # 绑到平台，旧记录也能显示成平台名字。`{}` 和 NULL 是两件事 —— NULL 是
+    # 还没问过 GitHub（轮询兜底会接着问），`{}` 是问过了、它没报人，再问就
+    # 是每分钟白白花一次读配额。整包读写，所以放 JSON（同 `merge_state`）。
+    merged_by: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Which poll is advancing this card, and until when (`poll_claim.py`): one
     # advancer per card, without a row lock held across the forge's answer.
     poll_claim: Mapped[uuid.UUID | None] = mapped_column(nullable=True)

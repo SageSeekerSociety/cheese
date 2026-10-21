@@ -8,6 +8,7 @@ from sqlalchemy import Row, Uuid, and_, any_, bindparam, delete, func, or_, sele
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.project.models import ProjectForge
 from app.domain.review.models import (
     AcceptApproval,
     AcceptCard,
@@ -333,6 +334,36 @@ class AcceptCardRepository:
                 AcceptCard.status == AcceptStatus.accepted,
             )
             .order_by(AcceptCard.decided_at, AcceptCard.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def accepted_missing_merge_actor(
+        self, *, since: datetime, limit: int
+    ) -> list[uuid.UUID]:
+        """Cards merged since `since` whose PR merger is still unknown.
+
+        `merged_by` NULL is "nobody asked yet"; `{}` is "asked, GitHub named
+        nobody" and is excluded here so the sweep stops spending reads on it.
+        Only cards with no platform decider need the GitHub fact — a click on
+        the platform already names the person. Only a GitHub binding can
+        answer: a Forgejo project's merged PR has no GitHub `merged_by` to
+        read, and asking it every tick would never fill the column.
+        """
+        stmt = (
+            select(AcceptCard.id)
+            .join(Topic, Topic.id == AcceptCard.topic_id)
+            .join(ProjectForge, ProjectForge.project_id == Topic.project_id)
+            .where(
+                AcceptCard.status == AcceptStatus.accepted,
+                AcceptCard.decided_by.is_(None),
+                AcceptCard.pr_number.is_not(None),
+                AcceptCard.merged_by.is_(None),
+                AcceptCard.pr_merged_at.is_not(None),
+                AcceptCard.pr_merged_at >= since,
+                ProjectForge.kind == "github_app",
+            )
+            .order_by(AcceptCard.pr_merged_at)
+            .limit(limit)
         )
         return list((await self._session.scalars(stmt)).all())
 

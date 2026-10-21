@@ -29,12 +29,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
+
 from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
+from app.domain.oauth.models import UserOAuthConnection
 from app.domain.oauth.repositories import OAuthConnectionRepository
+from app.domain.user.models import User
 
 from . import connections, tokens
 from .providers import (
@@ -266,6 +271,36 @@ async def get_github_profile_for_handle(
     return conn.provider_user_id, dict(conn.raw_profile or {})
 
 
+async def handles_for_github_ids(
+    session: Any, github_ids: Collection[str | int | None]
+) -> dict[str, str]:
+    """GitHub 数字 id → 平台 handle，一次查完；没绑定过的 id 不在结果里。
+
+    这是 ``get_github_profile_for_handle`` 的反方向：卡上存的是 GitHub 报的
+    原始 id，显示的时候才换成平台名字。这样谁后来才把 GitHub 账号绑到平台，
+    旧记录也认得出来（项目总览的「最近进展」）。一次查完，不按人 N+1：一屏
+    进展里可能有好几个不同的合并人。
+
+    账号已删掉的不回：那个 id 已经没有能显示的名字，调用方退回 GitHub 登录名。
+    """
+    ids = {str(i) for i in github_ids if i}
+    if not ids:
+        return {}
+    stmt = (
+        select(UserOAuthConnection.provider_user_id, User.username)
+        .join(User, User.id == UserOAuthConnection.user_id)
+        .where(
+            UserOAuthConnection.provider_id == "github_app",
+            UserOAuthConnection.provider_user_id.in_(ids),
+            User.deleted_at.is_(None),
+        )
+    )
+    return {
+        provider_user_id: username
+        for provider_user_id, username in (await session.execute(stmt)).all()
+    }
+
+
 # 兼容门面：`app.domain.oauth.services` 仍是路由、`deps.py`、`identity.py` 和单测
 # 的导入路径。拆开之前这个模块的名字空间里有什么，这里就还导出什么 ——
 # `GitHubProvider`、`seal_oauth_token` 这些取的仍是子模块里
@@ -281,6 +316,7 @@ __all__ = [
     "OAuthUserInfo",
     "RUCProvider",
     "get_github_profile_for_handle",
+    "handles_for_github_ids",
     "open_oauth_token",
     "seal_oauth_token",
 ]

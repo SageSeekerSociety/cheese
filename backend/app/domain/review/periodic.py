@@ -69,6 +69,14 @@ def register_periodic_jobs(
         ),
         forge_bound=True,
     )
+    # 卡片是在补记「谁在 GitHub 上合的」这项之前合并的：项目总览的「最近
+    # 进展」还要显示那 14 天里的经手人，所以同一节拍补一轮。
+    jobs.register(
+        "merge actor backfill",
+        settings.accept_pr_poll_interval_s,
+        lambda: pr_poll.poll_missing_merge_actors(chat),
+        forge_bound=True,
+    )
     # A task's next branch is read from the forge when its teammate goes on.
     jobs.register(
         "task closing",

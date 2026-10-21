@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.deliverables import artifacts
+from app.domain.oauth.services import handles_for_github_ids
 from app.domain.review.queries import (
     accepted_by_task,
     latest_cards_by_task,
@@ -57,6 +58,9 @@ class Happening:
     room_id: uuid.UUID | None = None
     #: 谁做的这件事；停滞、新版本没有人。
     by: str | None = None
+    #: `by` 是不是一个 GitHub 登录名（而不是平台 handle）。只有「GitHub 上的
+    #: 合并人没绑平台账号」这一种：界面不能拿它去名册里撞同名的平台账号。
+    by_github: bool = False
     #: 产物的新版本：哪一项、第几版。
     artifact_id: uuid.UUID | None = None
     artifact_name: str = ""
@@ -71,10 +75,26 @@ class Happening:
             "taskTitleSource": self.task_title_source,
             "roomId": str(self.room_id) if self.room_id else None,
             "by": self.by,
+            "byGithub": self.by_github,
             "artifactId": str(self.artifact_id) if self.artifact_id else None,
             "artifactName": self.artifact_name,
             "version": self.version,
         }
+
+
+def _merger(actor: dict | None, linked: dict[str, str]) -> tuple[str | None, bool]:
+    """A card's GitHub merger as ``(name, is_github_login)``: their platform
+    handle when the GitHub account is linked to one, else the login GitHub
+    reported (marked so the UI does not look it up in the roster).
+    ``(None, False)`` when nobody was reported (`{}`) or nobody asked yet."""
+    if not actor:
+        return None, False
+    github_id = str(actor.get("github_id") or "")
+    handle = linked.get(github_id)
+    if handle:
+        return handle, False
+    login = actor.get("login") or None
+    return login, bool(login)
 
 
 async def recent(
@@ -98,7 +118,9 @@ async def recent(
     ]
     found: list[Happening] = []
 
-    def about(task, kind: str, at: datetime | None, by: str | None) -> None:
+    def about(
+        task, kind: str, at: datetime | None, by: str | None, *, by_github=False
+    ) -> None:
         if at is not None and at >= since:
             found.append(
                 Happening(
@@ -109,15 +131,32 @@ async def recent(
                     task_title_source=str(task.title_source),
                     room_id=task.room_id,
                     by=by,
+                    by_github=by_github,
                 )
             )
 
     # 一件任务可以交付好几次，每一次采纳都是一条进展。
     accepted = await accepted_by_task(session, [t.id for t in tasks])
+    # 平台没点采纳、人在 GitHub 上直接合的，`by` 为空；卡上记着 GitHub 原始
+    # id，显示前一次换成平台成员，换不到就用 GitHub 登录名。
+    linked = await handles_for_github_ids(
+        session,
+        [
+            str(landed.merged_by["github_id"])
+            for landings in accepted.values()
+            for landed in landings
+            if landed.by is None
+            and landed.merged_by
+            and landed.merged_by.get("github_id")
+        ],
+    )
     for task in tasks:
         about(task, CREATED, task.created_at, task.created_by or task.owner_handle)
         for landed in accepted.get(task.id, []):
-            about(task, ACCEPTED, landed.at, landed.by)
+            by, by_github = (landed.by, False)
+            if by is None:
+                by, by_github = _merger(landed.merged_by, linked)
+            about(task, ACCEPTED, landed.at, by, by_github=by_github)
         if task.id not in accepted and task.accepted_at is not None:
             # 没走交付、在代码仓库直接合并的那一次。
             about(task, ACCEPTED, task.accepted_at, task.accepted_by)
