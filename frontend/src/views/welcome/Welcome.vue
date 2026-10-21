@@ -9,7 +9,6 @@ import type { WelcomeFinish } from './WelcomeView.vue'
 
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import WelcomeView from './WelcomeView.vue'
 
@@ -17,24 +16,20 @@ import { finishOnboarding, uploadAttachment } from '@/api'
 import { t } from '@/i18n'
 import { storageSetJson } from '@/lib/browserStorage'
 import { saveComposerDraft } from '@/lib/composerDrafts'
-import { desktopBridge, startConnecting } from '@/lib/desktop'
-import { inDesktopApp } from '@/lib/desktopApp'
 import { refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
 
 defineProps<{ again?: boolean }>()
 const router = useRouter()
 const me = AccountService.user
-const desktop = inDesktopApp()
 const busy = ref(false)
 const failure = ref('')
 
-async function finish({ answers, skipAll, draft, files, onThisComputer }: WelcomeFinish) {
+async function finish({ answers, skipAll, draft, files }: WelcomeFinish) {
   busy.value = true
   failure.value = ''
   try {
-    const done = await finishOnboarding({ ...answers, device_id: onThisComputer ? await thisComputer() : null })
-    if (onThisComputer && !done.on_device) toast.warning(t('welcome.deviceFailed'))
+    const done = await finishOnboarding(answers)
     rememberOnAccount(answers, skipAll)
     const room = done.root_topic_id
     if (room) {
@@ -42,8 +37,6 @@ async function finish({ answers, skipAll, draft, files, onThisComputer }: Welcom
       for (const file of files) atts.push(await uploadAttachment(room, file))
       if (draft || atts.length) saveComposerDraft(room, { draft, reply: null, atts })
     }
-    if (done.not_invited.length)
-      toast.warning(t('welcome.notInvited', { names: done.not_invited.join(t('welcome.preview.listSep')) }))
     await refreshProjects()
     await router.replace(
       room
@@ -65,24 +58,12 @@ function rememberOnAccount(answers: WelcomeFinish['answers'], skipAll: boolean) 
   AccountService.user = {
     ...user,
     onboarded_at: user.onboarded_at ?? new Date().toISOString(),
-    nickname: answers.nickname.trim() || user.nickname,
     ...(skipAll ? {} : { work_role: answers.work_role ?? null, organization: answers.organization?.trim() || null }),
   }
   storageSetJson('user', AccountService.user)
 }
-
-// 桌面端选了「用这台电脑」：先接上这台电脑，建项目时把它带上，服务端把它加进项目、
-// 让「综合」里的芝士在它上面的隔离环境里干活。接不上就留在云端，说一声，不拦着人进项目。
-async function thisComputer(): Promise<string | null> {
-  try {
-    await startConnecting({ quiet: true })
-    return (await desktopBridge()?.thisDevice()) ?? null
-  } catch {
-    return null
-  }
-}
 </script>
 
 <template>
-  <WelcomeView :again="again" :me="me" :desktop="desktop" :busy="busy" :failure="failure" @finish="finish" />
+  <WelcomeView :again="again" :me="me" :busy="busy" :failure="failure" @finish="finish" />
 </template>

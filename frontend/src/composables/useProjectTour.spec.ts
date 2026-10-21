@@ -1,5 +1,6 @@
-// 新手引导的后半程：介绍步点「下一步」往前；动作步要人真的做到了才往下走；走完或跳过
-// 就不再自动出现；亲手采纳过交付的人不带；帮助菜单能重新打开。
+// 新手引导的后半程：第一步就是把第一件事交给芝士；动作步要人真的做到了才往下走；
+// 界面上的地方用到时才讲；走完或跳过就不再自动出现；亲手采纳过交付的人不带；帮助菜单
+// 能重新打开。
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { __resetProjectTourForTests, GUIDE_STEPS, noteFacts, replayTour, useProjectTour } from './useProjectTour'
@@ -27,17 +28,10 @@ describe('新手引导的后半程', () => {
     expect(guide.active.value).toBe(true)
   })
 
-  it('walks the introduction with next, then stops at sending until a turn has run', () => {
+  it('starts at sending the first request, and stays there until a turn has run', () => {
     const guide = useProjectTour()
     noteFacts(none)
-    const has = onPage(
-      'sidebar-general',
-      'composer-input',
-      'page-workspace-overview',
-      'page-project-library',
-      'composer-send'
-    )
-    for (let i = 0; i < at('send'); i += 1) guide.next()
+    const has = onPage('composer-input', 'page-workspace-overview', 'page-project-library', 'composer-send')
     expect(guide.current.value?.key).toBe('send')
     guide.settle({ facts: none, has })
     expect(guide.current.value?.key).toBe('send')
@@ -79,20 +73,24 @@ describe('新手引导的后半程', () => {
     expect(guide.current.value?.key).toBe('reply')
   })
 
-  it('is done once a delivery is accepted', () => {
+  it('once a delivery is accepted, shows where the results went, and is done after that', () => {
     const guide = useProjectTour()
     noteFacts(none)
     guide.stop.value = at('accept')
-    guide.settle({ facts: { ...none, asked: true, accepted: true }, has: onPage() })
+    const accepted = { ...none, asked: true, accepted: true }
+    guide.settle({ facts: accepted, has: onPage('page-project-library') })
+    expect(guide.current.value?.key).toBe('library')
+    guide.next()
     expect(guide.done.value).toBe(true)
     expect(guide.active.value).toBe(false)
   })
 
-  it('skips introduction stops whose target is not on the channel page (no sidebar on a phone)', () => {
+  it('skips the library stop where the channel page has no sidebar (a phone)', () => {
     const guide = useProjectTour()
     noteFacts(none)
-    guide.settle({ facts: none, has: onPage('composer-input', 'composer-send') })
-    expect(guide.current.value?.key).toBe('composer')
+    guide.stop.value = at('library')
+    guide.settle({ facts: { ...none, asked: true, accepted: true }, has: onPage('composer-input', 'composer-send') })
+    expect(guide.done.value).toBe(true)
   })
 
   it('stays done after skipping, and opens again from the help menu', () => {

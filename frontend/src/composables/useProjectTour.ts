@@ -1,10 +1,11 @@
 // 新手引导的后半程：新用户进项目的「综合」之后，一个浮窗一步一步带着把第一件事做完。
 //
-// 前几步是介绍（频道、输入框、总览、资料库），点「下一步」往前。后面每一步要人真的
-// 做了才往下走：发出第一件事（服务端记下了一轮）、点开芝士回复的那条支线、打开它建的
-// 任务、采纳第一份交付（服务端记下了合并）。做没做到看两样：服务端的事实（上手的
-// `asked` / `accepted`，ChatPanel 问来后写进来）和页面上出现了什么（`v-guide-anchor`
-// 登记的控件：支线开着、任务页开着）。
+// 第一步就是人来要做的那件事：把输入框里的第一件事交给芝士。之后每一步要人真的做了
+// 才往下走：点开芝士回复的那条支线、打开它建的任务、采纳第一份交付（服务端记下了
+// 合并）。界面上的地方不先讲，用到时才讲：采纳以后，最后一步指向资料库，成果就放在
+// 那里，点「下一步」走完。做没做到看两样：服务端的事实（上手的 `asked` / `accepted`，
+// ChatPanel 问来后写进来）和页面上出现了什么（`v-guide-anchor` 登记的控件：支线开着、
+// 任务页开着）。
 //
 // 该指的东西还没出现时（芝士还在回、任务还没建），浮窗指着一个等得到它的地方（对话
 // 区、任务页），说它会出现在哪、可以先离开。
@@ -39,10 +40,6 @@ export interface GuideStep {
 }
 
 export const GUIDE_STEPS: GuideStep[] = [
-  { key: 'channels', anchors: ['sidebar-general'] },
-  { key: 'composer', anchors: ['composer-input'] },
-  { key: 'overview', anchors: ['page-workspace-overview'] },
-  { key: 'library', anchors: ['page-project-library'] },
   { key: 'send', anchors: ['composer-send'], done: (c) => c.facts.asked },
   {
     key: 'reply',
@@ -69,9 +66,10 @@ export const GUIDE_STEPS: GuideStep[] = [
     waiting: ['task-page', 'timeline'],
     done: (c) => c.facts.accepted,
   },
+  { key: 'library', anchors: ['page-project-library'] },
 ]
 
-/** 介绍那几步的目标只在项目的频道页上有；在那一页上找不到（手机上没有侧栏）就跳过。 */
+/** 介绍步的目标在侧栏上；在频道页上找不到（手机上没有侧栏）就跳过。 */
 export const INTRO_PAGE_ANCHOR = 'composer-input'
 
 const KEY_STOP = 'cheese.tour.stop'
