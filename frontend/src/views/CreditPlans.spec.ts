@@ -120,7 +120,7 @@ describe('Plans and top-ups', () => {
         hotThreshold: 10,
         hotMinItems: 5,
         beta: { credits: 500, claimed: true, feedback_credits: 100 },
-        rewards: { feedback_count: 2, feedback_credits: 200, invite_credits: 0, points: 0, items: [] },
+        rewards: { feedback_count: 2, feedback_credits: 200, invite_credits: 0, items: [] },
       },
       global: { plugins: [createVuetify({ components, directives }), router, i18n] },
     })

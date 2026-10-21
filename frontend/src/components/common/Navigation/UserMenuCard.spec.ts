@@ -16,7 +16,7 @@ import UserMenuCard from './UserMenuCard.vue'
 
 import i18n, { setLocale } from '@/i18n'
 
-function fakeMenu(intro: string) {
+function fakeMenu(intro: string, seatsLeft: number) {
   return {
     menuOpen: ref(true),
     loggedIn: computed(() => true),
@@ -26,11 +26,12 @@ function fakeMenu(intro: string) {
     avatarColor: computed(() => '#6a5acd'),
     nickname: computed(() => '爱丽丝'),
     intro: computed(() => intro),
+    inviteSeatsLeft: ref(seatsLeft),
     onLogout: vi.fn(),
   }
 }
 
-async function mount(intro = '') {
+async function mount(intro = '', seatsLeft = 3) {
   const stub = { template: '<div />' }
   const router = createRouter({
     history: createWebHashHistory(),
@@ -40,18 +41,35 @@ async function mount(intro = '') {
       { path: '/download', name: 'Download', component: stub },
       { path: '/archived-projects', name: 'my-archived-projects', component: stub },
       { path: '/users/settings', name: 'UserSettings', component: stub },
+      { path: '/users/settings/invites', name: 'UserSettingsInvites', component: stub },
     ],
   })
   await router.push('/')
   await router.isReady()
   const vuetify = createVuetify({ components, directives })
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return render(UserMenuCard, { props: { menu: fakeMenu(intro) as any }, global: { plugins: [vuetify, router] } })
+  return render(UserMenuCard, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    props: { menu: fakeMenu(intro, seatsLeft) as any },
+    global: { plugins: [vuetify, router] },
+  })
 }
 
 describe('「我」的菜单', () => {
   // 初始语言跟着浏览器（happy-dom 报 en-US），断言写的是中文，所以每条先定成中文。
   beforeEach(() => setLocale('zh-CN'))
+
+  it('「邀请好友」在个人主页下面，写着自己的码还剩几个名额，点进去是邀请页', async () => {
+    const view = await mount()
+    const item = await view.findByText('邀请好友 · 剩 3 个名额')
+    expect(item.closest('a')?.getAttribute('href')).toBe('#/users/settings/invites')
+  })
+
+  it('名额用完了只写「邀请好友」，照样能进邀请页', async () => {
+    const view = await mount('', 0)
+    const item = await view.findByText('邀请好友')
+    expect(item.closest('a')?.getAttribute('href')).toBe('#/users/settings/invites')
+    expect(view.queryByText(/剩 \d+ 个名额/)).toBeNull()
+  })
 
   it('个人主页、设置、下载客户端都在，并且能退出登录', async () => {
     const view = await mount()

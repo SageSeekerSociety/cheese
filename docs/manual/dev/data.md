@@ -4,6 +4,7 @@ kind: 参考
 summary: 每一类数据的位置、谁写、怎么备份。
 covers:
   - deploy/db-backup.sh
+  - deploy/gateway-db-backup.sh
   - deploy/r2-upload.py
   - deploy/r2-sync-uploads.py
   - deploy/systemd/
@@ -41,6 +42,7 @@ covers:
 | 上传文件增量镜像到 R2（远端不删） | `r2-sync-uploads.py` | 每小时 :30 |
 | 会话记录归档镜像到 R2 | 同一个脚本，`UPLOADS_PREFIX=transcripts` | 每小时 :45 |
 | etrip 的两个数据库与上传卷 | `etrip-backup.sh` | 每小时 :15 |
+| 模型网关的数据库（`pg_dump -Fc`，校验后本机留最新 28 份，传 R2 `db/`、30 天后过期；由 `.github/workflows/gateway-db-backup.yml` 跑，不是 systemd 定时器；恢复见[模型网关](/dev/gateway#backup)） | `gateway-db-backup.sh` | 每 6 小时（UTC :23） |
 
 会话记录归档那一行是在**保留历史**：现在已经没有新归档写进那个目录，它不再增长。归档房间的 CLI 记录现在由房间清理直接传进私有桶 `transcripts/rooms/`、核对后永久保留（见[资源回收与磁盘](/dev/cleanup#transcripts)）；runner 记下的原始记录封存在同一个私有桶的 `session-records/` 下，也永久保留（见[原始记录](/dev/session-records)）。这两份不经过上面的定时器。
 

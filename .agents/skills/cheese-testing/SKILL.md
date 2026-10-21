@@ -19,6 +19,10 @@ for backend fixture pitfalls and `.claude/rules/e2e.md` for browser fixtures.
 
 ## Choose the contract before the execution layer
 
+Which tests are worth writing at all, and which change needs none, is in
+AGENTS.md, "Test behaviour, never the implementation", and
+`.claude/rules/writing-tests.md`.
+
 For a behavior change, identify the Cheese promise it affects, the real boundary
 the test must cross, and the existing suite that owns it. Put new failure cases
 in that suite. When a new boundary has no owner, add its contract and test entry

@@ -27,7 +27,7 @@ _NAME_PATTERN = r"^[A-Za-z0-9._-]+$"
 
 
 class ModelPrices(BaseModel):
-    """一条模型的四个单价。
+    """一条模型的单价。
 
     用 `None` 表示「没定」，不是 0：0 是「定成免费」，`None` 是「这一栏空着」，网关的写
     接口也按这个区分（`GatewayAdmin._price_params` 只传真数字，`None` 一个都不发）。
@@ -38,6 +38,8 @@ class ModelPrices(BaseModel):
     output: float | None = None
     cache_read: float | None = None
     cache_creation: float | None = None
+    # The one-hour cache write (`cache_creation_input_token_cost_above_1hr`).
+    cache_creation_1h: float | None = None
 
 
 class ModelCapabilities(BaseModel):
@@ -333,6 +335,11 @@ class SourceUpdate(_SourceFields):
     api_key: str | None = None
     api_key_unchanged: bool = True
     prices: ModelPrices | None = None
+    # The upstream model's lifetime spend cap in USD (deploy/gateway/spend_cap.py).
+    # Absent leaves it alone, null clears it. The gateway counts the cap against
+    # everything its upstream model has been charged, so the service writes it on
+    # every runtime source on that upstream, not on this one alone.
+    spend_cap_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @field_validator("api_base")
     @classmethod
@@ -394,6 +401,7 @@ class GatewaySourceOut(BaseModel):
     priced: bool
     header_names: list[str]
     session_header: str | None
+    spend_cap_usd: float | None
 
 
 class GatewayUpstreamOut(BaseModel):

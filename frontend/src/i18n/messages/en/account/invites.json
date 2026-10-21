@@ -1,6 +1,6 @@
 {
   "title": "Invite friends",
-  "lede": "A friend who signs up with your code gets 50 credits after finishing the guide and creating a first project. If they accept a first delivery within 7 days of signing up, they get 100 more, and you get 150 credits and 50 points.",
+  "lede": "A friend who signs up with your code gets 50 credits after finishing the guide and creating a first project. If they accept a first delivery within 7 days of signing up, they get 100 more, and you get 150 credits.",
   "loadFailed": "Could not load your invitations",
   "retry": "Retry",
   "code": {
@@ -16,9 +16,7 @@
     "title": "Rewards earned",
     "credits": "Credits",
     "creditsValue": "{n} credits",
-    "points": "Contribution points",
-    "pointsValue": "{n} points",
-    "note": "Invitations earn at most 1,500 credits a month; beyond that only points are recorded. Credits last 90 days and are used after the month's plan credits.",
+    "note": "Invitations earn at most 1,500 credits a month; once you reach it, friends who get started that month earn you nothing more. Credits last 365 days from when they are paid and are used after the month's plan credits.",
     "viewCredits": "View personal credits"
   },
   "people": {

@@ -1,27 +1,21 @@
-"""``/run-records`` 与 ``/throughput`` 的「平台自己项目里的房间」门禁只有一份实现。
+"""``/run-records`` 与 ``/throughput`` 的门禁：只放行平台自己项目里的频道和任务。
 
-两条只读路由都给做这个平台本身的 AI 队友用，门禁都是：
+两条只读路由都给做这个平台本身的 AI 队友用，门禁是：
 ``place_or_404`` → ``resolver.resolve`` → ``authorize_topic(enforce=True)``
 → ``is_platform_project``（否则 403 ``say("runRecordsPlatformRoomsOnly")``）。
-两处若各自保留一份 ``_from_platform_room``，任何一处加条件另一处都不会跟上。
 """
 
-import ast
 import uuid
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.api import platform_room
-from app.api.routes import run_records, throughput
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
-
-_ROUTES_DIR = Path(__file__).resolve().parents[2] / "app" / "api" / "routes"
 
 
 class _FakeDb:
@@ -68,39 +62,6 @@ class _FakeResolver:
         self.authorized.append((actor, project_id, topic_id, enforce))
         if self.auth_error is not None:
             raise self.auth_error
-
-
-def test_run_records_and_throughput_share_the_one_platform_room_gate() -> None:
-    assert run_records.require_platform_room is platform_room.require_platform_room
-    assert throughput.require_platform_room is platform_room.require_platform_room
-    assert not hasattr(run_records, "_from_platform_room")
-    assert not hasattr(throughput, "_from_platform_room")
-
-    for route_file in ("run_records.py", "throughput.py"):
-        tree = ast.parse((_ROUTES_DIR / route_file).read_text(encoding="utf-8"))
-        fn_nodes = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        ]
-        fn_names = [node.name for node in fn_nodes]
-        assert "_from_platform_room" not in fn_names, (
-            f"{route_file} still defines a local _from_platform_room"
-        )
-        assert "require_platform_room" not in fn_names, (
-            f"{route_file} defines require_platform_room locally instead of importing"
-        )
-        handlers = [node for node in fn_nodes if node.decorator_list]
-        assert handlers, f"{route_file} has no decorated route handlers"
-        for handler in handlers:
-            called = {
-                call.func.id
-                for call in ast.walk(handler)
-                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-            }
-            assert "require_platform_room" in called, (
-                f"{route_file}:{handler.name} does not call require_platform_room"
-            )
 
 
 async def test_unknown_topic_raises_404_before_resolving_actor() -> None:
