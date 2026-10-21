@@ -66,6 +66,9 @@ const props = defineProps<{
   time: string
   /** handle→昵称 / 话题 id→标题，正文里的 token 靠它渲染成可点的 chip。 */
   refs: RefNames
+  /** 一个 handle 在界面上叫什么（反应条悬停列谁点了）。房间按名册给，和消息署名
+   *  同一个来源；没给时队友写「芝士」、人写 handle。 */
+  nameOfHandle?: (handle: string) => string
   /** 自己的 handle，用来标出哪些表情是自己点的。 */
   viewer: string
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
@@ -117,11 +120,14 @@ const personName = computed(() =>
 )
 
 // 反应条悬停时列的是谁点的：写房间给的名字，不写 handle。芝士的署名是管道
-// （`cheese-<hex>`），摆到屏幕上读的人只当成乱码；名册还没到、或者认不出这一位时
+// （`cheese-<hex>`），摆到屏幕上读的人只当成乱码；房间没给名字、或者认不出这一位时
 // 写「芝士」，和消息署名的兜底一样。人查不到名字时照旧显示 handle。
+//
+// 名字由房间按名册算好传进来，不能拿 `refs.mentionNames` 顶：那张表带着 all/here
+// 两个保留键，一个恰好叫 here 的人会被写成「在线成员」。
 function reactionAuthors(authors: string[]): string[] {
   return authors.map(
-    (handle) => props.refs.mentionNames[handle] || (isAgentHandle(handle) ? t('work.room.defaultAgentName') : handle)
+    (handle) => props.nameOfHandle?.(handle) || (isAgentHandle(handle) ? t('work.room.defaultAgentName') : handle)
   )
 }
 

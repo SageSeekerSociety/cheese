@@ -16,7 +16,7 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { t } from '../../../i18n'
 import { agentNames, memberName } from '../../../lib/agentNames'
-import { isAgentBlock } from '../../../lib/authorship'
+import { isAgentBlock, isAgentHandle } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
 import { isAvatarKnownFailed, rememberAvatarFailure } from '../../../utils/avatarFailures'
 import { getAvatarUrl } from '../../../utils/materials'
@@ -201,6 +201,20 @@ export function useRoomRoster(options: {
     if (name) return name
     return options.closed?.().has(m.author) ? t('account.closedUser') : m.author
   }
+  /**
+   * 一个 handle 在界面上的名字：队友按名册查（房间名册先说，项目名册补），人按项目
+   * 名册查；都认不出时人显示 handle、队友写「芝士」。
+   *
+   * 列「谁点了这个表情」用它。**不要**拿 `mentionNames` 顶：那张表额外塞了 all/here
+   * 两个保留键（渲染成「所有人」「在线成员」），一个恰好叫 here 的用户会被显示成
+   * 「在线成员」——`here` 在注册校验里是合法 handle。
+   */
+  function nameOfHandle(handle: string): string {
+    if (isAgentHandle(handle)) return agentDisplayName(handle)
+    const name = memberByHandle.value.get(handle)?.name
+    if (name) return name
+    return options.closed?.().has(handle) ? t('account.closedUser') : handle
+  }
   // 真头像加载失败过的 URL —— 退回彩色首字母，不留破图。
   //
   // 失败记录**只留一份**，在 `utils/avatarFailures` 里（UserAvatar 也读同一份）。
@@ -240,6 +254,7 @@ export function useRoomRoster(options: {
     agentNameOf,
     agentDisplayName,
     displayName,
+    nameOfHandle,
     isExternal,
     avatarSrc,
     onAvatarError,
