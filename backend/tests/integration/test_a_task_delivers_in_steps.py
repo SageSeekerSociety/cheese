@@ -191,7 +191,9 @@ def test_accepting_the_last_step_reads_as_accepted_and_has_the_task_written_up(
     assert "实况文档" in told and "chat_send" in told
 
 
-def test_the_task_closes_when_its_write_up_turn_ends(client, app_world):
+def test_the_task_closes_when_its_teammate_closes_it_after_the_write_up(
+    client, app_world
+):
     task_id, _ = _accepted_step(client, app_world, completes_task=True)
 
     written_up(client, task_id)
