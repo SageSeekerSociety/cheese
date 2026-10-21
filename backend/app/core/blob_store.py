@@ -124,6 +124,7 @@ class LocalStore(BlobStore):
         root = self.root.resolve()
         target = (root / key).resolve()
         if root not in target.parents:
+            # i18n-exempt: keys are made by the platform, never typed by a reader
             raise UnprocessableEntityError("blob key escapes the store")
         return target
 
@@ -317,6 +318,7 @@ def store(location: str) -> BlobStore:
         return local()
     if location == BUCKET:
         if not settings.files_bucket:
+            # i18n-exempt: a deployment missing its bucket, a 500 no reader is told
             raise RuntimeError(
                 "Bytes are recorded in the files bucket, but none is configured"
             )
@@ -329,6 +331,7 @@ def store(location: str) -> BlobStore:
                 region=settings.files_bucket_region,
             )
         )
+    # i18n-exempt: an invariant broken in the database, a 500 no reader is told
     raise UnprocessableEntityError(f"unknown blob location: {location}")
 
 

@@ -1118,6 +1118,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
             and self.files_bucket_access_key
             and self.files_bucket_secret_key
         ):
+            # i18n-exempt: refuses the boot; read by an operator in the log
             raise ValueError(
                 "FILES_STORE=bucket needs FILES_BUCKET, FILES_BUCKET_ENDPOINT_URL, "
                 "FILES_BUCKET_ACCESS_KEY and FILES_BUCKET_SECRET_KEY"

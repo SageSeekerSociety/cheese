@@ -25,9 +25,10 @@ import pytest
 from starlette.datastructures import UploadFile
 
 from app.api.routes import avatars, materials, spaces_materials
+from app.core import blob_store
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
-from app.domain.library import blobs, records, service
+from app.domain.library import records, service
 from app.domain.library.models import LibraryFileRecord
 
 # 比默认值小得多，但整 MB：这里量的是那条界线在哪，不是那个数是多少，而报出去的那个
@@ -95,7 +96,7 @@ def _current_row(project: uuid.UUID, name: str) -> LibraryFileRecord:
         name=name,
         bytes=2,
         sha256="0" * 64,
-        location=blobs.LOCAL,
+        location=blob_store.LOCAL,
         blob_key=f".library/{project}/{name}",
     )
 
