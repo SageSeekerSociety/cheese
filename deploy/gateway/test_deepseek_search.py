@@ -25,7 +25,12 @@ SENT: list[dict] = []
 
 async def deepseek(self, request: httpx.Request, **kwargs) -> httpx.Response:
     body = json.loads(request.content)
-    SENT.append({"url": str(request.url), "auth": request.headers.get("authorization"), "body": body})
+    SENT.append({
+        "url": str(request.url),
+        "auth": request.headers.get("authorization"),
+        "body": body,
+        "timeout": request.extensions.get("timeout") or {},
+    })
     hits = [] if body["query"] == "nothing" else [
         {"title": " A page ", "url": "https://example.com/a", "summary": "for a model",
          "snippet": "short", "date": "2026-10-01T00:00:00Z"},
@@ -86,6 +91,15 @@ async def main() -> None:
         assert empty.results == [] and cost == 0.0, (empty, cost)
         await search(costs, long)
         assert SENT[-1]["body"]["query"] == long[:128], SENT[-1]
+
+        # As the proxy calls it: the search tool from config.yaml, through the
+        # router, which hands the tool's own params (its timeout) to the call.
+        router = litellm.Router(
+            model_list=[],
+            search_tools=[{**tool, "litellm_params": {**tool["litellm_params"], "api_key": "k"}}],
+        )
+        await router.asearch(model="deepseek-search", query="hello")
+        assert SENT[-1]["timeout"]["read"] <= 15, SENT[-1]
     print(
         "PASS: DeepSeek search is the gateway's search tool; a search that found "
         f"something costs ${provider.USD_PER_SEARCH}, the price config.yaml gives "

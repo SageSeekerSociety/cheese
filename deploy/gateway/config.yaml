@@ -486,6 +486,10 @@ search_tools:
     litellm_params:
       search_provider: deepseek
       api_key: os.environ/DEEPSEEK_API_KEY
+      # LiteLLM's default is 6000 s, so a stalled DeepSeek connection would hold
+      # the request until the ingress cut it at 30 min. DeepSeek answers in a
+      # second or two; the backend gives up after 15 s anyway.
+      timeout: 15
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
