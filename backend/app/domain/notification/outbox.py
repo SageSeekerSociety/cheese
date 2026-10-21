@@ -14,6 +14,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.domain.notification.models import ChannelDelivery
+from app.domain.notification.names import names_for, with_names
 from app.domain.notification.preferences import (
     default_preferences,
     local_time,
@@ -66,6 +67,11 @@ class ChannelIntentHandler:
             if self.push_enabled and intents[d.delivery_key].push
         ]
         languages = await languages_by_ids(self.session, pushed)
+        # A push names people by name, not by the room's <@handle> token.
+        names = await names_for(
+            self.session,
+            *(d.payload for d in deliveries if d.recipient_id in pushed),
+        )
         for delivery in deliveries:
             intent = intents[delivery.delivery_key]
             common = {
@@ -83,7 +89,7 @@ class ChannelIntentHandler:
             if self.push_enabled and intent.push:
                 title, body = push_text(
                     delivery.type,
-                    delivery.payload,
+                    with_names(delivery.payload, names),
                     languages.get(delivery.recipient_id),
                 )
                 channels.append(

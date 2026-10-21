@@ -294,7 +294,7 @@ async def redescribe(
     # 否则它就是一条能悄悄改「这次改动会在历史里说什么」的路。
     self._notify_merge_result(
         topic,
-        say("cardRedescribed", actor=actor),
+        say("cardRedescribed", actor=f"<@{actor}>"),
         task_id=card.task_id,
         meta=notice(
             EVENT_CARD_REDESCRIBED,

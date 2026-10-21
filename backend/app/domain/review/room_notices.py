@@ -231,7 +231,9 @@ async def _announce_filed(
         session,
         place_id=topic.id,
         task_id=task.id,
-        content=say("cardFiled", task=task.title, reviewer=card.reviewer_handle),
+        content=say(
+            "cardFiled", task=task.title, reviewer=f"<@{card.reviewer_handle}>"
+        ),
         meta=notice(
             EVENT_CARD_FILED,
             severity=SEVERITY_INFO,
@@ -312,7 +314,7 @@ async def _notify_ready(
         session,
         card,
         topic,
-        say("acceptReady", pr=card.pr_number, reviewer=card.reviewer_handle),
+        say("acceptReady", pr=card.pr_number, reviewer=f"<@{card.reviewer_handle}>"),
         meta=notice(
             EVENT_ACCEPT_READY,
             severity=SEVERITY_INFO,

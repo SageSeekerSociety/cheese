@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import after_own_commit
 from app.domain.notification.models import NotificationType
+from app.domain.notification.names import names_for, with_names
 from app.domain.notification.push import PUSHABLE, away_text, push_link, push_text
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.user.services import languages_by_ids
@@ -108,9 +109,12 @@ async def notices_after(db: AsyncSession, user_id: int, after: int | None) -> di
     if after is None:
         return {"latest": latest, "items": []}
     locale = (await languages_by_ids(db, [user_id])).get(user_id)
+    rows = await repo.pushable_after(user_id, PUSHABLE, after, NOTICES_AT_ONCE)
+    # A push names people by name, not by the room's <@handle> token.
+    names = await names_for(db, *(row.metadata_payload for row in rows))
     items = []
-    for row in await repo.pushable_after(user_id, PUSHABLE, after, NOTICES_AT_ONCE):
-        payload = row.metadata_payload or {}
+    for row in rows:
+        payload = with_names(row.metadata_payload or {}, names)
         title, body = push_text(NotificationType(row.type), payload, locale)
         items.append(
             {"id": row.id, "title": title, "body": body, "url": push_link(payload)}

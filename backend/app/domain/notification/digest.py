@@ -48,6 +48,7 @@ from app.domain.notification.letter import (
 )
 from app.domain.notification.maintenance import display_names
 from app.domain.notification.models import ChannelDelivery
+from app.domain.notification.names import names_for, with_names
 from app.domain.notification.outbox import LEASE_SECONDS
 from app.domain.notification.preferences import DigestCadence, EmailMode, Preferences
 from app.domain.notification.preferences_models import PreferencesRepository
@@ -85,6 +86,11 @@ async def send_digest_email(
     async with sessions() as session:
         email = await session.scalar(select(User.email).where(User.id == receiver_id))
         names = [await display_names(session, item.get("payload")) for item in items]
+        # An email names people by name, not by the room's <@handle> token.
+        people = await names_for(session, *(item.get("payload") for item in items))
+    items = [
+        {**item, "payload": with_names(item.get("payload"), people)} for item in items
+    ]
     if not email or is_placeholder_email(email):
         logger.warning("摘要收件人 %s 没有可用邮箱", receiver_id)
         return False
