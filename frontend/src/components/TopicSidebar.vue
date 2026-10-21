@@ -24,7 +24,7 @@ import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
 
 import { brightest } from '../lib/roomLight'
 import { DEFAULT_SHELL, projectPageLayout, shellFor, termParams } from '../lib/shell'
-import { topicTitle } from '../lib/topicState'
+import { taskTitle, topicTitle } from '../lib/topicState'
 import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
 import { myHandle } from '../me'
@@ -116,6 +116,9 @@ const emit = defineEmits<{
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
   // final: the platform stops renaming that room from then on.
   (e: 'rename-topic', payload: { id: string; title: string }): void
+  // 任务行 ⋯ 里的「重命名」。和频道那一条同一个道理：人起的名字就是最终版，落盘在
+  // 父级（这一层不认识 store）。
+  (e: 'rename-task', payload: { id: string; roomId: string; title: string }): void
   // Open 项目文档 in the main area. The rail always asks for 项目目标 — the page
   // itself carries the tabs that reach the other two.
   (e: 'select-docs', kind: 'charter' | 'weeklies' | 'memory'): void
@@ -206,10 +209,11 @@ function tasksLight(channelId: string): RowLight | null {
 // 一行在改，而草稿放在这一层的话，改两行时上一次的草稿会漏到下一行。
 const renamingTopicId = ref<string | null>(null)
 
-const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsFor } = useTopicRailRoutes(
-  () => props.selectedProjectId,
-  { rename: (topic) => (renamingTopicId.value = topic.id) }
-)
+const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsFor, taskActionsFor } =
+  useTopicRailRoutes(() => props.selectedProjectId, {
+    rename: (topic) => (renamingTopicId.value = topic.id),
+    renameTask: (task) => startTaskRename(task),
+  })
 
 // 项目级页面：项目名下那一行是总览和资料库，其余几页（全部任务、项目文档、项目设置、
 // 转让或退出）都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，只换内容区。
@@ -358,6 +362,21 @@ function cancelRename() {
   renamingTopicId.value = null
 }
 
+// 任务行的改名和频道行同一套：这一层只说「哪一行在改」，名字交回去由父级落盘。
+// 起点是它现在的名字，改过才发；空的不发、没改也不发。
+const renamingTaskId = ref<string | null>(null)
+function startTaskRename(task: { id: string }) {
+  renamingTaskId.value = task.id
+}
+function commitTaskRename(task: RailTask, draft: string) {
+  const title = draft.trim()
+  renamingTaskId.value = null
+  if (title && title !== task.title) emit('rename-task', { id: task.id, roomId: task.room_id, title })
+}
+function cancelTaskRename() {
+  renamingTaskId.value = null
+}
+
 // 行操作收进一颗 ⋯ (C5): hover 只浮出一个入口，不再是三颗并排的按钮盖住标题
 // 尾巴。菜单展开期间那一颗必须留在屏幕上——它是菜单的 activator，跟着 hover
 // 一起消失的话，鼠标一移进菜单，菜单自己就塌了。哪一行开着记在这里，是因为同时
@@ -387,22 +406,44 @@ const rowSheetTopic = computed(() =>
   rowSheetTopicId.value ? topicById.value.get(rowSheetTopicId.value) ?? null : null
 )
 
+// 任务行也一样：长按升起的是这一行的操作。任务行分两处来（挂在频道下面的那几条和
+// 展开后接上的「其余任务」），查的时候两边都看。
+const rowSheetTaskId = ref<string | null>(null)
+const taskById = computed(() => {
+  const map = new Map<string, RailTask>()
+  for (const rows of Object.values(props.roomTasks ?? {})) for (const task of rows) map.set(task.id, task)
+  for (const more of Object.values(props.moreTasks ?? {}))
+    if (more.state === 'ready') for (const task of more.rows) map.set(task.id, task)
+  return map
+})
+const rowSheetTask = computed(() => (rowSheetTaskId.value ? taskById.value.get(rowSheetTaskId.value) ?? null : null))
+
 useLongPress(
   railScroll,
   (event) => {
-    const row = (event.target as HTMLElement | null)?.closest?.('[data-row-actions]')
+    const row = (event.target as HTMLElement | null)?.closest?.('[data-row-actions], [data-task-actions]')
     const id = row?.getAttribute('data-row-actions')
-    if (!id || !topicById.value.has(id)) return
-    rowSheetTopicId.value = id
+    if (id && topicById.value.has(id)) {
+      rowSheetTaskId.value = null
+      rowSheetTopicId.value = id
+      if (rowSheetActions.value.length) rowSheetOpen.value = true
+      return
+    }
+    const taskId = row?.getAttribute('data-task-actions')
+    if (!taskId || !taskById.value.has(taskId)) return
+    rowSheetTopicId.value = null
+    rowSheetTaskId.value = taskId
     if (rowSheetActions.value.length) rowSheetOpen.value = true
   },
   // 正在改名时手指按在输入框里是在选字，不是要这一行的操作。
-  { disabled: () => renamingTopicId.value !== null }
+  { disabled: () => renamingTopicId.value !== null || renamingTaskId.value !== null }
 )
 
-const rowSheetActions = computed<MenuAction[]>(() =>
-  rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
-)
+const rowSheetActions = computed<MenuAction[]>(() => {
+  const task = rowSheetTask.value
+  if (task) return taskActionsFor(task).map(menuActionOf)
+  return rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
+})
 
 // 项目文档 (C4): 项目目标 / 周报集 / 记忆 在侧栏只占一行，点开进项目目标；
 // 三选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
@@ -502,7 +543,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
       <MobileActionSheet
         v-model="rowSheetOpen"
         :actions="rowSheetActions"
-        :title="rowSheetTopic ? topicTitle(rowSheetTopic) : undefined"
+        :title="rowSheetTask ? taskTitle(rowSheetTask) : rowSheetTopic ? topicTitle(rowSheetTopic) : undefined"
       />
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
@@ -572,8 +613,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :selected="task.id === selectedTaskId"
                 :light="taskLight(task)"
                 :unread="unreadOf(task.id)"
+                :actions="taskActionsFor"
+                :page="page === true"
+                :renaming="renamingTaskId === task.id"
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
+                @commit-rename="(draft: string) => commitTaskRename(task, draft)"
+                @cancel-rename="cancelTaskRename()"
               />
               <TopicRailTaskRow
                 v-for="task in rootTopic ? moreTaskRows(rootTopic.id) : []"
@@ -582,8 +628,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :selected="task.id === selectedTaskId"
                 :light="taskLight(task)"
                 :unread="unreadOf(task.id)"
+                :actions="taskActionsFor"
+                :page="page === true"
+                :renaming="renamingTaskId === task.id"
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
+                @commit-rename="(draft: string) => commitTaskRename(task, draft)"
+                @cancel-rename="cancelTaskRename()"
               />
               <TopicRailMoreTasksRow
                 v-if="rootTopic && showMoreRow(rootTopic.id)"
@@ -677,8 +728,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :selected="task.id === selectedTaskId"
                         :light="taskLight(task)"
                         :unread="unreadOf(task.id)"
+                        :actions="taskActionsFor"
+                        :page="page === true"
+                        :renaming="renamingTaskId === task.id"
                         @select="emit('select-task', $event)"
                         @press="emit('press-task', $event)"
+                        @commit-rename="(draft: string) => commitTaskRename(task, draft)"
+                        @cancel-rename="cancelTaskRename()"
                       />
                       <TopicRailTaskRow
                         v-for="task in moreTaskRows(item.topic.id)"
@@ -688,8 +744,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :selected="task.id === selectedTaskId"
                         :light="taskLight(task)"
                         :unread="unreadOf(task.id)"
+                        :actions="taskActionsFor"
+                        :page="page === true"
+                        :renaming="renamingTaskId === task.id"
                         @select="emit('select-task', $event)"
                         @press="emit('press-task', $event)"
+                        @commit-rename="(draft: string) => commitTaskRename(task, draft)"
+                        @cancel-rename="cancelTaskRename()"
                       />
                       <TopicRailMoreTasksRow
                         v-if="showMoreRow(item.topic.id)"

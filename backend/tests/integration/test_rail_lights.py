@@ -1,13 +1,14 @@
 """侧栏每一行那盏灯的事实：`GET /topics?project_id=` 的每一行带哪几个判据。
 
-画哪一盏灯是前端那个纯函数的事（`frontend/src/lib/roomLight.ts`），灯要问的四件事
+画哪一盏灯是前端那个纯函数的事（`frontend/src/lib/roomLight.ts`），灯要问的五件事
 却都是后端算的，而且**都按人算**：换一个人看，同一间房、同一件活可以是别的颜色。
 所以这个文件里每条都从两个人的眼里看同一份数据 —— 只有一个人看得见的说法，光看
 一个人的响应是钉不住的。
 
-四条事实：有没有事在等我（`awaits_me`，这里只当对照）、做完了交付完了而我还没
-点开看过（`unseen_delivery`）、有人回复了我、我还没处理（`replied_to_me`），以及这间
-房里有没有一轮停在报错上、从什么时候起还没恢复（`incomplete_since`，红灯）。
+五条事实：有没有事在等我（`awaits_me`，这里只当对照）、有活在往前走（`moving`，
+呼吸绿）、做完了交付完了而我还没点开看过（`unseen_delivery`）、有人回复了我、我还
+没处理（`replied_to_me`），以及这间房里有没有一轮停在报错上、从什么时候起还没恢复
+（`incomplete_since`，红灯）。
 
 活的行由 `_planted` 直接种进库，不走「建任务 → 递卡 → 采纳」那一圈：每一圈自己的
 规矩在别处钉着（`test_accept.py`），而这里要对下来的是「哪几列推出哪盏灯」。判据
@@ -25,12 +26,13 @@ from app.domain.agent.models import AgentTurn
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.delivery.models import NativeInput
 from app.domain.review.models import AcceptCard
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.models import Task, TaskProgress, TaskStatus
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
     post_message,
     post_project,
+    room_agent_seat,
     session_auth_headers,
 )
 
@@ -1053,3 +1055,101 @@ def test_the_project_task_list_carries_the_same_clock(client):
 
 def _project_task_row(response, task_id: str) -> dict:
     return next(t for t in response.json()["data"]["data"] if t["id"] == task_id)
+
+
+# —— 呼吸绿：有活在往前走 ————————————————————————————————————
+
+
+def test_a_running_session_lights_the_task_and_its_room(client):
+    """任务自己的会话在跑：那一行闪绿，上面那间房也闪绿（房间看它名下的全部对话）。"""
+    from app.domain.agent.harness.driven.lifecycle import IDLE, RUNNING
+    from app.domain.agent.session_state import SeatKey, declare, register
+
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [{"name": "working", "title": "在跑的活", "owner_handle": "alice"}],
+    )
+    seat = room_agent_seat(client, room)
+    key = SeatKey(uuid.UUID(ids["working"]), seat, "claude-code")
+
+    async def _register() -> None:
+        await register(client.test_factory, key)
+
+    def declare_as(status: str) -> None:
+        async def _run() -> None:
+            async with client.test_factory() as s:
+                await declare(s, key, status)
+                await s.commit()
+
+        asyncio.run(_run())
+
+    asyncio.run(_register())
+
+    # 还没有会话：两行都不亮。
+    row = _room_row(client, project, room, "alice")
+    assert row["moving"] is False
+    assert _task_row(row, ids["working"])["moving"] is False
+
+    declare_as(RUNNING)
+    row = _room_row(client, project, room, "alice")
+    assert row["moving"] is True
+    assert _task_row(row, ids["working"])["moving"] is True
+
+    # 会话停了就灭：这里没有「五分钟没动静」的等待，running 就是 running。
+    declare_as(IDLE)
+    row = _room_row(client, project, room, "alice")
+    assert row["moving"] is False
+    assert _task_row(row, ids["working"])["moving"] is False
+
+
+def test_a_teammates_reported_working_state_alone_does_not_light_the_row(client):
+    """队友自己报「在做」不够：那一位会话已经停了，纸面状态不算在跑。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "claimed",
+                "title": "说自己在做",
+                "owner_handle": "alice",
+                "progress_state": TaskProgress.working,
+            }
+        ],
+    )
+
+    row = _room_row(client, project, room, "alice")
+    assert row["moving"] is False
+    assert _task_row(row, ids["claimed"])["moving"] is False
+
+
+def test_a_delivery_on_the_chain_lights_the_row_even_with_no_session(client):
+    """活已经递出去、走在交付链路上（CI 在跑）：没有会话在跑，也画呼吸绿。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "delivering",
+                "title": "等 CI 的活",
+                "owner_handle": "alice",
+                "card": {
+                    "status": "pending",
+                    "merge_state": {"state": "pending", "who": "ci"},
+                },
+            }
+        ],
+    )
+
+    row = _room_row(client, project, room, "alice")
+    assert row["moving"] is True
+    assert _task_row(row, ids["delivering"])["moving"] is True

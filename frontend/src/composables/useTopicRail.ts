@@ -183,8 +183,9 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   // 「有人回复了我」是频道行单独一样（`replied_to_me`）：活有它自己那一行，那件事
   // 后端只给频道算。
   //
-  // 「点开过就灭」的绿灯不在这里判：那由数据决定（服务端按已读位算 `unseen_delivery`，
-  // 点开时 `stores/workspace` 先把本地那一份灭掉）。
+  // 「点开过就灭」的长绿不在这里判：那由数据决定（服务端按已读位算 `unseen_delivery`，
+  // 点开时 `stores/workspace` 先把本地那一份灭掉）。呼吸绿问的 `moving` 也一样，
+  // 后端按会话状态和交付链路算好；这一层只查表。
   //
   // 蓝灯（我负责的活）是这一层唯一自己下的判断：它不看状态，只看这条活归谁——而且要
   // 状态那几盏都没话说的时候才画。
@@ -201,6 +202,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
       {
         awaitsMe: topic.awaits_me === true,
         repliedToMe: topic.replied_to_me === true,
+        // 房间里、支线里、名下的活里有会话在跑，或者有活走在交付链路上：呼吸绿。
+        moving: topic.moving === true,
         unseenDelivery: topic.unseen_delivery === true,
         // 房间在等一位队友、等太久了：红灯（`waiting`）。
         waitStalled: stalled.length > 0,
@@ -227,6 +230,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
       {
         awaitsMe: task.awaits_me === true,
         repliedToMe: false,
+        // 这条活的会话在跑，或者它走在交付链路上：呼吸绿。
+        moving: task.moving === true,
         unseenDelivery: task.unseen_delivery === true,
         waitStalled: false,
         // 交付被退回了，还没有人来改：这不是「有事等你」，是一颗红灯。
@@ -419,7 +424,9 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
       return t(hidden.why === 'unfinished' ? 'work.sidebar.expandStopped' : 'work.sidebar.expandStalled')
     }
     if (hidden?.kind === 'yellow') return t('work.sidebar.expandAwaits')
-    if (hidden?.kind === 'green') return t('work.sidebar.expandDelivered')
+    if (hidden?.kind === 'green') {
+      return t(hidden.breathe ? 'work.sidebar.expandWorking' : 'work.sidebar.expandDelivered')
+    }
     return t('work.sidebar.expand')
   }
 

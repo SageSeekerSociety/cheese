@@ -5,12 +5,13 @@ import type { RoomTask } from '@/cx_types'
 
 /** 侧栏一条任务行要的那几样。
  *
- *  `unseen_delivery` / `incomplete_since` 是行尾那盏灯的判据（`lib/roomLight.ts`）。
- *  挂在频道下面的「和我有关的那几条」跟着话题一起来，两样都带得全；展开后接上的
- *  「其余任务」走的是另一个接口（`/projects/{id}/tasks`），那份响应体大，而
- *  `unseen_delivery` 按人算——加进去会把它的缓存冲掉，所以那边刻意只给
- *  `incomplete_since`（它只在真的有事时变：一条活坏了，或者它恢复了）。那些行因此
- *  画得出黄灯和「停下来报错」的红灯，画不出交付完没看过的绿灯。 */
+ *  `moving` / `unseen_delivery` / `incomplete_since` 是行尾那盏灯的判据
+ *  （`lib/roomLight.ts`）。挂在频道下面的「和我有关的那几条」跟着话题一起来，三样
+ *  都带得全；展开后接上的「其余任务」走的是另一个接口（`/projects/{id}/tasks`），
+ *  那份响应体大，而 `unseen_delivery` 按人算——加进去会把它的缓存冲掉，所以那边
+ *  刻意只给 `moving` 和 `incomplete_since`（它们只在真的有事时变：一条活在跑、
+ *  走在交付链路上，或者它坏了 / 恢复了）。那些行因此画得出呼吸绿、黄灯和「停下来
+ *  报错」的红灯，画不出交付完没看过的长绿。 */
 export type RailTask = Pick<
   RoomTask,
   | 'id'
@@ -19,10 +20,17 @@ export type RailTask = Pick<
   | 'title_source'
   | 'presentation'
   | 'awaits_me'
+  | 'moving'
   | 'unseen_delivery'
   | 'incomplete_since'
   // 这条活归谁：我负责的（含没主的）那几条，行尾补一盏蓝灯（`useTopicRail.taskLight`）。
   | 'owner_handle'
+  // 谁在这件活里（负责人之外还有协作者）：行菜单里的「重命名」只画给这些人。
+  | 'contributor_handles'
+  // 复制链接要从任务自己的地址拼出来；行菜单不给非进行中的活用状态，但列表接口两边
+  // 都带着它，留着不多拉一次。
+  | 'project_id'
+  | 'status'
   // 不是和我有关的、被借来把这一块凑够三条的那几条（后端 `rail_tasks`）：行上画淡
   // 一档，悬浮说明写清它为什么在这儿。缺省 = 和我有关的。
   | 'filling_in'

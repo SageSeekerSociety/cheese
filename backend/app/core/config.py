@@ -344,6 +344,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # browser process tree cleanly. Measured, one shared instance served six
     # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
     fetch_browser_endpoint: str | None = None
+    # The platform's own DeepSeek API key, for web search (app.domain.fetch.search)
+    # in sessions whose model has no search tool of its own: Codex, pi, and
+    # Claude Code on an upstream that does not run WebSearch. Unset, search
+    # says it is not configured.
+    deepseek_api_key: str | None = None
     # Where the frontend serves the mini-app shell it builds (`frontend/miniapp/`),
     # as reached from here: `<this>/v1/index.html` is shell 1. The content
     # domain's `apps.` host answers with it, and a new mini-app is run in it

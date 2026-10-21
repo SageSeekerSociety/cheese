@@ -255,6 +255,11 @@ class AcceptService:
     ) -> list[uuid.UUID]:
         return await cards.open_pr_card_ids(self, project_id=project_id)
 
+    async def missing_merge_actor_card_ids(
+        self, *, since: datetime, limit: int
+    ) -> list[uuid.UUID]:
+        return await cards.missing_merge_actor_card_ids(self, since=since, limit=limit)
+
     async def anybody_still_waiting(self, place_ids: list[uuid.UUID]) -> bool:
         return await cards.anybody_still_waiting(self, place_ids=place_ids)
 
@@ -534,6 +539,9 @@ class AcceptService:
         return await polling.advance_pr_card(
             self, card_id=card_id, chat_service=chat_service, runner=runner
         )
+
+    async def fill_merged_by(self, card_id: uuid.UUID) -> bool:
+        return await polling.fill_merged_by(self, card_id)
 
     async def refresh_stale_pr_snapshots(self, cards: Sequence[AcceptCard]) -> None:
         return await polling.refresh_stale_pr_snapshots(self, cards=cards)
