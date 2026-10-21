@@ -68,11 +68,23 @@ def test_registration_locking_guidance_and_attachments_land_in_their_fields():
     ]
 
 
-def test_empty_guidance_goes_back_to_the_space_default():
-    fields = drafts.from_agent({"ai_guidance": ""}, SPACE, {})
+def test_guidance_adds_to_what_the_task_has_and_names_the_way_of_helping():
+    current = {"teaching": {"materialIds": [3], "systemPrompt": "旧的"}}
+    fields = drafts.from_agent(
+        {"ai_mode": "先明确需求再实现", "ai_guidance": ""}, SPACE, current
+    )
 
-    assert fields["teaching"] == {}
-    assert fields["teachingOwn"] is False
+    assert fields["teaching"] == {
+        "materialIds": [3],
+        "systemPrompt": None,
+        "mode": "spec",
+    }
+    assert fields["teachingOwn"] is True
+
+    cleared = drafts.from_agent(
+        {"ai_mode": "沿用空间设置", "ai_guidance": ""}, SPACE, {}
+    )
+    assert cleared["teachingOwn"] is False
 
 
 def test_a_draft_says_its_new_fields_in_芝士s_words():

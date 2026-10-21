@@ -115,10 +115,8 @@
     "needsReview": "An admin reviews it after publishing",
     "publish": "Publish",
     "teaching": {
-      "inherit": "Use the space default",
-      "own": "Set for this challenge",
       "subtitle": "Applies to projects created from this challenge",
-      "title": "AI guidance"
+      "title": "AI teammate guidance"
     },
     "useTemplate": "Use template",
     "importFile": "Import from file",

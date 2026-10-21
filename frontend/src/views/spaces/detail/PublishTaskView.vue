@@ -36,6 +36,7 @@ import TeachingFields from '@/components/common/TeachingFields.vue'
 import AgentLayer from '@/components/tasks/AgentLayer.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import { isTeachingBlank } from '@/lib/teaching'
 
 const props = withDefaults(
   defineProps<{
@@ -75,6 +76,8 @@ const props = withDefaults(
     } | null
     /** 芝士正在写的那一格（它的字段名）。 */
     agentWriting?: string | null
+    /** 空间的 AI 队友辅导：和本题的同时生效，摆在本题设置底下。 */
+    spaceTeaching?: SpaceTeaching | null
     /** 芝士那一层。 */
     pointer: AgentPointer | null
     outline: AgentBox | null
@@ -91,12 +94,19 @@ const props = withDefaults(
     strip: null,
     selection: () => [],
     agentWriting: null,
+    spaceTeaching: null,
   }
 )
 
 const teaching = defineModel<SpaceTeaching>('teaching', { required: true })
 /** 这道题单独写了 AI 指导；没有就沿用空间的默认。 */
 const teachingOwn = defineModel<boolean>('teachingOwn', { required: true })
+
+/** 题目和空间的辅导设置同时生效：这道题写了什么，就算「本题有自己的」。 */
+function setTeaching(value: SpaceTeaching) {
+  teaching.value = value
+  teachingOwn.value = !isTeachingBlank(value)
+}
 /** 窄屏上芝士是一张从下面拉起来的面板。 */
 const agentOpen = defineModel<boolean>('agentOpen', { default: false })
 /** 宽屏上芝士停在右边；收起来以后顶栏多一个按钮把它叫回来。 */
@@ -307,17 +317,15 @@ defineExpose({
               <div class="pub__teaching" data-testid="publish-teaching" data-agent-field="ai_guidance">
                 <p class="pub__teaching-label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
                 <p class="pub__teaching-hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
-                <v-radio-group v-model="teachingOwn" hide-details density="compact" class="pub__choices">
-                  <v-radio :value="false" :label="t('spaces.detail.publishTask.teaching.inherit')" />
-                  <v-radio :value="true" :label="t('spaces.detail.publishTask.teaching.own')" />
-                </v-radio-group>
                 <TeachingFields
-                  v-if="teachingOwn"
-                  v-model="teaching"
+                  :model-value="teaching"
                   class="pub__teaching-fields"
+                  inherit
+                  :space-teaching="spaceTeaching"
                   :materials="materials"
                   :materials-state="materialsState"
                   :library-to="libraryTo"
+                  @update:model-value="setTeaching"
                 />
               </div>
             </template>
@@ -447,13 +455,6 @@ defineExpose({
   background: var(--surface);
 }
 
-.pub__choices :deep(.v-label) {
-  color: var(--text);
-  font-size: 14px;
-  line-height: var(--lh-14);
-  opacity: 1;
-}
-
 .pub__teaching-label {
   margin: 0;
   color: var(--text);
@@ -467,6 +468,6 @@ defineExpose({
 }
 
 .pub__teaching-fields {
-  margin-top: 12px;
+  margin-top: 4px;
 }
 </style>

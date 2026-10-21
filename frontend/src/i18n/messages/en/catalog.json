@@ -548,10 +548,10 @@
     }
   },
   "spaceGuidanceView": {
-    "about": "Space settings 'Guidance for the AI teammate': a line of explanation, a six-field form and save. All six empty means this board sets no default, and whichever layer below says something is followed.",
+    "about": "Space settings 'AI teammate guidance': a line of explanation, the approach, additional requirements, materials it may read, and save. All empty means this board sets nothing; only each task's own counts.",
     "s1": {
       "name": "This board set defaults",
-      "note": "Default cell: system prompt, current week and this week's scope are filled in; the finer settings are tucked into 'More'."
+      "note": "Set: 'Guide with questions' is picked and requirements are written."
     },
     "s2": {
       "name": "No defaults yet",

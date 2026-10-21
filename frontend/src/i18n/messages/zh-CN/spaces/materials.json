@@ -11,6 +11,7 @@
   "intro": "空间成员都能看。标了「仅管理员」的，成员看不到，成员项目里的 AI 队友也读不到。",
   "pickFile": "选一个文件",
   "remove": "移除",
+  "title": "资料库",
   "toast": {
     "downloadFailed": "下载失败",
     "loadFailed": "资料读不出来",

@@ -25,8 +25,8 @@
     "summaryDomains": "仅限 {names}",
     "summaryNoRealName": "无需实名",
     "summaryRealName": "需实名",
-    "summaryTeachingDefault": "空间默认指导",
-    "summaryTeachingOwn": "本题单独指导",
+    "summaryTeachingDefault": "AI 队友按空间设置辅导",
+    "summaryTeachingOwn": "本题另有 AI 队友辅导设置",
     "title": "更多设置"
   },
   "name": "名称",

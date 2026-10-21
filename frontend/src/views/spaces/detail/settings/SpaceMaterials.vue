@@ -7,6 +7,7 @@
     :can-manage="canManage"
     :loading="loading"
     :busy="busy"
+    :standalone="route.name === 'SpacesLibrary'"
     @upload="upload"
     @download="download"
     @change-visibility="changeVisibility"

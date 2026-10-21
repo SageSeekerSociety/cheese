@@ -115,10 +115,8 @@
     "needsReview": "发布后需管理员审核",
     "publish": "发布",
     "teaching": {
-      "inherit": "沿用空间默认",
-      "own": "为本题单独设置",
       "subtitle": "用于从本题创建的项目",
-      "title": "AI 指导"
+      "title": "AI 队友辅导"
     },
     "useTemplate": "使用模板",
     "importFile": "从文件导入",

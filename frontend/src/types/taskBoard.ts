@@ -124,11 +124,12 @@ export type PostTaskSubmissionReviewRequestData = {
 export type PatchTaskSubmissionReviewRequestData = Partial<PostTaskSubmissionReviewRequestData>
 
 /**
- * Which level the composed guidance came from — `null` when no level said
- * anything. Shown so a student reads 「来自项目集」 rather than a bare result;
+ * Where the composed guidance came from — the space, the task, both, or the
+ * project; `null` when nobody said anything. Shown so a student reads where
+ * it came from rather than a bare result;
  * carried by the same resolution loop that picks the value (server side).
  */
-export type TaskInheritanceSource = 'space' | 'category' | 'task' | 'project'
+export type TaskInheritanceSource = 'space' | 'task' | 'both' | 'project'
 
 /** A board's 资料 row as the inheritance list reports it — never a `url`. */
 export interface TaskInheritanceMaterial {
@@ -145,6 +146,8 @@ export interface TaskInheritanceMaterial {
 
 /** The composed 给 AI 队友的指导, plus the level it came from. */
 export interface TaskInheritanceTeaching extends SpaceTeaching {
+  /** 空间和题目都写了补充要求时，空间的那一份（`systemPrompt` 是题目的）。 */
+  spacePrompt?: string | null
   source: TaskInheritanceSource | null
 }
 

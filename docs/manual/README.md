@@ -89,7 +89,7 @@
 | `team-challenge.md` | 以团队身份领取团队题目，一起做、一起交 | 详细规则链接题目、团队、提交 |
 | `resubmit.md` | 看评审结果，和芝士改完，提交新版本 | 提交规则见 `submissions.md` |
 | `publish-a-challenge.md` | 建空间、发邀请码、发布题目、批准领取、评审提交 | 详细规则链接空间、提交 |
-| `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `spaces.md` |
+| `guide-the-teammate.md` | 设置整块板和单道题的「AI 队友辅导」 | 字段说明见 `spaces.md` |
 | `publish-a-site.md` | 让芝士做网页、预览、采纳、发布和更新网站 | 限制见 `sites.md` |
 | `use-your-computer.md` | 接入自己的 Mac 或 Windows 电脑，让频道改用它，把本地数据交给芝士 | 服务器接入、隔离和自己的 Claude Code 见 `devices.md`；任务环境见 `environment.md` |
 | `connect-a-service.md` | 以 Notion 为例：让芝士在项目里声明 MCP 服务、在项目设置里连接、让芝士读页面、断开 | 连接的种类、状态和权限见 `connections.md` |
@@ -102,7 +102,7 @@
 | 页面 | 完整解释的内容 | 不负责的内容与去向 |
 |---|---|---|
 | `challenges.md` | 给做题的人：加入空间、题目列表、题目页、问芝士、领取与批准、无法领取、题目的项目 | 管理空间与出题见 `spaces.md`；提交见 `submissions.md` |
-| `spaces.md` | 给管理空间的人：新建空间、邀请码、成员与角色、发布题目的表单、审核题目、领取者与评审、资料库、给 AI 队友的指导 | 做题的一侧见 `challenges.md`；评审细节见 `submissions.md` |
+| `spaces.md` | 给管理空间的人：新建空间、邀请码、成员与角色、发布题目的表单、审核题目、领取者与评审、资料库、AI 队友辅导 | 做题的一侧见 `challenges.md`；评审细节见 `submissions.md` |
 | `teams.md` | 创建团队、邀请成员、加入申请、已发送邀请、团队成员管理、招募广场当前边界 | 项目成员归 `projects.md`；AI 队友归 `agents.md` |
 | `projects.md` | 创建项目、与赛题的关系、所属团队、项目成员与邀请、主要入口与「总览」、上游仓库、项目与成果的关系 | 文件操作归 `files.md`；队友配置归 `agents.md`；赛题提交归 `submissions.md` |
 | `rooms.md` | 新建频道、加入与退出、频道通知、默认 AI 队友、页面区域、频道总览、支线、置顶、频道成员、重命名与归档、消息与执行的关系、环境入口、项目目标和频道说明 | 队友配置与例行事务归 `agents.md`；环境规则归 `environment.md`，自有设备归 `devices.md`；任务列表归 `tasks.md`；例行事务归 `routines.md` |

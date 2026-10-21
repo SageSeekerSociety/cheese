@@ -1,6 +1,7 @@
 {
   "contributorNotInProject": "只能把项目成员加为协作者",
   "draftAccessChoice": "邮箱域名组 {unknown} 不在这个空间里，可用的有：{names}",
+  "draftAiModeChoice": "AI 队友辅导方式只能是引导为主、讲解与示例、先明确需求再实现、不加限制或沿用空间设置",
   "draftCategoryChoice": "分类只能是这个空间已有的：{names}",
   "draftTemplateChoice": "模板只能是这个空间已有的：{names}",
   "draftDeadlineFormat": "截止时间写成「YYYY-MM-DD HH:MM」，例如 2026-11-08 23:59",

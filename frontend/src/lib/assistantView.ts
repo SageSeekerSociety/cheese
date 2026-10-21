@@ -85,6 +85,7 @@ const LABEL_KEYS: Record<string, string> = {
   access: 'tasks.form.more.access',
   attachments: 'tasks.attachmentPicker.title',
   ai_guidance: 'spaces.detail.publishTask.teaching.title',
+  ai_mode: 'spaces.teaching.fields.mode',
 }
 
 export function fieldLabel(key: string): string {
@@ -170,8 +171,12 @@ export function valueText(key: string, value: unknown, terms: DraftTerms, before
     case 'attachments':
       return (value as { name: string }[]).map((f) => f.name).join('、') || t('tasks.assistant.changes.none')
     case 'ai_guidance': {
-      const prompt = (value as { systemPrompt?: string | null }).systemPrompt?.trim()
-      return prompt ? excerpt(prompt) : t('spaces.detail.publishTask.teaching.inherit')
+      const given = value as { mode?: string | null; systemPrompt?: string | null }
+      const parts = [
+        given.mode ? t(`spaces.teaching.mode.${given.mode}`) : '',
+        excerpt(given.systemPrompt?.trim() ?? ''),
+      ].filter(Boolean)
+      return parts.join(t('spaces.detail.publishTask.strip.separator')) || t('spaces.teaching.mode.inherit')
     }
     case 'form':
       return value === 'TEAM' ? t('tasks.form.team') : t('tasks.form.individual')

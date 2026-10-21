@@ -103,6 +103,7 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "access": ("accessControlEnabled", "accessDomainGroupIds"),
     "attachments": ("attachmentIds", "attachmentFiles"),
     "ai_guidance": ("teaching", "teachingOwn"),
+    "ai_mode": ("teaching", "teachingOwn"),
 }
 
 # i18n-data: what 芝士 writes and reads, matched against its words.
@@ -113,6 +114,15 @@ DIFFICULTIES = {"初级": 1, "中级": 2, "高级": 3}
 KINDS = {"文件": "FILE", "文字": "TEXT"}
 # i18n-data: whether a team's members may change once it is approved.
 LOCKING = {"允许变更": "NO_LOCK", "报名通过后锁定": "LOCK_ON_APPROVAL"}
+# i18n-data: how the AI teammate helps, as the form names the four ways; the
+# fifth keeps the space's.
+AI_MODES = {
+    "引导为主": "guide",
+    "讲解与示例": "example",
+    "先明确需求再实现": "spec",
+    "不加限制": "free",
+    "沿用空间设置": None,
+}
 
 _WHEN = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?\s*$")
 
@@ -467,10 +477,23 @@ def from_agent(
         given = list(files or [])
         out["attachmentIds"] = [f["id"] for f in given]
         out["attachmentFiles"] = given
-    if "ai_guidance" in args:
-        text = str(args["ai_guidance"] or "").strip()
-        out["teaching"] = {"systemPrompt": text} if text else {}
-        out["teachingOwn"] = bool(text)
+    if "ai_guidance" in args or "ai_mode" in args:
+        # The 题目's own guidance, on top of the space's: what 芝士 did not name
+        # (the materials, the other of the two) stays as it is.
+        teaching = dict(current.get("teaching") or {})
+        if "ai_guidance" in args:
+            teaching["systemPrompt"] = str(args["ai_guidance"] or "").strip() or None
+        if "ai_mode" in args:
+            if args["ai_mode"] not in AI_MODES:
+                raise BadRequestError(say("draftAiModeChoice"))
+            teaching["mode"] = AI_MODES[args["ai_mode"]]
+        out["teaching"] = teaching
+        out["teachingOwn"] = bool(
+            teaching.get("mode")
+            or teaching.get("systemPrompt")
+            or teaching.get("materialIds")
+            or teaching.get("documentIds")
+        )
     return out
 
 
@@ -762,6 +785,7 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
     levels = {v: k for k, v in DIFFICULTIES.items()}
     kinds = {v: k for k, v in KINDS.items()}
     lockings = {v: k for k, v in LOCKING.items()}
+    modes = {v: k for k, v in AI_MODES.items() if v}
     group_by_id = {v: k for k, v in space.domain_groups.items()}
 
     def when(ms) -> str:
@@ -811,12 +835,10 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
             for f in fields.get("attachmentFiles") or []
             if isinstance(f, dict)
         ),
+        "ai_mode: "
+        + modes.get((fields.get("teaching") or {}).get("mode"), "沿用空间设置"),
         "ai_guidance: "
-        + (
-            str((fields.get("teaching") or {}).get("systemPrompt") or "")
-            if fields.get("teachingOwn")
-            else "（用空间的默认指导）"
-        ),
+        + str((fields.get("teaching") or {}).get("systemPrompt") or "（无）"),
         "submission:",
         *(
             f"  - {e.get('prompt')}（{kinds.get(e.get('type'), e.get('type'))}）"

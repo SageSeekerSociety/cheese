@@ -148,6 +148,13 @@ export default {
     // 这四条都挂着 `spaceManageGuard`（见文件头）：非管理员直接被领到下面那条
     // `SpaceManageDenied`，不再靠页面自己拉到 403 才报错。
     {
+      // 空间资料库：成员看「所有成员」那一档，管理员在这里也能传、改档、撤下（和设置里那一栏同一页）。
+      path: 'library',
+      name: 'SpacesLibrary',
+      component: () => import('@/views/spaces/detail/settings/SpaceMaterials.vue'),
+      meta: { titleKey: 'spaces.materials.title' },
+    },
+    {
       // 我在这个空间的草稿：新题目和对已发布题目的修改（侧栏「我的草稿」）。
       path: 'drafts',
       name: 'SpacesDetailDrafts',

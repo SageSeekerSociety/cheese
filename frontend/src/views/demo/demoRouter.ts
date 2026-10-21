@@ -71,6 +71,7 @@ const catalogTargets = [
   { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId/submissions', name: 'TasksSubmissions', component: blank },
   { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
+  { path: '/spaces/:spaceId/library', name: 'SpacesLibrary', component: blank },
   { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
   { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
   // 题目那一层（`catalogScenesPages3.ts` 里题卡、单份回答、回答列表三件）互相指路：题卡上

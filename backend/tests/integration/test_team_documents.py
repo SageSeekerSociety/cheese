@@ -179,7 +179,9 @@ def test_an_ai_teammate_reads_only_the_team_documents_its_course_names(client):
         == 403
     )
 
-    task = seed_task_with_protocol(client, teaching={"document_ids": [named]})
+    task = seed_task_with_protocol(
+        client, override={"teaching": {"document_ids": [named]}}
+    )
     seed_claim(client, task, handle="owner")
     course = post_project(
         client, json={"name": "课程设计", "external_task_id": task}, owner="owner"

@@ -71,7 +71,7 @@ export const SPACE_TASK_BOARD: Space = {
   defaultCategoryId: 31,
   visibleTaskLimit: 12,
   reviewStatus: 'APPROVED',
-  teaching: { currentWeek: 6, allowedTopics: ['进程调度', '死锁'] },
+  teaching: { mode: 'guide', systemPrompt: '先弄清学生卡在哪一步，再决定怎么帮。' },
 }
 
 /**
@@ -131,10 +131,8 @@ export const SPACE_SETTINGS_GROUPS: SettingsGroup[] = [
 
 /** 这块板「给 AI 队友的指导」的默认那一份。 */
 export const SPACE_TEACHING: SpaceTeaching = {
-  systemPrompt: '这是一门操作系统的课。回答时先给结论，再给可以自己动手验证的那一步。',
-  currentWeek: 6,
-  allowedTopics: ['进程调度', '死锁'],
-  avoidInCode: ['eval', '不教 pthread 以外的线程库'],
+  mode: 'guide',
+  systemPrompt: '这是一门操作系统的课。回答时先给结论，再给可以自己动手验证的那一步。不要用 pthread 以外的线程库。',
 }
 
 /** 资料库里的几份：文件、图、仅管理员的一档各来一个。 */
