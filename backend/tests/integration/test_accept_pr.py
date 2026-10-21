@@ -225,11 +225,11 @@ def _poll(client) -> dict:
 
 
 def _backfill_merge_actors(client) -> dict:
-    """跑一轮合并人补录（项目总览还看得到的那 14 天）。"""
+    """跑一次合并人补录（项目总览还看得到的那 14 天，上线时那一次）。"""
     from app.domain.review import pr_poll
 
     return client.portal.call(
-        lambda: pr_poll.poll_missing_merge_actors(_chat_service())
+        lambda: pr_poll.backfill_missing_merge_actors(_chat_service())
     )
 
 

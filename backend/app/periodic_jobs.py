@@ -51,7 +51,6 @@ PERIODIC_JOB_NAMES = (
     "task deadline reminder",
     "pr poll",  # forge_bound: PR status reads
     "task pr poll",  # forge_bound: task branch/PR reads
-    "merge actor backfill",  # forge_bound: who merged an already-merged PR
     "task closing",  # forge_bound: a task going on reads its next branch
     "draft pr sweep",  # forge_bound: branch/compare reads and PR creation
     "orphan sweep",

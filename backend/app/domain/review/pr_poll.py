@@ -85,8 +85,8 @@ _uncarded_task_cursor: uuid.UUID | None = None
 #: 下面一层，读不到那个常量，所以这里重写一遍。
 MERGE_ACTOR_BACKFILL_WINDOW = timedelta(days=14)
 
-#: 一拍最多补几张：这是后台读，配额要留给还在走的卡。
-MERGE_ACTORS_PER_TICK = 20
+#: 一次补录最多补几张：上线时的那一次后台读，配额要留给还在走的卡。
+MERGE_ACTORS_PER_BACKFILL = 20
 
 #: The three words `_checks_state` folds a PR's check runs into.
 CHECKS_RUNNING = "running"
@@ -479,15 +479,17 @@ async def poll_uncarded_task_prs(
     }
 
 
-async def poll_missing_merge_actors(chat: Chat) -> dict:
+async def backfill_missing_merge_actors(chat: Chat) -> dict:
     """Backfill who merged the cards that landed on GitHub before the poller
     recorded it (`AcceptCard.merged_by`).
 
-    The project overview names the person behind each accept. A card merged on
-    GitHub has no `decided_by`; the poller now records GitHub's merger as it
-    watches, and this sweep fills the window that overview still shows. One
-    GitHub read per card, one card per transaction — a slow or failing forge
-    read must not hold another card's row or stop the rest."""
+    Every path but one now records the merger as it watches a merge; this runs
+    ONCE per process at takeover, never on a clock (the owner's call on
+    2026-10-21: checking every minute for a fact that stops changing is
+    waste). What it fills is the window the project overview still shows, so a
+    redeploy after the first one finds almost nothing. One GitHub read per
+    card, one card per transaction — a slow or failing forge read must not
+    hold another card's row or stop the rest."""
     # deferred-import: tests replace this name on app.domain.review.services
     from app.domain.review.services import AcceptService
 
@@ -495,7 +497,7 @@ async def poll_missing_merge_actors(chat: Chat) -> dict:
     since = datetime.now(UTC) - MERGE_ACTOR_BACKFILL_WINDOW
     async with sessions() as session:
         card_ids = await AcceptService(session).missing_merge_actor_card_ids(
-            since=since, limit=MERGE_ACTORS_PER_TICK
+            since=since, limit=MERGE_ACTORS_PER_BACKFILL
         )
     slots = asyncio.Semaphore(PRS_AT_ONCE)
 

@@ -4,7 +4,9 @@ The poller writes `AcceptCard.merged_by` when it watches a PR merge. Cards
 merged before that existed have no merger on them, and the project overview's
 「最近进展」 shows those accepts without a name. This is the backfill: one
 GitHub read per card, only for the window that overview still shows, and only
-until each card has an answer (`{}` counts as one — see `merge_actor`).
+until each card has an answer (`{}` counts as one — see `merge_actor`). It
+runs once per process at takeover (`pr_poll.backfill_missing_merge_actors`),
+not on a clock.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ async def fill_merged_by(self: pkg.AcceptService, card_id: uuid.UUID) -> bool:
 
     False when there is nothing left to do (already answered, decided on the
     platform, never merged, no PR) or when the read could not be made — the
-    sweep asks again on the next tick, and a GitHub hiccup is not an error the
+    next process start asks again, and a GitHub hiccup is not an error the
     progress line should turn into one. One card per transaction, as in the
     open-card poll: the forge read must not be made under another card's row.
     """

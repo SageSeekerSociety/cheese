@@ -8,24 +8,32 @@ Nullable with no backfill in SQL: the value is a GitHub fact the database
 cannot derive, and the poller's own backfill sweep fills the last 14 days.
 
 Revision ID: 53f2f3deeb83
-Revises: b5d1e9a3c7f2
+Revises: d41f7b2c9e60
 Create Date: 2026-10-21 16:46:45
 """
 
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
 revision: str = "53f2f3deeb83"
-down_revision: str | Sequence[str] | None = "b5d1e9a3c7f2"
+down_revision: str | Sequence[str] | None = "d41f7b2c9e60"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("accept_cards", sa.Column("merged_by", sa.JSON(), nullable=True))
+    op.add_column(
+        "accept_cards",
+        sa.Column(
+            "merged_by",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+        ),
+    )
 
 
 def downgrade() -> None:

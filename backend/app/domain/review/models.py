@@ -22,6 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -215,7 +216,7 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # 绑到平台，旧记录也能显示成平台名字。`{}` 和 NULL 是两件事 —— NULL 是
     # 还没问过 GitHub（轮询兜底会接着问），`{}` 是问过了、它没报人，再问就
     # 是每分钟白白花一次读配额。整包读写，所以放 JSON（同 `merge_state`）。
-    merged_by: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    merged_by: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Which poll is advancing this card, and until when (`poll_claim.py`): one
     # advancer per card, without a row lock held across the forge's answer.
     poll_claim: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
