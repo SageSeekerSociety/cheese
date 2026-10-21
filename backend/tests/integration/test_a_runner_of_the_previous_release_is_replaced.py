@@ -873,7 +873,7 @@ async def test_a_replacement_that_failed_once_is_settled_on_the_retry(
 
     async def exercise():
         session = ref(project, topic)
-        await _started_as_this_release_would(client, hub, tmp_path, session)
+        old = await _started_as_this_release_would(client, hub, tmp_path, session)
         await _unread_input(client, session)
         hub.old = True
         service = _backend(client, hub, tmp_path)
@@ -895,6 +895,8 @@ async def test_a_replacement_that_failed_once_is_settled_on_the_retry(
             async with asyncio.timeout(HANG_S):
                 while await holds() != (False, set()):
                     await asyncio.sleep(0.05)
+            # The seat is settled once its old runner has been replaced.
+            await _until(lambda: old.sid in hub.closed)
         finally:
             await service.stop_listening(0)
         assert calls["n"] >= 2
