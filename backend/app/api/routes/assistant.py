@@ -96,7 +96,13 @@ class ConversationOut(BaseModel):
     questions: int | None = None
 
 
-@router.get("/conversations")
+class ConversationsOut(BaseModel):
+    """The person's topics, latest first."""
+
+    conversations: list[ConversationOut]
+
+
+@router.get("/conversations", **typed_response(ConversationsOut))
 async def list_conversations(db: DbSession, auth: AuthUser) -> dict:
     """This person's topics with 芝士, latest first: the thread the panel shows,
     wherever it is opened."""
