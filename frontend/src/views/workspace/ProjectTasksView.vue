@@ -172,7 +172,7 @@ const channelActions = computed<MenuAction[]>(() => [
 const pickedChannel = computed(() => (props.channelId ? channelTitle.value.get(props.channelId) ?? null : null))
 const pickedGlyph = computed(() => props.channels.find((c) => c.id === props.channelId)?.glyph ?? 'mdi-pound')
 const nameOf = (handle: string) => props.names[handle] || handle
-const agentNameOf = (task: RoomTask) => (task.agent_handle && props.names[task.agent_handle]) || props.agentName
+const agentNameOf = (task: RoomTask) => (task.agent_handle && props.names[task.agent_handle]) || props.agentName || ''
 
 // 状态那一格：图标、颜色、动不动和下面那一行都在 `lib/taskState.ts`。已关闭的写「已关闭」；
 // 还开着、最后一步已采纳（队友在写总结）的那一会儿写「进行中」，样子也跟着开启。
