@@ -29,10 +29,9 @@ from app.core.errors import NotFoundError
 from app.core.storage import get_storage_backend
 from app.domain.agent.personal import billing
 from app.domain.agent.personal.prompt import task_brief
-from app.domain.block.models import BlockKind
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.queries import latest_messages
 from app.domain.living_doc.services import Documents
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import ProjectService
 from app.domain.task import drafts
 from app.domain.task.attachment_service import TaskAttachmentService
 from app.domain.task.claims import claim_of
@@ -147,7 +146,7 @@ IN_PROJECT = (
 
 
 async def _project_line(reader: Reader, project_id: uuid.UUID) -> str:
-    project = await ProjectRepository(reader.session).get(project_id)
+    project = await ProjectService(reader.session).get(project_id)
     name = project.name if project is not None else ""
     return f"<项目 {name} id={project_id}>"
 
@@ -162,11 +161,9 @@ async def _topic(reader: Reader, page_id: str) -> Shown:
         what = f"支线「{place.thread.title}」（在频道「{place.room.title}」里）"
     else:
         what = f"频道「{place.room.title}」"
-    page = await BlockRepository(reader.session).page_for_topic(
-        place.conversation_id, limit=RECENT, kinds=[BlockKind.message]
-    )
     lines = [
-        f"{b.author}：{' '.join(b.content.split())[:RECENT_CHARS]}" for b in page.items
+        f"{b.author}：{' '.join(b.content.split())[:RECENT_CHARS]}"
+        for b in await latest_messages(reader.session, place.conversation_id, RECENT)
     ]
     recent = (
         f"<最近 {len(lines)} 条>\n" + "\n".join(lines) + "\n</最近>"
