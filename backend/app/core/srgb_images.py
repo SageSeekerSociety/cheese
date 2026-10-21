@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Callable
+from typing import Any
 
 from PIL import Image, ImageCms, ImageOps
 
@@ -39,9 +40,12 @@ def _primaries(profile: ImageCms.ImageCmsProfile) -> list[tuple[float, float]]:
     Raises for anything that is not an RGB profile with readable colorants, and
     every caller treats that as "not sRGB".
     """
-    measured = profile.profile
+    # Pillow's stubs say `.profile` is the stream the profile was opened from;
+    # the object it really is carries each colourant as a CIE XYZ triple and its
+    # xy chromaticity.
+    measured: Any = profile.profile
     return [
-        (colorant[1][0], colorant[1][1])
+        (float(colorant[1][0]), float(colorant[1][1]))
         for colorant in (
             measured.red_colorant,
             measured.green_colorant,
@@ -122,6 +126,8 @@ def to_srgb(content: bytes) -> bytes:
                 _SRGB,
                 outputMode="RGBA" if "A" in picture.getbands() else "RGB",
             )
+            if converted is None:
+                return content
             # Pillow writes the profile the image carries into the file it
             # saves; the pixels are sRGB now, so there is nothing to declare.
             converted.info.pop("icc_profile", None)
