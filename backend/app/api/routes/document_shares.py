@@ -29,6 +29,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_roles import may
 from app.core.errors import ForbiddenError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
+from app.domain.identity.services import IdentityService
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.living_doc.services import Documents
@@ -39,6 +40,9 @@ from app.domain.project.room_files import (
     clean_artifact_path,
 )
 from app.domain.project_permissions import Permission
+from app.domain.review.queries import has_accepted
+from app.domain.usage import referrals
+from app.domain.user.services import user_by_handle
 from app.domain.web_snippet.services import Snippets
 
 documents = APIRouter(prefix="/documents", tags=["document-shares"])
@@ -139,11 +143,23 @@ async def _shared(db, token: str):
     return doc
 
 
+class SharedByOut(BaseModel):
+    """Who shared the page, for its colophon. ``code`` is their own invite
+    code while it still admits someone, so a reader can come in on it."""
+
+    handle: str
+    nickname: str | None
+    code: str | None
+    seats_left: int
+
+
 class SharedDocumentOut(BaseModel):
     title: str | None
     #: The current version's Markdown: pending suggestions are not in it.
     content: str
     updated_at: datetime
+    #: None when the link was made by an AI teammate rather than a person.
+    shared_by: SharedByOut | None
 
 
 @shared.get("/{token}", **typed_response(SharedDocumentOut))
@@ -152,7 +168,22 @@ async def read_shared(token: str, db: DbSession, response: Response) -> dict:
     doc = await _shared(db, token)
     response.headers.update(_UNLISTED)
     return ok(
-        {"title": doc.title, "content": doc.content, "updated_at": doc.updated_at}
+        {
+            "title": doc.title,
+            "content": doc.content,
+            "updated_at": doc.updated_at,
+            "shared_by": await _shared_by(db, doc.id),
+        }
+    )
+
+
+async def _shared_by(db, document_id: uuid.UUID) -> dict | None:
+    share = await Shares(db).of(document_id)
+    sharer = await user_by_handle(db, share.created_by) if share else None
+    if sharer is None or await IdentityService(db).is_agent(sharer.username):
+        return None
+    return await referrals.guest_pass(
+        db, sharer, has_accepted=lambda: has_accepted(db, sharer.username)
     )
 
 

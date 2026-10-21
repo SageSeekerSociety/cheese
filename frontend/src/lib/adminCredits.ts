@@ -32,7 +32,7 @@ export interface Plan {
   is_default: boolean
 }
 
-export type PackSource = 'plan_period' | 'task_earmark' | 'purchase' | 'admin_grant'
+export type PackSource = 'plan_period' | 'task_earmark' | 'purchase' | 'admin_grant' | 'reward'
 
 export interface CreditPack {
   id: string

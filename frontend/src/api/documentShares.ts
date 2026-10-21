@@ -37,10 +37,20 @@ export function shareUrl(token: string): string {
   return `${window.location.origin}/s/${encodeURIComponent(token)}`
 }
 
+/** Who shared the document, and the invite seats their own code still has. */
+export interface SharedBy {
+  handle: string
+  nickname: string | null
+  /** Their personal invite code; null when they have none to offer. */
+  code: string | null
+  seats_left: number
+}
+
 export interface SharedDocument {
   title: string | null
   content: string
   updated_at: string
+  shared_by: SharedBy | null
 }
 
 const shared = (token: string) => `/shared/${encodeURIComponent(token)}`

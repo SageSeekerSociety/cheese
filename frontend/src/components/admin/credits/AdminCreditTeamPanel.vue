@@ -77,6 +77,7 @@ function packName(pack: CreditPack): string {
     return t('credits.panel.packPlan', { month: fmtMonth(pack.period_start ?? pack.created_at, locale.value) })
   }
   if (pack.source === 'admin_grant') return t('credits.panel.packGrant')
+  if (pack.source === 'reward') return t('credits.panel.packReward')
   if (pack.source === 'purchase') return t('credits.panel.packPurchase')
   if (pack.source === 'task_earmark') {
     return pack.task_name ? t('credits.panel.packTask', { task: pack.task_name }) : t('credits.panel.packTaskUnknown')

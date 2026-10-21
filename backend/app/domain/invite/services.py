@@ -27,8 +27,9 @@ class InviteCodeService:
             raise ValueError("CODE_EXHAUSTED")
         return invite
 
-    async def consume_code(self, code: str) -> None:
-        """Atomically consume one use or report why the code is no longer valid."""
+    async def consume_code(self, code: str) -> InviteCode:
+        """Atomically consume one use and return the code, or report why it is
+        no longer valid."""
         now = datetime.now(UTC)
         result = await self._session.execute(
             update(InviteCode)
@@ -39,10 +40,11 @@ class InviteCodeService:
                 InviteCode.use_count < InviteCode.max_uses,
             )
             .values(use_count=InviteCode.use_count + 1)
-            .returning(InviteCode.id)
+            .returning(InviteCode)
         )
-        if result.scalar_one_or_none() is not None:
-            return
+        consumed = result.scalar_one_or_none()
+        if consumed is not None:
+            return consumed
 
         # A validation performed earlier in registration is intentionally not
         # trusted here: another transaction may have consumed the final use.

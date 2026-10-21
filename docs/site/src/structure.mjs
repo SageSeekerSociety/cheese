@@ -18,7 +18,7 @@ export const SECTIONS = [
     ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks', 'inbox', 'routines']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
     ['教学', ['challenges', 'spaces']],
-    ['资源', ['environment', 'devices', 'quota', 'feedback']],
+    ['资源', ['environment', 'devices', 'quota', 'rewards', 'feedback']],
     ['扩展', ['connections', 'skills']],
     ['账号', ['account']],
   ]],
