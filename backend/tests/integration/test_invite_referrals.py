@@ -7,14 +7,16 @@ delivery within seven days, which also pays the inviter 150 credits and 50
 points; each friend pays out once.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.domain.invite.models import InviteReferral
+from app.domain.usage.models import CreditReward
 from tests.integration.conftest import (
     join_project_team,
     post_project,
@@ -123,6 +125,22 @@ def test_open_registration_lets_a_used_up_code_through_uncredited(
     seen = _invites(client, mine)
     assert seen["use_count"] == 1
     assert late not in [p["handle"] for p in seen["invitees"]]
+
+
+def test_open_registration_mails_a_code_to_someone_on_a_used_up_link(
+    client, _portal, inviter
+):
+    """The signup page sends the code when it asks for the email code, which is
+    the first thing a friend on an old link does."""
+    _, mine = inviter
+    code = _invites(client, mine)["code"]
+    _register(client, _portal, code)
+
+    response = client.post(
+        "/users/verify/email",
+        json={"email": f"late-{uuid.uuid4().hex[:8]}@example.com", "inviteCode": code},
+    )
+    assert response.status_code == 200, response.text
 
 
 def test_invite_only_registration_refuses_a_used_up_code(
@@ -248,6 +266,58 @@ def test_past_the_monthly_cap_only_points_are_recorded(
     assert (seen["invite_credits"], seen["points"]) == (150, 100)
     assert sorted(p["credits"] for p in seen["invitees"]) == [0, 150]
     assert _credits(client, mine) == 150
+
+
+def test_the_monthly_cap_starts_again_next_month(client, _portal, inviter, monkeypatch):
+    from app.domain.usage import referrals
+
+    monkeypatch.setattr(referrals, "INVITER_MONTHLY_CAP", 150)
+    handle, mine = inviter
+    _accept_a_delivery(client, handle)
+    code = _invites(client, mine)["code"]
+    first, _ = _register(client, _portal, code)
+    _accept_a_delivery(client, first)
+
+    async def _paid_last_month() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                update(CreditReward)
+                .where(CreditReward.key.like("invite:referrer:%"))
+                .values(created_at=datetime.now(UTC) - timedelta(days=40))
+            )
+            await session.commit()
+
+    _portal.call(_paid_last_month)
+    second, _ = _register(client, _portal, code)
+    _accept_a_delivery(client, second)
+
+    assert _credits(client, mine) == 300
+
+
+def test_two_first_views_at_once_make_one_code(client, _portal, inviter):
+    """The public shared page can be a person's first view of their own code,
+    opened by several readers at the same moment."""
+    from app.domain.usage import referrals
+    from app.domain.user.models import User
+
+    async def never() -> bool:
+        return False
+
+    async def _race() -> tuple[str, str]:
+        async with client.test_factory() as a, client.test_factory() as b:
+            user_a = await a.scalar(select(User).where(User.username == "inviter"))
+            user_b = await b.scalar(select(User).where(User.username == "inviter"))
+            first = await referrals.personal_code(a, user_a, has_accepted=never)
+            # b reads before a commits, then waits on a's row.
+            second = asyncio.create_task(
+                referrals.personal_code(b, user_b, has_accepted=never)
+            )
+            await asyncio.sleep(0.3)
+            await a.commit()
+            return first.code, (await second).code
+
+    first, second = _portal.call(_race)
+    assert first == second
 
 
 def test_a_shared_page_offers_the_sharers_seats_while_they_last(

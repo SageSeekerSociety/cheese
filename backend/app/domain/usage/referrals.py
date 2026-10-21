@@ -16,9 +16,11 @@ is a ``CreditReward`` keyed by the invitee, so it pays once whatever retries.
 """
 
 import secrets
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.invite.models import InviteCode, InviteReferral
@@ -40,27 +42,35 @@ PACK_LIFETIME = timedelta(days=90)
 
 
 async def personal_code(
-    session: AsyncSession, user: User, *, has_accepted: bool
+    session: AsyncSession, user: User, *, has_accepted: Callable[[], Awaitable[bool]]
 ) -> InviteCode:
     """The person's own code, made the first time it is asked for. Someone who
     has already accepted a delivery (``has_accepted``, which the caller reads
-    from review) gets it with the extra uses unlocked."""
-    code = await session.scalar(
-        select(InviteCode).where(InviteCode.owner_user_id == user.id)
-    )
+    from review, and which is asked only when the code is made) gets it with
+    the extra uses unlocked. Two first views at once make one code: the
+    public shared page can be the first view, opened by many readers."""
+    mine = select(InviteCode).where(InviteCode.owner_user_id == user.id)
+    code = await session.scalar(mine)
     if code is not None:
         return code
-    code = InviteCode(
-        code=secrets.token_urlsafe(6),
-        owner_user_id=user.id,
-        created_by=user.id,
-        max_uses=FIRST_USES + (UNLOCKED_USES if has_accepted else 0),
-        unlocked_at=datetime.now(UTC) if has_accepted else None,
-        note="personal",
+    unlocked = await has_accepted()
+    await session.execute(
+        insert(InviteCode)
+        .values(
+            code=secrets.token_urlsafe(6),
+            owner_user_id=user.id,
+            created_by=user.id,
+            max_uses=FIRST_USES + (UNLOCKED_USES if unlocked else 0),
+            use_count=0,
+            is_active=True,
+            unlocked_at=datetime.now(UTC) if unlocked else None,
+            note="personal",
+        )
+        .on_conflict_do_nothing(index_elements=["owner_user_id"])
     )
-    session.add(code)
-    await session.flush()
-    return code
+    found = await session.scalar(mine)
+    assert found is not None  # inserted here, or by whoever won the race
+    return found
 
 
 async def record_referral(
@@ -137,6 +147,13 @@ async def on_accepted(session: AsyncSession, handle: str | None) -> None:
         actor="system",
         expires_at=now + PACK_LIFETIME,
     )
+    # Two friends getting started at once must not both fit under the cap:
+    # the inviter's own code row is the lock their payouts queue on.
+    await session.execute(
+        select(InviteCode.id)
+        .where(InviteCode.owner_user_id == inviter_id)
+        .with_for_update()
+    )
     paid = await _paid_this_month(session, inviter_id, now)
     await incentives.issue(
         key=f"invite:referrer:{user.id}",
@@ -175,7 +192,9 @@ def _stage(row: InviteReferral, now: datetime) -> str:
     return "onboarded" if row.onboarded_at is not None else "registered"
 
 
-async def overview(session: AsyncSession, user: User, *, has_accepted: bool) -> dict:
+async def overview(
+    session: AsyncSession, user: User, *, has_accepted: Callable[[], Awaitable[bool]]
+) -> dict:
     """What the person's 邀请好友 page shows."""
     code = await personal_code(session, user, has_accepted=has_accepted)
     rows = list(
@@ -232,7 +251,9 @@ async def overview(session: AsyncSession, user: User, *, has_accepted: bool) -> 
     }
 
 
-async def guest_pass(session: AsyncSession, user: User, *, has_accepted: bool) -> dict:
+async def guest_pass(
+    session: AsyncSession, user: User, *, has_accepted: Callable[[], Awaitable[bool]]
+) -> dict:
     """The sharer's code as a shared page's colophon offers it, with the seats
     left."""
     handle = user.username

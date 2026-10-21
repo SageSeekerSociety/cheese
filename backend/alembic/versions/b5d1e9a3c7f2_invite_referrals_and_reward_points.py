@@ -128,6 +128,9 @@ def upgrade() -> None:
             unique=True,
             postgresql_concurrently=True,
         )
+    # The block above committed; this statement takes invite_code exclusively
+    # again, so it waits for the lock the same way the start did.
+    with_lock_retries("invite_code")
     op.execute(
         "ALTER TABLE invite_code ADD CONSTRAINT uq_invite_code_owner_user_id "
         "UNIQUE USING INDEX uq_invite_code_owner_user_id"

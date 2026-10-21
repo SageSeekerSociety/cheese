@@ -183,7 +183,7 @@ async def _shared_by(db, document_id: uuid.UUID) -> dict | None:
     if sharer is None or await IdentityService(db).is_agent(sharer.username):
         return None
     return await referrals.guest_pass(
-        db, sharer, has_accepted=await has_accepted(db, sharer.username)
+        db, sharer, has_accepted=lambda: has_accepted(db, sharer.username)
     )
 
 

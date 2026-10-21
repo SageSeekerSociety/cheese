@@ -140,7 +140,7 @@ async def my_invites(
     if user is None:
         raise NotFoundError()
     found = await referrals.overview(
-        session, user, has_accepted=await has_accepted(session, user.username)
+        session, user, has_accepted=lambda: has_accepted(session, user.username)
     )
     await session.commit()
     return ok(MyInvitesOut.model_validate(found).model_dump(mode="json"))
