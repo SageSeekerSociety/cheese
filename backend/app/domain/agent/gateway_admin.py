@@ -75,7 +75,7 @@ from app.domain.agent.gateway_admin_types import (
     FREE,  # noqa: F401
     NO_EXPLICIT_CACHE,  # noqa: F401
     SESSION_HEADER,  # noqa: F401
-    SPEND_CAP,  # noqa: F401
+    SPEND_CAP,
     UPSTREAM_HEADERS,  # noqa: F401
     AdminKey,
     AdminModel,
@@ -426,6 +426,7 @@ class GatewayAdmin:
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
         session_header: str | None = None,
+        spend_cap_usd: float | None = None,
     ) -> None:
         """改一条运行时部署(一个模型的一条线路)。``None`` 一律表示「这次不动它」。
 
@@ -443,6 +444,9 @@ class GatewayAdmin:
         编辑界面不回显上游凭据,所以 ``api_key=None`` 必须意味着保持原样,而不是把
         key 清空——把 key 清成空,这条模型下一次调用就直接失败了。这份「保持原样」
         由网关的合并语义兑现:字段不出现,库里旧值就不动。
+
+        ``spend_cap_usd=0`` clears the cap: the merge drops a null, and
+        ``spend_cap.declared_cap`` reads a cap of 0 or less as none.
         """
         info: dict[str, object] = {}
         if label is not None:
@@ -455,6 +459,8 @@ class GatewayAdmin:
             info["cheese_overseas"] = bool(overseas)
         info.update(_capability_params(capabilities))
         info.update(_source_info(free, session_header))
+        if spend_cap_usd is not None:
+            info[SPEND_CAP] = spend_cap_usd
         params: dict[str, object] = {}
         if order is not None:
             params["order"] = order

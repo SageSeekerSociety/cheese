@@ -197,6 +197,45 @@ export default [
       ],
     },
   },
+  {
+    // A test reads what the code does, not what the code says (AGENTS.md, "Test
+    // behaviour, never the implementation"): a spec that reads source as text
+    // goes red on a refactor and stays green when behaviour breaks. The ignores
+    // list only shrinks — a file leaves it when its read is replaced by a test of
+    // behaviour or by a linter.
+    files: ['src/**/*.spec.ts', 'src/**/*.test.ts'],
+    ignores: [
+      'src/branchProtectionSection.spec.ts',
+      'src/offScreenSkipping.spec.ts',
+      'src/styles/docBlocks.spec.ts',
+      'src/views/home/Landing.spec.ts',
+      'src/vShowDisplayUtilities.spec.ts',
+      'src/i18n/catalog.spec.ts',
+      'src/components/base/BaseButton.spec.ts',
+      'src/components/base/SettingsRow.spec.ts',
+      'src/components/CheeseAvatar.spec.ts',
+      'src/views/feedback/scroll.spec.ts',
+      'src/views/demo/demoTokens.spec.ts',
+      'src/components/ChatPanel.mentionMenu.spec.ts',
+      'src/views/demo/demoTransitions.spec.ts',
+      'src/views/demo/DemoTokensPage.spec.ts',
+      'src/components/admin/AdminGrid.spec.ts',
+      'src/components/common/Navigation/BottomAppBar.spec.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ImportDeclaration[source.value=/\\?raw$/]',
+          message: "A test reads behaviour, not source; see AGENTS.md 'Test behaviour, never the implementation'.",
+        },
+        {
+          selector: 'ImportDeclaration[source.value=/^(node:)?fs(\\u002Fpromises)?$/]',
+          message: "A test reads behaviour, not source; see AGENTS.md 'Test behaviour, never the implementation'.",
+        },
+      ],
+    },
+  },
   // Layout (prettier, import order) is judged like any other rule: CI's
   // `pnpm run lint` fails a tree that does not hold it, and the pre-commit
   // `frontend-fix` hook applies it to the staged files with `eslint --fix`.

@@ -15,6 +15,7 @@ from app.domain.notification.entity_resolvers import (
 )
 from app.domain.notification.legacy_queue import import_legacy_queue
 from app.domain.notification.letter import letter_for, render_html, render_text
+from app.domain.notification.names import names_for, with_names
 from app.domain.notification.outbox import drain_channel
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.notification.services import NotificationQueryService
@@ -50,6 +51,9 @@ async def send_email(sessions, item):
             select(User.email).where(User.id == item["recipientId"])
         )
         names = await display_names(session, item.get("payload"))
+        # An email names people by name, not by the room's <@handle> token.
+        people = await names_for(session, item.get("payload"))
+    item = {**item, "payload": with_names(item.get("payload"), people)}
     if not email or is_placeholder_email(email):
         raise ValueError("Email recipient has no address")
     letter = letter_for(item, names)

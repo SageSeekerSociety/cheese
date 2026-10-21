@@ -62,7 +62,7 @@ from app.domain.review.schemas import (
     VoidDecision,
 )
 from app.domain.review.services import AcceptService, ReviewerAdmission
-from app.domain.room_task import naming
+from app.domain.room_task import heard, naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, place_or_404
 from app.domain.room_task.services import TaskService
@@ -500,6 +500,7 @@ async def reassign_card(
         admits_reviewer=_reviewer_admission(actor, resolver),
         card_id=card_id,
         reviewer_handle=body.reviewer_handle,
+        by=actor.handle,
     )
     return ok(await svc.describe(card))
 
@@ -531,11 +532,12 @@ async def reject_card(
     task = await TaskService(db).get(card.task_id) if card.task_id else None
     actionable = task is not None and task.status == TaskStatus.open
     action = (
+        f"{heard.BACK_TO_WORK}\n"
         f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
         "照着理由和批注改，改完重新递卡（驳回不阻塞重递）。"
         "理由看不懂或者你不同意，在对话里说清分歧，请人决定。"
         if actionable
-        else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+        else heard.TASK_CLOSED
     )
 
     topic = await svc._topic_or_404(topic_id)
@@ -546,9 +548,9 @@ async def reject_card(
             f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
         headline=(
-            say("cardRejectedFixing", who=decided_by)
+            say("cardRejectedFixing", who=f"<@{decided_by}>")
             if actionable
-            else say("cardRejectedClosed", who=decided_by)
+            else say("cardRejectedClosed", who=f"<@{decided_by}>")
         ),
         meta=notice(
             EVENT_CARD_REJECTED,
@@ -567,7 +569,12 @@ async def reject_card(
 
 @router.post("/accept-cards/{card_id}/void", dependencies=[ROUTE_DECIDES])
 async def void_card(
-    card_id: uuid.UUID, body: VoidDecision, db: DbSession, resolver: ActorResolverDep
+    card_id: uuid.UUID,
+    body: VoidDecision,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).
 
@@ -589,7 +596,12 @@ async def void_card(
         raise AuthenticationRequiredError(say("voidSignIn"))
     svc = _accept_service(db)
     card = await svc.void(card_id=card_id, decided_by=actor.handle, note=body.note)
-    return ok(await svc.describe(card))
+    described = await svc.describe(card)
+    # The task's teammate was told in the void's own transaction; it is woken
+    # once that has committed, as a return wakes it.
+    await db.commit()
+    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
+    return ok(described)
 
 
 @router.post("/accept-cards/{card_id}/merge-anyway", dependencies=[ROUTE_DECIDES])

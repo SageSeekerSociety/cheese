@@ -36,14 +36,18 @@ from app.domain.room_task import presentation
 @dataclass(frozen=True)
 class AtWork:
     """Who is at work in a page of rooms, as their sessions' runners declare it
-    (`session_states`): on each room's own line, with since when, and in each
-    room's 支线."""
+    (`session_states`): on each room's own line, with since when, in each room's
+    支线, and which of the page's tasks have a session running."""
 
     #: {room: [{"member", "kind": "working", "since"}]} — the entry shape of the
     #: room socket's ``activity`` frames, ``since`` in epoch seconds.
     rooms: dict[uuid.UUID, list[dict]]
     #: {room: the seats at work in one of its 支线}.
     threads: dict[uuid.UUID, set[str]]
+    #: The conversations among the ``tasks`` the caller named whose session is
+    #: running. A task is its own conversation, so it is not in ``rooms`` unless
+    #: the room's own line is running.
+    tasks: set[uuid.UUID]
 
 
 async def at_work(
@@ -51,6 +55,7 @@ async def at_work(
     room_ids: list[uuid.UUID],
     *,
     threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
+    tasks: Mapping[uuid.UUID, uuid.UUID] | None = None,
 ) -> AtWork:
     """Who is at work in these rooms, read once for a page.
 
@@ -60,34 +65,41 @@ async def at_work(
     it answers to a main-line message it says in that message's 支线 (`waits` is
     told those seats too, to take out the members already handling the room).
     Which 支线 belongs to which room is the database's (``threads``, or
-    `threads_of_rooms` when the caller has not asked it already)."""
+    `threads_of_rooms` when the caller has not asked it already).
+
+    ``tasks`` names the page's tasks ({task: room}) when the caller also asks
+    which of them are running — the sidebar's breathing green. It is read in
+    the same statement, so a page does not pay one more query for it: running
+    sessions are few, and the rows outside this page are filtered in memory."""
     if not room_ids:
-        return AtWork({}, {})
+        return AtWork({}, {}, set())
     if threads is None:
         threads = await threads_of_rooms(db, room_ids)
+    mine = set(room_ids)
+    task_rooms = tasks or {}
     rows = await db.execute(
         select(
             SessionState.conversation_id,
             SessionState.agent_handle,
             SessionState.changed_at,
         )
-        .where(
-            SessionState.conversation_id.in_({*room_ids, *threads}),
-            SessionState.worker_status == RUNNING,
-        )
+        .where(SessionState.worker_status == RUNNING)
         .order_by(SessionState.agent_handle)
     )
     rooms: dict[uuid.UUID, list[dict]] = {}
     in_threads: dict[uuid.UUID, set[str]] = {}
+    running_tasks: set[uuid.UUID] = set()
     for conversation, seat, since in rows:
         room = threads.get(conversation)
         if room is not None:
             in_threads.setdefault(room, set()).add(seat)
-        else:
+        elif conversation in mine:
             rooms.setdefault(conversation, []).append(
                 {"member": seat, "kind": WORKING, "since": since.timestamp()}
             )
-    return AtWork(rooms, in_threads)
+        if conversation in task_rooms:
+            running_tasks.add(conversation)
+    return AtWork(rooms, in_threads, running_tasks)
 
 
 async def live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[CardRow]:
@@ -131,6 +143,25 @@ def latest_per_place(cards: Sequence[CardRow]) -> dict[tuple, CardRow]:
     """同一个地方（房间自己，或某一条活）只留最新那张：旧卡被新卡顶掉后可能还没
     结算，它说的不代表现在。"""
     return {(c.topic_id, c.task_id): c for c in cards}
+
+
+def delivering_rooms(cards: Sequence[CardRow]) -> set[uuid.UUID]:
+    """这些房间里，哪几个**名下的活**已经递出去、走在交付链路上。
+
+    房间自己那张卡不算：`room_presentation` 已经把它说进 `presentation` 那一列了
+    （`own_cards`）。这一份补的是另一半 —— 一间房里一条活在等 CI / 换基 / 修检查时，
+    这间房自己那条线多半是闲着的，而它名下的活正在往前走（侧栏那盏呼吸绿：「这个频道
+    下有活正在往前走」）。缺了这一半，那种房间在侧栏上会一直不亮。
+
+    只认「卡说得出交付中」：判据在 `presentation.card_column`（和看板同一处），
+    这里不复述哪几种码算哪一列。
+    """
+    return {
+        card.topic_id
+        for card in latest_per_place(cards).values()
+        if card.task_id is not None
+        and presentation.card_column(card) is presentation.Column.delivering
+    }
 
 
 def stuck_on_checks(cards: Sequence[CardRow]) -> dict[uuid.UUID, StuckCard]:

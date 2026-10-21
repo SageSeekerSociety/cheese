@@ -1,8 +1,12 @@
 """Rewards and manual purchases issue real packs exactly once."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
+from sqlalchemy import select
 
 from app.core.config import settings
+from app.domain.usage.models import CreditReward
 from tests.integration.test_credit_plans import _auth, _shared_team
 
 
@@ -31,7 +35,7 @@ def test_beta_credits_are_claimed_once_and_go_to_the_personal_balance(client, ac
     }
     first = client.post("/users/me/credits/beta", headers=headers)
     assert first.status_code == 200, first.text
-    assert first.json()["data"] == {"credits": 500, "points": 0, "issued": True}
+    assert first.json()["data"] == {"credits": 500, "issued": True}
     assert (
         client.post("/users/me/credits/beta", headers=headers).json()["data"]["issued"]
         is False
@@ -47,7 +51,34 @@ def test_beta_credits_are_claimed_once_and_go_to_the_personal_balance(client, ac
     )
 
 
-def test_feedback_rewards_require_triage_and_are_not_repeatable(client, actors):
+def test_every_reward_pack_can_be_spent_for_a_year(client, actors):
+    """The beta claim and an accepted report expire on the same rule: a year
+    after they were issued."""
+    report = client.post(
+        "/feedback",
+        headers=actors["owner"],
+        json={"title": "Another useful report", "visibility": "private"},
+    )
+    assert report.status_code == 200, report.text
+    before = datetime.now(UTC)
+    assert client.post("/users/me/credits/beta", headers=actors["owner"]).is_success
+    rewarded = client.post(
+        f"/admin/feedback/{report.json()['data']['id']}/reward",
+        headers=actors["triager"],
+    )
+    assert rewarded.status_code == 200, rewarded.text
+    after = datetime.now(UTC)
+
+    packs = _packs(client, actors["owner"])
+    assert len(packs) == 2
+    for pack in packs:
+        expires = datetime.fromisoformat(pack["expires_at"])
+        assert before + timedelta(days=365) <= expires <= after + timedelta(days=365)
+
+
+def test_feedback_rewards_require_triage_and_are_not_repeatable(
+    client, _portal, actors
+):
     report = client.post(
         "/feedback",
         headers=actors["owner"],
@@ -60,7 +91,20 @@ def test_feedback_rewards_require_triage_and_are_not_repeatable(client, actors):
     assert client.post(url, headers=actors["admin"]).status_code == 403
     awarded = client.post(url, headers=actors["triager"])
     assert awarded.status_code == 200, awarded.text
-    assert awarded.json()["data"] == {"credits": 100, "points": 100, "issued": True}
+    assert awarded.json()["data"] == {"credits": 100, "issued": True}
+
+    async def points() -> list[int]:
+        async with client.test_factory() as session:
+            return list(
+                await session.scalars(
+                    select(CreditReward.points).where(
+                        CreditReward.key.like("feedback:%")
+                    )
+                )
+            )
+
+    # Contribution points are no longer shown, but still recorded.
+    assert _portal.call(points) == [100]
     assert client.post(url, headers=actors["triager"]).json()["data"]["issued"] is False
     assert sum(p["credits_total"] for p in _packs(client, actors["owner"])) == 100
     detail = client.get(f"/feedback/{feedback_id}", headers=actors["owner"]).json()[
@@ -201,7 +245,6 @@ def test_reward_history_belongs_only_to_the_authenticated_person(client, actors)
         "feedback_count": 0,
         "feedback_credits": 0,
         "invite_credits": 0,
-        "points": 0,
         "items": [],
     }
 

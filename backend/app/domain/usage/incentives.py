@@ -1,7 +1,7 @@
 """Beta rewards and the purchase enquiries handled in the credit console."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -21,6 +21,10 @@ from app.domain.usage.plans import PlanService
 
 BETA_CREDITS = 500
 FEEDBACK_CREDITS = 100
+#: Every reward pack, whatever earned it, can be spent for this long after it
+#: is issued. A fixed 365 days rather than calendar months, so the migration
+#: that dated the earlier packs (``e4a7c2d9b6f1``) applies the same span.
+REWARD_LIFETIME = timedelta(days=365)
 
 
 def reward_kind(key: str) -> str:
@@ -58,7 +62,6 @@ class CreditIncentives:
         reason: str,
         actor: str,
         points: int = 0,
-        expires_at: datetime | None = None,
     ) -> dict:
         """Issue the reward named ``key`` once. A reward of points alone writes
         the row and pays no pack."""
@@ -82,9 +85,9 @@ class CreditIncentives:
                 credits,
                 source=GrantSource.REWARD,
                 reason=reason,
-                expires_at=expires_at,
+                expires_at=datetime.now(UTC) + REWARD_LIFETIME,
             )
-        return {"credits": credits, "points": points, "issued": issued is not None}
+        return {"credits": credits, "issued": issued is not None}
 
     async def beta(self, user_id: int) -> dict:
         return {
@@ -107,7 +110,6 @@ class CreditIncentives:
                 "feedback_count": 0,
                 "feedback_credits": 0,
                 "invite_credits": 0,
-                "points": 0,
                 "items": [],
             }
         rows = list(
@@ -124,12 +126,10 @@ class CreditIncentives:
             "invite_credits": sum(
                 row.credits for row in rows if reward_kind(row.key) == "invite"
             ),
-            "points": sum(row.points for row in rows),
             "items": [
                 {
                     "kind": reward_kind(row.key),
                     "credits": row.credits,
-                    "points": row.points,
                     "created_at": row.created_at.isoformat(),
                 }
                 for row in rows[:10]

@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from app.core.errors import BadRequestError
 from app.core.sentences import say
 from app.domain.agent.gateway_admin import (
+    SPEND_CAP,
     AdminKey,
     AdminModel,
     AdminSource,
@@ -198,6 +199,15 @@ def _source_target(name: str, source_id: str) -> str:
     return f"{name}/{source_id}"[:128]
 
 
+def _spend_cap(source: AdminSource) -> float | None:
+    """The row's spend cap as the gateway enforces it: a positive number, or none
+    (``spend_cap.declared_cap`` reads 0, a negative or a non-number as no cap)."""
+    cap = source.upstream_info.get(SPEND_CAP)
+    if isinstance(cap, bool) or not isinstance(cap, int | float) or cap <= 0:
+        return None
+    return float(cap)
+
+
 def _source_item(source: AdminSource) -> dict:
     """页面上的一条线路。上游凭据网关本就不给；请求头只给名字不给值。"""
     return {
@@ -214,6 +224,7 @@ def _source_item(source: AdminSource) -> dict:
         "priced": source.priced,
         "header_names": list(source.header_names),
         "session_header": source.session_header,
+        "spend_cap_usd": _spend_cap(source),
     }
 
 
@@ -230,6 +241,7 @@ def _source_snapshot(source: AdminSource) -> dict:
         "free": source.free,
         "header_names": list(source.header_names),
         "session_header": source.session_header,
+        "spend_cap_usd": _spend_cap(source),
     }
 
 

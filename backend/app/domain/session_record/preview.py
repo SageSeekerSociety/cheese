@@ -125,6 +125,7 @@ _TOOL_ARG = {
     # 报任务状态时说的是那一句：状态本身是个码。
     "cheese_task_state": "note",
     "cheese_fetch": "url",
+    "cheese_search_web": "query",
     "cheese_decision": "text",
     "cheese_title": "text",
     "cheese_notify": "title",

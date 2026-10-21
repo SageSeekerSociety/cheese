@@ -59,6 +59,7 @@ from app.core.redis import get_redis_client
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.project.models import Project
+from app.domain.room_task import heard
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -309,6 +310,13 @@ async def _write(
             reason=stage,
             by=None,
         )
+    )
+    await heard.inform(
+        session,
+        task,
+        heard.task_renamed(
+            by=None, title=verdict.title, previous="" if stage == "name" else previous
+        ),
     )
     _tell_pages(session, task.id, task.room_id)
     await session.commit()

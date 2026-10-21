@@ -3,7 +3,7 @@ import type { UsagePack } from '@/lib/creditUsage'
 
 import { useI18n } from 'vue-i18n'
 
-import { fmtMonthDay, fmtPoints } from '@/lib/creditUsage'
+import { fmtDate, fmtPoints } from '@/lib/creditUsage'
 
 // 方案之外的额度：管理员发放、内测/反馈/邀请奖励、购买、题目给项目的定向额度，各剩多少点、共多少点、
 // 何时到期，以及什么时候用到它：题目给项目的最先用，其余在方案额度用完后用。
@@ -31,7 +31,7 @@ function meta(pack: UsagePack): string {
     pack.source === 'task_earmark' ? t('usage.packs.first') : t('usage.packs.afterPlan'),
     t('usage.packs.total', { n: fmtPoints(pack.credits_total, locale.value) }),
     pack.expires_at
-      ? t('usage.packs.expires', { date: fmtMonthDay(pack.expires_at, locale.value) })
+      ? t('usage.packs.expires', { date: fmtDate(pack.expires_at, locale.value) })
       : t('usage.packs.noExpiry'),
   ]
   if (pack.project_name) parts.unshift(t('usage.packs.project', { project: pack.project_name }))

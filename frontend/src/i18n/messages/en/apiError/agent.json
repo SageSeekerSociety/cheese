@@ -116,6 +116,7 @@
   "sessionFilesNotSent": "Couldn't refresh the session files on the device: {detail}",
   "sourceChatFoldsSystem": "{name} has a source on the OpenAI-compatible Chat protocol, which loses system messages in the middle of a conversation, so mid-conversation system messages have to stay off",
   "sourceChatNeedsConfigFlag": "The config.yaml sources of {name} aren't marked supports_mid_conversation_system: false. A source on the OpenAI-compatible Chat protocol loses system messages in the middle of a conversation, so every source of the model needs the mark; edit deploy/gateway/config.yaml and release the gateway first",
+  "sourceSpendCapInConfig": "{name} has a source on {upstream} in deploy/gateway/config.yaml whose spend cap differs from this one. A cap counts everything that upstream has been charged, so every source on it needs the same cap; move that row out of config.yaml, or change the cap there and release the gateway",
   "sourceConfigReadOnly": "This source of {name} is declared in deploy/gateway/config.yaml, and the gateway won't change it at runtime. To change it, edit deploy/gateway/config.yaml and release the gateway.",
   "sourceFreeNeedsZeroPrices": "A free source needs both its input and output price written as 0",
   "sourceHeaderDuplicate": "The header {name} is given more than once",

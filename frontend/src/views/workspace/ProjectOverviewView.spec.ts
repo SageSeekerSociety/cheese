@@ -129,6 +129,29 @@ it('最近进展里点一件，去那件任务', async () => {
   expect(view.emitted('open-task')).toEqual([[{ taskId: 't9', roomId: 'front' }]])
 })
 
+it('没绑平台账号的 GitHub 合并人：原样显示登录名，不去名册里撞同名的人', () => {
+  const item: ProgressItem = {
+    kind: 'accepted',
+    at: new Date().toISOString(),
+    taskId: 't9',
+    taskTitle: 'GitHub 上直接合的那次',
+    taskTitleSource: 'human',
+    roomId: 'front',
+    by: 'octocat',
+    byGithub: true,
+    artifactId: null,
+    artifactName: '',
+    version: null,
+  }
+  const view = mount({
+    progress: [item],
+    names: { alice: 'Alice', bob: 'Bob', octocat: '另一个人的名字' },
+  })
+  const progress = view.getByTestId('overview-progress')
+  expect(progress.textContent).toContain('octocat')
+  expect(progress.textContent).not.toContain('另一个人的名字')
+})
+
 it('任务和进展还没读到：不写「0」，也不写「暂无」', () => {
   const view = mount({ overviewText: null, progress: null, tasks: null })
   expect(view.getByTestId('overview-all-tasks').textContent).not.toMatch(/\d/)

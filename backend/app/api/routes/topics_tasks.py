@@ -93,6 +93,7 @@ from app.domain.review.services import AcceptService
 from app.domain.review.task_landing import tell_origin
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
+from app.domain.room_task import heard
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.place import place_or_404
 from app.domain.room_task.progress import set_progress
@@ -304,12 +305,18 @@ async def conclude_task(
         if task.conclusion
         else say("taskClosed", title=said_title(task))
     )
+    closed = {"platform": True, "action": "task_closed", "task_id": str(task.id)}
     await announce(
         db,
         place_id=place.room_id,
         task_id=task.id,
         content=ended,
-        meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
+        # Its own session closing it read that in the tool's reply.
+        meta=closed
+        if actor.via == "cheese"
+        else heard.informing(
+            closed, heard.task_closed(by=actor.handle, conclusion=task.conclusion)
+        ),
     )
     # The 支线 line under the message the task was made from is said by its AI
     # teammate, so whose teammate it is comes in here too.
@@ -369,13 +376,20 @@ async def reopen_task(
     place, actor, task = await task_conversation(db, resolver, topic_id)
     if not actor.authenticated or actor.handle != task.owner_handle:
         raise ForbiddenError(say("taskOwnerOnly"))
+    # The same test `reopen` moves a task onto a new branch by.
+    new_branch = task.branch_name is not None and task.delivered_head is not None
     task = await TaskService(db).reopen(task)
     await announce(
         db,
         place_id=place.room_id,
         task_id=task.id,
         content=say("taskReopened", actor=f"<@{actor.handle}>", title=said_title(task)),
-        meta={"platform": True, "action": "task_reopened", "task_id": str(task.id)},
+        meta=heard.informing(
+            {"platform": True, "action": "task_reopened", "task_id": str(task.id)},
+            heard.task_reopened(
+                by=actor.handle, task_id=task.id, new_branch=new_branch
+            ),
+        ),
     )
     out = await task_out(db, task)
     await db.commit()
@@ -453,6 +467,13 @@ async def update_task(
         ):
             raise ForbiddenError(say("taskOwnerOnly"))
         await tasks.set_contributors(task, leaving)
+        await heard.inform(
+            db,
+            task,
+            heard.contributors_changed(
+                by=actor.handle, added=[], removed=[actor.handle]
+            ),
+        )
         out = await task_out(db, task)
         await db.commit()
         return ok(out)
@@ -468,6 +489,12 @@ async def update_task(
         await _move_off_former_owners_computer(
             db, actor, place, task, body.owner_handle
         )
+        if body.owner_handle != task.owner_handle:
+            await heard.inform(
+                db,
+                task,
+                heard.owner_changed(by=actor.handle, owner=body.owner_handle),
+            )
         await tasks.hand_over(task, owner_handle=body.owner_handle)
     if "agent_handle" in body.model_fields_set:
         given = (body.agent_handle or "").strip() or None
@@ -489,9 +516,19 @@ async def update_task(
             raise UnprocessableEntityError(say("contributorNotInProject"))
         for handle in wanted:
             await members.take_in(place.room_id, handle)
-        await tasks.set_contributors(
-            task, [h for h in wanted if h != task.owner_handle]
-        )
+        before = list(task.contributor_handles or [])
+        after = [h for h in wanted if h != task.owner_handle]
+        await tasks.set_contributors(task, after)
+        added = [h for h in after if h not in before]
+        removed = [h for h in before if h not in after]
+        if added or removed:
+            await heard.inform(
+                db,
+                task,
+                heard.contributors_changed(
+                    by=actor.handle, added=added, removed=removed
+                ),
+            )
     out = await task_out(db, task)
     await db.commit()
     return ok(out)

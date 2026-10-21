@@ -17,6 +17,7 @@ import {
   unarchiveTopic,
   upgradeBlock,
 } from '@/api'
+import { renameTask as renameTaskApi } from '@/api/tasks'
 import { setChannelMembersOnly } from '@/api/topicMembers'
 import { t } from '@/i18n'
 import { patchQuery } from '@/query/client'
@@ -233,6 +234,33 @@ export function useChannelActions(deps: ChannelDeps) {
     }
   }
 
+  /** 给一件任务改名（侧栏任务行 ⋯ 里那一项）。任务行挂在频道的 `my_tasks` 里，
+   *  侧栏读的就是这一份：改名成功后把那一行就地换成新名字，不等房间推来的帧。 */
+  async function renameTask(taskId: string, roomId: string, title: string) {
+    try {
+      const updated = await renameTaskApi(taskId, title)
+      const project = projectId.value
+      if (!project) return
+      await patchTopics(project, (rows) =>
+        rows.map((topic) => {
+          const my = topic.my_tasks
+          if (topic.id !== roomId || !my) return topic
+          const at = my.shown.findIndex((task) => task.id === taskId)
+          if (at < 0) return topic
+          return {
+            ...topic,
+            my_tasks: {
+              ...my,
+              shown: my.shown.map((task, i) => (i === at ? { ...task, title: updated.title } : task)),
+            },
+          }
+        })
+      )
+    } catch (e) {
+      reportError(e, t('shell.workspaceErrors.rename'))
+    }
+  }
+
   // 乐观：本地这一行立刻变成新的状态——菜单、列表、rail 当场就是改后的样子，省掉的
   // 是「点一下到界面动」之间那一次往返。服务端那份回来覆盖它；失败时还原并说一声。
   async function setStatus(topicId: string, status: Topic['status'], write: () => Promise<Topic>, failed: string) {
@@ -323,6 +351,7 @@ export function useChannelActions(deps: ChannelDeps) {
     markRead,
     markDmRead,
     renameTopic,
+    renameTask,
     archive,
     unarchive,
     removeChannel,

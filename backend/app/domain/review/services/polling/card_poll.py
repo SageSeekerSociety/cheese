@@ -10,6 +10,7 @@ from app.core.sentences import say
 from app.domain.notice_meta import EVENT_MERGE_WITHHELD
 from app.domain.review import merge_state, notes, pr_signals
 from app.domain.review import services as pkg
+from app.domain.review.github_pr_status import merge_actor
 from app.domain.review.merge_state import RED_CONCLUSIONS, MergeVerdict
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.services._shared import (
@@ -135,6 +136,7 @@ async def _poll_pr_card(
             # The review remains a return. GitHub establishes a separate
             # fact about the batch, including the head that actually landed.
             card.pr_merged_at = status.merged_at or datetime.now(UTC)
+            card.merged_by = merge_actor(status)
             landed = await self._mark_task_merged(card, delivered_head=status.head_sha)
             await self._session.flush()
             if landed:

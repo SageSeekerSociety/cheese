@@ -86,8 +86,8 @@ DELEGATED_ROUTES: dict[str, bool] = {
 
 #: The routes a person's own 芝士 reaches only with a pass its gate issued for
 #: that call (`assistant.gate`, `assistant.passes`): what others see — a
-#: message, a task, a decision, a member, a channel — and reading a web page,
-#: which can carry what it read out in its address. The pass is the gate's
+#: message, a task, a decision, a member, a channel — and reading or searching
+#: the web, which can carry what it read out in an address or a query. The pass is the gate's
 #: verdict; without one the route refuses the credential.
 GATED_ROUTES: frozenset[str] = frozenset(
     {
@@ -106,6 +106,7 @@ GATED_ROUTES: frozenset[str] = frozenset(
         "app.api.routes.topics.create_topic",
         "app.api.routes.local_mcp.decide",
         "app.api.routes.fetch.read_url",
+        "app.api.routes.fetch.web_search",
     }
 )
 

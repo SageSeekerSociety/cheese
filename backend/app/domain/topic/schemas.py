@@ -88,6 +88,14 @@ class TopicOut(BaseModel):
     # 登录的人一律 False。借了 `Unread` 那份判断的同一个理由：别人的交付不该在我
     # 的侧栏上喊我。
     unseen_delivery: bool = False
+    # 这间房此刻在不在往前走：它自己那条线、它的支线、它名下的活里，任意一处有
+    # runner 报着在跑的会话；或者名下的活（或房间自己那张卡）走在交付链路上。
+    # 侧栏的**呼吸绿**问的就是它——「有一轮在跑，或者活已经递出去」。
+    #
+    # 和 `unseen_delivery` 分开：呼吸绿说的是「现在还在动」，常亮绿说的是「做完了、
+    # 你还没看过」。只有 list/get 话题时填，别处一律 False（「没人算过」，不是
+    # 「没有」）。
+    moving: bool = False
     # 成员动态：此刻谁在这个房间里忙——有一轮在跑的 AI 队友。
     # 来源：`agent/realtime/activity.py`。
     # 房间自己没有状态，有的是成员在做什么。只有 list/get 话题时填。

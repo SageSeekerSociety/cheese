@@ -257,12 +257,17 @@ def _topic_out(
     unseen: Collection[uuid.UUID] | None = None,
     answered: Collection[uuid.UUID] | None = None,
     incomplete: Mapping[uuid.UUID, datetime] | None = None,
+    moving: Collection[uuid.UUID] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
     derived from the topic's blocks; who is busy in it right now and whom it is
     waiting on (`activity` / `waits` — about members, never about the room); and
     与我的相关性, which depends on WHO is asking and so cannot live on the row
     at all.
+
+    `moving` is 「这间房此刻在不在往前走」—— 侧栏的呼吸绿：`moving` 是调用方已经
+    聚合好的「房间里、支线里、名下的活里有一处在跑」，房间自己那张卡走在交付链路上
+    也在这里补上（`presentation.room_presentation` 那一列）。
 
     `presentation` is the last of them: which column of the board this room is
     in and the one phrase to print on it, derived from the same facts the row
@@ -312,7 +317,6 @@ def _topic_out(
     asking_me = topic.id in (asks_me or set())
     out.joined = mine.joined
     out.awaits_me = mine.awaits_me or asking_me
-    data = out.model_dump(mode="json")
     facts = presentation.facts_for_room(
         topic,
         running_ids,
@@ -320,6 +324,12 @@ def _topic_out(
         awaiting_answer=topic.id in (asked or {}),
     )
     shown = presentation.room_presentation(facts, now=now or datetime.now(UTC))
+    # 侧栏的呼吸绿：房间里、支线里、名下的活里有一处在跑（调用方聚合好传进来），
+    # 或者房间自己那张卡走在交付链路上。和常亮绿是两档，见 `TopicOut.moving`。
+    out.moving = (
+        topic.id in (moving or ()) or shown.column is presentation.Column.delivering
+    )
+    data = out.model_dump(mode="json")
     data["presentation"] = shown.as_dict()
     return data
 
@@ -374,7 +384,9 @@ async def list_topics(
     # 会话（`session_states`）。`presentation` 那一格读的是房间自己那条线：看板
     # 一格是房间自己的格子，它名下的活有它们自己的格子
     # （`test_a_rooms_board_cell_does_not_follow_a_task_running_under_it`）。
-    working = await topics_signals.at_work(db, room_ids, threads=room_threads)
+    working = await topics_signals.at_work(
+        db, room_ids, threads=room_threads, tasks=tasks_by_room
+    )
     running_ids = set(working.rooms)
     relevance = await service.relevance_for_topics(
         topics,
@@ -385,6 +397,13 @@ async def list_topics(
     )
     live = await topics_signals.live_cards(db, [t.id for t in topics])
     cards = topics_signals.own_cards(live)
+    # 侧栏的呼吸绿：房间里、支线里、名下的活里，任意一处有 runner 报着在跑的会话
+    # （`moving`，`TopicOut.moving`）。三处都从 `at_work` 那一次读里来，不为这一页
+    # 多付一条查询。
+    moving_ids = set(working.rooms) | set(working.threads)
+    moving_ids |= {tasks_by_room[task_id] for task_id in working.tasks}
+    # 走在交付链路上的活也算：房间自己那条线闲着，名下的活在等 CI / 换基 / 修检查。
+    moving_ids |= topics_signals.delivering_rooms(live)
     managed = (
         await TopicMemberService(db).managed_topic_ids(topics, actor.handle)
         if actor.authenticated
@@ -426,6 +445,7 @@ async def list_topics(
         [t.id for t in topics],
         delivered_of=unseen.__contains__,
         incomplete_of=incomplete_tasks.get,
+        running_of=working.tasks.__contains__,
     )
     items = [
         {
@@ -445,6 +465,7 @@ async def list_topics(
                 unseen=unseen,
                 answered=answered,
                 incomplete=incomplete,
+                moving=moving_ids,
             ),
             "my_tasks": rails[t.id],
         }
@@ -551,8 +572,12 @@ async def get_topic(
         stuck_rooms=topics_signals.stuck_on_checks(live),
         threads=room_threads,
     )
-    # 同 `list_topics`：谁在这间房自己那条线上、和它的支线里干活。
-    working = await topics_signals.at_work(db, [topic.id], threads=room_threads)
+    # 同 `list_topics`：谁在这间房自己那条线上、和它的支线里干活；名下的活也交给
+    # 同一次读，免得为呼吸绿多查一条。
+    underway = await TaskService(db).tasks_of_rooms([topic.id])
+    working = await topics_signals.at_work(
+        db, [topic.id], threads=room_threads, tasks=underway
+    )
     running_ids = set(working.rooms)
     viewer = _viewer(actor)
     unseen = (
@@ -560,7 +585,11 @@ async def get_topic(
     )
     # 同 `list_topics`：这一间房里有没有人回复了我、而我还没处理（侧栏黄灯）。
     answered = await service.replied_to_me([topic.id], viewer) if viewer else set()
-    underway = await TaskService(db).tasks_of_rooms([topic.id])
+    # 同 `list_topics`：侧栏的呼吸绿问的是这间房、它的支线、它名下的活里有没有会话
+    # 在跑，或者有没有活走在交付链路上。
+    moving_ids = set(working.rooms) | set(working.threads)
+    moving_ids |= {underway[task_id] for task_id in working.tasks}
+    moving_ids |= topics_signals.delivering_rooms(live)
     tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
     for task_id, room_id in underway.items():
         tasks_of_room.setdefault(room_id, []).append(task_id)
@@ -573,6 +602,7 @@ async def get_topic(
         [topic.id],
         delivered_of=unseen.__contains__,
         incomplete_of=incomplete_tasks.get,
+        running_of=working.tasks.__contains__,
     )
     return ok(
         {
@@ -591,6 +621,7 @@ async def get_topic(
                 unseen=unseen,
                 answered=answered,
                 incomplete=incomplete,
+                moving=moving_ids,
             ),
             "my_tasks": rails[topic.id],
         }
