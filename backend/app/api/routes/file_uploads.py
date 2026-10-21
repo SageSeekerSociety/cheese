@@ -10,8 +10,9 @@ the address was handed out.
 """
 
 from fastapi import APIRouter, Request
+from pydantic import BaseModel
 
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core import blob_store
 from app.core.errors import UnprocessableEntityError
@@ -20,7 +21,15 @@ from app.core.sentences import say
 router = APIRouter(tags=["files"])
 
 
-@router.put("/files/incoming/{token}", dependencies=[ROUTE_DECIDES])
+class IncomingFileOut(BaseModel):
+    """The bytes landed; registering them is the next request."""
+
+
+@router.put(
+    "/files/incoming/{token}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(IncomingFileOut),
+)
 async def put_incoming_file(token: str, request: Request) -> dict:
     """The bytes of one upload, exactly as many as its address allows."""
     sealed = blob_store.open_upload(token, bound_to=blob_store.INCOMING)
