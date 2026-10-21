@@ -32,7 +32,6 @@ its task can be read in one place.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +41,7 @@ from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
 from app.domain.delivery_events import REPLACES, DeliveryEvent
 from app.domain.event_about import EventAbout
 from app.domain.notification.models import NotificationType
-from app.domain.room_task.models import Task, TaskProgress, TaskStatus
+from app.domain.room_task.models import Task, TaskStatus
 
 if TYPE_CHECKING:
     from app.domain.room_task.ports import Announce, RecordInstruction
@@ -175,10 +174,21 @@ def task_closed(*, by: str, conclusion: str | None) -> str:
     )
 
 
-def task_closed_by_platform() -> str:
+def task_closed_late() -> str:
+    """The last step landed and the write-up was not done in time
+    (`closing.close_overdue`)."""
     return (
         "平台关闭了这件任务：最后一步采纳之后，写总结、关闭任务的那一步没有在"
         "时限内做完。你在这里还在跑的活已经停下。"
+    )
+
+
+def task_closed_unasked() -> str:
+    """The last step landed and the instruction to write it up never reached
+    the teammate (`closing.close_after_summary`)."""
+    return (
+        "平台关闭了这件任务：最后一步已经采纳，叫你写总结、关闭任务的那条指令"
+        "一直没能交到你手上，平台没再等，直接关了。"
     )
 
 
@@ -220,18 +230,3 @@ def contributors_changed(*, by: str, added: list[str], removed: list[str]) -> st
 def teammate_changed(*, by: str, seat: str | None) -> str:
     who = f"<@{seat}>" if seat else "所在频道的 AI 队友"
     return f"@{by} 把这件任务改由 {who} 来做。"
-
-
-_STATE_WORDS = {
-    TaskProgress.working: "在做",
-    TaskProgress.waiting: "在等结果",
-    TaskProgress.blocked: "卡住了",
-}
-
-
-def session_left(*, at: datetime, state: TaskProgress, note: str | None) -> str:
-    said = _STATE_WORDS[state] + (f"：{note}" if note else "")
-    return (
-        f"这件任务的会话在 {at:%Y-%m-%d %H:%M} UTC 结束了。从那时起，看板上你报的"
-        f"「{said}」旁边写着「已离开」，直到会话再跑起来。"
-    )

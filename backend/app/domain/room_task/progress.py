@@ -18,9 +18,11 @@ Two writers, two columns each, and neither touches the other's:
   own act, and its tool's reply says so;
 - the session ending after that report: `note_agent_left` — the board puts
   「已离开」 beside the report, until a session runs in the task again
-  (`note_agent_back`), and the teammate hears it in its next input. It never
-  rewrites the report: a teammate that said 「在等 CI」 and then left is still
-  the last word on that work.
+  (`note_agent_back`). It never rewrites the report: a teammate that said
+  「在等 CI」 and then left is still the last word on that work. The teammate
+  is not told: the mark is about its own session being gone, and the session
+  coming back is what takes it away, so by the time it could read a word of it
+  the mark is no longer there.
 """
 
 import uuid
@@ -29,7 +31,6 @@ from datetime import datetime
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.room_task import heard
 from app.domain.room_task.live import rows_written
 from app.domain.room_task.models import Task, TaskProgress, TaskStatus
 
@@ -80,24 +81,7 @@ async def note_agent_left(
     report, leaving the report as it was. ``conversation_id`` is the task's own
     conversation, whose id is the task's. An open task only — a closed one
     says how it ended. Says whether anything was marked; a conversation that is
-    not a task marks nothing.
-
-    The first time it is marked beside a report, the teammate hears it in its
-    next input (`heard`): people saw 「已离开」 and may say so."""
-    task = await session.get(Task, conversation_id)
-    if (
-        task is not None
-        and task.status == TaskStatus.open
-        and task.agent_left_at is None
-        and task.progress_state is not None
-    ):
-        await heard.inform(
-            session,
-            task,
-            heard.session_left(
-                at=at, state=task.progress_state, note=task.progress_note
-            ),
-        )
+    not a task marks nothing."""
     room_id = await session.scalar(
         update(Task)
         .where(Task.id == conversation_id, Task.status == TaskStatus.open)

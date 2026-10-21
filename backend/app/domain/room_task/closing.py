@@ -412,7 +412,7 @@ async def close_after_summary(
         return None
     if await unfinished(session, task.id):
         return None
-    await heard.inform(session, task, heard.task_closed_by_platform())
+    await heard.inform(session, task, heard.task_closed_unasked())
     return await close_task(session, task, work, machines=machines)
 
 
@@ -451,7 +451,7 @@ async def close_overdue(
         left = await unfinished_work(session, task.id)
         if left and task.closing_since >= now - STOP_WORK_AFTER:
             continue
-        await heard.inform(session, task, heard.task_closed_by_platform())
+        await heard.inform(session, task, heard.task_closed_late())
         closed.append(
             Overdue(await close_task(session, task, work, machines=machines), left)
         )

@@ -64,8 +64,7 @@ def test_voiding_a_card_wakes_the_teammate_with_who_and_why(client, stub_hooks):
 
     heard = stub_hooks.last_prompt or ""
     assert "这一版的口径不对，按新口径重做" in heard
-    assert "alice" in heard
-    assert "作废" in heard
+    assert "@alice 作废" in heard
 
 
 def _task(client):
@@ -99,8 +98,7 @@ def test_a_person_reopening_a_task_reaches_the_teammates_next_input(client, stub
     _say(client, task, "接着做吧")
 
     heard = stub_hooks.last_prompt or ""
-    assert "重新打开" in heard
-    assert "alice" in heard
+    assert "@alice 重新打开" in heard
 
 
 def test_a_change_it_only_has_to_know_about_waits_for_its_next_input(
