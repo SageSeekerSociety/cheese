@@ -20,6 +20,7 @@ import os
 import re
 import tempfile
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from tenacity import AsyncRetrying, RetryCallState, retry_if_result, wait_fixed
 
@@ -41,7 +42,6 @@ SSH_TIMEOUT_S = 180.0
 # Only these markers may reach the room; process output can contain credentials.
 STARTUP_STEPS = {
     "tools": say("cloudStepTools"),
-    "connector": say("cloudStepConnector"),
     "connect": say("cloudStepConnect"),
     "verify": say("cloudStepVerify"),
 }
@@ -197,8 +197,8 @@ def bootstrap_script(
     With ``sandbox_disk``, first sets up the data disk a pool host keeps its
     sandboxes' homes on (``DATA_DISK``); a whole VM runs none.
 
-    Deliberately arch-agnostic: the download target is resolved on the
-    machine rather than guessed from here.
+    The connector is already on the machine: ``run_bootstrap`` put it there
+    over the same SSH connection before this runs.
     """
     config = json.dumps(
         {
@@ -233,11 +233,6 @@ def bootstrap_script(
     data_disk = DATA_DISK.format() if sandbox_disk else ""
     return f"""set -eu
 arch=$(uname -m)
-case "$arch" in
-  x86_64|amd64) target=linux-amd64 ;;
-  aarch64|arm64) target=linux-arm64 ;;
-  *) echo "unsupported arch: $arch" >&2; exit 1 ;;
-esac
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 export PATH="$HOME/.local/bin:$PATH"
 # claude — the agent itself. A machine with no claude, or one too old, does not
@@ -251,7 +246,7 @@ export PATH="$HOME/.local/bin:$PATH"
 # control, and the vendor's own installer names "not available in your region"
 # as a failure mode. Serving it ourselves is what turns the pin from a hope
 # about what the machine downloaded into a fact about what we handed it — the
-# same reason cheesehost is fetched from us two lines below.
+# same reason the cheesehost this script runs is the one we serve.
 #
 # Platform strings are the VENDOR's, and the musl check matters: Alpine-style
 # machines need a different build, and only the machine can tell.
@@ -300,15 +295,6 @@ if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
   echo "claude at $claude_pin is ${{have:-unusable}}, need >= {min_version}" >&2
   exit 1
 fi
-umask 077
-mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
-echo CHEESE_STARTUP:connector
-curl -fsSL --retry 3 --retry-delay 2 -m 120 \\
-  "{origin.rstrip("/")}/connector/latest/$target/cheesehost" \\
-  -o "$HOME/.local/bin/cheesehost.new"
-test -s "$HOME/.local/bin/cheesehost.new"
-chmod +x "$HOME/.local/bin/cheesehost.new"
-mv "$HOME/.local/bin/cheesehost.new" "$HOME/.local/bin/cheesehost"
 # The credential the device flow would have stored. umask first: this file is
 # the machine's identity to the platform.
 umask 077
@@ -413,7 +399,7 @@ async def run_bootstrap(
             except TimeoutError as exc:
                 child.kill()
                 await child.wait()
-                raise EnrollmentError("Claude transfer timed out") from exc
+                raise EnrollmentError("transfer to the machine timed out") from exc
             return child.returncode, output
 
         async def run(*command: str, wait_for_ssh: bool = False) -> bytes:
@@ -427,13 +413,18 @@ async def run_bootstrap(
             )(once, *command)
             if returncode:
                 raise EnrollmentError(
-                    f"Claude transfer failed ({returncode}): {output.decode()[-300:]}"
+                    f"transfer to the machine failed ({returncode}): "
+                    f"{output.decode()[-300:]}"
                 )
             return output
 
         # Cloud guests can reach us over SSH while their public HTTP download is
-        # too slow for enrollment. Reuse the platform's verified cache and the
-        # existing bootstrap credential; no extra listener or guest credential.
+        # too slow for enrollment: on dev a guest resolves the public origin to a
+        # gateway proxy's address and fetched the 32 MB connector at 3 MB/s,
+        # where the same file took 0.4 s over this connection. So the binaries
+        # the machine needs before it can talk to us go over the bootstrap
+        # credential, from the files the platform serves and caches; no extra
+        # listener or guest credential.
         pin = CLAUDE_PINNED_VERSION
         remote_dir = ".cheese/claude/versions"
         facts = (
@@ -442,7 +433,7 @@ async def run_bootstrap(
                     *ssh,
                     "uname -m; if ldd /bin/ls 2>&1 | grep -q musl; "
                     "then echo musl; else echo glibc; fi; "
-                    f'mkdir -p "$HOME/{remote_dir}"; '
+                    f'mkdir -p "$HOME/{remote_dir}" "$HOME/.local/bin"; '
                     f'if test -x "$HOME/{remote_dir}/{pin}"; then echo present; fi',
                     wait_for_ssh=True,
                 )
@@ -450,16 +441,36 @@ async def run_bootstrap(
             .decode()
             .splitlines()
         )
+        arch = {
+            "x86_64": "amd64",
+            "amd64": "amd64",
+            "aarch64": "arm64",
+            "arm64": "arm64",
+        }.get(facts[0] if facts else "")
+        if arch is None:
+            raise EnrollmentError("unsupported cloud machine architecture")
+
+        async def push(source: Path, remote: str) -> None:
+            """``source`` to ``remote`` (relative to the login's home), staged
+            beside it and renamed, so an interrupted copy is never run."""
+            await run(
+                "scp",
+                "-i",
+                key_path,
+                *SSH_OPTS,
+                str(source),
+                f"{login_user}@{ip}:{remote}.ssh-new",
+            )
+            await run(
+                *ssh,
+                f'chmod +x "$HOME/{remote}.ssh-new" && '
+                f'mv "$HOME/{remote}.ssh-new" "$HOME/{remote}"',
+            )
+
         if "present" not in facts:
-            arch = {
-                "x86_64": "x64",
-                "amd64": "x64",
-                "aarch64": "arm64",
-                "arm64": "arm64",
-            }.get(facts[0] if facts else "")
-            if arch is None:
-                raise EnrollmentError("unsupported cloud machine architecture")
-            platform = f"linux-{arch}" + ("-musl" if "musl" in facts else "")
+            platform = f"linux-{'x64' if arch == 'amd64' else arch}" + (
+                "-musl" if "musl" in facts else ""
+            )
             try:
                 if progress:
                     await progress(say("cloudStepPreparingClaude"))
@@ -470,19 +481,16 @@ async def run_bootstrap(
                 raise EnrollmentError("platform Claude binary unavailable") from exc
             if progress:
                 await progress(say("cloudStepTransferringClaude"))
-            await run(
-                "scp",
-                "-i",
-                key_path,
-                *SSH_OPTS,
-                str(binary),
-                f"{login_user}@{ip}:{remote_dir}/{pin}.ssh-new",
-            )
-            await run(
-                *ssh,
-                f'chmod +x "$HOME/{remote_dir}/{pin}.ssh-new" && '
-                f'mv "$HOME/{remote_dir}/{pin}.ssh-new" "$HOME/{remote_dir}/{pin}"',
-            )
+            await push(binary, f"{remote_dir}/{pin}")
+        # The connector the origin serves for this machine, every time: a retry
+        # may find an older one an earlier attempt left. People's own machines
+        # and a connector's self-update still download it over HTTP.
+        connector = connector_build.binary_path(f"linux-{arch}")
+        if connector is None:
+            raise EnrollmentError(f"the platform serves no connector for linux-{arch}")
+        if progress:
+            await progress(say("cloudStepConnector"))
+        await push(connector, ".local/bin/cheesehost")
         command = [
             "ssh",
             "-i",
