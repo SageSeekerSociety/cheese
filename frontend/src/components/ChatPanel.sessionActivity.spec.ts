@@ -52,13 +52,20 @@ class FakeWebSocket {
   onopen: (() => void) | null = null
   onclose: (() => void) | null = null
   onerror: (() => void) | null = null
+  sent: { type: string }[] = []
 
   constructor() {
     FakeWebSocket.instances.push(this)
   }
 
   close() {}
-  send() {}
+  send(data: string) {
+    const message = JSON.parse(data) as { type: string }
+    this.sent.push(message)
+    // 心跳没人应就会被当成假活、换掉这条连接。这里照真服务端答一声，用例才能把
+    // 时钟拨过核对间隔而不掉线。
+    if (message.type === 'ping') queueMicrotask(() => this.emit({ type: 'pong' } as WsServerFrame))
+  }
 
   emit(frame: WsServerFrame) {
     this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent)
@@ -131,6 +138,43 @@ describe('session activity', () => {
     socket.emit({ type: 'turn_finished', turn_id: 'two' })
     await flush()
     expect(view.emitted('working')?.at(-1)).toEqual([false])
+  })
+
+  // 结束的那一帧丢了，页面就一直以为还有活在跑：现场页签上那个绿点、对话里的
+  // 「芝士正在处理」会一直挂着，而连接本身是好的，不会靠重连替它纠正。所以还认为
+  // 有活在跑时，隔一阵用 sync 问一次服务端；它答的 room_state 说没有轮次了，就把
+  // working 报回 false。
+  it('a lost turn_finished still clears through the next check with the server', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      const vuetify = createVuetify({ components, directives })
+      const view = render(ChatPanel, {
+        props: { topic, topicList: [topic] },
+        global: { plugins: [vuetify, i18n] },
+      })
+      await flush()
+
+      const socket = FakeWebSocket.instances.at(-1)!
+      socket.emit({ type: 'turn_started', turn_id: 'lost-end' })
+      await flush()
+      expect(view.emitted('working')?.at(-1)).toEqual([true])
+
+      // 一句话都没再说：结束帧不会来了，页面自己核一次。
+      socket.sent.length = 0
+      vi.advanceTimersByTime(30_000)
+      expect(socket.sent).toContainEqual({ type: 'sync' })
+
+      socket.emit({ type: 'room_state', turn_ids: [], members: [] })
+      await flush()
+      expect(view.emitted('working')?.at(-1)).toEqual([false])
+
+      // 没有活在跑了，就不再问了。
+      socket.sent.length = 0
+      vi.advanceTimersByTime(60_000)
+      expect(socket.sent).not.toContainEqual({ type: 'sync' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   // 队友在房间里和别人一样：干活时对话里不另起一行「正在处理」，也没有一行跟着

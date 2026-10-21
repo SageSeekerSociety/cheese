@@ -121,12 +121,12 @@ export function useDraftAgent(options: DraftAgentOptions) {
     },
     on: {
       toolArgs: (call, name, raw) => {
-        if (name !== 'cheese_task_write') return
+        if (name !== 'cheese_problem_write') return
         typist.feed(call, raw)
         aimOf(raw)
       },
       toolEnded: (_call, name, failed) => {
-        if (name !== 'cheese_task_write') return
+        if (name !== 'cheese_problem_write') return
         then(() => void draft.ended(failed))
         if (failed) writingTarget.value = null
       },
