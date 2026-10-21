@@ -62,6 +62,21 @@ describe('asking the AI teammate in a document comment', () => {
     scope.stop()
   })
 
+  // 评论没有「所有人」可通知：手打的 @all 要照原样留着，不能变成谁都不通知、
+  // 还把 @ 吃掉的一个令牌（那与候选菜单不给这两个词的约定相反）。
+  it('leaves a hand-typed @all alone in a document comment', async () => {
+    const scope = effectScope()
+    const topic = { id: 't1', project_id: 'p1' } as Topic
+    const doc = scope.run(() =>
+      usePanelDoc({ topic, activityTick: 0, agentName: '芝士', agentHandle: 'cheese-a1' }, () => [
+        { handle: 'u1', label: '老王' },
+      ])
+    )!
+    expect(doc.withMentions('@all 开会')).toBe('@all 开会')
+    expect(doc.withMentions('@老王 @here 看一下')).toBe('<@u1> @here 看一下')
+    scope.stop()
+  })
+
   it('reads the token in a comment as the teammate’s name', () => {
     render(DocThreadCard, {
       props: {

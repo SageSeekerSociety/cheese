@@ -148,12 +148,16 @@ export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMem
   }
 
   /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到；
-      人也一样 —— 备注名不是名册上的名字，后端认不出来，写成字没人收到通知。 */
+      人也一样 —— 备注名不是名册上的名字，后端认不出来，写成字没人收到通知。
+
+      `broadcast: false`：评论文档没有「所有人」可通知，候选菜单也不给这两个词
+      （`useCommentMentions`）。开着的话手打一个 `@all` 会变成谁都不通知的 `<@all>`，
+      正文里那个 @ 还不见了。 */
   function withMentions(content: string): string {
     const handle = props.agentHandle
     const pool: MentionMember[] = [...(mentionPool?.() ?? [])]
     if (handle) pool.unshift({ handle, label: props.agentName })
-    return pool.length ? expandMentions(content, pool) : content
+    return pool.length ? expandMentions(content, pool, [], { broadcast: false }) : content
   }
 
   /** 当场要说的失败（目前只有复制代码失败）；null = 把它关掉。 */
