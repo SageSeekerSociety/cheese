@@ -28,7 +28,7 @@ function mount(packs: UsagePack[]) {
   return render(UsagePackList, { props: { packs }, global: { plugins: [i18n] } })
 }
 
-function fillOf(container: HTMLElement): HTMLElement {
+function fillOf(container: Element): HTMLElement {
   return container.querySelector('.upk__fill') as HTMLElement
 }
 
