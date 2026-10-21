@@ -87,6 +87,31 @@ def test_a_blocked_task_waits_on_its_owner(client):
     assert any(item.get("taskId") == task_id for item in mine.json()["data"]["data"])
 
 
+def test_a_blocked_row_on_the_owners_list_says_what_the_teammate_needs(client):
+    """The owner's list says what the teammate is stuck on: the note it gave
+    with its 「卡住了」 is the row's second line. A report with no note leaves the
+    line for the screen to fill, not a stale sentence from somewhere else."""
+    project_id, task_id, seat = _a_task(client)
+
+    def row() -> dict:
+        mine = client.get("/awaiting-me", headers=session_auth_headers("alice"))
+        assert mine.status_code == 200, mine.text
+        return next(
+            i for i in mine.json()["data"]["data"] if i.get("taskId") == task_id
+        )
+
+    assert (
+        _report(
+            client, project_id, task_id, seat, "blocked", "需要仓库的写权限才能推送"
+        ).status_code
+        == 200
+    )
+    assert row()["detail"] == "需要仓库的写权限才能推送"
+
+    assert _report(client, project_id, task_id, seat, "blocked").status_code == 200
+    assert row()["detail"] == ""
+
+
 def test_only_the_tasks_own_session_reports_its_progress(client):
     """A person reads the report; they do not write it for the teammate."""
     _project_id, task_id, _seat = _a_task(client)

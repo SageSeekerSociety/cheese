@@ -245,6 +245,10 @@ async def waiting_items(
             detail = card.change_subject or ""
         elif card is not None and shown.phrase in _CARD_SAYS_WHY:
             detail = card.note or ""
+        elif shown.phrase == presentation.NeedsYou.blocked.value:
+            # 卡住是队友自己报的，它附的那句就是要你做什么；没写的留空，由屏幕
+            # 说一句「打开看看它需要什么」—— 那句话要按读者的语言画。
+            detail = task.progress_note or ""
         else:
             detail = ""
         left.append((task, shown, reason, detail))

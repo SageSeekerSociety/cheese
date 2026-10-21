@@ -71,6 +71,10 @@ class RailCard:
     #: 清单那一行的第二行：递的是什么改动，卡停住时卡上那句为什么。
     change_subject: str | None = None
     note: str = ""
+    #: 交的是一份文件时它的名字（`《原型》第 3 版` 里的「原型」）。
+    deliverable_name: str | None = None
+    #: 什么时候递上来的：「等审」那一行写「从几点起等」。
+    created_at: datetime | None = None
 
 
 def _rail_card(card: AcceptCard | Row[Any]) -> RailCard:
@@ -93,6 +97,8 @@ def _rail_card(card: AcceptCard | Row[Any]) -> RailCard:
         task_id=card.task_id,
         change_subject=card.change_subject,
         note=card.note,
+        deliverable_name=card.deliverable_name,
+        created_at=card.created_at,
     )
 
 
@@ -141,8 +147,16 @@ async def latest_cards_by_task(
     Callers authorize and own this session and its transaction. This read
     does not explicitly begin, commit or roll back.
     """
-    cards = await AcceptCardRepository(db).latest_by_task(task_ids)
-    return {task_id: _rail_card(card) for task_id, card in cards.items()}
+    return (await latest_cards_and_counts_by_task(db, task_ids))[0]
+
+
+async def latest_cards_and_counts_by_task(
+    db: AsyncSession, task_ids: list[uuid.UUID]
+) -> tuple[dict[uuid.UUID, RailCard], dict[uuid.UUID, int]]:
+    """`latest_cards_by_task`, plus how many cards each task has filed in all:
+    「等审」那一行写「第 N 版」，N 就是它。同一趟查询。"""
+    cards, counts = await AcceptCardRepository(db).latest_and_counts_by_task(task_ids)
+    return {task_id: _rail_card(card) for task_id, card in cards.items()}, counts
 
 
 #: 轮询隔多久看一次每张卡的 PR（``accept_pr_poll_interval_s``）。镜像的新鲜度
