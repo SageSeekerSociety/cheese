@@ -256,7 +256,7 @@ test.describe('sidebar channel row geometry', () => {
       await expect(row.locator('.row-glyph')).toHaveCount(0);
     });
 
-    // State 11 is a channel with both controls, expanded and lightless: measure the
+    // 「同层：子频道和任务都能折叠」 is a channel with both controls, expanded and lightless: measure the
     // controls, not a light, and do not assume the task arrow is collapsed.
     test('both fold controls keep separate 44px targets when the row is expanded', async ({ page }) => {
       const cdp = await page.context().newCDPSession(page);
@@ -300,7 +300,6 @@ test.describe('sidebar channel row geometry', () => {
 
   // 名称前的记号换成了「有子话题 / 有任务」的控件，但同层标题必须仍然从同一条竖线
   // 开始——参差只出现在层级之间，不因为这一行多了哪一个控件而变化。
-  // Catalog 11=子频道+任务，12=仅子频道，13=仅任务，0=都没有。
   test('same-level titles share one left edge with children, tasks, both or neither', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     const cases = [
