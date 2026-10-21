@@ -12,10 +12,12 @@ from pathlib import Path
 import pytest
 from anyio.from_thread import BlockingPortal
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.avatars.models import Avatar
 from tests.integration.conftest import CreatedUser, UserCreator, unique_int
+from tests.support.pictures import wide_gamut_picture
 
 # A JPEG that is a JPEG all the way down to its magic bytes (SOI + JFIF APP0 +
 # EOI), so the server has to read the file to know what it is serving. The PNG
@@ -137,6 +139,27 @@ class TestAvatarsUploadIntegration:
         assert data["code"] == 200
         assert "avatarId" in data["data"]
 
+    def test_upload_stores_a_wide_gamut_photo_as_srgb(self):
+        """The stored bytes are the gamut every screen renders the page in.
+
+        A photo carrying a Display P3 profile made some phones tint the whole
+        screen while the avatar was on it; what is stored must not ask for a
+        gamut wider than sRGB.
+        """
+        response = self.client.post(
+            "/avatars",
+            headers=self.headers,
+            files={
+                "avatar": ("p3.jpg", io.BytesIO(wide_gamut_picture()), "image/jpeg")
+            },
+        )
+        assert response.status_code == 201
+        avatar_id = response.json()["data"]["avatarId"]
+
+        served = self.client.get(f"/avatars/{avatar_id}", headers=self.headers)
+        with Image.open(io.BytesIO(served.content)) as stored:
+            assert "icc_profile" not in stored.info
+
     def test_upload_avatar_no_auth(self):
         fake_image = io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"fake image content")
         response = self.client.post(
@@ -239,6 +262,27 @@ class TestAvatarsGetIntegration:
         )
         assert stale.status_code == 200
         assert stale.content == first.content
+
+    def test_a_stored_wide_gamut_avatar_is_converted_when_first_served(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """An avatar stored before upload converted them heals on first read.
+
+        The file on disk is Display P3 (a phone photo from before the upload
+        conversion existed); the bytes served must not ask for that gamut, and
+        the converted picture must be the one the next request reads.
+        """
+        storage = isolate_avatar_storage(monkeypatch, tmp_path)
+        storage.mkdir(parents=True, exist_ok=True)
+        stored_file = storage / str(self.avatar_id)
+        stored_file.write_bytes(wide_gamut_picture())
+
+        response = self.client.get(f"/avatars/{self.avatar_id}", headers=self.headers)
+
+        assert response.status_code == 200
+        for picture_bytes in (response.content, stored_file.read_bytes()):
+            with Image.open(io.BytesIO(picture_bytes)) as picture:
+                assert "icc_profile" not in picture.info
 
     def _upload(self, filename: str, content: bytes, content_type: str) -> int:
         response = self.client.post(
