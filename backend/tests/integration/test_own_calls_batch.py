@@ -61,3 +61,33 @@ async def test_a_message_seats_personal_agents_of_different_owners(
             session, SimpleNamespace(settings={}), topic, content, "u"
         )
     assert set(seated) == {agent_instance_handle(mine), agent_instance_handle(theirs)}
+
+
+async def test_a_private_channel_seats_only_agents_whose_owner_is_in_it(
+    db_factory, monkeypatch
+):
+    """Whoever is seated reads the channel, so a private one keeps to its roster."""
+    topic_id = await a_topic(db_factory)
+    seated = []
+
+    async def ensure(self, topic, seat):
+        seated.append(seat)
+
+    async def no_question(*args):
+        pass
+
+    monkeypatch.setattr(TopicMemberService, "ensure_agent_seat", ensure)
+    monkeypatch.setattr(own_calls, "ask_owner_to_join", no_question, raising=False)
+    async with db_factory() as session:
+        topic = await session.get(Topic, topic_id)
+        topic.members_only = True
+        me = await session.scalar(select(User).where(User.username == "u"))
+        other = await session.get(User, await registered(session, "other"))
+        mine = await _own(session, topic.project_id, me)
+        theirs = await _own(session, topic.project_id, other)
+        await session.flush()
+        content = " ".join(f"<@{agent_instance_handle(i)}>" for i in (mine, theirs))
+        await own_calls.seat_if_named(
+            session, SimpleNamespace(settings={}), topic, content, "u"
+        )
+    assert seated == [agent_instance_handle(mine)]
