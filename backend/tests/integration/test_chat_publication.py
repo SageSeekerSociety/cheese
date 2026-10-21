@@ -453,6 +453,10 @@ def test_another_agents_words_are_not_this_ones(client, stub_hooks, monkeypatch)
                 break
         _read_by_its_session(client, topic)
 
+        # The other teammate speaks half a window before the clock below: had
+        # its words counted as this seat's, this seat would not be due yet.
+        now = datetime.now(UTC)
+
         async def another_agent_says() -> None:
             async with client.test_factory() as session:
                 project = await session.scalar(
@@ -468,12 +472,13 @@ def test_another_agents_words_are_not_this_ones(client, stub_hooks, monkeypatch)
                         author_type=AuthorType.participant,
                         kind=BlockKind.message,
                         content="我这边好了",
+                        created_at=now + timedelta(seconds=threshold // 2),
                     )
                 )
                 await session.commit()
 
         client.portal.call(another_agent_says)
-        clock = datetime.now(UTC) + timedelta(seconds=threshold)
+        clock = now + timedelta(seconds=threshold + 1)
         assert client.portal.call(quiet.silence, clock) == 1
         assert len(notices) == 1
 

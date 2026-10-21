@@ -132,8 +132,6 @@ from app.domain.agent.turn.intake.rooms import room_roster
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
 from app.domain.agent.turn.state.live import LiveWork
 
-# 一轮还跑着的时候平台往它里面说的两句话（沉默、清单停在原地），连同各自的扫底。
-# 用 `TurnNotices` 收窄到 `ChatService` 对外的几样，所以这里不用反向被 import。
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn_usage import record_turn_usage

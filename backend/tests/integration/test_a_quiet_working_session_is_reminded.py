@@ -188,3 +188,81 @@ async def _asked_for_its_checklist(client, room):
         assert len(told) == 1 and "todo_write" in told[0]
     finally:
         await _put_down(channel, session)
+
+
+def test_work_the_platform_started_after_an_answered_question_is_not_reminded(
+    client, room, monkeypatch
+):
+    """A person asked hours ago and the agent answered. Now its session works on
+    something the platform handed it (a check gone red, a scheduled wake-up):
+    nobody is waiting on that work to speak, so the silence reminder stays out
+    of it, however long ago the person's question was."""
+    monkeypatch.setattr(settings, "chat_progress_reminder_after_s", THRESHOLD)
+    client.portal.call(_platform_work_after_an_answer, client, room)
+
+
+async def _platform_work_after_an_answer(client, room):
+    project, topic, _seat = room
+    channel = _KeepsWorking()
+    service, session, work, acting = await _at_work(client, room, channel)
+    told: list[str] = []
+
+    async def notice(topic_id, text, **_kwargs):
+        told.append(text)
+        return True
+
+    service.notify_running_session = notice  # type: ignore[method-assign]
+    quiet = QuietSessionReminders(service, service.compute)
+    try:
+        now = datetime.now(UTC)
+        asked_at = now - timedelta(hours=3)
+
+        def read(work_id, blocks, at):
+            return NativeInput(
+                project_id=project,
+                conversation_id=topic,
+                recipient_handle=acting,
+                harness=CLAUDE_CODE,
+                native_session_id="sess-quiet",
+                input_id=uuid.uuid4(),
+                work_id=work_id,
+                block_ids=blocks,
+                registered_at=at,
+                accepted_at=at,
+                echoed_at=at,
+            )
+
+        async with client.test_factory() as db:
+            asked = Block(
+                project_id=project,
+                conversation_id=topic,
+                author="alice",
+                author_type=AuthorType.participant,
+                kind=BlockKind.message,
+                content="首页为什么这么慢？",
+                created_at=asked_at,
+            )
+            db.add(asked)
+            await db.flush()
+            # Read into earlier work, and answered a minute later.
+            db.add(read(uuid.uuid4(), [str(asked.id)], asked_at))
+            db.add(
+                Block(
+                    project_id=project,
+                    conversation_id=topic,
+                    author=acting,
+                    author_type=AuthorType.participant,
+                    kind=BlockKind.message,
+                    content="慢在首页那三次查询，已经改了。",
+                    created_at=asked_at + timedelta(minutes=1),
+                )
+            )
+            # The work at hand began with an input that carried no one's words.
+            db.add(read(work, [], now))
+            await db.commit()
+
+        assert await quiet.silence(now + timedelta(seconds=30)) == 0
+        assert await quiet.silence(now + timedelta(seconds=THRESHOLD + 1)) == 0
+        assert told == []
+    finally:
+        await _put_down(channel, session)

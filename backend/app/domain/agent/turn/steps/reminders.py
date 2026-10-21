@@ -7,7 +7,7 @@
 `QuietSessionReminders.silence` 管前一样，`QuietSessionReminders.checklist` 管后一样。
 
 判据都是平台核得了的事，不看轮次：会话此刻在不在干活（这台进程持有的座位、它的
-runner 说在干活，`ComputePool.working_conversations`），它读进去的那份输入
+runner 说在干活，`ComputePool.working_conversations`），它为手上这段工作读进去的输入
 （`native_inputs` 的回执，`_read_at`）带着谁的话，它之后说没说过话（房间里它署名的消息），清单
 是不是它这一段工作写的（`TopicProgress.turn_id` 是会话手上那段工作）。
 
@@ -81,12 +81,6 @@ class _Asked:
     read_at: datetime
 
 
-#: How many of a conversation's newest read inputs are looked through for the
-#: one that carried a person's words: a session reads a few platform notices
-#: in a row at most before it reads somebody again.
-_READS_LOOKED_AT = 20
-
-
 def _read_at():
     """When the session read an input: its echo for a harness whose runner
     reports reads (`Harness.reports_lifecycle`), and the runner taking it for
@@ -101,10 +95,18 @@ def _read_at():
 
 
 async def _asked(
-    session: AsyncSession, conversation: uuid.UUID, acting: str
+    session: AsyncSession,
+    conversation: uuid.UUID,
+    acting: str,
+    work: uuid.UUID | None,
 ) -> _Asked | None:
-    """``acting`` 那一席的会话在这里读进去的最近一句人话，没有就是 None：读进去
-    的是平台的提示、别的队友的话，就没有谁在等它回话。"""
+    """``acting`` 那一席的会话为手上这段工作（``work``）读进去的最近一句人话，
+    没有就是 None：这段工作是平台的提示、别的队友的话叫起来的，就没有谁在等它
+    回话——之前哪段工作里回过的人，也不在等这一段。一份输入算进哪段工作，看它被
+    读进的那段（``execution_work_id``，runner 读到时报的），没报就是它自己开的
+    那段（``work_id``）。"""
+    if work is None:
+        return None
     read_at = _read_at()
     reads = (
         await session.execute(
@@ -117,10 +119,11 @@ async def _asked(
             .where(
                 NativeInput.conversation_id == conversation,
                 NativeInput.recipient_handle == acting,
+                func.coalesce(NativeInput.execution_work_id, NativeInput.work_id)
+                == work,
                 read_at.is_not(None),
             )
             .order_by(read_at.desc())
-            .limit(_READS_LOOKED_AT)
         )
     ).all()
     for read, *batches in reads:
@@ -221,8 +224,9 @@ class QuietSessionReminders:
         due: list[tuple[Seat, int, str | None]] = []
         async with self._chat.session_factory() as session:
             for seat in seats:
-                conversation, _seat, acting = seat
-                asked = await _asked(session, conversation, acting)
+                conversation, handle, acting = seat
+                work = self._working.work_in_flight(conversation, handle)
+                asked = await _asked(session, conversation, acting, work)
                 if asked is None:
                     continue
                 spoke = await _said_since(session, conversation, acting, asked.read_at)
@@ -264,13 +268,14 @@ class QuietSessionReminders:
                 row = await conversation_progress(session, conversation)
                 if row is None or row.turn_id is None:
                     continue
-                if row.turn_id != self._working.work_in_flight(conversation, handle):
+                work = self._working.work_in_flight(conversation, handle)
+                if row.turn_id != work:
                     continue
                 written_at = row.updated_at
                 since = max(written_at, self._checklist_reminded.get(seat, written_at))
                 if (now - since).total_seconds() < threshold:
                     continue
-                asked = await _asked(session, conversation, acting)
+                asked = await _asked(session, conversation, acting, work)
                 due.append(
                     (
                         seat,
