@@ -50,7 +50,10 @@ class GateCase:
 
 
 def _msg(where: str, text: str, *, project: str = P, task: bool = False) -> str:
-    return f"在{'任务' if task else '频道'}「{where}」（项目「{project}」）发消息：\n{text}"
+    everyone = "，全体成员都会看到" if where == "综合" else ""
+    return (
+        f"在{'任务' if task else '频道'}「{where}」（项目「{project}」{everyone}）发消息：\n{text}"
+    )
 
 
 CASES: list[GateCase] = [

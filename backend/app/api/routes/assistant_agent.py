@@ -397,8 +397,8 @@ async def _message(db, access, body: ActIn, me: Person) -> _Plan:
     return _Plan(
         gate.Action(
             "message",
-            f"在{'任务' if place.task else '频道'}「{name}」（项目「{project.name}」）"
-            f"发消息：\n{text}",
+            f"在{'任务' if place.task else '频道'}「{name}」（项目「{project.name}」"
+            f"{'，全体成员都会看到' if everyone else ''}）发消息：\n{text}",
             ("to_everyone",) if everyone else (),
         ),
         [

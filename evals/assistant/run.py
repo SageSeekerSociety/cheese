@@ -311,6 +311,17 @@ def _page(world, page) -> dict | None:
     raise ValueError(kind)
 
 
+def decide(world, card: int, state: str = "dismissed") -> None:
+    import httpx
+
+    with httpx.Client(base_url=world.url, timeout=30, trust_env=False) as http:
+        http.post(
+            f"/assistant/proposals/{card}",
+            json={"state": state},
+            headers=world.headers("linxi"),
+        )
+
+
 def ask(http, world, conversation: str, question: str, page) -> Turn:
     turn = Turn(question)
     body: dict = {"question": question}
@@ -334,6 +345,11 @@ def ask(http, world, conversation: str, question: str, page) -> Turn:
             if not line.startswith("data: "):
                 continue
             data = json.loads(line[6:])
+            if event == "proposal" and data.get("state") == "pending":
+                # The person, reading the panel: no card here is confirmed
+                # (a card's showing is what the checks read), and 芝士 hears
+                # it put aside rather than waiting on it.
+                decide(world, data["id"])
             if event == "delta":
                 turn.answer += data.get("text", "")
             elif event == "tool":
@@ -512,10 +528,14 @@ def main() -> None:
                 print(f"{task.id} ERROR {row['errors'][0]}", flush=True)
                 continue
             conversation = made
-            turns = [
-                ask(http, world, conversation, q, _page(world, task.page))
-                for q in task.turns
-            ]
+            turns = []
+            for q in task.turns:
+                try:
+                    turns.append(
+                        ask(http, world, conversation, q, _page(world, task.page))
+                    )
+                except Exception as e:  # noqa: BLE001  (the next task still runs)
+                    turns.append(Turn(q, error=f"{type(e).__name__}: {e}"))
             time.sleep(1.0)  # what an answer writes after its last event
             outcome = asyncio.run(read_outcome(sessions, world, turns, started))
             checks = []
