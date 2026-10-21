@@ -524,6 +524,34 @@ class RulesIn(BaseModel):
     askText: str = Field(default="", max_length=2000)
 
 
+class RuleCategoryOut(BaseModel):
+    code: str
+    label: str
+
+
+class RulesOut(BaseModel):
+    """What the person told their 芝士: kinds always asked, and their notes."""
+
+    ask: list[str]
+    allowText: str
+    askText: str
+    categories: list[RuleCategoryOut]
+
+
+class ActivityItemOut(BaseModel):
+    id: int
+    kind: str
+    summary: str
+    verdict: Literal["allowed", "asked"]
+    stage: str
+    reason: str
+    at: str
+
+
+class ActivityOut(BaseModel):
+    items: list[ActivityItemOut]
+
+
 def _rules_out(row) -> dict:
     return {
         "ask": [c for c in row.ask if c in gate.CATEGORIES],
@@ -533,13 +561,13 @@ def _rules_out(row) -> dict:
     }
 
 
-@router.get("/rules")
+@router.get("/rules", **typed_response(RulesOut))
 async def get_rules(db: DbSession, auth: AuthUser) -> dict:
     """What the person told their 芝士 to ask first and may simply do."""
     return ok(_rules_out(await gate.rules_of(db, auth.user_id)))
 
 
-@router.put("/rules", dependencies=[ROUTE_DECIDES])
+@router.put("/rules", dependencies=[ROUTE_DECIDES], **typed_response(RulesOut))
 async def put_rules(body: RulesIn, db: DbSession, auth: AuthUser) -> dict:
     unknown = [c for c in body.ask if c not in gate.CATEGORIES]
     if unknown:
@@ -555,7 +583,7 @@ async def put_rules(body: RulesIn, db: DbSession, auth: AuthUser) -> dict:
     return ok(_rules_out(row))
 
 
-@router.get("/activity")
+@router.get("/activity", **typed_response(ActivityOut))
 async def get_activity(
     db: DbSession,
     auth: AuthUser,

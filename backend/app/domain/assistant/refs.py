@@ -18,8 +18,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-#: A project's own numbered kinds, as their address segment says them.
-PROJECT_KINDS = ("channels", "tasks", "docs")
 #: What lives outside a project, by its first segment.
 GLOBAL_KINDS = (
     "spaces",

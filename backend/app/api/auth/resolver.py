@@ -180,10 +180,14 @@ class ActorResolver:
                 "Delegated credential is invalid or expired"
             )
         writes = pkg.DELEGATED_ROUTES.get(self._endpoint or "")
-        if writes is None and (self._endpoint or "") in pkg.GATED_ROUTES:
-            # Opened only to what the gate let through (`assistant.passes`).
-            if claims.agent is not None or claims.topic_id is not None:
-                raise ForbiddenError("This credential does not open this route")
+        if (
+            writes is None
+            and (self._endpoint or "") in pkg.GATED_ROUTES
+            and claims.agent is None
+            and claims.topic_id is None
+        ):
+            # A person's own 芝士, only as far as its gate let it through
+            # (`assistant.passes`).
             if topic_id is not None and project_id is None:
                 project_id = await self.project_of_topic(topic_id)
             if not self._through_gate:
