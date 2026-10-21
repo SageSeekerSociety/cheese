@@ -288,7 +288,7 @@ class DocumentWriter:
         }
         if changed:
             meta[DOC_EDITS_KEY] = changed
-        line = say("docEdited", actor=actor)
+        line = say("docEdited", actor=f"<@{actor}>")
         if earlier is not None:
             earlier.author = author
             earlier.content = line

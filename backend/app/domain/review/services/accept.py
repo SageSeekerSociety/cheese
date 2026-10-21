@@ -562,7 +562,7 @@ async def _finish_pr_accept(
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (
-        say("acceptDone", actor=by, pr=card.pr_number, how=how)
+        say("acceptDone", actor=f"<@{by}>", pr=card.pr_number, how=how)
         if by
         else say("acceptDoneNoActor", pr=card.pr_number, how=how)
     )
