@@ -15,14 +15,19 @@ import PreviewSlides from '@/components/panels/preview/PreviewSlides.vue'
 import { t } from '@/i18n'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, sheetKindOf, suffixOf } from '@/lib/fileKind'
 
-const props = defineProps<{
-  filename: string
-  /** 换了这个值就重新读：同一个名字被替换成新版本时也要换。 */
-  source: string
-  read: (asPdf: boolean) => Promise<ArrayBuffer>
-  /** 字节的来处能不能把 Office 文档转成 PDF。不能（空间资料库）就不去读，直接说只能下载。 */
-  convertible?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    filename: string
+    /** 换了这个值就重新读：同一个名字被替换成新版本时也要换。 */
+    source: string
+    read: (asPdf: boolean) => Promise<ArrayBuffer>
+    /** 字节的来处能不能把 Office 文档转成 PDF。不能（空间资料库）就不去读，直接说只能下载。 */
+    convertible?: boolean
+  }>(),
+  // An absent boolean prop is cast to false, which would make every caller
+  // that never mentions it unable to convert.
+  { convertible: true }
+)
 
 const data = ref<ArrayBuffer | null>(null)
 const imageUrl = ref('')
@@ -33,7 +38,7 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const suffix = computed(() => suffixOf(props.filename))
 const view = computed(() => DOCUMENT_TYPES[suffix.value]?.view)
-const downloadOnly = computed(() => props.convertible === false && NEEDS_CONVERSION.has(suffix.value))
+const downloadOnly = computed(() => !props.convertible && NEEDS_CONVERSION.has(suffix.value))
 let generation = 0
 
 function clear() {

@@ -208,7 +208,7 @@ const showList = computed(() => props.wide || !props.selected)
                   <span class="slib-row__name t-body" data-user-content>{{ item.name }}</span>
                   <span class="slib-row__meta t-meta c-muted">
                     <span v-if="item.uploaderName" data-user-content>{{ item.uploaderName }}</span>
-                    <span>{{ relTime(item.createdAt) }}</span>
+                    <span>{{ relTime(new Date(item.createdAt).toISOString()) }}</span>
                     <span v-if="item.size !== null">{{ fmtBytes(item.size) }}</span>
                   </span>
                 </span>
@@ -250,7 +250,7 @@ const showList = computed(() => props.wide || !props.selected)
         <h2 v-if="wide" class="t-title slib-detail__name" data-user-content>{{ selected.name }}</h2>
         <p class="slib-detail__meta t-meta c-muted">
           <span v-if="selected.uploaderName" data-user-content>{{ selected.uploaderName }}</span>
-          <span>{{ relTime(selected.createdAt) }}</span>
+          <span>{{ relTime(new Date(selected.createdAt).toISOString()) }}</span>
           <span v-if="selected.size !== null">{{ fmtBytes(selected.size) }}</span>
           <span v-if="selected.visibility === 'admins'" class="chip-neutral">
             <v-icon icon="mdi-lock-outline" size="12" />{{ t('spaces.materials.visibilityValue.admins') }}
