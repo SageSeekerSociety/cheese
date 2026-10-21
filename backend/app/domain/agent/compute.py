@@ -145,7 +145,6 @@ class ComputePool:
         images: "list[Image] | None" = None,
         *,
         register_input: "InputRegistrar",
-        expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
     ) -> bool:
@@ -153,9 +152,8 @@ class ComputePool:
         or was recovered.
 
         ``agent_handle`` aims the words at one seat. Without it the seats of
-        the room are tried one by one and each answers only for the seat whose
-        open work matches — a seat that is not working, or whose work is not
-        the expected one, says False and the next seat is asked.
+        the room are tried one by one — a seat whose session is not working
+        says False and the next seat is asked.
         """
         candidates = [
             runtime
@@ -172,7 +170,6 @@ class ComputePool:
                 text,
                 images=images,
                 register_input=register_input,
-                expected_work_id=expected_work_id,
                 agent_handle=agent_handle,
                 owes_reply=owes_reply,
             )
@@ -316,6 +313,22 @@ class ComputePool:
             if runtime.controls and runtime.holds(topic_id):
                 return runtime
         return None
+
+    def working_seat(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> tuple[str, str] | None:
+        """The seat whose session in this room is at work, as its own handle
+        and the handle it acts under: the one ``agent_handle`` names (by
+        either), or, unnamed, the room's only one. None when there is none —
+        or, unnamed, when several are, since picking one would be a guess.
+        Only a seat this process holds: words can be put only into a session
+        this process reads."""
+        seats = {
+            seat
+            for runtime in self._runtimes()
+            for seat in runtime.working_seats(topic_id, agent_handle)
+        }
+        return seats.pop() if len(seats) == 1 else None
 
     def work_in_flight(
         self, topic_id: uuid.UUID, agent_handle: str | None = None

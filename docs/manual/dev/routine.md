@@ -80,13 +80,13 @@ covers:
 | 现象 | 判据 | 结论 |
 | --- | --- | --- |
 | 投递本身就失败 | `Delivery.state == failed` | 失败 |
-| 那一轮没能开始 | `turn.delivered_at is None` 且 `stopped_at` 有值 | 失败（附房间里那句失败通知） |
-| 轮子已经接住 | `turn.delivered_at` 有值 | `queued` → `running` |
-| 一轮里报过错 | 房间里出现了该轮的 failed/timeout 事件 | 失败 |
-| 一直没交回 | 超过 `REPORT_TIMEOUT`（`agent_turn_hard_ceiling_s` + 5 分钟） | 失败，「AI 队友一直没有交回结果」 |
+| 没读到就没能开始 | 会话没读到这份输入，房间里却有平台为这次投递记下的 failed/timeout 事件 | 失败（附那句失败通知） |
+| 会话读到了 | 这份输入的回执（`NativeInput.echoed_at`） | `queued` → `running` |
+| 读进去的那段工作失败了 | runner 报的「读了，然后失败」（`NativeInput.failed_at`，会话退出也在内） | 失败（附房间里那句失败通知，没有就用失败的种类） |
+| 一直没交回 | 读到之后超过 `REPORT_TIMEOUT`（`agent_turn_hard_ceiling_s` + 5 分钟） | 失败，「AI 队友一直没有交回结果」 |
 | 两小时没开始 | `created_at` 超过 `START_TIMEOUT` | 失败（设备离线或排队过久） |
 
-为什么这不看「这一轮什么时候结束」：活会话里每条输入的 turn 行都是毫秒级交付又停止的，后端看不见设备那边这一轮到底还忙不忙。所以唯一的钟是「一轮最长能跑多久」再加一点交回的余量，而真正的失败更早会被房间里那条 turn-failed 通知抓到。迟到的失败如果后来交回了成功，`report` 会把 `notified` 复位、把错误清掉，**重新通知一次** —— 那次通知说的是它实际怎么样了。
+为什么这不看「这一轮什么时候结束」：轮次的起止说明不了队友有没有照着做。判成功的只有它交回（`cheese_routine_report`）；平台这一路只看核得了的事：投递、会话读没读到、runner 报没报读进去的工作失败了，再加一口「最长能做多久」的钟。迟到的失败如果后来交回了成功，`report` 会把 `notified` 复位、把错误清掉，**重新通知一次** —— 那次通知说的是它实际怎么样了。
 
 `_announce_finished` 只扫 `notified = false` 且已经终结的执行：成功的把交回的结果写进那条消息，没成功的消息正文留空（不以 AI 队友的名义替平台说话，原因由 `runs_under` 带出、画在消息下面那一行）；两种都把消息的时间改成结账的这一刻，挪到主线最下面，再给 `owner_handle` 发 `CHANGE_ALERT` 通知，一次都不重复。改过的消息在提交后整行推给开着频道的人（`publish_run_messages`，前端只有时间变了的那一行才重新落位）。`skipped` 的执行没有消息，只通知主人。
 

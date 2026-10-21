@@ -274,7 +274,6 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             attachments=None,
             landed_user_block_id=block.id,
             landed_user_block_ids=[block.id],
-            live_delivery_expected=False,
             recipient_handle=recipient.get("handle"),
             recipient_instance_id=(
                 uuid.UUID(recipient["instance_id"])

@@ -138,7 +138,7 @@ class _Chat:
         self.session_factory = client.test_factory
         self.told: list[tuple[uuid.UUID, str]] = []
 
-    async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> bool:
+    async def notify_running_session(self, topic_id: uuid.UUID, notice: str) -> bool:
         self.told.append((topic_id, notice))
         return True
 

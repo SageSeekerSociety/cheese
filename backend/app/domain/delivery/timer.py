@@ -257,8 +257,8 @@ async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int
         for row in rows:
             row.state = "failed"
             row.last_error = GAVE_UP
-            # A finished task waiting on this turn to be written up closes
-            # without it.
+            # A finished task waiting on this instruction to be written up
+            # closes without it.
             if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id:
                 await close_after_summary(
                     session, row.conversation_id, chat, machines=machines

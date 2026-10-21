@@ -9,11 +9,8 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.checkout_sweep import sweep
 from app.domain.agent.models import AgentTurn
-from app.domain.room_task.closing import turns_ended
 from app.domain.room_task.live import turns_moved
-from app.domain.room_task.ports import SweepCheckouts
 from app.domain.room_task.services import TaskService
 from app.domain.usage.budgets import CreditBudgets
 
@@ -56,15 +53,8 @@ class TurnRecord:
 
 
 class AgentTurnRepository:
-    def __init__(
-        self, session: AsyncSession, *, machines: SweepCheckouts | None = None
-    ) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
-        # Ending an interval can close the task it belonged to, and that close
-        # sweeps the room's closed checkouts (`room_task.closing.turns_ended`).
-        # The sweep is this package's, so a repository built without one still
-        # hands in the real thing; a caller passes its own only to replace it.
-        self._machines = machines if machines is not None else sweep
 
     async def open(
         self,
@@ -328,7 +318,6 @@ class AgentTurnRepository:
         rows = closed.all()
         conversations = [row.conversation_id for row in rows]
         await turns_moved(self._session, conversations)
-        await turns_ended(self._session, conversations, machines=self._machines)
         return {row.id for row in rows}
 
     async def still_open(
@@ -414,7 +403,6 @@ class AgentTurnRepository:
         )
         conversations = list(closed.scalars())
         await turns_moved(self._session, conversations)
-        await turns_ended(self._session, conversations, machines=self._machines)
         return len(conversations)
 
     async def started_at_of(
@@ -478,23 +466,6 @@ class AgentTurnRepository:
         for conversation, handle in await self._session.execute(stmt):
             busy.setdefault(conversation, set()).add(handle)
         return busy
-
-    async def open_turn_records(
-        self, conversation_id: uuid.UUID
-    ) -> list[tuple[uuid.UUID, str | None]]:
-        """``(turn id, seat)`` of every interval still open in this conversation.
-
-        The identity half of the open-interval read, for a reader that has to
-        hand a message to the one live turn it names rather than ask whether one
-        exists: the id steers the input, the seat names whose session takes it.
-        """
-        rows = await self._session.execute(
-            select(AgentTurn.id, AgentTurn.agent_handle).where(
-                AgentTurn.conversation_id == conversation_id,
-                AgentTurn.stopped_at.is_(None),
-            )
-        )
-        return [(turn_id, handle) for turn_id, handle in rows]
 
     async def turn_is_open(self, turn_id: uuid.UUID) -> bool:
         """Whether the authority still holds this one turn open.

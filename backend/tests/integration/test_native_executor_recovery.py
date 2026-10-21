@@ -123,7 +123,7 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
         async def continue_and_verify():
             factory = client.test_request_factory
             ids = await _blocks(factory, project_id, topic)
-            assert await recovered.notify_running_turn(
+            assert await recovered.notify_running_session(
                 topic, "原答者已提交回答", blocks=ids
             )
             assert runner.working and runner.work == str(work)

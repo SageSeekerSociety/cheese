@@ -464,57 +464,6 @@ async def test_topic_turn_reports_the_rescheduled_ceiling(db_factory):
 
 
 @pytest.mark.anyio
-async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
-    # Bulk signal for the sidebar's「芝士还在跑」indicator: a topic whose turn
-    # already finished must drop out, one still mid-flight must show up.
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    class _SlowTurn(WorkChat):
-        session_factory = db_factory
-
-        def replaying(self, topic_id):
-            return None
-
-        async def converse(self, **_):
-            started.set()
-            await release.wait()
-            yield {"type": "done"}
-
-    finished_topic = await a_topic(db_factory)
-    running_topic = await a_topic(db_factory)
-
-    async with broker.subscribe(str(finished_topic)) as q:
-        runner.submit(
-            _FakeChat([{"type": "done"}], db_factory),
-            finished_topic,
-            author="u",
-            content="hi",
-            addressed=addressed_to_agent("cheese-seat"),
-        )
-        await _next_frame(q, "turn_finished")
-
-    runner.submit(
-        _SlowTurn(),
-        running_topic,
-        author="u",
-        content="hi",
-        addressed=addressed_to_agent("cheese-seat"),
-    )
-    # Mid-flight for as long as the test looks: it ends when released, not
-    # after a fixed time a loaded machine could spend before the check.
-    await asyncio.wait_for(started.wait(), HANG_S)
-
-    ids = runner.running_topic_ids()
-    assert running_topic in ids
-    assert finished_topic not in ids
-    release.set()
-    await runner.drain()
-
-
-@pytest.mark.anyio
 async def test_runner_publishes_friendly_error_on_failure(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
@@ -1818,7 +1767,7 @@ async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
         addressed=addressed_to_agent("cheese-seat"),
     )
     await asyncio.wait_for(streaming.wait(), HANG_S)
-    assert topic in runner.running_topic_ids()
+    assert runner.topic_work(topic)["status"] == "running"
     assert broker.in_flight(str(topic)) is True
 
     # Age it into the sweep's sights: both signals cold for eight hours.
@@ -1844,10 +1793,9 @@ async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
     await runner.sweep_orphans(_Chat(), last_activity=_last_block)
     # Let the cancellation land at the turn's await point.
     async with asyncio.timeout(HANG_S):
-        while topic in runner.running_topic_ids():
+        while runner.topic_work(topic)["status"] == "running":
             await asyncio.sleep(0.01)
 
-    assert topic not in runner.running_topic_ids()
     assert runner.topic_work(topic)["status"] != "running"
     # A reconnecting client must not be told the dead turn is still streaming.
     assert broker.in_flight(str(topic)) is False

@@ -148,7 +148,7 @@ async def run(descriptor):
         if busy:
             assert status["working"] and status["work_id"] == str(work)
             assert (topic, work) in chat.live.hook_work
-            assert await chat.notify_running_turn(
+            assert await chat.notify_running_session(
                 topic,
                 "原答者已提交回答",
                 blocks=tuple(uuid.UUID(x) for x in descriptor["blocks"]),

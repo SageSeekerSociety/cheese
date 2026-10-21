@@ -246,7 +246,7 @@ async def write_file(
         await db.commit()
         if said is not None:
             line, told = said
-            await chat.notify_running_turn(row.id, told, blocks=[line.id])
+            await chat.notify_running_session(row.id, told, blocks=[line.id])
     return ok(
         {
             "path": path,

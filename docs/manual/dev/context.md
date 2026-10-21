@@ -186,7 +186,7 @@ then:
     value: 40
     who: 王长鑫
     gate: @芝士 按钮也换成主色
-    desc: 这位队友已经在跑一轮，新消息并进正在跑的会话（`merge_into_running_turn`），下一步之前读到，不另开一轮。
+    desc: 这位队友的会话正在干活，新消息并进那个会话（`merge_into_running_session`），下一步之前读到，不另开一轮。
     takeaway: 插话并进正在跑的这一轮，之前读过的都还在窗口里。
     room: 你的第二条消息。芝士没有重新开始。
     link: /dev/turn#serialize

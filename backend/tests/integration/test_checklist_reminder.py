@@ -4,7 +4,7 @@
 清单停在原地时，平台要叫它一声。2026-10-11 报上来的症状是清单「全空」到「全打勾」
 没有中间——写的人只在自己开工和收尾两头写了它，中间那 40 分钟里，看清单的人一直看
 着开工那一版。这里钉住的是平台这一侧的兜底：`remind_stale_checklists` 会叫那一轮
-再写一次，走的是和人的中途消息、和沉默提醒同一条路（`notify_running_turn`）。
+再写一次，走的是和人的中途消息、和沉默提醒同一条路（`notify_running_session`）。
 
 三个条件缺一不可，所以三个都有反例：这一轮得还在跑、这一版清单得是**这一轮自己写
 的**（上一轮留下的那版，平台叫不动它）、而且它得真的停够久。
@@ -50,7 +50,7 @@ def notices(monkeypatch, chat) -> list[str]:
         said.append(text)
         return True
 
-    monkeypatch.setattr(chat, "notify_running_turn", notice)
+    monkeypatch.setattr(chat, "notify_running_session", notice)
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", THRESHOLD)
     return said
 

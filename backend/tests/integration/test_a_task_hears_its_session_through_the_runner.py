@@ -51,7 +51,7 @@ class _Chat:
         self.remind_stale_checklists = AsyncMock()
         self.sweep_memory_dreams = AsyncMock()
 
-    async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> bool:
+    async def notify_running_session(self, topic_id: uuid.UUID, notice: str) -> bool:
         self.told.append((topic_id, notice))
         return True
 

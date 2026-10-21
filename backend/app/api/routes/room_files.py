@@ -556,5 +556,5 @@ async def editor_saves_file(
     await db.commit()
     if said is not None:
         line, told = said
-        await chat.notify_running_turn(target.room_id, told, blocks=[line.id])
+        await chat.notify_running_session(target.room_id, told, blocks=[line.id])
     return JSONResponse({"error": 0})

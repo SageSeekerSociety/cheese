@@ -61,11 +61,7 @@ class TurnAdmission:
 
         def _refuse_turn(self, message: str) -> BaseError: ...
 
-        async def has_running_turn(
-            self, topic_id: uuid.UUID, agent_handle: str | None = None
-        ) -> bool: ...
-
-        async def merge_into_running_turn(
+        async def merge_into_running_session(
             self,
             topic_id: uuid.UUID,
             user_block_ids: list[uuid.UUID],
@@ -274,14 +270,12 @@ class TurnAdmission:
             recipient_handle=recipient_handle,
         )
 
-        # A turn is already running for THIS seat: hand the message to it rather
-        # than queue behind it. 判据是收件人自己那一席在不在跑，不是房间里有没有
-        # 人在跑 —— 另一位队友在跑、收件人空闲时，排队本来就是正常路径，不记降级。
-        # 这一支进去就说明本来指望实时递交，所以除了真递进去，剩下的都是降级。
-        if user_block_id is not None and await self.has_running_turn(
-            topic_id, seat_handle
-        ):
-            delivered = await self.merge_into_running_turn(
+        # THIS seat's session is already working: hand the message to it rather
+        # than queue behind it. 判据是收件人自己那一席的会话在不在干活，不是房间里
+        # 有没有人在干活 —— 另一位队友在干活、收件人空闲时，排队本来就是正常路径，
+        # 不记降级（``None``）。会话在干活却没递进去的，才是降级。
+        if user_block_id is not None:
+            delivered = await self.merge_into_running_session(
                 topic_id,
                 user_block_ids,
                 content,
@@ -296,21 +290,22 @@ class TurnAdmission:
                 )
                 return
             if delivered is True:
-                # The answer streams out of the turn already in flight, which
+                # The answer streams out of the session already at work, which
                 # every client in this topic is subscribed to — this request has
                 # nothing left to yield.
                 return
-            logger.warning(
-                "live delivery fell back to the queue (topic=%s, turn=%s, "
-                "delivered=%s)",
-                topic_id,
-                turn_id,
-                delivered,
-            )
-            fallback_text, fallback_meta = delivery_fallback_notice()
-            await self.post_system_event(
-                topic_id, fallback_text, turn_id, meta=fallback_meta
-            )
+            if delivered is not None:
+                logger.warning(
+                    "live delivery fell back to the queue (topic=%s, turn=%s, "
+                    "delivered=%s)",
+                    topic_id,
+                    turn_id,
+                    delivered,
+                )
+                fallback_text, fallback_meta = delivery_fallback_notice()
+                await self.post_system_event(
+                    topic_id, fallback_text, turn_id, meta=fallback_meta
+                )
 
         async with self._prompt_lock(topic_id, turn_id, seat_handle):
             async for frame in self.turn_preparation.converse(

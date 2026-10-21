@@ -6,7 +6,7 @@
 以一直在说话而清单从开工起就是那一版（2026-10-11 报上来的正是这一种），反过来也
 成立。`silence_reminder` 管前一样，`stale_checklist_reminder` 管后一样。
 
-放进一轮的路和人的中途消息是同一条（`notify_running_turn`）：一轮第一秒取的那份
+放进去的路和人的中途消息是同一条（`notify_running_session`）：会话开工时取的那份
 快照，之后只有人打字或者平台叫它一声才能变。这里的两句就是「平台叫它一声」。
 
 放在 `turn/steps` 而不是 `chat.py`：`chat.py` 压在自己的行数上限上（见
@@ -50,7 +50,9 @@ class TurnNotices(Protocol):
 
     # Returns `bool | InputReconciliationPending` on ChatService; only whether the
     # live session took it matters here（`delivered is True`）。
-    async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> object: ...
+    async def notify_running_session(
+        self, topic_id: uuid.UUID, notice: str
+    ) -> object: ...
 
 
 def _still_running(chat: TurnNotices, state: HookWorkState) -> bool:
@@ -107,7 +109,7 @@ async def remind_silent_turns(chat: TurnNotices, now: datetime) -> int:
             state.last_checklist_reminder_at = now
             # A blocked terminal must not hold up reminders in other rooms.
             async with asyncio.timeout(5):
-                delivered = await chat.notify_running_turn(
+                delivered = await chat.notify_running_session(
                     state.topic_id, silence_reminder(minutes, language)
                 )
             # THAT a reminder fired was already visible — the periodic loop logs
@@ -174,7 +176,7 @@ async def remind_stale_checklists(chat: TurnNotices, now: datetime) -> int:
         try:
             state.last_checklist_reminder_at = now
             async with asyncio.timeout(5):
-                delivered = await chat.notify_running_turn(
+                delivered = await chat.notify_running_session(
                     state.topic_id, stale_checklist_reminder(minutes, language)
                 )
             logger.info(
@@ -198,7 +200,9 @@ class ProgressNotices(Protocol):
     @property
     def session_factory(self) -> async_sessionmaker: ...
 
-    async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> object: ...
+    async def notify_running_session(
+        self, topic_id: uuid.UUID, notice: str
+    ) -> object: ...
 
 
 #: The review domain's cards, read as a bare table: that domain imports this
@@ -285,7 +289,7 @@ class StaleProgressReminder:
             self._reminded[task_id] = now
             try:
                 async with asyncio.timeout(5):
-                    delivered = await self._chat.notify_running_turn(
+                    delivered = await self._chat.notify_running_session(
                         task_id, stale_progress_reminder(minutes, languages[task_id])
                     )
                 logger.info(

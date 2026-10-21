@@ -660,7 +660,7 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
     )
     # The default agent's turn is still held — Second's runs beside it: its
     # own session takes the prompt, and nothing is written mid-turn into the
-    # default one's (merge_into_running_turn only delivers to the seat the
+    # default one's (merge_into_running_session only delivers to the seat the
     # message named).
     async with asyncio.timeout(HANG_S):
         while screen.runs < 2:
@@ -1512,7 +1512,6 @@ async def test_midturn_delivery_holds_no_topic_lock(
         images=None,
         *,
         register_input=None,
-        expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
     ):
@@ -1521,9 +1520,12 @@ async def test_midturn_delivery_holds_no_topic_lock(
         return True
 
     monkeypatch.setattr(svc._compute, "steer", slow_deliver)
-    svc.live.active_turn_ids[topic_id] = {uuid.uuid4()}
+    # A session at work in the room.
+    monkeypatch.setattr(
+        svc._compute, "working_seat", lambda *_a, **_k: ("cheese", "cheese")
+    )
     merge = asyncio.create_task(
-        svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+        svc.merge_into_running_session(topic_id, block_ids, "改一下配色", "u")
     )
     await asyncio.wait_for(in_flight.wait(), timeout=5)
     async with factory() as session:
@@ -1579,7 +1581,6 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         images=None,
         *,
         register_input,
-        expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
     ):
@@ -1592,9 +1593,9 @@ async def test_midturn_message_stays_pending_until_its_receipt(
             tid,
             "cheese",
             "stub-session",
-            f"session-{expected_work_id}",
+            f"session-{turn_id}",
             uuid.uuid4(),
-            expected_work_id,
+            turn_id,
         )
         await register_input(identity)
         minted.append(identity)
@@ -1604,10 +1605,13 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     monkeypatch.setattr(svc._compute, "steer", fake_deliver)
     turn_id = uuid.uuid4()
-    svc.live.active_turn_ids[topic_id] = {turn_id}
+    # A session at work in the room, on the work ``turn_id``.
+    monkeypatch.setattr(
+        svc._compute, "working_seat", lambda *_a, **_k: ("cheese", "cheese")
+    )
 
     assert (
-        await svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+        await svc.merge_into_running_session(topic_id, block_ids, "改一下配色", "u")
         is True
     )
     assert len(delivered_texts) == 1

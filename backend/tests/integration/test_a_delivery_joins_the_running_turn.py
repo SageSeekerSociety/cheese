@@ -1,6 +1,6 @@
-"""A delivery for an agent that is busy joins the turn it is running.
+"""A delivery for an agent that is busy joins the session at work.
 
-A seat runs one turn at a time. A ledger delivery — a PR's CI result, a timed
+A seat's session does one piece of work at a time. A ledger delivery — a PR's CI result, a timed
 delivery, the second agent named in a message — used to wait for a turn of its
 own, refused for as long as the seat ran another; behind a long turn it was
 given up after half an hour (369 of 420 on dev in the 15 days to 2026-10-16).
@@ -8,14 +8,16 @@ A person's message, meanwhile, was always handed to the running turn.
 
 The rules, as stated before the code was written:
 
-- a delivery for a seat running a turn in that conversation is handed to that
-  turn, and counts as delivered once the session has read it;
-- a platform instruction does not move the turn's foreground work aside; a
+- a delivery for a seat whose session is at work in that conversation is
+  handed to that session, and counts as delivered once the session has read
+  it; a finished task's write-up and a task's opening too, since what they
+  decide is keyed on the session reading them, not on work of their own;
+- a platform instruction does not move the session's foreground work aside; a
   person naming the agent does, as their own message would;
-- a finished task's write-up, a routine's run and a task's opening are not
-  merged into the running turn: each goes to the session at once as an input
-  of its own, under its own work, and the session reads it at its next tool
-  boundary — a session that is working takes what it is given;
+- a routine's run is not merged into the work under way: its session is
+  assembled with the routine owner's memory, so it goes to the session at once
+  as an input of its own, under its own work, and the session reads it at its
+  next tool boundary — a session that is working takes what it is given;
 - a delivery the running turn did not take is not lost: it goes in as an
   input of its own.
 """
@@ -236,20 +238,50 @@ async def test_a_person_naming_a_busy_agent_moves_its_work_aside(world):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "own_turn",
-    [{CLOSES_TASK: True}, {"eventType": EVENT_ROUTINE_RUN}, {PURPOSE: OPENING}],
-    ids=["task write-up", "routine run", "task opening"],
+    "kind",
+    [{CLOSES_TASK: True}, {PURPOSE: OPENING}],
+    ids=["task write-up", "task opening"],
 )
-async def test_a_delivery_that_is_its_own_work_goes_in_at_once_as_its_own(
-    world, own_turn
-):
+async def test_a_write_up_or_an_opening_joins_the_session_at_work(world, kind):
     await world.busy()
     delivery_id = await _delivery(
         world.factory,
         world.conversation,
         world.instance_id,
         "write the task up",
-        payload=own_turn,
+        payload=kind,
+    )
+
+    assert await world.dispatch(delivery_id) == 1
+
+    await asyncio.wait_for(world.screen.handed_one.wait(), HANG_S)
+    assert "write the task up" in world.screen.handed[-1]
+    row = await _settled(world.factory, delivery_id, {"received"})
+    assert row.sent_at is not None
+    (joined,) = await _inputs_of_delivery(world.factory, delivery_id)
+    # Read inside the work already under way, not as work of its own.
+    assert joined.work_id != row.attempt_id
+    assert world.screen.moved_aside(world.conversation) == 0
+
+
+async def _inputs_of_delivery(factory, delivery_id) -> list[NativeInput]:
+    async with factory() as session:
+        return list(
+            await session.scalars(
+                select(NativeInput).where(NativeInput.delivery_id == delivery_id)
+            )
+        )
+
+
+@pytest.mark.anyio
+async def test_a_routine_run_goes_in_at_once_as_its_own(world):
+    await world.busy()
+    delivery_id = await _delivery(
+        world.factory,
+        world.conversation,
+        world.instance_id,
+        "write the task up",
+        payload={"eventType": EVENT_ROUTINE_RUN},
     )
 
     assert await world.dispatch(delivery_id) == 1

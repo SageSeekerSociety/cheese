@@ -24,7 +24,7 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     sweeping as _sweeping_fixture,
 )
-from tests.landing import summary_turn_ends, time_passes, watch
+from tests.landing import time_passes, watch, written_up
 from tests.machine_work import machine_commits
 from tests.support import git_store
 
@@ -191,10 +191,12 @@ def test_accepting_the_last_step_reads_as_accepted_and_has_the_task_written_up(
     assert "实况文档" in told and "chat_send" in told
 
 
-def test_the_task_closes_when_its_write_up_turn_ends(client, app_world):
+def test_the_task_closes_when_its_teammate_closes_it_after_the_write_up(
+    client, app_world
+):
     task_id, _ = _accepted_step(client, app_world, completes_task=True)
 
-    summary_turn_ends(client, task_id)
+    written_up(client, task_id)
 
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "closed"
@@ -214,7 +216,7 @@ def test_the_task_closes_without_a_write_up_that_never_comes(client, app_world):
 
 def test_the_owner_reopens_a_completed_task_onto_the_latest_code(client, app_world):
     task_id, before = _accepted_step(client, app_world, completes_task=True)
-    summary_turn_ends(client, task_id)
+    written_up(client, task_id)
     owner = client.get(f"/topics/{task_id}/task").json()["data"]["owner_handle"]
 
     refused = client.post(

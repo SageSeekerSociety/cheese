@@ -8,21 +8,14 @@ insert、没有 update，只有 select——对照写在这里，免得后来者
 「这里负责写」。
 
 跨进程认出这一轮，靠的也正是这些读：另一条进程开的行，本进程的缓存里没有，读它
-就能看见（`has_running_turn` / `consuming_turn`）。
+就能看见（`has_running_turn`）。
 """
 
 import uuid
-from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.agent.repositories import AgentTurnRepository
-from app.domain.agent.turn.state.live import (
-    DurableTurnSeat,
-    LiveWork,
-    TurnSeat,
-    pick_unambiguous_entry,
-)
 
 Sessions = async_sessionmaker[AsyncSession]
 
@@ -55,41 +48,6 @@ async def has_running_turn(
     if agent_handle is None:
         return True
     return None in handles or agent_handle in handles
-
-
-async def consuming_turn(
-    live: LiveWork,
-    sessions: Sessions,
-    topic_id: uuid.UUID,
-    matches: Callable[[TurnSeat], bool] | None = None,
-    *,
-    strict: bool = False,
-) -> tuple[uuid.UUID, TurnSeat | None] | None:
-    """The one live turn an inbound message belongs to, and the state that says
-    whose it is: this process's own AND the rows another process opened.
-
-    The union is asked the same question `LiveWork.consuming_work_id` asks of
-    one process alone, so a turn running on another backend consumes the message
-    instead of a second turn being opened beside it. A row this process also
-    holds keeps its richer local state; a row known only durably answers with
-    its seat (`DurableTurnSeat`) — that half is what aims the steer and names the
-    input's ``seen_by`` when the turn runs elsewhere. Closed rows are absent
-    from the durable half. Local marks remain candidates until eviction, even
-    when their rows are closed. ``TurnSeat`` is the seat pair both kinds carry,
-    which is all a caller reads from the result.
-    """
-    local = live.active_turn_ids.get(topic_id) or set()
-    async with sessions() as session:
-        records = await AgentTurnRepository(session).open_turn_records(topic_id)
-    entries: dict[uuid.UUID, TurnSeat | None] = {
-        work_id: live.hook_work.get((topic_id, work_id)) for work_id in local
-    }
-    for turn_id, handle in records:
-        entries.setdefault(
-            turn_id,
-            DurableTurnSeat(agent_instance_handle=handle, acting_agent=handle),
-        )
-    return pick_unambiguous_entry(entries.items(), matches, strict=strict)
 
 
 async def confirm_open(sessions: Sessions, work_id: uuid.UUID) -> bool:
