@@ -24,6 +24,17 @@
         <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
       </div>
     </v-bottom-sheet>
+    <!-- Over the form the page registered: 芝士's pointer, the field it writes, the ones it filled. -->
+    <Teleport v-if="formHost" :to="formHost">
+      <AgentLayer
+        :pointer="layer.pointer.value"
+        :outline="layer.outline.value"
+        :marks="layer.marks.value"
+        :selection="layer.selection.value"
+        :name="t('work.agentAvatar.defaultName')"
+        @undo="(key) => form?.undoMark(key)"
+      />
+    </Teleport>
   </template>
 </template>
 
@@ -37,11 +48,17 @@
 //
 // 项目里叫出的是项目自己的芝士（还没有做），所以在项目里不出现：入口不画，快捷键不响应，
 // 开着的面板走进项目时收起。
+//
+// 这一页登记了表单（`AgentSurface.form`）时，芝士那一层也由这里画，送进表单的外框里：
+// 指针、正在写的那一格的描边、「芝士已填写」和撤销。
 import { computed, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { useAgentPointer } from '@/composables/useAgentPointer'
+
 import { defineCommands } from '@/commands'
+import AgentLayer from '@/components/agent/AgentLayer.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
@@ -102,6 +119,18 @@ onBeforeUnmount(
   )
 )
 
+const form = computed(() => agentSurface.value?.form ?? null)
+const formHost = computed(() => form.value?.host() ?? null)
+const layer = useAgentPointer({
+  host: formHost,
+  fields: computed(() => form.value?.fields() ?? {}),
+  writing: computed(() => form.value?.writing() ?? null),
+  marks: computed(() => form.value?.marks() ?? {}),
+  active: computed(() => !!form.value && agentThread.busy.value),
+  passage: computed(() => form.value?.passage?.() ?? null),
+  holding: computed(() => form.value?.holding?.() ?? false),
+})
+
 function openTask(id: number) {
   const spaceId = route.params.spaceId
   if (spaceId) void router.push({ name: 'TasksDetail', params: { spaceId, taskId: id } })
@@ -146,7 +175,7 @@ const panelEvents = {
   dock: (next: boolean) => (docked.value = next),
   undo: (change: number, key: string) => agentSurface.value?.undo?.(change, key),
   undoAll: (rows: { change: number; key: string }[]) => agentSurface.value?.undoAll?.(rows),
-  jump: (key: string) => agentSurface.value?.jump?.(key),
+  jump: (key: string) => (agentSurface.value?.jump ?? layer.jump)(key),
   openDraft: (id: number) => agentSurface.value?.openDraft?.(id),
   openTask: (id: number) => (agentSurface.value?.openTask ?? openTask)(id),
   attach: (files: File[]) => void attachToAgent(files),

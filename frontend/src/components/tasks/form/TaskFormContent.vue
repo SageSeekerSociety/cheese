@@ -51,16 +51,6 @@ defineExpose({
     const ed = editor.value?.editor as { getMarkdown?: () => string } | null | undefined
     return ed?.getMarkdown ? serializeDoc(ed as { getMarkdown: () => string }) : undefined
   },
-  /** 正文末尾在屏幕上的位置：芝士写详情时，带名字的光标停在这里。 */
-  endRect: (): { left: number; top: number; bottom: number } | null => {
-    const ed = editor.value?.editor
-    if (!ed) return null
-    try {
-      return ed.view.coordsAtPos(Math.max(0, ed.state.doc.content.size - 1))
-    } catch {
-      return null
-    }
-  },
 })
 </script>
 

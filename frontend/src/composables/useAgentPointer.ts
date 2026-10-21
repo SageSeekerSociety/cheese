@@ -1,22 +1,23 @@
 // 芝士那一层（`AgentLayer.vue`）上的东西放在哪：量表单上那几格在屏幕上的位置，换成那一层
-// 的坐标。
+// 的坐标。哪几格、各叫什么、哪几格是打字写的，由登记表单的页面说（`AgentFormField`）；
+// 格子在页面上用 `data-agent-field` 标出来。
 //
-// 指针只有一个。芝士在写名称、详情这种要打字的格子时，它是带名字的文字光标，停在字的
-// 末尾（输入框量字宽，详情读编辑器末尾的位置）；写选项、数字、日期、列表时，它是箭头，
-// 指着那一格。芝士写着的时候每一帧都重量：字在长，格子也在长，也可能被挤下去。不写的时候
+// 指针只有一个。芝士在写打字的格子时，它是带名字的文字光标，停在字的末尾（输入框量字宽，
+// 编辑器读它末尾的位置）；写选项、数字、日期、列表时，它是箭头，指着那一格。芝士写着的时候每一帧都重量：字在长，格子也在长，也可能被挤下去。不写的时候
 // 格子变了大小（表单重排、人自己在打字）也重量，「芝士已填写」跟着格子走。
 //
 // 字写到看不见的地方时滚过去：先滚那一格自己（详情超过最大高度后在框里滚），再滚页面。
 // 跟着字滚是立刻到位的，平滑滚动每一帧重新起步，只会越落越远；换到另一格时才平滑滚过去。
 import type { Ref } from 'vue'
-import type { AgentBox, AgentMarkSpot, AgentPointer } from '@/components/tasks/AgentLayer.vue'
+import type { AgentBox, AgentMarkSpot, AgentPointer } from '@/components/agent/AgentLayer.vue'
 
 import { onBeforeUnmount, ref, watch } from 'vue'
 
-import { fieldLabel } from '@/lib/assistantView'
-
-/** 打字的格子：光标跟着字走。 */
-const TYPED = new Set(['name', 'description'])
+/** 表单上的一格：叫什么（「芝士已填写」的撤销念它），是不是打字写的（光标跟着字走）。 */
+export interface AgentFormField {
+  label: string
+  typed?: boolean
+}
 /** 人自己滚过页面之后这么久不跟着滚。 */
 const HANDS_OFF_MS = 2500
 /** 光标离屏幕上下边缘至少留这么多。 */
@@ -54,16 +55,31 @@ function textWidth(el: HTMLElement, text: string): number {
 export interface PointerOptions {
   /** 那一层所在的盒子（表单的外框，`position: relative`）。 */
   host: Ref<HTMLElement | null>
+  fields: Ref<Record<string, AgentFormField>>
   writing: Ref<string | null>
   marks: Ref<Record<string, number>>
   /** 芝士在答：指针在场。 */
   active: Ref<boolean>
-  /** 详情末尾在屏幕上的位置。 */
-  descriptionEnd: () => { left: number; top: number; bottom: number } | null
-  /** 芝士正在改的详情里那一段（`useTaskDraft` 的 passage）。 */
+  /** 芝士正在改的、编辑器里那一段：先选中原文，再跟着新文字走。 */
   passage?: Ref<{ find: string; replace: string | null } | null>
   /** 芝士停在一格前面、还没开始写：原来有字就先整格选中。 */
   holding?: Ref<boolean>
+}
+
+/** 编辑器里最后一个字后面在屏幕上的位置：TipTap 把编辑器挂在它的 `.ProseMirror` 上。 */
+function editorEnd(el: HTMLElement): { left: number; top: number; bottom: number } | null {
+  const view = (el as HTMLElement & { editor?: { view: EditorViewLike } }).editor?.view
+  if (!view) return null
+  try {
+    return view.coordsAtPos(Math.max(0, view.state.doc.content.size - 1))
+  } catch {
+    return null
+  }
+}
+
+interface EditorViewLike {
+  state: { doc: { content: { size: number } } }
+  coordsAtPos: (pos: number) => { left: number; top: number; bottom: number }
 }
 
 /** Markdown 写的一段在页面上读出来的字：去掉标记符号，空白并成一个。 */
@@ -174,7 +190,7 @@ export function useAgentPointer(options: PointerOptions) {
       const el = field(key)
       if (!el) return []
       const r = box(el.getBoundingClientRect())
-      return [{ key, label: fieldLabel(key), x: r.x + r.w, y: r.y }]
+      return [{ key, label: options.fields.value[key]?.label ?? key, x: r.x + r.w, y: r.y }]
     })
 
     const key = options.writing.value
@@ -207,10 +223,10 @@ export function useAgentPointer(options: PointerOptions) {
       return read()
     }
 
-    if (TYPED.has(key)) {
+    if (options.fields.value[key]?.typed) {
       const editor = el.querySelector<HTMLElement>('.ProseMirror')
       const passage = options.passage?.value
-      if (key === 'description' && editor && passage) {
+      if (editor && passage) {
         // 改详情里的一段：先选中原文，光标在它前面；开始写了，光标跟着新文字走。
         if (passage.replace === null) {
           anchor = findText(editor, shownText(passage.find))
@@ -254,8 +270,8 @@ export function useAgentPointer(options: PointerOptions) {
           selection.value = [...all.getClientRects()].slice(0, 40).map((r) => box(r))
         }
       }
-      if (key === 'description') {
-        const end = editor ? follow(editor, options.descriptionEnd) : options.descriptionEnd()
+      if (editor) {
+        const end = follow(editor, () => editorEnd(editor))
         if (end) {
           pointer.value = {
             x: end.left - origin.left,

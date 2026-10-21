@@ -2,13 +2,14 @@
 // 到多少填多少，人看到的是一格格瞬间换掉，看不出是谁在写、写到了哪。所以到了的参数先攒
 // 着，按节奏放出去。
 //
-// 节奏按格子定，不按总字数：参数是一段 JSON，这里边读边认出眼下在写哪个字段的字。
-// - 一格的字按每秒 CHARS_PER_S 个放；字多就加快，短格子最多 SHORT_S 秒、详情这类长格子
-//   最多 LONG_S 秒写完——描述再长也不拖，比人自己填快得多。
+// 节奏按格子定，不按总字数：参数是一段 JSON，这里边读边认出眼下在写哪个字段的字。哪些
+// 参数写起来长、哪些只用来定位，由调用的工具说（`TypistPace`）。
+// - 一格的字按每秒 CHARS_PER_S 个放；字多就加快，短格子最多 SHORT_S 秒、长格子（详情
+//   这类）最多 LONG_S 秒写完——再长也不拖，比人自己填快得多。
 // - 换到下一格之前停 HOLD_MS：指针滑过去，原来有字的格子先被选中一下，看得出是覆盖；
 //   改详情里的一段时，原文先被选中一下，再换上新的。
 //   停的时候连这一格的引号都不放，表单上还是原来的样子。
-// - 只用来定位的字段（草稿 id、要替换的原文）和 JSON 的括号、键名一下子放完。
+// - 只用来定位的参数（草稿 id、要替换的原文）和 JSON 的括号、键名一下子放完。
 // 模型比这慢时就跟着模型走，不为凑节奏等。
 //
 // 这次调用结束、草稿写进去了，都要等放完再收尾：不然表单会在打到一半时跳成最终的样子。
@@ -20,10 +21,13 @@ const SHORT_S = 1
 const LONG_S = 2
 const HOLD_MS = 220
 
-/** 写起来长的字段：详情、改详情时换上的那段、评分标准。 */
-const LONG = new Set(['description', 'replace', 'criteria'])
-/** 只用来定位、不往表单上写的字段：一下子放完，也不停。 */
-const INSTANT = new Set(['find', 'draft', 'task', 'space', 'version', 'source', 'template'])
+/** 一个工具的参数怎么放。 */
+export interface TypistPace {
+  /** 写起来长的参数（详情这类）：最多 LONG_S 秒，而不是 SHORT_S 秒。 */
+  long?: Iterable<string>
+  /** 只用来定位、不往页面上写的参数：一下子放完，也不停。 */
+  instant?: Iterable<string>
+}
 
 export interface Typist {
   /** 一次调用的参数到了这么多（整段，不是增量）。 */
@@ -67,8 +71,11 @@ function stringEnd(raw: string, from: number, escapedAtStart: boolean): number {
 /** `held`：停在哪个字段前面（它的字还没开始放），没停就是 null。 */
 export function createTypist(
   show: (call: string, raw: string, held: string | null) => void,
+  pace: TypistPace = {},
   instant = reducedMotion()
 ): Typist {
+  const LONG = new Set(pace.long ?? [])
+  const INSTANT = new Set(pace.instant ?? [])
   let call: string | null = null
   let raw = ''
   let shown = 0

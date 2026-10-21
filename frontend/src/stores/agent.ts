@@ -4,11 +4,13 @@
 // - 上下文（`useAgentContext`）：这一页是什么（芝士读到的「当前页面」由服务端按种类和 id
 //   写出），以及面板在这一页的问候、开场问题、输入框提示，能不能交文件。
 // - 可写面（`useAgentSurface`，可选）：芝士写进这一页时，页面怎么跟着动——参数边到边填、
-//   服务端定稿、撤销，以及面板上那一轮怎么画（改动卡、结果）。
+//   服务端定稿、撤销，以及面板上那一轮怎么画（改动卡、结果）。有表单的页面再说表单在哪、
+//   有哪几格（`form`）：指针、描边、「芝士已填写」由宿主画在表单上，页面不接线。
 //
 // 两份登记都是栈：后登记的在上面，组件卸载或被 keep-alive 收起时自己撤下（和
 // `useScreenHeader` 一个做法）。宿主状态放在模块里，不放在外壳组件里：外壳在落地页和
 // 应用之间会重新挂载，芝士答到一半不该跟着丢。换页时芝士照样答完。
+import type { AgentFormField } from '@/composables/useAgentPointer'
 import type { PanelChange, PanelResult, PanelStep } from '@/lib/assistantView'
 import type { AssistantPage } from '@/stores/agentThread'
 
@@ -17,8 +19,9 @@ import { toast } from 'vuetify-sonner'
 
 import { AttachmentsApi } from '@/api/attachments'
 import { t } from '@/i18n'
-import { panelMessages, resultView, stepView, writesView } from '@/lib/assistantView'
+import { stepView } from '@/lib/assistantView'
 import { storageGet, storageSet } from '@/lib/browserStorage'
+import { panelMessages, resultView, writesView } from '@/lib/draftChangeView'
 import { type AssistantHooks, createAssistant } from '@/stores/agentThread'
 
 /** 这一页在面板上说什么、芝士读什么。 */
@@ -43,8 +46,26 @@ export interface AgentPanelView {
   results: PanelResult[]
 }
 
+/** 芝士往里写的一张表单：宿主在它上面画一层，整张表单一个指针（`AgentLayer`）。 */
+export interface AgentForm {
+  /** 表单的外框（`position: relative`）：那一层画在这里，格子按 `data-agent-field` 找。 */
+  host: () => HTMLElement | null
+  fields: () => Record<string, AgentFormField>
+  /** 芝士正在写的那一格。 */
+  writing: () => string | null
+  /** 芝士正在改的、编辑器里那一段：先选中原文，再跟着新文字走。 */
+  passage?: () => { find: string; replace: string | null } | null
+  /** 芝士停在一格前面、还没开始写。 */
+  holding?: () => boolean
+  /** 芝士写过、人还没再碰的格子，各自是哪次改动。 */
+  marks: () => Record<string, number>
+  /** 「芝士已填写」旁的撤销。 */
+  undoMark: (key: string) => void
+}
+
 /** 一页登记的可写面：芝士写进这一页时页面怎么动。都可以不给。 */
 export interface AgentSurface {
+  form?: AgentForm
   /** 问之前：先把这一页存好，芝士读到的是存下的样子。 */
   prepare?: () => Promise<void>
   on?: AssistantHooks
@@ -52,6 +73,7 @@ export interface AgentSurface {
   view?: () => AgentPanelView
   undo?: (change: number, key: string) => void
   undoAll?: (rows: { change: number; key: string }[]) => void
+  /** 面板上「跳到这一格」；有表单时不给也行，宿主把那一格滚进视野、描一下。 */
   jump?: (key: string) => void
   openDraft?: (id: number) => void
   openTask?: (id: number) => void

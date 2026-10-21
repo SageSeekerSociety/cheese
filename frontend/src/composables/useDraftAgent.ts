@@ -1,5 +1,6 @@
 // 发布页、改题页登记的可写面：芝士写这份草稿时表单怎么跟着动、面板上的改动卡怎么画、人怎么
 // 撤销它改的格子。对话本身是全站那一条（`stores/agent.ts`），这里不再自己开。
+import type { AgentFormField } from '@/composables/useAgentPointer'
 import type { useTaskDraft } from '@/composables/useTaskDraft'
 import type { DraftTerms } from '@/lib/taskDraftAgent'
 import type { AssistantEdit } from '@/stores/agentThread'
@@ -10,8 +11,10 @@ import { toast } from 'vuetify-sonner'
 
 import { ApiError } from '@/api'
 import { t } from '@/i18n'
-import { panelMessages, resultView, stepView, writesView } from '@/lib/assistantView'
+import { stepView } from '@/lib/assistantView'
+import { fieldLabel, panelMessages, resultView, writesView } from '@/lib/draftChangeView'
 import { partialValue } from '@/lib/partialJson'
+import { AGENT_FIELDS, DRAFT_WRITE_PACE } from '@/lib/taskDraftAgent'
 import { createTypist } from '@/lib/typist'
 import { agentThread, useAgentSurface } from '@/stores/agent'
 
@@ -19,6 +22,8 @@ type Draft = ReturnType<typeof useTaskDraft>
 
 export interface DraftAgentOptions {
   draft: Draft
+  /** 表单的外框：芝士那一层画在这里。 */
+  host: () => HTMLElement | null
   terms: () => DraftTerms
   /** 有表单可撤销。 */
   canUndo?: () => boolean
@@ -28,10 +33,18 @@ export interface DraftAgentOptions {
   publishedHere?: (taskId: number) => void
   /** 一份文件拆出几道题时，这份草稿是第几道（改动卡上写「第 N 道」）。 */
   ordinal?: (draftId: number) => number | undefined
-  /** 面板上「跳到这一格」。 */
-  jump?: (key: string) => void
   openDraft?: (id: number) => void
   openTask?: (id: number) => void
+}
+
+/** 题目表单上芝士写的那几格（按眼下的语言叫）：名称和详情是打字写的。 */
+function formFields(): Record<string, AgentFormField> {
+  return Object.fromEntries(
+    Object.keys(AGENT_FIELDS).map((key) => [
+      key,
+      { label: fieldLabel(key), typed: key === 'name' || key === 'description' },
+    ])
+  )
 }
 
 export function useDraftAgent(options: DraftAgentOptions) {
@@ -40,7 +53,10 @@ export function useDraftAgent(options: DraftAgentOptions) {
 
   // 芝士写的参数按打字的节奏放进表单（见 lib/typist.ts）；调用结束、写进草稿、发布都排在
   // 放完之后。
-  const typist = createTypist((_call, raw, held) => void draft.preview(partialValue(raw), options.terms(), held))
+  const typist = createTypist(
+    (_call, raw, held) => void draft.preview(partialValue(raw), options.terms(), held),
+    DRAFT_WRITE_PACE
+  )
   let after: Promise<void> = Promise.resolve()
   function then(step: () => void) {
     after = after
@@ -90,6 +106,15 @@ export function useDraftAgent(options: DraftAgentOptions) {
   }
 
   useAgentSurface(() => ({
+    form: {
+      host: options.host,
+      fields: formFields,
+      writing: () => draft.writing.value,
+      passage: () => draft.passage.value,
+      holding: () => draft.holding.value,
+      marks: () => draft.marks.value,
+      undoMark: (key) => void undoMark(key),
+    },
     prepare: async () => {
       await draft.flush()
       await draft.ensure()
@@ -133,7 +158,6 @@ export function useDraftAgent(options: DraftAgentOptions) {
     }),
     undo: (change, key) => void undo(change, key),
     undoAll: (rows) => void undoAll(rows),
-    jump: options.jump,
     openDraft: options.openDraft,
     openTask: options.openTask,
   }))

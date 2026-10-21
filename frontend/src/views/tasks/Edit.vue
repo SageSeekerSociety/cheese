@@ -5,7 +5,6 @@
 // 改动先存成这道题的修改草稿（`useTaskDraft`）：边改边存，离开再回来还在，点「保存更改」
 // 才落到题目上，学生在那之前看到的是原来的题目。芝士停在右边，接着的是题目页「问芝士」
 // 的那段对话；它改的也是这份草稿，表单跟着动（`useDraftAgent`）。
-import type { AgentBox, AgentMarkSpot, AgentPointer } from '@/components/tasks/AgentLayer.vue'
 import type { SpaceTeaching, TaskDraftFields, TaskFormSubmitData } from '@/types'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -15,7 +14,6 @@ import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
-import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSpaceData } from '@/composables/useSpaceData'
@@ -31,7 +29,6 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
-import AgentLayer from '@/components/tasks/AgentLayer.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
@@ -150,9 +147,9 @@ const terms = () => ({
 
 const agent = useDraftAgent({
   draft,
+  host: () => host.value,
   terms,
   publishedHere: () => navigateToDetail(),
-  jump: (key) => layer.jump(key),
   openTask: (id) => openTask(id),
 })
 const { assistant } = agent
@@ -169,18 +166,6 @@ useAgentContext(() => ({
   canAttach: true,
 }))
 
-const layer = useAgentPointer({
-  host,
-  writing: draft.writing,
-  marks: draft.marks,
-  active: computed(() => assistant.busy.value),
-  descriptionEnd: () => form.value?.descriptionEnd() ?? null,
-  passage: draft.passage,
-  holding: draft.holding,
-})
-const pointer = computed<AgentPointer | null>(() => layer.pointer.value)
-const outline = computed<AgentBox | null>(() => layer.outline.value)
-const marks = computed<AgentMarkSpot[]>(() => layer.marks.value)
 // 桌面上进这一页时，芝士停在右边就把它打开：表单和面板并排，芝士写进来看得见。
 onMounted(() => {
   if (mdAndUp.value && agentDocked.value) openAgent()
@@ -373,14 +358,6 @@ onBeforeUnmount(() => void draft.flush())
         </div>
       </template>
     </TaskForm>
-    <AgentLayer
-      :pointer="pointer"
-      :outline="outline"
-      :marks="marks"
-      :selection="layer.selection.value"
-      :name="t('work.agentAvatar.defaultName')"
-      @undo="agent.undoMark"
-    />
   </div>
 </template>
 
