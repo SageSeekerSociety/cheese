@@ -13,7 +13,13 @@ import PanelSite from './PanelSite.vue'
 const api = vi.hoisted(() => ({ getTranscript: vi.fn(), sessionRecordImageUrl: vi.fn() }))
 vi.mock('../../api', () => ({ ...api, SITE_PAGE_SIZE: 120 }))
 vi.mock('../../composables/useSessionInspector', () => ({ useSessionInspector: () => ({}) }))
-vi.mock('../SessionInspector.vue', () => ({ default: { template: '<div />' } }))
+// 会话栏在这里只当一格占位：概览／原始记录的切换放在它的 actions 插槽里，
+// 所以替身要把插槽画出来，不然这个 spec 点不到那两个按钮。
+vi.mock('../SessionInspector.vue', () => ({ default: { template: '<div><slot name="actions" /></div>' } }))
+// 空状态是 Vuetify 的那一只；这一个 spec 没装 Vuetify，只关心那句字出没出来。
+vi.mock('@/components/base/BaseEmptyState.vue', () => ({
+  default: { props: ['title'], template: '<div class="empty-stub">{{ title }}</div>' },
+}))
 vi.mock('@/i18n', () => ({
   t: (key: string) =>
     ({
@@ -72,6 +78,29 @@ beforeEach(() => {
   Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
 })
 afterEach(cleanup)
+
+describe('the header stays put', () => {
+  it('keeps the view switch on screen while records load and when there are none', async () => {
+    let answer!: (value: { data: Block[]; has_more: boolean }) => void
+    api.getTranscript.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve
+        })
+    )
+    const view = open()
+
+    // 记录还在路上：表头（会话栏 + 切换）照常画，骨架只在它下面。
+    expect(view.container.querySelector('.site-head')).toBeTruthy()
+    expect(view.container.querySelector('.skel--site')).toBeTruthy()
+    expect(view.getByRole('button', { name: 'Raw records' })).toBeTruthy()
+
+    answer({ data: [], has_more: false })
+    await waitFor(() => expect(view.container.textContent).toContain('work.room.site.empty'))
+    expect(view.container.querySelector('.site-head')).toBeTruthy()
+    expect(view.getByRole('button', { name: 'Raw records' })).toBeTruthy()
+  })
+})
 
 describe('raw records and overview share one timeline', () => {
   it('starts in overview, reveals thinking in raw view, and remembers the choice', async () => {

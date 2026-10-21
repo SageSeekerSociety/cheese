@@ -255,3 +255,29 @@ describe('a read that is slow or fails', () => {
     scope.stop()
   })
 })
+
+describe('a topic with no records yet', () => {
+  it('does not flash the skeleton on every background refresh', async () => {
+    api.getTranscript.mockResolvedValue(page([]))
+    const { site, scope } = await openAtBottom()
+    expect(site.transcript.value).toHaveLength(0)
+    expect(site.loading.value).toBe(false)
+
+    // 下一次刷新还在路上：屏上该一直停在那句空状态里，不该切回骨架屏。
+    let answer!: (value: ReturnType<typeof page>) => void
+    api.getTranscript.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve
+        })
+    )
+    vi.advanceTimersByTime(3000)
+    await settle()
+    expect(site.loading.value).toBe(false)
+
+    answer(page([]))
+    await settle()
+    expect(site.loading.value).toBe(false)
+    scope.stop()
+  })
+})

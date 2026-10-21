@@ -121,9 +121,19 @@ const formattedOutput = computed(() => {
         hide-details
         @update:model-value="(v: string | null) => setSeat(v)"
       />
-      <BaseButton kind="ghost" size="sm" :aria-expanded="expanded" @click="setExpanded(!expanded)">{{
-        t(expanded ? 'work.room.site.session.collapse' : 'work.room.site.session.expand')
-      }}</BaseButton>
+      <!-- 调用方在这一行里放自己的小控件（现场那一格放「概览／原始记录」），
+           这一行就同时是那一格常驻表头的一部分。 -->
+      <div v-if="$slots.actions" class="inspector-actions">
+        <slot name="actions" />
+      </div>
+      <BaseButton
+        kind="ghost"
+        size="sm"
+        class="inspector-expand"
+        :aria-expanded="expanded"
+        @click="setExpanded(!expanded)"
+        >{{ t(expanded ? 'work.room.site.session.collapse' : 'work.room.site.session.expand') }}</BaseButton
+      >
     </div>
     <v-alert v-if="error" type="error" density="compact" class="ma-2">{{ error }}</v-alert>
     <div v-if="expanded" class="inspector-body">
@@ -213,6 +223,13 @@ const formattedOutput = computed(() => {
 .inspector-seat {
   flex: 0 1 200px;
   min-width: 140px;
+}
+
+/* 调用方的控件靠右，和「查看详情」挨着；这一行紧，所以它自己也别要外边距。 */
+.inspector-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
 }
 
 .inspector-body {
