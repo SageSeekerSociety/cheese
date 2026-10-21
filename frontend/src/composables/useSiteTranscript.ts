@@ -4,13 +4,13 @@
 // 事：props/events 那条边界，一直落在同一个文件里。
 import type { Ref } from 'vue'
 import type { Block } from '../cx_types'
+import type { ScrollAnchor } from './useStickToBottom'
 
 import { nextTick, ref } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../api'
 import { capWindow, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
 import { beginMeasuredLayout, endMeasuredLayout } from '../lib/contentVisibility'
-import { shouldKeepPinning } from '../lib/siteLog'
 
 import { t } from '@/i18n'
 
@@ -22,6 +22,17 @@ export interface SiteTranscriptHooks {
   viewing: () => string | null
   /** 这一窗自己的滚动容器。 */
   scrollRef: Ref<HTMLElement | null>
+  /**
+   * 读者是不是停在末尾。这个状态由他自己的滚动维护（`useStickToBottom`），不是
+   * 每次更新时现量——请求在路上、内容在重排的时候量出来的那一瞬间都可能骗人。
+   */
+  following: Readonly<Ref<boolean>>
+  /** 把这一窗钉到末尾。 */
+  scrollToTail: () => void
+  /** 记下此刻视口顶上那一行。 */
+  captureAnchor: () => ScrollAnchor
+  /** 内容换过之后把那一行放回原来的位置。 */
+  restoreAnchor: (anchor: ScrollAnchor) => void
   /** 这一页/这一行又露面了哪些队友（PanelSite 的 `noteAgents`）。 */
   noteAgents: (blocks: Block[]) => void
   /** 每一轮从什么时候开始（PanelSite 的 `noteStarts`）。 */
@@ -49,36 +60,6 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   // 手上这一窗是给哪个视角读的（null = 全部）。换视角时它和这一栏现在要读的东西就
   // 不是一回事了，重读时不能再和它合。
   let loadedFor: string | null = null
-
-  // 读的人是不是正看着最底下。新的一行来了，只有这时才跟着往下走；往上翻着看旧记录
-  // 的人，不能被一行新的拽回底部。
-  function atTail(): boolean {
-    const el = hooks.scrollRef.value
-    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 48
-  }
-
-  // A single `scrollTop = scrollHeight` at nextTick does NOT work here, which is
-  // how this shipped broken the first time: the panel renders its spinner first,
-  // so the container is one viewport tall with nothing to scroll, the assignment
-  // clamps to 0, and the timeline lays out underneath — leaving the reader on the
-  // oldest entry, the exact bug this exists to fix. Measured on the deployed page:
-  // scrollHeight 500 at +40ms, 2066 at +120ms, scrollTop 0 throughout.
-  // So keep re-pinning while the height is still moving (see shouldKeepPinning).
-  function scrollSiteToTail(): void {
-    let lastHeight = -1
-    let frames = 0
-    const pin = (): void => {
-      const el = hooks.scrollRef.value
-      if (!el) return
-      el.scrollTop = el.scrollHeight
-      if (shouldKeepPinning(el.scrollHeight, lastHeight, frames)) {
-        lastHeight = el.scrollHeight
-        frames += 1
-        requestAnimationFrame(pin)
-      }
-    }
-    nextTick(() => requestAnimationFrame(pin))
-  }
 
   async function loadOlder() {
     const tid = hooks.topicId()
@@ -170,7 +151,6 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     const author = hooks.viewing()
     const switched = author !== loadedFor
     const quiet = transcript.value.length > 0
-    const follow = switched || !quiet || atTail()
     if (!quiet) loading.value = true
     errorMsg.value = null
     try {
@@ -181,19 +161,29 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       loadedFor = author
       hooks.noteAgents(tx.data)
       hooks.noteStarts(tx.turn_starts)
+      // 跟不跟，读读者自己滚出来的那个状态，而不是此刻量一次：请求在路上的这几百毫秒
+      // 里他可能已经往上翻了，而量到的那一下还停在底部——那就把他拽回去了。
+      const follow = switched || !quiet || hooks.following.value
       // 窗口下面被裁过、读的人还在历史中间：把最新的一页拼上去，会在两段之间留一个
       // 从没取过的洞。这时什么也别动——他回到末尾时，那次 load 会重新接上。
       if (!(hasNewer.value && !follow)) {
+        // 不跟的时候先记下他读着的那一行：整窗换过之后浏览器可能已经把 scrollTop
+        // 夹到了别处（见 useStickToBottom 的 ScrollAnchor）。
+        const anchor = follow ? null : hooks.captureAnchor()
         transcript.value = mergeSite(tx.data, transcript.value, switched)
         hasNewer.value = false
         if (switched || !quiet) {
           hasOlder.value = tx.has_more === true
           olderCursor = tx.oldest_id ?? null
         }
+        // Follow the tail on every open of a topic's 现场 — that is what "open on
+        // the newest" means. 换视角也是「打开这个人的现场」，同样停在最新的那一条。
+        if (follow) hooks.scrollToTail()
+        else if (anchor) {
+          await nextTick()
+          hooks.restoreAnchor(anchor)
+        }
       }
-      // Follow the tail on every open of a topic's 现场 — that is what "open on
-      // the newest" means. 换视角也是「打开这个人的现场」，同样停在最新的那一条。
-      if (follow) scrollSiteToTail()
     } catch (e) {
       errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
     } finally {
@@ -245,18 +235,23 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     if (viewing !== null && block.author !== viewing) return
     const at = transcript.value.findIndex((b) => b.id === block.id)
     if (at >= 0) {
+      const follow = hooks.following.value
+      const anchor = follow ? null : hooks.captureAnchor()
       const next = transcript.value.slice()
       next[at] = block
       transcript.value = next
+      if (follow) hooks.scrollToTail()
+      else if (anchor) void nextTick(() => hooks.restoreAnchor(anchor))
       return
     }
     // 窗口被裁过：这一行落在窗口下面那一段里，接上去中间就是断的。读的人已经回到末尾
     // 的话，重读一页最新的把窗口接上；否则放着，等他回来。
     if (hasNewer.value) {
-      if (atTail()) void load()
+      if (hooks.following.value) void load()
       return
     }
-    const follow = atTail()
+    const follow = hooks.following.value
+    const anchor = follow ? null : hooks.captureAnchor()
     const time = Date.parse(block.created_at)
     const next = transcript.value.slice()
     // 几乎总是接在末尾；偶尔晚到的一行按时间插回它的位置（一轮以它记下的时间排）。
@@ -264,7 +259,8 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     while (i > 0 && Date.parse(next[i - 1].created_at) > time) i -= 1
     next.splice(i, 0, block)
     transcript.value = next
-    if (follow) scrollSiteToTail()
+    if (follow) hooks.scrollToTail()
+    else if (anchor) void nextTick(() => hooks.restoreAnchor(anchor))
   }
 
   return { transcript, hasOlder, loading, loadingOlder, errorMsg, load, onSiteScroll, receive }

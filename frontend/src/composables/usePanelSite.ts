@@ -51,7 +51,8 @@ export function usePanelSite(scope: PanelSiteScope) {
   // with a scrollHeight of 1818 and a viewport of 500 — the reader landed 1300px
   // above the thing they came to see.
   const scrollRef = ref<HTMLElement | null>(null)
-  useStickToBottom(scrollRef, 48)
+  // 这一窗停在哪、跟不跟新行：由读者自己的滚动维护，见 useStickToBottom。
+  const stick = useStickToBottom(scrollRef, 48)
 
   // ---- 按队友看 ----
   // 一个房间可以先后、甚至同时交给几个队友。时间线是他们交错着的，而人来看的往往
@@ -90,6 +91,10 @@ export function usePanelSite(scope: PanelSiteScope) {
     topicId: scope.topicId,
     viewing: () => viewing.value,
     scrollRef,
+    following: stick.following,
+    scrollToTail: stick.scrollToTail,
+    captureAnchor: stick.captureAnchor,
+    restoreAnchor: stick.restoreAnchor,
     noteAgents,
     noteStarts,
   })
