@@ -1469,13 +1469,13 @@ DELEGATED_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_member_set",
-            "以用户的名义管成员：where 给项目短名或频道编号，who 给对方的 handle。"
+            "以用户的名义管成员：where 给项目短名或频道编号，who 给对方的 handle 或名字。"
             "项目里：不在项目的人发邀请（role 为 member 或 mentor），已在的人改角色"
             "（admin / member / mentor），remove 为 true 时移出。频道里：加进来，或 "
             "remove 移出。只能做用户自己有权限做的；移出成员、降低权限默认要用户确认。",
             {
                 "where": _text("项目短名或频道编号"),
-                "who": _text("对方的 handle"),
+                "who": _text("对方的 handle 或名字；重名时会列出各人的 handle"),
                 "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
                 "remove": {"type": "boolean"},
             },
@@ -3783,11 +3783,9 @@ def _act(body: dict, host):
     )
     if not data.get("done"):
         why = data.get("reason") or "需要用户确认"
-        if data.get("card"):
-            return None, (
-                f"还没有执行：已在面板中请用户确认（{why}）。告诉用户确认卡片在面板中，"
-                "不要说已经执行。"
-            )
+        card = data.get("card")
+        if card:
+            return None, _decided(card, host)
         return None, f"没有做：{why}。"
     answered, made = None, None
     for call in data.get("calls") or []:
@@ -3798,6 +3796,19 @@ def _act(body: dict, host):
         answered = host.request(plan).get("data")
         made = answered.get("id") if isinstance(answered, dict) else None
     return answered, data.get("said") or "已完成。"
+
+
+def _decided(card: dict, host) -> str:
+    """Wait, as the person reads the card in the panel, for them to confirm
+    it or not (`/assistant/agent/wait`), and say how it ended; or, when they
+    have not decided for long, that it still waits (the next question tells
+    how it ended)."""
+    while True:
+        got = host.request(
+            {"method": "POST", "path": "/assistant/agent/wait", "body": {"card": card["id"]}}
+        ).get("data") or {}
+        if got.get("said"):
+            return got["said"]
 
 
 def _acting(kind: str, *fields: str):

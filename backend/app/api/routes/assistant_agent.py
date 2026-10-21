@@ -12,6 +12,7 @@ what they may see on the site, and nothing their pages would not show them.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFou
 from app.core.sentences import say
 from app.domain.agent.personal import reading
 from app.domain.agent.session_host.consumptions import Consumptions
-from app.domain.assistant import changes, gate, passes, refs
+from app.domain.assistant import changes, gate, passes, proposals, refs
 from app.domain.notification.preferences import local_time
 from app.domain.project import address
 from app.domain.project.services import ProjectService
@@ -249,11 +250,46 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
     its review card, a document."""
     me = await _person(resolver, db)
     ref = refs.parse(body.ref)
+    if ref is not None and ref.kind in _WAITING_KINDS:
+        return ok({"text": await _waiting_one(db, me, ref)})
     if ref is None or ref.kind not in reading.KINDS:
         raise BadRequestError(say("assistantRefUnknown", ref=body.ref))
     reader = reading.Reader(session=db, user_id=me.user_id, timezone=me.timezone)
     text = await reading.read(reader, ProjectPages(db, resolver), ref, body.page)
     return ok({"text": text})
+
+
+#: The refs of what waits on the person, by the kind ``refs.parse`` names:
+#: they are read from the inbox, which is where they live.
+_WAITING_KINDS = {
+    "alert": "alert",
+    "invite": "project_invite",
+    "transfer": "project_transfer",
+    "team-invite": "team_invite",
+    "join-request": "join_request",
+    "run": "run",
+}
+
+
+async def _waiting_one(db, me: Person, ref) -> str:
+    """One thing from the person's inbox, as the inbox lists it; or that it
+    no longer waits."""
+    wanted, kind = str(ref.id), _WAITING_KINDS[ref.kind]
+    for item in await all_waiting(db, handle=me.handle, user_id=me.user_id):
+        if kind == "alert" and isinstance(item, WaitingItem):
+            if str(item.alert_id) == wanted:
+                line = await _work_line(item, _Names(db), me.timezone)
+                return line + "\n答复用 cheese_inbox_respond。"
+        elif kind == "run" and isinstance(item, RunAsk):
+            if str(item.id) == wanted:
+                return _run_line(item, me.timezone)
+        elif isinstance(item, MembershipAsk) and item.kind == kind:
+            if str(item.id) == wanted:
+                return _ask_line(item, me.timezone)
+    return say(
+        "assistantNoLongerWaiting",
+        ref=refs.of(ref.kind + "s", ref.id, within=ref.within),
+    )
 
 
 # What 芝士 does that others see (`assistant.gate`). Each kind of action is
@@ -801,6 +837,48 @@ async def agent_act(
         }
     card = await show_proposal(db, questions, claims, kind, payload)
     return ok({"done": False, "reason": verdict.reason, "card": card})
+
+
+#: How long one wait on a card holds its request open; 芝士's tool asks again
+#: until the person decides, the answer is stopped, or ``CARD_WAIT_S`` passes.
+WAIT_S = 50.0
+#: How long an answer waits on one card in all. A person who has left the
+#: panel decides later; the answer ends, and the next question tells 芝士 how
+#: the card ended (``personal.service.ask``).
+CARD_WAIT_S = 600.0
+#: How often a waiting request looks at the card again.
+LOOK_EVERY_S = 1.0
+
+
+class WaitIn(BaseModel):
+    card: int
+
+
+@router.post("/wait", include_in_schema=False)
+async def agent_wait(body: WaitIn, resolver: ActorResolverDep, db: DbSession) -> dict:
+    """How a card 芝士 put up ended: ``sent`` (the person confirmed it, and
+    it was done as them) or ``dismissed``; still ``pending`` after
+    ``WAIT_S``, when the tool asks again. The answer told is the answer that
+    no longer needs telling (``proposals.told``)."""
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    until = time.monotonic() + WAIT_S
+    while True:
+        row = await proposals.mine(db, claims.user_id, body.card)
+        if row.state != "pending":
+            proposals.told(row)
+            await db.commit()
+            return ok({"state": row.state, "said": proposals.outcome(row)})
+        waited = (datetime.now(UTC) - row.created_at).total_seconds()
+        # Ends the transaction, so the next look sees the person's answer and
+        # the connection goes back to the pool while it waits.
+        await db.rollback()
+        if waited >= CARD_WAIT_S:
+            return ok({"state": "pending", "said": say("assistantCardStillWaiting")})
+        if time.monotonic() >= until:
+            return ok({"state": "pending"})
+        await asyncio.sleep(LOOK_EVERY_S)
 
 
 _LEVELS = {

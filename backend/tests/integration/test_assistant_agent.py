@@ -2,12 +2,14 @@
 words of their address, as the person, in text."""
 
 import asyncio
+import re
 import uuid
 
 from sqlalchemy import select
 
+from app.api.routes import assistant_agent
 from app.core.sandbox_auth import mint_delegated_credential
-from app.domain.assistant import gate
+from app.domain.assistant import gate, proposals
 from app.domain.assistant.models import (
     AssistantChange,
     AssistantConversation,
@@ -20,9 +22,19 @@ from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.topic.models import Topic
 from app.domain.user.repositories import UserProfileRepository
 from tests.conftest import seed_user
-from tests.integration.conftest import open_task
+from tests.integration.conftest import (
+    add_external_member,
+    new_project,
+    open_task,
+    session_auth_headers,
+)
 from tests.integration.test_assistant import _ledger_user
 from tests.integration.test_message_edit import _room, _say
+
+
+def _auth_headers(client, handle: str) -> dict:
+    """The person themselves, as their own pages call."""
+    return {"Authorization": f"Bearer {seed_user(client, handle)}"}
 
 
 def _as(token: str) -> dict:
@@ -347,6 +359,129 @@ def test_a_message_the_person_did_not_ask_for_becomes_a_card(client, monkeypatch
     assert got["reason"] == "你只让芝士查看频道，没有提到发消息。"
     [check] = _checks(client, "alice")
     assert (check.verdict, check.stage) == ("asked", "reasoned")
+
+
+def test_cheese_waits_for_the_person_to_decide_on_its_card(client, monkeypatch):
+    """A card 芝士 put up is waited on: how the person decided is what its
+    tool hears, and an undecided card is said to be still waiting."""
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    token = _acting(client, "alice", _asked_in(client, "alice", "帮我看看综合频道"))
+
+    async def looks(session):
+        return _Gatekeeper("拦", "你没有提到发消息。\n结论：拦")
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+    monkeypatch.setattr(assistant_agent, "WAIT_S", 0.2)
+    monkeypatch.setattr(assistant_agent, "LOOK_EVERY_S", 0.05)
+
+    def card(text: str) -> int:
+        r = client.post(
+            "/assistant/agent/act",
+            json={
+                "kind": "message",
+                "where": f"{slug}/channels/{number}",
+                "text": text,
+            },
+            headers=_as(token),
+        )
+        return r.json()["data"]["card"]["id"]
+
+    def wait(card_id: int) -> dict:
+        r = client.post(
+            "/assistant/agent/wait", json={"card": card_id}, headers=_as(token)
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]
+
+    waiting, declined = card("收到"), card("好的")
+    assert wait(waiting) == {"state": "pending"}
+    me = _auth_headers(client, "alice")
+    client.post(f"/assistant/proposals/{waiting}", json={"state": "sent"}, headers=me)
+    client.post(
+        f"/assistant/proposals/{declined}", json={"state": "dismissed"}, headers=me
+    )
+
+    sent = wait(waiting)
+    assert sent["state"] == "sent" and "已确认" in sent["said"]
+    assert "没有执行" in wait(declined)["said"]
+
+
+def test_a_card_decided_after_the_answer_is_told_with_the_next_question(client):
+    """A card the person decided on once its answer had ended is told to 芝士
+    with their next question, once."""
+    conversation = _asked_in(client, "alice", "帮我回一下李老师")
+    owner = _ledger_user(client, "alice")[0]
+
+    async def put_up():
+        async with client.test_factory() as db:
+            row = await proposals.propose(
+                db,
+                user_id=owner,
+                work=str(uuid.uuid4()),
+                kind="act",
+                payload={"summary": "在频道「组会」发消息：周五前发你", "calls": []},
+            )
+            message = AssistantMessage(
+                conversation_id=uuid.UUID(conversation),
+                seq=2,
+                role="assistant",
+                text="卡片在面板中。",
+                parts={"proposals": [proposals.view(row)]},
+            )
+            db.add(message)
+            await db.commit()
+            return row.id
+
+    card_id = asyncio.run(put_up())
+    client.post(
+        f"/assistant/proposals/{card_id}",
+        json={"state": "sent"},
+        headers=_auth_headers(client, "alice"),
+    )
+
+    async def untold():
+        async with client.test_factory() as db:
+            return await proposals.untold(db, owner, [card_id])
+
+    [row] = asyncio.run(untold())
+    assert (
+        proposals.outcome(row)
+        == "「在频道「组会」发消息：周五前发你」：用户已确认，已执行。"
+    )
+
+
+def test_what_waits_on_the_person_reads_by_its_ref(client):
+    """The inbox names an alert by its ref, and that ref reads: the alert as
+    the inbox lists it, or that it no longer waits."""
+    project = new_project(client, name="组会", owner="bob")
+    add_external_member(client, project["id"], "alice", by="bob")
+    r = client.post(
+        f"/projects/{project['id']}/alerts",
+        json={
+            "level": "strong",
+            "kind": "decision_request",
+            "title": "中期答辩时间",
+            "body": "选一个日子",
+            "target_handle": "alice",
+            "payload": {"options": ["11 月 5 日", "11 月 12 日"]},
+        },
+        headers=session_auth_headers("bob"),
+    )
+    assert r.status_code == 200, r.text
+    token = _personal(client, "alice")
+    inbox = client.post("/assistant/agent/inbox", json={}, headers=_as(token))
+    ref = re.search(r"alerts/\d+", inbox.json()["data"]["text"]).group(0)
+
+    read = _read(client, token, ref)
+    assert read.status_code == 200, read.text
+    assert "中期答辩时间" in read.json()["data"]["text"]
+    assert "11 月 12 日" in read.json()["data"]["text"]
+    gone = _read(client, token, "alerts/999999")
+    assert (
+        gone.json()["data"]["text"]
+        == "「alerts/999999」已经不在待办里了：处理过了，或者已被撤回。"
+    )
 
 
 def test_removing_someone_is_asked_by_the_persons_rule_with_no_model(

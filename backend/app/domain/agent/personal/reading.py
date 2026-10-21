@@ -22,6 +22,7 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.domain.agent.personal import people
 from app.domain.assistant import refs
 from app.domain.assistant.refs import Ref
 from app.domain.block.queries import messages_page
@@ -130,12 +131,15 @@ async def _messages(reader: Reader, conversation_id: uuid.UUID, page: int) -> st
     )
     if not rows:
         return "（还没有消息）" if page == 1 else f"没有第 {page} 页的消息了。"
+    named = await people.names(reader.session, ((b.author, b.content) for b in rows))
     lines = []
     for block in rows:
-        text = " ".join(block.content.split())
+        text = named.said(" ".join(block.content.split()))
         if len(text) > MESSAGE_CHARS:
             text = text[:MESSAGE_CHARS] + "……"
-        lines.append(f"[{_when(reader, block.created_at)}] {block.author}：{text}")
+        lines.append(
+            f"[{_when(reader, block.created_at)}] {named.of(block.author)}：{text}"
+        )
     shown_from = total - (page - 1) * MESSAGES - len(rows) + 1
     head = (
         f"消息 {shown_from}–{shown_from + len(rows) - 1}（共 {total} 条，旧的在前）："

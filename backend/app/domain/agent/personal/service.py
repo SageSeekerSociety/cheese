@@ -37,7 +37,7 @@ from app.core.background import spawn
 from app.core.sandbox_auth import mint_delegated_credential
 from app.core.sentences import error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
-from app.domain.agent.personal import billing
+from app.domain.agent.personal import billing, loops
 from app.domain.agent.personal.prompt import about, earlier, now_line, page
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
 from app.domain.agent.session_host.answer import (
@@ -59,6 +59,7 @@ from app.domain.agent.session_host.contract import (
     StartAbandoned,
 )
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.assistant import proposals
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
 from app.domain.user.services import timezones_by_ids, usernames_by_ids
 
@@ -70,8 +71,16 @@ TITLE_CHARS = 40
 FAILED = say("assistantFailed")
 #: Said when the session host stayed full for as long as a question waits.
 BUSY = say("assistantBusy")
-#: How long one question may take, from when it took its conversation.
-ANSWER_S = 170.0
+#: Said when an answer was stopped for writing the same thing over and over.
+REPEATING = say("assistantRepeating")
+#: How long one question may take, from when it took its conversation: not a
+#: limit an answer is meant to meet. An answer may read a dozen channels, or
+#: wait while the person decides on a card (``assistant_agent.agent_wait``),
+#: and the person can stop it at any time. A runner that went away is noticed
+#: within ``GONE_AFTER_S``, and the conversation's hold is renewed only while
+#: the answer is read; what this bounds is the question's credential, should
+#: everything else fail.
+ANSWER_S = 3600.0
 #: How much longer than that a question's credential lasts.
 CREDENTIAL_MARGIN_S = 60
 
@@ -342,6 +351,10 @@ class Answers:
         self._sessions = sessions
         self._consumptions = consumptions
         self._redis = redis
+        # What each answer read here has written, and which were stopped for
+        # writing the same thing over and over (``loops``).
+        self._written: dict[str, tuple[str, int]] = {}
+        self._repeating: set[str] = set()
 
     async def stopped(self, consumption: Consumption) -> bool:
         redis = self._redis()
@@ -360,6 +373,7 @@ class Answers:
             await self._consumptions.publish(
                 consumption, "delta", {"text": item.text, "at": item.at}
             )
+            await self._look_for_loops(consumption, item.text)
         elif isinstance(item, Tool):
             await self._consumptions.publish(
                 consumption, "tool", {"name": item.name, "call": item.call}
@@ -380,6 +394,17 @@ class Answers:
                 consumption, "tool_failed", {"call": item.call, "text": item.text}
             )
 
+    async def _look_for_loops(self, consumption: Consumption, more: str) -> None:
+        work = consumption.work_id
+        text, looked = self._written.get(work, ("", 0))
+        text += more
+        if len(text) - looked >= loops.LOOK_EVERY:
+            looked = len(text)
+            if work not in self._repeating and loops.repeating(text):
+                self._repeating.add(work)
+                await self._consumptions.halt(consumption)
+        self._written[work] = (text, looked)
+
     async def ended(
         self,
         consumption: Consumption,
@@ -393,7 +418,11 @@ class Answers:
         conversation_id = uuid.UUID(consumption.key)
         text, refusal = answer.text, FAILED
         failed: str | None = answer.error
-        if isinstance(failure, HostFull):
+        self._written.pop(consumption.work_id, None)
+        if consumption.work_id in self._repeating:
+            self._repeating.discard(consumption.work_id)
+            failed, refusal = "the answer kept saying the same thing", REPEATING
+        elif isinstance(failure, HostFull):
             failed, refusal = "the session host stayed full", BUSY
         elif isinstance(failure, StartAbandoned):
             failed = None
@@ -482,6 +511,20 @@ async def ask(
         )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         timezone = (await timezones_by_ids(session, [user_id])).get(user_id)
+        # Cards the person decided on after the answer that put them up had
+        # ended: that answer never heard how they ended, so this one is told.
+        decided = await proposals.untold(
+            session,
+            user_id,
+            [
+                card["id"]
+                for m in before
+                for card in (m.parts or {}).get("proposals") or []
+                if isinstance(card, dict) and isinstance(card.get("id"), int)
+            ],
+        )
+        for card in decided:
+            proposals.told(card)
         await session.commit()
 
     async def said() -> Prompt:
@@ -503,6 +546,10 @@ async def ask(
         if files:
             said += "\n\n附上的文件（用 cheese_read 读）：\n" + "\n".join(
                 f"- {name}（files/{file_id}）" for file_id, name in files
+            )
+        if decided:
+            said += "\n\n你之前请用户确认的操作，结果如下：\n" + "\n".join(
+                f"- {proposals.outcome(card)}" for card in decided
             )
         # The clock goes at the end of the question, never in the rules: what
         # the session sends first stays the same all day.
