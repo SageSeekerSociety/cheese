@@ -31,6 +31,8 @@ export interface PanelChangeRow {
 
 export interface PanelChange {
   id: number
+  /** 不是写草稿的改动（通知设置、频道提醒）：卡头写它，不写「表单改动」。 */
+  title?: string
   draft: number
   /** 新建的草稿：卡上写它的名字，点开切过去。 */
   created: boolean
@@ -60,9 +62,13 @@ export interface PanelProposal {
   text: string
   /** 开出的任务：卡上给「查看」。 */
   task?: string
+  /** `act`：为什么先问人。 */
+  reason?: string
 }
 
 export function proposalView(p: AssistantProposal): PanelProposal {
+  if (p.kind === 'act')
+    return { id: p.id, kind: p.kind, state: p.state, where: '', text: p.summary ?? '', reason: p.reason ?? '' }
   return {
     id: p.id,
     kind: p.kind,

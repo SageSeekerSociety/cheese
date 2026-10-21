@@ -69,4 +69,21 @@ describe('AgentProposal', () => {
 
     expect(view.emitted('open')).toEqual([['t-9']])
   })
+
+  it('another action says what it does and why it was asked, and is confirmed as it is', async () => {
+    const view = mount({
+      id: 5,
+      kind: 'act',
+      state: 'pending',
+      where: '',
+      text: '把 bob 移出频道「综合」',
+      reason: '你设了「移除成员」要先问你',
+    })
+    expect(view.getByText('把 bob 移出频道「综合」')).toBeTruthy()
+    expect(view.getByText('你设了「移除成员」要先问你')).toBeTruthy()
+
+    await fireEvent.click(view.getByRole('button', { name: '确认' }))
+
+    expect(view.emitted('send')).toEqual([[5, { text: '把 bob 移出频道「综合」' }]])
+  })
 })

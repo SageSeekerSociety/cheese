@@ -37,7 +37,7 @@
     >
       <header class="at__card-h">
         <span class="at__card-t">{{
-          change.created ? t('tasks.assistant.changes.created') : t('tasks.assistant.changes.title')
+          change.title || (change.created ? t('tasks.assistant.changes.created') : t('tasks.assistant.changes.title'))
         }}</span>
         <span v-if="change.ordinal" class="at__card-no">{{
           t('tasks.assistant.changes.ordinal', { n: change.ordinal })
@@ -80,7 +80,11 @@
         </li>
       </ul>
       <footer v-if="change.canUndo && undoable(change)" class="at__card-f">
-        <span>{{ t('tasks.assistant.changes.count', { n: undoable(change) }) }}</span>
+        <span>{{
+          t(change.title ? 'tasks.assistant.changes.changedCount' : 'tasks.assistant.changes.count', {
+            n: undoable(change),
+          })
+        }}</span>
         <span class="at__grow" />
         <BaseButton size="sm" kind="ghost" @click="emit('undoAll', undoRows(change))">{{
           t('tasks.assistant.changes.undoAll')

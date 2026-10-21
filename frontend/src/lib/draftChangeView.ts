@@ -160,7 +160,36 @@ function rowValue(key: string, edit: AssistantEdit) {
   return field ? pick(field) : undefined
 }
 
+/** 改的是这个人自己的设置（通知设置、频道提醒），不是题目草稿。 */
+const isSetting = (edit: AssistantEdit) => edit.kind === 'settings' || edit.kind === 'notify'
+
+/** 改的是这个人自己的设置：每一项写名字和改成了什么，总能撤销。 */
+function settingsView(edit: AssistantEdit): PanelChange {
+  const changed = edit.changed as Record<string, { label?: string; after: unknown }>
+  return {
+    id: edit.id,
+    draft: -edit.id,
+    created: false,
+    name: '',
+    title: edit.title,
+    rows: Object.entries(changed).map(([key, change]) => {
+      const after = String(change.after)
+      const said = `tasks.assistant.changes.setting.${after}`
+      return {
+        change: edit.id,
+        key,
+        label: change.label ?? key,
+        value: /^[a-z]+$/.test(after) ? t(said) : after,
+        undone: edit.undone.includes(key),
+      }
+    }),
+    notes: [],
+    canUndo: edit.undoable,
+  }
+}
+
 export function changeView(edit: AssistantEdit, terms: DraftTerms, canUndo: boolean): PanelChange {
+  if (isSetting(edit)) return settingsView(edit)
   const rows: PanelChangeRow[] = []
   const seen = new Set<string>()
   for (const field of Object.keys(edit.changed)) {
@@ -213,15 +242,17 @@ export function writesView(
   canUndo: (edit: AssistantEdit) => boolean = () => false,
   ordinal: (draft: number) => number | undefined = () => undefined
 ): PanelWrites {
+  // A change of the person's own settings is a card of its own, keyed below every draft.
+  const group = (edit: AssistantEdit) => (isSetting(edit) ? -edit.id : edit.draft)
   const order: number[] = []
-  for (const edit of edits) if (!order.includes(edit.draft)) order.push(edit.draft)
+  for (const edit of edits) if (!order.includes(group(edit))) order.push(group(edit))
   const changes = order.map((id) => {
     const card = merged(
-      edits.filter((e) => e.draft === id),
+      edits.filter((e) => group(e) === id),
       terms,
       canUndo
     )
-    const collapsed = current !== null && id !== current
+    const collapsed = current !== null && id > 0 && id !== current
     return { ...card, ...(collapsed ? { collapsed, notes: [], canUndo: false } : {}), ordinal: ordinal(id) }
   })
   return { changes }
