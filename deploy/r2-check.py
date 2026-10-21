@@ -53,6 +53,19 @@ def observe_uploads_service(env: dict[str, str]) -> None:
     print("uploads marker records the dev service's successful exit timestamp")
 
 
+def uploads_on_disk(env: dict[str, str]) -> bool:
+    """Does this box keep uploads on its own disk, so a local mirror of them
+    must be fresh? Stated by whoever runs the check (CHEESE_UPLOADS_ON_DISK),
+    never guessed from the box: an absent mirror and a box with nothing to
+    mirror look the same from here. Unset is yes, the old rule."""
+    value = env.get("CHEESE_UPLOADS_ON_DISK", "true").strip().lower()
+    if value in ("true", "1", "yes"):
+        return True
+    if value in ("false", "0", "no"):
+        return False
+    raise ValueError(f"CHEESE_UPLOADS_ON_DISK must be true or false, got {value!r}")
+
+
 def check_remote(s3, bucket: str, prefix: str, pattern: str, label: str, now: int, limit: int) -> None:
     start = prefix.strip("/") + "/" if prefix.strip("/") else ""
     candidates = [obj for obj in common.objects(s3, bucket, prefix)
@@ -80,6 +93,9 @@ def main() -> int:
         print("R2 is configured")
         return 0
     if args.mode == "mirror-receipt":
+        if not uploads_on_disk(env):
+            print("uploads mirror: not required on this box; no receipt to record")
+            return 0
         if env.get("UPLOADS_PREFIX", "prod-uploads").strip("/") != "prod-uploads":
             raise ValueError("dev uploads service uses prod-uploads; cannot mark another prefix")
         observe_uploads_service(env)
@@ -100,7 +116,10 @@ def main() -> int:
     if args.mode == "local":
         backup_dir = Path(env.get("CHEESE_BACKUP_DIR", "~/backups")).expanduser()
         check(check_marker, backup_dir / ".last-offsite-success", "DB off-site upload", now, limit)
-        check(check_marker, common.uploads_marker(env), "uploads mirror", now, limit)
+        if uploads_on_disk(env):
+            check(check_marker, common.uploads_marker(env), "uploads mirror", now, limit)
+        else:
+            print("uploads mirror: not required (CHEESE_UPLOADS_ON_DISK=false: this box keeps no uploads on local disk)")
     else:
         s3 = common.client(env)
         stamp = r"\d{8}-\d{6}"

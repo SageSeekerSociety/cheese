@@ -17,6 +17,14 @@ jobs:
     env:
       CHEESE_R2_ENV: /home/nictheboy/ops/r2.env
       CHEESE_BACKUP_DIR: /home/nictheboy/backups
+      # This box keeps no uploads on its own disk to mirror (as observed on
+      # 2026-10-21: the dev backend runs FILES_STORE=bucket, the box has no
+      # cheese-uploads-mirror unit, and the local uploads directory holds only
+      # files from 2026-08-13). So the
+      # check does not ask for an uploads mirror marker here (deploy/r2-check.py,
+      # uploads_on_disk). Set it back to true if this box starts keeping uploads
+      # on disk again; the DB and transcript checks are unaffected either way.
+      CHEESE_UPLOADS_ON_DISK: "false"
       UV: /home/nictheboy/.local/bin/uv
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

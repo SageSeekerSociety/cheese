@@ -130,6 +130,20 @@ class Backups(unittest.TestCase):
         (directory / ".last-offsite-success").unlink()
         self.assertEqual(self.call(check, "local"), 1)
 
+    def test_a_box_stated_to_keep_no_uploads_on_disk_needs_no_uploads_marker(self):
+        directory = Path(self.env["CHEESE_BACKUP_DIR"])
+        directory.mkdir()
+        (directory / ".last-offsite-success").write_text(str(int(time.time())))
+        self.assertEqual(self.call(check, "local"), 1)  # unstated: still required
+        os.environ["CHEESE_UPLOADS_ON_DISK"] = "false"
+        self.assertEqual(self.call(check, "local"), 0)
+        # The DB off-site marker is still required.
+        (directory / ".last-offsite-success").unlink()
+        self.assertEqual(self.call(check, "local"), 1)
+        os.environ["CHEESE_UPLOADS_ON_DISK"] = "maybe"
+        with self.assertRaisesRegex(ValueError, "CHEESE_UPLOADS_ON_DISK"):
+            self.call(check, "local")
+
     def test_stale_marker_invalid_marker_and_future_marker_fail(self):
         directory = self.markers(age=6 * 3600 + 1)
         self.assertEqual(self.call(check, "local"), 1)

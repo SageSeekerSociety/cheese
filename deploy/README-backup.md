@@ -24,7 +24,7 @@ Docker volume. Everything else (R2 upload, verify, off-site) is shared.
 | `r2-prune-dumps.py` (tiered local retention, R2-verified deletes) | on the box, `~/ops/r2-prune-dumps.py`, only where `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` | each DB backup, at the end |
 | `r2-sync-uploads.py` (incremental mirror of `uploads/` to R2) | on the box, `~/ops/r2-sync-uploads.py` (`cheese-uploads-mirror.timer`) | hourly, :30 |
 | `r2-sync-uploads.py` again, over the old transcript archives (already `.tar.gz`, so mirrored as they are; nothing writes new ones there: room cleanup uploads archived rooms' transcripts to the private bucket under `transcripts/rooms/`, see [`README-room-cleanup.md`](README-room-cleanup.md)) | on the box, same script (`cheese-transcripts-mirror.timer`, `UPLOADS_PREFIX=transcripts`) | hourly, :45 |
-| Backup freshness alert | `.github/workflows/backup-freshness.yml`, dev runner | daily; local DB > 26h, R2/ uploads markers and DB/tar objects > 6h fail |
+| Backup freshness alert | `.github/workflows/backup-freshness.yml`, dev runner | daily; local DB > 26h, R2/ uploads markers (uploads only where `CHEESE_UPLOADS_ON_DISK` is not `false`) and DB/tar objects > 6h fail |
 | Recovery proof | `.github/workflows/backup-restore-test.yml`, dev runner | weekly; local DB, R2 DB, uploads restore + verify |
 | `gateway-db-backup.sh` (LLM gateway DB: pg_dump -Fc via `docker exec`, verify, keep newest 8, then `r2-upload.py` to `db/gateway-litellm-<ts>.dump`) | `.github/workflows/gateway-db-backup.yml`, dev runner; dumps in `~/backups/gateway/`, restore in [`gateway/README.md`](gateway/README.md#backups) | every 6h, :23 UTC |
 | Box-down alert | `.github/workflows/box-uptime.yml`, GitHub-hosted | hourly; fails if the box's runner is offline |
@@ -131,7 +131,14 @@ experiment override, not a second default. Containers publish no ports and
 have no network access. Restore logs and TOC remain in `.tmp/restore-tests/`.
 
 The daily freshness workflow checks the local DB success at 26h and, if R2 is
-configured, both off-site and uploads success markers at 6h. It also reads R2
+configured, both off-site and uploads success markers at 6h. The uploads marker
+is required only where uploads are kept on the box's own disk: the workflow
+states that with `CHEESE_UPLOADS_ON_DISK` (unset means true). The dev runner's
+job sets it to `false`, because the dev box keeps no uploads to mirror (as
+observed on 2026-10-21: the backend runs `FILES_STORE=bucket`, no
+`cheese-uploads-mirror` unit is installed, and the local directory holds only
+files from 2026-08-13); there the
+check prints that the uploads mirror is not required and records no receipt. It also reads R2
 objects for the dev DB, prod DB, both etrip DBs and etrip uploads tar; each
 must be nonempty and no older than 6h. Checks use exact seconds, not rounded
 hours. No R2 config is an explicit skip; partial config, missing markers,
