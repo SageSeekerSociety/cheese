@@ -356,6 +356,21 @@ class ComputePool:
         }
         return works.pop() if len(works) == 1 else None
 
+    def draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Is this seat's runner another release's, finishing the work it was
+        doing? A message for the seat waits until it has been replaced."""
+        return any(
+            runtime.draining(topic_id, agent_handle) for runtime in self._runtimes()
+        )
+
+    def tell_draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Whether the room is to be told now that a message waits for this
+        seat's drain: once per drain."""
+        return any(
+            runtime.tell_draining(topic_id, agent_handle)
+            for runtime in self._runtimes()
+        )
+
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Does any backend still hold a live session for this topic — for
         this agent's seat in it, when one is named?"""

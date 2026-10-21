@@ -99,6 +99,7 @@
   "resendInterruptedDetail": "A message is resent only once, never in an automatic loop. Finished changes are all in the workspace; to continue, retry and it will pick up where it stopped.",
   "runnerUnresponsive": "{harness}'s runner has not answered for {seconds} s",
   "sessionReplacedForUpgrade": "The platform was upgraded and restarted the session, which cut this turn short",
+  "upgradeMessageWaits": "The platform is upgrading. {agent} will handle your message after finishing its current work",
   "runtimeImageMissing": "This turn did not start. The platform is preparing the environment again.",
   "runtimeImageMissingDetail": "This turn had not started running, and project files are untouched. Retry in a moment; if it keeps happening, contact an admin.",
   "runtimeImageMissingTitle": "The environment's image is temporarily unavailable",

@@ -153,6 +153,8 @@ async def ensure(
     )
     mark("ensure_attach")
     # Compared with what it would be started with now: up to date, or a
-    # relaunch the channel owes (``prewarm_due``).
+    # relaunch the channel owes (``prewarm_due``). A runner another release
+    # started is replaced by now (``ClaudeCodeDriver.launch``).
     svc.unchecked.discard(seat)
+    svc.replace_due.pop(seat, None)
     return attached

@@ -1699,6 +1699,13 @@ class Runner(runner.Runner[Journal]):
             self.announce()
             return {"worker_epoch": self.outbox.epoch, "state": self.standing()}
         if method == "ping":
+            # The handshake every release reads, whichever protocol it speaks
+            # (``lifecycle``): ``alive``, ``lifecycle``, ``launch``,
+            # ``session_id``, ``working`` (the busy flag), ``work_id`` and
+            # ``worker_epoch`` keep their names and meanings. A later protocol
+            # may add fields here, never drop or change these, so the release
+            # after it can still tell whether this runner is at work and drain
+            # it before replacing it.
             return {
                 "pid": os.getpid(),
                 "lifecycle": lifecycle.PROTOCOL,

@@ -224,10 +224,14 @@ class SessionStatus:
     #: The machine answered that this session's runner is not there at all
     #: (``host.attach``). Its process is gone with it.
     runner_gone: bool = False
-    #: The runner speaks an earlier protocol than this release reads: one the
-    #: previous release started (``host.attach``). It is not read; the next
-    #: start replaces it, resuming its conversation.
+    #: The runner speaks another lifecycle protocol than this release reads:
+    #: one another release started (``host.attach``). It is not read and given
+    #: nothing; the room replaces it once it is idle (``room.sessions.lifecycle``),
+    #: resuming its conversation.
     outdated: bool = False
+    #: The registration the runner holds (its ping's ``worker_epoch``): what a
+    #: call this process makes without registering it carries.
+    epoch: int = 0
 
 
 class InputUnconfirmed(SessionError):

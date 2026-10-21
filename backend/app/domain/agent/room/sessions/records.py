@@ -13,6 +13,7 @@ session is taken through that module path by tests that hold one
 facade's own state (``RoomSessions.clocks``) is keyed on.
 """
 
+import uuid
 from dataclasses import dataclass, field
 
 from app.domain.agent.harness import SessionRef
@@ -22,6 +23,7 @@ from app.domain.agent.harness.driven.subscription import (
     TOOL_RETURNED,
     TOOL_STARTED,
 )
+from app.domain.agent.session_host.contract import Access
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 
 
@@ -67,6 +69,31 @@ class Live:
     #: Which reading of the seat its events come from (FB-56): a reading
     #: that was replaced is refused where the room's books change.
     attachment: str = field(default="", compare=False)
+
+
+@dataclass
+class Outdated:
+    """A seat whose runner another release started, found by recovery: it
+    speaks a lifecycle protocol this release does not read, so it is not read
+    and is given nothing, and it is replaced by one of this release's once its
+    ping says it is idle (``lifecycle``)."""
+
+    live: Live
+    #: Where it runs, for asking it again.
+    access: Access
+    #: Its ping said it was working when it was found.
+    working: bool
+    #: The room's work it was doing then, which it is left to finish.
+    work: uuid.UUID | None
+    #: When this process found it, on the monotonic clock: the drain's cap runs
+    #: from here.
+    found: float
+    #: The registration it holds, for the interrupt the cap falls back to.
+    epoch: int = 0
+    #: The room was told a message waits for it.
+    told: bool = False
+    #: It is being settled: what was held for it is let go.
+    settling: bool = False
 
 
 def _home(state: str) -> str:

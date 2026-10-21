@@ -329,8 +329,11 @@ of its turns without ending them and releases the lock. The successor then picks
 where it stands and starts any turn a message was left waiting for. A Claude
 Code runner that does not speak the lifecycle protocol the successor reads
 (`harness/driven/lifecycle.py`, `PROTOCOL`) is replaced rather than picked up:
-what it was written and never read is offered again, and the turn it was in
-ends with `runner_replaced` and is resumed at once. The whole
+an idle one at once, one at work once its ping says the work is done (it gets
+no new input meanwhile and the seat's messages wait), and what it was written
+and never read is offered again. Only past `RUNNER_DRAIN_S` (30 minutes by
+default) is its turn interrupted, ending with `runner_replaced` and resumed at
+once. The whole
 of that fits in the backend's 60-second `stop_grace_period`, which is why the
 old slot is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
 The in-place recreate on boxes without `ACTIVE_BACKEND_DIR` hands over the same
