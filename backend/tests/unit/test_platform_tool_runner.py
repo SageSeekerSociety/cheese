@@ -968,7 +968,7 @@ def test_a_space_s_materials_are_listed_with_the_refs_that_read_them():
     ],
 )
 def test_search_looks_in_projects_or_in_a_space(args, plan):
-    got = cheese.request_plan("cheese_work_search", args, {})
+    got = cheese.request_plan("cheese_find", args, {})
     assert (got["path"], got["body"]) == plan
 
 

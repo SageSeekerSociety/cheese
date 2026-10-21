@@ -82,7 +82,7 @@ TOOLS = (
     "cheese_inbox",
     "cheese_inbox_respond",
     "cheese_read",
-    "cheese_work_search",
+    "cheese_find",
     "cheese_help",
     "cheese_message_send",
     "cheese_task_open",

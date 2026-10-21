@@ -239,7 +239,7 @@ async def _project(reader: Reader, page_id: str) -> Shown:
                 "<这一页>",
                 "项目里的一页：用户在这个项目里。",
                 "- 用户说「这个项目」，指它；它的频道、任务和文档用 cheese_read 读项目编号，"
-                "找东西用 cheese_work_search 加上 where。",
+                "找东西用 cheese_find 加上 where。",
                 "</这一页>",
                 await _project_line(reader, project_id),
             ]

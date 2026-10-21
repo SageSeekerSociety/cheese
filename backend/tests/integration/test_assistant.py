@@ -1301,7 +1301,7 @@ def test_asked_in_a_channel_it_reads_the_channel_and_drafts_what_the_person_send
         "id"
     ]
     gateway.script = [
-        ("tool", "cheese_work_search", {"query": "演示视频", "where": slug}),
+        ("tool", "cheese_find", {"query": "演示视频", "where": slug}),
         (
             "tool",
             "cheese_message_send",

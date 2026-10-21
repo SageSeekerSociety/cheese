@@ -1378,7 +1378,7 @@ DELEGATED_TOOLS = ToolTable(
             {"project": _text("只看这个项目的（项目短名）；省略看全部")},
         ),
         _tool(
-            "cheese_work_search",
+            "cheese_find",
             "按关键词搜用户能看到的工作内容：频道、消息、任务、文档段落、周报、资料库文件、"
             "产物，或一个空间里的题目和他的草稿。不给 where 搜他最近的几个项目；where "
             "给项目短名只搜那个项目，给 spaces/4 搜那个空间的题目（query 留空列出最近的"
@@ -2104,14 +2104,14 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": "/notifications/preferences/agent/set",
             "body": body,
         }
-    if tool == "cheese_work_search":
+    if tool == "cheese_find":
         where = (args.get("where") or "").strip().strip("/")
         space = re.fullmatch(r"spaces/(\d+)", where)
         if space:
             body = {"space": int(space.group(1)), "query": args.get("query") or ""}
             return {"method": "POST", "path": "/task-drafts/agent/search", "body": body}
         if not (args.get("query") or "").strip():
-            raise ValueError("cheese_work_search 需要 query（只有搜空间里的题目时可以留空）")
+            raise ValueError("cheese_find 需要 query（只有搜空间里的题目时可以留空）")
         body = {"query": args["query"], **({"project": where} if where else {})}
         return {"method": "POST", "path": "/assistant/agent/search", "body": body}
     if tool == "cheese_help":
@@ -4343,7 +4343,7 @@ _SAY = {
     "cheese_inbox": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_read": _say_read,
     "cheese_settings_set": lambda a, d, e: (d or {}).get("text") or "",
-    "cheese_work_search": lambda a, d, e: (
+    "cheese_find": lambda a, d, e: (
         _say_task_search(a, d, e)
         if "tasks" in (d or {})
         else (d or {}).get("text") or ""

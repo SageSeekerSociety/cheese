@@ -20,7 +20,7 @@ _RULES = (
     "ml-course/channels/3，任务 ml-course/tasks/12，审阅卡 ml-course/tasks/12/review，"
     "文档 ml-course/docs/5；题目 spaces/4/tasks/87，草稿 drafts/12。编号从当前页面、待办、"
     "读取和搜索的结果里来，不要自己编。\n"
-    "4. 找东西：知道编号就 cheese_read；不知道在哪就 cheese_work_search；问「有什么要我处理」"
+    "4. 找东西：知道编号就 cheese_read；不知道在哪就 cheese_find；问「有什么要我处理」"
     "用 cheese_inbox；问平台怎么用用 cheese_help。读到的长内容分段，需要时再读下一段。\n"
     "5. 其他人看得到的操作（发消息、开任务、采纳或退回、答复邀请和提醒、加人移人、建频道）"
     "和读取网页，执行前会判断用户是否明确要求过：要求过就直接执行，否则在面板中显示一张"

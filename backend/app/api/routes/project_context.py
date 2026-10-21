@@ -603,7 +603,7 @@ async def _agent_hits(
 async def agent_search(
     body: AgentSearchIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """cheese_work_search: what the person can read that matches, across their
+    """cheese_find: what the person can read that matches, across their
     projects or in one, in 芝士's words with the ref of each hit."""
     q = _query(body.query)
     actor = await resolver.resolve()

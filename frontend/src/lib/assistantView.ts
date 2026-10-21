@@ -97,7 +97,7 @@ const STEP_ARG: Record<string, string> = {
   cheese_project_search: 'query',
   cheese_task_draft: 'title',
   cheese_read: 'ref',
-  cheese_work_search: 'query',
+  cheese_find: 'query',
   cheese_help: 'query',
   cheese_message_send: 'where',
   cheese_task_open: 'title',

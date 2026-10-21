@@ -89,7 +89,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_inbox: 'toolLabels.cheeseInbox',
   cheese_inbox_respond: 'toolLabels.cheeseInboxRespond',
   cheese_read: 'toolLabels.cheeseRead',
-  cheese_work_search: 'toolLabels.cheeseWorkSearch',
+  cheese_find: 'toolLabels.cheeseFind',
   cheese_help: 'toolLabels.cheeseHelp',
   cheese_message_send: 'toolLabels.cheeseMessageSend',
   cheese_task_open: 'toolLabels.cheeseTaskOpen',
