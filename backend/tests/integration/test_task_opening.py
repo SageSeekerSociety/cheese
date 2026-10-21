@@ -259,7 +259,7 @@ def _session_declares(client, task: str, status: str):
     async def _declare():
         await session_state.register(client.test_factory, key)
         async with client.test_factory() as session:
-            await session_state.declare(session, key, status, datetime.now(UTC))
+            await session_state.declare(session, key, status)
             await session.commit()
 
     asyncio.run(_declare())

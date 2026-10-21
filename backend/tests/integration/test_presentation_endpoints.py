@@ -193,7 +193,7 @@ def _the_rooms_session_declares(client, room: str, status: str) -> None:
     async def _declare() -> None:
         await session_state.register(client.test_factory, key)
         async with client.test_factory() as s:
-            await session_state.declare(s, key, status, datetime.now(UTC))
+            await session_state.declare(s, key, status)
             await s.commit()
 
     client.portal.call(_declare)

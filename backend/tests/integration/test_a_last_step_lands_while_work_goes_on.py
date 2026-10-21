@@ -91,7 +91,7 @@ def _session(client, task_id: str, status: str, *, seat: str | None = None) -> N
     async def declare():
         await session_state.register(client.test_factory, key)
         async with client.test_factory() as session:
-            await session_state.declare(session, key, status, datetime.now(UTC))
+            await session_state.declare(session, key, status)
             await session.commit()
 
     client.portal.call(declare)
