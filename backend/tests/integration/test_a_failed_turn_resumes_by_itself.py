@@ -55,7 +55,7 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
-from tests.conftest import StubChannel, stub_compute
+from tests.conftest import StubChannel, drain_hooks, stub_compute
 from tests.integration.conftest import project_service, registered
 from tests.support.hang import HANG_S
 from tests.support.threads import thread_in
@@ -244,21 +244,13 @@ async def test_a_rate_limited_turn_resumes_by_itself(
         assert str(RESUME_NOTE) in screen.handed[-1]
         assert len(screen.sessions) == 1
         await runner.drain(timeout_s=10)
-        deadline = time.monotonic() + HANG_S
-        while True:
-            async with factory() as session:
-                completed = await for_site(
-                    session, conversation, since=None, until=None
-                )
-            if (
-                any(
-                    r["meta"].get("event_type") == "turn_resume_started"
-                    for r in completed
-                )
-                or time.monotonic() >= deadline
-            ):
-                break
-            await asyncio.sleep(0.05)
+        # The resume's start is recorded when the session's read of it is
+        # reported; the resumed turn's own retry line arrives as a record after
+        # that read, on its own commit. Read the history once both have landed.
+        [(room_id, _)] = screen.sessions
+        await drain_hooks(screen, room_id)
+        async with factory() as session:
+            completed = await for_site(session, conversation, since=None, until=None)
         assert [
             r["meta"].get("event_type")
             for r in completed
