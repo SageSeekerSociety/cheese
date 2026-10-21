@@ -611,6 +611,21 @@ def test_a_person_who_cannot_open_the_task_cannot_ask_about_it(client, gateway):
     assert gateway.requests == []
 
 
+def test_a_page_without_a_reader_is_refused_before_the_model(client, gateway):
+    """A question names its page by kind and id; a kind 芝士 has no reader for
+    is refused as a bad request, and the model is not asked."""
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "这是什么？", "page": {"kind": "settings", "id": 1}},
+        headers=me,
+    )
+    assert r.status_code == 400, r.text
+    assert gateway.requests == []
+
+
 def test_with_no_credits_left_the_model_is_not_asked(client, gateway):
     free_plan_credits(client, 1.0)
     me = _auth(client, "asker")

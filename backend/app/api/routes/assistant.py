@@ -17,7 +17,7 @@ import logging
 import time
 import uuid
 from dataclasses import replace
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
@@ -28,7 +28,6 @@ from app.api.refusal import refuse
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service
-from app.api.task_deps import _task_attachment_service
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
@@ -39,10 +38,9 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
-from app.domain.agent.personal import billing
+from app.domain.agent.personal import pages
 from app.domain.agent.personal import service as assistant
 from app.domain.agent.personal.keys import person_key
-from app.domain.agent.personal.prompt import task_brief
 from app.domain.agent.personal.session import session as conversation_session
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.contract import (
@@ -53,7 +51,6 @@ from app.domain.agent.session_host.contract import (
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.space.services import SpaceService
 from app.domain.task import drafts
-from app.domain.task.claims import claim_of
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -215,39 +212,30 @@ async def _prestart(
 
 
 class PageIn(BaseModel):
-    """The page a question is asked from: a 题目's, or a draft's (the publish
-    or edit page)."""
+    """The page a question is asked from: which kind of page, and which one.
+    The kinds are the pages 芝士 knows how to read (``pages.PAGES``)."""
 
-    kind: Literal["task", "draft"]
+    kind: pages.PageKind
     id: int = Field(ge=1)
 
 
 async def _page(db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo) -> str:
     """The page, written out for 芝士; it takes the same judgment as opening
     the page."""
-    if page.kind == "draft":
-        row = await drafts.mine(db, auth.user_id, page.id)
-        zones = await timezones_by_ids(db, [auth.user_id])
-        return await drafts.context(db, spaces, row, zones.get(auth.user_id))
-    task = await _readable_task(db, page.id, auth)
     zones = await timezones_by_ids(db, [auth.user_id])
-    files, _, readable = await _task_attachment_service(db).list_for_task(
-        task=task, user_id=auth.user_id
-    )
-    return task_brief(
-        task,
-        claim=await claim_of(db, task=task, user_id=auth.user_id),
+    reader = pages.Reader(
+        session=db,
+        user_id=auth.user_id,
         timezone=zones.get(auth.user_id),
-        materials=[(f.id, (f.meta or {}).get("filename") or str(f.id)) for f in files],
-        materials_readable=readable,
+        spaces=spaces,
     )
+    return await pages.render(reader, page.kind, page.id)
 
 
 def _page_of(row) -> PageIn | None:
     """Where a conversation was started, as the page a question defaults to."""
-    if row.place_kind in ("task", "draft") and row.place_id.isdigit():
-        return PageIn(kind=row.place_kind, id=int(row.place_id))
-    return None
+    home = pages.home_page(row.place_kind, row.place_id)
+    return None if home is None else PageIn(kind=home[0], id=home[1])
 
 
 class FileIn(BaseModel):
@@ -328,11 +316,7 @@ async def ask(
             slot=slot,
             context=said,
             files=[(f.id, f.name) for f in body.files],
-            kind=(
-                billing.WRITING
-                if shown is not None and shown.kind == "draft"
-                else billing.ASKING
-            ),
+            kind=pages.billed_as(None if shown is None else shown.kind),
         )
     except BaseException:
         await slot.release()
