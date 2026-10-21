@@ -38,13 +38,13 @@ describe('其他额度', () => {
 
     expect(ui.getByText('剩余 -0.04 点')).toBeTruthy()
     expect(ui.queryByText('剩余 -0 点')).toBeNull()
-    expect(fillOf(ui.container).style.width).toBe('0%')
+    expect(fillOf(ui.container).style.width).toBe('100%')
   })
 
-  it('还剩一点的包照实写剩余和条长', () => {
+  it('条画已用的比例，还剩多少看右边的字', () => {
     const ui = mount([{ ...PACK, credits_remaining: 8.5, remaining_ratio: 0.085 }])
 
     expect(ui.getByText('剩余 8.5 点')).toBeTruthy()
-    expect(fillOf(ui.container).style.width).toBe('8.5%')
+    expect(fillOf(ui.container).style.width).toBe('91.5%')
   })
 })
