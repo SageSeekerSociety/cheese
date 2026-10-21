@@ -49,8 +49,12 @@ namespace in which HAProxy (`gateway-proxy-a` or `-b`,
 instances, `litellm-blue` and `litellm-green`, sharing the gateway database and
 Redis. Outside a release one proxy and one color run.
 
-Only one color runs outside a release. Router cooldowns live in process memory;
-concurrent colors would keep separate cooldown state.
+Only one color runs at a time on purpose. LiteLLM keeps router cooldowns and
+the `deepseek-flash` session affinity in process memory (`router_settings` has
+no Redis), so two colors taking traffic would each keep their own, and a
+conversation would bounce between RUC nodes and keep missing its prefix cache.
+A second standing color would only help if the gateway crashed on its own;
+that case would also need the router state moved to Redis first.
 
 A release (`deploy/release-gateway.sh`) reads credentials from
 `$HOME/gateway/compose/.env`, pulls the CI-built image, tests image
@@ -125,14 +129,17 @@ signatures, tool-call ids, thinking level), and `no_explicit_cache.py` strips
 `cache_control` from a deployment marked `cheese_no_explicit_cache: true`,
 because argon refuses explicit caching and LiteLLM would otherwise create a
 `cachedContents` object for every Claude Code request. Its key is capped at
-USD 1,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
+USD 2,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
 gateway database's daily spend, so the cap survives releases.
 
-`deepseek-flash` uses DeepSeek's official API, whose alias serves
-DeepSeek-V4.1-Flash-1017 as of 2026-10-17. Set `DEEPSEEK_API_KEY` in
-`$HOME/gateway/compose/.env`. Self-hosted copies whose checkpoint is not
-verified are excluded, including on API failures. See the
-[official changelog](https://api-docs.deepseek.com/updates/).
+`deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
+RUC key, and by DeepSeek's API when every RUC key fails or is past its 3
+parallel requests. Set `RUC_DEEPSEEK_API_BASE` (the endpoint's address, no
+path) and `RUC_DEEPSEEK_API_KEY_1` to `RUC_DEEPSEEK_API_KEY_9` in
+`$HOME/gateway/compose/.env` before releasing: nine of the ten keys RUC
+issued, all but the one kept for tests. The endpoint admits campus
+addresses only, so a box serving it needs the route in docs/infrastructure.md
+("Campus model API").
 
 `qwen-audio-asr` uses Alibaba Bailian (Beijing) for the composer's voice input.
 Set `DASHSCOPE_API_KEY` in `$HOME/gateway/compose/.env`. A workspace that was
@@ -195,6 +202,19 @@ is (`upstream_headers.py`, registered the same way). OpenCode Go needs both: its
 own User-Agent, and a session per conversation without which it refuses the
 request. How to put a subscription or relay row in front of a pay-per-use one:
 `docs/manual/dev/gateway.md`, "订阅与中转".
+
+Claude Code's WebSearch asks the upstream to run the search (the server tool
+`web_search_20250305`). DeepSeek's API runs it; RUC's vLLM does not, and
+answers with the model's text alone, which Claude Code shows the agent as a
+search that found nothing. So a deployment that cannot search says
+`supports_web_search: false` under `model_info`, a request whose tools include
+web search is not routed to it (`web_search.py`, registered the same way), and
+an answer to a search-only request that comes back with neither a
+`server_tool_use` block nor a search counted in its usage (how LiteLLM reports
+a search it translated, such as Gemini's grounding) reaches the client as an
+error, logged as `cheese web_search not run`
+with the model group and deployment. Mark a new deployment only after
+measuring it.
 
 The box's `backend/.env` must contain:
 

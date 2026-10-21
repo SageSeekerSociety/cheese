@@ -15,7 +15,7 @@ from app.domain.block.adapters import dump_blocks_json
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.output_effects import append_output
 from app.domain.block.queries import client_delivery_bundle, message_reply_target
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import BlockOut, reply_preview
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
@@ -168,6 +168,7 @@ async def persist_human_message(
         # recoverable, refusing the send is not.
         reply_uuid = parse_work_id(reply_to)
         reply_author: str | None = None
+        reply_parent: Block | None = None
         if reply_uuid is not None:
             parent = await message_reply_target(session, reply_uuid)
             if parent is None or parent.conversation_id != place.conversation_id:
@@ -181,6 +182,7 @@ async def persist_human_message(
                 # 回谁的话就是对着谁说的：被回复的那条的作者定这一句的收件人
                 # （#3210），由 `refuse` 认。
                 reply_author = parent.author
+                reply_parent = parent
         if content:
             content = prepared.content
             admission = await refuse(
@@ -270,6 +272,14 @@ async def persist_human_message(
             BlockOut.model_validate(block).model_dump(mode="json")
             for block in created_blocks
         ]
+        # The reply cue needs a line from the parent, and the reader's timeline
+        # may not hold it. It rides with the reply; the parent stays out of the
+        # page. Written before the idempotency record so a retry carries it too.
+        if reply_parent is not None:
+            preview = reply_preview(reply_parent)
+            for block, payload in zip(created_blocks, payloads, strict=True):
+                if block.reply_to is not None:
+                    payload["reply_preview"] = preview
         block_ids = [block.id for block in created_blocks]
         if delivery_key:
             await idem.record_result(

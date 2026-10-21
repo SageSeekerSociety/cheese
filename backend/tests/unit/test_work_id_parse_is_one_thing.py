@@ -17,6 +17,8 @@ import pytest
 
 from app.core import work_context
 from app.domain.agent.turn.store import human
+from app.domain.block.models import BlockKind
+from app.domain.event_author import AuthorType
 
 _ID = uuid.UUID("934bfa5a-193d-4d51-a29b-96771eaf4aa6")
 
@@ -43,7 +45,15 @@ async def _run_persist_human_message(
     monkeypatch.setattr(human, "PlaceResolver", lambda _s: resolver)
 
     reply_lookup = AsyncMock(
-        return_value=SimpleNamespace(conversation_id=topic_id, author="alice")
+        return_value=SimpleNamespace(
+            id=_ID,
+            conversation_id=topic_id,
+            author="alice",
+            kind=BlockKind.message,
+            author_type=AuthorType.participant,
+            content="parent",
+            mime_type=None,
+        )
     )
     monkeypatch.setattr(human, "message_reply_target", reply_lookup)
 

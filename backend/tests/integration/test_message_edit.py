@@ -271,6 +271,46 @@ def test_an_edit_notifies_only_whom_it_newly_mentions(client):
     assert len(_mentions(client, "bob")) == 1
 
 
+def test_an_edit_in_a_task_notifies_the_person_it_newly_names(client):
+    """A task's conversation is a conversation: its edit tells the person it
+    newly names, and stores the name the way sending the same text does."""
+    seed_user(client, "bob")
+    room, _ = _room(client)
+    task = open_task(client, room)
+    said = _say(client, task["id"], "alice", "谁看一下")
+    wait_work_idle()
+    assert _mentions(client, "bob") == []
+
+    _edit(client, said, "@bob 看一下", session_auth_headers("alice"))
+
+    assert len(_mentions(client, "bob")) == 1
+    assert _shown(client, task["id"], said)["content"] == "<@bob> 看一下"
+
+
+def test_an_edit_in_a_task_wakes_the_teammate_it_newly_names(client, stub_hooks):
+    """The seat an edit in a task newly names is delivered to and woken, the
+    way the same text sent to the task would have woken it."""
+    room = _two_teammates(client)
+    channel, other = room["channel"], room["other"]
+    task = open_task(client, channel)
+    said = _say(client, task["id"], "alice", "接口先别动")
+    wait_work_idle()
+    arrivals = _record_arrivals(stub_hooks)
+
+    _edit(client, said, f"<@{other}> 接口先别动", session_auth_headers("alice"))
+    wait_work_idle()
+
+    [row] = [
+        d
+        for d in _deliveries(client, task["id"])
+        if d.payload.get("eventType") == mention.BY_PERSON
+    ]
+    assert row.recipient_handle == other
+    assert row.payload["blockId"] == said
+    assert row.state == "received", row.last_error
+    assert any(agent == other for agent, _ in arrivals), arrivals
+
+
 def _two_teammates(client) -> dict:
     """A channel of alice's with two AI seats on it, and a 支线 of that channel.
 

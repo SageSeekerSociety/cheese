@@ -299,6 +299,45 @@ describe('对话栏自己的输入栏', () => {
     expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
   })
 
+  // 交给芝士的第一件事没回成：人已经知道该跟它说什么了，起手卡不能再摆回他那条
+  // 消息上面，挡住失败原因和「重试」。
+  it('keeps the starter drafts away once 芝士 took a turn, even one that failed', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listBlocks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'm3',
+          conversation_id: 'starter-failed',
+          kind: 'message',
+          content: '@芝士 帮我写一份课程报告。题目和要求是：TCP 拥塞控制算法对比',
+          author: 'alice',
+          author_type: 'participant',
+          created_at: '2026-09-16T10:00:00Z',
+          thread: {
+            id: 't3',
+            room_id: 'starter-failed',
+            root_block_id: 'm3',
+            reply_count: 0,
+            last_reply_at: null,
+            last_reply: null,
+            participants: [],
+            tasks: [],
+            failed: true,
+          },
+        } as never,
+      ],
+      total: 1,
+      has_more: false,
+      oldest_id: 'm3',
+      has_newer: false,
+      newest_id: null,
+    })
+    const { rerender, queryByRole } = mountPanel({}, 'starter-failed')
+    await rerender({ topic: { ...topic('starter-failed'), kind: 'root' } })
+    await flush()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
+  })
+
   it('previews a document and sends its uploaded path', async () => {
     const api = await import('../../api')
     vi.mocked(api.uploadAttachment).mockResolvedValue({
