@@ -202,7 +202,7 @@ const refs = computed(() => ({
 }))
 /** 做这件任务的队友叫什么：它单独指定的那位，否则这间房名册上的队友，再否则项目的默认队友。 */
 function madeAgentName(made: RoomTask): string {
-  const seat = made.agent_handle || props.taskAgentHandle
+  const seat = made.agent_handle || props.topic.agent_handle || props.taskAgentHandle
   return (seat && props.memberNames?.[seat]) || store.agentName
 }
 

@@ -36,6 +36,8 @@ const props = defineProps<{
   /** 只看这个频道；null 是整个项目。 */
   channelId: string | null
   names: Record<string, string>
+  /** 频道 id → 坐在那个频道的队友叫什么；任务没单独指定队友时用它。 */
+  roomAgentNames?: Record<string, string>
   /** 项目默认的那位 AI 队友叫什么：任务没单独指定队友时，卡住了的那一句点它的名。 */
   agentName?: string
   /** handle → 头像图；没挑过的是空串，退回首字母。和 names 同源。 */
@@ -172,7 +174,8 @@ const channelActions = computed<MenuAction[]>(() => [
 const pickedChannel = computed(() => (props.channelId ? channelTitle.value.get(props.channelId) ?? null : null))
 const pickedGlyph = computed(() => props.channels.find((c) => c.id === props.channelId)?.glyph ?? 'mdi-pound')
 const nameOf = (handle: string) => props.names[handle] || handle
-const agentNameOf = (task: RoomTask) => (task.agent_handle && props.names[task.agent_handle]) || props.agentName || ''
+const agentNameOf = (task: RoomTask) =>
+  (task.agent_handle && props.names[task.agent_handle]) || props.roomAgentNames?.[task.room_id] || props.agentName || ''
 
 // 状态那一格：图标、颜色、动不动和下面那一行都在 `lib/taskState.ts`。已关闭的写「已关闭」；
 // 还开着、最后一步已采纳（队友在写总结）的那一会儿写「进行中」，样子也跟着开启。

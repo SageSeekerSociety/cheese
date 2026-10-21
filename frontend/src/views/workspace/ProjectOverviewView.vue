@@ -57,6 +57,8 @@ const props = defineProps<{
    *  `underway_counts` 数，不从 `tasks` 自己凑（清单第 14 条）。 */
   underway: number
   names: Record<string, string>
+  /** 频道 id → 坐在那个频道的队友叫什么；任务没单独指定队友时用它。 */
+  roomAgentNames?: Record<string, string>
   avatars: Record<string, string>
   me: string
   artifactApi: ArtifactApi
@@ -163,7 +165,11 @@ function stateOf(task: RoomTask): TaskState {
   return taskState(task, {
     viewer: props.me,
     nameOf,
-    agentName: (task.agent_handle && props.names[task.agent_handle]) || props.agentName || '',
+    agentName:
+      (task.agent_handle && props.names[task.agent_handle]) ||
+      props.roomAgentNames?.[task.room_id] ||
+      props.agentName ||
+      '',
   })
 }
 </script>

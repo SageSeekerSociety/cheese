@@ -244,3 +244,12 @@ it('全部状态为空且关闭任务读失败时，不把失败当成暂无任�
   await fireEvent.click(view.getByRole('button', { name: t('global.loadError.retry') }))
   expect(view.emitted().more).toHaveLength(1)
 })
+
+it('任务没单独指定队友时，状态叫它所在频道那位队友的名字，不叫默认的「芝士」', () => {
+  const view = mount([task({ room_id: 'front', presentation: { column: 'building', phrase: 'running' } })], {
+    agentName: '芝士',
+    roomAgentNames: { front: 'Nova' },
+  })
+  expect(view.container.textContent).toContain('Nova在做')
+  expect(view.container.textContent).not.toContain('芝士在做')
+})
