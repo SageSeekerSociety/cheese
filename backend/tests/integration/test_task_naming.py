@@ -697,11 +697,11 @@ def test_a_task_a_teammate_created_keeps_its_title_until_its_direction_changes(
     client, alice, gateway
 ):
     """The AI teammate that creates a task names it, and the platform does not
-    second-guess it after the first turn; only a change of direction does."""
+    second-guess it once its session first goes idle; only a change of direction does."""
     tid = _by_teammate(client, alice, "迁移旧数据")
     assert _shown(client, tid) == ("迁移旧数据", "auto")
     _say(client, tid, "先从用户表开始")
-    for reason in ("message", "turn"):
+    for reason in ("message", "idle"):
         assert _run(client, tid, reason) is None
     assert gateway["asked"] == []
 
