@@ -83,6 +83,28 @@ describe('邀请好友', () => {
     expect(link.searchParams.get('code')).toBe('K7Q2M9')
   })
 
+  it('复制邀请码复制的就是这个码', async () => {
+    const view = await open({})
+    await fireEvent.click(view.getByRole('button', { name: t('account.invites.code.copyCode') }))
+    expect(writeText).toHaveBeenCalledWith('K7Q2M9')
+  })
+
+  it('已邀请算每一位好友，已采纳只算首次采纳了的', async () => {
+    const friend = (handle: string, stage: 'registered' | 'onboarded' | 'activated' | 'lapsed') => ({
+      handle,
+      nickname: null,
+      avatar_id: null,
+      registered_at: '2026-10-10T00:00:00Z',
+      stage,
+      credits: stage === 'activated' ? 150 : 0,
+    })
+    const view = await open({
+      invitees: [friend('a', 'activated'), friend('b', 'onboarded'), friend('c', 'lapsed'), friend('d', 'activated')],
+    })
+    expect(view.getByTestId('invite-count').textContent?.trim()).toBe('4')
+    expect(view.getByTestId('invite-accepted').textContent?.trim()).toBe('2')
+  })
+
   it('每位好友各自走到哪一步', async () => {
     const view = await open({
       invitees: [

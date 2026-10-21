@@ -1,10 +1,9 @@
 {
   "title": "Invite friends",
-  "lede": "A friend who signs up with your code gets 50 credits after finishing the guide and creating a first project. If within 7 days of signing up they accept a first delivery from Cheese, that is, actually get something done with it, they get 100 more and you get 150 credits.",
+  "lede": "Send a friend your sign-up link. Once they sign up and accept a first delivery from Cheese, you both get credits.",
   "loadFailed": "Could not load your invitations",
   "retry": "Retry",
   "code": {
-    "title": "Your invite code",
     "label": "Invite code",
     "remaining": "{left} of {total} seats left",
     "unlockHint": "Accept your first delivery to add {n} more seats",
@@ -12,15 +11,24 @@
     "copyLink": "Copy sign-up link",
     "copied": "Invite code copied"
   },
-  "earned": {
-    "title": "Rewards earned",
-    "credits": "Credits",
-    "creditsValue": "{n} credits",
-    "note": "Invitations earn at most 1,500 credits a month; once you reach it, friends who accept their first delivery that month earn you nothing more. Credits last 365 days from when they are paid and are used after the month's plan credits.",
-    "viewCredits": "View personal credits"
+  "steps": {
+    "title": "What your friend and you get",
+    "signUp": "Your friend signs up with your link",
+    "signUpGain": "Uses 1 seat",
+    "project": "They create their first project",
+    "projectGain": "Friend +50 credits",
+    "accept": "Within 7 days they accept a first delivery from Cheese",
+    "acceptGain": "Friend +100 credits, you +150",
+    "meaning": "A first acceptance means your friend actually got something done with it."
   },
   "people": {
     "title": "People you invited",
+    "viewCredits": "View personal credits",
+    "invited": "Invited",
+    "accepted": "Accepted",
+    "credits": "Credits from invitations",
+    "creditsValue": "{n} credits",
+    "capNote": "Invitations earn at most 1,500 credits a month; once you reach it, friends who accept their first delivery that month earn you nothing more. Credits last 365 days from when they are paid and are used after the month's plan credits.",
     "empty": "No one yet",
     "registeredOn": "Joined {date}",
     "stage": {
