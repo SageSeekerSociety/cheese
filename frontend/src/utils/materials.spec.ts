@@ -11,7 +11,7 @@ import { getAvatarUrl, getFullAttachmentUrl } from './materials'
 
 describe('getAvatarUrl', () => {
   it('前缀缺失时兜底成网关挂载点，而不是把 undefined 串进地址', () => {
-    expect(getAvatarUrl(12)).toBe('/api/avatars/12')
+    expect(getAvatarUrl(12)).toBe('/api/avatars/12?v=2')
   })
 
   it('返回的永远是从根开始的绝对地址，不随当前路由漂移', () => {
@@ -57,13 +57,13 @@ describe('API 前缀是空串时（生产镜像运行时漏配）', () => {
   it('空串也兜底成 /api，而不是拼出 /avatars/12', async () => {
     vi.stubEnv('VITE_API_BASE_URL', '')
     const { getAvatarUrl, getFullAttachmentUrl } = await reload()
-    expect(getAvatarUrl(12)).toBe('/api/avatars/12')
+    expect(getAvatarUrl(12)).toBe('/api/avatars/12?v=2')
     expect(getFullAttachmentUrl('/uploads/a.png')).toBe('/api/uploads/a.png')
   })
 
   it('配了非空前缀时就用配的那一个', async () => {
     vi.stubEnv('VITE_API_BASE_URL', '/gw')
     const { getAvatarUrl } = await reload()
-    expect(getAvatarUrl(12)).toBe('/gw/avatars/12')
+    expect(getAvatarUrl(12)).toBe('/gw/avatars/12?v=2')
   })
 })
