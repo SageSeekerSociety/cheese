@@ -543,6 +543,34 @@ def test_an_edit_to_an_unread_message_needs_no_notice(client, running_turn):
     assert asyncio.run(_waiting_notices(client, room)) == []
 
 
+def _site_lines(client, room: str) -> list[str]:
+    """What a member of the room reads in 现场 that the platform wrote there."""
+    site = client.get(f"/topics/{room}/transcript", headers=session_auth_headers("bob"))
+    assert site.status_code == 200, site.text
+    return [i["content"] for i in site.json()["data"]["data"] if i.get("run_record")]
+
+
+def test_members_read_in_the_site_that_the_agent_was_told_of_an_edit(client):
+    room, _ = _room(client)
+    said = _say(client, room, "alice", "周五交初稿")
+    _read_by_a_turn(client, said)
+    assert not [line for line in _site_lines(client, room) if "alice" in line]
+
+    _edit(client, said, "周六交初稿", session_auth_headers("alice"))
+
+    assert len([line for line in _site_lines(client, room) if "alice" in line]) == 1
+
+
+def test_an_edit_nobody_had_read_leaves_the_site_as_it_was(client):
+    room, _ = _room(client)
+    said = _say(client, room, "alice", "周五交初稿")
+    before = _site_lines(client, room)
+
+    _edit(client, said, "周六交初稿", session_auth_headers("alice"))
+
+    assert _site_lines(client, room) == before
+
+
 def _visible(client, room: str) -> list[dict]:
     blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
     return [b for b in blocks if (b.get("meta") or {}).get("in_room") is not False]

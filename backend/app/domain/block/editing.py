@@ -44,6 +44,16 @@ from app.domain.conversation.services import is_task
 from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
+from app.domain.notice_meta import (
+    EVENT_MESSAGE_EDITED,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+)
+from app.domain.notice_meta import (
+    notice as notice_meta,
+)
+from app.domain.run_record import service as run_records
+from app.domain.run_record.models import RunRecord
 
 
 class EditedText(Protocol):
@@ -137,6 +147,12 @@ async def edit_message[Sent: EditedText](
         if in_room and already_read
         else None
     )
+    # Its frame is built now: once committed, the record's attributes expire.
+    kept = (
+        run_records.as_payload(await _keep_in_the_site(session, block, editor))
+        if notice is not None
+        else None
+    )
     relayed = not in_room and not sent.by_agent
     if relayed:
         await _tell_the_card(
@@ -154,6 +170,10 @@ async def edit_message[Sent: EditedText](
     await publish(
         str(block.conversation_id), {"type": "block_updated", "block": payload}
     )
+    if kept is not None:
+        await publish(
+            str(block.conversation_id), {"type": run_records.FRAME, "record": kept}
+        )
     if notice is not None:
         await notify.notify_running_turn(
             block.conversation_id, _said(notice), blocks=[notice.id]
@@ -202,6 +222,28 @@ async def _tell_the_room(blocks: BlockRepository, block: Block, editor: str) -> 
                 f"<@{editor}> 改了之前发的一条消息（id {block.id}），改后是：\n"
                 f"{block.content}"
             ),
+        },
+    )
+
+
+async def _keep_in_the_site(
+    session: AsyncSession, block: Block, editor: str
+) -> RunRecord:
+    """The room's members see in 现场 that the agent was told of the edit.
+
+    The notice block above is the agent's: it waits for a turn to read it. What
+    a member reads is a run record of the same sentence, the way the platform's
+    other running facts reach 现场."""
+    return await run_records.keep(
+        session,
+        project_id=block.project_id,
+        conversation_id=block.conversation_id,
+        content=say("messageEdited", actor=f"<@{editor}>"),
+        meta={
+            **notice_meta(
+                EVENT_MESSAGE_EDITED, severity=SEVERITY_INFO, who=WHO_PLATFORM
+            ),
+            "block_id": str(block.id),
         },
     )
 
