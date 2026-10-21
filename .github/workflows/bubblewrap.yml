@@ -10,6 +10,8 @@ on:
       - scripts/build-bubblewrap.sh
       - .github/workflows/bubblewrap.yml
       - cli/internal/daemoncmd/sandbox.go
+      # The release the allow job places is the one pinned there.
+      - backend/app/domain/agent/toolchain.py
   workflow_dispatch: {}
 
 permissions:

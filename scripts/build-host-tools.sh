@@ -251,8 +251,9 @@ license libnftnl "$libnftnl_version" GPL-2.0-or-later "libnftnl-$libnftnl_versio
 license libmnl "$libmnl_version" LGPL-2.1-or-later "libmnl-$libmnl_version" COPYING
 license xfsprogs "$xfsprogs_version" "GPL-2.0-only AND LGPL-2.1-only" "xfsprogs-$xfsprogs_version" LICENSES/GPL-2.0 LICENSES/LGPL-2.1
 license inih "$inih_version" BSD-3-Clause "inih-$inih_version" LICENSE.txt
-license userspace-rcu "$urcu_version" LGPL-2.1-or-later "userspace-rcu-$urcu_version" \
-  LICENSE.md LICENSES/LGPL-2.1-or-later.txt LICENSES/MIT.txt
+license userspace-rcu "$urcu_version" "LGPL-2.1-or-later AND MIT AND LicenseRef-Boehm-GC" \
+  "userspace-rcu-$urcu_version" LICENSE.md LICENSES/LGPL-2.1-or-later.txt LICENSES/MIT.txt \
+  LICENSES/LicenseRef-Boehm-GC.txt
 license libuuid "$util_linux_version" BSD-3-Clause "util-linux-$util_linux_version" \
   Documentation/licenses/COPYING.BSD-3-Clause
 license libblkid "$util_linux_version" LGPL-2.1-or-later "util-linux-$util_linux_version" \
@@ -288,8 +289,11 @@ find "$package/libexec" -type f -perm -u+x -exec sh -c \
 mkdir -p "$package/licenses"
 notice "git $git_version, with https through its own libcurl, linked statically from these components, built by scripts/build-host-tools.sh. Each component's license texts are under licenses/."
 # git is GPL-2.0; its own copy of the regex library it is built with here
-# (NO_REGEX) is LGPL-2.1-or-later.
+# (NO_REGEX) is LGPL-2.1-or-later. Its SHA-1 (sha1dc, the default) and
+# reftable code are compiled in under licenses of their own.
 license git "$git_version" "GPL-2.0-only AND LGPL-2.1-or-later" "git-$git_version" COPYING LGPL-2.1
+license sha1dc "(git $git_version)" MIT "git-$git_version" sha1dc/LICENSE.txt
+license reftable "(git $git_version)" BSD-3-Clause "git-$git_version" reftable/LICENSE
 license curl "$curl_version" curl "curl-$curl_version" COPYING
 license openssl "$openssl_version" Apache-2.0 "openssl-$openssl_version" LICENSE.txt
 license zlib "$zlib_version" Zlib "zlib-$zlib_version" LICENSE

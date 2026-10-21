@@ -58,10 +58,10 @@ for linked in "musl-dev $musl_version" "libcap-static $libcap_version"; do
     exit 1
   fi
 done
-curl -fsSL -o "$package/licenses/musl-$musl_version-COPYRIGHT" \
+curl -fsSL --retry 5 --retry-all-errors -o "$package/licenses/musl-$musl_version-COPYRIGHT" \
   "https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v$musl_version"
 echo "$musl_copyright_sha256  $package/licenses/musl-$musl_version-COPYRIGHT" | sha256sum -c -
-curl -fsSL -o "$package/licenses/libcap-$libcap_version-License" \
+curl -fsSL --retry 5 --retry-all-errors -o "$package/licenses/libcap-$libcap_version-License" \
   "https://git.kernel.org/pub/scm/libs/libcap/libcap.git/plain/License?h=libcap-$libcap_version"
 echo "$libcap_license_sha256  $package/licenses/libcap-$libcap_version-License" | sha256sum -c -
 {
