@@ -37,10 +37,10 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import AGENT_NOTICE_META_KEY, Block, BlockKind
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.adapters import platform_line
+from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
 from app.domain.delivery_events import REPLACES, DeliveryEvent
-from app.domain.event_author import AuthorType
+from app.domain.event_about import EventAbout
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.models import Task, TaskProgress, TaskStatus
 
@@ -114,14 +114,15 @@ async def inform(session: AsyncSession, task: Task, said: str) -> None:
     """Tell ``task``'s teammate ``said`` in its next input, on a line the room
     does not show: what changed is already in front of people where they
     changed it (the board, the task header, the card)."""
-    await BlockRepository(session).add(
+    await platform_line(
+        session,
+        about=EventAbout.task,
         project_id=task.project_id,
-        conversation_id=task.id,
+        room_id=task.room_id,
+        task_id=task.id,
         author="system",
-        author_type=AuthorType.platform,
         content=said,
-        kind=BlockKind.event,
-        meta={"platform": True, "in_room": False, AGENT_NOTICE_META_KEY: said},
+        meta={"in_room": False, AGENT_NOTICE_META_KEY: said},
     )
 
 
