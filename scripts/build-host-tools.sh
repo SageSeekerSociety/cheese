@@ -15,7 +15,7 @@
 #
 #   sh scripts/build-host-tools.sh <output dir>
 set -eu
-revision=1
+revision=2
 iproute2_version=7.2.0
 iproute2_sha256=4c2fa124c2cf0afd7ca34d1eeacba6ba048a56f6374e2aab93dafbdbd4eea9c0
 iptables_version=1.8.13
@@ -32,6 +32,25 @@ curl_version=8.22.0
 curl_sha256=f7ef3ae8a22e521f289803fe93543eb64c329b58aa73a9e224dfd915a2a5f4f7
 git_version=2.56.0
 git_sha256=26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3
+# The libraries the programs above link statically come from Alpine's
+# packages, which carry no license texts. Each text is taken from upstream at
+# the version Alpine built (`linked` stops the build when Alpine has moved on).
+musl_version=1.2.5
+musl_copyright_sha256=f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af
+libmnl_version=1.0.5
+libmnl_sha256=274b9b919ef3152bfb3da3a13c950dd60d6e2bcd54230ffeca298d03b40d0525
+urcu_version=0.15.2
+urcu_sha256=59f36f2b8bda1b7620a7eced2634f26c549444818a8313025a3bb09c0766a61d
+util_linux_version=2.41.6
+util_linux_sha256=e596083744e746be7d2823b62b43f4418dd7bf56303b4dc09e6fe8112fe3d7ed
+libevent_version=2.1.13
+libevent_sha256=f7e9383b8c0baa81b687e5b5eecc01beefaf1b19b64151d95ed61647fe7a315c
+ncurses_version=6.5_p20250503
+ncurses_copying_sha256=708999f95527e1ffa670c6fce288c6c600cb477dd04afcc1171422b3dd4ee226
+openssl_version=3.5.9
+openssl_license_sha256=7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a
+zlib_version=1.3.2
+zlib_license_sha256=e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2
 out=$(mkdir -p "${1:?output directory}" && cd "$1" && pwd)
 
 case "$(uname -m)" in
@@ -56,6 +75,23 @@ fetch() { # url sha256
   curl -fsSL --retry 5 --retry-all-errors -o "$(basename "$1")" "$1"
   echo "$2  $(basename "$1")" | sha256sum -c -
   tar -xf "$(basename "$1")"
+}
+
+# One file of an upstream source, into <directory>/<name>.
+fetch_file() { # url sha256 directory name
+  mkdir -p "$3"
+  curl -fsSL --retry 5 --retry-all-errors -o "$3/$4" "$1"
+  echo "$2  $3/$4" | sha256sum -c -
+}
+
+# The Alpine package a program links statically must be the version whose
+# license text the recipe carries.
+linked() { # package, version
+  have=$(apk list -I "$1" | sed -n "s/^$1-\(.*\)-r[0-9]* .*/\1/p")
+  if [ "$have" != "$2" ]; then
+    echo "Alpine's $1 is ${have:-not installed}; the recipe's license text is for $2" >&2
+    exit 1
+  fi
 }
 
 # Every program shipped must load no shared library: a machine gets the file.
@@ -151,10 +187,43 @@ fetch "https://mirrors.edge.kernel.org/pub/software/scm/git/git-$git_version.tar
     DESTDIR="$work/git-root" install
 )
 
-license() { # source dir, files...
-  directory=$1
-  shift
+# --- the license texts of the libraries linked from Alpine ----------------
+linked musl-dev "$musl_version"
+linked libmnl-static "$libmnl_version"
+linked userspace-rcu-static "$urcu_version"
+linked util-linux-static "$util_linux_version"
+linked libevent-static "$libevent_version"
+linked ncurses-static "$ncurses_version"
+linked openssl-libs-static "$openssl_version"
+linked zlib-static "$zlib_version"
+fetch_file "https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v$musl_version" \
+  "$musl_copyright_sha256" "musl-$musl_version" COPYRIGHT
+fetch "https://www.netfilter.org/pub/libmnl/libmnl-$libmnl_version.tar.bz2" "$libmnl_sha256"
+fetch "https://lttng.org/files/urcu/userspace-rcu-$urcu_version.tar.bz2" "$urcu_sha256"
+fetch "https://mirrors.edge.kernel.org/pub/linux/utils/util-linux/v${util_linux_version%.*}/util-linux-$util_linux_version.tar.xz" "$util_linux_sha256"
+fetch "https://github.com/libevent/libevent/releases/download/release-$libevent_version-stable/libevent-$libevent_version-stable.tar.gz" "$libevent_sha256"
+# ncurses is released as snapshots: 6.5_p20250503 is tag v6_5_20250503.
+ncurses_tag=v$(echo "$ncurses_version" | sed 's/[._]p\{0,1\}/_/g')
+fetch_file "https://raw.githubusercontent.com/ThomasDickey/ncurses-snapshots/$ncurses_tag/COPYING" \
+  "$ncurses_copying_sha256" "ncurses-$ncurses_version" COPYING
+fetch_file "https://raw.githubusercontent.com/openssl/openssl/openssl-$openssl_version/LICENSE.txt" \
+  "$openssl_license_sha256" "openssl-$openssl_version" LICENSE.txt
+fetch_file "https://raw.githubusercontent.com/madler/zlib/v$zlib_version/LICENSE" \
+  "$zlib_license_sha256" "zlib-$zlib_version" LICENSE
+
+# A component's license texts into the package's licenses/, and its line in
+# the package's NOTICE.
+license() { # component, version, SPDX license, source dir, files...
+  printf '%-14s %-15s %s\n' "$1" "$2" "$3" >> "$package/NOTICE"
+  directory=$4
+  shift 4
   for file in "$@"; do cp "$directory/$file" "$package/licenses/$directory-$(basename "$file")"; done
+}
+
+notice() { # what the package is
+  printf '%s\n\n%-14s %-15s %s\n' "$1" component version license > "$package/NOTICE"
+  # Every program is linked statically against musl, Alpine's C library.
+  license musl "$musl_version" MIT "musl-$musl_version" COPYRIGHT
 }
 
 archive() {
@@ -175,11 +244,19 @@ cp "xfsprogs-$xfsprogs_version/mkfs/mkfs.xfs" "xfsprogs-$xfsprogs_version/quota/
 # filesystem an older kernel cannot mount, so the machine picks the file for
 # the kernel it runs (`enrollment.DATA_DISK`).
 cp "xfsprogs-$xfsprogs_version"/mkfs/lts_*.conf "$package/mkfs/"
-license "iproute2-$iproute2_version" COPYING
-license "iptables-$iptables_version" COPYING
-license "libnftnl-$libnftnl_version" COPYING
-license "xfsprogs-$xfsprogs_version" LICENSES/GPL-2.0
-license "inih-$inih_version" LICENSE.txt
+notice "host-tools $revision: ip (iproute2), iptables (xtables-nft-multi), mkfs.xfs and xfs_quota (xfsprogs), linked statically from these components, built by scripts/build-host-tools.sh. Each component's license texts are under licenses/."
+license iproute2 "$iproute2_version" GPL-2.0-or-later "iproute2-$iproute2_version" COPYING
+license iptables "$iptables_version" GPL-2.0-or-later "iptables-$iptables_version" COPYING
+license libnftnl "$libnftnl_version" GPL-2.0-or-later "libnftnl-$libnftnl_version" COPYING
+license libmnl "$libmnl_version" LGPL-2.1-or-later "libmnl-$libmnl_version" COPYING
+license xfsprogs "$xfsprogs_version" "GPL-2.0-only AND LGPL-2.1-only" "xfsprogs-$xfsprogs_version" LICENSES/GPL-2.0 LICENSES/LGPL-2.1
+license inih "$inih_version" BSD-3-Clause "inih-$inih_version" LICENSE.txt
+license userspace-rcu "$urcu_version" LGPL-2.1-or-later "userspace-rcu-$urcu_version" \
+  LICENSE.md LICENSES/LGPL-2.1-or-later.txt LICENSES/MIT.txt
+license libuuid "$util_linux_version" BSD-3-Clause "util-linux-$util_linux_version" \
+  Documentation/licenses/COPYING.BSD-3-Clause
+license libblkid "$util_linux_version" LGPL-2.1-or-later "util-linux-$util_linux_version" \
+  Documentation/licenses/COPYING.LGPL-2.1-or-later
 static "$package/bin/ip" "$package/bin/xtables-nft-multi" "$package/bin/mkfs.xfs" "$package/bin/xfs_quota"
 "$package/bin/ip" -V
 "$package/bin/iptables-restore" --version
@@ -189,7 +266,10 @@ archive
 package="$work/tmux-$revision"
 mkdir -p "$package/bin" "$package/licenses"
 cp "tmux-$tmux_version/tmux" "$package/bin/"
-license "tmux-$tmux_version" COPYING
+notice "tmux $tmux_version, linked statically from these components, built by scripts/build-host-tools.sh. Each component's license texts are under licenses/."
+license tmux "$tmux_version" ISC "tmux-$tmux_version" COPYING
+license libevent "$libevent_version" BSD-3-Clause "libevent-$libevent_version-stable" LICENSE
+license ncurses "$ncurses_version" X11 "ncurses-$ncurses_version" COPYING
 static "$package/bin/tmux"
 "$package/bin/tmux" -V
 archive
@@ -206,8 +286,13 @@ rm -rf "$package/share/man" "$package/share/gitweb" "$package/share/perl5" \
 find "$package/libexec" -type f -perm -u+x -exec sh -c \
   'readelf -h "$1" >/dev/null 2>&1 && strip "$1"' _ {} \;
 mkdir -p "$package/licenses"
-license "git-$git_version" COPYING
-license "curl-$curl_version" COPYING
+notice "git $git_version, with https through its own libcurl, linked statically from these components, built by scripts/build-host-tools.sh. Each component's license texts are under licenses/."
+# git is GPL-2.0; its own copy of the regex library it is built with here
+# (NO_REGEX) is LGPL-2.1-or-later.
+license git "$git_version" "GPL-2.0-only AND LGPL-2.1-or-later" "git-$git_version" COPYING LGPL-2.1
+license curl "$curl_version" curl "curl-$curl_version" COPYING
+license openssl "$openssl_version" Apache-2.0 "openssl-$openssl_version" LICENSE.txt
+license zlib "$zlib_version" Zlib "zlib-$zlib_version" LICENSE
 static "$package/bin/git" "$package/libexec/git-core/git-remote-http"
 "$package/bin/git" --version
 archive

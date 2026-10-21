@@ -38,6 +38,8 @@ jobs:
           for name in host-tools tmux git; do
             mkdir "$RUNNER_TEMP/placed/$name"
             tar -xzf dist/$name-*.tar.gz -C "$RUNNER_TEMP/placed/$name" --strip-components=1
+            cat "$RUNNER_TEMP/placed/$name/NOTICE"
+            ls "$RUNNER_TEMP/placed/$name/licenses"
           done
           echo "TOOLS=$RUNNER_TEMP/placed/host-tools" >> "$GITHUB_ENV"
           echo "PLACED=$RUNNER_TEMP/placed" >> "$GITHUB_ENV"
@@ -150,7 +152,7 @@ jobs:
         run: |
           recipe=scripts/build-host-tools.sh
           revision=$(sed -n 's/^revision=//p' "$recipe")
-          versions=$(sed -n 's/^\([a-z0-9]*\)_version=\(.*\)/\1 \2/p' "$recipe" | paste -sd, - | sed 's/,/, /g')
+          versions=$(sed -n 's/^\([a-z0-9_]*\)_version=\(.*\)/\1 \2/p' "$recipe" | paste -sd, - | sed 's/,/, /g')
           gh release create "host-tools-v$revision" dist/* --target "$GITHUB_SHA" \
             --title "host tools $revision" \
-            --notes "Built statically against musl in Alpine 3.22 by \`$recipe\` for cheesehost to place on Linux machines: $versions. Sources are the upstream release tarballs, each checked against the SHA-256 in the recipe. Each archive carries the licenses of the programs it contains under \`licenses/\`."
+            --notes "Built statically against musl in Alpine 3.22 by \`$recipe\` for cheesehost to place on Linux machines: $versions. Sources and license texts come from upstream, each checked against the SHA-256 in the recipe. Each archive's \`NOTICE\` lists every component its programs are linked from, with version and license, and \`licenses/\` carries their license texts."
