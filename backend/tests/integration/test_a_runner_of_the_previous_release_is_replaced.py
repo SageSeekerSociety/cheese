@@ -450,7 +450,7 @@ async def test_a_message_sent_meanwhile_waits_and_reaches_the_new_runner(
         service, old = held["service"], held["old"]
         assert not await _admitted(service, topic, first)
         assert not await _admitted(service, topic, second)
-        waiting = [line for line in await _said(client, topic) if "平台升级中" in line]
+        waiting = [line for line in await _said(client, topic) if "平台更新中" in line]
         assert len(waiting) == 1, "told once per drain, not once per message"
         async with client.test_request_factory() as db:
             kept = await db.get(Block, first)
