@@ -101,13 +101,19 @@ jobs:
           git --version
           git clone -q --depth 1 --filter=blob:none https://github.com/SageSeekerSociety/cheese "$RUNNER_TEMP/clone"
           git -C "$RUNNER_TEMP/clone" rev-parse --path-format=absolute --git-common-dir
-      # Static: the same files run on distributions the build never saw,
-      # including one whose CA bundle is not where Debian keeps it.
+      # Static: the same files run on distributions the build never saw, and
+      # git's https finds each one's CA certificates where it keeps them. A
+      # cloud image carries those; Ubuntu's container image does not, so it is
+      # given them first.
       - name: On other distributions
         run: |
           for image in fedora:42 almalinux:9 alpine:3.22 ubuntu:20.04 archlinux:latest; do
             echo "== $image"
-            docker run --rm -v "$PLACED:/placed:ro" "$image" sh -c '
+            prepare=true
+            case "$image" in
+              ubuntu:*) prepare="apt-get update -qq && apt-get install -y -qq ca-certificates >/dev/null" ;;
+            esac
+            docker run --rm -v "$PLACED:/placed:ro" "$image" sh -c "$prepare"' &&
               /placed/host-tools/bin/ip -V &&
               /placed/host-tools/bin/xtables-nft-multi iptables-restore --version &&
               /placed/host-tools/bin/mkfs.xfs -V &&
