@@ -154,6 +154,9 @@ def as_block(item: dict, conversation_id: uuid.UUID) -> dict:
             "parent": parent,
             "tool": tool,
             "narration": not tool,
+            # The machine's own note is not a step of any turn: 现场 draws it
+            # as a platform line, even when the caller gave it a turn id.
+            "platform": item["harness"] == "machine",
             "in_room": False,
         },
     }

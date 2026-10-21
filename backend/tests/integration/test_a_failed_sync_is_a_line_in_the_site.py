@@ -3,23 +3,19 @@
 It used to be a chat message signed by the teammate, telling the room to retry
 a turn — something only the platform's next turn can do and nobody reading the
 room can. The failure still has to be visible (a turn whose work stayed on the
-machine looks like a turn that succeeded), so it is kept where the turn is:
-one `sync_failed` status record.
+machine looks like a turn that succeeded), so it is kept where the sync ran:
+one `sync_failed` status record, drawn as a platform line.
+
+It carries no turn. The sync runs after the turn ended and the machine is given
+no turn id; the newest turn at that instant can be a co-seated agent's or the
+next one, so attaching it by guesswork would put the line in the wrong 过程.
+现场's own rule for a block with no turn is a platform line of its own, and
+that is what this is.
 
 The one failure that does stay in the room is a PR already in the merge queue:
 retrying cannot help there, and a person has to decide.
-
-The machine is given no turn id, so the note joins the turn whose checkpoint
-it is — the newest turn this seat's records carry. Without that it would
-render as a turn of its own with no steps, and a reader looking at one turn's
-过程 would not see it at all. A co-seated agent's newer turn is not it.
 """
 
-import asyncio
-import uuid
-from datetime import UTC, datetime, timedelta
-
-from app.domain.session_record.models import SessionRecord
 from tests.integration.conftest import (
     open_task,
     post_project,
@@ -29,40 +25,6 @@ from tests.integration.conftest import (
 )
 
 BROWSER = {"X-Cheese-Token": ""}
-
-
-def _seed_turn(
-    client, task_id: str, turn: uuid.UUID, seat: str, at: datetime | None = None
-) -> None:
-    """The harness's own last record of a turn, as the runner journals it."""
-
-    async def write() -> None:
-        when = at or datetime.now(UTC)
-        async with client.test_factory() as session:
-            session.add(
-                SessionRecord(
-                    conversation_id=uuid.UUID(task_id),
-                    turn_id=turn,
-                    agent_handle=seat,
-                    harness="claude-code",
-                    first_sequence=1,
-                    last_sequence=1,
-                    first_at=when,
-                    last_at=when,
-                    count=1,
-                    bytes=1,
-                    records=[
-                        {
-                            "sequence": 1,
-                            "at": when.isoformat(),
-                            "record": {"type": "assistant"},
-                        }
-                    ],
-                )
-            )
-            await session.commit()
-
-    asyncio.run(write())
 
 
 def _a_task(client) -> tuple[str, str, str, str]:
@@ -81,29 +43,26 @@ def _post(client, task_id: str, headers: dict, text: str):
     )
 
 
-def test_the_failed_sync_is_beside_the_turn_and_not_a_message(client):
+def test_the_failed_sync_is_a_platform_line_in_the_site_and_not_a_message(client):
     project_id, _, task_id, seat = _a_task(client)
-    turn = uuid.uuid4()
-    text = "这轮的改动没能推回 task/72508bfc——它还留在那台机器上"
+    text = "有改动没能推回 task/72508bfc——它还留在那台机器上"
 
-    posted = _post(
-        client,
-        task_id,
-        {**task_agent_headers(project_id, task_id, seat), "X-Cheese-Turn": str(turn)},
-        text,
-    )
+    posted = _post(client, task_id, task_agent_headers(project_id, task_id, seat), text)
     assert posted.status_code == 200, posted.text
 
     site = client.get(
         f"/topics/{task_id}/transcript", headers=session_auth_headers("alice")
     )
     assert site.status_code == 200, site.text
-    ours = [i for i in site.json()["data"]["data"] if i["turn_id"] == str(turn)]
-    assert len(ours) == 1, ours
-    [record] = ours
+    [record] = [
+        i
+        for i in site.json()["data"]["data"]
+        if any(p.get("label") == "sync_failed" for p in i["meta"]["parts"])
+    ]
     assert record["author"] == seat
-    parts = record["meta"]["parts"]
-    [status] = [p for p in parts if p["kind"] == "status"]
+    assert record["turn_id"] is None
+    assert record["meta"]["platform"] is True
+    [status] = [p for p in record["meta"]["parts"] if p["kind"] == "status"]
     assert status == {"kind": "status", "label": "sync_failed", "text": text}
 
     room = client.get(
@@ -117,7 +76,7 @@ def test_the_failed_sync_is_beside_the_turn_and_not_a_message(client):
 
 def test_only_this_place_s_own_credential_may_write_one(client):
     project_id, room, task_id, seat = _a_task(client)
-    text = "这轮的改动没能推回 task/x"
+    text = "有改动没能推回 task/x"
 
     person = _post(client, task_id, {**BROWSER, **session_auth_headers("alice")}, text)
     assert person.status_code == 401, person.text
@@ -130,52 +89,3 @@ def test_only_this_place_s_own_credential_may_write_one(client):
         text,
     )
     assert elsewhere.status_code == 401, elsewhere.text
-
-
-def test_a_note_without_a_turn_joins_the_turn_it_belongs_to(client):
-    project_id, _, task_id, seat = _a_task(client)
-    turn = uuid.uuid4()
-    _seed_turn(client, task_id, turn, seat)
-
-    posted = _post(
-        client, task_id, task_agent_headers(project_id, task_id, seat), "推不回去"
-    )
-    assert posted.status_code == 200, posted.text
-
-    raw = client.get(
-        f"/topics/{task_id}/session-records", headers=session_auth_headers("alice")
-    )
-    assert raw.status_code == 200, raw.text
-    [note] = [
-        i
-        for i in raw.json()["data"]["items"]
-        if i["record"].get("subtype") == "sync_failed"
-    ]
-    assert note["turn_id"] == str(turn)
-
-
-def test_a_note_joins_its_own_seat_s_turn_not_a_co_seated_agent_s(client):
-    """A room can seat several agents, each with its own newer turn. The
-    checkpoint that failed is this seat's, so the note must not be drawn in the
-    other seat's turn — where this seat's per-turn 过程 would hide it."""
-    project_id, _, task_id, seat = _a_task(client)
-    ours, theirs = uuid.uuid4(), uuid.uuid4()
-    now = datetime.now(UTC)
-    _seed_turn(client, task_id, ours, seat, at=now - timedelta(minutes=5))
-    _seed_turn(client, task_id, theirs, "another-seat", at=now)
-
-    posted = _post(
-        client, task_id, task_agent_headers(project_id, task_id, seat), "推不回去"
-    )
-    assert posted.status_code == 200, posted.text
-
-    raw = client.get(
-        f"/topics/{task_id}/session-records", headers=session_auth_headers("alice")
-    )
-    assert raw.status_code == 200, raw.text
-    [note] = [
-        i
-        for i in raw.json()["data"]["items"]
-        if i["record"].get("subtype") == "sync_failed"
-    ]
-    assert note["turn_id"] == str(ours)

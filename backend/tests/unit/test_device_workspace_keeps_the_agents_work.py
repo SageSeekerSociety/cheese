@@ -515,12 +515,12 @@ def test_failed_push_leaves_work_and_a_durable_failure_log(device):
 
 
 def test_failed_push_is_shown_in_the_site(device):
-    """A failed push is a line in 现场, beside the turn whose checkpoint ran it.
+    """A failed push is a platform line in 现场, not a chat message.
 
-    It is not a chat message: nobody in the room can retry the turn, and the
-    message that said to read like one for a person. It goes to this session's
-    own conversation, naming the branch — a sibling task's failure cannot be
-    written into that task's 现场 with this credential."""
+    Nobody in the room can retry the turn, and the message that said to read
+    like one for a person. It goes to this session's own conversation, naming
+    the branch — a sibling task's failure cannot be written into that task's
+    现场 with this credential."""
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)

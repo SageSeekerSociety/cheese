@@ -5049,9 +5049,10 @@ def _report_sync_failure(
     success the work is already visible in the branch, and a note per turn
     saying so would be noise that trains people to skip it.
 
-    An ordinary failed push is a line in the 现场 of the conversation whose
-    checkpoint ran — the only conversation this credential may write, and the
-    turn the sync belongs to. It names the branch, which is how a sibling
+    An ordinary failed push is a platform line in the 现场 of the conversation
+    whose checkpoint ran — the only conversation this credential may write. It
+    carries no turn: the sync runs after the turn ended, and the newest turn
+    then is not reliably the one. It names the branch, which is how a sibling
     task's commit is identified when a room's `sync --all` picked it up: a
     task credential may not write into another task's conversation. The queue
     case is different — retrying cannot help and a person has to choose — so

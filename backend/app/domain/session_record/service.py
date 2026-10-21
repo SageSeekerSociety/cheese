@@ -291,13 +291,12 @@ async def note(
     so it gets a sequence of its own and `harness` keeps it out of every
     agent's run. It is sealed and read back exactly like a harness record.
 
-    The sync runs at a turn's end, after the harness's own last record, and the
-    machine is given no turn id. With none, the note joins the last turn this
-    seat's records carry — the one whose checkpoint it is, not a co-seated
-    agent's newer turn."""
+    It carries no turn unless the caller names one: the sync runs after the
+    turn ended, and guessing which turn it was (the newest, the newest of this
+    seat) picks a co-seated agent's turn or the next turn when they arrive
+    first. 现场 draws it as a platform line of its own (`as_block` marks
+    harness "machine" as platform), which is what it is."""
     when = at or datetime.now(UTC)
-    if turn_id is None:
-        turn_id = await _latest_turn(db, conversation_id, agent_handle)
     sequence = int(when.timestamp() * 1_000_000)
     entry = {"sequence": sequence, "at": when.isoformat(), "record": scrubbed(record)}
     db.add(
@@ -316,26 +315,6 @@ async def note(
         )
     )
     await db.flush()
-
-
-async def _latest_turn(
-    db: AsyncSession, conversation_id: uuid.UUID, agent_handle: str
-) -> uuid.UUID | None:
-    """The turn this seat's newest record belongs to, if any.
-
-    Scoped to the seat that is writing the note: a room can seat several
-    agents, and another agent's newer turn is not the turn this machine's
-    checkpoint ended."""
-    return await db.scalar(
-        select(SessionRecord.turn_id)
-        .where(
-            SessionRecord.conversation_id == conversation_id,
-            SessionRecord.agent_handle == agent_handle,
-            SessionRecord.turn_id.is_not(None),
-        )
-        .order_by(SessionRecord.last_at.desc(), SessionRecord.id.desc())
-        .limit(1)
-    )
 
 
 # --- sealing -----------------------------------------------------------------
