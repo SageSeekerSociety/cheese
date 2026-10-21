@@ -124,6 +124,22 @@ class UserRepository:
         found = {**by_email, **by_username}
         return {q: found[q] for q in wanted if q in found}
 
+    async def names_by_handles(self, handles: Sequence[str]) -> dict[str, str]:
+        """Batch handle → the name the person is shown by (their nickname), for
+        people and AI teammates alike: an AI teammate is a user row whose profile
+        carries its display name. Handles that name nobody are absent; a person
+        without a profile is shown by their handle."""
+        wanted = {h for h in handles if h}
+        if not wanted:
+            return {}
+        stmt = (
+            select(User.username, UserProfile.nickname)
+            .outerjoin(UserProfile, UserProfile.user_id == User.id)
+            .where(User.username.in_(wanted), User.deleted_at.is_(None))
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {username: (nickname or username) for username, nickname in rows}
+
     async def get_by_handles(self, handles: Sequence[str]) -> dict[str, User]:
         """Batch handle → user. Roster-wide lookups run on every agent turn, so
         they must not go N+1 over ``get_by_handle``."""

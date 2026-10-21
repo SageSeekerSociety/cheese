@@ -18,7 +18,7 @@ import uuid
 import pytest
 
 from tests.conftest import seed_user, wait_work_idle
-from tests.integration.conftest import mail
+from tests.integration.conftest import as_read, mail
 from tests.integration.test_accept_pr import (
     _accept,
     _approve,
@@ -87,7 +87,7 @@ def _notices(client, token: str, event_type: str | None = None) -> list[dict]:
 
 def _same_words(notice_row: dict, room_line: dict) -> bool:
     """通知里读到的和回房间看到的是同一句 —— 同一件事不许有两种说法。"""
-    return notice_row["contextMetadata"]["content"] == room_line["content"]
+    return notice_row["contextMetadata"]["content"] == as_read(room_line["content"])
 
 
 def test_the_reviewer_hears_when_the_checks_go_green(client, app_world):

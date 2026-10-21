@@ -13,7 +13,10 @@ and `review/pr_poll.py` moves the card, as in production.
 
 import pytest
 
+from app.domain.notification.live import notices_after
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 from tests.conftest import seed_user, wait_work_idle
+from tests.integration.conftest import as_read
 from tests.integration.test_accept_pr import _poll, _ready_card
 from tests.integration.test_accept_pr import app_world as _app_world_fixture
 from tests.integration.test_pr_poller_notices import _events, _notices
@@ -46,8 +49,12 @@ def test_a_ready_pr_line_names_its_sentence_and_the_notification_carries_it(
     assert line["content"] == f"PR #{number} 可以合并了，等 <@alice> 采纳"
 
     (row,) = _notices(client, alice, "accept_ready")
-    assert row["contextMetadata"]["message"] == keys["content"]
-    assert row["contextMetadata"]["content"] == line["content"]
+    # Outside the room nobody draws the <@alice> chip: the row says her name.
+    assert row["contextMetadata"]["message"] == {
+        "key": "acceptReady",
+        "params": {"pr": number, "reviewer": "alice"},
+    }
+    assert row["contextMetadata"]["content"] == as_read(line["content"])
 
 
 def test_a_filed_card_line_names_its_sentence(client, app_world):
@@ -70,3 +77,52 @@ def test_a_filed_merge_names_the_task_not_the_project(client, app_world):
 
     assert "Test delivery" in line["content"]
     assert f"《{project['name']}》" not in line["content"]
+
+
+def _named(client, handle: str, nickname: str) -> int:
+    """Give ``handle`` the name it goes by; its user id."""
+    import asyncio
+
+    async def _go() -> int:
+        async with client.test_factory() as session:
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None
+            await UserProfileRepository(session).create_profile(
+                user_id=user.id, nickname=nickname, intro="", avatar_id=1
+            )
+            await session.commit()
+            return user.id
+
+    return asyncio.run(_go())
+
+
+def test_the_inbox_and_the_push_say_the_reviewers_name_not_their_login(
+    client, app_world
+):
+    """A line names its reviewer with a token the room draws as a chip; the
+    inbox row and the browser push, read away from the room, say the name the
+    person goes by instead of ``<@alice>``."""
+    import asyncio
+
+    alice = seed_user(client, "alice")
+    user_id = _named(client, "alice", "白川理音")
+    fake = app_world["fake"]
+    _pid, tid, _cid, number, head_sha = _ready_card(client, app_world, number=42)
+    fake.check_state_by_sha[head_sha] = ("success", "green")
+    _poll(client)
+    wait_work_idle()
+
+    (row,) = _notices(client, alice, "accept_ready")
+    assert (
+        row["contextMetadata"]["content"]
+        == f"PR #{number} 可以合并了，等 白川理音 采纳"
+    )
+    assert row["contextMetadata"]["message"]["params"]["reviewer"] == "白川理音"
+
+    async def _pushed() -> list[dict]:
+        async with client.test_factory() as session:
+            return (await notices_after(session, user_id, 0))["items"]
+
+    pushes = [p["title"] for p in asyncio.run(_pushed())]
+    assert f"PR #{number} 可以合并了，等 白川理音 采纳" in pushes
+    assert not any("<@" in title for title in pushes)

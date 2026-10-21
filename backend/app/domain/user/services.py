@@ -195,6 +195,14 @@ async def lookup_accounts(session: AsyncSession, qs: Sequence[str]) -> dict[str,
     return await UserRepository(session).lookup_accounts(qs)
 
 
+async def names_by_handles(
+    session: AsyncSession, handles: Sequence[str]
+) -> dict[str, str]:
+    """Handle → the name the person or AI teammate is shown by, in one
+    statement; see ``UserRepository.names_by_handles``."""
+    return await UserRepository(session).names_by_handles(handles)
+
+
 async def search_accounts(
     session: AsyncSession, q: str, limit: int
 ) -> Sequence[tuple[str, str]]:
