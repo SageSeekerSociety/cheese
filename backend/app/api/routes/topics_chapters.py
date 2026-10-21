@@ -21,6 +21,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError
+from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
 from app.domain.chapter.schemas import ChapterMarkOut, ChapterOut
@@ -41,7 +42,7 @@ async def _conversation(db, resolver, conversation_id: uuid.UUID, *, acting: boo
         actor, project_id=place.project_id, topic_id=place.room_id
     )
     if acting and not actor.authenticated:
-        raise AuthenticationRequiredError("A verified member identity is required")
+        raise AuthenticationRequiredError(say("signInRequired"))
     return place, actor
 
 

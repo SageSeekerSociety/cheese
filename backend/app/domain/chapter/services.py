@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.chapter.models import Chapter
 from app.domain.membership.ports import ProjectTeam
 from app.domain.room_task.place import Place
@@ -85,7 +84,7 @@ class Chapters:
             raise ForbiddenError(say("channelJoinToChapter"))
 
     async def _message_of(self, place: Place, block_id: uuid.UUID) -> Block:
-        block = await BlockRepository(self._session).get(block_id)
+        block = await self._session.get(Block, block_id)
         if block is None or block.conversation_id != place.conversation_id:
             raise NotFoundError(say("chapterMessageNotHere"))
         if block.kind != BlockKind.message:
