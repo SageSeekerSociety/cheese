@@ -83,6 +83,7 @@ PERIODIC_JOB_NAMES = (
     "routines",
     "task deadline sweep",
     "memory dream",
+    "platform model roles refresh",
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
 )
 

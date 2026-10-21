@@ -14,8 +14,6 @@ The rules a person can state without reading the code:
 * A project's own settings still win.
 """
 
-from contextlib import asynccontextmanager
-
 import pytest
 
 from app.core import model_roles
@@ -85,7 +83,8 @@ def narrowings(monkeypatch):
     monkeypatch.setattr(
         roles.background, "spawn", lambda coro, name=None: scheduled.append(coro)
     )
-    monkeypatch.setattr(roles, "NARROW_AFTER_SECONDS", 0)
+    monkeypatch.setattr(roles, "NARROW_MARGIN_SECONDS", 0)
+    monkeypatch.setattr(roles.settings, "platform_model_roles_refresh_interval_s", 0)
     return scheduled
 
 
@@ -101,12 +100,6 @@ async def test_pointing_a_role_moves_its_jobs_key_to_the_new_model(
     db = _StubDb()
     service = _service(gw, db)
     await _models(service)
-
-    @asynccontextmanager
-    async def session():
-        yield db
-
-    monkeypatch.setattr(roles, "async_session_factory", session)
 
     await service.set_role(handle="admin", role="voice_asr_model", model="asr")
     assert gw.keys["voice-asr"] == [settings.voice_asr_model, "asr"]

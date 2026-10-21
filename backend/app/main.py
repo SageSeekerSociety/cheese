@@ -128,6 +128,19 @@ async def lifespan(application: FastAPI):
             "agent-user seed skipped", reason=str(exc)[:120]
         )
 
+    # Which gateway model each platform model role runs on, as an administrator
+    # pointed it (`app.core.model_roles`), read before this process serves: a
+    # role read from its Settings field after an administrator moved it (and
+    # its key) would be refused at the gateway. The periodic job "platform
+    # model roles refresh" keeps it current. Never blocks boot either.
+    try:
+        async with async_session_factory() as session:
+            await model_role_store.refresh(session)
+    except Exception as exc:  # same rule as the seed above
+        get_logger("cheesex.runtime").warning(
+            "platform model roles read skipped", reason=str(exc)[:120]
+        )
+
     # Every project agent is a collaborator with an identity of its own — a user
     # row under `agent_instance_handle(id)`, which is what its roster seats name.
     # `ensure_identity` runs on create, so this only reaches agents created before
@@ -441,10 +454,6 @@ async def lifespan(application: FastAPI):
         gateway_catalog.keep_fresh(get_llm_gateway()),
         name="gateway model catalogue",
     )
-    # Which gateway model each platform model role runs on, as an administrator
-    # pointed it (`app.core.model_roles`): read off the request path, the same
-    # way. Until the first pass lands every role reads its Settings field.
-    background.spawn(model_role_store.keep_fresh(), name="platform model roles")
 
     async def hand_over() -> None:
         # Hand the running work to the next process, in the order that lets

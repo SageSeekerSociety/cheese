@@ -7,9 +7,10 @@ virtual keys minted for the role's job allow exactly one model
 (``service_keys.KeySpec``), so a role moved to another model is refused by the
 gateway until its key allows the new one. The key is widened to both models
 first, the choice is stored, and the key is narrowed to the new model only
-once every process has read the new choice (``NARROW_AFTER_SECONDS``, past
-``model_roles.REFRESH_INTERVAL_SECONDS``): narrowed at once, a process still on
-the old model would be refused until its next refresh. A failure before the
+once every process has read the new choice (after
+``Settings.platform_model_roles_refresh_interval_s`` plus
+``NARROW_MARGIN_SECONDS``): narrowed at once, a process still on the old model
+would be refused until its next refresh. A failure before the
 store changes nothing; a narrowing that never happens (the process ended, the
 gateway refused) leaves a key that allows one model too many, which is safe
 and is logged.
@@ -24,7 +25,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.core import background, model_roles
-from app.core.db import async_session_factory
+from app.core.config import settings
+from app.core.db import SessionFactory
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.gateway_admin import AdminModel, GatewayAdmin
@@ -40,7 +42,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # When the key is narrowed to the new model: after every process's next refresh.
-NARROW_AFTER_SECONDS = model_roles.REFRESH_INTERVAL_SECONDS + 15.0
+NARROW_MARGIN_SECONDS = 15.0
 
 
 async def _narrow_later(
@@ -48,10 +50,12 @@ async def _narrow_later(
 ) -> None:
     """Narrow the role's keys to ``model`` once every process has read it, if the
     role still runs on it then (another change may have moved it again)."""
-    await asyncio.sleep(NARROW_AFTER_SECONDS)
+    await asyncio.sleep(
+        settings.platform_model_roles_refresh_interval_s + NARROW_MARGIN_SECONDS
+    )
     try:
-        async with async_session_factory() as db:
-            await refresh(db)
+        # By now this process's periodic refresh has read whatever was stored
+        # since; a role moved again meanwhile is left wide for its own narrowing.
         if model_roles.get(role) != model:
             return
         for alias in aliases:
@@ -66,15 +70,11 @@ async def refresh(db: AsyncSession) -> None:
     model_roles.install({row.role: row.model for row in rows})
 
 
-async def keep_fresh() -> None:
-    """Refresh the roles forever, starting now (a background task)."""
-    while True:
-        try:
-            async with async_session_factory() as db:
-                await refresh(db)
-        except Exception:  # a refresh must never kill its own loop
-            logger.warning("platform model roles refresh failed", exc_info=True)
-        await asyncio.sleep(model_roles.REFRESH_INTERVAL_SECONDS)
+async def refresh_from(sessions: SessionFactory) -> None:
+    """The periodic refresh (``app/periodic_jobs.py``, every process): read the
+    stored choices with a session of its own."""
+    async with sessions() as db:
+        await refresh(db)
 
 
 async def listing(service: pkg.GatewayModelsService) -> dict:

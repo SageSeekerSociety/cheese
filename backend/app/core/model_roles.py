@@ -16,7 +16,7 @@ Read it synchronously (``get``); the stored choices are kept warm by
 ``refresh`` on a timer and after every write in the writing process (the same
 split as ``app.domain.agent.gateway_catalog``), so the readers on the request
 path neither make a database call nor have to become async. Another process
-picks a change up within ``REFRESH_INTERVAL_SECONDS``.
+picks a change up within ``Settings.platform_model_roles_refresh_interval_s``.
 
 A project's own settings still win where a project has them: ``default_model``
 over ``agent_model``, ``default_subagent_model`` over ``subagent_model``
@@ -30,11 +30,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from app.core.config import settings
-
-# How stale another process's view of the roles may get. A role is repointed
-# by hand, rarely; half a minute keeps the read off the request path and the
-# change visible before anyone goes to check it.
-REFRESH_INTERVAL_SECONDS = 30.0
 
 
 @dataclass(frozen=True)

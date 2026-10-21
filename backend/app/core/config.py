@@ -806,6 +806,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # turn, and its whole purpose is catching the case where nothing else will
     # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # Seconds between reads of the platform model roles an administrator
+    # pointed (`app.core.model_roles`), in every process. Another process sees
+    # a role change within this; the key behind a role is narrowed after it
+    # (`gateway_models.roles.NARROW_AFTER_SECONDS`). 0 turns it off (tests).
+    platform_model_roles_refresh_interval_s: float = 30.0
     # Seconds between looks, on the process holding the sessions, for work
     # still running in a task that has closed (`stop_work_in_closed_tasks`).
     # One indexed read of the tasks its working seats are in, and none when no
