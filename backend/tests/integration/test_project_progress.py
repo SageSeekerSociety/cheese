@@ -7,7 +7,10 @@
 """
 
 import uuid
+from datetime import UTC, datetime
 
+from app.domain.review.models import AcceptStatus
+from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
 from tests.integration.conftest import (
@@ -110,3 +113,51 @@ def test_closing_a_task_is_said_in_the_task_not_the_channel(client):
 
     assert "task_closed" not in _said(client, channel)
     assert "task_closed" in _said(client, task)
+
+
+def _accepted_card(
+    client, channel: str, task: str, *, decided_by=None, merged_by=None
+) -> None:
+    """A card the way delivery leaves one after the PR merged."""
+
+    async def seed() -> None:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).add(
+                topic_id=uuid.UUID(channel),
+                task_id=uuid.UUID(task),
+                reviewer_handle="alice",
+                change_subject="fix: load",
+            )
+            card.status = AcceptStatus.accepted
+            card.pr_number = 7
+            card.pr_merged_at = datetime.now(UTC)
+            card.decided_by = decided_by
+            card.pr_merged_by_login = merged_by
+            await session.commit()
+
+    client.portal.call(seed)
+
+
+def _accepted_progress(client, project: str) -> list[dict]:
+    return [h for h in _progress(client, project, "alice") if h["kind"] == "accepted"]
+
+
+def test_an_external_merge_says_who_merged_it_on_github(client):
+    """PR 直接在 GitHub 上合掉的那次交付：没有平台点击人，进展写 GitHub 报的
+    合并人，而不是空着。"""
+    project = _project(client)
+    channel = _channel(client, project)
+    task = _task(client, channel, "首页加载慢")
+    _accepted_card(client, channel, task, merged_by="bob")
+
+    assert [h["by"] for h in _accepted_progress(client, project)] == ["bob"]
+
+
+def test_a_platform_accept_still_names_the_person_who_clicked(client):
+    """平台里点过采纳的，`decided_by` 才是那个经手人；合并人只是补位。"""
+    project = _project(client)
+    channel = _channel(client, project)
+    task = _task(client, channel, "首页加载慢")
+    _accepted_card(client, channel, task, decided_by="alice", merged_by="bob")
+
+    assert [h["by"] for h in _accepted_progress(client, project)] == ["alice"]

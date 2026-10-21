@@ -69,6 +69,15 @@ def register_periodic_jobs(
         ),
         forge_bound=True,
     )
+    # Cards merged directly on GitHub settled without a platform click, so
+    # nothing recorded who merged them. New merges record it as they settle;
+    # this reaches back for the ones already settled, a few per tick.
+    jobs.register(
+        "merge actor backfill",
+        settings.accept_pr_poll_interval_s,
+        lambda: pr_poll.backfill_merge_actors(chat),
+        forge_bound=True,
+    )
     # A task's next branch is read from the forge when its teammate goes on.
     jobs.register(
         "task closing",

@@ -336,6 +336,36 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def recent_accepted_without_merge_actor(
+        self,
+        *,
+        since: datetime,
+        limit: int,
+        project_id: uuid.UUID | None = None,
+    ) -> list[uuid.UUID]:
+        """最近被采纳、还没查过「谁合的」的卡 id，新合的在前面。
+
+        这就是补录要问的那一笔：卡已经落成 accepted、骑着一个 PR、合并发生在
+        `since` 之后、平台里没人点过采纳（`decided_by` 空），而且还没问过
+        GitHub（`pr_merged_by_login` 是 NULL —— 空串是问过、没人可写的答案）。
+        """
+        stmt = (
+            select(AcceptCard.id)
+            .join(Topic, Topic.id == AcceptCard.topic_id)
+            .where(
+                AcceptCard.status == AcceptStatus.accepted,
+                AcceptCard.pr_number.is_not(None),
+                AcceptCard.pr_merged_at.is_not(None),
+                AcceptCard.pr_merged_at >= since,
+                AcceptCard.decided_by.is_(None),
+                AcceptCard.pr_merged_by_login.is_(None),
+            )
+        )
+        if project_id is not None:
+            stmt = stmt.where(Topic.project_id == project_id)
+        stmt = stmt.order_by(AcceptCard.pr_merged_at.desc()).limit(limit)
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_live_for_places(
         self, place_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
     ) -> list[AcceptCard]:

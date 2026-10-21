@@ -41,7 +41,15 @@ from app.domain.topic.models import Topic
 # `from . import x` 在名字尚未绑定时会回落去导入子模块本身，所以这里的
 # 导入顺序不依赖 `__init__.py` 把 `cards` 等名字先绑定好。
 from . import accept as _accept
-from . import cards, decisions, merge_queue, notices, polling, reviewers
+from . import (
+    cards,
+    decisions,
+    merge_actor_backfill,
+    merge_queue,
+    notices,
+    polling,
+    reviewers,
+)
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.delivery_events import SettleCard
@@ -533,6 +541,16 @@ class AcceptService:
     ) -> None:
         return await polling.advance_pr_card(
             self, card_id=card_id, chat_service=chat_service, runner=runner
+        )
+
+    async def backfill_merge_actors(
+        self,
+        *,
+        limit: int = merge_actor_backfill.BATCH,
+        project_id: uuid.UUID | None = None,
+    ) -> int:
+        return await merge_actor_backfill.backfill_merge_actors(
+            self, limit=limit, project_id=project_id
         )
 
     async def refresh_stale_pr_snapshots(self, cards: Sequence[AcceptCard]) -> None:

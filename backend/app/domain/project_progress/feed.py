@@ -19,7 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.deliverables import artifacts
+from app.domain.oauth.services import handles_for_github_ids
 from app.domain.review.queries import (
+    Returned,
     accepted_by_task,
     latest_cards_by_task,
     returned_since,
@@ -77,6 +79,25 @@ class Happening:
         }
 
 
+async def _merge_actor_names(
+    session: AsyncSession, accepted: dict[uuid.UUID, list[Returned]]
+) -> dict[str, str]:
+    """GitHub 合并人的账号 id → 平台名字，只查那些没在平台里点过采纳的。
+
+    没有连接过知是的账号不在结果里：调用方退回 GitHub 登录名，而不是编一个
+    成员出来。
+    """
+    ids = {
+        landed.github_id
+        for landed_list in accepted.values()
+        for landed in landed_list
+        if landed.by is None and landed.github_id
+    }
+    if not ids:
+        return {}
+    return await handles_for_github_ids(session, ids)
+
+
 async def recent(
     session: AsyncSession,
     project_id: uuid.UUID,
@@ -114,10 +135,21 @@ async def recent(
 
     # 一件任务可以交付好几次，每一次采纳都是一条进展。
     accepted = await accepted_by_task(session, [t.id for t in tasks])
+    merged_names = await _merge_actor_names(session, accepted)
     for task in tasks:
         about(task, CREATED, task.created_at, task.created_by or task.owner_handle)
         for landed in accepted.get(task.id, []):
-            about(task, ACCEPTED, landed.at, landed.by)
+            # 平台里点过采纳的是 `landed.by`；没有点击的那种，卡上记的是
+            # GitHub 的合并人 —— 能对上平台账号就写平台名字，对不上写登录名。
+            about(
+                task,
+                ACCEPTED,
+                landed.at,
+                landed.by
+                or merged_names.get(landed.github_id or "")
+                or landed.github_login
+                or None,
+            )
         if task.id not in accepted and task.accepted_at is not None:
             # 没走交付、在代码仓库直接合并的那一次。
             about(task, ACCEPTED, task.accepted_at, task.accepted_by)

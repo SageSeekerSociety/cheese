@@ -333,6 +333,8 @@ class FakeGitHubPrClient:
             "merged": False,
             "merge_commit_sha": None,
             "merged_at": None,
+            "merged_by_id": None,
+            "merged_by_login": None,
         }
         return head_sha
 
@@ -342,12 +344,17 @@ class FakeGitHubPrClient:
         *,
         merge_commit_sha: str | None = "human-merge-sha",
         merged_at: datetime | None = None,
+        merged_by: tuple[str, str] | None = None,
     ) -> None:
+        """`merged_by` is (GitHub numeric id, login) of the person who pressed
+        Merge — None for the App, which is what most platform merges are."""
         self.prs[number].update(
             state="closed",
             merged=True,
             merge_commit_sha=merge_commit_sha,
             merged_at=merged_at,
+            merged_by_id=merged_by[0] if merged_by else None,
+            merged_by_login=merged_by[1] if merged_by else None,
         )
 
     def close_unmerged(self, number: int) -> None:
@@ -424,6 +431,8 @@ class FakeGitHubPrClient:
             merged=pr["merged"],
             merge_commit_sha=pr["merge_commit_sha"],
             merged_at=pr["merged_at"],
+            merged_by_id=pr["merged_by_id"],
+            merged_by_login=pr["merged_by_login"],
             mergeable=self.mergeable_by_number.get(number),
             mergeable_state=self._derived_mergeable_state(number),
             draft=self.draft_by_number.get(number, False),
@@ -864,6 +873,42 @@ def _give_card_a_pr(
             return head_sha
 
     return asyncio.run(_do())
+
+
+def _connect_github(client, handle: str, github_id: str, login: str) -> None:
+    """Give `handle` a connected GitHub account — the row `get_handle_for_github_id`
+    reads when it turns a merge actor into a platform name."""
+    from app.domain.oauth.repositories import OAuthConnectionRepository
+    from app.domain.user.repositories import UserRepository
+
+    async def seed() -> None:
+        async with client.test_factory() as session:
+            user = await UserRepository(session).get_by_handle(handle)
+            assert user is not None
+            await OAuthConnectionRepository(session).create(
+                user_id=user.id,
+                provider_id="github_app",
+                provider_user_id=github_id,
+                raw_profile={"id": github_id, "login": login},
+            )
+            await session.commit()
+
+    asyncio.run(seed())
+
+
+def _merge_actor(client, card_id: str) -> str | None:
+    """`accept_cards.pr_merged_by_login`, read straight from the row (not in
+    the API payload — the feed is the only reader). Empty means the forge named
+    no person."""
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def read() -> str | None:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(_uuid.UUID(card_id))
+            assert card is not None
+            return card.pr_merged_by_login
+
+    return asyncio.run(read())
 
 
 def _ready_card(
@@ -2631,6 +2676,88 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
         is not None
     )
     assert delivered["accepted_at"] is None
+
+
+def test_poll_names_who_merged_an_external_merge(client, app_world):
+    """在 GitHub 上直接合的卡没有平台点击人，但 GitHub 知道是谁合的：连过知是
+    的账号显示平台名字，最近进展里那一行也就有人名了。"""
+    fake = app_world["fake"]
+    pid, tid, cid, _number, _head = _ready_card(client, app_world)
+    _connect_github(client, "alice", "4242", "octocat")
+    fake.merge_externally(_number, merged_by=("4242", "octocat"))
+
+    _poll(client)
+
+    # 卡上记的是 GitHub 报的那一份；换成平台名字是进度页的事。
+    assert _merge_actor(client, cid) == "octocat"
+    progress = client.get(
+        f"/projects/{pid}/progress", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    accepted = [
+        item
+        for item in progress
+        if item["kind"] == "accepted"
+        and item["taskId"] == str(delivery_task_id(client, tid))
+    ]
+    assert accepted, progress
+    assert accepted[0]["by"] == "alice"
+
+
+def test_an_external_merger_with_no_platform_account_keeps_the_github_login(
+    client, app_world
+):
+    fake = app_world["fake"]
+    _pid, _tid, cid, number, _head = _ready_card(client, app_world)
+    fake.merge_externally(number, merged_by=("999", "someone-else"))
+
+    _poll(client)
+
+    assert _merge_actor(client, cid) == "someone-else"
+
+
+def test_a_merge_by_the_app_records_no_merge_actor(client, app_world):
+    """平台自己合的（merged_by 是 bot）不算人：空串是「问过、没人可写」，
+    补录不会再问一张已经有答案的卡。"""
+    fake = app_world["fake"]
+    _pid, _tid, cid, number, _head = _ready_card(client, app_world)
+    fake.merge_externally(number)  # 没有 merged_by = App 合的
+
+    _poll(client)
+
+    assert _merge_actor(client, cid) == ""
+
+
+def test_the_backfill_reaches_cards_settled_before_the_record_existed(
+    client, app_world
+):
+    """存量卡：已经合掉、卡上还没人记合并人。补录去 GitHub 问一次就补上；
+    问过（哪怕答案是没有）就不再问。"""
+    from app.domain.review import pr_poll
+    from app.domain.review.models import AcceptStatus
+    from app.domain.review.repositories import AcceptCardRepository
+
+    fake = app_world["fake"]
+    _pid, _tid, cid, number, _head = _ready_card(client, app_world)
+    fake.merge_externally(number, merged_by=("4242", "octocat"))
+
+    async def settle_before_the_record() -> None:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(_uuid.UUID(cid))
+            assert card is not None
+            card.status = AcceptStatus.accepted
+            card.pr_merged_at = datetime.now(UTC)
+            card.decided_by = None
+            card.pr_merged_by_id = None
+            card.pr_merged_by_login = None
+            await session.commit()
+
+    asyncio.run(settle_before_the_record())
+
+    client.portal.call(lambda: pr_poll.backfill_merge_actors(_chat_service()))
+    assert _merge_actor(client, cid) == "octocat"
+
+    again = client.portal.call(lambda: pr_poll.backfill_merge_actors(_chat_service()))
+    assert again["merged_by_answered"] == 0
 
 
 def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(

@@ -75,6 +75,27 @@ class PullRequestStatus:
     #: (the App) did. GitHub makes the opener the author of the squash commit,
     #: so this decides who the landed commit is credited to.
     opened_by: str | None = None
+    #: The human whose account merged the PR — GitHub's numeric id and login.
+    #: None, None when a bot merged it (the platform's App does, on every
+    #: accept click) or the payload does not say. The id is what maps back to
+    #: a platform account; the login is what to show when no account is
+    #: connected. Only set on a merged PR: GitHub fills `merged_by` in for
+    #: the merger, and it means nothing before then.
+    merged_by_id: str | None = None
+    merged_by_login: str | None = None
+
+
+def pr_merger(data: dict) -> tuple[str | None, str | None]:
+    """(numeric id, login) of the account that merged the PR in `data`, or
+    None, None when a bot did it or the payload does not say.
+
+    A bot is not a person: the platform merges with its own App, and reading
+    that as "somebody merged" would put the App's name where no human belongs.
+    """
+    user = data.get("merged_by") or {}
+    if user.get("type") != "User" or not user.get("id") or not user.get("login"):
+        return None, None
+    return str(user["id"]), str(user["login"])
 
 
 def pr_opener(data: dict) -> str | None:
@@ -110,6 +131,7 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
     mergeable = data.get("mergeable")
     mergeable_state = data.get("mergeable_state")
     review_comments = data.get("review_comments")
+    merged_by_id, merged_by_login = pr_merger(data) if merged else (None, None)
     return PullRequestStatus(
         head_sha=data["head"]["sha"],
         head_ref=str(data["head"].get("ref") or ""),
@@ -136,6 +158,8 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
         # for what this field holds on an unmerged PR.
         merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
         merged_at=_parse_github_time(data.get("merged_at")) if merged else None,
+        merged_by_id=merged_by_id,
+        merged_by_login=merged_by_login,
     )
 
 

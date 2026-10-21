@@ -29,12 +29,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
+
 from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
+from app.domain.oauth.models import UserOAuthConnection
 from app.domain.oauth.repositories import OAuthConnectionRepository
+from app.domain.user.models import User
 
 from . import connections, tokens
 from .providers import (
@@ -243,6 +248,33 @@ class OAuthService:
         return connections._connection_to_dict(conn)
 
 
+async def handles_for_github_ids(
+    session: Any, provider_user_ids: Collection[str]
+) -> dict[str, str]:
+    """Connected GitHub account ids → the platform handles behind them.
+
+    The reverse of `get_github_profile_for_handle`, in one read: a reader has
+    several GitHub accounts in hand (the forge names who merged each PR) and
+    wants the people's platform names. Accounts nobody connected are simply
+    absent — callers fall back to the GitHub login rather than inventing a
+    member.
+    """
+    ids = sorted({str(raw) for raw in provider_user_ids if raw})
+    if not ids:
+        return {}
+    stmt = (
+        select(UserOAuthConnection.provider_user_id, User.username)
+        .join(User, User.id == UserOAuthConnection.user_id)
+        .where(
+            UserOAuthConnection.provider_id == "github_app",
+            UserOAuthConnection.provider_user_id.in_(ids),
+            User.deleted_at.is_(None),
+        )
+    )
+    rows = await session.execute(stmt)
+    return {str(provider_id): username for provider_id, username in rows.all()}
+
+
 async def get_github_profile_for_handle(
     session: Any, handle: str
 ) -> tuple[str, dict] | None:
@@ -281,6 +313,7 @@ __all__ = [
     "OAuthUserInfo",
     "RUCProvider",
     "get_github_profile_for_handle",
+    "handles_for_github_ids",
     "open_oauth_token",
     "seal_oauth_token",
 ]

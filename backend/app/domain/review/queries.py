@@ -187,6 +187,11 @@ class Returned:
     task_id: uuid.UUID
     by: str | None
     at: datetime
+    #: 采纳这条才有：GitHub 报的合并人账号。平台里点过采纳（`by` 有值）时
+    #: 不用它；没有点击时，由读的人决定换成平台名字还是显示登录名 —— 那是它
+    #: 上头的 `project_progress` 的事，本包够不着 oauth。
+    github_id: str | None = None
+    github_login: str | None = None
 
 
 async def returned_since(
@@ -203,14 +208,25 @@ async def returned_since(
 async def accepted_by_task(
     db: AsyncSession, task_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[Returned]]:
-    """这些任务每一次被采纳的交付：谁采纳的、什么时候，按先后。没被采纳过的任务
-    不在里面。"""
+    """这些任务每一次被采纳的交付：谁经手的、什么时候，按先后。没被采纳过的任务
+    不在里面。
+
+    「经手」先是平台里点采纳的那个人（`by`）；没有点击（PR 直接在 GitHub 上
+    合了）时没有这个值，但卡上记着 GitHub 报的合并人 —— 读的人在
+    `project_progress` 那层把它换成平台名字，或退回登录名。两样都没有才是空
+    （平台自己合的、或还没补上）。"""
     found: dict[uuid.UUID, list[Returned]] = {}
     for card in await AcceptCardRepository(db).accepted_for_tasks(task_ids):
         at = card.pr_merged_at or card.decided_at
         if card.task_id is not None and at is not None:
             found.setdefault(card.task_id, []).append(
-                Returned(task_id=card.task_id, by=card.decided_by, at=at)
+                Returned(
+                    task_id=card.task_id,
+                    by=card.decided_by,
+                    at=at,
+                    github_id=card.pr_merged_by_id or None,
+                    github_login=card.pr_merged_by_login or None,
+                )
             )
     return found
 

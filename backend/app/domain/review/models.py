@@ -206,6 +206,17 @@ class AcceptCard(UuidPk, Timestamps, Base):
     pr_merged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Who merged the PR on GitHub, as GitHub reports it: the account's numeric
+    # id (what maps back to a platform user) and login (what to show when the
+    # account is not connected to anyone). Empty login is a checked answer with
+    # nobody to name (a bot merged it, or the forge does not report a merger) —
+    # distinct from NULL, which means "not looked at yet". Consulted only where
+    # nobody accepted in the platform (`decided_by` empty): a merge done
+    # directly on GitHub still landed the delivery, and the recent-progress
+    # feed says who handled it rather than leaving the row blank. The login
+    # may be stale after a rename; the id is not, which is why both are kept.
+    pr_merged_by_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pr_merged_by_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Which poll is advancing this card, and until when (`poll_claim.py`): one
     # advancer per card, without a row lock held across the forge's answer.
     poll_claim: Mapped[uuid.UUID | None] = mapped_column(nullable=True)

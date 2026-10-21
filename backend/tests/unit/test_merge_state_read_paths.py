@@ -61,6 +61,37 @@ def test_parser_ignores_a_non_string_mergeable_state():
     assert status.mergeable_state is None
 
 
+def test_parser_reads_who_merged_a_merged_pr():
+    status = parse_pull_request_status(
+        _payload(
+            merged=True, merged_by={"type": "User", "id": 4242, "login": "octocat"}
+        )
+    )
+
+    assert (status.merged_by_id, status.merged_by_login) == ("4242", "octocat")
+
+
+def test_parser_does_not_name_a_bot_as_the_merger():
+    """平台自己用 App 合的 PR 也是 merged_by，但那是机器人 —— 当成「有人合的」
+    会把 App 写进人的位置。"""
+    status = parse_pull_request_status(
+        _payload(
+            merged=True,
+            merged_by={"type": "Bot", "id": 1, "login": "cheesex-app[bot]"},
+        )
+    )
+
+    assert (status.merged_by_id, status.merged_by_login) == (None, None)
+
+
+def test_parser_ignores_a_merger_on_an_unmerged_pr():
+    status = parse_pull_request_status(
+        _payload(merged=False, merged_by={"type": "User", "id": 7, "login": "x"})
+    )
+
+    assert (status.merged_by_id, status.merged_by_login) == (None, None)
+
+
 # ---- 读路径一：HttpxGitHubPrClient（轮询）-----------------------------------
 
 

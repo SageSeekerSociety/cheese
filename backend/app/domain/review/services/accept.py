@@ -474,6 +474,14 @@ async def _settle_external_merge(
     fact, and since #206 that fact is the whole of what the platform waits
     for."""
     card.pr_merged_at = status.merged_at or datetime.now(UTC)
+    if card.pr_merged_by_login is None:
+        # The feed's 「谁经手的」 has no platform click to name here; GitHub
+        # knows who merged it. Kept as GitHub reports it — turning the account
+        # into a platform name is the feed's job (the account may only get
+        # connected later), and "" is the checked answer with no person to
+        # name, which keeps the backfill from asking again.
+        card.pr_merged_by_id = status.merged_by_id
+        card.pr_merged_by_login = status.merged_by_login or ""
     await self._mark_task_merged(card, delivered_head=status.head_sha)
     if status.merge_commit_sha:
         # Nice to have, not required: nothing downstream looks a run up by

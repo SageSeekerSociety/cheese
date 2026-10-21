@@ -201,6 +201,26 @@ async def poll_open_prs(
     }
 
 
+#: Cards per tick whose 「谁合的」 is still unknown. Small: each one costs a
+#: GitHub read out of the same background quota the PR polls draw on.
+MERGE_ACTOR_BACKFILL_PER_TICK = 5
+
+
+async def backfill_merge_actors(
+    chat: Chat, project_id: uuid.UUID | None = None
+) -> dict:
+    """One tick of reaching back for who merged the cards that settled without
+    a platform accept click. See `review.services.merge_actor_backfill`."""
+    # deferred-import: tests replace this name on app.domain.review.services
+    from app.domain.review.services import AcceptService
+
+    async with chat.session_factory() as session:
+        answered = await AcceptService(session).backfill_merge_actors(
+            limit=MERGE_ACTOR_BACKFILL_PER_TICK, project_id=project_id
+        )
+    return {"merged_by_answered": answered}
+
+
 @dataclass(frozen=True)
 class _TaskPrCandidate:
     task_id: uuid.UUID
