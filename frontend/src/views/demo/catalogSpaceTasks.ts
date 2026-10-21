@@ -89,9 +89,6 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     component: AssistantPanel,
     needs: UI_T_R,
     args: {
-      conversations: [],
-      currentId: null,
-      title: '',
       messages: [],
       streaming: null,
       tool: null,
@@ -152,6 +149,22 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         props: PANEL_SPLIT,
         expectSelector: '.at__card--one',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s5.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s5.note')
+        },
+        props: {
+          ...PANEL_DONE,
+          earlier: [{ id: 'old', title: '实验三从哪入手', at: '2026-10-19T08:00:00Z', messages: PANEL_DONE.messages }],
+          hasOlder: true,
+          dockable: true,
+          docked: true,
+        },
+        expect: '更早的话题',
       },
     ],
   },
@@ -260,8 +273,8 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.publishTaskView.s5.note')
         },
-        props: { agentDocked: false },
-        expectSelector: '[data-testid="publish-agent-dock"]',
+        props: { agentOpen: false },
+        expectSelector: '[data-testid="publish-agent-open"]',
       },
     ],
   },

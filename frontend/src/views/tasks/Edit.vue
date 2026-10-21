@@ -15,7 +15,6 @@ import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
-import { useAgentDock } from '@/composables/useAgentDock'
 import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
@@ -28,7 +27,6 @@ import { useTaskData } from './composables'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
 import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
-import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -40,8 +38,8 @@ import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { mentorOptions } from '@/lib/taskMentors'
 import { isTeachingBlank } from '@/lib/teaching'
-import { myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
+import { agentDocked, agentOpen, openAgent, useAgentContext } from '@/stores/agent'
 import { useSpaceStore } from '@/stores/space'
 import { draftFieldsOf } from '@/types'
 
@@ -153,11 +151,23 @@ const terms = () => ({
 const agent = useDraftAgent({
   draft,
   terms,
-  // 和题目页「问芝士」同一段对话。
-  home: () => ({ kind: 'task', id: taskId }),
   publishedHere: () => navigateToDetail(),
+  jump: (key) => layer.jump(key),
+  openTask: (id) => openTask(id),
 })
 const { assistant } = agent
+// 芝士读到的是这份修改草稿；面板在这一页给改题的开场问题，能交文件。
+useAgentContext(() => ({
+  page: draft.id.value ? { kind: 'draft', id: draft.id.value } : null,
+  starters: [
+    t('tasks.assistant.draft.editStarters.later'),
+    t('tasks.assistant.draft.editStarters.rubric'),
+    t('tasks.assistant.draft.editStarters.check'),
+  ],
+  placeholder: t('tasks.assistant.draft.placeholder'),
+  hint: t('tasks.assistant.draft.hint'),
+  canAttach: true,
+}))
 
 const layer = useAgentPointer({
   host,
@@ -171,8 +181,10 @@ const layer = useAgentPointer({
 const pointer = computed<AgentPointer | null>(() => layer.pointer.value)
 const outline = computed<AgentBox | null>(() => layer.outline.value)
 const marks = computed<AgentMark[]>(() => layer.marks.value)
-const agentOpen = ref(false)
-const agentDocked = useAgentDock()
+// 桌面上进这一页时，芝士停在右边就把它打开：表单和面板并排，芝士写进来看得见。
+onMounted(() => {
+  if (mdAndUp.value && agentDocked.value) openAgent()
+})
 
 // --- 保存 ---------------------------------------------------------------------------
 
@@ -268,48 +280,6 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => void draft.flush())
-
-const panelProps = computed(() => ({
-  personalTeamHandle: myHandle(),
-  conversations: assistant.conversations.value,
-  currentId: assistant.current.value,
-  title: assistant.title.value,
-  messages: agent.panel.value.messages,
-  streaming: assistant.streaming.value,
-  tool: assistant.tool.value,
-  queued: assistant.queued.value,
-  notice: assistant.notice.value,
-  creditRefused: assistant.creditRefused.value,
-  busy: assistant.busy.value,
-  steps: agent.panel.value.steps,
-  changes: agent.panel.value.changes,
-  results: agent.panel.value.results,
-  files: agent.panel.value.files,
-  context: '',
-  starters: [
-    t('tasks.assistant.draft.editStarters.later'),
-    t('tasks.assistant.draft.editStarters.rubric'),
-    t('tasks.assistant.draft.editStarters.check'),
-  ],
-  placeholder: t('tasks.assistant.draft.placeholder'),
-  hint: t('tasks.assistant.draft.hint'),
-  canAttach: true,
-  closable: true,
-}))
-
-const panelEvents = {
-  send: (text: string) => void agent.ask(text),
-  stop: () => void assistant.stop().catch(() => undefined),
-  new: () => assistant.startNew(),
-  select: (id: string) => void assistant.select(id),
-  close: () => (mdAndUp.value ? (agentDocked.value = false) : (agentOpen.value = false)),
-  undo: (id: number, key: string) => void agent.undo(id, key),
-  undoAll: (rows: { change: number; key: string }[]) => void agent.undoAll(rows),
-  jump: (key: string) => layer.jump(key),
-  openTask,
-  attach: (files: File[]) => void agent.attach(files),
-  removeFile: (i: number) => agent.removeFile(i),
-}
 </script>
 
 <template>
@@ -330,11 +300,10 @@ const panelEvents = {
         t('tasks.edit.discard')
       }}</BaseButton>
       <AgentEntryButton
-        v-if="!mdAndUp || !agentDocked"
+        v-if="mdAndUp && !agentOpen"
         :name="t('work.agentAvatar.defaultName')"
-        :compact="!mdAndUp"
-        :data-testid="mdAndUp ? 'edit-agent-dock' : 'edit-agent-open'"
-        @click="mdAndUp ? (agentDocked = true) : (agentOpen = true)"
+        data-testid="edit-agent-open"
+        @click="openAgent"
       />
       <BaseButton kind="ghost" :disabled="saving" @click="navigateToDetail">{{ t('global.cancel') }}</BaseButton>
       <BaseButton
@@ -413,13 +382,6 @@ const panelEvents = {
       @undo="agent.undoMark"
     />
   </div>
-
-  <v-navigation-drawer v-if="mdAndUp && agentDocked" permanent location="right" width="380" class="te__agent">
-    <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
-  </v-navigation-drawer>
-  <v-bottom-sheet v-else-if="!mdAndUp" v-model="agentOpen">
-    <div class="te__sheet"><AssistantPanel v-bind="panelProps" closable v-on="panelEvents" /></div>
-  </v-bottom-sheet>
 </template>
 
 <style scoped>
@@ -492,15 +454,5 @@ const panelEvents = {
   font-size: 13px;
   line-height: var(--lh-13);
   white-space: nowrap;
-}
-
-.te__agent :deep(.v-navigation-drawer__content) {
-  display: flex;
-  flex-direction: column;
-}
-
-.te__sheet {
-  height: 78vh;
-  background: var(--surface);
 }
 </style>

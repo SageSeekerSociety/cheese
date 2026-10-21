@@ -3,8 +3,8 @@
 //
 // 题目页和发布页、改题页用的是同一份：芝士在哪都能做这些事，差别只在页面上有没有
 // 那张表单（没有就不给撤销）。
-import type { AssistantEdit, AssistantMessage, AssistantPublished, AssistantStep } from '@/composables/useAssistant'
 import type { DraftTerms } from '@/lib/taskDraftAgent'
+import type { AssistantEdit, AssistantMessage, AssistantPublished, AssistantStep } from '@/stores/agentThread'
 import type { TaskRubricLine, TaskSubmissionSchemaEntry } from '@/types'
 
 import dayjs from 'dayjs'

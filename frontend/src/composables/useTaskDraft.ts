@@ -10,7 +10,7 @@
 //   定数，覆盖预览、记成已存；调用报错就把预览收回。
 //
 // 「已存」那一份（`saved`）是比较的基准：表单报上来的值和它不一样的格子，才是人改的。
-import type { AssistantEdit } from '@/composables/useAssistant'
+import type { AssistantEdit } from '@/stores/agentThread'
 import type { TaskDraft, TaskDraftField, TaskDraftFields } from '@/types'
 
 import { computed, nextTick, ref } from 'vue'

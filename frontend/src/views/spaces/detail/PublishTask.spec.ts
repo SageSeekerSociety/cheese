@@ -123,7 +123,9 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
 
 import TaskPublish from './PublishTask.vue'
 
+import AgentHost from '@/layouts/AgentHost.vue'
 import AccountService from '@/services/account'
+import { agentDocked, resetAgent } from '@/stores/agent'
 import { typeInComposer } from '@/test/composerInput'
 
 const SPACE_ID = 7
@@ -185,8 +187,10 @@ async function mount(query = '') {
   await router.isReady()
   const pinia = createPinia()
   setActivePinia(pinia)
-  // 芝士的面板停在页面外框的右边（导航抽屉），外框要有。
-  const Page = defineComponent({ render: () => h(VApp, () => h(TaskPublish as Component)) })
+  // 芝士的面板是外壳里那一个（layouts/AgentHost.vue），停在页面外框的右边：外框和它都要有。
+  const Page = defineComponent({
+    render: () => h(VApp, () => [h(TaskPublish as Component), h(AgentHost as Component)]),
+  })
   const view = render(Page, {
     global: { plugins: [createVuetify({ components, directives }), router, pinia, i18n] },
   })
@@ -266,6 +270,10 @@ function spaceBody() {
 async function boardAs(user: { id: number; username: string; nickname: string }) {
   localStorage.setItem('user', JSON.stringify(user))
   AccountService.user = user as never
+  AccountService.loggedIn = true
+  // 芝士是全站那一个：上一条用例的对话、开合、停靠不带进这一条。
+  resetAgent()
+  agentDocked.value = true
 }
 
 function pdfFile(name = '讲义.pdf', bytes = 1024): File {
@@ -296,8 +304,13 @@ function sent(): Record<string, unknown> {
 }
 
 beforeEach(() => {
-  apiRequest.mockImplementation(async (path: string) =>
-    path.endsWith('/conversations') ? { id: 'c1', title: '', lastActiveAt: '2026-10-20T08:00:00Z' } : {}
+  // 芝士那一条对话：读是还没有话题，开一个新话题是 c1。
+  apiRequest.mockImplementation(async (path: string, init?: { method?: string }) =>
+    path.endsWith('/conversations')
+      ? init?.method === 'POST'
+        ? { id: 'c1', title: '', lastActiveAt: '2026-10-20T08:00:00Z' }
+        : { conversations: [] }
+      : {}
   )
   script = []
   spaceDetail.mockImplementation(async () => spaceBody())
@@ -550,10 +563,10 @@ describe('发题页：一份文件拆出几道题', () => {
     )
   }
 
-  const conversationReads = () =>
-    apiRequest.mock.calls.filter(([path]) => String(path).endsWith('/conversations/c9')).length
+  const threadReads = () =>
+    apiRequest.mock.calls.filter(([path]) => String(path).endsWith('/assistant/conversations')).length
 
-  it('表单上方排着这几道，点了切过去；对话还是那一段，不重读', async () => {
+  it('表单上方排着这几道，点了切过去；对话还是那一条，不重读', async () => {
     await boardAs(MEMBER)
     pair()
     const view = await mount('?draft=61')
@@ -562,11 +575,11 @@ describe('发题页：一份文件拆出几道题', () => {
     expect(strip.textContent).toContain('来自 实验3.pdf')
     expect(strip.textContent).toContain('Lab 3 缓存模拟器')
     expect(strip.textContent).toContain('Lab 4 矩阵转置')
-    await waitFor(() => expect(conversationReads()).toBe(1))
+    await waitFor(() => expect(threadReads()).toBe(1))
 
     await fireEvent.click(view.getByTestId('draft-strip-62'))
     await waitFor(() => expect(nameInput(view).value).toBe('Lab 4 矩阵转置'))
-    expect(conversationReads()).toBe(1)
+    expect(threadReads()).toBe(1)
   })
 
   it('全部发布：齐了的发出去，缺项的那道标出来、留在原处', async () => {
@@ -585,16 +598,18 @@ describe('发题页：一份文件拆出几道题', () => {
 })
 
 describe('发题页：右边的芝士', () => {
-  it('能收起来，顶栏多一个按钮叫回来；收起来这件事记在这台浏览器里', async () => {
+  it('关上以后页头多一个按钮叫回来；取消固定记在这台浏览器里', async () => {
     await boardAs(MEMBER)
     const view = await mount()
 
     await fireEvent.click(view.getByRole('button', { name: '关闭' }))
-    expect(view.queryByRole('region', { name: /芝士/ })).toBeNull()
-    expect(localStorage.getItem('cheesex.agentDocked')).toBe('false')
+    await waitFor(() => expect(view.queryByTestId('agent-host')).toBeNull())
 
-    await fireEvent.click(view.getByTestId('publish-agent-dock'))
-    await waitFor(() => expect(view.queryByTestId('publish-agent-dock')).toBeNull())
-    expect(localStorage.getItem('cheesex.agentDocked')).toBe('true')
+    await fireEvent.click(view.getByTestId('publish-agent-open'))
+    await waitFor(() => expect(view.queryByTestId('agent-host')).not.toBeNull())
+    expect(view.queryByTestId('publish-agent-open')).toBeNull()
+
+    await fireEvent.click(view.getByRole('button', { name: '取消固定' }))
+    expect(localStorage.getItem('cheesex.agentDocked')).toBe('false')
   })
 })

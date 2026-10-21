@@ -141,10 +141,17 @@ async def stop(
 
 @dataclass(frozen=True)
 class Place:
-    """Where a conversation was started: ``("task", "7")`` today."""
+    """Where a conversation was started. A person's conversations are one
+    thread, each a topic in it, so a new one starts on the person
+    (``personal``); older ones started on a 题目 or a draft keep saying so,
+    which is the page a question in them defaults to."""
 
     kind: str
     id: str
+
+    @classmethod
+    def personal(cls, user_id: int) -> Place:
+        return cls("personal", str(user_id))
 
 
 def sse(event: str, data: dict, position: str | None = None) -> bytes:
@@ -164,16 +171,15 @@ class AssistantConversations:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
-    async def list(self, user_id: int, place: Place) -> list[AssistantConversation]:
-        """This person's conversations here, latest first. One that never got a
+    async def list(self, user_id: int) -> list[AssistantConversation]:
+        """This person's conversations, wherever they were started, latest
+        first: the topics of their thread with 芝士. One that never got a
         question (started, then refused for lack of credits, say) is not
         listed: it has nothing to go back to."""
         stmt = (
             select(AssistantConversation)
             .where(
                 AssistantConversation.user_id == user_id,
-                AssistantConversation.place_kind == place.kind,
-                AssistantConversation.place_id == place.id,
                 AssistantConversation.title != "",
             )
             .order_by(AssistantConversation.last_active_at.desc())
@@ -256,17 +262,6 @@ class AssistantConversations:
                 conversation.title = words.splitlines()[0][:TITLE_CHARS]
         await self._s.flush()
         return row
-
-
-async def follow_task(
-    session: AsyncSession, conversation_id: uuid.UUID, task_id: int
-) -> None:
-    """A draft was published: the conversation that wrote it now belongs to the
-    题目, so its writer goes on with it from the 题目's page. A conversation
-    already on a 题目 stays where it is."""
-    row = await session.get(AssistantConversation, conversation_id)
-    if row is not None and row.place_kind == "draft":
-        row.place_kind, row.place_id = "task", str(task_id)
 
 
 def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:

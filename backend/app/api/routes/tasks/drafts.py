@@ -306,7 +306,7 @@ async def publish_draft(
     db=Depends(get_db),
 ) -> dict:
     """Publish the draft: a new 题目, or the changes saved onto the published
-    one. The draft is gone after; its conversation stays with the 题目."""
+    one. The draft is gone after."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
     return ok(await _publish(db, service, row, user_id))
@@ -314,7 +314,6 @@ async def publish_draft(
 
 async def _publish(db, service: TaskService, row, user_id: int) -> dict:
     form = drafts.published_form(row)
-    conversation = row.conversation_id
     task_id = row.task_id
     creating: CreateTaskRequest | None = None
     changing: PatchTaskRequest | None = None
@@ -355,10 +354,6 @@ async def _publish(db, service: TaskService, row, user_id: int) -> dict:
                 task=task, user_id=user_id, attachment_ids=added
             )
             await db.commit()
-    published = answer["task"]["id"]
-    if conversation is not None:
-        await assistant.follow_task(db, conversation, published)
-        await db.commit()
     return {**answer, "draftId": row.id}
 
 

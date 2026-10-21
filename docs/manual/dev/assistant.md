@@ -1,7 +1,7 @@
 ---
 title: 个人芝士
 kind: 流程
-summary: 项目之外的芝士：一个人在某个地方和芝士的对话怎么存、在哪里跑、能做什么、怎么扣钱，以及它和人一起写题目草稿。
+summary: 项目之外的芝士：一个人和芝士的那一条对话怎么存、在哪里跑、能做什么、怎么扣钱，全站唯一的面板怎么接到页面上，以及它和人一起写题目草稿。
 covers:
   - backend/app/domain/agent/personal/
   - backend/app/domain/assistant/models.py
@@ -12,23 +12,36 @@ covers:
   - frontend/src/components/assistant/AssistantPanel.vue
   - frontend/src/components/assistant/AssistantTurn.vue
   - frontend/src/components/tasks/AgentLayer.vue
-  - frontend/src/composables/useAssistant.ts
+  - frontend/src/stores/agentThread.ts
+  - frontend/src/stores/agent.ts
+  - frontend/src/layouts/AgentHost.vue
   - frontend/src/composables/useTaskDraft.ts
   - frontend/src/composables/useDraftAgent.ts
 ---
 
 # 个人芝士 {#assistant}
 
-项目之外的芝士：一个人在某个地方和芝士的对话怎么存、在哪里跑、能做什么、怎么扣钱，以及它和人一起写题目草稿。方向与规则见 #2285。
+项目之外的芝士：一个人和芝士的那一条对话怎么存、在哪里跑、能做什么、怎么扣钱，全站唯一的面板怎么接到页面上，以及它和人一起写题目草稿。方向与规则见 #2285。
 
 > 讲：对话怎么存、会话在哪里跑、工具、一次提问从准入到扣费、题目草稿。不讲：项目里的 AI 队友（见[一轮对话](/dev/turn)），额度本身（见[计费流程](/dev/billing#personal)）。
 
 ## 对话 {#conversations}
 
-每人一个芝士、多段对话。一段对话挂在一样东西上（`place_kind` + `place_id`）：一道题（`("task", "<题目 id>")`，题目页的「问芝士」和改题页），或一份草稿（`("draft", "<草稿 id>")`，发布页）。草稿记着它的对话（`task_draft.conversation_id`），打开草稿就接着它；草稿发布以后，对话改挂到发布出来的那道题上（`service.follow_task`），出题人在题目页接着说。对话只有本人看得到，别人的对话和不存在的对话答同一个 404，id 不泄露任何东西。
+每人一个芝士、一条对话：在哪一页打开面板，都是这一条。它由一个个话题组成，每个话题是一行 `assistant_conversations`，「新话题」开下一个（`POST /api/assistant/conversations`，等第一句话发出去才建）；`GET /api/assistant/conversations` 列出这个人的全部话题，最近的在前，面板打开时接着最近的那个，更早的往上翻时再读。问的时候眼前是哪一页随问题一起说（见下文「当前页面」），所以话题不挂在页面上：新话题的 `place_kind` 是 `personal`；早先挂在题目或草稿上的话题照旧列出，在里面提问时没说哪一页，就当作在它挂着的那一页问的。草稿还记着写它的那个话题（`task_draft.conversation_id`），发布页用它把同一份文件拆出的几道题排在一起。对话只有本人看得到，别人的对话和不存在的对话答同一个 404，id 不泄露任何东西。
 
 说过的话存在 `assistant_messages`，按顺序只追加，面板显示的就是它。模型那一份对话不在数据库里，在这段对话自己的会话里。
 
+
+## 面板接到页面上 {#host}
+
+面板全站只有一个，挂在应用外壳里（`layouts/AgentHost.vue`），对话和面板状态在模块里（`stores/agent.ts`、`stores/agentThread.ts`）：外壳在落地页和应用之间会重新挂载，芝士答到一半不跟着丢，换页时照样答完。入口三处：桌面左侧导航栏底部的芝士头像、手机顶栏右侧的芝士头像、`Ctrl/Cmd+J`。项目里的页面不画入口，开着的面板走进项目时收起：那里是项目的 AI 队友。退出登录时对话、待交的文件一并清掉。
+
+页面不接线，只登记两件事，都是栈（后登记的在上面，组件卸载或被 keep-alive 收起时自己撤下）：
+
+- `useAgentContext`：这一页是什么（`page`，芝士读到的「当前页面」），以及面板在这一页的问候、开场问题、输入框提示、能不能交文件。没登记的页面用通用的说法，不附「当前页面」。
+- `useAgentSurface`（可选）：芝士写进这一页时页面怎么动——`tool_args` 边到边填、`edit` 定稿、`published` 之后、撤销，以及面板上那一轮怎么画（改动卡能不能撤销、第几道）。题目页登记了 `published`（芝士保存了这道题的修改，页面重读）；发布页和改题页由 `useDraftAgent` 登记整套。
+
+桌面上面板默认停在右边（把页面挤窄，芝士往表单里写时并排看得见），可以取消固定，变成右下角的浮层；这一项记在浏览器里（`cheesex.agentDocked`）。发布页、改题页在桌面上打开时，停在右边的面板自动打开。手机上从底部升起。
 ## 会话 {#session}
 
 和房间里的芝士是同一套底座：中心会话机上钉住版本的 pi，由 runner 守着，用同一个启动脚本起（`harness/pi/launch.py`、`host.py`），后端用同一种「等到有新东西才回」的读法读它的日志和正在写的内容（`driven/runner.py`）。区别是没有房间要的那些东西：没有项目、执行机、频道锁、工作租约和房间日志。起会话、发问题、读回答由会话核心做（`agent/session_host/`），和[文档里的芝士](/dev/doc-agent#session)、[房间里的芝士](/dev/harness#contract)共用；这里只决定会话是什么样的（`personal/session.py`）。
@@ -40,7 +53,7 @@ covers:
 - **每人最多同时跑 2 个**：起第 3 个时，关掉这个人最久没用的那个；正在回答的不关，所以同时在更多地方提问时会暂时超过 2 个。
 - **每个会话内存上限 512 MB**（runner 和 pi 合计，用户级 systemd scope）。起新会话前看会话机剩余内存，不够就排队等，最多 3 分钟（`HOST_WAIT_S`）：答完的会话空闲几分钟就退出，内存是这样空出来的；3 分钟后还不够就回「芝士当前繁忙，稍后重试」。已经在跑的会话不受影响。
 - 推理打开（读一份实验指导、写一道题要它），强度 high（`personal/session.py` 的 `EFFORT`，模型在网关的 `cheese_efforts` 里声明了才传，否则用模型默认）。强度和频道里的 AI 队友走同一个设置 `ModelSettings.effort`，各 harness 自己翻译：pi 用 `--thinking`，Claude Code 用 `CLAUDE_CODE_EFFORT_LEVEL`。单次回答最多 16000 token，推理和写进草稿的整篇题目详情都算在里面。对话长到一次提问超过约 4.8 万 token 时，pi 自己把较早的部分压成摘要，保留最近约 8000 token 原文，发生在触发它的那次提问里。
-- 打开一段对话（`GET /api/assistant/conversations/{id}`）时，后台顺手把它的会话起起来，第一个问题就不用等启动。「新对话」第一句话发出去才建，这一步帮不上它。
+- 打开一段对话（`GET /api/assistant/conversations/{id}`）时，后台顺手把它的会话起起来，第一个问题就不用等启动。「新话题」第一句话发出去才建，这一步帮不上它。
 
 **在新会话之前就有的对话**：会话第一次被问时，把这段对话之前说过的话（最近约 2.4 万字）连同问题一起交给它一次，接着答。
 

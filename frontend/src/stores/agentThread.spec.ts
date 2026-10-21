@@ -1,8 +1,8 @@
-// 题目页上问芝士，对着服务端真实的回答形状（信封 + server-sent events）：问一句，
-// 答案留在对话里；被拒的问题说出服务端给的原因，什么也不留。
+// 和芝士的那一条对话，对着服务端真实的回答形状（信封 + server-sent events）：问一句，
+// 答案留在话题里；被拒的问题说出服务端给的原因，什么也不留；「新话题」把之前的留在上面。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useAssistant } from './useAssistant'
+import { createAssistant } from './agentThread'
 
 import i18n, { setLocale } from '@/i18n'
 
@@ -20,15 +20,15 @@ function events(...frames: [string, object][]): Response {
   return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
 }
 
-/** The server: one task with no conversations yet, and ``ask`` answering as given. */
+/** The server: a person with no topics yet, and ``ask`` answering as given. */
 function serve(ask: () => Response) {
   const asked: string[] = []
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
     const method = (init?.method ?? 'GET').toUpperCase()
-    if (url.endsWith('/assistant/tasks/7/conversations') && method === 'GET') {
+    if (url.endsWith('/assistant/conversations') && method === 'GET') {
       return envelope({ conversations: asked.length ? [{ ...CONVERSATION, title: asked[0] }] : [] })
     }
-    if (url.endsWith('/assistant/tasks/7/conversations') && method === 'POST') {
+    if (url.endsWith('/assistant/conversations') && method === 'POST') {
       return envelope(CONVERSATION, 201)
     }
     if (url.endsWith('/assistant/conversations/c1/ask')) {
@@ -40,7 +40,7 @@ function serve(ask: () => Response) {
   return asked
 }
 
-describe('题目页上问芝士', () => {
+describe('和芝士的那一条对话', () => {
   beforeEach(() => localStorage.clear())
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -49,7 +49,7 @@ describe('题目页上问芝士', () => {
 
   it('sends the question and keeps the streamed answer in the conversation', async () => {
     const asked = serve(() => events(['delta', { text: '先会' }], ['delta', { text: ' gdb。' }], ['done', {}]))
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -71,7 +71,7 @@ describe('题目页上问芝士', () => {
           headers: { 'content-type': 'application/json' },
         })
     )
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -91,7 +91,7 @@ describe('题目页上问芝士', () => {
         ['done', {}]
       )
     )
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
     await a.load()
 
     await a.ask('要先会什么？', 'fallback')
@@ -105,7 +105,7 @@ describe('题目页上问芝士', () => {
     serve(() =>
       events(['error', { message: '服务端的原话', i18n: { key: 'noSuchSentence', params: {} } }], ['done', {}])
     )
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
     await a.load()
 
     await a.ask('要先会什么？', 'fallback')
@@ -131,7 +131,7 @@ describe('题目页上问芝士', () => {
           { status: 401, headers: { 'content-type': 'text/event-stream' } }
         )
     )
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
     await a.load()
 
     await a.ask('要先会什么？', 'fallback')
@@ -155,7 +155,7 @@ describe('题目页上问芝士', () => {
           { status: 429, headers: { 'content-type': 'application/json' } }
         )
     )
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -186,7 +186,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
     const readOn: string[] = []
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       const method = (init?.method ?? 'GET').toUpperCase()
-      if (url.endsWith('/assistant/tasks/7/conversations') && method === 'GET')
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
         return envelope({ conversations: [CONVERSATION] })
       if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
         return envelope({ ...CONVERSATION, messages: [], answering: null })
@@ -198,7 +198,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
       }
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -214,7 +214,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
   it('a stream cut that cannot be read on keeps no half answer and says it failed', async () => {
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       const method = (init?.method ?? 'GET').toUpperCase()
-      if (url.endsWith('/assistant/tasks/7/conversations') && method === 'GET')
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
         return envelope({ conversations: [CONVERSATION] })
       if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
         return envelope({ ...CONVERSATION, messages: [], answering: null })
@@ -222,7 +222,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
         return placed(['answering', { id: 'q1' }], ['delta', { text: '先会', at: 0 }, '1-0'])
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
     await a.load()
 
     await a.ask('要先会什么？', '答不上来')
@@ -235,7 +235,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
   it('opening a conversation still being answered shows the answer as it goes on', async () => {
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       const method = (init?.method ?? 'GET').toUpperCase()
-      if (url.endsWith('/assistant/tasks/7/conversations') && method === 'GET')
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
         return envelope({ conversations: [CONVERSATION] })
       if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
         return envelope({
@@ -247,7 +247,7 @@ describe('题目页上问芝士：连接断了，回答接着读', () => {
         return placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0'])
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
 
     await a.load()
     await vi.waitFor(() => expect(a.busy.value).toBe(false))
@@ -272,7 +272,7 @@ describe('芝士这一轮做了什么', () => {
         ['done', {}]
       )
     )
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
     await a.load()
 
     await a.ask('空间里有哪些实验？', '答不上来')
@@ -288,7 +288,7 @@ describe('芝士这一轮做了什么', () => {
 
   it('a conversation opened again shows what was kept of each answer', async () => {
     vi.stubGlobal('fetch', async (url: string) => {
-      if (url.endsWith('/assistant/tasks/7/conversations')) return envelope({ conversations: [CONVERSATION] })
+      if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [CONVERSATION] })
       if (url.endsWith('/assistant/conversations/c1'))
         return envelope({
           ...CONVERSATION,
@@ -312,7 +312,7 @@ describe('芝士这一轮做了什么', () => {
         })
       return new Response('not found', { status: 404 })
     })
-    const a = useAssistant({ home: () => ({ kind: 'task', id: 7 }) })
+    const a = createAssistant()
 
     await a.load()
 
@@ -322,5 +322,41 @@ describe('芝士这一轮做了什么', () => {
       ['cheese_task_write', 'failed', null],
     ])
     expect(answer.edits?.[0].changed).toEqual({ deadline: { before: 1, after: 2 } })
+  })
+
+  it('a new topic keeps the last one above it, and earlier topics are read back on asking', async () => {
+    const said = (title: string) => [
+      { role: 'user', text: title, at: '2026-10-19T08:00:00Z' },
+      { role: 'assistant', text: '好的。', at: '2026-10-19T08:00:05Z' },
+    ]
+    const TOPICS = [
+      { id: 'c2', title: '这周要交什么', lastActiveAt: '2026-10-20T08:00:00Z', questions: 1 },
+      { id: 'c1', title: '实验三从哪入手', lastActiveAt: '2026-10-19T08:00:00Z', questions: 1 },
+    ]
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET') return envelope({ conversations: TOPICS })
+      if (url.endsWith('/assistant/conversations/c2'))
+        return envelope({ ...TOPICS[0], answering: null, messages: said('这周要交什么') })
+      if (url.endsWith('/assistant/conversations/c1'))
+        return envelope({ ...TOPICS[1], answering: null, messages: said('实验三从哪入手') })
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+
+    // The thread opens on the latest topic; the one before it is not read yet.
+    expect(a.current.value).toBe('c2')
+    expect(a.hasOlder.value).toBe(true)
+
+    a.startNew()
+    expect(a.current.value).toBeNull()
+    expect(a.messages.value).toEqual([])
+    expect(a.earlier.value.map((topic) => topic.id)).toEqual(['c2'])
+
+    await a.older()
+    expect(a.earlier.value.map((topic) => topic.title)).toEqual(['实验三从哪入手', '这周要交什么'])
+    expect(a.earlier.value[0].messages[0].text).toBe('实验三从哪入手')
+    expect(a.hasOlder.value).toBe(false)
   })
 })

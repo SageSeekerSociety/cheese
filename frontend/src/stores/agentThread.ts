@@ -1,10 +1,7 @@
-// 个人芝士（#2285）在一个地方的对话：题目页上、发布页和改题页上的草稿上。芝士是同一个，
-// 能做的事处处一样；地方只决定对话挂在哪（`home`）和问的时候眼前是哪一页（`page`）。
-//
-// - 题目页：这道题上我和芝士的几段对话，打开时接着最近的一段；「新对话」等第一句话
-//   发出去才建。
-// - 草稿（发布页、改题页）：草稿记着它的那段对话，打开就接着它。发布以后对话跟着
-//   题目走，到题目页还能接着说。
+// 个人芝士（#2285）和一个人的那一条对话。芝士是同一个，在哪一页打开都是这一条：每段
+// 对话是其中的一个话题，「新话题」开下一个，之前的话题留在上面，往上翻能看到。问的时候
+// 眼前是哪一页（`page`）随问题一起说，页面不再决定对话挂在哪。全站只有一份，由芝士的
+// 宿主持有（`stores/agent.ts`）。
 //
 // 回答是流式的（server-sent events）：`queued` 在等会话机空出来，`delta` 是文字，
 // `tool` 是芝士开始调一个工具，`tool_args` 是那次调用边写边流过来的参数（页面拿它
@@ -86,9 +83,6 @@ export interface AssistantMessage {
   published?: AssistantPublished[]
 }
 
-/** 对话挂在哪：一道题上，或一份草稿上（草稿记着它的对话）。 */
-export type AssistantHome = { kind: 'task'; id: number } | { kind: 'draft'; id: number; conversationId: string | null }
-
 /** 问的时候眼前是哪一页：芝士看到的「当前页面」就是它。 */
 export interface AssistantPage {
   kind: 'task' | 'draft'
@@ -103,22 +97,30 @@ export interface AssistantHooks {
   toolEnded?: (call: string, name: string, failed: boolean) => void
   edit?: (edit: AssistantEdit) => void
   published?: (published: AssistantPublished) => void
-  /** 在草稿上开了一段新对话。 */
-  conversation?: (id: string) => void
+}
+
+/** 之前的一个话题：「新话题」以前说的，或往上翻读回来的。 */
+export interface AssistantTopic {
+  id: string
+  title: string
+  lastActiveAt: string
+  messages: AssistantMessage[]
 }
 
 export interface AssistantOptions {
-  home: () => AssistantHome | null
   page?: () => AssistantPage | null
   /** 问之前：确保有地方可问（发布页上还没存过的草稿，先存一份）。 */
   prepare?: () => Promise<void>
   on?: AssistantHooks
 }
 
-export function useAssistant(opts: AssistantOptions) {
+export function createAssistant(opts: AssistantOptions = {}) {
   const on = opts.on ?? {}
 
+  /** 这个人的话题，最近的在前。 */
   const conversations = ref<AssistantConversation[]>([])
+  /** 当前话题上面摆着的之前几个话题，按时间从早到晚。 */
+  const earlier = ref<AssistantTopic[]>([])
   const current = ref<string | null>(null)
   const messages = ref<AssistantMessage[]>([])
   /** 正在流进来的那一段回答；没有在答时是 null。 */
@@ -139,43 +141,35 @@ export function useAssistant(opts: AssistantOptions) {
   let editSeq = 0
 
   const busy = computed(() => streaming.value !== null)
-  const title = computed(() => conversations.value.find((c) => c.id === current.value)?.title ?? '')
+
+  /** 还有没摆出来的更早的话题：往上翻能读。 */
+  const hasOlder = computed(() => {
+    const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
+    return conversations.value.some((c) => !shown.has(c.id))
+  })
 
   async function listConversations() {
-    const home = opts.home()
-    if (!home) {
-      conversations.value = []
-      return
-    }
-    if (home.kind === 'task') {
-      const data = await request<{ conversations: AssistantConversation[] }>(
-        `/assistant/tasks/${home.id}/conversations`
-      )
-      conversations.value = data.conversations
-      return
-    }
-    // 草稿只有它记着的那一段。
-    const id = current.value ?? home.conversationId
-    if (!id) {
-      conversations.value = []
-      return
-    }
-    const known = conversations.value.find((c) => c.id === id)
-    conversations.value = known ? [known] : [{ id, title: '', lastActiveAt: new Date().toISOString() }]
+    const data = await request<{ conversations: AssistantConversation[] }>('/assistant/conversations')
+    conversations.value = data.conversations ?? []
   }
 
+  type ReadConversation = AssistantConversation & {
+    messages: (AssistantMessage & { parts?: StoredParts })[]
+    answering?: string | null
+  }
+
+  async function read(id: string): Promise<ReadConversation> {
+    return request<ReadConversation>(`/assistant/conversations/${id}`)
+  }
+
+  const shownMessages = (data: ReadConversation) =>
+    data.messages.map(({ parts, ...message }) => (parts ? { ...message, ...kept(parts) } : message))
+
   async function open(id: string) {
-    const data = await request<
-      AssistantConversation & {
-        messages: (AssistantMessage & { parts?: StoredParts })[]
-        answering?: string | null
-      }
-    >(`/assistant/conversations/${id}`)
+    const data = await read(id)
     current.value = id
-    messages.value = data.messages.map(({ parts, ...message }) => (parts ? { ...message, ...kept(parts) } : message))
+    messages.value = shownMessages(data)
     notice.value = null
-    const home = opts.home()
-    if (home?.kind === 'draft') conversations.value = [{ id, title: data.title, lastActiveAt: data.lastActiveAt }]
     // 打开时还在答（刷新了页面、换了一台设备）：接上，看它接着写。
     const answering = data.answering
     if (answering)
@@ -187,49 +181,64 @@ export function useAssistant(opts: AssistantOptions) {
       )
   }
 
-  /** 打开面板：接着这里最近的那一段；一段都没有就是一段新的。 */
+  /** 打开面板：接着最近的那个话题；一个都没有，就从第一句话开始一个新的。只读一次，
+   *  之后面板关了再开还是这一条。 */
   async function load() {
     if (loaded.value) return
-    const home = opts.home()
     loaded.value = true
-    if (!home) return
     await listConversations()
-    const latest = home.kind === 'draft' ? home.conversationId : conversations.value[0]?.id
+    const latest = conversations.value[0]?.id
     if (latest) await open(latest)
   }
 
-  /** 换了地方（切到另一份草稿）：从头读。 */
-  async function reload() {
+  /** 换了一个人（退出登录）：之前的对话一样不留。 */
+  function reset() {
     loaded.value = false
+    conversations.value = []
+    earlier.value = []
     current.value = null
     messages.value = []
-    conversations.value = []
     notice.value = null
-    await load()
+    creditRefused.value = false
   }
 
+  /** 「新话题」：之前说的留在上面，芝士从下一句话起不再读它们。话题等第一句话发出去才建。 */
   function startNew() {
     if (busy.value) return
+    if (current.value) {
+      const at = conversations.value.find((c) => c.id === current.value)
+      earlier.value = [
+        ...earlier.value,
+        {
+          id: current.value,
+          title: at?.title ?? '',
+          lastActiveAt: at?.lastActiveAt ?? new Date().toISOString(),
+          messages: messages.value,
+        },
+      ]
+    }
     current.value = null
     messages.value = []
     notice.value = null
   }
 
-  async function select(id: string) {
-    if (busy.value || id === current.value) return
-    await open(id)
+  /** 往上翻：把还没摆出来的、最近的那个更早的话题读回来，摆在最上面。 */
+  async function older() {
+    const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
+    const next = conversations.value.find((c) => !shown.has(c.id))
+    if (!next) return
+    const data = await read(next.id)
+    earlier.value = [
+      { id: next.id, title: data.title, lastActiveAt: data.lastActiveAt, messages: shownMessages(data) },
+      ...earlier.value,
+    ]
   }
 
   async function ensureConversation(): Promise<string> {
     if (current.value) return current.value
-    const home = opts.home()
-    if (!home) throw new Error('nowhere to ask')
-    const path =
-      home.kind === 'task' ? `/assistant/tasks/${home.id}/conversations` : `/assistant/drafts/${home.id}/conversations`
-    const data = await request<AssistantConversation>(path, { method: 'POST' })
-    conversations.value = home.kind === 'task' ? [data, ...conversations.value] : [data]
+    const data = await request<AssistantConversation>('/assistant/conversations', { method: 'POST' })
+    conversations.value = [data, ...conversations.value]
     current.value = data.id
-    if (home.kind === 'draft') on.conversation?.(data.id)
     return data.id
   }
 
@@ -459,6 +468,8 @@ export function useAssistant(opts: AssistantOptions) {
   return {
     conversations,
     current,
+    earlier,
+    hasOlder,
     messages,
     streaming,
     tool,
@@ -469,11 +480,10 @@ export function useAssistant(opts: AssistantOptions) {
     notice,
     creditRefused,
     busy,
-    title,
     load,
-    reload,
+    reset,
     startNew,
-    select,
+    older,
     ask,
     stop,
     markUndone,

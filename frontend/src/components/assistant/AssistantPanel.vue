@@ -10,39 +10,27 @@
   >
     <header class="ap__head">
       <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" :state="busy ? 'think' : null" /></span>
-      <v-menu location="bottom start" :disabled="busy">
-        <template #activator="{ props: menu }">
-          <button v-bind="menu" type="button" class="ap__title" :disabled="busy">
-            <span class="ap__title-text">{{ title || t('tasks.assistant.newConversation') }}</span>
-            <v-icon size="16" class="ap__title-caret">mdi-chevron-down</v-icon>
-          </button>
-        </template>
-        <v-list density="compact" class="ap__list" :aria-label="t('tasks.assistant.conversations')">
-          <v-list-subheader>{{ t('tasks.assistant.conversations') }}</v-list-subheader>
-          <v-list-item
-            v-if="currentId === null"
-            :active="true"
-            :title="t('tasks.assistant.newConversation')"
-            :subtitle="t('tasks.assistant.noQuestions')"
-          />
-          <v-list-item
-            v-for="c in conversations"
-            :key="c.id"
-            :active="c.id === currentId"
-            :title="c.title || t('tasks.assistant.newConversation')"
-            :subtitle="listSubtitle(c)"
-            @click="!busy && emit('select', c.id)"
-          />
-        </v-list>
-      </v-menu>
+      <!-- Who is answering, and whose it is: two parts side by side, never one sentence. -->
+      <span class="ap__who">
+        <span class="ap__name">{{ t('work.agentAvatar.defaultName') }}</span>
+        <span class="ap__scope">{{ t('tasks.assistant.personal') }}</span>
+      </span>
       <span class="ap__grow" />
       <BaseButton
         icon="mdi-pencil-outline"
         size="sm"
-        :disabled="busy"
-        :title="t('tasks.assistant.newConversation')"
-        :aria-label="t('tasks.assistant.newConversation')"
+        :disabled="busy || (messages.length === 0 && streaming === null)"
+        :title="t('tasks.assistant.newTopic')"
+        :aria-label="t('tasks.assistant.newTopic')"
         @click="!busy && emit('new')"
+      />
+      <BaseButton
+        v-if="dockable"
+        :icon="docked ? 'mdi-dock-window' : 'mdi-dock-right'"
+        size="sm"
+        :title="docked ? t('tasks.assistant.undock') : t('tasks.assistant.dock')"
+        :aria-label="docked ? t('tasks.assistant.undock') : t('tasks.assistant.dock')"
+        @click="emit('dock', !docked)"
       />
       <BaseButton
         v-if="closable"
@@ -55,6 +43,35 @@
     </header>
 
     <div ref="scroller" class="ap__chat">
+      <button v-if="hasOlder" type="button" class="ap__older" @click="emit('older')">
+        {{ t('tasks.assistant.olderTopics') }}
+      </button>
+      <section v-for="topic in earlier" :key="topic.id" class="ap__topic" :aria-label="topic.title">
+        <template v-for="(m, i) in topic.messages" :key="i">
+          <div v-if="m.role === 'user'" class="ap__q">
+            <p v-if="m.text" class="ap__q-t">{{ m.text }}</p>
+            <p v-for="name in m.files ?? []" :key="name" class="ap__q-file">
+              <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
+            </p>
+          </div>
+          <div v-else class="ap__a">
+            <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
+            <AssistantTurn
+              class="ap__text"
+              :steps="m.steps ?? []"
+              :changes="m.changes ?? []"
+              :results="m.results ?? []"
+            >
+              <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
+              <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
+              <p v-if="m.stopped" class="ap__stopped">{{ t('tasks.assistant.stopped') }}</p>
+            </AssistantTurn>
+          </div>
+        </template>
+        <p class="ap__divider">
+          <span>{{ t('tasks.assistant.newTopic') }}</span>
+        </p>
+      </section>
       <template v-if="messages.length === 0 && streaming === null">
         <p v-if="context !== ''" class="ap__ctx">{{ context ?? t('tasks.assistant.reads') }}</p>
         <div class="ap__a">
@@ -189,11 +206,12 @@ import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
 
-export interface PanelConversation {
+/** 之前的一个话题：读回来只给看。 */
+export interface PanelTopic {
   id: string
   title: string
-  lastActiveAt: string
-  questions?: number
+  at: string
+  messages: PanelMessage[]
 }
 
 export interface PanelMessage {
@@ -218,10 +236,11 @@ export interface PanelFile {
 
 const props = withDefaults(
   defineProps<{
-    conversations: PanelConversation[]
-    currentId: string | null
-    title: string
     messages: PanelMessage[]
+    /** 当前话题上面摆着的之前几个话题，从早到晚；只给看。 */
+    earlier?: PanelTopic[]
+    /** 还有更早的话题没摆出来。 */
+    hasOlder?: boolean
     /** 正在流进来的回答；没在答是 null，刚开始答、还没有字是空串。 */
     streaming: string | null
     /** 芝士此刻在用的工具。 */
@@ -247,8 +266,15 @@ const props = withDefaults(
     canAttach?: boolean
     files?: PanelFile[]
     closable?: boolean
+    /** 桌面上能停在右边：头上给一颗「固定到右侧」或「取消固定」。 */
+    dockable?: boolean
+    docked?: boolean
   }>(),
   {
+    earlier: () => [],
+    hasOlder: false,
+    dockable: false,
+    docked: false,
     queued: false,
     creditRefused: false,
     personalTeamHandle: undefined,
@@ -269,7 +295,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   send: [text: string]
   new: []
-  select: [id: string]
+  older: []
+  dock: [docked: boolean]
   stop: []
   close: []
   undo: [changeId: number, key: string]
@@ -343,10 +370,6 @@ function dayOf(i: number): string {
   return i === 0 || day(props.messages[i - 1].at) !== here ? here : ''
 }
 
-function listSubtitle(c: PanelConversation): string {
-  return t('tasks.assistant.listed', { day: day(c.lastActiveAt), n: c.questions ?? 0 })
-}
-
 function submit() {
   if (!ready.value) return
   // 只附文件不打字也发：文件在这一页是什么意思，页面会告诉芝士。
@@ -392,31 +415,62 @@ watch(
   flex-shrink: 0;
 }
 
-.ap__title {
+.ap__who {
   display: inline-flex;
-  gap: 2px;
-  align-items: center;
+  gap: 6px;
+  align-items: baseline;
   min-width: 0;
-  max-width: 240px;
-  padding: 4px 8px;
+  padding: 0 6px;
+}
+
+.ap__name {
   font-size: 14px;
   font-weight: 600;
+  line-height: var(--lh-14);
   color: var(--ink);
-  border-radius: var(--radius-md);
-}
-
-.ap__title:hover:not(:disabled) {
-  background: var(--fill);
-}
-
-.ap__title-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ap__title-caret {
-  color: var(--faint);
+.ap__scope {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ap__older {
+  align-self: center;
+  padding: 2px 10px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  border-radius: var(--radius-pill);
+}
+
+.ap__older:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+.ap__topic {
+  display: contents;
+}
+
+.ap__divider {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.ap__divider::before,
+.ap__divider::after {
+  flex: 1;
+  border-top: 1px solid var(--line-2);
+  content: '';
 }
 
 .ap__grow {
