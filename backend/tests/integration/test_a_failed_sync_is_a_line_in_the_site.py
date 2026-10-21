@@ -10,14 +10,14 @@ The one failure that does stay in the room is a PR already in the merge queue:
 retrying cannot help there, and a person has to decide.
 
 The machine is given no turn id, so the note joins the turn whose checkpoint
-it is — the newest turn the conversation's records carry. Without that it
-would render as a turn of its own with no steps, and a reader looking at one
-turn's 过程 would not see it at all.
+it is — the newest turn this seat's records carry. Without that it would
+render as a turn of its own with no steps, and a reader looking at one turn's
+过程 would not see it at all. A co-seated agent's newer turn is not it.
 """
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.domain.session_record.models import SessionRecord
 from tests.integration.conftest import (
@@ -31,11 +31,13 @@ from tests.integration.conftest import (
 BROWSER = {"X-Cheese-Token": ""}
 
 
-def _seed_turn(client, task_id: str, turn: uuid.UUID, seat: str) -> None:
+def _seed_turn(
+    client, task_id: str, turn: uuid.UUID, seat: str, at: datetime | None = None
+) -> None:
     """The harness's own last record of a turn, as the runner journals it."""
 
     async def write() -> None:
-        at = datetime.now(UTC)
+        when = at or datetime.now(UTC)
         async with client.test_factory() as session:
             session.add(
                 SessionRecord(
@@ -45,14 +47,14 @@ def _seed_turn(client, task_id: str, turn: uuid.UUID, seat: str) -> None:
                     harness="claude-code",
                     first_sequence=1,
                     last_sequence=1,
-                    first_at=at,
-                    last_at=at,
+                    first_at=when,
+                    last_at=when,
                     count=1,
                     bytes=1,
                     records=[
                         {
                             "sequence": 1,
-                            "at": at.isoformat(),
+                            "at": when.isoformat(),
                             "record": {"type": "assistant"},
                         }
                     ],
@@ -150,3 +152,30 @@ def test_a_note_without_a_turn_joins_the_turn_it_belongs_to(client):
         if i["record"].get("subtype") == "sync_failed"
     ]
     assert note["turn_id"] == str(turn)
+
+
+def test_a_note_joins_its_own_seat_s_turn_not_a_co_seated_agent_s(client):
+    """A room can seat several agents, each with its own newer turn. The
+    checkpoint that failed is this seat's, so the note must not be drawn in the
+    other seat's turn — where this seat's per-turn 过程 would hide it."""
+    project_id, _, task_id, seat = _a_task(client)
+    ours, theirs = uuid.uuid4(), uuid.uuid4()
+    now = datetime.now(UTC)
+    _seed_turn(client, task_id, ours, seat, at=now - timedelta(minutes=5))
+    _seed_turn(client, task_id, theirs, "another-seat", at=now)
+
+    posted = _post(
+        client, task_id, task_agent_headers(project_id, task_id, seat), "推不回去"
+    )
+    assert posted.status_code == 200, posted.text
+
+    raw = client.get(
+        f"/topics/{task_id}/session-records", headers=session_auth_headers("alice")
+    )
+    assert raw.status_code == 200, raw.text
+    [note] = [
+        i
+        for i in raw.json()["data"]["items"]
+        if i["record"].get("subtype") == "sync_failed"
+    ]
+    assert note["turn_id"] == str(ours)

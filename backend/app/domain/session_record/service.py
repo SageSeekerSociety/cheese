@@ -293,10 +293,11 @@ async def note(
 
     The sync runs at a turn's end, after the harness's own last record, and the
     machine is given no turn id. With none, the note joins the last turn this
-    conversation's records carry — the one whose checkpoint it is."""
+    seat's records carry — the one whose checkpoint it is, not a co-seated
+    agent's newer turn."""
     when = at or datetime.now(UTC)
     if turn_id is None:
-        turn_id = await _latest_turn(db, conversation_id)
+        turn_id = await _latest_turn(db, conversation_id, agent_handle)
     sequence = int(when.timestamp() * 1_000_000)
     entry = {"sequence": sequence, "at": when.isoformat(), "record": scrubbed(record)}
     db.add(
@@ -318,13 +319,18 @@ async def note(
 
 
 async def _latest_turn(
-    db: AsyncSession, conversation_id: uuid.UUID
+    db: AsyncSession, conversation_id: uuid.UUID, agent_handle: str
 ) -> uuid.UUID | None:
-    """The turn the conversation's newest record belongs to, if any."""
+    """The turn this seat's newest record belongs to, if any.
+
+    Scoped to the seat that is writing the note: a room can seat several
+    agents, and another agent's newer turn is not the turn this machine's
+    checkpoint ended."""
     return await db.scalar(
         select(SessionRecord.turn_id)
         .where(
             SessionRecord.conversation_id == conversation_id,
+            SessionRecord.agent_handle == agent_handle,
             SessionRecord.turn_id.is_not(None),
         )
         .order_by(SessionRecord.last_at.desc(), SessionRecord.id.desc())
