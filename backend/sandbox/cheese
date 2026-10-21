@@ -5222,6 +5222,7 @@ def _sync_task(task_id: str) -> list[str]:
                     f"{datetime.now(UTC).isoformat()} archived snapshot={snapshot}; "
                     "delivery is closed\n"
                 )
+                _warm_task_diff(worktree, data)
                 return left_out
             branch = data["branch"]
             found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
@@ -5249,6 +5250,7 @@ def _sync_task(task_id: str) -> list[str]:
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
             )
+            _warm_task_diff(worktree, data)
             return left_out
         except BaseException as exc:
             record.write(
@@ -5262,6 +5264,59 @@ def _sync_task(task_id: str) -> list[str]:
             queued = exc.pr if isinstance(exc, _BranchQueued) else None
             _report_sync_failure(task_id, branch, queued)
             raise
+
+
+def _warm_task_diff(worktree: Path, data: dict) -> None:
+    """Fetch the old content the 改动 tab will need, before it is asked for.
+
+    The worktree is a ``blob:none`` partial clone: a diff against the task's
+    base reads the old version of every changed file, and git fetches the
+    missing ones only when it gets there. The first reader pays for that
+    fetch; on a slow machine it can outlast the browser's read budget, so the
+    tab times out once and is fast afterwards. Pay it here, off the sync's
+    path, at the end of a turn.
+    """
+    base = data.get("base") or "main"
+    try:
+        ancestor = _git_task(
+            worktree, "merge-base", "HEAD", f"refs/remotes/origin/{base}"
+        )
+    except Exception:
+        # No such base ref (a single-branch checkout, or a base branch that was
+        # never fetched): there is nothing this can usefully warm.
+        return
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    command = [
+        "git",
+        "-C",
+        str(worktree),
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        ancestor,
+        "--",
+    ]
+    kwargs = (
+        {
+            "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.DETACHED_PROCESS
+        }
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
+    with contextlib.suppress(OSError):
+        subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            close_fds=True,
+            **kwargs,
+        )
 
 
 class _ClosedTaskNotBackedUp(RuntimeError):
