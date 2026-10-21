@@ -70,12 +70,13 @@ describe('侧栏频道菜单的四种入口和原有权限', () => {
     expect(ids).toEqual(['topic.newTask', 'topic.allTasks', 'topic.rename', 'topic.leave'])
   })
 
-  it('未加入的活动频道不增加「加入」，只保留其余允许的入口', () => {
+  it('未加入的活动频道用加入替代退出，不额外禁止原本允许的改名', () => {
     const { routes } = mount()
     expect(routes.actionsFor(channel({ joined: false })).map((action) => action.id)).toEqual([
       'topic.newTask',
       'topic.allTasks',
       'topic.rename',
+      'topic.join',
     ])
   })
 
@@ -106,13 +107,14 @@ describe('侧栏频道菜单的四种入口和原有权限', () => {
     expect(rename).toHaveBeenCalledExactlyOnceWith(target)
   })
 
-  it('退出回调只改变被操作频道的加入状态；侧栏不再提供「加入」', () => {
+  it.each([
+    { joined: true, action: 'topic.leave', next: false },
+    { joined: false, action: 'topic.join', next: true },
+  ])('$action 回调只改变被操作频道的加入状态', ({ joined, action, next }) => {
     const { routes, store } = mount()
     const setJoined = vi.spyOn(store, 'setJoined').mockResolvedValue(true)
-    const actions = routes.actionsFor(channel({ joined: true }))
-    expect(actions.some((entry) => entry.id === 'topic.join')).toBe(false)
-    actions.find((entry) => entry.id === 'topic.leave')!.run!()
-    expect(setJoined).toHaveBeenCalledExactlyOnceWith('channel-a', false)
+    routes.actionsFor(channel({ joined })).find((entry) => entry.id === action)!.run!()
+    expect(setJoined).toHaveBeenCalledExactlyOnceWith('channel-a', next)
   })
 
   it('全部任务回调导航到被操作频道的任务筛选页', async () => {
