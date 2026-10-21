@@ -50,7 +50,7 @@ describe('其他额度', () => {
 
   it('到期日写上年份：明年才到期的包，不能读成今年已经过了', () => {
     const ui = mount([
-      { ...PACK, source: 'reward', credits_remaining: 100, remaining_ratio: 1, expires_at: '2027-10-19T08:00:00Z' },
+      { ...PACK, source: 'reward', credits_remaining: 100, remaining_ratio: 1, expires_at: '2027-10-19T12:00:00Z' },
     ])
 
     expect(ui.getByText(/2027年10月19日到期/)).toBeTruthy()
