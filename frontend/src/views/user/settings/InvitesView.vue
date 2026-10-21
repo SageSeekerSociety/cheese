@@ -88,7 +88,7 @@
           <div class="invites__stat">
             <dt>{{ t('account.invites.people.credits') }}</dt>
             <dd class="t-num" data-testid="invite-credits">
-              {{ t('account.invites.people.creditsValue', { n: invites.invite_credits }) }}
+              {{ t('account.invites.people.creditsValue', { n: earnedCredits }) }}
             </dd>
           </div>
         </dl>
@@ -163,6 +163,9 @@ const emit = defineEmits<{ copyCode: []; copyLink: []; retry: [] }>()
 const seatsLeft = computed(() => (props.invites ? Math.max(0, props.invites.max_uses - props.invites.use_count) : 0))
 
 const acceptedCount = computed(() => props.people.filter((p) => p.stage === 'activated').length)
+
+/** Only what inviting these friends earned: invite_credits also counts the person's own rewards as an invitee. */
+const earnedCredits = computed(() => props.people.reduce((sum, p) => sum + p.credits, 0))
 
 const steps = computed(() => [
   { what: t('account.invites.steps.signUp'), gain: t('account.invites.steps.signUpGain') },
@@ -314,6 +317,8 @@ function stageText(person: InviteeRow): string {
   flex-shrink: 0;
   align-items: center;
   margin-top: 20px;
+  /* The head pads 16px on the right; the card's content sits 24px in. */
+  margin-right: 8px;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
@@ -432,6 +437,7 @@ function stageText(person: InviteeRow): string {
 
   .invites__link {
     margin-top: 16px;
+    margin-right: 0;
   }
 
   .invites__stats {

@@ -105,6 +105,22 @@ describe('邀请好友', () => {
     expect(view.getByTestId('invite-accepted').textContent?.trim()).toBe('2')
   })
 
+  it('邀请所得额度只算邀请好友挣到的，不算自己被邀请时得的', async () => {
+    const friend = (handle: string, credits: number) => ({
+      handle,
+      nickname: null,
+      avatar_id: null,
+      registered_at: '2026-10-10T00:00:00Z',
+      stage: 'activated' as const,
+      credits,
+    })
+    // 450 = 两位好友的 150 + 150，加上这个人自己被邀请时得的 50 + 100。
+    const view = await open({ invite_credits: 450, invitees: [friend('a', 150), friend('b', 150), friend('c', 0)] })
+    expect(view.getByTestId('invite-credits').textContent?.trim()).toBe(
+      t('account.invites.people.creditsValue', { n: 300 })
+    )
+  })
+
   it('每位好友各自走到哪一步', async () => {
     const view = await open({
       invitees: [
