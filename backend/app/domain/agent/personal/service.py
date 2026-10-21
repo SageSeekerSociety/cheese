@@ -408,6 +408,13 @@ class Answers:
             text, failed = written.strip(), None
         parts = parts_of(await self._consumptions.told(consumption.work_id))
         if (text and not failed) or stopped or parts:
+            if answer.usage is not None and answer.usage.calls:
+                # Each model call's prompt and how much of it the provider's
+                # cache answered: how well the conversation keeps its start.
+                parts = {
+                    **(parts or {}),
+                    "usage": {"calls": [list(c) for c in answer.usage.calls]},
+                }
             async with self._sessions() as session:
                 store = AssistantConversations(session)
                 conversation = await store.owned(user_id, conversation_id)

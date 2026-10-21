@@ -625,6 +625,11 @@ def test_each_model_call_begins_with_the_whole_of_the_one_before(client, gateway
         assert kept == before["messages"], json.dumps(
             [before["messages"], kept], ensure_ascii=False, indent=1
         )
+    # Each answer keeps what each of its calls sent and how much the cache
+    # answered, for watching how well the start holds.
+    shown = client.get(f"/assistant/conversations/{conversation}", headers=me)
+    answers = [m for m in shown.json()["data"]["messages"] if m["role"] == "assistant"]
+    assert [len(m["parts"]["usage"]["calls"]) for m in answers] == [2, 1]
 
 
 def test_a_conversation_is_its_owners_alone(client, gateway):
