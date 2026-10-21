@@ -753,10 +753,13 @@ def sandbox_tools(release, platform_machine):
     placed = execution_root(Path.home()) / "runtime/host-tools/bin"
     for name in HOST_TOOLS:
         if not os.access(placed / name, os.X_OK):
+            # i18n-exempt: a platform host's install failure, read by operators in its log
             raise RuntimeError(f"cheesehost has not placed {name} at {placed}")
+    # The tools before the helper that runs them: a helper installed first
+    # would meanwhile run tools that are not there yet.
     for source, target in (
-        (release / "remote-execution/sandbox_host.py", SANDBOX_HOST),
         *((placed / name, f"{SANDBOX_TOOLS}/{name}") for name in HOST_TOOLS),
+        (release / "remote-execution/sandbox_host.py", SANDBOX_HOST),
     ):
         install_as_root(source, target)
     return placed_bubblewrap()

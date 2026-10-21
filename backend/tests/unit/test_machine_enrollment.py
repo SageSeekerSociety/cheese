@@ -577,20 +577,33 @@ sudo() {{ [ "$2" = blkid ] || printf '%s\\n' "$*" >> {calls}; }}
     return done, (calls.read_text() if calls.exists() else "")
 
 
-def test_the_data_disk_is_formatted_for_the_machines_kernel(tmp_path):
+LTS = [
+    "lts_5.4.conf",
+    "lts_5.10.conf",
+    "lts_5.15.conf",
+    "lts_6.1.conf",
+    "lts_6.12.conf",
+]
+
+
+@pytest.mark.parametrize(
+    ("kernel", "chosen"),
+    [
+        ("6.8.0-45-generic", "lts_6.1.conf"),
+        ("5.15.0-118-generic", "lts_5.15.conf"),
+        ("6.12.113+deb13-cloud-amd64", "lts_6.12.conf"),
+        ("7.0.1", "lts_6.12.conf"),
+    ],
+)
+def test_the_data_disk_is_formatted_for_the_machines_kernel(tmp_path, kernel, chosen):
     """A newer mkfs.xfs's defaults can make a filesystem an older kernel cannot
     mount: the disk gets the features of the newest long-term kernel that is
     not newer than the machine's own."""
-    done, calls = _run_format(
-        tmp_path,
-        "6.8.0-45-generic",
-        ["lts_5.15.conf", "lts_6.1.conf", "lts_6.12.conf", "lts_5.4.conf"],
-    )
+    done, calls = _run_format(tmp_path, kernel, LTS)
 
     assert done.returncode == 0, done.stderr
-    assert "-c options=" in calls and calls.split("options=")[1].split()[0].endswith(
-        "/mkfs/lts_6.1.conf"
-    ), calls
+    assert "-c options=" in calls, calls
+    assert calls.split("options=")[1].split()[0].endswith(f"/mkfs/{chosen}"), calls
 
 
 def test_a_host_without_the_platforms_mkfs_formats_nothing(tmp_path):

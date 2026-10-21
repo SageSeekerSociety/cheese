@@ -124,6 +124,12 @@ DATA_DISK_LINE = re.compile(r"^CHEESE_SANDBOX_DISK_BYTES=([0-9]+)$", re.MULTILIN
 # machine's own (its `lts_*.conf`): a newer mkfs's defaults can make a
 # filesystem an older kernel refuses to mount.
 DATA_DISK = """
+# Ubuntu from 23.10 lets a program make a user namespace only where an
+# AppArmor profile names it, and no profile names the bwrap cheesehost placed.
+# On a host the platform opened, the platform is the owner who allows it.
+if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+  sudo -n "$HOME/.local/bin/cheesehost" sandbox allow < /dev/null
+fi
 disk=""
 for link in /dev/disk/by-id/*drive-scsi1; do
   [ -e "$link" ] && disk=$(readlink -f "$link")
@@ -232,7 +238,6 @@ case "$arch" in
   aarch64|arm64) target=linux-arm64 ;;
   *) echo "unsupported arch: $arch" >&2; exit 1 ;;
 esac
-echo CHEESE_STARTUP:tools
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 export PATH="$HOME/.local/bin:$PATH"
 # claude — the agent itself. A machine with no claude, or one too old, does not
@@ -323,18 +328,13 @@ echo CHEESE_STARTUP:connect
 # directory and reports success; python3, which the platform's own programs on
 # a machine are. Nothing comes from the machine's packages, so a machine where
 # one could not be placed is refused here, while somebody reads the output.
+echo CHEESE_STARTUP:tools
 runtime="$HOME/.cheese/runtime"
 for tool in tmux git python3; do
   case "$tool" in python3) dir=python ;; *) dir=$tool ;; esac
   PATH="$runtime/$dir/bin:$PATH" command -v "$tool" >/dev/null 2>&1 \\
     || {{ echo "$tool is missing and cheesehost could not place it" >&2; exit 1; }}
 done
-# Ubuntu from 23.10 lets a program make a user namespace only where an
-# AppArmor profile names it, and no profile names the bwrap cheesehost placed.
-# On a machine the platform opened, the platform is the owner who allows it.
-if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
-  sudo -n "$HOME/.local/bin/cheesehost" sandbox allow < /dev/null
-fi
 {data_disk}
 # A retried enrollment writes a new device identity. Starting an active service
 # leaves the old token in memory, so the room waits for a device that never joins.

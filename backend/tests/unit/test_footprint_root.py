@@ -98,7 +98,12 @@ def test_every_side_of_a_sandbox_names_the_same_helper_cgroup_and_resolvers():
     # The helper runs root's copies of the host tools, which the bootstrap
     # installs: one it runs that is not installed fails every sandbox start.
     assert sandbox_host.TOOLS == bootstrap.SANDBOX_TOOLS
-    ran = {sandbox_host.IP, sandbox_host.XFS_QUOTA, sandbox_host.IPTABLES_SAVE[0]}
+    ran = {
+        sandbox_host.IP,
+        sandbox_host.XFS_QUOTA,
+        sandbox_host.IPTABLES_SAVE[0],
+        sandbox_host.IPTABLES_RESTORE[0],
+    }
     assert ran == {f"{bootstrap.SANDBOX_TOOLS}/{name}" for name in bootstrap.HOST_TOOLS}
 
 

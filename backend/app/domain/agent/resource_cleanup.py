@@ -573,10 +573,15 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
         for path in paths:
             rooms += ["--bind", str(path), str(path)]
         # The git the connector placed under the owner's home where the system
-        # had none good enough (`cli/internal/devenv`), shown back read-only.
-        found = Path(shutil.which("git") or "git").resolve()
-        if Path.home() in found.parents:
-            rooms += ["--ro-bind", str(found.parents[1]), str(found.parents[1])]
+        # had none good enough (`cli/internal/devenv`), shown back read-only;
+        # nothing else of the home is.
+        placed = (
+            Path.home()
+            / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+            / "runtime/git"
+        )
+        if placed.is_dir():
+            rooms += ["--ro-bind", str(placed), str(placed)]
         argv = [
             "bwrap",
             "--unshare-all",

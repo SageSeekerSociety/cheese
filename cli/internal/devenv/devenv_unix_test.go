@@ -326,3 +326,20 @@ func TestOnLinuxWhatWasPlacedIsUsedWhileTheServerCannotBeReached(t *testing.T) {
 		t.Errorf("tmux on PATH: %q", got)
 	}
 }
+
+func TestOnLinuxTheOldestTmuxAndGitTheConnectorTakesAreTheSystems(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("tmux and git are placed on Linux only")
+	}
+	machineWith(t, true, map[string]string{"tmux": "tmux 3.3", "git": "git version 2.31.0"})
+	var asked atomic.Int32
+	base, counts := toolchainServerCounting(t, nil, "", &asked)
+	if err := Ensure(context.Background(), base, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"tmux", "git"} {
+		if askedFor(counts, name) != 0 {
+			t.Errorf("the server was asked for a %s this machine does not need", name)
+		}
+	}
+}
