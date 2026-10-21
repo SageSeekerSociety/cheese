@@ -1,0 +1,11 @@
+{
+  "answerBy": "待 {name} 回答",
+  "answerMine": "待你回答",
+  "blockedFallback": "{name}卡住了，打开看看它需要什么",
+  "reviewBy": "待 {name} 审阅",
+  "reviewMine": "待你审阅",
+  "submitted": "{time}提交",
+  "version": "第 {n} 版",
+  "waitedFor": "已等 {time}",
+  "workedFor": "已做 {time}"
+}

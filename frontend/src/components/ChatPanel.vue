@@ -171,11 +171,14 @@ const panel = useChatPanel({
   emit: panelEmit,
 })
 
+// 一件任务交给的那位 AI 队友叫什么；没单独指定的，是这间房的那位。
+const taskAgentName = (handle: string | null | undefined) =>
+  (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value
 const threadLines = useThreadLines({
   mainLine: () => mainLine.value,
   roomId: () => props.topic?.id ?? null,
   timeline: panel.timeline,
-  agentNameOf: (handle) => (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value,
+  agentNameOf: taskAgentName,
 })
 // 置顶：只在频道主线上、我能在这里说话（加入了这个频道）、频道没归档时能做。
 const pinnable = computed(() => threadable.value && props.topic?.joined !== false)
@@ -207,7 +210,13 @@ function nameOf(handle: string): string {
 // 挂在拆出它的那句回复下面。认得的是跟着窗口里各块一起来的那几件（useTimelineTasks）。
 const knownTasks = computed(() => [...panel.roomTasks.known.value.values()])
 const taskLines = computed(
-  () => new Map(knownTasks.value.map((task) => [task.id, taskLine(task, panel.viewer.value, nameOf)]))
+  () =>
+    new Map(
+      knownTasks.value.map((task) => [
+        task.id,
+        taskLine(task, panel.viewer.value, nameOf, taskAgentName(task.agent_handle)),
+      ])
+    )
 )
 const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
 function taskOf(taskId: string): TaskLine | null {

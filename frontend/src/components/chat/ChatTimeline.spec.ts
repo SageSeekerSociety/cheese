@@ -13,6 +13,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { isAgentBlock } from '../../lib/authorship'
 import { collapseNotices } from '../../lib/platformNotice'
+import { taskState } from '../../lib/taskState'
 
 import ChatTimeline from './ChatTimeline.vue'
 
@@ -33,6 +34,11 @@ function said(id: string, content: string): Block {
 }
 
 const BLOCKS = [said('a', 'first'), said('b', 'second'), said('c', 'third')]
+/** 一件等看的人审阅的任务，卡上那一格的状态。 */
+const REVIEW = taskState(
+  { id: 'task', presentation: { column: 'needs_you', phrase: 'awaiting_review' }, waiting_on: 'lin' },
+  { viewer: 'lin' }
+)
 
 function mount(overrides: Record<string, unknown> = {}) {
   const rows = collapseNotices(BLOCKS)
@@ -152,7 +158,7 @@ describe('each task made on its own in the channel keeps its own card', () => {
     } as Block
   }
   function card(id: string, title: string): TaskLine {
-    return { id, title, owner: 'lin', creator: 'lin', status: '待你审阅', tone: 'mine', accepted: null, at: '' }
+    return { id, title, owner: 'lin', creator: 'lin', state: REVIEW, mine: true, accepted: null, at: '' }
   }
 
   it('two tasks created one after the other by the same person show two cards', () => {
@@ -200,8 +206,8 @@ describe('every row in the timeline has a name, on screen or not', () => {
       title: 'Fix the login redirect',
       owner: 'lin',
       creator: 'lin',
-      status: '待你审阅',
-      tone: 'mine',
+      state: REVIEW,
+      mine: true,
       accepted: null,
       at: '',
     }

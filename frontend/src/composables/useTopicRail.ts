@@ -11,6 +11,7 @@ import type { RailTask } from '../components/topic-sidebar/moreTasks'
 import type { Topic } from '../cx_types'
 import type { RailMemberMark } from '../lib/memberActivity'
 import type { RowLight } from '../lib/roomLight'
+import type { TaskState } from '../lib/taskState'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 import type { TopicUnread } from '../types/channels'
 
@@ -20,6 +21,7 @@ import { agentIdentities, agentNames } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { waitStalled, waitText } from '../lib/replyWait'
 import { lightOf as lightFor, MINE_LIGHT } from '../lib/roomLight'
+import { taskState } from '../lib/taskState'
 import { ancestorPathIds, inferTopicKind, loadExpandedTopics, saveExpandedTopics, visibleRows } from '../lib/topicTree'
 import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
 import { getAvatarUrl } from '../utils/materials'
@@ -244,6 +246,18 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     return isMine(task) ? MINE_LIGHT : null
   }
 
+  /** 挂在频道下面的一条活的状态记号和它下面那一行（`lib/taskState.ts`），和全部任务、
+   *  任务页头同一个样子。这份行没有 `session_running`，「在做」转不转看 `moving`。 */
+  function taskStateOf(task: RailTask): TaskState {
+    const agent = task.agent_handle ? agentNameMap.value.get(task.agent_handle) : undefined
+    return taskState(task, {
+      viewer: myHandle(),
+      nameOf: (handle) => memberOf(handle).name || handle,
+      agentName: agent || agentName.value,
+      now: clock.value,
+    })
+  }
+
   // 房间在等的成员里，此刻算卡住了的那几位：它那一轮报错了（立刻算），或等满了阈值。
   function stalledWaits(topic: Topic | undefined) {
     return (topic?.waits ?? []).filter((w) => waitStalled(w, clock.value))
@@ -447,6 +461,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     stalledOf,
     lightOf,
     taskLight,
+    taskStateOf,
     memberMarks,
     toggleTitle,
   }

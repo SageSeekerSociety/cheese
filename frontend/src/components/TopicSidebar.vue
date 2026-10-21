@@ -150,6 +150,7 @@ const {
   stalledOf,
   lightOf,
   taskLight,
+  taskStateOf,
   memberMarks,
   toggleTitle,
   topicById,
@@ -612,6 +613,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :task="task"
                 :selected="task.id === selectedTaskId"
                 :light="taskLight(task)"
+                :state="taskStateOf(task)"
                 :unread="unreadOf(task.id)"
                 :actions="taskActionsFor"
                 :page="page === true"
@@ -627,6 +629,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :task="task"
                 :selected="task.id === selectedTaskId"
                 :light="taskLight(task)"
+                :state="taskStateOf(task)"
                 :unread="unreadOf(task.id)"
                 :actions="taskActionsFor"
                 :page="page === true"
@@ -727,6 +730,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
                         :light="taskLight(task)"
+                        :state="taskStateOf(task)"
                         :unread="unreadOf(task.id)"
                         :actions="taskActionsFor"
                         :page="page === true"
@@ -743,6 +747,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
                         :light="taskLight(task)"
+                        :state="taskStateOf(task)"
                         :unread="unreadOf(task.id)"
                         :actions="taskActionsFor"
                         :page="page === true"

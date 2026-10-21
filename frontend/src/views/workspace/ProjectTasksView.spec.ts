@@ -96,8 +96,9 @@ it('等你的那一件写成「待你…」，等别人的照通用的说法', (
   })
   const theirs = task({ title: '别人的', presentation: { column: 'needs_you', phrase: 'awaiting_review' } })
   const view = mount([mine, theirs])
-  expect(view.getByText(t('work.board.mine.awaiting_review'))).toBeTruthy()
-  expect(view.getByText(t('work.board.phrase.awaiting_review'))).toBeTruthy()
+  // 等你的那一件只有一行写「待你审阅」；两件的状态标签都是通用的那一句。
+  expect(view.getAllByText(t('work.taskState.reviewMine'))).toHaveLength(1)
+  expect(view.getAllByText(t('work.board.phrase.awaiting_review'))).toHaveLength(2)
 })
 
 it('十四天没动静的收进「已停滞」，点开才列出来', async () => {

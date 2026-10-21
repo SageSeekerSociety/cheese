@@ -277,13 +277,13 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
     expect(row.querySelector('.row-light--red')).not.toBeNull()
     // 隐藏后代的红灯带着 main 的「在等谁、为什么」，比一句通用的「成员卡住了」更具体。
-    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('报错')
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('没做完')
 
     await fireEvent.click(toggleFor(container, 'a'))
 
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
     expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
     expect(rowFor(container, 'a2').querySelector('.row-light--red')).not.toBeNull()
-    expect(rowFor(container, 'a2').querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('报错')
+    expect(rowFor(container, 'a2').querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('没做完')
   })
 })

@@ -17,8 +17,10 @@
  * 值，运行时不构成循环。
  */
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
+import type { BoardPhrase, RoomTask } from '@/cx_types'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { TaskLine } from '@/lib/channelTasks'
+import type { TaskState } from '@/lib/taskState'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
@@ -38,6 +40,7 @@ import ThreadHead from '@/components/room/ThreadHead.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
+import { taskState } from '@/lib/taskState'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」。 */
@@ -155,6 +158,17 @@ function askBlock(
 
 // ---- 任务卡（TaskCard / TaskCreatedPost）--------------------------------------
 
+/** 一件任务的状态那一格，照 `lib/taskState.ts` 算：看的人是 alice，做它的是房间那位队友。 */
+export function catalogTaskState(phrase: BoardPhrase, over: Partial<RoomTask> = {}, viewer = 'alice'): TaskState {
+  return taskState(
+    { id: 'task-week-1', presentation: { column: 'building', phrase }, ...over },
+    { viewer, agentName: AGENT_NAME, nameOf: (handle) => CATALOG_NAMES[handle] ?? handle }
+  )
+}
+
+/** 预览里出现的几个人。 */
+export const CATALOG_NAMES: Record<string, string> = { alice: 'Alice', bobby: '波比', 'cheese-topica': AGENT_NAME }
+
 /** 频道里的一件任务，画成卡片时用到的那几样。 */
 function taskLine(over: Partial<TaskLine>): TaskLine {
   return {
@@ -162,8 +176,8 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
     title: '整理第一周的课件',
     owner: 'cheese',
     creator: 'bob',
-    status: '进行中',
-    tone: 'running',
+    state: catalogTaskState('started'),
+    mine: false,
     accepted: null,
     at: new Date(Date.now() - 5 * 60_000).toISOString(),
     latest: null,
@@ -172,7 +186,7 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
 }
 
 /** 任务页页头那一格：一件在做的任务，一位 AI 队友，它的会话在标准沙箱里。 */
-const TASK_HEADER_PROPS = {
+export const TASK_HEADER_PROPS = {
   room: { id: 'demo-room', project_id: 'demo', title: '前端', kind: 'topic', status: 'active' },
   task: {
     id: 'demo-task',
@@ -386,7 +400,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '进行中',
-        note: '状态那一枚跟着任务走：在跑的是一个点，做完是一个勾，关掉是一道横。',
+        note: '状态那一格是任务状态的记号（图标 + 那一句），各种状态的样子见「任务状态」那几页。',
         props: { task: taskLine({}), ownerName: AGENT_NAME },
         expect: '整理第一周的课件',
       },
@@ -394,7 +408,10 @@ const TASK_ENTRIES: CatalogEntry[] = [
         name: '采纳过几步',
         note: '还开着、已经采纳过的任务在状态前面写采纳了几次。',
         props: {
-          task: taskLine({ accepted: '已采纳 2 次', status: '待 波比 审阅', tone: 'waiting' }),
+          task: taskLine({
+            accepted: '已采纳 2 次',
+            state: catalogTaskState('awaiting_review', { waiting_on: 'bobby' }),
+          }),
           ownerName: AGENT_NAME,
         },
         expect: '已采纳 2 次',
@@ -405,7 +422,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
         props: {
           task: taskLine({
             latest: '发送验证码的接口写好了，正在写校验那一个',
-            status: '芝士在做',
+            state: catalogTaskState('running', { session_running: true }),
           }),
           ownerName: '王一鸣',
           ownerAvatar: '',
@@ -416,7 +433,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
         name: '支线顶上',
         note: '支线转成任务后，画在支线那一块顶上：只有任务名、负责人和状态，回复数和最后一句在下面的支线那几行里。',
         props: {
-          task: taskLine({ latest: '这一句不画', status: '芝士在做' }),
+          task: taskLine({ latest: '这一句不画', state: catalogTaskState('running', { session_running: true }) }),
           ownerName: '王一鸣',
           head: true,
         },

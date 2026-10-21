@@ -21,10 +21,11 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
-import { taskPhraseLabel } from '@/lib/board'
 import { environmentName } from '@/lib/environment'
 import { relTime } from '@/lib/relTime'
+import { taskState } from '@/lib/taskState'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
@@ -74,8 +75,12 @@ const taskAgentName = computed(() => {
   const handle = props.task?.agent_handle
   return (handle && props.memberNames[handle]) || props.agentName
 })
-// 做这件事的队友报的那一句：看板那一格已经照它画了，页头再把它的原话、谁什么时候报的
-// 摆出来。它报完之后会话结束了，旁边写「已离开」，不改它报的。任务关了就不再说。
+// 状态那一格（`lib/taskState.ts`）和它后面那一句：在做什么、已做多久，在等什么，卡在哪
+// （没留话时说一句打开看看），待谁审阅、第几版。队友报的原话照写，悬停看谁什么时候报的。
+// 它报完之后会话结束了，旁边写「已离开」，不改它报的。
+const state = computed(() =>
+  props.task ? taskState(props.task, { viewer: ME, nameOf, agentName: taskAgentName.value }) : null
+)
 const progressNote = computed(() => (isOpen.value ? props.task?.progress_note ?? '' : ''))
 const agentLeft = computed(() => isOpen.value && !!props.task?.progress_state && !!props.task?.agent_left_at)
 const progressTitle = computed(() => {
@@ -229,16 +234,22 @@ function actionTestId(id: string): string | undefined {
         task ? taskTitle(task) : ''
       }}</span>
       <span class="task-header__meta">
-        <span v-if="task" class="task-header__state" data-testid="task-phrase" :title="progressTitle">{{
-          taskPhraseLabel(task, ME)
-        }}</span>
+        <TaskStateMark
+          v-if="state"
+          class="task-header__state"
+          data-testid="task-phrase"
+          :title="progressTitle"
+          :state="state"
+          :emphasis="task?.waiting_on === ME"
+          :size="13"
+        />
         <span
-          v-if="progressNote"
+          v-if="state?.line"
           class="task-header__note"
           data-testid="task-progress-note"
-          data-user-content
-          :title="progressTitle"
-          >{{ progressNote }}</span
+          :data-user-content="progressNote ? '' : undefined"
+          :title="progressTitle ?? state?.line"
+          >{{ state?.line }}</span
         >
         <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
           t('work.task.progress.left', { name: taskAgentName })

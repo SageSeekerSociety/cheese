@@ -322,6 +322,10 @@ export interface RoomTask {
   // 这条活此刻在不在往前走（侧栏的呼吸绿）：它自己的会话在跑，或者卡走在交付链路
   // 上。和 `unseen_delivery` 是两档绿。侧栏行和项目级列表都带。
   moving?: boolean
+  // 做它的 AI 队友此刻有没有一次会话在跑（频道的任务列表、房间快照、单个任务才带；
+  // 后端 `room_task_rows.with_session_running`）。「在做」那颗记号只在它为真时动
+  // （`lib/taskState.ts`）；项目级列表和侧栏行不带，那边用 `moving`。
+  session_running?: boolean
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
   // 落在哪一格、写哪句话。必有：状态只在后端算一次，前端不另推（见 lib/board.ts）。
@@ -363,6 +367,12 @@ export interface ThreadCard {
   status: string
   pr_number?: number | null
   pr_url?: string | null
+  /** 这张卡什么时候递上来的（ISO）。 */
+  since?: string | null
+  /** 这件任务递过的第几张卡，从 1 数。 */
+  version?: number | null
+  /** 被审阅的是什么：改动的标题，或文件名。 */
+  subject?: string | null
 }
 
 export interface TopicProgress {

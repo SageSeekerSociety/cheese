@@ -68,3 +68,15 @@ it('a task whose delivery was sent back still reads as returned', async () => {
   const view = await mount(ownerItem('bounced'))
   expect(view.getByText('已退回')).toBeTruthy()
 })
+
+// 卡住了的那一行，第二行是它要你做的事。AI 队友没留话时不能空着：负责人得知道该打开看看。
+it('a stuck task with no note from its teammate says to open it and see what it needs', async () => {
+  const view = await mount({ ...ownerItem('blocked'), detail: '' })
+  expect(view.getByText('芝士卡住了，打开看看它需要什么')).toBeTruthy()
+})
+
+it('a stuck task whose teammate said what it needs shows that, not the generic line', async () => {
+  const view = await mount({ ...ownerItem('blocked'), detail: '没有预发环境的测试账号' })
+  expect(view.getByText('没有预发环境的测试账号')).toBeTruthy()
+  expect(view.queryByText('芝士卡住了，打开看看它需要什么')).toBeNull()
+})

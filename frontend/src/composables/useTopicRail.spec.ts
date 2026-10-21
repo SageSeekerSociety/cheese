@@ -129,7 +129,7 @@ describe('侧栏一行上的成员头像', () => {
     // 头像不画了，但「在等谁、为什么」还挂在灯上（悬停那一句）。
     expect(rail.lightOf('t-1')).toMatchObject({ kind: 'red', why: 'waiting' })
     expect(rail.lightOf('t-1')?.title).toContain('小知')
-    expect(rail.lightOf('t-1')?.title).toContain('报错')
+    expect(rail.lightOf('t-1')?.title).toContain('没做完')
   })
 
   it('只画此刻在干活的成员', async () => {
@@ -269,7 +269,7 @@ describe('折叠开关替收起来的行说话', () => {
 
     const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
     expect(title).not.toContain('在跑')
-    expect(title).toContain('报错')
+    expect(title).toContain('没做完')
   })
 
   it('里面是「有活在往前走」的闪绿，开关说它在走，不说只是刚交付完', async () => {
@@ -280,6 +280,6 @@ describe('折叠开关替收起来的行说话', () => {
     ])
 
     const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
-    expect(title).toContain('往前走')
+    expect(title).toContain('正在进行')
   })
 })

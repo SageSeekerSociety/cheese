@@ -150,6 +150,7 @@ function create() {
     :channels="channels"
     :channel-id="channelId"
     :names="names"
+    :agent-name="store.agentName"
     :avatars="avatars"
     :me="myHandle()"
     :loading="(status !== 'closed' && loading) || (includesClosed && closedCounts === null && !closedFailed)"

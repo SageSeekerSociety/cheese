@@ -368,7 +368,7 @@ describe('行左边那一个槽', () => {
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
     const signal = row.querySelector('.row-light--red') as HTMLElement
     expect(signal).not.toBeNull()
-    expect(signal.getAttribute('aria-label')).toContain(reason === 'mention' ? '分钟' : '报错')
+    expect(signal.getAttribute('aria-label')).toContain(reason === 'mention' ? '分钟' : '没做完')
     expect(signal.title).toBe(signal.getAttribute('aria-label'))
   })
 
@@ -405,7 +405,7 @@ describe('行左边那一个槽', () => {
     )
     const { container } = mount({ topics: rows })
     const light = topicRowFor(container, 'a').querySelector('.row-light--red')
-    expect(light?.getAttribute('title')).toContain('最近一轮报错了')
+    expect(light?.getAttribute('title')).toContain('上次没做完')
   })
 
   // 时间线说不出在等谁的那一笔（member 为 null），侧栏把它记在项目默认的队友头上。

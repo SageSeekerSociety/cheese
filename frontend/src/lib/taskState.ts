@@ -1,0 +1,204 @@
+// 一件任务的状态长什么样：哪种状态、哪个图标、哪种颜色、动不动，以及标签下面那一行
+// 说什么。频道里的任务卡、全部任务、待处理清单、任务页头和侧栏的任务行都从这一处取，
+// 同一件任务在五处是同一个样子。
+//
+// 状态不在这里算：后端 `presentation.phrase` 已经说了它在哪一格（`room_task/presentation.py`），
+// 这里只把那个码归到界面上的几种状态，再挑图标和颜色。
+//
+//   在做   running            琥珀；会话真的在跑时转动，停着时换成静止的图标
+//   在等   waiting            中性
+//   卡住   blocked            警示；第一次看到时闪一下
+//   待回答 awaiting_answer    警示，问号；第一次看到时闪一下
+//   等审   卡在审阅链路上      强调
+//   退回   bounced            危险
+//   开启 / 关闭               淡
+
+import type { BoardPhrase, RoomTask } from '@/cx_types'
+
+import { phraseLabel } from './board'
+import { relTime } from './relTime'
+import { waitedFor } from './replyWait'
+
+import { t } from '@/i18n'
+
+export type TaskStateKind = 'running' | 'waiting' | 'blocked' | 'asking' | 'review' | 'bounced' | 'open' | 'closed'
+
+/** 记号和字用哪一组 token（样式在 `TaskStateMark.vue`）。 */
+export type TaskStateTone = 'accent' | 'neutral' | 'warn' | 'ink' | 'danger' | 'faint'
+
+export interface TaskState {
+  kind: TaskStateKind
+  icon: string
+  tone: TaskStateTone
+  /** 标签：看板卡面上那一句（`work.board.phrase.*`）。 */
+  label: string
+  /** 记号在转：只给「在做」且会话真的在跑的那一刻。 */
+  live: boolean
+  /** 第一次看到时要闪一下的那件事的钥匙；不闪是 null。见 `firstSight`。 */
+  attention: string | null
+  /** 标签下面那一行；没有就空串。 */
+  line: string
+}
+
+const KIND: Record<BoardPhrase, TaskStateKind> = {
+  running: 'running',
+  waiting: 'waiting',
+  blocked: 'blocked',
+  awaiting_answer: 'asking',
+  gate_running: 'review',
+  awaiting_checks: 'review',
+  fixing_checks: 'review',
+  resolving_conflict: 'review',
+  updating_branch: 'review',
+  awaiting_review: 'review',
+  checks_failed: 'review',
+  bounced: 'bounced',
+  started: 'open',
+  idle: 'open',
+  draft: 'open',
+  accepted: 'closed',
+  completed: 'closed',
+  closed: 'closed',
+  archived: 'closed',
+}
+
+/** 后端码归到哪种状态。这一版不认识的码（后端先发了新短语）当作开启，不画成警示。 */
+export function stateKind(phrase: BoardPhrase): TaskStateKind {
+  return KIND[phrase] ?? 'open'
+}
+
+const LOOK: Record<TaskStateKind, { icon: string; tone: TaskStateTone }> = {
+  running: { icon: 'mdi-timelapse', tone: 'accent' },
+  waiting: { icon: 'mdi-timer-sand', tone: 'neutral' },
+  blocked: { icon: 'mdi-alert-circle', tone: 'warn' },
+  asking: { icon: 'mdi-help-circle', tone: 'warn' },
+  review: { icon: 'mdi-file-eye-outline', tone: 'ink' },
+  bounced: { icon: 'mdi-undo-variant', tone: 'danger' },
+  open: { icon: 'mdi-circle-outline', tone: 'faint' },
+  closed: { icon: 'mdi-minus-circle-outline', tone: 'faint' },
+}
+
+/** 「在做」但会话停着：同一种颜色，换一个不转的图标 —— 转与不转关掉动画之后也分得开。 */
+const RUNNING_IDLE_ICON = 'mdi-progress-clock'
+/** 关闭里最后一步被采纳的那种画一个勾，没交付就关了的画一道横。 */
+const ACCEPTED_ICON = 'mdi-check-circle-outline'
+
+/** 一种状态的图标和颜色，给要自己换标签的地方用（全部任务里收尾那一会儿写「进行中」）。 */
+export function stateLook(kind: TaskStateKind): { icon: string; tone: TaskStateTone } {
+  return LOOK[kind]
+}
+
+type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
+  Partial<
+    Pick<
+      RoomTask,
+      | 'progress_note'
+      | 'progress_set_at'
+      | 'session_running'
+      | 'moving'
+      | 'waiting_on'
+      | 'awaits_me'
+      | 'reviewer_handle'
+      | 'card'
+    >
+  >
+
+/** 做它的 AI 队友此刻是不是真的在跑。频道的任务列表和单个任务带 `session_running`；
+ *  项目级列表和侧栏行只带 `moving`（会话在跑，或卡走在交付链路上）—— 「在做」的时候
+ *  没有卡在链路上，所以那边 `moving` 就是会话在跑。 */
+export function sessionRunning(row: Pick<StateRow, 'session_running' | 'moving'>): boolean {
+  return row.session_running ?? row.moving === true
+}
+
+// 这一页里已经闪过的那几件：任务 + 它进这个状态的那一刻。列表刷新、组件重画、同一件
+// 在别的表面又出现一次都不再闪；它再卡住一次（报的时刻变了）才再闪。
+const seen = new Set<string>()
+
+/** 这件事是不是这一页第一次看到：是就记下并回 true，之后都回 false。 */
+export function firstSight(key: string): boolean {
+  if (seen.has(key)) return false
+  seen.add(key)
+  return true
+}
+
+export interface StateContext {
+  /** 看的人的 handle：等的是他就写「待你审阅」「待你回答」。 */
+  viewer: string
+  /** 做这件任务的 AI 队友叫什么；空的时候用默认名。 */
+  agentName?: string
+  /** handle → 名字。 */
+  nameOf?: (handle: string) => string
+  /** 现在几点（毫秒）；不给就是此刻。 */
+  now?: number
+}
+
+function joined(parts: (string | null | undefined | false)[]): string {
+  return parts.filter((part): part is string => !!part).join(' · ')
+}
+
+/** 一件任务此刻的状态：图标、颜色、动不动、标签和下面那一行。 */
+export function taskState(row: StateRow, ctx: StateContext): TaskState {
+  const { phrase } = row.presentation
+  const kind = stateKind(phrase)
+  const look = LOOK[kind]
+  const now = ctx.now ?? Date.now()
+  const nameOf = ctx.nameOf ?? ((handle: string) => handle)
+  const note = (row.progress_note ?? '').trim()
+  const live = kind === 'running' && sessionRunning(row)
+  const answersMine = (!!row.waiting_on && row.waiting_on === ctx.viewer) || row.awaits_me === true
+  let icon = look.icon
+  let line = ''
+  switch (kind) {
+    case 'running': {
+      if (!live) icon = RUNNING_IDLE_ICON
+      const time = waitedFor(row.progress_set_at, now)
+      line = joined([note, time && t('work.taskState.workedFor', { time })])
+      break
+    }
+    case 'waiting': {
+      const time = waitedFor(row.progress_set_at, now)
+      line = joined([note, time && t('work.taskState.waitedFor', { time })])
+      break
+    }
+    case 'blocked':
+      line = note || t('work.taskState.blockedFallback', { name: ctx.agentName || t('work.room.defaultAgentName') })
+      break
+    case 'asking':
+      line = answersMine
+        ? t('work.taskState.answerMine')
+        : row.waiting_on
+          ? t('work.taskState.answerBy', { name: nameOf(row.waiting_on) })
+          : ''
+      break
+    case 'review': {
+      // 检查没过时下一步在负责人手上，不是在等谁审阅：那一句不写。
+      const reviewer = phrase === 'checks_failed' ? null : row.waiting_on ?? row.reviewer_handle ?? null
+      const card = row.card
+      const since = card?.since ? relTime(card.since) : ''
+      const reviewsMine = reviewer === ctx.viewer || (phrase === 'awaiting_review' && row.awaits_me === true)
+      line = joined([
+        reviewsMine
+          ? t('work.taskState.reviewMine')
+          : reviewer && t('work.taskState.reviewBy', { name: nameOf(reviewer) }),
+        card?.subject,
+        card?.version ? t('work.taskState.version', { n: card.version }) : null,
+        since && t('work.taskState.submitted', { time: since }),
+      ])
+      break
+    }
+    case 'closed':
+      if (phrase === 'accepted') icon = ACCEPTED_ICON
+      break
+    default:
+      break
+  }
+  return {
+    kind,
+    icon,
+    tone: look.tone,
+    label: phraseLabel(phrase),
+    live,
+    attention: kind === 'blocked' || kind === 'asking' ? `${row.id}:${phrase}:${row.progress_set_at ?? ''}` : null,
+    line,
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "answerBy": "Waiting for {name} to answer",
+  "answerMine": "Waiting for your answer",
+  "blockedFallback": "{name} is stuck. Open it to see what it needs",
+  "reviewBy": "Waiting for {name} to review",
+  "reviewMine": "Waiting for your review",
+  "submitted": "Submitted {time}",
+  "version": "Version {n}",
+  "waitedFor": "Waiting for {time}",
+  "workedFor": "Working for {time}"
+}

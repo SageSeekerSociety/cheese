@@ -13,6 +13,7 @@
 import type { ProjectSituation } from '@/api/projectProgress'
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { RoomTask } from '@/cx_types'
+import type { TaskState } from '@/lib/taskState'
 import type { ProgressItem } from '@/types/projectProgress'
 
 import { computed, ref } from 'vue'
@@ -25,9 +26,10 @@ import MarkdownView from '@/components/common/MarkdownView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import OverviewDraftForm from '@/components/overview/OverviewDraftForm.vue'
 import SituationCard from '@/components/overview/SituationCard.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
-import { myPhraseLabel, phraseLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
+import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
 /** 从一道题领出来的项目截到哪一刻。 */
@@ -156,10 +158,9 @@ const people = computed(() => {
     .map(([owner, list]) => ({ owner, tasks: [...list].sort((a, b) => rank(a) - rank(b)) }))
     .sort((a, b) => (a.owner === props.me ? -1 : b.owner === props.me ? 1 : b.tasks.length - a.tasks.length))
 })
-function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'plain' } {
-  if (task.awaits_me) return { text: myPhraseLabel(task.presentation.phrase), tone: 'mine' }
-  if (task.presentation.phrase === 'running') return { text: phraseLabel('running'), tone: 'running' }
-  return { text: phraseLabel(task.presentation.phrase), tone: 'plain' }
+// 状态那一格和全部任务、频道里的卡是同一个记号（`lib/taskState.ts`）。
+function stateOf(task: RoomTask): TaskState {
+  return taskState(task, { viewer: props.me, nameOf })
 }
 </script>
 
@@ -327,9 +328,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                   <span class="ov-task__title t-body" :data-user-content="task.title || undefined">{{
                     taskTitle(task)
                   }}</span>
-                  <span class="ov-task__state" :class="`ov-task__state--${stateOf(task).tone}`">
-                    {{ stateOf(task).text }}
-                  </span>
+                  <TaskStateMark class="ov-task__state" :state="stateOf(task)" :emphasis="task.awaits_me === true" />
                 </button>
               </li>
               <li v-if="person.tasks.length > PER_PERSON">
@@ -566,14 +565,6 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   flex-shrink: 0;
   font-size: 13px;
   line-height: var(--lh-13);
-  color: var(--muted);
-}
-.ov-task__state--mine {
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-.ov-task__state--running {
-  color: var(--ok-ink);
 }
 .ov-person__more {
   margin-left: 28px;
