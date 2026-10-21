@@ -328,8 +328,7 @@ def _topic_out(
     # 侧栏的呼吸绿：房间里、支线里、名下的活里有一处在跑（调用方聚合好传进来），
     # 或者房间自己那张卡走在交付链路上。和常亮绿是两档，见 `TopicOut.moving`。
     out.moving = (
-        topic.id in (moving or ())
-        or shown.column is presentation.Column.delivering
+        topic.id in (moving or ()) or shown.column is presentation.Column.delivering
     )
     data = out.model_dump(mode="json")
     data["presentation"] = shown.as_dict()
