@@ -14,6 +14,9 @@ def view(row: DeviceClaudeLoginRow) -> dict:
         "logged_in": row.logged_in,
         "auth_method": row.auth_method,
         "subscription_type": row.subscription_type,
+        # Which Claude account: never a token, only what names it.
+        "account_email": row.account_email,
+        "account_org": row.account_org,
         # What its owner named it.
         "name": row.name,
         "checked_at": row.checked_at.isoformat(),

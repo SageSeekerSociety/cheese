@@ -215,6 +215,11 @@ class DeviceClaudeLoginRow(Base):
     # Subscription status reported by Claude Code, and its plan (`max`, `pro`, …).
     auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subscription_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Which Claude account it is — the email and organization `claude auth
+    # status` names — so several logins on one machine can be told apart.
+    # None until the machine is next asked.
+    account_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    account_org: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # What its owner named this connection on 「模型连接」; None until they do.
     # The machine never reports it, so its reports leave it alone, and the own
     # agents on the connection are named after it.

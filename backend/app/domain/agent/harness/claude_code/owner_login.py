@@ -133,6 +133,9 @@ class ClaudeLogin:
     logged_in: bool
     auth_method: str | None = None
     subscription_type: str | None = None
+    #: Which Claude account it is, as `claude auth status` names it.
+    account_email: str | None = None
+    account_org: str | None = None
     #: What the machine calls this login (its directory's name there).
     local_id: str = FIRST_LOGIN
 
@@ -145,15 +148,19 @@ def _one(local_id: str, entry: dict) -> ClaudeLogin:
         status.get("loggedIn") is True and status.get("authMethod") == "claude.ai"
     )
 
-    def short(name: str) -> str | None:
+    def short(name: str, limit: int = 32) -> str | None:
         value = status.get(name)
-        return value[:32] if logged_in and isinstance(value, str) and value else None
+        if not (logged_in and isinstance(value, str) and value.strip()):
+            return None
+        return value.strip()[:limit]
 
     return ClaudeLogin(
         installed=True,
         logged_in=logged_in,
         auth_method=short("authMethod"),
         subscription_type=short("subscriptionType"),
+        account_email=short("email", 320),
+        account_org=short("orgName", 255),
         local_id=local_id,
     )
 
@@ -207,6 +214,8 @@ async def remember(
             "logged_in": login.logged_in,
             "auth_method": login.auth_method,
             "subscription_type": login.subscription_type,
+            "account_email": login.account_email,
+            "account_org": login.account_org,
             "checked_at": now,
         }
         row = await session.scalar(
