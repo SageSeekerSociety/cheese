@@ -37,6 +37,7 @@ jobs:
     env:
       CHEESE_R2_ENV: /home/nictheboy/ops/r2.env
       CHEESE_BACKUP_DIR: /home/nictheboy/backups
+      UV: /home/nictheboy/.local/bin/uv
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Prove restore failures fail the drill
@@ -56,21 +57,23 @@ jobs:
           fi
       - name: Prepare R2 drill dependencies
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
+        # uv, not `python3 -m venv`: the box's python3 has no ensurepip (no
+        # python3.X-venv package), so a venv cannot be made that way. uv makes
+        # its environments itself, and caches them. Called by absolute path: the
+        # runner service's PATH is not the login shell's. Same as
+        # gateway-db-backup.yml and backup-freshness.yml.
         run: |
-          python3 -m venv "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/pip" install --disable-pip-version-check boto3==1.40.61
+          [ -x "$UV" ] || { echo "::error::uv is not at $UV on this runner"; exit 1; }
+          "$UV" run --no-project --with boto3==1.40.61 python3 -c 'import boto3'
       - name: Download latest R2 DB dump and prove it restores
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
         run: |
           TMP="$(mktemp -d "$RUNNER_TEMP/r2-db-$GITHUB_RUN_ID.XXXXXX")"
           trap 'rm -rf -- "$TMP"' EXIT
-          TMPDIR="$TMP" "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python" deploy/r2-restore.py
+          TMPDIR="$TMP" "$UV" run --no-project --with boto3==1.40.61 python3 deploy/r2-restore.py
       - name: Restore and verify the uploads mirror in a new temporary directory
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
         run: |
           TMP="$(mktemp -d "$RUNNER_TEMP/r2-uploads-$GITHUB_RUN_ID.XXXXXX")"
           trap 'rm -rf -- "$TMP"' EXIT
-          "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python" deploy/r2-sync-uploads.py --restore "$TMP/uploads" --verify "$TMP/uploads"
-      - name: Remove R2 drill environment
-        if: ${{ always() }}
-        run: rm -rf -- "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          "$UV" run --no-project --with boto3==1.40.61 python3 deploy/r2-sync-uploads.py --restore "$TMP/uploads" --verify "$TMP/uploads"
