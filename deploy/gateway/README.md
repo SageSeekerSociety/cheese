@@ -335,6 +335,20 @@ Check the loaded configuration's request transformation and nonzero token prices
 docker exec -i cheese-gateway-litellm-blue-1 python - /app/config.yaml < deploy/gateway/check_config.py  # or -green-1, whichever serves
 ```
 
+## Prices for web searches
+
+Claude Code's WebSearch is run by the upstream behind a row, and an upstream
+that bills searches bills each one on top of the tokens. A row prices them in
+`model_info.search_context_cost_per_query` (USD per search, the same in all
+three sizes), and the search cost lands in the call's spend, so it is charged
+in credits and counted by the key's budget like the tokens are. DeepSeek's
+official row carries $0.00075 a search ($0.75 per 1,000 successful requests).
+The pinned LiteLLM prices one search per answer for `deepseek` however many
+the answer reports; `patch_deepseek_search_cost.py` makes it count
+`usage.server_tool_use.web_search_requests`, as it does for Anthropic, and
+`test_deepseek_search_cost.py` holds the charge to tokens plus each search. A
+row that cannot search needs no price.
+
 ## Prices for subscription models
 
 The Claude models served through the platform's subscription never pass

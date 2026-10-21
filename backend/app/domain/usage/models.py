@@ -235,6 +235,12 @@ class ComputeGrant(UuidPk, Timestamps, Base):
 #: The ``route`` of a usage row that charges cloud compute rather than a model
 #: call (``usage.compute``): no tokens, and no part of any count of calls.
 COMPUTE_ROUTE = "compute"
+#: The ``route`` of a usage row that charges a web search the platform ran
+#: itself (``usage.search``): like a compute charge, credits and no call.
+SEARCH_ROUTE = "search"
+#: The routes of rows that charge credits for something other than a model
+#: call.
+NOT_MODEL_CALLS = (COMPUTE_ROUTE, SEARCH_ROUTE)
 
 
 class ProjectCreditBudget(Timestamps, Base):
@@ -400,7 +406,8 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     kind: Mapped[str] = mapped_column(String(24), default="chat")
     # The supply the traffic actually took (issue #218): "gateway" (LiteLLM),
     # "subscription" (metering proxy), "native" (profile-pinned credentials);
-    # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``).
+    # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``), "search"
+    # for a web search the platform ran (``SEARCH_ROUTE``).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
     # The team that paid, and the credits charged for this row (#2397). Every

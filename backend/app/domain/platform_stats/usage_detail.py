@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.block.models import Block
 from app.domain.event_author import AuthorType
 from app.domain.project.models import Project
-from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage, call_count
+from app.domain.usage.models import NOT_MODEL_CALLS, ResourceUsage, call_count
 from app.domain.user.models import User, UserProfile
 
 #: 「每小时」那条线和「什么时候用的」用北京时间读：用的人在这个时区。
@@ -46,7 +46,7 @@ RECENT_CALLS = 50
 #: 窗口不长于这么多天时给每小时的序列；更长的窗口按天看就够了，按小时是几千个点。
 HOURLY_MAX_DAYS = 7
 
-_MODEL_CALLS = ResourceUsage.route != COMPUTE_ROUTE
+_MODEL_CALLS = ResourceUsage.route.notin_(NOT_MODEL_CALLS)
 
 
 def _in_window(since: datetime, until: datetime) -> tuple[Any, ...]:
