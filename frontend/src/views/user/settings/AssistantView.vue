@@ -227,7 +227,8 @@ const changed = () =>
 
 .ast__item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  /* The chip column is as wide as its longest label, so every summary starts at the same edge. */
+  grid-template-columns: 6.5em minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
   padding: 12px 24px;
@@ -235,6 +236,7 @@ const changed = () =>
 }
 
 .ast__chip {
+  justify-self: start;
   padding: 1px 8px;
   font-size: 12px;
   line-height: var(--lh-12);
@@ -273,5 +275,17 @@ const changed = () =>
   line-height: var(--lh-12);
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* The card's own padding narrows on a phone (`settings-card.css`): these blocks follow it. */
+@media (max-width: 767.98px) {
+  .ast__checks,
+  .ast__words {
+    padding-inline: 16px;
+  }
+
+  .ast__item {
+    padding-inline: 16px;
+  }
 }
 </style>
