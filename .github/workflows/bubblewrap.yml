@@ -10,6 +10,8 @@ on:
       - scripts/build-bubblewrap.sh
       - .github/workflows/bubblewrap.yml
       - cli/internal/daemoncmd/sandbox.go
+      # The release the allow job places is the one pinned there.
+      - backend/app/domain/agent/toolchain.py
   workflow_dispatch: {}
 
 permissions:
@@ -66,7 +68,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           (cd cli && go build -o "$RUNNER_TEMP/cheesehost" .)
-          revision=$(sed -n 's/^revision=//p' scripts/build-bubblewrap.sh)
+          # The release machines are given (`agent/toolchain.py`): a recipe
+          # change is published only after it merges, so its own revision
+          # has no release yet.
+          revision=$(sed -n 's/^BUBBLEWRAP_REVISION = "\(.*\)"$/\1/p' backend/app/domain/agent/toolchain.py)
           gh release download "bubblewrap-v$revision" -p "*-linux-x64.tar.gz" -D "$RUNNER_TEMP"
           mkdir -p ~/.cheese/runtime/bubblewrap
           tar -xzf "$RUNNER_TEMP"/bubblewrap-*-linux-x64.tar.gz -C ~/.cheese/runtime/bubblewrap --strip-components=1
@@ -99,4 +104,4 @@ jobs:
           source=$(sed -n 's/^source_sha256=//p' scripts/build-bubblewrap.sh)
           gh release create "bubblewrap-v$revision" dist/* \
             --title "bubblewrap $revision" \
-            --notes "bubblewrap $version, built statically against musl in Alpine 3.22 by \`scripts/build-bubblewrap.sh\` for cheesehost to place on Linux machines. Source: the upstream release tarball, SHA-256 \`$source\`. Licensed LGPL-2.0-or-later; COPYING is in each archive."
+            --notes "bubblewrap $version, built statically against musl in Alpine 3.22 by \`scripts/build-bubblewrap.sh\` for cheesehost to place on Linux machines. Source: the upstream release tarball, SHA-256 \`$source\`. Each archive's \`NOTICE\` lists bubblewrap and the libraries bwrap is linked from, with version and license, and \`licenses/\` carries their license texts."
