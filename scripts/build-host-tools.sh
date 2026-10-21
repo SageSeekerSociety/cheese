@@ -61,7 +61,7 @@ fetch() { # url sha256
 # Every program shipped must load no shared library: a machine gets the file.
 static() {
   for program in "$@"; do
-    if readelf -d "$program" 2>/dev/null | grep -q NEEDED; then
+    if ! readelf -h "$program" >/dev/null || readelf -d "$program" | grep -q NEEDED; then
       echo "$program is not static" >&2
       exit 1
     fi
