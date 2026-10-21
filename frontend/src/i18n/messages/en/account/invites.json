@@ -1,6 +1,6 @@
 {
   "title": "Invite friends",
-  "lede": "A friend who signs up with your code gets 50 credits after finishing the guide and creating a first project. If they accept a first delivery within 7 days of signing up, they get 100 more, and you get 150 credits.",
+  "lede": "A friend who signs up with your code gets 50 credits after finishing the guide and creating a first project. If within 7 days of signing up they accept a first delivery from Cheese, that is, actually get something done with it, they get 100 more and you get 150 credits.",
   "loadFailed": "Could not load your invitations",
   "retry": "Retry",
   "code": {
@@ -16,7 +16,7 @@
     "title": "Rewards earned",
     "credits": "Credits",
     "creditsValue": "{n} credits",
-    "note": "Invitations earn at most 1,500 credits a month; once you reach it, friends who get started that month earn you nothing more. Credits last 365 days from when they are paid and are used after the month's plan credits.",
+    "note": "Invitations earn at most 1,500 credits a month; once you reach it, friends who accept their first delivery that month earn you nothing more. Credits last 365 days from when they are paid and are used after the month's plan credits.",
     "viewCredits": "View personal credits"
   },
   "people": {
@@ -26,8 +26,8 @@
     "stage": {
       "registered": "Signed up · no project yet",
       "onboarded": "Awaiting first acceptance",
-      "activated": "Active · +{n} credits",
-      "activatedNoCredits": "Active",
+      "activated": "Accepted · +{n} credits",
+      "activatedNoCredits": "Accepted",
       "lapsed": "7 days passed"
     }
   }
