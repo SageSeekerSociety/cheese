@@ -302,7 +302,7 @@ describe('芝士这一轮做了什么', () => {
               parts: {
                 steps: [
                   { call: 'thinking-0', name: 'thinking', args: '', ms: 3000 },
-                  { call: 'c1', name: 'cheese_task_write', args: '{"task":88}', failed: '草稿还不完整' },
+                  { call: 'c1', name: 'cheese_problem_write', args: '{"task":88}', failed: '草稿还不完整' },
                 ],
                 edits: [{ draft: 41, changed: { deadline: { before: 1, after: 2 } }, kept: [], notes: [] }],
                 published: [],
@@ -319,7 +319,7 @@ describe('芝士这一轮做了什么', () => {
     const answer = a.messages.value[1]
     expect(answer.steps?.map((s) => [s.name, s.state, s.ms ?? null])).toEqual([
       ['thinking', 'done', 3000],
-      ['cheese_task_write', 'failed', null],
+      ['cheese_problem_write', 'failed', null],
     ])
     expect(answer.edits?.[0].changed).toEqual({ deadline: { before: 1, after: 2 } })
     // Kept before the server kept writes: shown, not undone.

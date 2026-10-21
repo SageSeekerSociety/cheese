@@ -110,14 +110,19 @@ class GatewayChat:
         timeout: float,
         json_response: bool = False,
         images: Sequence[bytes] | None = None,
+        max_tokens: int | None = None,
+        extra: Mapping[str, object] | None = None,
     ) -> Completion:
+        """``max_tokens`` overrides the client's for this call; ``extra`` adds
+        provider fields to the request (``thinking`` to switch reasoning off)."""
         body: dict = {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": self._user_content(prompt, images)},
             ],
-            "max_tokens": self._max_tokens,
+            "max_tokens": max_tokens or self._max_tokens,
+            **(extra or {}),
         }
         if json_response:
             body["response_format"] = {"type": "json_object"}

@@ -43,8 +43,10 @@ from app.domain.agent_instance.models import (
 from app.domain.assistant.models import (
     AssistantChange,
     AssistantConversation,
+    AssistantGateCheck,
     AssistantGatewayKey,
     AssistantProposal,
+    AssistantRules,
 )
 from app.domain.device.models import DeviceRow
 from app.domain.integration.models import Integration
@@ -247,6 +249,12 @@ async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
     )
     await session.execute(
         delete(AssistantProposal).where(AssistantProposal.user_id == user_id)
+    )
+    await session.execute(
+        delete(AssistantGateCheck).where(AssistantGateCheck.user_id == user_id)
+    )
+    await session.execute(
+        delete(AssistantRules).where(AssistantRules.user_id == user_id)
     )
     await session.execute(
         delete(Notification).where(
