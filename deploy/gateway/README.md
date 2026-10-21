@@ -62,10 +62,12 @@ preservation, and starts the idle color with the configuration bundled in the
 image. The new color takes traffic only after four checks: its Docker health
 check, `/health/readiness`, and the proxy's own check, plus a `GET /v1/models`
 sent to it with the master key. That listing must include every model the
-serving color lists, apart from one this release removes from `config.yaml`
-that no database row of the serving color serves (`/model/info`, `db_model`),
-so a model added on the admin page has loaded from the database. `/health` is
-not used: it calls every model. Then one runtime-API
+serving color lists, so a model added on the admin page has loaded from the
+database, and the new color must offer at least one selectable model. The only
+model allowed to go missing is one this release removes from `config.yaml`, no
+database row of the serving color serves (`/model/info`, `db_model`), and the
+operator names in the workflow's `allow_drop` input (`GATEWAY_ALLOW_DROP`).
+`/health` is not used: it calls every model. Then one runtime-API
 command makes the new color serve and sets the old one to drain. The proxy is
 not restarted, so no caller connection closes, and the next request on any of
 them goes to the new color. The old color finishes the streams it has; the
