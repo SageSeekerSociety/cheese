@@ -323,7 +323,7 @@ def test_a_message_through_any_harness_silences_the_reminder(
         notices.append(text)
         return True
 
-    monkeypatch.setattr(chat, "notify_running_turn", notice)
+    monkeypatch.setattr(chat, "notify_running_session", notice)
 
     def begin(topic_id, prompt, reply, agent=None):
         stub_hooks.starts(topic_id)

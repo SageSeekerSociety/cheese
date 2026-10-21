@@ -281,27 +281,12 @@ def _turn_running_elsewhere(client) -> None:
     client.portal.call(_insert)
 
 
-def _turn_starting_here(monkeypatch) -> None:
-    """A turn this process has just started in another project's conversation,
-    whose delivered row is not written yet: the in-process half of what the
-    sidebar reads (`AgentWorkRunner.running_topic_ids`), which other tests in
-    the same worker leave behind, so this must not cost the list a `tasks`
-    lookup either."""
-    from app.api.deps import get_work_runner
-
-    runner = get_work_runner()
-    elsewhere = uuid.uuid4()
-    here = runner.running_topic_ids
-    monkeypatch.setattr(runner, "running_topic_ids", lambda: here() | {elsewhere})
-
-
 def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monkeypatch):
     """Across a populated project, `GET /topics?project_id=` reads `topics`,
     `threads`, task `accept_cards`, underway `tasks`, and `awaiting_an_answer`
     `blocks` once each, while preserving the full response field set."""
     pid, room_ids = _seed_populated_project(client)
     _turn_running_elsewhere(client)
-    _turn_starting_here(monkeypatch)
     headers = session_auth_headers("alice")
 
     with counting_sql(client) as seen:

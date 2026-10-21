@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.delivery.models import NativeInput
 from app.domain.review.models import AcceptCard
 from app.domain.room_task.models import Task, TaskStatus
 from tests.integration.conftest import (
@@ -495,21 +496,27 @@ def _agent_wrote(
     return at
 
 
-def _turn_started(client, conversation_id: str, *, ago, author="alice"):
-    """这里又开过一轮 —— 一行 `agent_turns`，不写话也算。"""
+def _input(client, project_id: str, conversation_id: str, *, ago, read: bool):
+    """一份输入写给了这里的会话；``read`` 说会话有没有把它读进去（`echoed_at`）。
+
+    没读的那一态：传输接住了、会话还没读到，或者进程带着它走了 —— 谁也没听见它。
+    """
     at = datetime.now(UTC) - ago
 
     async def _add() -> None:
         async with client.test_factory() as s:
             s.add(
-                AgentTurn(
-                    id=uuid.uuid4(),
+                NativeInput(
+                    project_id=uuid.UUID(project_id),
                     conversation_id=uuid.UUID(conversation_id),
-                    continuation_id=uuid.uuid4(),
-                    author=author,
-                    content="开始吧",
-                    started_at=at,
-                    delivered_at=at,
+                    recipient_handle=AGENT,
+                    harness="claude-code",
+                    native_session_id="sess-rail",
+                    input_id=uuid.uuid4(),
+                    work_id=uuid.uuid4(),
+                    registered_at=at,
+                    accepted_at=at,
+                    echoed_at=at if read else None,
                 )
             )
             await s.commit()
@@ -518,13 +525,9 @@ def _turn_started(client, conversation_id: str, *, ago, author="alice"):
     return at
 
 
-def _turn_opened(client, conversation_id: str, *, ago, delivered: bool, stopped=False):
-    """开了一轮：一行 `agent_turns`，`delivered` 说 prompt 有没有送到会话。
-
-    `open_turn` 先把行落下来，传输接住才写 `delivered_at`；`delivered=False` 正是
-    两步之间进程死掉的那一态 —— 会话从没听过这个 prompt。`stopped=True` 是清扫 /
-    `retire_failed` 之后：行只关不删，会一直留着。
-    """
+def _turn_opened(client, conversation_id: str, *, ago):
+    """平台开了一轮：一行 `agent_turns`，连「送到了」都记上 —— 却没有任何会话
+    读进过什么。"""
     at = datetime.now(UTC) - ago
 
     async def _add() -> None:
@@ -537,8 +540,7 @@ def _turn_opened(client, conversation_id: str, *, ago, delivered: bool, stopped=
                     author="alice",
                     content="接着干",
                     started_at=at,
-                    delivered_at=at if delivered else None,
-                    stopped_at=at + timedelta(seconds=1) if stopped else None,
+                    delivered_at=at,
                 )
             )
             await s.commit()
@@ -671,10 +673,11 @@ def test_the_member_speaking_again_clears_it(client):
     assert _task_row(row, ids["task"])["incomplete_since"] is None
 
 
-def test_a_newer_turn_starting_clears_it_even_without_a_word(client):
-    """这里又开了一轮 —— 就算它还没说话，坏掉的那一轮也不再是当下的事。
+def test_a_session_reading_an_input_there_clears_it_even_without_a_word(client):
+    """这里的会话又读进了一份输入 —— 一句话、一条指令、平台替它续上的那一下 ——
+    就算它还没说话，坏掉的那一次也不再是当下的事。
 
-    开了新的一轮就是「被接手了」；新的一轮自己再坏，是**另一条**失败、另一个钟。
+    读进去就是「被接手了」；接手的那段工作自己再坏，是**另一条**失败、另一个钟。
     """
     project = _project(client)
     room = _room(client, project)
@@ -693,18 +696,15 @@ def test_a_newer_turn_starting_clears_it_even_without_a_word(client):
     _broke(client, project, ids["task"], ago=timedelta(minutes=9))
     assert _room_row(client, project, room, "alice")["incomplete_since"] is not None
 
-    _turn_started(client, ids["task"], ago=timedelta(minutes=1))
+    _input(client, project, ids["task"], ago=timedelta(minutes=1), read=True)
 
     row = _room_row(client, project, room, "alice")
     assert row["incomplete_since"] is None
     assert _task_row(row, ids["task"])["incomplete_since"] is None
 
 
-def test_an_undelivered_turn_does_not_clear_the_old_failure(client):
-    """行落下了、prompt 却没送到会话 —— 没人接手，旧失败继续亮着。
-
-    `open_turn` 在传输接受之前就写 `agent_turns`；进程随后死掉时这一行会留着，
-    但会话从没听过它，它不是「又开了一轮在干」：不清掉红灯。
+def test_an_input_nobody_read_does_not_clear_the_old_failure(client):
+    """写给了会话、会话却没读到 —— 没人接手，旧失败继续亮着。
     两个列表（侧栏与「全部任务」）读的是同一份事实。
     """
     project = _project(client)
@@ -716,14 +716,14 @@ def test_an_undelivered_turn_does_not_clear_the_old_failure(client):
         [
             {
                 "name": "task",
-                "title": "没送到所以还没人接手的活",
+                "title": "没读到所以还没人接手的活",
                 "owner_handle": "alice",
             }
         ],
     )
     at = _broke(client, project, ids["task"], ago=timedelta(minutes=9))
 
-    _turn_opened(client, ids["task"], ago=timedelta(minutes=1), delivered=False)
+    _input(client, project, ids["task"], ago=timedelta(minutes=1), read=False)
 
     row = _room_row(client, project, room, "alice")
     task = _task_row(row, ids["task"])
@@ -739,8 +739,9 @@ def test_an_undelivered_turn_does_not_clear_the_old_failure(client):
     )
 
 
-def test_a_swept_undelivered_turn_does_not_clear_it_either(client):
-    """清扫把那一行关掉（只 close/warn，不删行）—— 关掉不等于有人接手。"""
+def test_a_turn_the_platform_opened_does_not_clear_it(client):
+    """平台开了一轮、连送到都记上了，可哪个会话都没读进什么 —— 开一轮只说明平台
+    想让它接着干，不说明有谁接手了：旧失败继续亮着。"""
     project = _project(client)
     room = _room(client, project)
     ids = _planted(
@@ -750,28 +751,21 @@ def test_a_swept_undelivered_turn_does_not_clear_it_either(client):
         [
             {
                 "name": "task",
-                "title": "崩溃后被清扫过的活",
+                "title": "平台开了一轮的活",
                 "owner_handle": "alice",
             }
         ],
     )
     at = _broke(client, project, ids["task"], ago=timedelta(minutes=9))
 
-    _turn_opened(
-        client,
-        ids["task"],
-        ago=timedelta(minutes=1),
-        delivered=False,
-        stopped=True,
-    )
+    _turn_opened(client, ids["task"], ago=timedelta(minutes=1))
 
     row = _room_row(client, project, room, "alice")
-    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
     assert abs(_incomplete(_task_row(row, ids["task"])) - at) < timedelta(seconds=1)
 
 
-def test_only_a_turn_that_reached_the_session_clears_it(client):
-    """同一件活：先有一轮没送到（红灯不动），送到之后才算接手（红灯清掉）。"""
+def test_only_an_input_the_session_read_clears_it(client):
+    """同一件活：先有一份没读到（红灯不动），读到了才算接手（红灯清掉）。"""
     project = _project(client)
     room = _room(client, project)
     ids = _planted(
@@ -781,18 +775,18 @@ def test_only_a_turn_that_reached_the_session_clears_it(client):
         [
             {
                 "name": "task",
-                "title": "先没送到、后送到了的活",
+                "title": "先没读到、后读到了的活",
                 "owner_handle": "alice",
             }
         ],
     )
     at = _broke(client, project, ids["task"], ago=timedelta(minutes=9))
 
-    _turn_opened(client, ids["task"], ago=timedelta(minutes=2), delivered=False)
+    _input(client, project, ids["task"], ago=timedelta(minutes=2), read=False)
     row = _room_row(client, project, room, "alice")
     assert abs(_incomplete(_task_row(row, ids["task"])) - at) < timedelta(seconds=1)
 
-    _turn_opened(client, ids["task"], ago=timedelta(seconds=30), delivered=True)
+    _input(client, project, ids["task"], ago=timedelta(seconds=30), read=True)
     row = _room_row(client, project, room, "alice")
     assert row["incomplete_since"] is None
     assert _task_row(row, ids["task"])["incomplete_since"] is None

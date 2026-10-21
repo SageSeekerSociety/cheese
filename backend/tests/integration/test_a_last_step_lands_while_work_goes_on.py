@@ -2,35 +2,38 @@
 
 A task delivered what its card called the last step. Its owner then asked for
 more, and a few seconds later accepted that card. The task went into its
-write-up window, the write-up never got a turn because the teammate was busy
+write-up window, the write-up was never taken up because the teammate was busy
 doing what it had just been asked, and half an hour later the task closed and
 stopped that work half done; it had nowhere left to be delivered (dev,
 2026-10-12).
 
-What decides is what the task's own teammate was asked for: work begun after
-the card went up is not in the delivery, nor is a message to it still waiting
-for its turn, so the delivery counts as a step and the task goes on. A turn
-the platform started in the task — another seat woken there, a fix it was
-told to make — is not such a request. A task whose teammate is idle closes as
-it always did, and one whose teammate is still in the turn that delivered
-closes once that turn is over. A turn gone silent does not hold a task, and
-nothing holds it past the last deadline: the work is stopped, and the room
-hears what was not delivered.
+What decides is what the task's own teammate was asked for, by facts the
+platform can check: its session reading a message sent after the card went up
+and still being at work (its runner says so), or a message to it still
+waiting to be read. Either is work the delivery does not contain, so the
+delivery counts as a step and the task goes on. An instruction the platform
+gave in the task — another seat woken there, a fix it was told to make — is
+not such a request. A task closes when its teammate, having written it up,
+closes it; reading the write-up instruction closes nothing. Without that, the
+deadline closes it once its teammate's session is not at work on something
+else, and nothing holds it past the last deadline: the work is stopped, and the
+room hears what was not delivered.
 """
 
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text
 
 from app.core.errors import UpstreamUnavailableError
-from app.domain.agent.models import AgentTurn
+from app.domain.agent import session_state
 from app.domain.block.models import Block, BlockKind
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.event_author import AuthorType
 from app.domain.project import forge
 from app.domain.room_task.closing import CLOSES_TASK
+from app.domain.run_record.models import RunRecord
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.test_accept_pr import (
     _accept,
@@ -41,7 +44,13 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
-from tests.landing import summary_turn_ends, time_passes, watch
+from tests.landing import (
+    teammate_seat,
+    time_passes,
+    watch,
+    write_up_read,
+    written_up,
+)
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
 
@@ -73,72 +82,75 @@ def _last_step_up(client, app_world, pr: int = 7) -> tuple[str, str, dict]:
 TEAMMATE = "cheese"
 
 
-def _turn_starts(
+def _session(client, task_id: str, status: str, *, seat: str | None = None) -> None:
+    """What the runner of ``seat``'s session in the task declares it doing;
+    by default the task's own teammate's, under the seat it acts as."""
+    seat = seat or teammate_seat(client, task_id)[1]
+    key = session_state.SeatKey(uuid.UUID(str(task_id)), seat, "claude-code")
+
+    async def declare():
+        await session_state.register(client.test_factory, key)
+        async with client.test_factory() as session:
+            await session_state.declare(session, key, status)
+            await session.commit()
+
+    client.portal.call(declare)
+
+
+def _message(
     client,
-    task_id: str,
+    task: dict,
     *,
+    read: bool,
     at: datetime | None = None,
-    by: str = TEAMMATE,
-    author: str = "alice",
-    content: str = "接着把慢的几处改掉",
-) -> uuid.UUID:
-    """A turn starts in the task — by default its AI teammate's, on its
-    owner's word — and is still going."""
-    turn = uuid.uuid4()
-    started = at or datetime.now(UTC)
+    content: str = "顺便把首页也测一下",
+    by_platform: bool = False,
+    seat: str | None = None,
+) -> None:
+    """A message to the teammate in the task — its owner's, or a platform
+    instruction. ``read``: ``seat``'s session (the teammate's by default) read
+    it now — its echo, which stamps it consumed; else it waits in the queue."""
+    seat = seat or teammate_seat(client, task["id"])[1]
 
-    async def start():
+    async def write():
         async with client.test_factory() as session:
-            session.add(
-                AgentTurn(
-                    id=turn,
-                    conversation_id=uuid.UUID(str(task_id)),
-                    continuation_id=turn,
-                    author=author,
-                    agent_handle=by,
-                    content=content,
-                    started_at=started,
-                    delivered_at=started,
+            block = Block(
+                project_id=uuid.UUID(task["project_id"]),
+                conversation_id=uuid.UUID(task["id"]),
+                author="system" if by_platform else "alice",
+                author_type=AuthorType.platform
+                if by_platform
+                else AuthorType.participant,
+                kind=BlockKind.message,
+                content=content,
+                created_at=at or datetime.now(UTC),
+                meta={
+                    "consumed_turn": str(uuid.uuid4()) if read else None,
+                    "agent_recipient": {"handle": TEAMMATE, "mentioned": True},
+                },
+            )
+            session.add(block)
+            await session.flush()
+            if read:
+                now = datetime.now(UTC)
+                session.add(
+                    NativeInput(
+                        project_id=uuid.UUID(task["project_id"]),
+                        conversation_id=uuid.UUID(task["id"]),
+                        recipient_handle=seat,
+                        harness="claude-code",
+                        native_session_id="sess-last-step",
+                        input_id=uuid.uuid4(),
+                        work_id=uuid.uuid4(),
+                        block_ids=[str(block.id)],
+                        registered_at=now,
+                        accepted_at=now,
+                        echoed_at=now,
+                    )
                 )
-            )
             await session.commit()
 
-    client.portal.call(start)
-    return turn
-
-
-def _turn_says_something(client, task: dict, turn: uuid.UUID) -> None:
-    """The running turn writes a line in the task now."""
-
-    async def say():
-        async with client.test_factory() as session:
-            session.add(
-                Block(
-                    project_id=uuid.UUID(task["project_id"]),
-                    conversation_id=uuid.UUID(task["id"]),
-                    author=TEAMMATE,
-                    author_type=AuthorType.participant,
-                    kind=BlockKind.message,
-                    content="还在改",
-                    turn_id=turn,
-                )
-            )
-            await session.commit()
-
-    client.portal.call(say)
-
-
-def _turn_ends(client, turn: uuid.UUID) -> None:
-    async def stop():
-        async with client.test_factory() as session:
-            await session.execute(
-                update(AgentTurn)
-                .where(AgentTurn.id == turn)
-                .values(stopped_at=datetime.now(UTC))
-            )
-            await session.commit()
-
-    client.portal.call(stop)
+    client.portal.call(write)
 
 
 def _card_went_up(client, card: str) -> datetime:
@@ -184,8 +196,10 @@ def test_a_last_step_accepted_while_its_teammate_works_on_more_keeps_the_task_op
     client, app_world
 ):
     task_id, card, before = _last_step_up(client, app_world)
-    # Its owner asks for more after the card went up; the teammate gets to it.
-    _turn_starts(client, task_id)
+    # Its owner asks for more after the card went up; the teammate's session
+    # reads it and is at work on it.
+    _session(client, task_id, "running")
+    _message(client, _task(client, task_id), read=True)
 
     r = _accept(client, card)
     assert r.status_code == 200, r.text
@@ -202,14 +216,18 @@ def test_a_last_step_accepted_while_its_teammate_works_on_more_keeps_the_task_op
     assert _task(client, task_id)["status"] == "open"
 
 
-def test_the_turn_that_delivered_does_not_keep_the_task_open(client, app_world):
-    """The turn the card went up from may still be finishing when the card is
+def test_the_work_that_delivered_does_not_keep_the_task_open(client, app_world):
+    """The work the card went up from may still be going when the card is
     accepted; that is the delivery's own work, and the task still closes —
-    once that turn is over, not by stopping it."""
+    once its session stops, not by stopping it."""
     task_id, card, _ = _last_step_up(client, app_world)
-    delivering = _turn_starts(
-        client, task_id, at=_card_went_up(client, card) - timedelta(minutes=1)
+    _message(
+        client,
+        _task(client, task_id),
+        read=True,
+        at=_card_went_up(client, card) - timedelta(minutes=1),
     )
+    _session(client, task_id, "running")
 
     r = _accept(client, card)
     assert r.status_code == 200, r.text
@@ -219,7 +237,7 @@ def test_the_turn_that_delivered_does_not_keep_the_task_open(client, app_world):
     watch(client)
     assert _task(client, task_id)["status"] == "open"
 
-    _turn_ends(client, delivering)
+    _session(client, task_id, "idle")
     watch(client)
     task = _task(client, task_id)
     assert task["status"] == "closed"
@@ -233,13 +251,14 @@ def test_work_begun_while_the_task_is_written_up_keeps_it_open(client, app_world
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
 
     # Someone asks for more in the window, and the teammate starts on it.
-    _turn_starts(client, task_id)
+    _session(client, task_id, "running")
+    _message(client, _task(client, task_id), read=True)
     watch(client)
 
     _goes_on(client, task_id, before)
     # The write-up it was told to do is not sent any more: the task is not
     # finishing.
-    summary_turn_ends(client, task_id)
+    write_up_read(client, task_id)
     assert _task(client, task_id)["status"] == "open"
     [write_up] = [
         i for i in _instructions(client, task_id) if i.payload.get(CLOSES_TASK)
@@ -248,31 +267,73 @@ def test_work_begun_while_the_task_is_written_up_keeps_it_open(client, app_world
     assert write_up.sent_at is None
 
 
-def test_an_idle_teammate_lets_the_task_close_as_before(client, app_world):
+def test_the_task_closes_when_its_teammate_closes_it_after_the_write_up(
+    client, app_world
+):
     task_id, card, _ = _last_step_up(client, app_world)
-    earlier = _turn_starts(client, task_id)
-    _turn_ends(client, earlier)
-
     r = _accept(client, card)
     assert r.status_code == 200, r.text
 
-    summary_turn_ends(client, task_id)
+    written_up(client, task_id)
     task = _task(client, task_id)
     assert task["status"] == "closed"
     assert task["presentation"]["phrase"] == "accepted"
+
+
+def test_reading_the_write_up_does_not_close_the_task(client, app_world):
+    """The session read the instruction and went quiet: the platform cannot
+    tell from that whether it wrote the task up, so the task stays open until
+    its teammate closes it, or the deadline does."""
+    task_id, card, _ = _last_step_up(client, app_world)
+    r = _accept(client, card)
+    assert r.status_code == 200, r.text
+
+    write_up_read(client, task_id)
+    _session(client, task_id, "running")
+    _session(client, task_id, "idle")
+    watch(client)
+    task = _task(client, task_id)
+    assert task["status"] == "open"
+    assert task["presentation"]["phrase"] == "accepted"
+
+    time_passes(client, task_id, minutes=50)
+    watch(client)
+    assert _task(client, task_id)["status"] == "closed"
+
+
+def test_a_session_at_work_on_the_write_up_does_not_hold_the_deadline(
+    client, app_world
+):
+    """Once the session has read the write-up, its being at work is the
+    write-up, which the deadline does not wait for."""
+    task_id, card, _ = _last_step_up(client, app_world)
+    r = _accept(client, card)
+    assert r.status_code == 200, r.text
+
+    write_up_read(client, task_id)
+    _session(client, task_id, "running")
+    time_passes(client, task_id, minutes=50)
+    watch(client)
+    assert _task(client, task_id)["status"] == "closed"
 
 
 @pytest.mark.parametrize(
     ("seat", "why"),
     [
         ("dispatcher", "another seat woken in the task by a platform notice"),
-        (TEAMMATE, "a fix the platform told the teammate to make"),
+        (None, "a fix the platform told the teammate to make"),
     ],
 )
-def test_a_turn_the_platform_started_is_not_more_work(client, app_world, seat, why):
+def test_work_the_platform_asked_for_is_not_more_work(client, app_world, seat, why):
     task_id, card, before = _last_step_up(client, app_world)
-    platform_turn = _turn_starts(
-        client, task_id, by=seat, author="system", content=f"平台提示：{why}"
+    _session(client, task_id, "running", seat=seat)
+    _message(
+        client,
+        _task(client, task_id),
+        read=True,
+        by_platform=True,
+        content=why,
+        seat=seat,
     )
 
     r = _accept(client, card)
@@ -285,86 +346,73 @@ def test_a_turn_the_platform_started_is_not_more_work(client, app_world, seat, w
     watch(client)
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
 
-    # The task closes once that turn is over, not by stopping it.
-    _turn_ends(client, platform_turn)
-    summary_turn_ends(client, task_id)
+    # The task closes once its teammate writes it up and closes it.
+    _session(client, task_id, "idle", seat=seat)
+    written_up(client, task_id)
     task = _task(client, task_id)
     assert task["status"] == "closed"
     assert task["presentation"]["phrase"] == "accepted"
 
 
-def _owner_asks(client, task: dict, *, taken: bool) -> None:
-    """Its owner asks the teammate for more in the task. ``taken``: the
-    message has been taken on as a turn — the turn carries the message's own
-    id — and that turn is still going; else nothing has taken it yet, and it
-    waits in the queue.
+def test_a_message_answered_before_the_write_up_is_not_more_work(client, app_world):
+    """Its owner asked something after the card went up, and the teammate
+    answered and stopped. That request is done with: when its session then
+    takes up the write-up, the task is being written up, not worked on more."""
+    task_id, card, _ = _last_step_up(client, app_world)
+    _session(client, task_id, "running")
+    _message(client, _task(client, task_id), read=True)
+    _session(client, task_id, "idle")
 
-    Both go straight into the task. A message sent for real is taken on by the
-    scan behind it, which runs a turn of its own and finishes at a moment of
-    its choosing; with no runtime here that is a race between the write-up
-    ending and the message's turn ending, and the task closes when the second
-    wins. Written here it is going, and it stays going for the whole test.
+    r = _accept(client, card)
+    assert r.status_code == 200, r.text
+    write_up_read(client, task_id)
+    _session(client, task_id, "running")
+    watch(client)
 
-    What the taken one writes is the state between the scan picking the message
-    up and the turn building its prompt: the turn is there, carrying the
-    message's own id, and it has not run a prompt — an attempt counted there
-    takes the message out of the queue for good. So the message is still
-    waiting, and still unread, because a turn stamps `consumed_turn` only when
-    it stops.
-    """
-    topic = uuid.UUID(str(task["id"]))
-    asked = uuid.uuid4()
-    started = datetime.now(UTC)
-
-    async def write():
-        async with client.test_factory() as session:
-            session.add(
-                Block(
-                    id=asked,
-                    project_id=uuid.UUID(task["project_id"]),
-                    conversation_id=topic,
-                    author="alice",
-                    author_type=AuthorType.participant,
-                    kind=BlockKind.message,
-                    content="顺便把首页也测一下",
-                    meta={
-                        "consumed_turn": None,
-                        "agent_recipient": {"handle": TEAMMATE, "mentioned": True},
-                    },
-                )
-            )
-            if taken:
-                session.add(
-                    AgentTurn(
-                        id=asked,
-                        conversation_id=topic,
-                        continuation_id=asked,
-                        author="alice",
-                        agent_handle=TEAMMATE,
-                        content="",
-                        started_at=started,
-                    )
-                )
-            await session.commit()
-
-    client.portal.call(write)
+    task = _task(client, task_id)
+    assert task["status"] == "open"
+    assert task["presentation"]["phrase"] == "accepted"
 
 
-@pytest.mark.parametrize("taken", [True, False], ids=["turn-waiting", "queued"])
-def test_a_message_sent_while_the_task_is_written_up_is_not_dropped(
-    client, app_world, taken
+def test_another_seats_work_holds_the_deadline_after_the_teammate_wrote_up(
+    client, app_world
 ):
-    """Its owner asks for more while the last step is being written up; the
-    message waits for its turn either way. The write-up ending must not close
-    the task before the message gets its turn: the task goes on instead."""
+    """The teammate read its write-up; another seat woken in the task is still
+    at work. That seat's work is not the write-up: the deadline waits for it,
+    and past the last deadline stops it with the room told."""
+    task_id, card, _ = _last_step_up(client, app_world)
+    r = _accept(client, card)
+    assert r.status_code == 200, r.text
+    write_up_read(client, task_id)
+    _session(client, task_id, "running", seat="dispatcher")
+
+    time_passes(client, task_id, minutes=50)
+    watch(client)
+    assert _task(client, task_id)["status"] == "open"
+
+    time_passes(client, task_id, minutes=150)
+    watch(client)
+    assert _task(client, task_id)["status"] == "closed"
+
+
+@pytest.mark.parametrize("read", [True, False], ids=["being-worked-on", "queued"])
+def test_a_message_sent_while_the_task_is_written_up_is_not_dropped(
+    client, app_world, read
+):
+    """Its owner asks for more while the last step is being written up: its
+    session is at work on the message, or the message waits to be read. The
+    write-up being read must not close the task before the message is
+    answered: the task goes on instead."""
     task_id, card, before = _last_step_up(client, app_world)
     r = _accept(client, card)
     assert r.status_code == 200, r.text
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
 
-    _owner_asks(client, _task(client, task_id), taken=taken)
+    if read:
+        _session(client, task_id, "running")
+    _message(client, _task(client, task_id), read=read)
 
-    summary_turn_ends(client, task_id)
+    write_up_read(client, task_id)
     assert _task(client, task_id)["status"] == "open"
 
     watch(client)
@@ -373,41 +421,27 @@ def test_a_message_sent_while_the_task_is_written_up_is_not_dropped(
     assert any("没有关闭" in said for said in told)
 
 
-def test_a_turn_gone_silent_does_not_keep_the_task_open(client, app_world):
-    """An interval left open by a turn that died without closing it is not
-    work: it says nothing past the orphan sweep's limit."""
-    task_id, card, _ = _last_step_up(client, app_world)
-    _turn_starts(client, task_id, at=datetime.now(UTC) - timedelta(hours=36))
-
-    r = _accept(client, card)
-    assert r.status_code == 200, r.text
-    assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
-
-    summary_turn_ends(client, task_id)
-    assert _task(client, task_id)["status"] == "closed"
-
-
 def test_work_that_never_ends_is_stopped_at_the_last_deadline(client, app_world):
     task_id, card, _ = _last_step_up(client, app_world)
-    delivering = _turn_starts(
+    _message(
         client,
-        task_id,
+        _task(client, task_id),
+        read=True,
         at=_card_went_up(client, card) - timedelta(minutes=1),
         content="把慢的几处都改掉",
     )
+    _session(client, task_id, "running")
     r = _accept(client, card)
     assert r.status_code == 200, r.text
     task = _task(client, task_id)
 
-    # It keeps talking, so it is work, and the task waits for it.
+    # Its session is at work, and the task waits for it.
     time_passes(client, task_id, minutes=50)
-    _turn_says_something(client, task, delivering)
     watch(client)
     assert _task(client, task_id)["status"] == "open"
 
     # But not forever.
     time_passes(client, task_id, minutes=150)
-    _turn_says_something(client, task, delivering)
     watch(client)
     assert _task(client, task_id)["status"] == "closed"
 
@@ -428,6 +462,22 @@ def test_work_that_never_ends_is_stopped_at_the_last_deadline(client, app_world)
     assert "没有交付" in note.content
     assert "把慢的几处都改掉" in note.meta["detail"]
 
+    # The stopped work keeps a record of its own, under the seat whose session
+    # it was: once the task is closed nothing else says whose work that was.
+    async def records():
+        async with client.test_factory() as session:
+            return list(
+                await session.scalars(
+                    select(RunRecord).where(
+                        RunRecord.conversation_id == uuid.UUID(str(task_id))
+                    )
+                )
+            )
+
+    [record] = client.portal.call(records)
+    assert record.seat == teammate_seat(client, task_id)[1]
+    assert "把慢的几处都改掉" in record.meta["detail"]
+
 
 def test_a_task_the_forge_cannot_take_on_does_not_hold_up_the_rest(
     client, app_world, monkeypatch
@@ -437,7 +487,8 @@ def test_a_task_the_forge_cannot_take_on_does_not_hold_up_the_rest(
     for each, its_card in ((stuck_id, stuck_card), (task_id, card)):
         r = _accept(client, its_card)
         assert r.status_code == 200, r.text
-        _turn_starts(client, each)
+        _session(client, each, "running")
+        _message(client, _task(client, each), read=True)
     stuck_project = uuid.UUID(_task(client, stuck_id)["project_id"])
     reachable = forge.default_branch
 

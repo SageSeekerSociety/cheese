@@ -186,7 +186,7 @@
    "from": "api",
    "to": "session",
    "y": 752,
-   "label": "merge_into_running_turn：送进正在跑的会话",
+   "label": "merge_into_running_session：送进正在跑的会话",
    "variant": "emphasis"
   },
   {

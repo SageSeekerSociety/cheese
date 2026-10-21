@@ -69,7 +69,6 @@ from app.domain.routine.service.settlement import (
     _announce_finished as _announce_finished,
 )
 from app.domain.routine.service.settlement import _settle_open_runs as _settle_open_runs
-from app.domain.routine.service.settlement import _turn_failure as _turn_failure
 from app.domain.routine.service.sweep import (
     publish_run_messages as publish_run_messages,
 )

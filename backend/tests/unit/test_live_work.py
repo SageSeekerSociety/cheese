@@ -244,29 +244,6 @@ async def test_two_live_turns_are_both_remembered_and_close_independently():
 
 
 @pytest.mark.anyio
-async def test_consuming_work_id_does_not_misattribute_between_live_turns():
-    live = LiveWork()
-    topic = uuid.uuid4()
-    a, b = uuid.uuid4(), uuid.uuid4()
-    live.hook_work[(topic, a)] = _state(topic, a, agent_instance_handle="inst-a")
-    live.hook_work[(topic, b)] = _state(topic, b, agent_instance_handle="inst-b")
-    await live.mark_turn_active(topic, a)
-    await live.mark_turn_active(topic, b)
-
-    to = lambda handle: lambda s: s.agent_instance_handle == handle  # noqa: E731
-    # Exactly one recipient matches: that turn is the one.
-    assert live.consuming_work_id(topic, to("inst-a")) == a
-    assert live.consuming_work_id(topic, to("inst-b")) == b
-    # Two live turns and no exact match: held, never sent to a guessed turn.
-    assert live.consuming_work_id(topic, lambda s: True) is None
-    assert live.consuming_work_id(topic) is None
-
-    # Closing one leaves the survivor the unambiguous target.
-    await live.mark_turn_inactive(topic, a)
-    assert live.consuming_work_id(topic) == b
-
-
-@pytest.mark.anyio
 async def test_the_prompt_lock_marks_nothing_before_the_row_is_committed():
     """The lock reserves the seat; it does not claim a turn is running.
 

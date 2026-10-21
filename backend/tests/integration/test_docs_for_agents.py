@@ -35,7 +35,7 @@ DEV = [
         "title": "一条消息怎么变成芝士的一轮",
         "heading": "排队还是插话",
         "url": "/dev/turn#serialize",
-        "text": "merge_into_running_turn 把新消息送进正在运行的会话，"
+        "text": "merge_into_running_session 把新消息送进正在运行的会话，"
         "采纳之前的一轮不会被打断。",
     },
 ]

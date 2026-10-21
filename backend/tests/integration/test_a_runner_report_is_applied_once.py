@@ -20,7 +20,7 @@ Real PostgreSQL; the reports are built as the reading builds them.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -50,6 +50,7 @@ from app.domain.delivery.input_identity import (
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks, register_input
 from app.domain.event_author import AuthorType
+from app.domain.room_task.closing import unfinished
 from tests.turn_log import a_topic
 
 SEAT = "cheese-test"
@@ -75,7 +76,10 @@ class _Seat:
         self.epoch = await session_state.register(self.factory, self.key)
         return self.epoch
 
-    def report(self, fact, *, epoch: int | None = None) -> Report:
+    def report(
+        self, fact, *, epoch: int | None = None, at: datetime | None = None
+    ) -> Report:
+        """``at``: the runner's own clock, the platform's by default."""
         self.seq += 1
         return Report(
             self.topic,
@@ -84,7 +88,7 @@ class _Seat:
             self.epoch if epoch is None else epoch,
             self.epoch,
             self.seq,
-            datetime.now(UTC),
+            at or datetime.now(UTC),
             fact,
         )
 
@@ -356,6 +360,31 @@ async def test_a_read_input_is_delivered_and_a_failure_after_it_is_recorded(
     row = await seat.row(identity)
     assert row.failure == "api_error" and row.failed_at is not None
     assert read_failed(await seat.block(block)) == "api_error"
+
+
+@pytest.mark.anyio
+async def test_a_message_read_after_the_session_started_is_its_work_whatever_the_runners_clock(
+    db_factory,
+):
+    """The runner's clock runs a minute ahead of the platform's. Its session
+    starts work, then reads a message: that message is what it is working on,
+    so a task it was asked in does not count it done with — the order the
+    platform heard the two in decides, not the times the runner wrote on
+    them."""
+    seat = await _seat(db_factory)
+    asked_after = datetime.now(UTC) - timedelta(seconds=1)
+    work = uuid.uuid4()
+    identity, _block = await seat.input(work=work)
+    ahead = datetime.now(UTC) + timedelta(minutes=1)
+    await seat.apply(seat.report(InputWritten(identity), at=ahead))
+    await seat.apply(seat.report(SessionRunning(work), at=ahead))
+    await seat.apply(
+        seat.report(InputRead(InputReceipt(identity, "native_echo", work)), at=ahead)
+    )
+
+    async with db_factory() as session:
+        left = await unfinished(session, seat.topic, since=asked_after, seat=SEAT)
+    assert left == ["fix the login page"]
 
 
 @pytest.mark.anyio

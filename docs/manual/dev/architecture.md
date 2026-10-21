@@ -157,7 +157,7 @@ app/domain/<包>/
 - **订上时对齐**：房间连接的 `subscribed` 帧带着房间快照（`api/room_snapshot.py`）和 `newest`；项目订阅每次连上把四样各读一次。重连就是重新订阅，断线期间漏掉的帧不用补。
 - **消息按号补读**：`blocks.seq` 是每段对话自己的号，数据库插入时给：先取这段对话的事务级 advisory lock，再取索引上的最大号加一，所以号的先后就是提交的先后。前端手里最大的号小于 `newest` 就读 `GET /topics/{id}/blocks?stored_after=`。已读位置也是这个号。
 - **项目订阅**：页面在房间连接上订阅 `project:<id>`，收到频道清单的哪一行、未读、私聊未读、提醒档位变了；只有自己人看得见的房间只告诉里面的人。
-- **运行中**：频道列表的「运行中」由 `runtime.AgentWorkRunner.running_topic_ids()`读本进程内存。终点是轮次状态在库里，「运行中」是一个查询，它的变化也经写入钩子推出。
+- **运行中**：频道列表的「运行中」读 runner 报上来的会话状态（`session_states.worker_status`，`agent/session_state.running_conversations`），是一个查询。
 - **流式帧不走写入钩子**：一轮正在输出的文字量大、只对在看的人有用，不落库。今天 `InProcessBroker` 只在本进程扇出（`agent/realtime/broker.py`）；轮次可以在任意副本跑之后，它需要一条跨副本的扇出（Redis pub/sub，或 `NOTIFY` 带轮次号），这是[全局锁退役](#ownership-retire)的前提之一。
 
 | 方案 | 结论 |

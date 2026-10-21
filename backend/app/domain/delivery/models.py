@@ -104,6 +104,8 @@ class NativeInput(UuidPk, Base):
             "harness", "native_session_id", "input_id", name="uq_native_input_identity"
         ),
         Index("ix_native_inputs_delivery", "delivery_id"),
+        # When a conversation last read an input (`block.waits`).
+        Index("ix_native_inputs_conversation_read", "conversation_id", "echoed_at"),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(Uuid)

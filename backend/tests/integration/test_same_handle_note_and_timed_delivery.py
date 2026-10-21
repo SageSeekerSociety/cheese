@@ -66,7 +66,7 @@ def test_a_note_reaches_the_other_thread_of_the_same_handle(client, monkeypatch)
         handed.append((str(topic_id), notice))
         return True
 
-    monkeypatch.setattr(ChatService, "notify_running_turn", remember)
+    monkeypatch.setattr(ChatService, "notify_running_session", remember)
 
     r = client.post(
         f"/topics/{here}/note", json={"thread": there, "content": "口径改了，按新的来"}
@@ -127,7 +127,7 @@ def test_a_note_to_another_agent_in_the_same_project_is_refused(client, monkeypa
         handed.append(str(topic_id))
         return True
 
-    monkeypatch.setattr(ChatService, "notify_running_turn", remember)
+    monkeypatch.setattr(ChatService, "notify_running_session", remember)
 
     r = client.post(
         f"/topics/{here}/note", json={"thread": theirs, "content": "偷偷说一句"}
@@ -153,7 +153,7 @@ def test_a_note_to_another_project_is_refused(client, monkeypatch):
         handed.append(str(topic_id))
         return True
 
-    monkeypatch.setattr(ChatService, "notify_running_turn", remember)
+    monkeypatch.setattr(ChatService, "notify_running_session", remember)
 
     r = client.post(
         f"/topics/{here}/note", json={"thread": elsewhere, "content": "偷偷说一句"}

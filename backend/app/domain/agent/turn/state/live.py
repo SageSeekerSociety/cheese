@@ -10,10 +10,9 @@ hand out is held in Valkey until the turn lets it go.
 import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
 
 from app.domain.agent.admission import Lease
 from app.domain.memory.scopes import MemoryScope
@@ -33,88 +32,6 @@ WriteThrough = Callable[[uuid.UUID, uuid.UUID], Awaitable[bool]]
 #: mark_turn_inactive 时问一次——缓存松手而库里的行还开着，是缓存唯一不该替它遮
 #: 掩的事，但收场仍归生命周期，这里不代它关。
 ConfirmClosed = Callable[[uuid.UUID, uuid.UUID], Awaitable[bool]]
-
-
-@dataclass(frozen=True, slots=True)
-class DurableTurnSeat:
-    """A live turn known only from its durable row.
-
-    What the process-local ``hook_work`` would have told a reader in one
-    process — the seat the turn authors under and the seat whose session answers
-    for it — reconstructed from the open ``AgentTurn`` row, so the cross-process
-    half of 「这条消息该进哪一轮」 sees a turn this process never assembled.
-    ``agent_handle`` is the one column the row holds for both questions; it is
-    ``None`` on a row that reached the table before it was assembled.
-    """
-
-    agent_instance_handle: str | None
-    acting_agent: str | None
-
-
-class TurnSeat(Protocol):
-    """What names whose turn it is: the two seats a live turn is read by.
-
-    Both ``HookWorkState`` (this process's own work) and ``DurableTurnSeat`` (a
-    row another process opened) carry these, and that is the whole reason the
-    pickers below can ask one question of a mixed set — the durable row cannot
-    offer more, and a caller aiming a steer or stamping ``seen_by`` needs only
-    these two. Declared as a Protocol so the reader of a turn does not name
-    either concrete class. Read-only members: a class's ``acting_agent: str``
-    then satisfies it, which a writable ``str | None`` member would reject.
-    """
-
-    @property
-    def agent_instance_handle(self) -> str | None: ...
-
-    @property
-    def acting_agent(self) -> str | None: ...
-
-
-def pick_unambiguous_entry[StateT: TurnSeat](
-    entries: Iterable[tuple[uuid.UUID, StateT | None]],
-    matches: Callable[[StateT], bool] | None,
-    *,
-    strict: bool,
-) -> tuple[uuid.UUID, StateT | None] | None:
-    """The one live turn an inbound message belongs to, with the state naming it.
-
-    With no ``matches``, a single live turn on the topic is the answer. With
-    several (parallel seats in one room) only an exact ``matches`` hit decides,
-    and only when exactly one hits: delivering to a guessed turn is worse than
-    holding the message for none. A live id with no state cannot be ruled out —
-    the old single-slot tolerance — unless ``strict``, which refuses to deliver
-    without a state. Shared by the process-local set and the durable rows so the
-    two answer the question the same way. Returns the state beside the id so a
-    caller can aim the steer and name ``seen_by`` at the turn's own seat.
-
-    Generic in the state so a caller keeping one concrete kind (the local
-    ``HookWorkState``) reads that kind back, while the mixed authority set is
-    typed as the ``TurnSeat`` they share.
-    """
-    entries = list(entries)
-    if not entries:
-        return None
-    if matches is None:
-        return entries[0] if len(entries) == 1 else None
-    hits: list[tuple[uuid.UUID, StateT | None]] = []
-    for work_id, state in entries:
-        if state is None:
-            if not strict:
-                hits.append((work_id, None))
-        elif matches(state):
-            hits.append((work_id, state))
-    return hits[0] if len(hits) == 1 else None
-
-
-def pick_unambiguous[StateT: TurnSeat](
-    entries: Iterable[tuple[uuid.UUID, StateT | None]],
-    matches: Callable[[StateT], bool] | None,
-    *,
-    strict: bool,
-) -> uuid.UUID | None:
-    """The id alone — `pick_unambiguous_entry` without the state."""
-    picked = pick_unambiguous_entry(entries, matches, strict=strict)
-    return picked[0] if picked is not None else None
 
 
 @dataclass
@@ -356,24 +273,6 @@ class LiveWork:
         active.discard(work_id)
         if not active:
             self.active_turn_ids.pop(topic_id, None)
-
-    def consuming_work_id(
-        self,
-        topic_id: uuid.UUID,
-        matches: Callable[[HookWorkState], bool] | None = None,
-        *,
-        strict: bool = False,
-    ) -> uuid.UUID | None:
-        """The live turn an inbound message belongs to, if unambiguous — the
-        turns THIS process is holding. `authority.consuming_turn` adds the rows
-        another process opened and asks the same question of both."""
-        active = self.active_turn_ids.get(topic_id)
-        if not active:
-            return None
-        entries = [
-            (work_id, self.hook_work.get((topic_id, work_id))) for work_id in active
-        ]
-        return pick_unambiguous(entries, matches, strict=strict)
 
     def attributed_work_id(self, topic_id: uuid.UUID, author: str) -> uuid.UUID | None:
         """Which live hook work a room publication with no turn id belongs to."""

@@ -75,7 +75,7 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
     async def continue_and_verify():
         factory = client.test_request_factory
         ids = await _blocks(factory, project_id, topic)
-        assert await recovered.notify_running_turn(
+        assert await recovered.notify_running_session(
             topic, "原答者提交了回答", blocks=ids
         )
         await settle_turn(recovered, topic)

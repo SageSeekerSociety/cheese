@@ -7,7 +7,6 @@ and be at work.
 """
 
 import uuid
-from datetime import UTC, datetime
 
 from tests.integration.conftest import open_task, post_project, room_agent_seat
 
@@ -26,7 +25,7 @@ def test_the_room_task_list_says_which_tasks_have_a_session_running(client):
     async def run_it() -> None:
         await register(client.test_factory, key)
         async with client.test_factory() as session:
-            await declare(session, key, RUNNING, datetime.now(UTC))
+            await declare(session, key, RUNNING)
             await session.commit()
 
     client.portal.call(run_it)

@@ -25,7 +25,7 @@ from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.delivery_events import REPLACES, DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
-from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
+from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -400,12 +400,8 @@ async def redispatch_undelivered(
     return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
 
 
-async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat, machines=None):
-    """Renew admission ownership while queued; settle only this claimed attempt.
-
-    ``machines`` closes a finished task's room checkouts with it
-    (`room_task.ports.SweepCheckouts`), handed in by whoever runs the turn.
-    """
+async def run_attempt(sessions, delivery_id, attempt_id, work):
+    """Renew admission ownership while queued; settle only this claimed attempt."""
 
     async def renew():
         while True:
@@ -453,14 +449,6 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat, machines
                         "automatic replay is withheld"
                     )
                 row.lease_until = None
-                # The instruction to write a finished task up is over, however
-                # it went. A turn it started that the session still runs closes
-                # the task when it ends (`room_task.closing.turns_ended`); with
-                # none running, the task closes now.
-                if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
-                    await close_after_summary(
-                        session, row.conversation_id, chat, machines=machines
-                    )
             await session.commit()
 
 

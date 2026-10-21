@@ -125,7 +125,6 @@ def test_an_input_never_sent_is_withdrawn_and_one_maybe_sent_is_kept(
                 await runtime.steer(
                     ref.topic_id,
                     "one more thing",
-                    expected_work_id=work,
                     register_input=register,
                 )
         identity = caught.value.identity

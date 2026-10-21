@@ -329,7 +329,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         await release.wait()
         return True
 
-    monkeypatch.setattr(chat, "notify_running_turn", delayed_notice)
+    monkeypatch.setattr(chat, "notify_running_session", delayed_notice)
     with room_socket(client, topic, speaker) as ws:
         post_message(client, topic, speaker, {"content": "@芝士 检查一下"})
         while True:
@@ -424,7 +424,7 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
         notices.append(notice)
         return True
 
-    monkeypatch.setattr(chat, "notify_running_turn", record_notice)
+    monkeypatch.setattr(chat, "notify_running_session", record_notice)
     # The executor is remote: this process runs no work for the topic, so the
     # endpoint's runner lookup attributes nothing.
     monkeypatch.setattr(get_work_runner(), "live_work_for_topic", lambda _t: None)
@@ -499,52 +499,6 @@ def test_publication_attribution_never_guesses_between_agents():
     # Nothing live: nothing to attribute.
     live.hook_work = {}
     assert attribute(live, topic, "cheese-a") is None
-
-
-def test_consuming_work_id_only_delivers_when_unambiguous():
-    """An inbound message goes to exactly one live turn, never a guess.
-
-    Today the active set holds at most one id and this reduces to the old
-    single-slot behavior, including its tolerance of a missing hook state.
-    With several turns live (parallel agents in one room), delivery needs
-    exactly one recipient match — zero or two both hold the message.
-    """
-    from types import SimpleNamespace
-
-    from app.domain.agent.turn.state.live import LiveWork
-
-    topic = uuid.uuid4()
-    a, b = uuid.uuid4(), uuid.uuid4()
-    live = LiveWork()
-    live.hook_work = {
-        (topic, a): SimpleNamespace(work_id=a, agent_instance_handle="inst-a"),
-        (topic, b): SimpleNamespace(work_id=b, agent_instance_handle="inst-b"),
-    }
-    live.active_turn_ids = {topic: {a, b}}
-    consume = LiveWork.consuming_work_id
-    to = lambda handle: lambda s: s.agent_instance_handle == handle  # noqa: E731
-    # Exactly one match: delivered there.
-    assert consume(live, topic, to("inst-a")) == a
-    assert consume(live, topic, to("inst-b")) == b
-    # No match, or both match: held rather than guessed.
-    assert consume(live, topic, to("inst-c")) is None
-    assert consume(live, topic, lambda s: True) is None
-    # No matcher and several live: held.
-    assert consume(live, topic) is None
-    # A live id without hook state is tolerated (single-slot compatibility)…
-    live.active_turn_ids = {topic: {a, b}}
-    del live.hook_work[(topic, b)]
-    assert consume(live, topic, to("inst-a")) is None  # b still could be it
-    # …unless the caller is strict: then a missing state cannot receive.
-    live.active_turn_ids = {topic: {b}}
-    assert consume(live, topic, to("inst-b"), strict=True) is None
-    assert consume(live, topic, to("inst-b"), strict=False) == b
-    # One live turn with its state: the everyday case.
-    live.hook_work[(topic, b)] = SimpleNamespace(
-        work_id=b, agent_instance_handle="inst-b"
-    )
-    assert consume(live, topic, to("inst-b")) == b
-    assert consume(live, topic) == b
 
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"pixels"
