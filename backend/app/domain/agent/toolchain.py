@@ -60,12 +60,12 @@ PBS_RELEASE = "20261003"
 PBS_PYTHON_VERSION = "3.13.16"
 #: The bwrap a Linux connector places for its rooms' sandboxes, whatever the
 #: system has (`cli/internal/devenv`): built by `scripts/build-bubblewrap.sh`.
-BUBBLEWRAP_REVISION = "0.13.0-cheese.1"
+BUBBLEWRAP_REVISION = "0.13.0-cheese.2"
 #: What else a Linux connector places (`cli/internal/devenv`), built by
 #: `scripts/build-host-tools.sh`: the host tools (ip, iptables, mkfs.xfs,
 #: xfs_quota) whatever the system has, and tmux and git where the system's are
 #: missing or too old.
-HOST_TOOLS_REVISION = "1"
+HOST_TOOLS_REVISION = "2"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -125,52 +125,52 @@ class Artifact:
 ARTIFACTS: dict[tuple[str, str], Artifact] = {
     ("bubblewrap", "linux-x64"): Artifact(
         f"{_BWRAP_BASE}-linux-x64.tar.gz",
-        "3cea2c7dee3c4a24aa3d46cd3691b4f1cc45f397c958c807d56c004acb18d816",
-        85451,
+        "df8769e412c53e1065bc9e94383599992c78bbf8265d66067422b098680683c1",
+        94034,
         ".tar.gz",
     ),
     ("bubblewrap", "linux-arm64"): Artifact(
         f"{_BWRAP_BASE}-linux-arm64.tar.gz",
-        "ef555f752c2a17c1fd74f989aae0933599bbec1e1f900c3d7a96ab748d64e056",
-        96939,
+        "7ece0e2e82695237cc404212dc630ce229525d178a1188cd8b30cb49fa387ecf",
+        104979,
         ".tar.gz",
     ),
-    # scripts/build-host-tools.sh; digests and sizes of release host-tools-v1,
+    # scripts/build-host-tools.sh; digests and sizes of release host-tools-v2,
     # checked against the downloaded files on 2026-10-21.
     ("host-tools", "linux-x64"): Artifact(
         f"{_HOST_TOOLS_BASE}/host-tools-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
-        "b22f51834f5955f231ad2357e49a533b4aeff583c0fa61198f77c190ade7c62e",
-        1245095,
+        "e1e8446d4de0ac8a887898bccb03e13d543e51d1bcb5d68bb6b55083e843b921",
+        1273070,
         ".tar.gz",
     ),
     ("host-tools", "linux-arm64"): Artifact(
         f"{_HOST_TOOLS_BASE}/host-tools-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
-        "1ce3d1e744578a15e280722a7977634983c9af7af1a3eb66d0432d1ff1e603d4",
-        1280585,
+        "682920e22c043c94e2a6f21d3ebf079fc4c98c096ee3cd74d784c1de8d05209a",
+        1300404,
         ".tar.gz",
     ),
     ("tmux", "linux-x64"): Artifact(
         f"{_HOST_TOOLS_BASE}/tmux-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
-        "27fcfe08922accd5102a996956d8d9a47c396eaf02be38e007f712eabf5fa988",
-        619760,
+        "431fa99829de7257094a6cc33412a1b4fe5f8634dda5fec1d0e8abf3ebf57e6f",
+        624840,
         ".tar.gz",
     ),
     ("tmux", "linux-arm64"): Artifact(
         f"{_HOST_TOOLS_BASE}/tmux-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
-        "44f41b69fdc861127d5821ae1b6d30feb158861ad552ad65397d2c103f839011",
-        615904,
+        "a2222ef87684bc647aa6978e4e46a34f4ad5776d7a04534ef8914516fced1f5b",
+        620292,
         ".tar.gz",
     ),
     ("git", "linux-x64"): Artifact(
         f"{_HOST_TOOLS_BASE}/git-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
-        "357d3f2f25f7ac210bd5fee6aef2b2361c46b141789b8ae89b14c822331ac4cc",
-        7704815,
+        "940886203cb09a19af987521d07d721322a6dba4e3330eb313432f4b13b4b3da",
+        7716487,
         ".tar.gz",
     ),
     ("git", "linux-arm64"): Artifact(
         f"{_HOST_TOOLS_BASE}/git-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
-        "8b1dc80b3debcd11e673963104dbce20f7c194cfcc1c4237e341e3e090a4de52",
-        7958737,
+        "20986e04ae4d578eb3221423c4cab68426bade6625001316d7c4d380e2979d89",
+        7971160,
         ".tar.gz",
     ),
     # scripts/build-forge-cli.sh applies the merged-status localization fix.

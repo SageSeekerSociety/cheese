@@ -12,8 +12,8 @@ from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
 from app.domain.usage.models import NOT_MODEL_CALLS, ResourceUsage, call_count
 
-#: Rows of model calls. A compute charge (``usage.compute``) or a search the
-#: platform ran (``usage.search``) is a usage row too, for its credits, but
+#: Rows of model calls. A compute charge (``usage.compute``) or a web search
+#: the platform asked for (``SEARCH_ROUTE``) is a usage row too, for its credits, but
 #: it has no tokens and is no call: every count of
 #: tokens, cost and calls below leaves it out, and only the credit reads of a
 #: team's spend take it in.
