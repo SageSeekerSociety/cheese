@@ -29,8 +29,10 @@ from app.core.errors import NotFoundError
 from app.core.storage import get_storage_backend
 from app.domain.agent.personal import billing
 from app.domain.agent.personal.prompt import task_brief
+from app.domain.assistant import refs
 from app.domain.block.queries import latest_messages
 from app.domain.living_doc.services import Documents
+from app.domain.project import address
 from app.domain.project.services import ProjectService
 from app.domain.task import drafts
 from app.domain.task.attachment_service import TaskAttachmentService
@@ -137,30 +139,47 @@ RECENT = 12
 #: How much of one message it says.
 RECENT_CHARS = 200
 
-#: What the person's 芝士 does in a project, said with each of its pages.
-IN_PROJECT = (
-    "- 在项目里你只读、起草、派活：发消息用 cheese_message_draft、开任务用 "
-    "cheese_task_draft 起草，用户在面板里确认后才发出去。不要改项目里的文档和代码；"
-    "要改，开任务交给项目的 AI 队友。"
-)
-
 
 async def _project_line(reader: Reader, project_id: uuid.UUID) -> str:
     project = await ProjectService(reader.session).get(project_id)
-    name = project.name if project is not None else ""
-    return f"<项目 {name} id={project_id}>"
+    if project is None:
+        return ""
+    return f"<项目「{project.name}」 编号 {project.slug}>"
+
+
+async def _ref_of(
+    reader: Reader, kind: address.Numbered, thing_id: uuid.UUID, project_id: uuid.UUID
+) -> str:
+    """The thing's ref (`assistant.refs`): what 芝士 reads it by."""
+    project = await ProjectService(reader.session).get(project_id)
+    found = await address.thing_by_id(reader.session, kind, thing_id)
+    slug = project.slug if project is not None else str(project_id)
+    number = found.number if found is not None else None
+    return {
+        address.Numbered.channel: refs.channel,
+        address.Numbered.task: refs.task,
+        address.Numbered.document: refs.doc,
+    }[kind](slug, number)
 
 
 async def _topic(reader: Reader, page_id: str) -> Shown:
     """A channel, a task or a 支线 of a project: what it is, and its latest
-    messages; the rest is read with the chat tools, by its id."""
+    messages; the rest is read by its ref."""
     place = await _access(reader).topic(_uuid(page_id))
     if place.task is not None:
-        what = f"任务「{place.task.title}」（在频道「{place.room.title}」里）"
-    elif place.thread is not None:
-        what = f"支线「{place.thread.title}」（在频道「{place.room.title}」里）"
+        here = await _ref_of(
+            reader, address.Numbered.task, place.task.id, place.project_id
+        )
+        what = f"任务「{place.task.title}」（{here}，在频道「{place.room.title}」里）"
     else:
-        what = f"频道「{place.room.title}」"
+        here = await _ref_of(
+            reader, address.Numbered.channel, place.room.id, place.project_id
+        )
+        what = (
+            f"支线「{place.thread.title}」（在频道「{place.room.title}」（{here}）里）"
+            if place.thread is not None
+            else f"频道「{place.room.title}」（{here}）"
+        )
     lines = [
         f"{b.author}：{' '.join(b.content.split())[:RECENT_CHARS]}"
         for b in await latest_messages(reader.session, place.conversation_id, RECENT)
@@ -175,9 +194,7 @@ async def _topic(reader: Reader, page_id: str) -> Shown:
             [
                 "<这一页>",
                 f"{what}：用户在看它的对话。",
-                f"- 用户说「这里」，指它。读更早的记录、搜别处的讨论用聊天工具，topic 传 "
-                f"{place.conversation_id}。",
-                IN_PROJECT,
+                f"- 用户说「这里」，指它；读更早的记录用 cheese_read {here}。",
                 "</这一页>",
                 await _project_line(reader, place.project_id),
                 recent,
@@ -188,21 +205,21 @@ async def _topic(reader: Reader, page_id: str) -> Shown:
 
 
 async def _document(reader: Reader, page_id: str) -> Shown:
-    """A document of a project: its title and where it is; its text is read
-    with cheese_doc_get when it is needed."""
+    """A document of a project: its title and ref; its text is read when it
+    is needed."""
     document_id = _uuid(page_id)
     await _access(reader).document(document_id)
     doc = await Documents(reader.session).get(document_id)
     if doc is None or doc.project_id is None:
         raise NotFoundError.for_resource("document", page_id)
+    here = await _ref_of(reader, address.Numbered.document, doc.id, doc.project_id)
     return Shown(
         "\n".join(
             [
                 "<这一页>",
-                f"文档《{doc.title or '未命名'}》：用户在看这份文档。",
-                f"- 用户说「这份」「文档」，指它。读全文用 cheese_doc_get，document 传 "
-                f"{document_id}。",
-                IN_PROJECT,
+                f"文档《{doc.title or '未命名'}》（{here}）：用户在看这份文档。",
+                f"- 用户说「这份」「文档」，指它；读全文用 cheese_read {here}。"
+                "要改它，开任务交给项目的 AI 队友。",
                 "</这一页>",
                 await _project_line(reader, doc.project_id),
             ]
@@ -213,7 +230,7 @@ async def _document(reader: Reader, page_id: str) -> Shown:
 
 async def _project(reader: Reader, page_id: str) -> Shown:
     """Any other page of a project (its overview, board, library, members):
-    which project; what is in it is looked up with the tools."""
+    which project; what is in it is read by its ref."""
     project_id = _uuid(page_id)
     await _access(reader).project(project_id)
     return Shown(
@@ -221,9 +238,8 @@ async def _project(reader: Reader, page_id: str) -> Shown:
             [
                 "<这一页>",
                 "项目里的一页：用户在这个项目里。",
-                "- 用户说「这个项目」，指它。项目里的频道、讨论和文档用 "
-                "cheese_project_search 找。",
-                IN_PROJECT,
+                "- 用户说「这个项目」，指它；它的频道、任务和文档用 cheese_read 读项目编号，"
+                "找东西用 cheese_search 加上 where。",
                 "</这一页>",
                 await _project_line(reader, project_id),
             ]
