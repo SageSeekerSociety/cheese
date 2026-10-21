@@ -46,13 +46,13 @@ from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationEr
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
-from app.domain.agent.model_catalog import catalog, project_pool, subagent_default
+from app.domain.agent.model_catalog import catalog, subagent_default
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.queries import _model_policy_call, _Proposed, task_credit_context
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.session_host.contract import EFFORT_ENV
-from app.domain.agent.supply import SUBSCRIPTION
+from app.domain.agent.supply import GATEWAY, SUBSCRIPTION
 from app.domain.agent_instance.own import owned_instance, unusable
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.conversation.models import Conversation
@@ -176,8 +176,9 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
     The Agent tool takes a model only as one of Claude's family aliases, so a
     session runs a subagent on `kimi-k3` by starting the subagent type of that
     name, whose definition names the model; admission still decides whether
-    it may (`/llm/admission`). Only the project's own pool is listed: a model
-    from the other one is refused there.
+    it may (`/llm/admission`). Only models the platform pool serves (catalogue
+    ``supply`` gateway) are listed: a subscription model is refused there unless
+    the project or the seat already selected it.
 
     Claude Code reads its agent definitions once, when it starts, and a file
     written into a running session's agents directory is never seen by it. So
@@ -185,10 +186,9 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
     configuration hash: a model the gateway adds reaches a running session when
     it is next reopened, at a task boundary.
     """
-    pool = project_pool(project_settings)
     agents: dict[str, str] = {}
     for choice in catalog(project_settings).values():
-        if choice["supply"] != pool:
+        if choice["supply"] != GATEWAY:
             continue
         # Agent names are stricter than model ids; the id itself rides `model`.
         name = re.sub(r"[^a-z0-9._-]+", "-", choice["id"].lower()).strip("-.")

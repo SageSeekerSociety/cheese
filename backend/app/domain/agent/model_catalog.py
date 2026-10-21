@@ -1,15 +1,15 @@
 """Every model a project can be pointed at, and how each one is reached.
 
 It reads five facts that all live in this package: what the gateway currently
-offers (`gateway_catalog`), what a subscription brings (`market`), which pool a
-project runs (`supply`), which harness its turns run (`harness`), and the
-deployment's own settings. A picker shows the answer and admission goes through
+offers (`gateway_catalog`), what a subscription brings (`market`), the names of
+the pools that serve them (`supply`), which harness its turns run (`harness`),
+and the deployment's own settings. A picker shows the answer and admission goes through
 it to decide whether a selection is real, so it is computed once per project
 (`catalog`) and handed down as a value.
 
 It sits here rather than beside `AgentConfiguration`, which also talks about a
 model: what models EXIST is a property of the deployment and the project, not of
-a saved teammate, and reading the gateway, the harnesses or the supply policy
+a saved teammate, and reading the gateway or the harnesses
 from a package that is not this one is a dependency back into `agent` — the
 cycle C3 counts. The one reader that needs the catalogue (`agent_instance`
 validating a chosen model id when a teammate is created or edited) takes it as
@@ -29,23 +29,13 @@ from app.domain.agent.market import (
     subscription_model_ids,
     subscription_model_listings,
 )
-from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
+from app.domain.agent.supply import GATEWAY, SUBSCRIPTION
 from app.domain.agent_instance.configuration import Effort
 from app.domain.policy import gate
 
 #: What each subscription model honours: Claude Code reads Claude's own
 #: capabilities, so every effort the platform offers reaches the model.
 SUBSCRIPTION_EFFORTS = list(get_args(Effort))
-
-
-def project_pool(project_settings: dict | None) -> str:
-    """这个项目跑哪个池。
-
-    ``resolve_pool`` 对目录消费者的唯一出口：「这轮走哪条供给」只能有一个
-    答案来源（P34 的守卫按模块数引用），要池的调用方拿这里，不许自己再
-    import supply。
-    """
-    return resolve_pool(project_settings)
 
 
 def model_choices(project_settings: dict | None) -> list[dict]:
@@ -55,12 +45,15 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     which harnesses can reach it — a subscription model comes with a credential
     only one harness can present — and reading it off the id later would mean
     guessing.
+
+    The default is the gateway model the platform names for agents
+    (`model_roles`); a subscription model is never the default. Which pool a
+    turn takes follows from the model it is bound to, never from the project.
     """
-    subscription_default = resolve_pool(project_settings) == SUBSCRIPTION
     choices = [
         dict(
             asdict(item),
-            default=item.default and subscription_default,
+            default=False,
             supply=SUBSCRIPTION,
             efforts=SUBSCRIPTION_EFFORTS,
             # Claude: only teams an administrator approved may use it.
@@ -76,8 +69,7 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             "id": item.id,
             "label": item.label,
             "description": "平台模型池",
-            "default": not subscription_default
-            and item.id == model_roles.model("agent_model"),
+            "default": item.id == model_roles.model("agent_model"),
             "supply": GATEWAY,
             # The tier an administrator set on the gateway (`cheese_tier`):
             # which plans may use it.

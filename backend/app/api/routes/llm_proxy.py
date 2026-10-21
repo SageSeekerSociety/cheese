@@ -132,15 +132,14 @@ def _default_catalog_id(choices: dict[str, dict]) -> str | None:
     return default["id"] if default else None
 
 
-def _offerable_model_ids(project, choices: dict[str, dict]) -> set[str]:
-    """这个项目能指定的模型集合：目录里属于本项目池的那些 id。
+def _offerable_model_ids(choices: dict[str, dict]) -> set[str]:
+    """主 agent 能随意给分身指定的模型：目录里由平台模型池（gateway）供给的那些 id。
 
-    池外的目录项（gateway 项目里的订阅短名、订阅项目里的网关模型）对主
-    agent 不可指定：绑上它们请求就得走另一条供给路，而那条路这个项目没有
-    凭据 —— 列进可选等于教人吃拒绝。
+    供给是模型自己的事实（目录每一项都带 ``supply``），不是项目的设置。订阅
+    短名不在这里：绑上它就得走订阅那条路，凭据是某一个骨架自己的，列进可选
+    等于教人吃拒绝。项目或席位已经选定的订阅模型由调用方另外放行。
     """
-    pool = model_catalog.project_pool(project.settings if project else None)
-    return {cid for cid, c in choices.items() if c.get("supply") == pool}
+    return {cid for cid, c in choices.items() if c.get("supply") == GATEWAY}
 
 
 async def _bind_requested_subagent_model(
@@ -176,7 +175,7 @@ async def _bind_requested_subagent_model(
         or settings_.get("default_model")
         or _default_catalog_id(choices)
     )
-    allowed = _offerable_model_ids(project, choices)
+    allowed = _offerable_model_ids(choices)
     # 父会话的模型和项目显式配的两个默认（主模型、分身默认）也合法：它们跨
     # 池也真跑得起来（供给跟着绑定走），主 agent 复述它们不该吃到一个拒绝。
     # 但只列目录里还在的 —— 列一个 resolve 绑不上的,是把人从一个拒绝指到另

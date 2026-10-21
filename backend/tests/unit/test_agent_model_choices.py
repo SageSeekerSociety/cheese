@@ -68,29 +68,31 @@ def test_unknown_model_is_not_a_default(chosen):
         subscription_model_alias(chosen)
 
 
-@pytest.mark.parametrize(
-    ("supply", "expected"),
-    [
-        (None, "gateway-model"),
-        ("gateway", "gateway-model"),
-        ("subscription", "sonnet"),
-    ],
-)
-def test_choices_follow_project_supply(monkeypatch, supply, expected):
+def test_the_default_is_the_platform_agent_model(monkeypatch):
+    """目录默认是平台角色 ``agent_model`` 指的那个网关模型；订阅模型从不当默认。"""
     monkeypatch.setattr(settings, "agent_model", "gateway-model")
-    project = {"supply": supply}
-    chosen = [item for item in model_choices(project) if item["default"]]
-    assert [item["id"] for item in chosen] == [expected]
-    assert "unknown" not in _offered(project)
+    chosen = [item for item in model_choices(None) if item["default"]]
+    assert [item["id"] for item in chosen] == ["gateway-model"]
+    assert not any(
+        item["default"]
+        for item in model_choices(None)
+        if item["supply"] == "subscription"
+    )
+    assert "unknown" not in _offered(None)
 
 
-@pytest.mark.parametrize("supply", ["subscription", "gateway"])
-def test_every_gateway_model_is_offered_whatever_the_projects_supply_is(
-    supply, deployed_pool
-):
-    project = {"supply": supply}
-    assert {"glm-5.2", "deepseek-flash", "sonnet"} <= _offered(project)
-    assert sum(item["default"] for item in model_choices(project)) == 1
+@pytest.mark.parametrize("leftover", ["subscription", "gateway", "gatway"])
+def test_a_leftover_supply_setting_changes_nothing(monkeypatch, leftover):
+    """项目设置里不再有「供给」这一项：哪个池由所选模型决定。迁移之前写下的
+    ``settings["supply"]`` 不论写的是什么，目录都和没写一模一样——包括曾经会把
+    默认翻到订阅 sonnet 的 ``"subscription"``。"""
+    monkeypatch.setattr(settings, "agent_model", "gateway-model")
+    assert model_choices({"supply": leftover}) == model_choices(None)
+
+
+def test_every_gateway_model_is_offered(deployed_pool):
+    assert {"glm-5.2", "deepseek-flash", "sonnet"} <= _offered(None)
+    assert sum(item["default"] for item in model_choices(None)) == 1
 
 
 def test_a_deployment_on_a_gateway_harness_offers_every_pool_model(monkeypatch):
@@ -158,26 +160,25 @@ def test_a_project_that_switched_harness_is_filtered_by_that_one(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("supply", "default_model"),
+    "default_model",
     [
-        # 订阅部署下，项目显式把默认改成网关模型 —— #1365 之前这是 agent 上的配置
-        # 反推出来的，主线会走 gateway；#1365 之后唯一能让主线读到这个意图的地方
-        # 就是 project.settings["default_model"]。
-        ("subscription", "deepseek-flash"),
-        # 网关部署下，项目显式把默认改成另一个网关模型
-        ("gateway", "glm-5.2"),
+        # 一个网关模型。#1365 之后唯一能让主线读到这个意图的地方就是
+        # project.settings["default_model"]。
+        "deepseek-flash",
+        # 一个订阅模型：池跟着模型走，项目选了它，主线就走订阅那条路。
+        "sonnet",
     ],
 )
 def test_project_default_model_overrides_deployment_default(
-    monkeypatch, deployed_pool, supply, default_model
+    monkeypatch, deployed_pool, default_model
 ):
     """项目 settings 里显式写 default_model，就把它那条标 default=True，其余清掉。
 
-    没写时按部署兜底算（订阅部署→sonnet；网关部署→agent_model）。这条是事故
-    「agent 配了 deepseek、主线静默换到订阅 sonnet」的修复点。
+    没写时按部署兜底算（agent_model）。这条是事故「agent 配了 deepseek、主线静默
+    换到订阅 sonnet」的修复点。
     """
     monkeypatch.setattr(settings, "agent_model", "gateway-model")
-    project = {"supply": supply, "default_model": default_model}
+    project = {"default_model": default_model}
     choices = model_choices(project)
     defaults = [item for item in choices if item["default"]]
     assert len(defaults) == 1
@@ -189,13 +190,7 @@ def test_project_default_model_overrides_deployment_default(
 def test_no_default_model_falls_back_to_deployment_default(monkeypatch, deployed_pool):
     """没写 default_model 时保留部署兜底算出来的 default —— 不破坏现状。"""
     # deployed_pool fixture 把 settings.agent_model 设成 "glm-5.2"
-    # 订阅部署 + 项目 supply=subscription → 默认 sonnet
-    choices = model_choices({"supply": "subscription"})
-    defaults = [item for item in choices if item["default"]]
-    assert len(defaults) == 1
-    assert defaults[0]["id"] == "sonnet"
-    # 网关部署 → 默认 settings.agent_model（= glm-5.2）
-    choices = model_choices({"supply": "gateway"})
+    choices = model_choices({})
     defaults = [item for item in choices if item["default"]]
     assert len(defaults) == 1
     assert defaults[0]["id"] == "glm-5.2"
@@ -203,12 +198,12 @@ def test_no_default_model_falls_back_to_deployment_default(monkeypatch, deployed
 
 def test_unknown_default_model_is_silently_ignored(monkeypatch, deployed_pool):
     """历史数据可能写过目录里没有的名字，那种情况按没设处理，不让目录空掉。"""
-    project = {"supply": "subscription", "default_model": "nothing-real"}
+    project = {"default_model": "nothing-real"}
     choices = model_choices(project)
-    # 仍然有一个 default（部署兜底算出来的 sonnet），不是零个
+    # 仍然有一个 default（部署兜底算出来的 agent_model），不是零个
     defaults = [item for item in choices if item["default"]]
     assert len(defaults) == 1
-    assert defaults[0]["id"] == "sonnet"
+    assert defaults[0]["id"] == "glm-5.2"
 
 
 # --- What the platform pool offers ------------------------------------------
@@ -384,9 +379,7 @@ def test_a_model_offers_the_efforts_the_gateway_declares_for_it(monkeypatch):
 
 def test_a_subscription_model_offers_every_effort():
     subscription = [
-        item
-        for item in model_choices({"supply": "subscription"})
-        if item["supply"] == "subscription"
+        item for item in model_choices(None) if item["supply"] == "subscription"
     ]
     assert subscription
     assert all(
