@@ -5,7 +5,7 @@ someone from outside it comes in as an external member by accepting an
 invitation, and is the one kind of person a manager can take out of the project.
 """
 
-from tests.integration.conftest import add_external_member, new_project
+from tests.integration.conftest import _register, add_external_member, new_project
 
 OWNER = "owner-1"
 MISSING_PROJECT = "00000000-0000-0000-0000-000000000000"
@@ -33,6 +33,7 @@ def test_external_members_are_listed_after_the_owner(client):
 
 def test_a_second_invitation_to_the_same_person_is_rejected(client, bearer):
     project_id = _create_project(client)
+    _register(client, "alice")
     first = client.post(
         f"/projects/{project_id}/invitations",
         json={"user_handle": "alice"},
@@ -45,6 +46,22 @@ def test_a_second_invitation_to_the_same_person_is_rejected(client, bearer):
         headers=bearer(OWNER),
     )
     assert again.status_code == 422
+
+
+def test_a_handle_nobody_holds_is_not_invited(client, bearer):
+    """An invitation is answered by the account it names: one to a handle no
+    account holds would reach no one, and would let in whoever took that
+    handle later."""
+    project_id = _create_project(client)
+    r = client.post(
+        f"/projects/{project_id}/invitations",
+        json={"user_handle": "nobody-yet"},
+        headers=bearer(OWNER),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["i18n"]["key"] == "inviteNoSuchPerson"
+    pending = client.get(f"/projects/{project_id}/invitations", headers=bearer(OWNER))
+    assert pending.json()["data"]["data"] == []
 
 
 def test_someone_already_in_the_project_is_not_invited(client, bearer):

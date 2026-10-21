@@ -29,6 +29,7 @@ def _headers(client, handle: str) -> dict[str, str]:
 
 
 def _invite_mentor(client, project_id: str) -> str:
+    seed_user(client, MENTOR)
     r = client.post(
         f"/projects/{project_id}/invitations",
         json={"user_handle": MENTOR},
