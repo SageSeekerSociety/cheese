@@ -34,6 +34,7 @@ from app.domain.agent.gateway_models_helpers import (
     _source_prices,
     _source_snapshot,
     _source_target,
+    _spend_cap,
     _translated_to_chat,
     _upstream_of,
     _validate_api_base,
@@ -121,6 +122,40 @@ async def _fold_system_messages(
             await service._admin.update_model(  # type: ignore[union-attr]
                 model_id=source.source_id, capabilities={_MID_SYSTEM: False}
             )
+
+
+async def _same_upstream_caps(
+    service: pkg.GatewayModelsService,
+    *,
+    upstream_model: str,
+    cap: float | None,
+    edited: str,
+) -> list[str]:
+    """The other runtime rows on ``upstream_model`` whose cap is not ``cap``.
+
+    spend_cap.py counts a row's cap against everything its upstream model has
+    been charged, whichever row or model name carried the calls, so one cap per
+    upstream is the only setting that means anything: two rows with different
+    caps would refuse at different totals of the same bill. A config.yaml row
+    cannot be rewritten from here, so one that disagrees refuses the edit.
+    """
+    stale: list[str] = []
+    for model in await service._require_models():
+        for source in model.sources:
+            if source.upstream_model != upstream_model or source.source_id == edited:
+                continue
+            if _spend_cap(source) == cap:
+                continue
+            if source.origin == "config":
+                raise BadRequestError(
+                    say(
+                        "sourceSpendCapInConfig",
+                        name=model.name,
+                        upstream=upstream_model,
+                    )
+                )
+            stale.append(source.source_id)
+    return stale
 
 
 async def add_source(
@@ -211,6 +246,16 @@ async def update_source(
             bare = _bare_upstream(source)
             kwargs["upstream_model"] = upstream_string(data["protocol"], bare)
         upstream_model = kwargs.get("upstream_model", source.upstream_model)
+        others: list[str] = []
+        if "spend_cap_usd" in data:
+            # Checked before anything is written: a refusal leaves every row as it was.
+            cap = data["spend_cap_usd"]
+            others = await _same_upstream_caps(
+                service, upstream_model=upstream_model, cap=cap, edited=source_id
+            )
+            kwargs["spend_cap_usd"] = cap or 0.0
+            # The audit names every row the edit wrote, not only the one asked for.
+            data["spend_cap_also_on"] = others
         api_base = data.get("api_base")
         if api_base is None and "upstream_model" in kwargs:
             # 换了协议：已存的地址也要按新协议的写法收一遍。
@@ -238,6 +283,10 @@ async def update_source(
             if data.get(field) is not None:
                 kwargs[field] = data[field]
         await service._admin.update_model(**kwargs)  # type: ignore[union-attr]
+        for other in others:
+            await service._admin.update_model(  # type: ignore[union-attr]
+                model_id=other, spend_cap_usd=kwargs["spend_cap_usd"]
+            )
         await service._after_write()
         return {"model": await service._read_back(name, {}, model.model_id)}
 
