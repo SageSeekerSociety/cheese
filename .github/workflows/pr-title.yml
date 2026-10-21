@@ -21,12 +21,20 @@ permissions:
   contents: read
   pull-requests: read
 
-concurrency:
-  group: pr-title-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
-  cancel-in-progress: true
-
 jobs:
   recheck:
+    # Concurrency lives on the job, not the workflow. Required CI completes for
+    # every conclusion, including `cancelled` — the draft run that a
+    # ready_for_review supersedes ends that way — and each completion starts a
+    # run of this workflow. The `if` below skips that job, but as a
+    # workflow-level group the run still cancelled the title-edit recheck
+    # running for the same head. The cancelled `recheck` check then stayed on
+    # the head as its last word, so the head's rollup read red even after later
+    # attempts passed (#4573). A job skipped by `if` never enters a job-level
+    # group, so only rechecks that will actually run supersede each other.
+    concurrency:
+      group: pr-title-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+      cancel-in-progress: true
     if: >-
       (github.event_name == 'pull_request'
        && github.event.pull_request.head.repo.full_name == github.repository

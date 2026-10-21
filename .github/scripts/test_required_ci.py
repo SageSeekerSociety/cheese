@@ -778,6 +778,20 @@ class TitleRecheckTest(unittest.TestCase):
             with self.subTest(context=context):
                 self.assertEqual(bool(eval(expression, {"__builtins__": {}}, {})), expected)  # noqa: S307
 
+    def test_a_skipped_completion_cannot_cancel_a_running_recheck(self):
+        # Required CI completes for every conclusion, so the draft run that
+        # ready_for_review supersedes starts this workflow too, with a
+        # `cancelled` completion. Its job is skipped; held as a workflow-level
+        # group, the run still cancelled the title-edit recheck for the same
+        # head, and that CANCELLED `recheck` check stayed on the head as its
+        # last word — a red rollup after every later attempt passed (#4573).
+        # Job-level concurrency is entered only by a job that will run.
+        text = WORKFLOW.with_name("pr-title.yml").read_text()
+        self.assertNotRegex(text, r"(?m)^concurrency:")
+        recheck = jobs_of(text)["recheck"]
+        self.assertEqual(recheck["concurrency"], "")
+        self.assertIn("group: pr-title-", recheck["text"])
+
     def test_title_edit_reruns_only_ci_required(self):
         self.assertEqual(self.recheck(), ["202"])
 
