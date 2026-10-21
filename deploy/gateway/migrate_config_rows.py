@@ -26,7 +26,12 @@ What a DB row needs that a config row does not:
   copied into litellm_params (and left in model_info too).
 - A price-only row (model_info.blocked) is blocked right after it is created:
   /model/new never writes the blocked column, only /model/block does, and a
-  DB row's model_info.blocked is read from that column.
+  DB row's model_info.blocked is read from that column. For the second or so
+  in between the row can route; it has no credential, and LiteLLM would fall
+  back to ANTHROPIC_API_KEY for an `anthropic/` row without one. The gateway's
+  compose file does not pass that variable, but if the container has it
+  anyway, such a row is created with a key the upstream refuses
+  (PRICE_ROW_KEY) instead.
 
 `os.environ/...` references are kept verbatim; LiteLLM resolves them for DB rows
 as it does for config rows.
@@ -52,6 +57,10 @@ SKIP = {
 }
 # Written by LiteLLM itself, or meaningless on a DB row (blocked is a column).
 DROP_INFO = {"id", "db_model", "blocked"}
+# What a price-only row is created with when the container could otherwise lend
+# it a real key from the environment for the moment before it is blocked.
+PRICE_ROW_KEY = "price-row-no-credential"
+LENDS_A_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
 # The fields LiteLLM prices a deployment by, as it declares them.
 PRICE_FIELDS = set(CustomPricingLiteLLMParams.model_fields) - {"output_vector_size"}
 
@@ -68,7 +77,9 @@ def call(method, path, body=None):
 
 
 def key_ref(value):
-    if value is None or (isinstance(value, str) and value.startswith("os.environ/")):
+    if value in (None, PRICE_ROW_KEY) or (
+        isinstance(value, str) and value.startswith("os.environ/")
+    ):
         return value
     return "<literal>"
 
@@ -84,6 +95,8 @@ for index, entry in enumerate(config.get("model_list") or [], 1):
     for key in moved:
         params[key] = info[key]
     price_only = bool((entry.get("model_info") or {}).get("blocked"))
+    if price_only and LENDS_A_KEY and "api_key" not in params:
+        params["api_key"] = PRICE_ROW_KEY
     line = {
         "i": index,
         "model_name": name,
