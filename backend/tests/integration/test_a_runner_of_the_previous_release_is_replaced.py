@@ -16,6 +16,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from sqlalchemy import select
 
@@ -29,6 +30,7 @@ from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.models import TurnResume
 from app.domain.agent.room import sessions as room_sessions
 from app.domain.agent.service import AgentResult
+from app.domain.agent.session_host.contract import SessionError
 from app.domain.agent.turn_resume import after_failure, hand_due
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind, consumed_turn
@@ -74,6 +76,8 @@ class OldRunnerHub(ReleaseHub):
         self.old = False
         self.old_ping = dict(OLD_PING)
         self.interrupted = 0
+        # What the interrupt fails with, when the connection to it breaks.
+        self.interrupt_fails: Exception | None = None
         self.told: list[tuple[str, str]] = []
 
     async def call_executor(self, device_id, state, method, params, timeout=None):
@@ -84,13 +88,20 @@ class OldRunnerHub(ReleaseHub):
             if method == "ping":
                 return dict(self.old_ping)
             if method == "interrupt":
+                if self.interrupt_fails is not None:
+                    raise self.interrupt_fails
                 # A runner that holds a registration refuses a call made
                 # under any other (``lifecycle.StaleEpoch``).
                 held = self.old_ping.get("worker_epoch")
                 if held is not None and params.get("epoch") != held:
                     raise DeviceCallError(f"stale worker epoch: {params}")
                 self.interrupted += 1
-                self.old_ping = {**self.old_ping, "working": False}
+                self.old_ping = {
+                    **self.old_ping,
+                    "working": False,
+                    "last_work": self.old_ping.get("work_id"),
+                    "last_failure": {"kind": "interrupted"},
+                }
                 return {"interrupted": True}
             if method == "read":
                 raise DeviceCallError("Unknown Claude Code session operation: read")
@@ -186,7 +197,7 @@ async def _said(client, topic) -> list[str]:
 def center(monkeypatch):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     # The drain asks the old runner often enough for a test to watch it.
-    monkeypatch.setattr(room_sessions, "DRAIN_POLL_S", 0.05, raising=False)
+    monkeypatch.setattr(room_sessions, "DRAIN_POLL_S", 0.05)
 
 
 @pytest.mark.anyio
@@ -250,6 +261,9 @@ async def test_a_working_old_runner_finishes_its_turn_and_is_replaced_once_idle(
         held["old"] = await _started_as_this_release_would(
             client, hub, tmp_path, session
         )
+        # A message written to it just before the deploy, which it reads at its
+        # next tool boundary.
+        held["steered"] = await _unread_input(client, session)
         hub.old = True
         hub.old_ping = dict(AT_WORK)
         held["service"] = service = _backend(client, hub, tmp_path)
@@ -276,8 +290,14 @@ async def test_a_working_old_runner_finishes_its_turn_and_is_replaced_once_idle(
         old = held["old"]
         await asyncio.sleep(0.3)
         assert hub.closed == [] and hub.interrupted == 0
+        # A start that does not wait at admission (the platform's own work)
+        # does not close the old runner's screen under its work.
+        claude = held["service"]._compute._backends["claude-code"]
+        with pytest.raises(SessionError):
+            await claude.ensure(ref(project, topic), system_prompt="System")
+        assert hub.closed == []
         # Its work is done.
-        hub.old_ping = dict(OLD_PING)
+        hub.old_ping = {**OLD_PING, "last_work": str(WORK), "last_failure": None}
         await _until(lambda: old.sid in hub.closed and len(hub.opened) == 1)
         assert hub.opened[0].sid != old.sid
         assert hub.interrupted == 0
@@ -286,7 +306,13 @@ async def test_a_working_old_runner_finishes_its_turn_and_is_replaced_once_idle(
         assert await _resumes(client, topic) == []
         said = await _said(client, topic)
         assert "the login page is fixed" in said
-        assert not any("平台升级重启了会话" in line for line in said)
+        # What it read during the drain is not offered again.
+        async with client.test_request_factory() as db:
+            steered = await db.get(Block, held["steered"])
+            assert steered is not None and consumed_turn(steered) is not None
+            assert not await held_blocks(
+                db, project_id=project, topic_id=topic, recipient_handle=AGENT
+            )
         await held["service"].stop_listening(0)
 
     client.portal.call(finish)
@@ -386,7 +412,7 @@ async def test_past_the_cap_the_old_runners_turn_is_interrupted_and_resumed(
     again by itself. The upgrade cut it short, not the agent failing, so it is
     resumed even when that turn was itself the resume of a failure a moment
     before (``was_a_resume``)."""
-    monkeypatch.setattr(settings, "runner_drain_s", 1.0)
+    monkeypatch.setattr(settings, "runner_drain_s", 3.0)
     project, topic = room
     hub = OldRunnerHub()
     hub.ping = dict(IDLE)
@@ -447,6 +473,108 @@ async def test_past_the_cap_the_old_runners_turn_is_interrupted_and_resumed(
         # The streak carries on as it stood: the upgrade is not one more
         # failure for the agent's next resume to count against.
         assert resume.attempt == (1 if was_a_resume else 0)
+
+    client.portal.call(exercise)
+
+
+async def _drain_one(client, hub, tmp_path, project, topic):
+    """A deploy that finds the room's old runner at work; the backend."""
+    await _seated(client, project, topic)
+    await _started_as_this_release_would(client, hub, tmp_path, ref(project, topic))
+    hub.old = True
+    hub.old_ping = {**AT_WORK, "worker_epoch": 7}
+    service = _backend(client, hub, tmp_path)
+    await service.recover_sessions()
+    return service
+
+
+@pytest.mark.anyio
+async def test_work_the_old_runner_ends_in_a_failure_is_resumed(
+    client,
+    room,  # noqa: F811
+    center,
+    tmp_path,
+):
+    """The old runner went idle on its own, but its work failed (the model
+    service refused it): the turn is started again on the new runner, not
+    closed as finished."""
+    project, topic = room
+    hub = OldRunnerHub()
+    hub.ping = dict(IDLE)
+
+    async def exercise():
+        service = await _drain_one(client, hub, tmp_path, project, topic)
+        hub.old_ping = {
+            **OLD_PING,
+            "worker_epoch": 7,
+            "last_work": str(WORK),
+            "last_failure": {"kind": "api_error", "status": 529},
+        }
+        rows: list[TurnResume] = []
+        async with asyncio.timeout(HANG_S):
+            while not (rows := await _resumes(client, topic)):
+                await asyncio.sleep(0.05)
+        await service.stop_listening(0)
+        assert [row.reason for row in rows] == ["runner_replaced"]
+        assert hub.interrupted == 0
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_closing_the_task_stops_the_old_runners_work_for_good(
+    client,
+    room,  # noqa: F811
+    center,
+    tmp_path,
+):
+    """Work taken away while the old runner drains (the task closed, the agent
+    removed) reaches that runner under the registration it holds, and ends
+    there: it is not started again."""
+    project, topic = room
+    hub = OldRunnerHub()
+    hub.ping = dict(IDLE)
+
+    async def exercise():
+        service = await _drain_one(client, hub, tmp_path, project, topic)
+        old = hub.opened[0]
+        # The closed-task sweep finds it at work.
+        assert topic in service._compute.working_conversations()
+        await service._compute.stop_work(topic)
+        assert hub.interrupted == 1
+        await _until(lambda: old.sid in hub.closed)
+        await asyncio.sleep(0.3)
+        await service.stop_listening(0)
+        assert await _resumes(client, topic) == []
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_an_interrupt_that_cannot_be_delivered_still_ends_the_drain(
+    client,
+    room,  # noqa: F811
+    center,
+    tmp_path,
+    monkeypatch,
+):
+    """Past the cap the connection to the old runner breaks as it is told to
+    stop: the seat is not left waiting on it, and the turn is started again."""
+    monkeypatch.setattr(settings, "runner_drain_s", 0.3)
+    project, topic = room
+    hub = OldRunnerHub()
+    hub.ping = dict(IDLE)
+    hub.interrupt_fails = httpx.RemoteProtocolError("owner connection reset")
+
+    async def exercise():
+        service = await _drain_one(client, hub, tmp_path, project, topic)
+        rows: list[TurnResume] = []
+        async with asyncio.timeout(HANG_S):
+            while not (rows := await _resumes(client, topic)):
+                await asyncio.sleep(0.05)
+        assert not service._compute.draining(topic, AGENT)
+        await service.stop_listening(0)
+        assert [row.reason for row in rows] == ["runner_replaced"]
 
     client.portal.call(exercise)
 

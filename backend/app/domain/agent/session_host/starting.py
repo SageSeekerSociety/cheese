@@ -240,7 +240,13 @@ async def attach(
         # same conversation (``ClaudeCodeDriver.launch``). What this reads of
         # it is the ping's handshake, which every protocol keeps
         # (``harness/driven/lifecycle.py``).
-        return replace(found, outdated=True, epoch=int(status.get("worker_epoch") or 0))
+        return replace(
+            found,
+            outdated=True,
+            epoch=int(status.get("worker_epoch") or 0),
+            last_work=status.get("last_work"),
+            last_failed=bool(status.get("last_failure")),
+        )
     launched = Launched(
         found.conversation,
         frozenset(status.get("capabilities") or ()),

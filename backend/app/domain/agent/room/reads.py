@@ -73,7 +73,14 @@ class RoomBooks(Protocol):
     async def result_landed(self, report: Report) -> None: ...
 
     async def inputs_replaced(
-        self, conversation_id: uuid.UUID, agent_handle: str, harness: str, native: str
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        native: str,
+        *,
+        read: bool = False,
+        read_into: uuid.UUID | None = None,
     ) -> None: ...
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None: ...
@@ -121,6 +128,8 @@ def reader(chat: RoomBooks) -> RoomReader:
                 session.agent_handle,
                 session.harness,
                 event.conversation,
+                read=event.read,
+                read_into=event.read_into,
             )
         elif isinstance(event, Writing):
             await publish_live(

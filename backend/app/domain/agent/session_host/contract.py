@@ -232,6 +232,11 @@ class SessionStatus:
     #: The registration the runner holds (its ping's ``worker_epoch``): what a
     #: call this process makes without registering it carries.
     epoch: int = 0
+    #: The work the runner last ended, and whether it ended in a failure: how
+    #: a runner this release does not read says how its work ended (its
+    #: ping's ``last_work`` and ``last_failure``).
+    last_work: str | None = None
+    last_failed: bool = False
 
 
 class InputUnconfirmed(SessionError):

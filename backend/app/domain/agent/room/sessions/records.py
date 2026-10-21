@@ -92,6 +92,9 @@ class Outdated:
     epoch: int = 0
     #: The room was told a message waits for it.
     told: bool = False
+    #: Somebody took its work away (a Stop, a closed task, the agent removed
+    #: from the room): the work ends there, and is not started again.
+    stopped: bool = False
     #: It is being settled: what was held for it is let go.
     settling: bool = False
 

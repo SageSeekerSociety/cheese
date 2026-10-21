@@ -30,6 +30,7 @@ from app.domain.agent.session_host.contract import (
     Access,
     ModelSettings,
     Owner,
+    SessionError,
     SessionSpec,
 )
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
@@ -55,6 +56,15 @@ async def ensure(
     how long each step took (`send` logs it)."""
     mark = Stopwatch(phases)
     seat = svc._seat_of(session)
+    if svc._draining(seat):
+        # Starting one now would close the old runner's screen in the middle
+        # of the work it is being left to finish. A turn waits for the drain
+        # at admission (``admitted_initial``); a start that never passes there
+        # (the platform's own work) is refused and tried again later.
+        raise SessionError(
+            "This seat's runner is finishing work another release started; "
+            "it is replaced once that is done"
+        )
     previous = svc.live.get(seat)
     if previous is not None and acting is not None and acting != previous.acting:
         # A different teammate is taking this seat over; the conversation

@@ -189,10 +189,15 @@ class Report:
 @dataclass(frozen=True)
 class Replaced:
     """The process holding native session ``conversation`` was replaced by one
-    of this release's (a runner the previous release started): what it was
-    written and never read, it never will read."""
+    of this release's (a runner another release started). What it was written
+    and has no record of reading, it never will read; unless it went idle on
+    its own before it was replaced (``read``), which it does only once it has
+    taken in everything it was written: then those were read, into the work
+    ``read_into`` names when it was doing one."""
 
     conversation: str
+    read_into: uuid.UUID | None = None
+    read: bool = False
 
 
 @dataclass(frozen=True)

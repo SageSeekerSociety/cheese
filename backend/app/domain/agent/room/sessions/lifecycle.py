@@ -287,11 +287,15 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
     """Let the work an outdated runner is doing finish, then replace it.
 
     Its ping is the one thing every protocol keeps (``lifecycle``'s
-    handshake), so that is all this asks it, every ``DRAIN_POLL_S``. Idle, or
-    gone, it is replaced; still at work past ``settings.runner_drain_s`` from
-    when this process found it, its work is interrupted and resumed on the new
-    runner (``runner_replaced``), the way every replacement went before there
-    was a drain. A runner that cannot be asked is waited for to the same cap."""
+    handshake), so that is all this asks it, every ``DRAIN_POLL_S``. Idle, it
+    is replaced, and its work ends the way its ping says the work ended: as
+    finished, or, when it ended in a failure, started again on the new
+    runner (``runner_replaced``). Gone, its work is started again too. Still
+    at work past ``settings.runner_drain_s`` from when this process found it,
+    its work is interrupted and started again, the way every replacement went
+    before there was a drain. A runner that cannot be asked is waited for to
+    the same cap. Work somebody stopped meanwhile (``RoomSessions.interrupt``)
+    ends as stopped."""
     live = outdated.live
     logger.info(
         "runner_drain_started topic=%s seat=%s conversation=%s work=%s cap_s=%.0f",
@@ -301,7 +305,6 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
         outdated.work,
         settings.runner_drain_s,
     )
-    reason = "drained"
     while True:
         await asyncio.sleep(pkg.DRAIN_POLL_S)
         try:
@@ -311,14 +314,25 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
                 "outdated runner not asked topic=%s seat=%s", seat[0], seat[1]
             )
             status = None
-        if status is not None and not (status.alive and status.working):
-            # A process that ended at work did not finish it: it is resumed.
-            reason = "drained" if status.alive else "gone"
+        if status is not None and not status.alive:
+            reason = "gone"
+            break
+        if status is not None and not status.working:
+            ended_badly = status.last_failed and status.last_work == str(outdated.work)
+            reason = "failed" if ended_badly else "drained"
             break
         if time.monotonic() - outdated.found >= settings.runner_drain_s:
-            interrupted = await svc.host.stop(
-                live.ref, host=outdated.access.host, epoch=outdated.epoch
-            )
+            try:
+                interrupted = await svc.host.stop(
+                    live.ref, host=outdated.access.host, epoch=outdated.epoch
+                )
+            except Exception:  # the next start closes its screen all the same
+                logger.exception(
+                    "outdated runner not interrupted topic=%s seat=%s",
+                    seat[0],
+                    seat[1],
+                )
+                interrupted = False
             logger.warning(
                 "runner_drain_timed_out topic=%s seat=%s conversation=%s work=%s "
                 "after_s=%.0f interrupted=%s",
@@ -331,9 +345,18 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
             )
             reason = "timed_out"
             break
+    if outdated.stopped:
+        reason = "stopped"
     while True:
         try:
-            await _replaced(svc, outdated, failed=reason != "drained")
+            await _replaced(
+                svc,
+                outdated,
+                failed=reason in ("gone", "failed", "timed_out"),
+                # It went idle on its own; stopped, it may have been cut off
+                # before it took in what it was written.
+                read=reason in ("drained", "failed"),
+            )
             break
         except Exception:  # the database away for a moment: settle again
             logger.exception(
@@ -352,20 +375,29 @@ async def _drain(svc: pkg.RoomSessions, seat: Seat, outdated: Outdated) -> None:
     )
 
 
-async def _replaced(svc: pkg.RoomSessions, outdated: Outdated, *, failed: bool) -> None:
+async def _replaced(
+    svc: pkg.RoomSessions, outdated: Outdated, *, failed: bool, read: bool = False
+) -> None:
     """Settle a seat whose runner is another release's, and have one of this
     release's take its place on the same conversation.
 
-    What it was written and never read is dropped, so the messages in it are
-    offered again, and what waited for it goes ahead. Work it finished ends as
-    finished; work it did not (``failed``: interrupted at the drain's cap, or
-    its process gone) ends with the upgrade as its failure, which the platform
-    starts again by itself (``resumable_failures``). The new runner is started
-    as soon as the seat is quiet (``prewarm_due``), or by the next start."""
+    What it was written and has no record of reading is dropped, so the
+    messages in it are offered again, unless it went idle on its own
+    (``read``): a runner goes idle only once it has taken in everything it
+    was written, so those were read into its work, and offering them again
+    would have them answered twice. What waited for it goes ahead. Work it
+    finished ends as finished; work it did not (``failed``: it ended in a
+    failure, was interrupted at the drain's cap, or its process went) ends
+    with the upgrade as its failure, which the platform starts again by
+    itself (``resumable_failures``). The new runner is started as soon as the
+    seat is quiet (``prewarm_due``), or by the next start."""
     live = outdated.live
     seat = svc._seat_of(live.session)
     outdated.settling = True
-    await svc._hear(live.session, Read(None, Replaced(live.conversation)))
+    await svc._hear(
+        live.session,
+        Read(None, Replaced(live.conversation, read_into=outdated.work, read=read)),
+    )
     if (work := outdated.work) is not None:
         await svc._consume(
             live.session.project_id,
@@ -378,8 +410,7 @@ async def _replaced(svc: pkg.RoomSessions, outdated: Outdated, *, failed: bool) 
                 failure_code=RUNNER_REPLACED_CODE if failed else None,
                 agent_handle=live.acting,
                 harness=svc.harness,
-                # It ran to its end: what it was given, it read.
-                inputs_read=not failed,
+                inputs_read=read,
             ),
             f"{svc.harness}:{live.conversation}:replaced:{work}",
             False,

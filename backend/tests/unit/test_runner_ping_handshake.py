@@ -4,9 +4,10 @@ A runner outlives the release that started it, so the next release meets it
 speaking a lifecycle protocol it does not read (``harness/driven/lifecycle.py``).
 What it still reads is the ping: whether the runner is alive, which protocol and
 launch it is, its conversation, whether it is at work and on what, and the
-registration it holds. That is how it lets the work finish before replacing the
-runner, and how it interrupts the work under the runner's own registration once
-the drain runs out. A runner of this release is held to those fields here, the
+registration it holds, and how the work it last ended ended. That is how it lets
+the work finish before replacing the runner, knows whether that work failed, and
+interrupts the work under the runner's own registration once the drain runs
+out. A runner of this release is held to those fields here, the
 real archive against the pinned build, and to the busy flag being true for the
 whole of a piece of work, a tool running included, and false once it ended.
 """
@@ -33,6 +34,8 @@ HANDSHAKE = {
     "working": (bool,),
     "work_id": (str, type(None)),
     "worker_epoch": (int,),
+    "last_work": (str, type(None)),
+    "last_failure": (dict, type(None)),
 }
 
 
@@ -70,3 +73,17 @@ def test_the_ping_says_whether_the_runner_is_at_work_from_start_to_end(
     done = _handshake(screen.call("ping"))
     assert done["working"] is False and done["work_id"] is None
     assert done["alive"] is True
+    # How it ended: cleanly.
+    assert done["last_work"] == work and done["last_failure"] is None
+
+    # Work taken away ends in a failure, and the ping says so.
+    cut = str(uuid.uuid4())
+    screen.send(
+        contract.do("Bash", command="sleep 30", description="wait"), work_id=cut
+    )
+    screen.wait(_is("assistant"), after=screen.records()[-1]["sequence"])
+    screen.call("interrupt")
+    screen.wait_event(_status("idle", cut))
+    stopped = _handshake(screen.call("ping"))
+    assert stopped["last_work"] == cut
+    assert stopped["last_failure"] == {"kind": "interrupted"}

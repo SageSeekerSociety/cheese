@@ -523,11 +523,27 @@ class RoomSessions:
 
     async def interrupt(self, session: SessionRef) -> bool:
         """Take the seat's work away; the session and its conversation stay.
-        True = the stop reached the session."""
-        live = self.live.get(self._seat_of(session))
-        if live is None:
+        True = the stop reached the session. A runner being drained is
+        stopped too, under the registration it holds, and its work then ends
+        as stopped rather than as one to start again."""
+        seat = self._seat_of(session)
+        live = self.live.get(seat)
+        if live is not None:
+            return await self.host.stop(live.ref)
+        if not self._draining(seat):
             return False
-        return await self.host.stop(live.ref)
+        outdated = self.outdated[seat]
+        outdated.stopped = True
+        return await self.host.stop(
+            outdated.live.ref, host=outdated.access.host, epoch=outdated.epoch
+        )
+
+    def holding(self, seat: Seat) -> SessionRef | None:
+        """The session this process holds on the seat, a runner being drained
+        included; None when it holds none."""
+        if (live := self.live.get(seat)) is not None:
+            return live.session
+        return self.outdated[seat].live.session if self._draining(seat) else None
 
     async def announce(self, topic: uuid.UUID) -> None:
         """Tell the room its session's controls moved."""

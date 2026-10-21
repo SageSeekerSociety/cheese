@@ -338,12 +338,25 @@ class ChatService(
         return await runner_reports.apply(self, report)
 
     async def inputs_replaced(
-        self, conversation_id: uuid.UUID, agent_handle: str, harness: str, native: str
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        native: str,
+        *,
+        read: bool = False,
+        read_into: uuid.UUID | None = None,
     ) -> None:
         """The process holding native session ``native`` was replaced
         (`runner_reports.replaced`)."""
         await runner_reports.replaced(
-            self, conversation_id, agent_handle, harness, native
+            self,
+            conversation_id,
+            agent_handle,
+            harness,
+            native,
+            read=read,
+            read_into=read_into,
         )
 
     async def result_landed(self, report: Report) -> None:

@@ -339,6 +339,45 @@ async def drop_unread_of_session(session, *, harness, native_session_id, reason)
     return dropped
 
 
+async def read_unread_of_session(
+    session, *, harness, native_session_id, work_id: uuid.UUID | None
+) -> int:
+    """Every input written to this native session that has no record of being
+    read nor dropped, recorded as read, into ``work_id`` when it names one: its
+    runner went idle, which it does only once it has taken in what it was
+    written, and nothing that runner reported can be read
+    (``room.sessions.lifecycle._replaced``). Read is delivered: nothing in
+    them is offered again."""
+    unread = list(
+        await session.scalars(
+            select(NativeInput).where(
+                NativeInput.harness == harness,
+                NativeInput.native_session_id == native_session_id,
+                NativeInput.echoed_at.is_(None),
+                NativeInput.terminated_at.is_(None),
+            )
+        )
+    )
+    read = 0
+    for row in unread:
+        identity = InputIdentity(
+            *(getattr(row, field) for field in InputIdentity.__dataclass_fields__)
+        )
+        if (
+            await record_receipt(
+                session,
+                InputReceipt(
+                    identity,
+                    "native_echo",
+                    execution_work_id=row.execution_work_id or work_id,
+                ),
+            )
+            is not None
+        ):
+            read += 1
+    return read
+
+
 async def fail_read_inputs(
     session, *, harness, native_session_id, input_ids, failure
 ) -> int:
