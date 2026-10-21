@@ -1,12 +1,15 @@
 """Execute enrollment with local SSH/SCP transports and a verified-cache fixture."""
 
 import asyncio
+import io
 import os
 import platform
+import tarfile
 
 import pytest
 
-from app.domain.machine import enrollment
+from app.api.routes.installer import download_toolchain
+from app.domain.machine import enrollment, toolchain_dist
 
 # The connector target of the machine these tests run on, which the fake ssh
 # below makes the guest.
@@ -28,6 +31,48 @@ def served_connectors(tmp_path, monkeypatch):
         binary.write_text(f"#!/bin/sh\necho served {target}\n")
     monkeypatch.setattr(enrollment.connector_build, "dist_dir", lambda: dist)
     return dist
+
+
+def _archive(path, top, files):
+    """A toolchain archive as the releases are cut: everything under ``top/``."""
+    with tarfile.open(path, "w:gz") as archive:
+        for name, text in files.items():
+            data = text.encode()
+            entry = tarfile.TarInfo(f"{top}/{name}")
+            entry.size, entry.mode = len(data), 0o755
+            archive.addfile(entry, io.BytesIO(data))
+
+
+@pytest.fixture(autouse=True)
+def served_sandbox_tools(tmp_path, monkeypatch):
+    """The sandbox tools' archives the toolchain route serves, by platform;
+    ``broken`` names a tool the platform cannot get."""
+    broken: set[str] = set()
+
+    async def ensure_cached(root, tool, platform_key):
+        if tool in broken:
+            raise toolchain_dist.ToolchainDistError(f"{tool} unavailable upstream")
+        path = tmp_path / "toolchain-cache" / tool / platform_key / "artifact.tar.gz"
+        if not path.exists():
+            path.parent.mkdir(parents=True)
+            program = {"bubblewrap": "bwrap", "host-tools": "bin/mkfs.xfs"}[tool]
+            _archive(
+                path,
+                f"{tool}-1",
+                {program: f"#!/bin/sh\necho {tool} {platform_key}\n"},
+            )
+        return path
+
+    monkeypatch.setattr(toolchain_dist, "ensure_cached", ensure_cached)
+    return broken
+
+
+async def _served_digest(tool, platform_key):
+    """The digest the toolchain route answers with, which the connector
+    compares with the one beside its placed copy (`cli/internal/devenv`)."""
+    response = await download_toolchain(tool, platform_key)
+    assert response.status_code == 200
+    return response.headers["X-Checksum-SHA256"]
 
 
 def fake_transports(tools, home):
@@ -272,6 +317,97 @@ async def test_no_served_connector_stops_before_the_script(
     monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
     ran = home / "script-ran"
     with pytest.raises(enrollment.EnrollmentError, match=GUEST_TARGET):
+        await enrollment.run_bootstrap(
+            ip="guest",
+            login_user="cheese",
+            private_key="test",
+            script=f'touch "{ran}"',
+        )
+    assert not ran.exists()
+
+
+@pytest.mark.parametrize(
+    ("machine", "platform_key"),
+    [("x86_64", "linux-x64"), ("aarch64", "linux-arm64")],
+)
+async def test_the_sandbox_tools_are_placed_where_the_connector_takes_them_as_current(
+    tmp_path, monkeypatch, machine, platform_key
+):
+    """A cloud machine gets bubblewrap and the host tools over the enrollment
+    connection, before the script runs, unpacked where its connector keeps
+    them and beside the digest the route serves, so `link connect` finds them
+    current and downloads neither."""
+    home = _guest_with_claude(tmp_path)
+    fake_transports(tmp_path / "bin", home)
+    uname = tmp_path / "bin" / "uname"
+    uname.write_text(
+        f'#!/bin/sh\n[ "$1" = -m ] && echo {machine} || exec /usr/bin/uname "$@"\n'
+    )
+    uname.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    runtime = home / ".cheese/runtime"
+
+    output = await enrollment.run_bootstrap(
+        ip="guest",
+        login_user="cheese",
+        private_key="test",
+        script='r="$HOME/.cheese/runtime"; "$r/bubblewrap/bwrap"; '
+        '"$r/host-tools/bin/mkfs.xfs"',
+    )
+
+    assert output.splitlines() == [
+        f"bubblewrap {platform_key}",
+        f"host-tools {platform_key}",
+    ]
+    for tool in ("bubblewrap", "host-tools"):
+        marker = (runtime / f"{tool}.sha256").read_text().strip()
+        assert marker == await _served_digest(tool, platform_key)
+    assert sorted(p.name for p in runtime.iterdir()) == [
+        "bubblewrap",
+        "bubblewrap.sha256",
+        "host-tools",
+        "host-tools.sha256",
+    ]
+
+
+async def test_a_retry_replaces_sandbox_tools_an_earlier_attempt_left(
+    tmp_path, monkeypatch
+):
+    """An older placement, or one an interrupted attempt left half made, is
+    replaced whole: nothing of it is left to run, and the digest is current."""
+    home = _guest_with_claude(tmp_path)
+    runtime = home / ".cheese/runtime"
+    (runtime / "host-tools/bin").mkdir(parents=True)
+    (runtime / "host-tools/bin/old-only").write_text("old")
+    (runtime / "host-tools.sha256").write_text("0" * 64 + "\n")
+    (runtime / "bubblewrap.ssh-new").mkdir()
+    (runtime / "bubblewrap.ssh-new/partial").write_text("half")
+    fake_transports(tmp_path / "bin", home)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    platform_key = {"linux-amd64": "linux-x64", "linux-arm64": "linux-arm64"}[
+        GUEST_TARGET
+    ]
+
+    await enrollment.run_bootstrap(
+        ip="guest", login_user="cheese", private_key="test", script="true"
+    )
+
+    assert not (runtime / "host-tools/bin/old-only").exists()
+    assert not (runtime / "bubblewrap.ssh-new").exists()
+    assert (runtime / "host-tools.sha256").read_text().strip() == (
+        await _served_digest("host-tools", platform_key)
+    )
+
+
+async def test_a_sandbox_tool_the_platform_cannot_serve_stops_before_the_script(
+    tmp_path, monkeypatch, served_sandbox_tools
+):
+    served_sandbox_tools.add("host-tools")
+    home = _guest_with_claude(tmp_path)
+    fake_transports(tmp_path / "bin", home)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    ran = home / "script-ran"
+    with pytest.raises(enrollment.EnrollmentError, match="host-tools"):
         await enrollment.run_bootstrap(
             ip="guest",
             login_user="cheese",
