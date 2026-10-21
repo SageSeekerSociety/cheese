@@ -54,7 +54,7 @@ function pick(role: PlatformRole, value: string) {
       v-if="props.error"
       :title="t('models.roles.loadFailed')"
       :error="props.error"
-      :retry-label="t('models.page.retry')"
+      :retry-label="t('models.roles.retry')"
       @retry="emit('retry')"
     />
     <p class="amr__hint t-meta-read">{{ t('models.roles.hint') }}</p>

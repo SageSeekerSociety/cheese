@@ -368,6 +368,7 @@
       "voice_asr_model": "Voice input: speech to text",
       "voice_polish_model": "Voice input: transcript tidy-up",
       "memory_migration_model": "Memory migration"
-    }
+    },
+    "retry": "Retry loading roles"
   }
 }

@@ -368,6 +368,7 @@
       "voice_asr_model": "语音输入：语音转文字",
       "voice_polish_model": "语音输入：整理转写",
       "memory_migration_model": "记忆迁移"
-    }
+    },
+    "retry": "重新读取角色"
   }
 }
