@@ -774,7 +774,18 @@ def install_as_root(source, target):
     staged = target + "." + uuid.uuid4().hex
     failure = "installing " + target + " failed"
     sudo(
-        ["install", "-D", "-o", "root", "-g", "root", "-m", "0755", str(source), staged],
+        [
+            "install",
+            "-D",
+            "-o",
+            "root",
+            "-g",
+            "root",
+            "-m",
+            "0755",
+            str(source),
+            staged,
+        ],
         failure,
     )
     sudo(["mv", "-f", staged, target], failure)

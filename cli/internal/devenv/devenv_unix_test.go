@@ -305,3 +305,24 @@ func TestOnLinuxTheHostToolsArePlacedButNotOnPath(t *testing.T) {
 		t.Fatal("the host tools are on the connector's PATH")
 	}
 }
+
+func TestOnLinuxWhatWasPlacedIsUsedWhileTheServerCannotBeReached(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("tmux is placed on Linux only")
+	}
+	machineWith(t, true, map[string]string{"git": "git version 2.47.3"})
+	var asked atomic.Int32
+	if err := Ensure(context.Background(), toolchainServer(t, nil, "", &asked), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	// The machine starts again before its network: the connector's screens
+	// still need the tmux it placed.
+	t.Setenv("PATH", strings.SplitN(os.Getenv("PATH"), ":", 3)[2])
+	t.Setenv("CHEESE_RUNTIME_PATH", "")
+	if err := Ensure(context.Background(), "http://127.0.0.1:1/connector", io.Discard); err == nil {
+		t.Fatal("an unreachable server was not reported")
+	}
+	if got := onPath(t, "tmux"); got != "placed tmux" {
+		t.Errorf("tmux on PATH: %q", got)
+	}
+}

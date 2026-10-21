@@ -443,9 +443,7 @@ def connect(index, pid, forward, site=None):
     if forward or site:
         sysctl(f"net.ipv4.conf.{host}.route_localnet", 1)
     sysctl("net.ipv4.ip_forward", 1)
-    run(
-        [IP, "-batch", "-"], f"addr add {gateway}/30 dev {host}\nlink set {host} up\n"
-    )
+    run([IP, "-batch", "-"], f"addr add {gateway}/30 dev {host}\nlink set {host} up\n")
     machine = os.open("/proc/self/ns/net", os.O_RDONLY)
     sandbox = os.open(f"/proc/{pid}/ns/net", os.O_RDONLY)
     try:

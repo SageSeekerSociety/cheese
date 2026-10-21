@@ -135,6 +135,44 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         96939,
         ".tar.gz",
     ),
+    # scripts/build-host-tools.sh; digests and sizes of release host-tools-v1,
+    # checked against the downloaded files on 2026-10-21.
+    ("host-tools", "linux-x64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/host-tools-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
+        "b22f51834f5955f231ad2357e49a533b4aeff583c0fa61198f77c190ade7c62e",
+        1245095,
+        ".tar.gz",
+    ),
+    ("host-tools", "linux-arm64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/host-tools-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
+        "1ce3d1e744578a15e280722a7977634983c9af7af1a3eb66d0432d1ff1e603d4",
+        1280585,
+        ".tar.gz",
+    ),
+    ("tmux", "linux-x64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/tmux-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
+        "27fcfe08922accd5102a996956d8d9a47c396eaf02be38e007f712eabf5fa988",
+        619760,
+        ".tar.gz",
+    ),
+    ("tmux", "linux-arm64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/tmux-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
+        "44f41b69fdc861127d5821ae1b6d30feb158861ad552ad65397d2c103f839011",
+        615904,
+        ".tar.gz",
+    ),
+    ("git", "linux-x64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/git-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
+        "357d3f2f25f7ac210bd5fee6aef2b2361c46b141789b8ae89b14c822331ac4cc",
+        7704815,
+        ".tar.gz",
+    ),
+    ("git", "linux-arm64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/git-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
+        "8b1dc80b3debcd11e673963104dbce20f7c194cfcc1c4237e341e3e090a4de52",
+        7958737,
+        ".tar.gz",
+    ),
     # scripts/build-forge-cli.sh applies the merged-status localization fix.
     ("fj", "darwin-arm64"): Artifact(
         f"{_FJ_BASE}/fj-{FJ_VERSION}-aarch64-apple-darwin.tar.gz",

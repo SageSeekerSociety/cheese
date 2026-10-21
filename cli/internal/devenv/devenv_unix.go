@@ -24,6 +24,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -89,21 +90,28 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}
-	if runtime.GOOS == "linux" {
-		for _, name := range []string{"bubblewrap", "host-tools"} {
-			if err := ensureTool(ctx, base, root, platform, tool{name, ".tar.gz", extractTarGz}, log); err != nil {
-				return fmt.Errorf("%s: %w", name, err)
+	// A tool the server cannot be asked about now (a machine starting before
+	// its network) keeps the copy placed before, which was checked then.
+	var failed error
+	place := func(name, onPath string) {
+		if err := ensureTool(ctx, base, root, platform, tool{name, ".tar.gz", extractTarGz}, log); err != nil {
+			failed = errors.Join(failed, fmt.Errorf("%s: %w", name, err))
+			if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+				return
 			}
 		}
-		runtimepath.Put(filepath.Join(root, "bubblewrap"))
+		if onPath != "" {
+			runtimepath.Put(onPath)
+		}
+	}
+	if runtime.GOOS == "linux" {
+		place("bubblewrap", filepath.Join(root, "bubblewrap"))
+		place("host-tools", "")
 	}
 	for _, f := range needed {
-		if err := ensureTool(ctx, base, root, platform, tool{f.tool, ".tar.gz", extractTarGz}, log); err != nil {
-			return fmt.Errorf("%s: %w", f.tool, err)
-		}
-		runtimepath.Put(filepath.Join(root, f.tool, "bin"))
+		place(f.tool, filepath.Join(root, f.tool, "bin"))
 	}
-	return nil
+	return failed
 }
 
 // minimum is the oldest Python the session's runner runs on (it uses StrEnum).

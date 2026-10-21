@@ -44,22 +44,24 @@ func (p *program) Start(_ ksvc.Service) error {
 	if err != nil {
 		return fmt.Errorf("service: %w", err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	// What the server's commands need and this system lacks (see `devenv`) is
+	// placed before the host is made, since the host keeps its screens in the
+	// tmux that may be placed here. A machine that cannot get something still
+	// connects with what it has: whatever does not need it keeps working, and
+	// the next start tries again.
+	if err := devenv.Ensure(ctx, cfg.Base, os.Stderr); err != nil {
+		log.Printf("cheese: runtime not placed: %v", err)
+	}
 	h, err := host.New(cfg, p.cfgPath)
 	if err != nil {
+		cancel()
 		return fmt.Errorf("service: %w", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 	p.done = make(chan struct{})
 	go func() {
 		defer close(p.done)
-		// What the server's commands need and this system lacks (an older
-		// python3 than the session's runner takes) is placed before the machine
-		// is announced. A machine that cannot get it still connects: whatever
-		// does not need it keeps working, and the next start tries again.
-		if err := devenv.Ensure(ctx, cfg.Base, os.Stderr); err != nil {
-			log.Printf("cheese: runtime not placed: %v", err)
-		}
 		if err := h.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("cheese: host exited: %v", err)
 		}
