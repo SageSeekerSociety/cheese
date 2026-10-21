@@ -139,6 +139,9 @@ else:
     from shell_stop import deliver_stop
 
 PINNED_VERSION = "2.1.299"
+# The preload the device launch hands the build in BUN_OPTIONS
+# (`device_launch.py`); a private chat's WebFetch depends on it.
+PAGE_TRANSPORT = "webfetch_transport.cjs"
 # The file tools the plugin runs on the executor. Bash is not one: the build
 # runs it itself, through the shell prefix (`shell`), so its tasks, their
 # controls and their notifications are the build's own.
@@ -243,10 +246,10 @@ def prepare(
     if target.get("kind") == "private":
         if __package__:
             # deferred-import: private scratch requires fcntl, absent on Windows
-            from .private import ensure
+            from .private import ensure, webfetch_egress
         else:
             # deferred-import: private scratch requires fcntl, absent on Windows
-            from private import ensure
+            from private import ensure, webfetch_egress
         ensure(target, directory, os.environ)
     if target.get("kind") == "deferred" and target["workspace"] != DEFERRED_WORKSPACE:
         target = _take_leased_machine(target)
@@ -555,12 +558,16 @@ def prepare(
     if target.get("kind") == "private":
         # Subagents and arbitrary plugins must not create another local execution
         # route around the proxy. Skills shipped by the platform remain available.
-        command.extend(
-            [
-                "--disallowedTools",
-                "Agent,Task,WebFetch,WebSearch,EnterWorktree,ExitWorktree",
-            ]
-        )
+        # WebSearch runs at the model's provider, so it opens no route here.
+        # WebFetch reads the page from this host, so it is let in only where the
+        # transport preload will send that read through the chat's egress proxy;
+        # without the preload it would leave by the host's own network.
+        refused = ["Agent", "Task", "EnterWorktree", "ExitWorktree"]
+        if PAGE_TRANSPORT in os.environ.get("BUN_OPTIONS", ""):
+            env["CHEESE_WEBFETCH_EGRESS"] = webfetch_egress()
+        else:
+            refused.append("WebFetch")
+        command.extend(["--disallowedTools", ",".join(refused)])
     launch = {
         # The session enters its own namespace first, where the project is at
         # `workspace`; `cwd` is where this host holds it, for starting there.

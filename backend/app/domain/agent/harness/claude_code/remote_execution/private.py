@@ -9,6 +9,10 @@ attached to the default bridge and decides every connection: the public
 internet, and the platform endpoint in ``CHEESE_API``, nothing else internal.
 The container is told about the proxy (``HTTP_PROXY`` and the rest) so ordinary
 tools use it, but nothing depends on them using it: there is no other exit.
+
+The chat's WebFetch runs in Claude Code itself, on the host, and reaches the
+proxy from there over the default bridge (``webfetch_egress``): the proxy takes
+the bridge's gateway, which is the host, as one more client.
 """
 
 from __future__ import annotations
@@ -172,6 +176,30 @@ def _platform(environ):
     return f"{host}:{port}"
 
 
+def host_on_bridge():
+    """The address the host's own connections to the bridge come from."""
+    found = _docker("network", "inspect", OUTSIDE)
+    if found.returncode:
+        raise _failed(f"network inspect {OUTSIDE}", found)
+    configs = (json.loads(found.stdout)[0].get("IPAM") or {}).get("Config") or []
+    return [f"{entry['Gateway']}/32" for entry in configs if "Gateway" in entry]
+
+
+def webfetch_egress():
+    """Where the chat's WebFetch reaches the proxy from the host
+    (``CHEESE_WEBFETCH_EGRESS``, read by ``webfetch_transport.cjs``)."""
+    found = _docker(
+        "container",
+        "inspect",
+        "--format",
+        '{{(index .NetworkSettings.Networks "' + OUTSIDE + '").IPAddress}}',
+        EGRESS,
+    )
+    if found.returncode or not found.stdout.strip():
+        raise _failed(f"container inspect {EGRESS}", found)
+    return f"http://{found.stdout.strip()}:{EGRESS_PORT}"
+
+
 def egress_command(config, environ, subnets, identity):
     command = [
         "run",
@@ -246,7 +274,7 @@ def ensure_egress(config, environ):
     otherwise (absent, stopped, or started for another image or platform
     endpoint) replaced. Every private chat on the host shares it.
     """
-    subnets = ensure_network()
+    subnets = ensure_network() + host_on_bridge()
     image = _docker("image", "inspect", "--format", "{{.Id}}", config["image"])
     if image.returncode:
         raise _failed(f"image inspect {config['image']}", image)
