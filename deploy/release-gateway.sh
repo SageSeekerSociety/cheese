@@ -152,23 +152,41 @@ for model in json.load(urllib.request.urlopen(request, timeout=20))["data"]:
     print(model["id"])
 ' | sort -u
 }
+# The models container $1 serves from a database row (added on the admin page),
+# by name, from /model/info: a name stays required while any of its rows is one.
+db_model_names() {
+  docker exec "$1" /app/.venv/bin/python -c '
+import json, os, urllib.request
+request = urllib.request.Request(
+    "http://127.0.0.1:4000/model/info",
+    headers={"Authorization": "Bearer " + os.environ["LITELLM_MASTER_KEY"]},
+)
+for row in json.load(urllib.request.urlopen(request, timeout=20))["data"]:
+    if (row.get("model_info") or {}).get("db_model") is True:
+        print(row["model_name"])
+' | sort -u
+}
 config_of() { docker inspect "$1" --format '{{range .Mounts}}{{if eq .Destination "/app/config.yaml"}}{{.Source}}{{end}}{{end}}'; }
 declared() { sed -nE "s/^[[:space:]-]*model_name:[[:space:]]*[\"']?([^\"'[:space:]]+)[\"']?[[:space:]]*$/\1/p" "$1" 2>/dev/null; }
 
 # Container $1 (new) serves every model container $2 (serving) serves, except
-# one the serving container's configuration declares and this release's no
-# longer does. Any other missing one was added on the admin page, lives in the
-# database, and has not loaded: the new color would refuse it.
+# one the serving container's configuration declares, this release's no longer
+# does, and no database row serves. Any other missing one lives in the
+# database and has not loaded: the new color would refuse it. The database
+# check matters most when a model moves from config.yaml to a runtime row:
+# the release removes its name from the file, and only the row keeps it.
 serves_the_same_models() {
-  local live new old_declared new_declared missing="" id
+  local live new old_declared new_declared in_db missing="" id
   live="$(model_ids "$2")" || { log "the serving gateway does not list its models"; return 1; }
   new="$(model_ids "$1")" || return 1
+  in_db="$(db_model_names "$2")" || { log "the serving gateway does not list its database models"; return 1; }
   old_declared="$(declared "$(config_of "$2")")"
   new_declared="$(declared "$GATEWAY_CONFIG")"
   while read -r id; do
     [[ -n "$id" ]] || continue
     grep -Fxq -- "$id" <<<"$new" && continue
-    grep -Fxq -- "$id" <<<"$old_declared" && ! grep -Fxq -- "$id" <<<"$new_declared" && continue
+    grep -Fxq -- "$id" <<<"$old_declared" && ! grep -Fxq -- "$id" <<<"$new_declared" \
+      && ! grep -Fxq -- "$id" <<<"$in_db" && continue
     missing+=" $id"
   done <<<"$live"
   [[ -z "$missing" ]] || { log "not served yet:$missing"; return 1; }
