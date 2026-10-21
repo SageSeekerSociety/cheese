@@ -14,24 +14,9 @@ import { useDesktopApp } from '@/composables/useDesktopApp'
 
 import UserMenuCard from './UserMenuCard.vue'
 
-import { getMyInvites } from '@/api/invites'
 import i18n, { setLocale } from '@/i18n'
 
-vi.mock('@/api/invites', () => ({ getMyInvites: vi.fn() }))
-
-function seats(maxUses: number, used: number) {
-  vi.mocked(getMyInvites).mockResolvedValue({
-    code: 'K7Q2M9',
-    max_uses: maxUses,
-    use_count: used,
-    unlocked: maxUses > 1,
-    unlock_uses: 3,
-    invite_credits: 0,
-    invitees: [],
-  })
-}
-
-function fakeMenu(intro: string) {
+function fakeMenu(intro: string, seatsLeft: number) {
   return {
     menuOpen: ref(true),
     loggedIn: computed(() => true),
@@ -41,11 +26,12 @@ function fakeMenu(intro: string) {
     avatarColor: computed(() => '#6a5acd'),
     nickname: computed(() => '爱丽丝'),
     intro: computed(() => intro),
+    inviteSeatsLeft: ref(seatsLeft),
     onLogout: vi.fn(),
   }
 }
 
-async function mount(intro = '') {
+async function mount(intro = '', seatsLeft = 3) {
   const stub = { template: '<div />' }
   const router = createRouter({
     history: createWebHashHistory(),
@@ -61,16 +47,16 @@ async function mount(intro = '') {
   await router.push('/')
   await router.isReady()
   const vuetify = createVuetify({ components, directives })
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return render(UserMenuCard, { props: { menu: fakeMenu(intro) as any }, global: { plugins: [vuetify, router] } })
+  return render(UserMenuCard, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    props: { menu: fakeMenu(intro, seatsLeft) as any },
+    global: { plugins: [vuetify, router] },
+  })
 }
 
 describe('「我」的菜单', () => {
   // 初始语言跟着浏览器（happy-dom 报 en-US），断言写的是中文，所以每条先定成中文。
-  beforeEach(() => {
-    setLocale('zh-CN')
-    seats(4, 1)
-  })
+  beforeEach(() => setLocale('zh-CN'))
 
   it('「邀请好友」在个人主页下面，写着自己的码还剩几个名额，点进去是邀请页', async () => {
     const view = await mount()
@@ -79,9 +65,7 @@ describe('「我」的菜单', () => {
   })
 
   it('名额用完了只写「邀请好友」，照样能进邀请页', async () => {
-    seats(4, 4)
-    const view = await mount()
-    await vi.waitFor(() => expect(getMyInvites).toHaveBeenCalled())
+    const view = await mount('', 0)
     const item = await view.findByText('邀请好友')
     expect(item.closest('a')?.getAttribute('href')).toBe('#/users/settings/invites')
     expect(view.queryByText(/剩 \d+ 个名额/)).toBeNull()
@@ -127,7 +111,6 @@ describe('「我」的菜单', () => {
 describe('「我」的菜单，在桌面 app 里', () => {
   beforeEach(() => {
     setLocale('zh-CN')
-    seats(1, 0)
     ;(window as unknown as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
   })
   afterEach(() => {
