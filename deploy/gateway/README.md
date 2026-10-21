@@ -121,18 +121,25 @@ convention; they are estimates, not a live exchange rate. The pinned adapter
 keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
 unsupported adaptive-thinking field.
 
-Gemini 4 Argon runs on Google AI Studio. Set `GEMINI_API_KEY` in the same
-`.env` before releasing a configuration that includes it. Two adaptations make
+Gemini 4 Argon runs on Google AI Studio, as a runtime row added on the admin
+models page, not in `config.yaml`, so its spend cap changes without a release.
+The row's `api_key` is `os.environ/GEMINI_API_KEY`, which the pinned LiteLLM
+resolves for database rows too, so `GEMINI_API_KEY` stays in the same `.env`.
+Its prices are Google's rates from 2026-12-01 ($4 in, $20 out, $0.20 cache
+read per million tokens; https://ai.google.dev/gemini-api/docs/pricing read
+2026-10-15), half that until then, so the brake does not go soft on 12-01.
+Measured 2026-10-15 with `gateway_conformance.py`: text, tool calls, parallel
+calls, tool results, images in tool results, the mid-conversation system
+message and the implicit prompt cache pass. Two adaptations make
 Claude Code's requests work there: `patch_gemini_generation.py` makes the
 pinned LiteLLM treat `gemini-4` as the Gemini 3+ generation (thought
 signatures, tool-call ids, thinking level), and `no_explicit_cache.py` strips
 `cache_control` from a deployment marked `cheese_no_explicit_cache: true`,
 because argon refuses explicit caching and LiteLLM would otherwise create a
-`cachedContents` object for every Claude Code request. Its key is capped at
-USD 2,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
-gateway database's daily spend, so the cap survives releases. The cap is read
-from the deployment on every call, so on a runtime row it is changed on the
-admin models page without a release (see "Putting a model in front of people").
+`cachedContents` object for every Claude Code request. Its key has a lifetime
+cap (`cheese_spend_cap_usd`, `spend_cap.py`; USD 2,000 when the row was added),
+counted from the gateway database's daily spend, so the cap survives releases;
+change it on the admin models page (see "Putting a model in front of people").
 
 `deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
 RUC key, and by DeepSeek's API when every RUC key fails or is past its 3

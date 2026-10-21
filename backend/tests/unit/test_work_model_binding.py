@@ -66,11 +66,18 @@ def test_the_binding_carries_the_supply_that_serves_it():
     assert resolve(_work(model="deepseek-flash"), catalog(None)).supply == GATEWAY
 
 
-def test_the_project_default_follows_the_projects_own_supply():
-    """项目挑了网关池，默认就是网关池那一个，不是订阅的 sonnet。"""
-    bound = resolve(None, catalog({"supply": "gateway"}))
+def test_the_project_default_is_a_gateway_model():
+    """项目不挑池：没选模型时默认是平台池那一个，不是订阅的 sonnet。"""
+    bound = resolve(None, catalog(None))
     assert bound.supply == GATEWAY
     assert bound.model != "sonnet"
+
+
+def test_a_project_that_picks_a_subscription_model_runs_on_the_subscription():
+    """池跟着模型走：项目默认选了订阅模型，绑定就带订阅那条供给。"""
+    bound = resolve(None, catalog({"default_model": "opus"}))
+    assert bound.model == "opus"
+    assert bound.supply == SUBSCRIPTION
 
 
 def test_effort_rides_with_the_work_not_with_the_project():

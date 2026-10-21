@@ -601,11 +601,13 @@ async def test_late_spend_rows_land_via_deferred_drain(
 async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrives(
     business_db_factory, tmp_path
 ):
-    """Deploying the subscription must not move a project that chose the gateway.
+    """Deploying the subscription must not move a project off the gateway.
 
-    What holds it there is the project's own supply setting, not a model saved
-    on one of its agents: an agent is a participant, and which pool a project
-    runs on is not a property of a participant (结论 44).
+    What holds it there is the catalogue default: the pool follows the model a
+    turn is bound to, and a subscription model is never the default, so a
+    project that picked nothing runs on the gateway's agent model. It is not a
+    model saved on one of its agents either: an agent is a participant, and
+    which pool a project runs on is not a property of a participant (结论 44).
 
     Provider URLs and keys remain on the backend, away from the machine.
     """
@@ -624,11 +626,6 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
     svc, factory, pid, _tid = await _mk_service(
         business_db_factory, tmp_path, fake, profiles=profiles
     )
-    async with factory() as session:
-        project = await ProjectRepository(session).get(pid)
-        assert project is not None
-        project.settings = {**(project.settings or {}), "supply": "gateway"}
-        await session.commit()
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
 
@@ -657,7 +654,7 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
         assert project is not None
-        project.settings = {**(project.settings or {}), "supply": "subscription"}
+        project.settings = {**(project.settings or {}), "default_model": "sonnet"}
         await put_on_plan(session, project.team_id, "reserve")
         await approve_overseas(session, project.team_id)
         await session.commit()
@@ -692,7 +689,7 @@ async def test_a_turn_on_a_machine_is_metered_by_the_subscription_proxy(
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
         assert project is not None
-        project.settings = {**(project.settings or {}), "supply": "subscription"}
+        project.settings = {**(project.settings or {}), "default_model": "sonnet"}
         await put_on_plan(session, project.team_id, "reserve")
         await approve_overseas(session, project.team_id)
         await session.commit()

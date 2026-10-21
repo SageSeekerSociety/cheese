@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_seated_in_its_room
 from app.api.deps import get_chat_service, get_db
+from app.api.model_keys import credit_refusal, dreams, task_credit_context_of
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
@@ -58,7 +59,6 @@ from app.domain.agent import model_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.personal.keys import stored_key
-from app.domain.agent.queries import TaskCreditContext, task_credit_context
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
@@ -66,8 +66,6 @@ from app.domain.memory import dream
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
-from app.domain.usage.balance import Refusal
-from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.services import UsageService
 
 logger = logging.getLogger("cheesex.llm_proxy")
@@ -124,17 +122,6 @@ def _caller_token(request: Request) -> str:
     return request.headers.get("x-api-key", "").strip()
 
 
-async def _dreams(db: AsyncSession, project, claims: dict) -> bool:
-    """Whether this call is the project's memory consolidation: made in the
-    overview room (the place its scoped token names) while a dream runs.
-    The dream holds the overview's turn lock for as long as it runs, so no
-    room turn there makes calls meanwhile (`memory.dream.dreaming`)."""
-    place = claims.get("t")
-    if project is None or not place or place != str(project.root_topic_id):
-        return False
-    return await dream.dreaming(db, project.id)
-
-
 def _upstream_url(path: str) -> str:
     base = (settings.anthropic_base_url or "").rstrip("/")
     return f"{base}/{path.lstrip('/')}"
@@ -145,15 +132,14 @@ def _default_catalog_id(choices: dict[str, dict]) -> str | None:
     return default["id"] if default else None
 
 
-def _offerable_model_ids(project, choices: dict[str, dict]) -> set[str]:
-    """这个项目能指定的模型集合：目录里属于本项目池的那些 id。
+def _offerable_model_ids(choices: dict[str, dict]) -> set[str]:
+    """主 agent 能随意给分身指定的模型：目录里由平台模型池（gateway）供给的那些 id。
 
-    池外的目录项（gateway 项目里的订阅短名、订阅项目里的网关模型）对主
-    agent 不可指定：绑上它们请求就得走另一条供给路，而那条路这个项目没有
-    凭据 —— 列进可选等于教人吃拒绝。
+    供给是模型自己的事实（目录每一项都带 ``supply``），不是项目的设置。订阅
+    短名不在这里：绑上它就得走订阅那条路，凭据是某一个骨架自己的，列进可选
+    等于教人吃拒绝。项目或席位已经选定的订阅模型由调用方另外放行。
     """
-    pool = model_catalog.project_pool(project.settings if project else None)
-    return {cid for cid, c in choices.items() if c.get("supply") == pool}
+    return {cid for cid, c in choices.items() if c.get("supply") == GATEWAY}
 
 
 async def _bind_requested_subagent_model(
@@ -189,7 +175,7 @@ async def _bind_requested_subagent_model(
         or settings_.get("default_model")
         or _default_catalog_id(choices)
     )
-    allowed = _offerable_model_ids(project, choices)
+    allowed = _offerable_model_ids(choices)
     # 父会话的模型和项目显式配的两个默认（主模型、分身默认）也合法：它们跨
     # 池也真跑得起来（供给跟着绑定走），主 agent 复述它们不该吃到一个拒绝。
     # 但只列目录里还在的 —— 列一个 resolve 绑不上的,是把人从一个拒绝指到另
@@ -245,34 +231,6 @@ async def _projects_own_agent(
     )
 
 
-async def _task_credit_context(
-    db: AsyncSession, project, claims: dict
-) -> TaskCreditContext | None:
-    if not claims.get("t"):
-        return None
-    try:
-        conversation_id = uuid.UUID(claims["t"])
-    except ValueError:
-        return None
-    agents = AgentInstanceService(db)
-    agent = await agents.for_seat_handle(project, claims.get("a"))
-    if agent is None:
-        agent = await agents.for_project(project)
-    handles = [claims.get("a") or ""]
-    if agent is not None:
-        handles.extend([agent.handle, agent_instance_handle(agent.instance_id)])
-    return await task_credit_context(db, project.id, conversation_id, handles)
-
-
-async def _credit_refusal(
-    db: AsyncSession, project, context: TaskCreditContext | None
-) -> Refusal | None:
-    refused = await UsageService(db).admit_project(project.id)
-    if refused is not None or context is None:
-        return refused
-    return await CreditBudgets(db).member_refusal(project.id, context.owner_handle)
-
-
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
 # and the catch-all would otherwise swallow this path and forward it upstream.
 @router.post("/admission", include_in_schema=False, dependencies=[ROUTE_DECIDES])
@@ -321,8 +279,8 @@ async def admission(
     refused = None
     credit_context = None
     if project is not None:
-        credit_context = await _task_credit_context(db, project, claims)
-        refused = await _credit_refusal(db, project, credit_context)
+        credit_context = await task_credit_context_of(db, project, claims)
+        refused = await credit_refusal(db, project, credit_context)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
     # it run" and "where does it go" keeps the data plane from needing a second
@@ -440,7 +398,7 @@ async def admission(
     # consolidated is the dream's: it runs on the project's dream key, and the
     # metering proxy writes the dream's kind on its usage line. Read before the
     # read session is handed back below.
-    dreaming = await _dreams(db, project, claims)
+    dreaming = await dreams(db, project, claims)
     # The name that goes into the REQUEST BODY. The proxy writes it there on the
     # way out, which is the only place either pool reads a model from, and the
     # only reason the launch environment can now name none. A subscription model
@@ -568,12 +526,12 @@ async def proxy(
         await _require_model_caller(db, token, project_uuid)
         project = await ProjectRepository(db).get(project_uuid)
         credit_context = (
-            await _task_credit_context(db, project, claims)
+            await task_credit_context_of(db, project, claims)
             if project is not None
             else None
         )
         if project is not None and request.method == "POST":
-            refused = await _credit_refusal(db, project, credit_context)
+            refused = await credit_refusal(db, project, credit_context)
             if refused is not None:
                 message = "cheese project budget: " + str(refused.message)
                 return StreamingResponse(
@@ -593,7 +551,7 @@ async def proxy(
                     status_code=400,
                     media_type="application/json",
                 )
-        dreaming = await _dreams(db, project, claims)
+        dreaming = await dreams(db, project, claims)
         # The stream below can hold this request for minutes.
         await release_read_session(db)
         if credit_context is not None:

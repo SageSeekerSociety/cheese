@@ -42,7 +42,6 @@
   "cheeseFeedbackPropose": "Submit a feedback proposal",
   "cheeseFeedbackRelease": "Release a claimed feedback report",
   "cheeseFetch": "Read web page",
-  "cheeseSearchWeb": "Search the web",
   "cheeseFileRead": "Read file",
   "cheeseGhToken": "Get a GitHub token",
   "cheeseLibraryGet": "Fetch a project library file",
@@ -54,7 +53,6 @@
   "cheeseInbox": "Check the inbox",
   "cheeseInboxRespond": "Answer an inbox item",
   "cheeseRead": "Read",
-  "cheeseSearch": "Search",
   "cheeseHelp": "Look up the manual",
   "cheeseMessageSend": "Send a message",
   "cheeseTaskOpen": "Open a task",
@@ -132,5 +130,6 @@
   "webFetch": "Read web page",
   "webSearch": "Search the web",
   "write": "Write file",
-  "writeFile": "Write file"
+  "writeFile": "Write file",
+  "cheeseFind": "Find"
 }

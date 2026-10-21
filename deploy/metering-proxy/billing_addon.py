@@ -126,11 +126,12 @@ ADMISSION_URL = os.environ.get("CHEESE_ADMISSION_URL", "")
 DEFER_BODY_LIMIT = int(os.environ.get("CHEESE_DEFER_BODY_LIMIT", str(8 * 1024 * 1024)))
 ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 
-# Where the API-key pool lives (LiteLLM). A project whose supply decision says
-# `gateway` is rewritten to this base instead of going out to Anthropic —
-# same interception point, different destination (#243). Empty = this
-# deployment has no API-key pool, and such a project is refused rather than
-# silently served from the subscription it did not ask for.
+# Where the API-key pool lives (LiteLLM). A request whose admission supply says
+# `gateway` (the pool serving the model it is bound to) is rewritten to this
+# base instead of going out to Anthropic — same interception point, different
+# destination (#243). Empty = this deployment has no API-key pool, and such a
+# request is refused rather than silently served from the subscription it did
+# not ask for.
 GATEWAY_BASE = os.environ.get("CHEESE_GATEWAY_BASE", "")  # "http://host:port"
 
 # fds of the single-writer lock, held open for the process's life so the flock
