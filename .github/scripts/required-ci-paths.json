@@ -138,8 +138,6 @@
     "backend/app/domain/agent/project_hooks.py",
     "backend/sandbox/cheese",
     ".github/scripts/ensure-claude-cli.sh",
-    ".github/scripts/allow-user-namespaces.sh",
-    ".github/scripts/ensure-apt.sh",
     ".github/workflows/mcp-equivalence.yml"
   ]
 }
