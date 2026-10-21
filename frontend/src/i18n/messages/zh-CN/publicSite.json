@@ -326,6 +326,10 @@
     "pageTitle": "分享的文档",
     "updated": "更新于 {time}",
     "gone": "这条分享链接已失效",
-    "loadFailed": "文档加载失败"
+    "loadFailed": "文档加载失败",
+    "colophon": {
+      "brand": "知是 · 人与 AI 队友的协作工作台",
+      "seats": "{name} 附赠的受邀席位余 {n} · 凭此链接进入"
+    }
   }
 }

@@ -7,7 +7,11 @@ export interface BetaCredits {
 export interface CreditRewards {
   feedback_count: number
   feedback_credits: number
-  items: { kind: 'beta' | 'feedback'; credits: number; created_at: string }[]
+  /** Credits earned by inviting friends who went on to accept a first delivery. */
+  invite_credits: number
+  /** Contribution points (积分) ever earned; they never go down. */
+  points: number
+  items: { kind: 'beta' | 'feedback' | 'invite'; credits: number; points: number; created_at: string }[]
 }
 
 export interface PublishedCreditPlan {

@@ -9,6 +9,7 @@
     ref="viewRef"
     :error="error"
     :require-invite-code="requireInviteCode"
+    :preset-invite-code="presetInviteCode"
     :registration-config-ready="registrationConfigReady"
     :submitting="submitting"
     :consent-documents="consentDocuments"
@@ -19,11 +20,12 @@
 
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { useConsentDocuments } from '@/composables/useConsentDocuments'
 
 import { attemptMessage } from '../attemptWait'
+import { inviteCodeFor } from '../inviteCode'
 
 import StartView, { type SignUpValues } from './StartView.vue'
 
@@ -46,6 +48,9 @@ onMounted(() => {
 
 const signupStore = useSignupStore()
 const router = useRouter()
+// A friend's invite link (`?code=…`) fills the code in, and shows the field even
+// when registration does not require one.
+const presetInviteCode = inviteCodeFor(useRoute().query.code)
 
 onMounted(async () => {
   try {
@@ -67,7 +72,7 @@ const submit = async (value: SignUpValues) => {
   try {
     await signupStore.startSignup({
       ...value,
-      inviteCode: requireInviteCode.value ? value.inviteCode?.trim() : undefined,
+      inviteCode: value.inviteCode?.trim() || undefined,
       consent,
     })
 

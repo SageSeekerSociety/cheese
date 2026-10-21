@@ -16,5 +16,6 @@ def test_registration_normalizes_present_invite_code() -> None:
     )
 
 
-def test_open_registration_ignores_invite_code() -> None:
-    assert _normalize_registration_invite_code("stale-code", required=False) is None
+def test_open_registration_keeps_a_code_that_came_along() -> None:
+    assert _normalize_registration_invite_code(" friend ", required=False) == "friend"
+    assert _normalize_registration_invite_code("  ", required=False) is None

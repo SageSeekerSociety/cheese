@@ -42,6 +42,13 @@ export default {
           component: () => import('@/views/user/settings/Notifications.vue'),
         },
         {
+          // 邀请好友：自己的邀请码、还剩几个名额、邀请得了什么、邀请来的人走到了哪一步。
+          path: 'invites',
+          name: 'UserSettingsInvites',
+          component: () => import('@/views/user/settings/Invites.vue'),
+          meta: { palette: { label: 'account.settings.invites', icon: 'mdi-account-plus-outline' } },
+        },
+        {
           // 芝士替这个人用的邮箱和飞书。
           path: 'connections',
           name: 'UserSettingsConnections',

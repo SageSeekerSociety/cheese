@@ -76,7 +76,7 @@
         />
       </AccountField>
 
-      <AccountField v-if="requireInviteCode" :label="t('account.invitationCode')" input-id="signup-invite-code">
+      <AccountField v-if="showInviteCode" :label="t('account.invitationCode')" input-id="signup-invite-code">
         <v-text-field
           id="signup-invite-code"
           v-model="inviteCode"
@@ -143,6 +143,8 @@ const props = defineProps<{
   error: string
   /** The server wants an invitation code, so the field is shown and required. */
   requireInviteCode: boolean
+  /** A code the person arrived with (a friend's invite link): filled in, and the field shown. */
+  presetInviteCode?: string
   /** The settings are in: the submit button is out of reach until they are. */
   registrationConfigReady: boolean
   /** The container is waiting on the server. */
@@ -155,7 +157,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{ submit: [value: SignUpValues] }>()
 
+const showInviteCode = computed(() => props.requireInviteCode || !!props.presetInviteCode)
+
 const { handleSubmit, defineField } = useForm({
+  initialValues: { inviteCode: props.presetInviteCode ?? '' },
   validationSchema: computed(() =>
     toTypedSchema(
       z

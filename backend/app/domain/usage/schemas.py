@@ -30,18 +30,23 @@ class BetaCreditsOut(BaseModel):
 
 class CreditRewardOut(BaseModel):
     credits: int
+    points: int
     issued: bool
 
 
 class CreditRewardItemOut(BaseModel):
-    kind: Literal["beta", "feedback"]
+    kind: Literal["beta", "feedback", "invite"]
     credits: int
+    points: int
     created_at: datetime
 
 
 class CreditRewardsOut(BaseModel):
     feedback_count: int
     feedback_credits: int
+    invite_credits: int
+    #: Every contribution point ever earned; it never goes down.
+    points: int
     items: list[CreditRewardItemOut]
 
 
@@ -74,3 +79,28 @@ class CreditRequestOut(BaseModel):
 
 class CreditRequestsOut(BaseModel):
     items: list[CreditRequestOut]
+
+
+class InviteeOut(BaseModel):
+    handle: str
+    nickname: str | None
+    avatar_id: int | None
+    registered_at: datetime
+    #: registered → onboarded (has a project) → activated (accepted a delivery
+    #: in time, both sides paid); lapsed when the seven days ran out first.
+    stage: Literal["registered", "onboarded", "activated", "lapsed"]
+    #: What the inviter was paid for this friend: 0 until activated, and 0
+    #: past the monthly cap, where only the points were recorded.
+    credits: int
+
+
+class MyInvitesOut(BaseModel):
+    code: str
+    max_uses: int
+    use_count: int
+    #: Whether the owner's own first accepted delivery has added the extra uses.
+    unlocked: bool
+    unlock_uses: int
+    invite_credits: int
+    points: int
+    invitees: list[InviteeOut]
