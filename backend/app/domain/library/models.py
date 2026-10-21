@@ -37,11 +37,11 @@ class LibraryFileRecord(UuidPk, Base):
     )
     #: 资料库里的名字，也就是它的地址（`library/<name>`）；`/` 分出文件夹。
     name: Mapped[str] = mapped_column(String(512))
-    #: 字节存在哪一种存储里（`blobs.LOCAL`）。
+    #: 字节存在哪一种存储里（`app.core.blob_store` 的 `LOCAL` / `BUCKET`）。
     location: Mapped[str] = mapped_column(
         String(16), default="local", server_default="local"
     )
-    #: 字节在那个存储里的键（`blobs.new_key`）。
+    #: 字节在那个存储里的键（`.library-blobs/<项目>/<这一行的 id>`，跟着这一行，不跟名字）。
     blob_key: Mapped[str] = mapped_column(String(1024))
     bytes: Mapped[int] = mapped_column(BigInteger)
     sha256: Mapped[str] = mapped_column(String(64))

@@ -192,7 +192,7 @@ async def get_app_shot(
     """What the version looked like when the platform ran it, at ``width``."""
     _, snippet = await _snippet(db, resolver, key)
     found = await Snippets(db).require_version(snippet, version)
-    data = Snippets.shot(found, shot_name(width, theme))
+    data = await Snippets.shot(found, shot_name(width, theme))
     if data is None:
         raise NotFoundError(say("appShotMissing"))
     return Response(

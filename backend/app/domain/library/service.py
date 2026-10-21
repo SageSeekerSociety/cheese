@@ -9,7 +9,7 @@
 
 - 资料库项目级、按原名寻址、只读。「上周那份预算表」这句话里名字就是身份，所以
   这里不放随机串；名字里的 `/` 是文件夹。清单和名字在记录表里，字节按每一行自己
-  的键存放（:mod:`app.domain.library.records`、:mod:`app.domain.library.blobs`），
+  的键存放（:mod:`app.domain.library.records`、:mod:`app.core.blob_store`），
   这里只管名字长什么样。
 - 房间文件（`.room-files/<project>/<room>/`）只属于一个房间：贴进来的截图没有名
   字，`image.png` 是浏览器替它编的，它只属于那条消息。发布出来的预览产物同理。
@@ -77,7 +77,7 @@ def is_message_attachment(path: str) -> bool:
 
 #: 一份文件落地时的字节上限。房间文件（:func:`write_room_file`）与资料库
 #: （:mod:`app.domain.library.records`）落的是同一批字节，用同一条规则
-#: （:func:`max_bytes_for`）；路由那一层的 ``MAX_LIBRARY_UPLOAD_BYTES`` 也指回这里，
+#: （:func:`max_bytes_for`）；资料库页领上传地址时也按它拒（``records.upload_slot``），
 #: 别在别处再写一遍。
 #:
 #: 这道上限不是「上传那一层」的事：``client_max_body_size`` 只在网关后面那一条路

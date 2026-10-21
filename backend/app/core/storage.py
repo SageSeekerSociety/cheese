@@ -318,17 +318,60 @@ class S3StorageBackend(StorageBackend):
                 raise
             return True
 
-    async def presign(self, key: str, operation: str, expires_s: int) -> str:
+    async def presign(
+        self, key: str, operation: str, expires_s: int, **params: Any
+    ) -> str:
         """A URL that lets whoever holds it do one thing to one object for a
         while (``get_object``), with no credential of ours:
         a machine that moves a large file to or from the bucket is handed this
-        rather than the key, and the bytes do not pass through the backend."""
+        rather than the key, and the bytes do not pass through the backend.
+        ``params`` are signed in with it (``ContentLength`` for a PUT)."""
         async with self._get_client() as client:
             return await client.generate_presigned_url(
                 operation,
-                Params={"Bucket": self._bucket, "Key": key},
+                Params={"Bucket": self._bucket, "Key": key, **params},
                 ExpiresIn=expires_s,
             )
+
+    async def put(self, key: str, body: bytes | BinaryIO) -> None:
+        async with self._get_client() as client:
+            await client.put_object(Bucket=self._bucket, Key=key, Body=body)
+
+    async def read_range(self, key: str, start: int, end: int, chunk: int):
+        """Bytes ``start`` to ``end`` (inclusive) of the object, ``chunk`` at
+        a time; :class:`LookupError` for an object that is not there."""
+        async with self._get_client() as client:
+            try:
+                answer = await client.get_object(
+                    Bucket=self._bucket, Key=key, Range=f"bytes={start}-{end}"
+                )
+            except Exception as exc:
+                if _object_is_absent(exc):
+                    raise LookupError(key) from None
+                raise
+            body = answer["Body"]
+            try:
+                async for piece in body.iter_chunks(chunk):
+                    yield piece
+            finally:
+                body.close()
+
+    async def move(self, source: str, key: str) -> bool:
+        """Copy ``source`` to ``key`` inside the bucket and delete ``source``;
+        False when there is no ``source``."""
+        async with self._get_client() as client:
+            try:
+                await client.copy_object(
+                    Bucket=self._bucket,
+                    Key=key,
+                    CopySource={"Bucket": self._bucket, "Key": source},
+                )
+            except Exception as exc:
+                if _object_is_absent(exc):
+                    return False
+                raise
+            await client.delete_object(Bucket=self._bucket, Key=source)
+        return True
 
     async def stat(self, key: str) -> tuple[int, str] | None:
         """The object's size and ETag, or None for an object that is not there.

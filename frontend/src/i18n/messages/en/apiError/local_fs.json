@@ -17,7 +17,6 @@
   "libraryNotARevision": "Not a revision",
   "libraryPathRelative": "path must be a relative path in the library",
   "libraryPrefixReserved": "{prefix}/ is reserved for the library. Channel files can't go there",
-  "libraryUploadTooLarge": "The file is too large (10 MB max)",
   "libraryVersionIsCurrent": "That version is already the current one",
   "libraryVersionNotFound": "That version could not be found",
   "localDirGrantNotFound": "This grant doesn't exist",
@@ -42,5 +41,7 @@
   "templateNotFound": "This template doesn't exist",
   "templateSuffixRequired": "The “{template}” template must be saved as .{suffix}",
   "tooManySameNameFiles": "Too many files with the same name: {name}",
-  "unsupportedFileType": "Unsupported file type"
+  "unsupportedFileType": "Unsupported file type",
+  "uploadExpired": "This upload has expired. Please upload the file again",
+  "uploadIncomplete": "The file did not finish uploading. Please upload it again"
 }

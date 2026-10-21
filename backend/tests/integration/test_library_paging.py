@@ -5,6 +5,7 @@
 """
 
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support import library_uploads
 
 
 def _project(client) -> str:
@@ -13,11 +14,7 @@ def _project(client) -> str:
 
 
 def _put_in(client, project_id: str, name: str, folder: str | None = None) -> None:
-    r = client.post(
-        f"/projects/{project_id}/library",
-        files={"file": (name, name.encode(), "application/octet-stream")},
-        data={"folder": folder} if folder else None,
-    )
+    r = library_uploads.put_in(client, project_id, name, name.encode(), folder=folder)
     assert r.status_code == 200, r.text
 
 
