@@ -65,8 +65,11 @@ async def main() -> None:
     (tool,) = [t for t in config["search_tools"] if t["search_tool_name"] == "deepseek-search"]
     assert tool["litellm_params"]["search_provider"] == "deepseek", tool
     assert tool["litellm_params"]["api_key"] == "os.environ/DEEPSEEK_API_KEY", tool
+    # The models are runtime rows in the gateway database; test_rows.yaml holds
+    # the deepseek-flash rows as the platform serves them.
+    rows = yaml.safe_load(Path(__file__).with_name("test_rows.yaml").read_text())["model_list"]
     official = next(
-        row for row in config["model_list"]
+        row for row in rows
         if row["model_name"] == "deepseek-flash"
         and row["litellm_params"].get("api_key") == "os.environ/DEEPSEEK_API_KEY"
     )
