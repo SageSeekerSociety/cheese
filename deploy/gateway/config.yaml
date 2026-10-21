@@ -303,6 +303,16 @@ model_list:
       input_cost_per_token: 0.0000003
       output_cost_per_token: 0.0000012
       cache_read_input_token_cost: 0.000000006
+      # Each search this API runs for Claude Code's WebSearch is billed on its
+      # own: $0.75 per 1,000 successful requests, the USD price DeepSeek's
+      # English page lists (https://api-docs.deepseek.com/guides/search/, read
+      # 2026-10-21; the Chinese page lists the CNY account's ¥5), so
+      # 0.00075 a search, counted per search by patch_deepseek_search_cost.py.
+      # LiteLLM reads the medium size; DeepSeek has one price for all three.
+      search_context_cost_per_query:
+        search_context_size_low: 0.00075
+        search_context_size_medium: 0.00075
+        search_context_size_high: 0.00075
       # This deployment's alias supports native thinking/effort. Without these
       # capabilities LiteLLM 1.96 drops thinking when Claude Code sends effort.
       supports_reasoning: true

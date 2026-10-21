@@ -213,7 +213,7 @@ function confirmKeep() {
   if (block && props.topic) pins.keep(props.topic.id, block)
 }
 function nameOf(handle: string): string {
-  return panel.refMaps.mentionNames[handle] || handle
+  return panel.nameOfHandle(handle)
 }
 // 频道里每件任务的那张卡：挂在它出自的那条消息下面，或者是「新建了任务」那一条；支线里
 // 挂在拆出它的那句回复下面。认得的是跟着窗口里各块一起来的那几件（useTimelineTasks）。

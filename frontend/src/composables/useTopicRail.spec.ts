@@ -223,6 +223,32 @@ describe('交付被退回的任务行', () => {
   })
 })
 
+// 有活在往前走：绿灯在闪，而且压过「做完了、还没看过」那一档——同一行两件事都成立时，
+// 先说「还在走」。
+describe('呼吸绿', () => {
+  beforeEach(() => setLocale('zh-CN'))
+
+  it('频道行有活在往前走：绿灯在闪', async () => {
+    const { rail } = await mountRail([topic('t-moving', { moving: true })])
+
+    expect(rail.lightOf('t-moving')).toEqual({ kind: 'green', breathe: true })
+  })
+
+  it('任务行的会话在跑或走在交付链路上：闪绿压过长绿', async () => {
+    const { rail } = await mountRail([topic('t-1', {})])
+    const task = {
+      id: 'k-1',
+      room_id: 't-1',
+      owner_handle: 'cheese-someone',
+      moving: true,
+      unseen_delivery: true,
+      presentation: { column: 'delivering', phrase: 'awaiting_checks' },
+    } as RailTask
+
+    expect(rail.taskLight(task)).toEqual({ kind: 'green', breathe: true })
+  })
+})
+
 // 收起来的折叠开关替里面的行说了它们的状态（`toggleTitle`）。收起来的那盏红说的是哪一
 // 件，开关就得说哪一件。断的是那句话的关键含义（停下报错），不是整句原文。
 describe('折叠开关替收起来的行说话', () => {
@@ -244,5 +270,16 @@ describe('折叠开关替收起来的行说话', () => {
     const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
     expect(title).not.toContain('在跑')
     expect(title).toContain('报错')
+  })
+
+  it('里面是「有活在往前走」的闪绿，开关说它在走，不说只是刚交付完', async () => {
+    const { rail } = await mountRail([
+      topic('p', {}),
+      // 子行还在往前走：收起来之后，父行的折叠开关要替它说这一件。
+      topic('c-moving', { parent_id: 'p', moving: true }),
+    ])
+
+    const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
+    expect(title).toContain('往前走')
   })
 })

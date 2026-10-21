@@ -41,6 +41,6 @@ AI 队友以席位的身份参与房间，和人走同一套判定。平台管�
 
 `POST /projects/{id}/own-agents` 接收 `connection_id`、`model` 和 `device_id`。三项均从项目所属团队选择；`platform` 表示平台模型来源，平台模型的范围沿用团队方案。执行设备在沙箱中执行工具，不因创建队友而授予整台机器权限。同一连接可以实例化多位队友。添加、编辑、停用和设为默认沿用项目的 `configure_agents` 权限。
 
-`own_agents` 保留模型进程的通道和成员归属：设备登录走 `OwnerChannel`，平台保存的连接走 `AccountChannel`。`owner_user_id` 用于提示词和名称，不决定连接可见性或谁可调用、配置队友。`own.naming.current_role` 在组装提示词时生成成员的私人助手约定；其他成员的任务不因消息作者不是这个成员而被平台拒绝。任务引用的消息仍必须属于本项目，私聊内容不会被引用到其他对话。
+`own_agents` 保留模型进程的通道和成员归属：设备登录走 `OwnerChannel`，平台保存的连接走 `AccountChannel`。`owner_user_id` 用于提示词和名称，不决定连接可见性或谁可调用、配置队友。`own.naming.current_role` 在组装提示词时生成成员的私人助手约定；其他成员的任务不因消息作者不是这个成员而被平台拒绝。任务引用的消息仍必须属于本项目，私聊内容不会被引用到其他对话。私密频道是例外：点名只在主人也在这间频道的名册上时才让它入座（`agent/own_calls.seat_if_named`）——入座就能读到这里说的话，等于把频道外的人拉进来。
 
 每份连接可用的模型由团队管理。被解除、退出登录或不再允许所选模型的连接不能开始新工作（`own.admission`、`agent/owner_provider`）。模型进程与执行设备分开，见[远程执行](https://github.com/SageSeekerSociety/cheese/blob/main/docs/remote-execution.md)。

@@ -581,6 +581,7 @@ const rowLabels = computed(() =>
               :is-agent="isAgentBlock(m)"
               :time="fmtTime(m.created_at)"
               :refs="refs"
+              :name-of-handle="nameOf"
               :viewer="viewer"
               :ask-closed="askClosed"
               :active="bar.shown && bar.id === m.id"

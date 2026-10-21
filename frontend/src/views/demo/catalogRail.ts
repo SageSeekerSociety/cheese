@@ -104,10 +104,16 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         expectSelector: '.row-light--yellow',
       },
       {
-        name: '绿：做完了，你还没看过',
+        name: '长绿：做完了，你还没看过',
         note: '点开看过就灭。',
-        props: { light: { kind: 'green' } },
+        props: { light: { kind: 'green', breathe: false } },
         expectSelector: '.row-light--green',
+      },
+      {
+        name: '呼吸绿：有活在往前走',
+        note: '有一轮在跑，或者活在交付链路上（等闸门、等 CI、修检查、解冲突、换基）。这个动是信息本身：系统开了「减少动态」时它停下来，但留一圈光晕，和长绿仍然分得开。',
+        props: { light: { kind: 'green', breathe: true } },
+        expectSelector: '.row-light--breathe',
       },
       {
         name: '蓝：这条归我',
@@ -142,7 +148,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       {
         name: '做完了、你还没看过（绿灯）',
         note: '这里的活都交付完了，你还没点开看过。点开就灭。',
-        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'green' } }),
+        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'green', breathe: false } }),
         expectSelector: '.row-light--green',
       },
       {
@@ -311,7 +317,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           selectedTopicId: null,
           page: false,
           unreadOf: () => 0,
-          lightOf: () => ({ kind: 'green' }),
+          lightOf: () => ({ kind: 'green', breathe: false }),
         },
         expectSelector: '.row-light--green',
       },

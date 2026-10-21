@@ -394,13 +394,13 @@ def _mail_outcome(draft: MailDraft, by: str) -> Block | None:
     if draft.topic_id is None:
         return
     if draft.status == "sent":
-        line = say("mailSent", actor=by, subject=draft.subject)
+        line = say("mailSent", actor=f"<@{by}>", subject=draft.subject)
         severity = SEVERITY_INFO
     elif draft.status == "failed":
         line = say("mailFailed", subject=draft.subject)
         severity = SEVERITY_WARN
     elif draft.status == "discarded":
-        line = say("mailDiscarded", actor=by, subject=draft.subject)
+        line = say("mailDiscarded", actor=f"<@{by}>", subject=draft.subject)
         severity = SEVERITY_INFO
     else:
         return
@@ -582,7 +582,10 @@ async def mail_draft(
         else say("mailDraftSummary", to=", ".join(draft.to), subject=draft.subject)
     )
     line = say(
-        "mailDraftedBy", who=f"<@{speaker}>", account=row.label, owner=row.owner_handle
+        "mailDraftedBy",
+        who=f"<@{speaker}>",
+        account=row.label,
+        owner=f"<@{row.owner_handle}>",
     )
     block_id = uuid.uuid4()
     db.add(

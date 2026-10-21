@@ -19,6 +19,8 @@ export interface ProgressItem {
   roomId: string | null
   /** 谁做的；停滞、新版本没有人。 */
   by: string | null
+  /** `by` 是 GitHub 登录名而不是平台 handle：不去名册里找同名的账号。 */
+  byGithub?: boolean
   /** 产物的新版本：哪一项、第几版。 */
   artifactId: string | null
   artifactName: string

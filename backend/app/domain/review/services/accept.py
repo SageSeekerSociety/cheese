@@ -20,6 +20,7 @@ from app.domain.review import (
     pr_text,
 )
 from app.domain.review import forge as forge_mod
+from app.domain.review.github_pr_status import merge_actor
 from app.domain.review.merge_state import MergeVerdict, Who, whose_move
 from app.domain.review.models import (
     AcceptCard,
@@ -474,6 +475,9 @@ async def _settle_external_merge(
     fact, and since #206 that fact is the whole of what the platform waits
     for."""
     card.pr_merged_at = status.merged_at or datetime.now(UTC)
+    # 平台没点过采纳（`decided_by` 空）：把 GitHub 报的合并人留下来，项目
+    # 总览那一行才有经手人可显示。`{}` 是「问过了、没报人」的记号。
+    card.merged_by = merge_actor(status)
     await self._mark_task_merged(card, delivered_head=status.head_sha)
     if status.merge_commit_sha:
         # Nice to have, not required: nothing downstream looks a run up by
@@ -562,7 +566,7 @@ async def _finish_pr_accept(
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (
-        say("acceptDone", actor=by, pr=card.pr_number, how=how)
+        say("acceptDone", actor=f"<@{by}>", pr=card.pr_number, how=how)
         if by
         else say("acceptDoneNoActor", pr=card.pr_number, how=how)
     )
