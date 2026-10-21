@@ -57,7 +57,7 @@ function show(more: Record<string, unknown> = {}) {
       publishedError: null,
       publishedTasks: [],
       selectedTopics: [],
-      sort: 'createdAt_desc',
+      sort: 'latestPublished',
       search: '',
       selectedCategory: null,
       ...more,
