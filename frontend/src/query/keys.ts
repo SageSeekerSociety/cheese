@@ -46,6 +46,8 @@ export const keys = {
   roomTask: (roomId: string) => ['room', roomId, 'task'] as const,
   roomPreview: (roomId: string) => ['room', roomId, 'preview'] as const,
   roomPins: (roomId: string) => ['room', roomId, 'pins'] as const,
+  /** 一段对话的章节（频道或任务，键是那段对话的 id）。 */
+  roomChapters: (conversationId: string) => ['room', conversationId, 'chapters'] as const,
   roomThreads: (roomId: string) => ['room', roomId, 'threads'] as const,
   /** 一条支线本身（它是一段对话，所以按房间分层），带着它挂着的那条主线消息。 */
   roomThread: (threadId: string) => ['room', threadId, 'thread'] as const,

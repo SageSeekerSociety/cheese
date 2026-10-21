@@ -9,6 +9,7 @@
 // those pieces: header, timeline, new-message pill, error toast.
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
+import type { ChapterRow } from '../types/chapters'
 
 import { computed, ref, watch } from 'vue'
 
@@ -95,6 +96,12 @@ const props = withDefaults(
     inThread?: boolean
     // 输入框里那句提示，当它不是这一栏默认的那句时：支线转成任务后写「在任务中回复」。
     hint?: string | null
+    /** 这段对话的章节，按对话里的顺序（频道页、任务页给；支线、私聊不给）。 */
+    chapters?: ChapterRow[]
+    /** 现在能不能改章节：说得上话、没归档。 */
+    chapterable?: boolean
+    /** 已经钉成章节的那几条（block id）。 */
+    chapterIds?: ReadonlySet<string>
   }>(),
   {
     alwaysSummon: false,
@@ -108,6 +115,9 @@ const props = withDefaults(
     backLabel: null,
     unreadOnOpen: 0,
     conversationId: null,
+    chapters: () => [],
+    chapterable: false,
+    chapterIds: () => new Set<string>(),
     agentHandle: null,
     composerClosed: null,
     askClosed: false,
@@ -184,6 +194,8 @@ const pins = useChannelPins({
   report: (message) => (panel.errorMsg.value = message),
   seen: () => panel.timeline.messages.value.some((m) => typeof m.meta?.pinned_block_id === 'string'),
 })
+// 章节：这段对话的目录由拿着这一段地址的页面取（频道页、任务页），这里只画。支线和
+// 私聊不传，就没有章节刻度，也没有 ⋯ 里那一项。
 // 私密频道和私聊里的东西只有这里的人看得到：保存到资料库之前先说清保存后谁会看到。
 const keeping = ref<Block | null>(null)
 const keepAudience = useKeepAudience(
@@ -434,6 +446,9 @@ useComposerShortcut({
           :thread-status-for="threadLines.statusFor"
           :pinnable="pinnable"
           :pinned-ids="pins.pinnedIds.value"
+          :chapterable="chapterable"
+          :chapter-ids="chapterIds"
+          :chapters="chapters"
           :task-of="taskOf"
           :tasks-under="tasksUnder"
           :name-of="nameOf"
@@ -517,6 +532,8 @@ useComposerShortcut({
           @outbox-leave="outboxLeave"
           @pin="pins.pin"
           @unpin="pins.unpin"
+          @chapter="emit('chapter', $event)"
+          @unchapter="emit('unchapter', $event)"
           @keep="keepFile"
         >
           <template #timeline-start><slot name="timeline-start" /></template>

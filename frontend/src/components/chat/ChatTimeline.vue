@@ -18,12 +18,14 @@ import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { RefNames } from '../../lib/refChip'
+import type { ChapterRow } from '../../types/chapters'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import { replySnippet } from '../../lib/blockDisplay'
+import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
@@ -37,6 +39,8 @@ import TaskCard from '../room/TaskCard.vue'
 import TaskCreatedPost from '../room/TaskCreatedPost.vue'
 import ThreadLine from '../room/ThreadLine.vue'
 import TimelineMark from '../TimelineMark.vue'
+
+import ChapterMark from './ChapterMark.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import RoutineRunLine from '@/components/routine/RoutineRunLine.vue'
@@ -134,6 +138,12 @@ const props = defineProps<{
   pinnable?: boolean
   /** 已经置顶的那几条（block id）。 */
   pinnedIds?: ReadonlySet<string>
+  /** 这段对话能钉章节（频道主线、任务）：消息的 ⋯ 里多一项「钉成章节」。 */
+  chapterable?: boolean
+  /** 已经钉成章节的那几条（block id）。 */
+  chapterIds?: ReadonlySet<string>
+  /** 这段对话的章节，按对话里的顺序；每条起头消息前画一道章节刻度。 */
+  chapters?: ChapterRow[]
   /** 频道里一件任务的那张卡；不认得就是 null。 */
   taskOf?: (taskId: string) => TaskLine | null
   /** 从这条消息（或它的支线）出来的任务，按创建的先后。 */
@@ -163,6 +173,8 @@ const emit = defineEmits<{
   (e: 'retry'): void
   (e: 'pin', block: Block): void
   (e: 'unpin', block: Block): void
+  (e: 'chapter', block: Block): void
+  (e: 'unchapter', block: Block): void
   (e: 'keep', block: Block): void
   (e: 'retry-send', clientId: string): void
   (e: 'starter', text: string): void
@@ -364,6 +376,22 @@ function rowLabel(name: string | null, iso: string, text: string): string {
   const time = props.fmtTime(iso)
   return name ? t('work.room.chat.messageLabel', { name, time, text }) : t('work.room.chat.eventLabel', { time, text })
 }
+// 章节刻度：每条被钉成章节的消息是第几章、叫什么。标题取那条消息的第一行；不在
+// 当前窗口里的章节也照样占一个号，所以翻动历史时刻度上的号不会跳。
+const chapterMarks = computed(() => {
+  const marks = new Map<string, { no: number; title: string }>()
+  inReadingOrder(props.chapters ?? []).forEach((chapter, i) => {
+    marks.set(chapter.block.id, {
+      no: i + 1,
+      title: replySnippet(chapter.block, props.refs, 60) || t('work.channel.chapters.untitled'),
+    })
+  })
+  return marks
+})
+function chapterMarkOf(blockId: string) {
+  return chapterMarks.value.get(blockId) ?? null
+}
+
 const rowLabels = computed(() =>
   props.rows.map(({ block, notice }, i) => {
     const task = createdTasks.value[i]
@@ -410,6 +438,8 @@ const rowLabels = computed(() =>
         :processable="processable"
         :pinnable="pinnable"
         :pinned-ids="pinnedIds"
+        :chapterable="chapterable"
+        :chaptered-ids="chapterIds"
         @react="emitReact"
         @toggle-picker="emit('toggle-picker', $event)"
         @reply="emit('reply', $event)"
@@ -419,6 +449,8 @@ const rowLabels = computed(() =>
         @edit="emit('edit', $event)"
         @pin="emit('pin', $event)"
         @unpin="emit('unpin', $event)"
+        @chapter="emit('chapter', $event)"
+        @unchapter="emit('unchapter', $event)"
       />
       <!-- 骨架和真的那几行同形同高：到货时骨架淡出，不推动下面的东西。 -->
       <Transition name="tl-skel">
@@ -477,6 +509,10 @@ const rowLabels = computed(() =>
               <v-icon size="12">mdi-arrow-down</v-icon>
               {{ t('work.room.chat.newMessagesBelow') }}
             </TimelineMark>
+            <!-- 章节刻度：这一节从这条消息开始。 -->
+            <template v-if="!notice && chapterMarkOf(m.id)">
+              <ChapterMark :no="chapterMarkOf(m.id)!.no" :title="chapterMarkOf(m.id)!.title" />
+            </template>
             <TaskCreatedPost
               v-if="createdTasks[i]"
               :class="{ 'tl-arrive': arrived.has(m.id) }"

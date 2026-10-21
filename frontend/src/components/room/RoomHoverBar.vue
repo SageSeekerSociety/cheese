@@ -47,6 +47,10 @@ const props = defineProps<{
   pinnable?: boolean
   /** 已经置顶的那几条（block id）：它们的 ⋯ 里是「取消置顶」。 */
   pinnedIds?: ReadonlySet<string>
+  /** 这段对话能钉章节（频道主线、任务）：⋯ 里多一项「钉成章节」。 */
+  chapterable?: boolean
+  /** 已经是章节的那几条（block id）：它们的 ⋯ 里是「取消章节」。 */
+  chapteredIds?: ReadonlySet<string>
 }>()
 
 const emit = defineEmits<{
@@ -59,6 +63,8 @@ const emit = defineEmits<{
   (e: 'edit', block: Block): void
   (e: 'pin', block: Block): void
   (e: 'unpin', block: Block): void
+  (e: 'chapter', block: Block): void
+  (e: 'unchapter', block: Block): void
 }>()
 
 // 复制之后原地说一声「已复制」，一会儿再换回来；换了一条消息就不再说。
@@ -210,6 +216,22 @@ const menuActions = computed<MenuAction[]>(() => {
             onSelect: () => emit('unpin', block),
           }
         : { key: 'pin', label: t('work.room.pin.pin'), icon: 'mdi-pin-outline', onSelect: () => emit('pin', block) }
+    )
+  if (props.chapterable && block.kind === 'message')
+    actions.push(
+      props.chapteredIds?.has(block.id)
+        ? {
+            key: 'unchapter',
+            label: t('work.room.chapter.unpin'),
+            icon: 'mdi-bookmark-minus-outline',
+            onSelect: () => emit('unchapter', block),
+          }
+        : {
+            key: 'chapter',
+            label: t('work.room.chapter.pin'),
+            icon: 'mdi-bookmark-plus-outline',
+            onSelect: () => emit('chapter', block),
+          }
     )
   if (target.editable)
     actions.push({

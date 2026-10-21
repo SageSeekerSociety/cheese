@@ -1,0 +1,9 @@
+{
+  "jump": "跳到这一条",
+  "menu": "章节的操作",
+  "pinnedBy": "{name} 钉的 · {when}",
+  "title": "章节 · {count}",
+  "untitled": "（没有字的章节）",
+  "unpin": "取消章节",
+  "unpinFailed": "取消章节失败"
+}

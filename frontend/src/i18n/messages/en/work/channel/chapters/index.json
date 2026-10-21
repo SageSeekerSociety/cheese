@@ -1,0 +1,9 @@
+{
+  "jump": "Go to this message",
+  "menu": "Chapter actions",
+  "pinnedBy": "Marked by {name} · {when}",
+  "title": "Chapters · {count}",
+  "untitled": "(a chapter with no words)",
+  "unpin": "Remove chapter",
+  "unpinFailed": "Could not remove the chapter"
+}
