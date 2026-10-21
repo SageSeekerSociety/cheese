@@ -510,9 +510,12 @@ def whose_move(verdict: MergeVerdict) -> Who:
     - clean → human（绿勾，采纳亮，通知验收人）；
     - dirty → agent（芝士把 main 合进来解冲突）；
     - behind → platform（平台 update-branch；撞冲突下一轮变 dirty 才转 agent）；
-    - unstable / blocked → 按 reasons 分：有红检查 → agent；只是必跑检查
-      没报到或 CI 在跑 → ci；draft → agent（活还没做完）；只剩 GitHub 的
-      裁决而看不出细节 → human（机器不猜）；
+    - unstable → human：这是「可采纳」那一档，必跑检查没有欠账（见模块开头），
+      采纳按钮是亮的。有检查红了（不在必跑名单）仍先交给 agent；剩下的检查还在
+      跑不改变下一步，别把它写成 ci —— 那就把人挡在一格他本来就能点的卡前面；
+    - blocked → 按 reasons 分：有红检查 → agent；必跑检查没报到或还在跑 → ci；
+      draft → agent（活还没做完）；只剩 GitHub 的裁决而看不出细节 → human
+      （机器不猜）；
     - unknown → platform（GitHub 还没算完，下一轮自然收敛，谁都不用动）。
 
     「必跑检查没报到超过宽限期转人」是调用方的事——宽限期要时钟，这里是纯函数。
@@ -529,6 +532,13 @@ def whose_move(verdict: MergeVerdict) -> Who:
     kinds = {r.kind for r in verdict.reasons}
     if kinds & {"required_check_failed", "check_failed"}:
         return "agent"
+    # unstable 的裁决已经把必跑名单放行了（`compute_merge_state` 只让全绿、
+    # 可接受的检查走到这一档）。还有检查在跑说明不了下一步该等谁：它们不挡合并，
+    # 点采纳是走得通的。2026-10-21 的 PR #4562 上，两个 job 的每一步都绿了、run
+    # 也结束了，GitHub 却一直把它们报成 in_progress —— 写成 ci 的结果是那张卡
+    # 永远显示「等检查」，验收人看不到一盏黄灯。落到这里就是人。
+    if verdict.state == "unstable":
+        return "human"
     if kinds & {"required_check_missing", "ci_running"}:
         return "ci"
     if "draft" in kinds:

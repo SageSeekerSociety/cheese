@@ -2293,7 +2293,9 @@ def test_poll_mirrors_the_merge_state_onto_the_card(client, app_world):
     assert card["pr_head_sha"] == head_sha
     mirror = card["merge_state"]
     assert mirror["state"] == "unstable"
-    assert mirror["who"] == "ci"
+    # 没配必跑名单，GitHub 说 unstable 就是「可以合」；还在跑的那个检查不挡
+    # 采纳，下一步在验收人手上（`whose_move` 的 unstable 那一档）。
+    assert mirror["who"] == "human"
     assert mirror["head_sha"] == head_sha
 
     fake.check_state_by_sha[head_sha] = ("success", "全绿")
@@ -2301,6 +2303,41 @@ def test_poll_mirrors_the_merge_state_onto_the_card(client, app_world):
     mirror = _cards(client, tid)[0]["merge_state"]
     assert mirror["state"] == "clean"
     assert mirror["who"] == "human"
+
+
+def test_a_running_check_outside_the_required_list_still_waits_on_the_reviewer(
+    client, app_world
+):
+    """必跑检查都绿了、只剩一条非必跑检查还在跑：卡可以采纳，验收人那行要亮黄灯。
+
+    GitHub 对这种情况报 unstable（可采纳），但 check runs 里还有 in_progress。
+    `whose_move` 若按「有检查在跑」把这一步交给 ci，`awaits_me` 就是 false，侧栏
+    那盏灯停在蓝色 —— 2026-10-21 的 #4562 正是这样：两个 job 的每一步都绿了、run
+    也结束了，GitHub 却一直把它们报成 in_progress。
+    """
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, required_checks=[{"name": "test"}])
+    fake.mergeable_state_by_number[number] = "unstable"
+    fake.check_runs_by_sha[head_sha] = [
+        {"name": "test", "status": "completed", "conclusion": "success"},
+        {"name": "scope", "status": "in_progress", "conclusion": None},
+    ]
+
+    _poll(client)
+
+    card = _cards(client, tid)[0]
+    assert card["merge_state"]["state"] == "unstable"
+    assert card["merge_state"]["who"] == "human"
+
+    row = {
+        item["id"]: item
+        for item in client.get(
+            f"/projects/{pid}/tasks", headers=session_auth_headers("alice")
+        ).json()["data"]["data"]
+    }[str(delivery_task_id(client, tid))]
+    assert row["presentation"] == {"column": "needs_you", "phrase": "awaiting_review"}
+    assert row["awaits_me"] is True
 
 
 def test_poll_never_merges_an_unarmed_card(client, app_world):
