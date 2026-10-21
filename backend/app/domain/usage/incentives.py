@@ -1,6 +1,7 @@
 """Beta rewards and the purchase enquiries handled in the credit console."""
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -20,6 +21,12 @@ from app.domain.usage.plans import PlanService
 
 BETA_CREDITS = 500
 FEEDBACK_CREDITS = 100
+
+
+def reward_kind(key: str) -> str:
+    """What a reward was for, read off its key's prefix."""
+    prefix = key.split(":", 1)[0]
+    return prefix if prefix in ("feedback", "invite") else "beta"
 
 
 def request_out(row: CreditRequest) -> dict:
@@ -43,8 +50,18 @@ class CreditIncentives:
         return {"credits": row.credits, "reason": row.reason} if row else None
 
     async def issue(
-        self, *, key: str, user_id: int, credits: int, reason: str, actor: str
+        self,
+        *,
+        key: str,
+        user_id: int,
+        credits: int,
+        reason: str,
+        actor: str,
+        points: int = 0,
+        expires_at: datetime | None = None,
     ) -> dict:
+        """Issue the reward named ``key`` once. A reward of points alone writes
+        the row and pays no pack."""
         team = await team_service(self._session).ensure_personal_team(user_id)
         issued = await self._session.scalar(
             insert(CreditReward)
@@ -52,15 +69,22 @@ class CreditIncentives:
                 key=key,
                 team_id=team.id,
                 credits=credits,
+                points=points,
                 reason=reason,
                 actor_handle=actor,
             )
             .on_conflict_do_nothing(index_elements=["key"])
             .returning(CreditReward.key)
         )
-        if issued is not None:
-            await Ledger(self._session).grant(team.id, credits, reason=reason)
-        return {"credits": credits, "issued": issued is not None}
+        if issued is not None and credits > 0:
+            await Ledger(self._session).grant(
+                team.id,
+                credits,
+                source=GrantSource.REWARD,
+                reason=reason,
+                expires_at=expires_at,
+            )
+        return {"credits": credits, "points": points, "issued": issued is not None}
 
     async def beta(self, user_id: int) -> dict:
         return {
@@ -79,7 +103,13 @@ class CreditIncentives:
             None,
         )
         if team is None:
-            return {"feedback_count": 0, "feedback_credits": 0, "items": []}
+            return {
+                "feedback_count": 0,
+                "feedback_credits": 0,
+                "invite_credits": 0,
+                "points": 0,
+                "items": [],
+            }
         rows = list(
             await self._session.scalars(
                 select(CreditReward)
@@ -87,14 +117,19 @@ class CreditIncentives:
                 .order_by(CreditReward.created_at.desc(), CreditReward.key)
             )
         )
-        feedback = [row for row in rows if row.key.startswith("feedback:")]
+        feedback = [row for row in rows if reward_kind(row.key) == "feedback"]
         return {
             "feedback_count": len(feedback),
             "feedback_credits": sum(row.credits for row in feedback),
+            "invite_credits": sum(
+                row.credits for row in rows if reward_kind(row.key) == "invite"
+            ),
+            "points": sum(row.points for row in rows),
             "items": [
                 {
-                    "kind": "feedback" if row.key.startswith("feedback:") else "beta",
+                    "kind": reward_kind(row.key),
                     "credits": row.credits,
+                    "points": row.points,
                     "created_at": row.created_at.isoformat(),
                 }
                 for row in rows[:10]

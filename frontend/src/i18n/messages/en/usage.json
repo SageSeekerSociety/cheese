@@ -49,7 +49,11 @@
     "awardedCount": "Rewarded reports",
     "awardedCredits": "Credits earned",
     "count": "{n} reports",
-    "summaryNote": "Rewards go to your personal balance when your report is accepted."
+    "summaryNote": "Rewards go to your personal balance when your report is accepted.",
+    "invite": "Invitation reward",
+    "gainPoints": "+{n} points",
+    "inviteEarned": "{n} credits earned from invitations",
+    "pointsEarned": "{n} contribution points"
   },
   "offers": {
     "feedbackLink": "Open feedback center",
@@ -106,6 +110,7 @@
   "packs": {
     "title": "Other credits",
     "grant": "Granted by an admin",
+    "reward": "Reward",
     "purchase": "Purchase",
     "task": "Task “{task}”",
     "taskUnknown": "Task credits",

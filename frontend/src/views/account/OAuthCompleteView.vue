@@ -86,7 +86,7 @@
               />
             </AccountField>
 
-            <AccountField v-if="requireInviteCode" :label="t('account.invitationCode')" input-id="oauth-create-invite">
+            <AccountField v-if="showInviteCode" :label="t('account.invitationCode')" input-id="oauth-create-invite">
               <v-text-field
                 id="oauth-create-invite"
                 v-model="createInviteCode"
@@ -95,7 +95,7 @@
                 autocorrect="off"
                 spellcheck="false"
                 name="createInviteCode"
-                :rules="inviteCodeRules"
+                :rules="requireInviteCode ? inviteCodeRules : []"
               />
             </AccountField>
 
@@ -196,7 +196,7 @@
 import type { AcceptedDocuments, ConsentMethod } from '@/types/apiLegal'
 import type { OAuthState } from '@/types/apiUsers'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { REGEX_PASSWORD, REGEX_USERNAME } from '@/utils/form'
 
@@ -234,6 +234,8 @@ const props = defineProps<{
   /** Which half of proving a new account is shown. */
   step: 'form' | 'code'
   requireInviteCode: boolean
+  /** A code the person arrived with (a friend's invite link): filled in, and the field shown. */
+  presetInviteCode?: string
   /** The registration settings are in; the create button waits for them. */
   registrationConfigReady: boolean
   creating: boolean
@@ -261,7 +263,8 @@ const createNickname = ref('')
 const setPassword = ref(false)
 const createPassword = ref('')
 const confirmPassword = ref('')
-const createInviteCode = ref('')
+const createInviteCode = ref(props.presetInviteCode ?? '')
+const showInviteCode = computed(() => props.requireInviteCode || !!props.presetInviteCode)
 const createEmail = ref('')
 
 // Bind form fields
