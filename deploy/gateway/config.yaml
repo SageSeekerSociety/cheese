@@ -241,7 +241,7 @@ model_list:
       # otherwise; Gemini's implicit cache still applies.
       cheese_no_explicit_cache: true
       # The Google key's lifetime cap, at the prices above (spend_cap.py).
-      cheese_spend_cap_usd: 1000
+      cheese_spend_cap_usd: 2000
       supports_reasoning: true
       supports_vision: true
       supports_output_config: true
