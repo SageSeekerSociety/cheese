@@ -86,6 +86,13 @@ def test_a_passing_failure_resumes(said, kind):
         "API Error: Server is temporarily limiting requests (not your usage limit)"
         ' · litellm.RateLimitError: AnthropicException - {"error": {"code": "1113",'
         ' "message": "quota exhausted", "type": "limitation"}}',
+        # Our gateway's lifetime cap on an upstream key. LiteLLM words it as a
+        # rate limit, and the platform used to resume it until the streak ran
+        # out — six rounds of ten harness retries, all refused (2026-10-21).
+        "API Error: Server is temporarily limiting requests (not your usage limit)"
+        " · gemini/gemini-4-argon has reached its spend cap: $1005.08 of $1000.00."
+        " Received Model Group=gemini-4-argon\nAvailable Model Group Fallbacks=None"
+        "（rate_limit）",
         # The same conversation goes out again and is refused again.
         "API Error: 400 litellm.BadRequestError: DeepseekException - "
         '{"error":{"message":"messages.3.content.0.tool_result.image[0]: You have '
