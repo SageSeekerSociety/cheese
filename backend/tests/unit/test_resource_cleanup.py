@@ -326,52 +326,93 @@ def test_a_room_that_will_not_leave_is_ended_once_the_grace_has_run_out(tmp_path
             squatter.wait(timeout=5)
 
 
+def _sleeper(cwd, *args):
+    return subprocess.Popen([sys.executable, "-c", *args], cwd=cwd)
+
+
+def _stop(*processes):
+    for process in processes:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
 @pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
 def test_a_room_is_ended_on_a_machine_without_lsof(tmp_path, monkeypatch):
     """A Linux machine need not have lsof (the Debian cloud image behind the VM
     offering has none), and what still holds a room is found and ended all the
-    same: a process working inside it, and one holding a file of it open."""
+    same: a process working inside it, one holding a file of it open, and one
+    that only has a file of it mapped. A process in the room's neighbour, whose
+    name merely starts the same, is left alone."""
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home, work = cleanup.resource_paths(tmp_path, project, resource)
     home.mkdir(parents=True)
     work.mkdir(parents=True)
     (home / "log").write_text("")
-    sleep = subprocess.run(
-        ["sh", "-c", "command -v sleep"], capture_output=True, text=True
-    ).stdout.strip()
-    working = subprocess.Popen([sleep, "300"], cwd=work)
-    holding = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            "import sys,time; f=open(sys.argv[1]); time.sleep(300)",
-            str(home / "log"),
-        ],
-        cwd=tmp_path,
+    (home / "lib").write_bytes(b"x" * 4096)
+    neighbour = home.parent / (home.name + "-other")
+    neighbour.mkdir()
+    sleep = "import time; time.sleep(300)"
+    working = _sleeper(work, sleep)
+    holding = _sleeper(tmp_path, f"f = open({str(home / 'log')!r}); {sleep}")
+    mapping = _sleeper(
+        tmp_path,
+        "import mmap, time\n"
+        f"with open({str(home / 'lib')!r}, 'rb') as f:\n"
+        "    m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ)\n"
+        "time.sleep(300)",
     )
+    beside = _sleeper(neighbour, sleep)
     empty = tmp_path / "bin"
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
+    room = [home, work]
     try:
         wait_for(
             lambda: (
-                working.pid in cleanup.holders([home, work])
-                and holding.pid in cleanup.holders([home, work])
+                {working.pid, holding.pid, mapping.pid} <= set(cleanup.holders(room))
             )
         )
+        assert beside.pid not in cleanup.holders(room)
         with pytest.raises(cleanup.StillRunning):
-            cleanup.check_no_writers([home, work])
+            cleanup.check_no_writers(room)
 
-        cleanup.end_holders([home, work])
+        cleanup.end_holders(room)
 
-        assert working.wait(timeout=15) != 0
-        assert holding.wait(timeout=15) != 0
-        cleanup.check_no_writers([home, work])
+        for process in (working, holding, mapping):
+            assert process.wait(timeout=15) != 0
+        assert beside.poll() is None, "the neighbour's process was ended"
+        cleanup.check_no_writers(room)
     finally:
-        for process in (working, holding):
-            if process.poll() is None:
-                process.kill()
-                process.wait(timeout=5)
+        _stop(working, holding, mapping, beside)
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc")
+def test_a_process_that_sees_the_room_elsewhere_still_holds_it(tmp_path):
+    """A process in a mount namespace of its own can see the room under another
+    name (a private session works in it as `/work`); it holds the room all the
+    same."""
+    home, work = cleanup.resource_paths(tmp_path, str(uuid.uuid4()), str(uuid.uuid4()))
+    work.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.mkdir()
+    probe = subprocess.run(["unshare", "-rm", "true"], capture_output=True, text=True)
+    if probe.returncode != 0:
+        pytest.skip("no unprivileged mount namespaces here")
+    elsewhere = subprocess.Popen(
+        [
+            "unshare",
+            "-rm",
+            "sh",
+            "-c",
+            f"mount --bind {work} {alias} && cd {alias} && exec sleep 300",
+        ]
+    )
+    try:
+        # unshare and sh both exec, so the sleep keeps the pid started here.
+        wait_for(lambda: elsewhere.pid in cleanup.holders([home, work]))
+    finally:
+        _stop(elsewhere)
 
 
 def test_a_safety_refusal_is_never_overruled_by_time(tmp_path):

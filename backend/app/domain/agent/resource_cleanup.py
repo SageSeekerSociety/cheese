@@ -197,55 +197,77 @@ def windows_holders(paths: list[Path]) -> list[int]:
 PROC = Path("/proc")
 
 
-def _beneath(target: str, roots: list[str]) -> bool:
-    if target.endswith(" (deleted)"):
-        target = target[: -len(" (deleted)")]
-    return any(target == root or target.startswith(root + os.sep) for root in roots)
-
-
-def _places(pid: Path) -> list[str]:
-    """Every path this process holds: its working directory, root and
-    executable, each open file, and each mapped file. A link it does not let
-    this user read (another user's process) is not this user's to end either."""
-    found = []
-    for name in ("cwd", "root", "exe"):
+def proc_index(paths: list[Path]) -> set:
+    """Every file and directory under these, as (device, inode): what a process
+    holding something of the room holds, whatever path it reaches it by. A
+    process in another mount namespace names the room differently (a private
+    session sees its directory as `/work`), and on a platform host the homes are
+    also reachable through the data disk they are bound from; the inode is the
+    same in every case. `lsof +D` matches the same way."""
+    found = set()
+    stack = [str(path) for path in paths]
+    while stack:
+        directory = stack.pop()
         try:
-            found.append(os.readlink(pid / name))
+            info = os.stat(directory, follow_symlinks=False)
+            entries = list(os.scandir(directory))
         except OSError:
-            pass
-    try:
-        for fd in os.scandir(pid / "fd"):
+            continue
+        found.add((info.st_dev, info.st_ino))
+        for entry in entries:
             try:
-                found.append(os.readlink(fd.path))
+                info = entry.stat(follow_symlinks=False)
             except OSError:
-                pass
+                continue
+            found.add((info.st_dev, info.st_ino))
+            if entry.is_dir(follow_symlinks=False):
+                stack.append(entry.path)
+    return found
+
+
+def _holds(pid: Path, index: set) -> bool:
+    """Whether this process's working directory, root, executable, an open file
+    or a mapped file is one of `index`. A link the kernel does not let this user
+    follow (another user's process) is not this user's to end either."""
+    links = [pid / "cwd", pid / "root", pid / "exe"]
+    try:
+        links += [Path(fd.path) for fd in os.scandir(pid / "fd")]
     except OSError:
         pass
+    for link in links:
+        try:
+            info = os.stat(link)
+        except OSError:
+            continue
+        if (info.st_dev, info.st_ino) in index:
+            return True
     try:
         with open(pid / "maps") as maps:
             for line in maps:
                 fields = line.split(None, 5)
-                if len(fields) == 6 and fields[5].startswith("/"):
-                    found.append(fields[5].rstrip("\n"))
-    except OSError:
+                if len(fields) < 5 or fields[4] == "0":
+                    continue
+                major, minor = fields[3].split(":")
+                device = os.makedev(int(major, 16), int(minor, 16))
+                if (device, int(fields[4])) in index:
+                    return True
+    except (OSError, ValueError):
         pass
-    return found
+    return False
 
 
-def proc_holders(paths: list[Path]) -> list[int]:
+def proc_holders(paths: list[Path], index: set | None = None) -> list[int]:
     """What `lsof +D` answers, read from /proc: the processes whose working
-    directory, root, executable, open files or mapped files lie inside these.
-
-    The paths are compared as the process names them. A sandbox binds the room's
-    home at its own path (`confinement.sandbox_argv`), so a process inside one
-    names its files as the host does."""
-    roots = [os.path.realpath(path) for path in paths]
+    directory, root, executable, an open file or a mapped file lies inside
+    these. `index` is `proc_index(paths)`, when the caller already has it."""
+    if index is None:
+        index = proc_index(paths)
     own = {os.getpid(), os.getppid()}
     found = []
     for entry in os.scandir(PROC):
         if not entry.name.isdigit() or int(entry.name) in own:
             continue
-        if any(_beneath(place, roots) for place in _places(Path(entry.path))):
+        if _holds(Path(entry.path), index):
             found.append(int(entry.name))
     return sorted(found)
 
@@ -389,7 +411,8 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
 def check_no_writers(paths: list[Path]) -> None:
     """Refuse if anything holds a file or a working directory under these.
 
-    ONE lsof call, never one per path. `lsof +D` spends about two seconds
+    On Linux the processes are read from /proc (`proc_holders`); elsewhere
+    by lsof. ONE lsof call, never one per path. `lsof +D` spends about two seconds
     walking every process's descriptors before it so much as looks at the
     directory, so its cost is per INVOCATION and not per tree: measured
     2026-09-18, an empty directory costs the same 1.97s as a repository, five
@@ -403,20 +426,17 @@ def check_no_writers(paths: list[Path]) -> None:
     present = [str(path) for path in paths if path.exists()]
     if not present:
         return
-    if sys.platform == "win32":
-        pids = windows_holders([Path(path) for path in present])
+    if sys.platform == "win32" or PROC.is_dir():
+        if sys.platform == "win32":
+            pids = windows_holders([Path(path) for path in present])
+            named = [str(pid) for pid in pids]
+        else:
+            pids = proc_holders([Path(path) for path in present])
+            named = [proc_command(pid) for pid in pids]
         if pids:
             raise StillRunning(
                 "resource still has processes holding files or working "
-                "directories: " + ", ".join(str(pid) for pid in pids)
-            )
-        return
-    if PROC.is_dir():
-        pids = proc_holders([Path(path) for path in present])
-        if pids:
-            raise StillRunning(
-                "resource still has processes holding files or working "
-                "directories: " + "; ".join(proc_command(pid) for pid in pids)
+                "directories: " + ", ".join(named)
             )
         return
     result = run_command(["lsof", "-t", "+D", *present])
@@ -463,7 +483,15 @@ def end_holders(paths: list[Path]) -> None:
     then SIGKILL. A tmux pane whose process dies reads as dead to the next
     `request_exit`, which closes the session the ordinary way.
     """
-    pids = holders(paths)
+    index = None
+    if sys.platform != "win32" and PROC.is_dir():
+        # The room is walked once; only the processes are read again each poll.
+        index = proc_index([path for path in paths if path.exists()])
+
+    def current() -> list[int]:
+        return holders(paths) if index is None else proc_holders(paths, index)
+
+    pids = current()
     for signal_number, wait in ((15, 10.0), (9, 2.0)):
         helper = portable(paths) if sys.platform == "win32" else None
         if helper is not None:
@@ -478,7 +506,7 @@ def end_holders(paths: list[Path]) -> None:
         deadline = time.monotonic() + wait
         while pids and time.monotonic() < deadline:
             time.sleep(0.1)
-            pids = [pid for pid in pids if pid in set(holders(paths))]
+            pids = [pid for pid in pids if pid in set(current())]
         if not pids:
             return
 
