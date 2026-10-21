@@ -234,7 +234,7 @@ def test_a_member_is_working_in_a_room_while_its_runner_says_its_session_runs(
         async def _declare() -> None:
             await session_state.register(client.test_factory, key)
             async with client.test_factory() as s:
-                await session_state.declare(s, key, status, datetime.now(UTC))
+                await session_state.declare(s, key, status)
                 await s.commit()
 
         client.portal.call(_declare)

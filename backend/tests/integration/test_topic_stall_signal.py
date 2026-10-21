@@ -80,7 +80,7 @@ def _declares(client, topic_id: str, status: str) -> None:
     async def _run() -> None:
         await session_state.register(client.test_factory, key)
         async with client.test_factory() as session:
-            await session_state.declare(session, key, status, datetime.now(UTC))
+            await session_state.declare(session, key, status)
             await session.commit()
 
     asyncio.run(_run())

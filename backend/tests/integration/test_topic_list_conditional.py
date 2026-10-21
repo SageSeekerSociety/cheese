@@ -6,7 +6,6 @@
 
 import time
 import uuid
-from datetime import UTC, datetime
 
 from app.domain.agent import session_state
 from app.domain.agent.realtime.broker import get_broker
@@ -102,7 +101,7 @@ def test_a_typing_member_does_not_break_the_etag(client):
     async def at_work() -> None:
         await session_state.register(client.test_factory, key)
         async with client.test_factory() as session:
-            await session_state.declare(session, key, "running", datetime.now(UTC))
+            await session_state.declare(session, key, "running")
             await session.commit()
 
     client.portal.call(at_work)
