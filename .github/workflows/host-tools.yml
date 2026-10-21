@@ -95,8 +95,7 @@ jobs:
       - name: tmux and git, as a user
         run: |
           tmux="$PLACED/tmux/bin/tmux -S $RUNNER_TEMP/tmux.sock"
-          $tmux new-session -d -s probe 'exit 3'
-          sleep 1
+          $tmux new-session -d -s keep 'sleep 30'
           # A screen whose program ended stays, marked dead with its time:
           # what the connector reads to close it.
           $tmux set-option -g remain-on-exit on
