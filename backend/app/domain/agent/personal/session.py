@@ -89,6 +89,7 @@ TOOLS = (
     "cheese_review_decide",
     "cheese_member_set",
     "cheese_channel_create",
+    "cheese_settings_set",
     "cheese_web_fetch",
     "cheese_problem_write",
     "cheese_problem_publish",

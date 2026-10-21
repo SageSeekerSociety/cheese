@@ -82,3 +82,14 @@ def where_of(place) -> str:
     if place.thread is not None:
         return place.thread.title
     return place.room.title
+
+
+async def tell_change(questions, claims, shown: dict) -> None:
+    """Show a change 芝士 made on the question's stream (``change``), where the
+    panel lists it with 撤销."""
+    try:
+        asked = await questions.get(claims.work)
+    except RuntimeError:  # no Valkey: nobody to tell
+        return
+    if asked is not None and asked.kind == personal.KIND:
+        await questions.publish(asked, "change", shown)

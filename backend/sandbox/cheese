@@ -1389,7 +1389,8 @@ DELEGATED_TOOLS = ToolTable(
             "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它的审阅卡 "
             "ml-course/tasks/12/review，文档 ml-course/docs/5；项目以外的：题目 "
             "spaces/4/tasks/87，草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
-            "（列出全部）和 spaces/4/materials/9；me 是用户参加的题目和各自的截止时间。"
+            "（列出全部）和 spaces/4/materials/9；me 是用户参加的题目和各自的截止时间，"
+            "settings 是他的通知设置。"
             "编号从当前页面、待办和别的读取结果里来。"
             "长的分段读：结果末尾写着下一段的 page。",
             {
@@ -1474,6 +1475,21 @@ DELEGATED_TOOLS = ToolTable(
                 "members_only": {"type": "boolean"},
             },
             ["where", "title"],
+        ),
+        _tool(
+            "cheese_settings_set",
+            "改用户自己的设置，直接改、面板上能撤销，一次一项。where 省略是他的通知设置："
+            "key 为 in_app（站内通知 on/off）、push（推送 on/off）、email（instant / "
+            "digest / off）、quiet_hours（off，或 22:00-08:00 这样的时段）、digest（汇总"
+            "频率 daily / weekly / off）。where 给频道编号时改那个频道给他的提醒：key 写 "
+            "level，value 为 all（所有新消息）、mentions（只在 @他和他参与的支线有回复时）"
+            "或 mute（静音）。改之前可以先用 cheese_read 读 settings 看现在的设置。",
+            {
+                "where": _text("频道编号；省略是通知设置"),
+                "key": _text("哪一项"),
+                "value": _text("改成什么"),
+            },
+            ["key", "value"],
         ),
         _tool(
             "cheese_web_fetch",
@@ -1815,6 +1831,8 @@ def _read_plan(args: dict) -> dict:
         raise ValueError("page 是从 1 开始的整数")
     if args["ref"].strip().strip("/") == "me":
         return {"method": "GET", "path": "/tasks/joined"}
+    if args["ref"].strip().strip("/") == "settings":
+        return {"method": "POST", "path": "/notifications/preferences/agent/read", "body": {}}
     found = _read_kind(args["ref"])
     if found is None:
         body = {"ref": args["ref"], "page": page}
@@ -2052,6 +2070,13 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
     if tool == "cheese_read":
         return _read_plan(args)
+    if tool == "cheese_settings_set":
+        where = (args.get("where") or "").strip()
+        if where and where != "me":
+            body = {"where": where, "level": args["value"]}
+            return {"method": "POST", "path": "/assistant/agent/notify", "body": body}
+        body = {"key": args["key"], "value": args["value"]}
+        return {"method": "POST", "path": "/notifications/preferences/agent/set", "body": body}
     if tool == "cheese_search":
         where = (args.get("where") or "").strip().strip("/")
         space = re.fullmatch(r"spaces/(\d+)", where)
@@ -4251,6 +4276,7 @@ _SAY = {
     "cheese_my_tasks": _say_my_tasks,
     "cheese_inbox": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_read": _say_read,
+    "cheese_settings_set": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_search": lambda a, d, e: (
         _say_task_search(a, d, e) if "tasks" in (d or {}) else (d or {}).get("text") or ""
     ),

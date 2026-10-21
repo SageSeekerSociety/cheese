@@ -76,6 +76,11 @@ DELEGATED_ROUTES: dict[str, bool] = {
     # What it does that others see goes through its gate first, which hands
     # back a pass for the routes in `GATED_ROUTES`.
     "app.api.routes.assistant_agent.agent_act": True,
+    # What is the person's own — their notification settings, how much of a
+    # channel reaches them — it changes directly, as a change they can undo.
+    "app.api.routes.assistant_agent.agent_notify": True,
+    "app.api.routes.notification_preferences.agent_read_preferences": False,
+    "app.api.routes.notification_preferences.agent_set_preference": True,
 }
 
 

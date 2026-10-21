@@ -21,7 +21,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.api.assistant_deps import ProjectPages, show_proposal, where_of
+from app.api.assistant_deps import ProjectPages, show_proposal, tell_change, where_of
 from app.api.auth import ActorResolverDep
 from app.api.awaiting_asks import MembershipAsk, RunAsk, TaskAsk
 from app.api.awaiting_deps import all_waiting
@@ -34,11 +34,12 @@ from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFou
 from app.core.sentences import say
 from app.domain.agent.personal import reading
 from app.domain.agent.session_host.consumptions import Consumptions
-from app.domain.assistant import gate, passes, refs
+from app.domain.assistant import changes, gate, passes, refs
 from app.domain.notification.preferences import local_time
 from app.domain.project import address
 from app.domain.project.services import ProjectService
 from app.domain.room_task.awaiting import WaitingItem
+from app.domain.topic.services import TopicService
 from app.domain.user.services import timezones_by_ids
 
 Questions = Annotated[Consumptions, Depends(get_consumptions)]
@@ -764,3 +765,69 @@ async def agent_act(
         }
     card = await show_proposal(db, questions, claims, kind, payload)
     return ok({"done": False, "reason": verdict.reason, "card": card})
+
+
+_LEVELS = {
+    "all": "所有新消息",
+    "mentions": "只在 @我和我参与的支线有回复时",
+    "mute": "静音",
+}
+
+
+class NotifyIn(BaseModel):
+    where: str
+    level: str
+
+
+@router.post("/notify", include_in_schema=False)
+async def agent_notify(
+    body: NotifyIn, resolver: ActorResolverDep, db: DbSession, questions: Questions
+) -> dict:
+    """cheese_settings_set on a channel: how much of it reaches the person,
+    changed for them and kept as a change they can undo."""
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    me = await _person(resolver, db)
+    if body.level not in _LEVELS:
+        raise BadRequestError(
+            say("assistantActNeeds", what="level: all / mentions / mute")
+        )
+    project, place, _ = await _place(db, ProjectPages(db, resolver), body.where)
+    room = place.room
+    topics = TopicService(db)
+    before = (await topics.notify_levels(project.id, me.handle)).get(room.id)
+    was = before[0].value if before else "mentions"
+    await topics.set_notify_level(room.id, me.handle, body.level)
+    row = await changes.report(
+        db,
+        user_id=me.user_id,
+        work=claims.work,
+        kind="notify",
+        target=room.id,
+        payload={
+            "title": f"频道「{room.title}」的提醒",
+            "project": str(project.id),
+            "changed": {"level": {"label": "提醒", "before": was, "after": body.level}},
+        },
+    )
+    await db.commit()
+    await tell_change(questions, claims, changes.view(row))
+    return ok({"text": f"已把频道「{room.title}」的提醒改成：{_LEVELS[body.level]}。"})
+
+
+async def _notify_back(db, resolver, same, parts: list[str], redo: bool) -> dict:
+    """Put a channel's reminders back as they were before the answer, or as
+    it left them, as the person's own change."""
+    actor = await resolver.resolve()
+    first, last = same[0], same[-1]
+    level = (last if redo else first).payload["changed"]["level"][
+        "after" if redo else "before"
+    ]
+    await TopicService(db).set_notify_level(
+        uuid.UUID(first.target), actor.handle, level
+    )
+    return {"topic": first.target, "level": level}
+
+
+changes.register("notify", parts=lambda payload: ["level"], apply=_notify_back)

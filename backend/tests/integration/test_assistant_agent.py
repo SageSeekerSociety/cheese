@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.core.sandbox_auth import mint_delegated_credential
 from app.domain.assistant import gate
 from app.domain.assistant.models import (
+    AssistantChange,
     AssistantConversation,
     AssistantGateCheck,
     AssistantMessage,
@@ -314,3 +315,54 @@ def test_removing_someone_is_asked_by_the_persons_rule_with_no_model(
     assert got["card"]["calls"][0]["method"] == "DELETE"
     [check] = _checks(client, "alice")
     assert check.stage == "rule"
+
+
+def test_the_persons_own_settings_change_at_once_and_undo_from_the_panel(client):
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    token = _acting(client, "alice", _asked_in(client, "alice", "晚上别推送了"))
+    me = {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
+
+    pushed = client.post(
+        "/notifications/preferences/agent/set",
+        json={"key": "push", "value": "off"},
+        headers=_as(token),
+    )
+    muted = client.post(
+        "/assistant/agent/notify",
+        json={"where": f"{slug}/channels/{number}", "level": "mute"},
+        headers=_as(token),
+    )
+
+    assert pushed.status_code == 200, pushed.text
+    assert pushed.json()["data"]["text"] == "已把推送通知改成 off。"
+    assert muted.status_code == 200, muted.text
+    assert (
+        client.get("/notifications/preferences", headers=me).json()["data"][
+            "pushEnabled"
+        ]
+        is False
+    )
+    read = client.post(
+        "/notifications/preferences/agent/read", json={}, headers=_as(token)
+    )
+    assert "推送通知（push）：off" in read.json()["data"]["text"]
+
+    async def made():
+        async with client.test_factory() as db:
+            return list(
+                await db.scalars(
+                    select(AssistantChange.id).order_by(AssistantChange.id)
+                )
+            )
+
+    push_change, mute_change = asyncio.run(made())[-2:]
+    for change in (push_change, mute_change):
+        undone = client.post(f"/assistant/changes/{change}/undo", json={}, headers=me)
+        assert undone.status_code == 200, undone.text
+    assert (
+        client.get("/notifications/preferences", headers=me).json()["data"][
+            "pushEnabled"
+        ]
+        is True
+    )

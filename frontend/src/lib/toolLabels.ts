@@ -96,6 +96,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_review_decide: 'toolLabels.cheeseReviewDecide',
   cheese_member_set: 'toolLabels.cheeseMemberSet',
   cheese_channel_create: 'toolLabels.cheeseChannelCreate',
+  cheese_settings_set: 'toolLabels.cheeseSettingsSet',
   cheese_web_fetch: 'toolLabels.cheeseWebFetch',
   cheese_my_tasks: 'toolLabels.cheeseMyTasks',
   cheese_task_search: 'toolLabels.cheeseTaskSearch',
