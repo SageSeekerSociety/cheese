@@ -129,7 +129,7 @@ signatures, tool-call ids, thinking level), and `no_explicit_cache.py` strips
 `cache_control` from a deployment marked `cheese_no_explicit_cache: true`,
 because argon refuses explicit caching and LiteLLM would otherwise create a
 `cachedContents` object for every Claude Code request. Its key is capped at
-USD 1,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
+USD 2,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
 gateway database's daily spend, so the cap survives releases.
 
 `deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
