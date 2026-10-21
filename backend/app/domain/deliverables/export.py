@@ -449,7 +449,7 @@ async def create_archive(
         manifest["library"] = {"files": len(stored_files)}
         for name, location, key in stored_files:
             try:
-                data = await run_sync(library_files.read_blob, location, key)
+                data = await library_files.read_blob(location, key)
             except NotFoundError as exc:
                 raise UpstreamUnavailableError(
                     "A library file is missing; no archive was returned"

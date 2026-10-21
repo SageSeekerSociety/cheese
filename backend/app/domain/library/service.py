@@ -9,7 +9,7 @@
 
 - 资料库项目级、按原名寻址、只读。「上周那份预算表」这句话里名字就是身份，所以
   这里不放随机串；名字里的 `/` 是文件夹。清单和名字在记录表里，字节按每一行自己
-  的键存放（:mod:`app.domain.library.records`、:mod:`app.domain.library.blobs`），
+  的键存放（:mod:`app.domain.library.records`、:mod:`app.core.blob_store`），
   这里只管名字长什么样。
 - 房间文件（`.room-files/<project>/<room>/`）只属于一个房间：贴进来的截图没有名
   字，`image.png` 是浏览器替它编的，它只属于那条消息。发布出来的预览产物同理。

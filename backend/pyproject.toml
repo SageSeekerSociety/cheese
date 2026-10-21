@@ -67,6 +67,7 @@ dev = [
     # baseline scripts/check_boundaries.py derives from the tree at the merge
     # base.
     "import-linter>=2.15",
+    "moto[server]>=5.1",
     "pyright>=1.1.410",
     "pytest>=9.1.0",
     "pytest-anyio>=0.0.0",

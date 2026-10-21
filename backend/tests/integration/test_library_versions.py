@@ -5,22 +5,16 @@
 """
 
 from tests.integration.test_library import _library, _project
+from tests.support import library_uploads
 
 
 def _put_in(client, project_id: str, name: str, content: bytes) -> None:
-    r = client.post(
-        f"/projects/{project_id}/library",
-        files={"file": (name, content, "application/octet-stream")},
-    )
+    r = library_uploads.put_in(client, project_id, name, content)
     assert r.status_code == 200, r.text
 
 
 def _replace(client, project_id: str, name: str, content: bytes) -> None:
-    r = client.put(
-        f"/projects/{project_id}/library",
-        params={"path": name},
-        files={"file": (name, content, "application/octet-stream")},
-    )
+    r = library_uploads.replace(client, project_id, name, content)
     assert r.status_code == 200, r.text
 
 

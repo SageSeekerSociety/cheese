@@ -973,6 +973,22 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     s3_region: str = "us-east-1"
     s3_public_url: str | None = None
 
+    # --- Project files (#2114, `app.core.blob_store`) ---
+    # Where the bytes of a file the platform keeps for a project are written
+    # when it is first saved: "local" (under `workspace_root`) or "bucket"
+    # (the bucket below). A file's record says where its own bytes are, so
+    # changing this moves nothing that is already stored.
+    files_store: Literal["local", "bucket"] = "local"
+    # A bucket of its own, with a key that reaches only it: these are private
+    # files, and the key is not the one the public and transcript buckets use.
+    # A browser puts an upload straight into it, so its CORS rules must let the
+    # site's origin PUT.
+    files_bucket: str = ""
+    files_bucket_endpoint_url: str | None = None
+    files_bucket_access_key: str | None = None
+    files_bucket_secret_key: str | None = None
+    files_bucket_region: str = "auto"
+
     # --- Human auth (P1 agent-as-user / 真鉴权) ---
     # Enforce topic access (成员/角色/项目 checks). Ops kill-switch: set false to
     # disable the membership check entirely if a token rollout surfaces an
@@ -1091,6 +1107,23 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         """The commit this process runs as: the release a deploy named, else
         the commit its image was built from."""
         return self.app_release or self.app_version
+
+    @model_validator(mode="after")
+    def _files_bucket_named_when_new_files_go_there(self) -> "Settings":
+        """Refuse to boot when new files are to go to a bucket nobody named:
+        otherwise the first upload after the deploy is where it shows."""
+        if self.files_store == "bucket" and not (
+            self.files_bucket
+            and self.files_bucket_endpoint_url
+            and self.files_bucket_access_key
+            and self.files_bucket_secret_key
+        ):
+            # i18n-exempt: refuses the boot; read by an operator in the log
+            raise ValueError(
+                "FILES_STORE=bucket needs FILES_BUCKET, FILES_BUCKET_ENDPOINT_URL, "
+                "FILES_BUCKET_ACCESS_KEY and FILES_BUCKET_SECRET_KEY"
+            )
+        return self
 
     @model_validator(mode="after")
     def _require_real_jwt_secret_on_deployment(self) -> "Settings":

@@ -42,5 +42,7 @@
   "templateNotFound": "This template doesn't exist",
   "templateSuffixRequired": "The “{template}” template must be saved as .{suffix}",
   "tooManySameNameFiles": "Too many files with the same name: {name}",
-  "unsupportedFileType": "Unsupported file type"
+  "unsupportedFileType": "Unsupported file type",
+  "uploadExpired": "The upload has expired. Upload the file again",
+  "uploadIncomplete": "The file did not finish uploading. Upload it again"
 }

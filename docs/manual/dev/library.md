@@ -22,7 +22,7 @@ covers:
 
 ## 两个根，两种寻址 {#roots}
 
-`domain/library/` 是这半个世界的全部。它的字节都在 `settings.workspace_root` 下，和项目那唯一一个 git 源（`domain/repository/service.py`）互不相干——被托管的仓库只装芝士替用户做的活，用户给的资料、贴进来的截图、发布出来的预览产物都不是那个活的源，所以**既不进 git 树，也不落在检出目录里**（结论 49 / 不变量 I21b）。
+`domain/library/` 是这半个世界的全部。它的字节在平台自己的存储里（房间文件这几个根在 `settings.workspace_root` 下，资料库的在每一行记着的地方），和项目那唯一一个 git 源（`domain/repository/service.py`）互不相干——被托管的仓库只装芝士替用户做的活，用户给的资料、贴进来的截图、发布出来的预览产物都不是那个活的源，所以**既不进 git 树，也不落在检出目录里**（结论 49 / 不变量 I21b）。
 
 | 在哪 | 属于谁 | 寻址 |
 |---|---|---|
@@ -31,7 +31,7 @@ covers:
 | `.room-file-history/<project>/<room>/` | 一个房间 | 内容 sha256，房间路径够不着 |
 | `.artifacts/<project>/<card>/` | 一次交付 | 文件名，卡分目录 |
 
-资料库和另外三个不一样：它不是一个目录，是一张表。列出来的是表里的行，字节在每一行自己说的地方（`blobs.py`，今天只有本地磁盘一种，新写的字节在 `.library-blobs/<project>/<记录 id>`）。名字和字节的位置分开，所以改名、挪进文件夹只改名字，以后把字节放进对象存储也只是多一种 `location`（#2114）。
+资料库和另外三个不一样：它不是一个目录，是一张表。列出来的是表里的行，字节在每一行自己说的地方：`location` 是哪一种存储（`app/core/blob_store.py`：`local` 是 `workspace_root` 下，`bucket` 是文件桶），`blob_key` 是里面的键，新写的字节在 `.library-blobs/<project>/<记录 id>`。名字和字节的位置分开，所以改名、挪进文件夹只改名字。新字节写到 `FILES_STORE` 指定的存储；改这个配置不搬任何东西，已经存下的照旧按自己那一行的 `location` 读（#2114）。
 
 房间文件这几个根的 `_safe_path` 只有包含关系这一条检查——和仓库那侧的同名检查不是一条规则，那边还要挡 `.git`，因为那边的根是一棵 git 树，这两个根里没有 git。房间文件里 `library/` 这个前缀被留着：`write_room_file` 见到它以「`library/` 留给资料库」拒掉，否则读的人会拿到房间那份、以为看的是资料库里的原件。
 
@@ -50,6 +50,8 @@ covers:
 ## 资料库的记录表 {#library-records}
 
 `library_files`（`domain/library/models.py`，读写在 `records.py`）一行是一份存下来的字节：名字、谁放进来的、在哪个房间、什么时候、多大、sha256、字节在哪。读、判断在不在、列清单、项目导出都查这张表，不扫目录。两条放进来的路都经过 `records.add`：从房间留下（`save_to_library`）、资料库页上直接放（`POST /projects/{id}/library`）。先记一行、再写字节，请求结束时一起提交。
+
+资料库页上传的字节不经过后端。页面先领一个地址（`POST /projects/{id}/library/uploads`，带名字和大小，超过上限的不给），把文件原样 PUT 过去，再拿领到的凭据 `upload` 来登记（`POST …/library` 放进新的一份，`PUT …/library?path=` 换成新版本）。地址只收领的时候说的那么多字节：文件桶是签进了 `Content-Length` 的预签名地址，本地存储是后端自己的 `PUT /files/incoming/<凭据>`（`routes/file_uploads.py`）。字节先落在 `.incoming/` 下，登记时后端自己量大小、算 sha256（`records.received`），对得上才挪到这一行的键下；凭据封着项目 id，别的项目登记不了。领了地址却没登记的那一份留在 `.incoming/`，文件桶上由这个前缀的生命周期规则过期。
 
 「替换为新版本」（`PUT /projects/{id}/library?path=`）是人明确说「这是同一份的新版本」，只有这时候同一个名字才换字节：旧的那一行标上 `superseded_at`，它的字节原地不动，新字节记新的一行。所以同一个名字可以有几行，`superseded_at` 为空的是现在这一份。引用这个名字的旧消息从此读到新的一份——这正是替换的意思。字节端点因此不让浏览器凭缓存直接用（`Cache-Control: private, no-cache`）。删除一份资料连同它的所有行和字节一起扔掉。
 
@@ -108,4 +110,4 @@ covers:
 - **快照不是「按名字的最新一版」**。它按卡分目录，所以一份产物交过七版就是七个目录；想看某一版的字节只能通过那一版的卡（`GET /projects/{id}/artifacts/{artifact}/versions/{card}/file`，加 `preview_pdf=true` 顺带转成 PDF）。
 - **撤回采纳不动字节**。卡的状态变了，`.artifacts/<card>/` 里的文件还在；`list_for_project` 也不再把它数进版本。
 - **清单上的一项不会因为没字节就不在**。`link` 型交付只记指针（`deliverable_url`），`merge` 型干脆没有文件；`deliverable_kind` 为 NULL 的卡说的是「没声明过」，和 `merge` 是两件不同的事。
-- **`_libraries` 没有 git 备份**。资料库的字节和另外三个根都在 `workspace_root` 下，跟着平台自己的存储走，不在任何项目的仓库里；它们的保护来自平台侧，不来自项目的分支。
+- **`_libraries` 没有 git 备份**。资料库的字节和另外三个根跟着平台自己的存储走（`workspace_root` 下或文件桶里），不在任何项目的仓库里；它们的保护来自平台侧，不来自项目的分支。

@@ -2,13 +2,10 @@
 //
 // 下载地址和删除还在 api.ts 里（别处早就在用）；这里是列清单（一页一页）、上传、替换、
 // 读字节、版本列表、按版本下载、恢复旧版。
-import type { ApiEnvelope } from '@/cx_types'
-
 import { authToken, BASE, libraryFileRawUrl, request } from '../api'
 import { t } from '../i18n'
 
 import { libraryParams, type LibraryQuery } from './libraryQuery'
-import { refusalWords } from './noticeText'
 
 function auth(): Record<string, string> {
   const token = authToken()
@@ -81,26 +78,42 @@ export async function listLibraryFolders(projectId: string): Promise<string[]> {
   return (await request<{ folders: string[] }>(`/projects/${encodeURIComponent(projectId)}/library/folders`)).folders
 }
 
+/** 把一份文件的字节传上去，交回登记要用的凭据。
+ *
+ *  字节不经过后端：先领一个地址，再把文件原样 PUT 过去——对象存储的预签名地址，或者
+ *  文件存在服务器本地盘时后端自己的一个地址（以 `/` 开头）。地址只收领的时候说的那么
+ *  多字节。 */
+async function sendLibraryBytes(projectId: string, file: File): Promise<string> {
+  const slot = await request<{ url: string; upload: string }>(
+    `/projects/${encodeURIComponent(projectId)}/library/uploads`,
+    { method: 'POST', body: JSON.stringify({ name: file.name, size: file.size }) }
+  )
+  const put = await fetch(slot.url.startsWith('/') ? `${BASE}${slot.url}` : slot.url, {
+    method: 'PUT',
+    body: file,
+  })
+  if (!put.ok) throw new Error(t('files.library.uploadFailed', { status: put.status }))
+  return slot.upload
+}
+
 async function libraryUpload(
   projectId: string,
   file: File,
   replacing?: string,
   folder?: string
 ): Promise<{ path: string; bytes: number }> {
-  const form = new FormData()
-  form.append('file', file)
-  if (folder) form.append('folder', folder)
-  const query = replacing ? `?path=${encodeURIComponent(replacing)}` : ''
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/library${query}`, {
-    method: replacing ? 'PUT' : 'POST',
-    body: form,
-    headers: auth(),
-  })
-  const envelope = (await res.json().catch(() => null)) as ApiEnvelope<{ path: string; bytes: number }> | null
-  if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(refusalWords(envelope) || t('files.library.uploadFailed', { status: res.status }))
+  const upload = await sendLibraryBytes(projectId, file)
+  const base = `/projects/${encodeURIComponent(projectId)}/library`
+  if (replacing) {
+    return request(`${base}?path=${encodeURIComponent(replacing)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ upload }),
+    })
   }
-  return envelope.data
+  return request(base, {
+    method: 'POST',
+    body: JSON.stringify({ upload, filename: file.name, ...(folder ? { folder } : {}) }),
+  })
 }
 
 /** 在资料库页上直接放进一份文件，`folder` 给了就放进那个文件夹。撞名不覆盖，返回它最后叫什么。 */
