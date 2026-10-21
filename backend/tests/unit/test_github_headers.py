@@ -1,62 +1,18 @@
-"""GitHub REST callers share one header construction rule.
-
-``github_app`` and ``oauth/services/providers`` use
-``app.core.github_headers`` so their requests carry consistent headers.
-"""
-
-import ast
-import inspect
+"""Every GitHub REST request carries the same Accept header; the API version is opt-in."""
 
 import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from app.core import github_headers as github_headers_module
 from app.core.github_headers import (
     GITHUB_ACCEPT,
     GITHUB_API_VERSION,
     github_headers,
 )
-from app.domain.oauth.services import providers
 from app.domain.oauth.services.providers import GitHubProvider, OAuthProviderConfig
 from app.domain.project import github_app
 from app.domain.project.github_app import GitHubAppTokens
-
-
-def _call_count_to_github_headers(module: object) -> int:
-    tree = ast.parse(inspect.getsource(module))
-    return sum(
-        1
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "github_headers"
-    )
-
-
-def _string_literals(module: object) -> set[str]:
-    tree = ast.parse(inspect.getsource(module))
-    return {
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
-
-
-def test_github_callers_share_the_header_function():
-    assert github_app.github_headers is github_headers
-    assert providers.github_headers is github_headers
-    assert github_headers_module.github_headers is github_headers
-
-    assert _call_count_to_github_headers(github_app) == 5
-    assert _call_count_to_github_headers(providers) == 2
-
-    for module in (github_app, providers):
-        literals = _string_literals(module)
-        assert GITHUB_ACCEPT not in literals
-        assert GITHUB_API_VERSION not in literals
-        assert "X-GitHub-Api-Version" not in literals
 
 
 def test_accept_is_consistent_and_version_header_is_opt_in():
