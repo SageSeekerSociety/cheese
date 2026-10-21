@@ -48,7 +48,7 @@
       "daily": "Daily",
       "weekly": "Weekly",
       "all": "All new messages",
-      "mentions": "Only @me and threads I'm in",
+      "mentions": "Only {'@'}me and threads I'm in",
       "mute": "Muted"
     }
   },

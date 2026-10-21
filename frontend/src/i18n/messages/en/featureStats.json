@@ -26,7 +26,7 @@
       "summary": "Naming task titles automatically: what it spends, which stages it runs at, and how often people rename what it wrote"
     },
     "personalAssistant": {
-      "title": "个人芝士",
+      "title": "Personal Cheese",
       "summary": "Actions taken for users, the share needing confirmation and its cost, and prompt cache hit rates"
     }
   },
@@ -152,7 +152,7 @@
     "kpi": {
       "checks": "Authorization checks",
       "checksSplit": "{allowed} taken directly, {asked} confirmed by the user",
-      "checksNote": "Each action others can see is checked once before 芝士 takes it for the user",
+      "checksNote": "Each action others can see is checked once before Cheese takes it for the user",
       "askedShare": "Share confirmed",
       "askedNote": "Actions that need confirmation appear as cards in the panel; a high share means the check is strict",
       "cost": "Check cost",

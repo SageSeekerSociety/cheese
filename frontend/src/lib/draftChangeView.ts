@@ -160,6 +160,19 @@ function rowValue(key: string, edit: AssistantEdit) {
   return field ? pick(field) : undefined
 }
 
+/** 设置值怎么说；时段（22:00-08:00）这类原样写。 */
+const SETTING_VALUES: Record<string, string> = {
+  on: 'tasks.assistant.changes.setting.on',
+  off: 'tasks.assistant.changes.setting.off',
+  instant: 'tasks.assistant.changes.setting.instant',
+  digest: 'tasks.assistant.changes.setting.digest',
+  daily: 'tasks.assistant.changes.setting.daily',
+  weekly: 'tasks.assistant.changes.setting.weekly',
+  all: 'tasks.assistant.changes.setting.all',
+  mentions: 'tasks.assistant.changes.setting.mentions',
+  mute: 'tasks.assistant.changes.setting.mute',
+}
+
 /** 改的是这个人自己的设置（通知设置、频道提醒），不是题目草稿。 */
 const isSetting = (edit: AssistantEdit) => edit.kind === 'settings' || edit.kind === 'notify'
 
@@ -174,12 +187,12 @@ function settingsView(edit: AssistantEdit): PanelChange {
     title: edit.title,
     rows: Object.entries(changed).map(([key, change]) => {
       const after = String(change.after)
-      const said = `tasks.assistant.changes.setting.${after}`
+      const said = SETTING_VALUES[after]
       return {
         change: edit.id,
         key,
         label: change.label ?? key,
-        value: /^[a-z]+$/.test(after) ? t(said) : after,
+        value: said ? t(said) : after,
         undone: edit.undone.includes(key),
       }
     }),
