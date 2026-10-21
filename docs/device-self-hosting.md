@@ -165,7 +165,7 @@ The connector asks `GET <origin>/connector/claude/pin` for the pinned version, d
 
 Add API keys and Anthropic-compatible model services through the team's Models page. Their keys are encrypted on the platform and have no storage computer.
 
-When a credential host connects, the backend runs `claude auth status` through its connector for each registered subscription, without calling a model. It updates the registered login's status; it does not discover credentials from execution-device ownership. A credential-only host and an enrolled execution device can use the same transport.
+When a credential host connects, the backend runs `claude auth status` through its connector for each registered subscription, without calling a model. It updates the registered login's status, including the Claude account email and organization the command reports, which the team's Models page shows to tell logins apart (a personal login's account only to its owner); it does not discover credentials from execution-device ownership. A credential-only host and an enrolled execution device can use the same transport.
 
 **入册时缺任何一样都是 fatal**，理由同 §0：留到后面发现的失败，全都出现在没人看的地方。
 

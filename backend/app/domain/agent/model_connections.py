@@ -58,6 +58,22 @@ async def of_team(
     used = await AgentSessionService(db).last_used_on(
         OWNER_CHANNEL, [row.transport_id for row, *_ in rows]
     )
+
+    def shown(login: DeviceClaudeLoginRow, storage_team: int | None) -> bool:
+        """Whether the viewer may see the computer a login is on: a team
+        device's name is the team's, a member's own computer only its own."""
+        return storage_team == team_id or (
+            login.owner_user_id is not None and login.owner_user_id == viewer_user_id
+        )
+
+    def account_shown(login: DeviceClaudeLoginRow) -> bool:
+        """Whether the viewer may see which Claude account a login is: a team's
+        own subscription to the team, a member's personal one only to them,
+        wherever it is stored or shared."""
+        if login.owner_user_id is None:
+            return login.team_id == team_id
+        return login.owner_user_id == viewer_user_id
+
     return [
         {
             **claude_login.view(login),
@@ -66,12 +82,10 @@ async def of_team(
             "allowed_models": login.allowed_models,
             "device_id": login.transport_id,
             "device_name": (name or host_name or login.transport_id)
-            if storage_team == team_id
-            or (
-                login.owner_user_id is not None
-                and login.owner_user_id == viewer_user_id
-            )
+            if shown(login, storage_team)
             else login.transport_id,
+            "account_email": login.account_email if account_shown(login) else None,
+            "account_org": login.account_org if account_shown(login) else None,
             "online": hub.is_online(login.transport_id),
             "last_used_at": used[login.transport_id].isoformat()
             if login.transport_id in used

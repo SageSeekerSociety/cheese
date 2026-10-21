@@ -50,6 +50,8 @@ class _Machines:
         self.online: set[str] = set()
         #: machine -> its logins, by local id -> logged in.
         self.logins: dict[str, dict[str, bool]] = {}
+        #: machine -> local id -> the Claude account (email, org) logged in.
+        self.accounts: dict[str, dict[str, tuple[str, str]]] = {}
         self.refuse_logout = False
         self.exec = AsyncMock(side_effect=self._exec)
 
@@ -83,6 +85,8 @@ class _Machines:
             status = {"loggedIn": logged_in}
             if logged_in:
                 status |= {"authMethod": "claude.ai", "subscriptionType": "max"}
+                email, org = self.accounts.get(device, {}).get(local_id, (None, None))
+                status |= {"email": email, "orgName": org}
             reports.append({"id": local_id, "status": status})
         return {
             "exit": 0,
@@ -420,3 +424,37 @@ def test_a_probe_does_not_assign_a_team_to_an_unregistered_login(client, monkeyp
     del machines.logins[laptop]["C2QR"]
     client.post(path, headers=alice)
     assert [c["local_id"] for c in _connections(client, alice)] == [FIRST_LOGIN]
+
+
+def test_each_login_names_the_claude_account_it_is(client, monkeypatch):
+    """Two logins on one computer are told apart by the Claude account each
+    one is, as the computer reports it on every check."""
+    alice = _bearer(seed_user(client, "alice"))
+    laptop = _laptop(client, "alice", "B7QX")
+    machines = _Machines()
+    machines.online.add(laptop)
+    machines.holds(laptop, FIRST_LOGIN, "B7QX")
+    machines.accounts[laptop] = {
+        FIRST_LOGIN: ("alice@example.com", "Alice's Organization"),
+        "B7QX": ("alice@work.example", "Work Inc"),
+    }
+    monkeypatch.setattr(connections, "device_hub", machines)
+
+    path = f"/connector/teams/{team_id(client)}/claude-logins/{laptop}/check"
+    checked = client.post(path, headers=alice)
+
+    assert checked.status_code == 200, checked.text
+    accounts = {
+        c["local_id"]: (c["account_email"], c["account_org"])
+        for c in _connections(client, alice)
+    }
+    assert accounts == {
+        FIRST_LOGIN: ("alice@example.com", "Alice's Organization"),
+        "B7QX": ("alice@work.example", "Work Inc"),
+    }
+
+    # Logged in again there with another account: the next check says so.
+    machines.accounts[laptop]["B7QX"] = ("bob@work.example", "Work Inc")
+    assert client.post(path, headers=alice).status_code == 200
+    second = next(c for c in _connections(client, alice) if c["local_id"] == "B7QX")
+    assert second["account_email"] == "bob@work.example"

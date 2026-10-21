@@ -57,5 +57,6 @@
   "connection": "模型连接",
   "removePersonal": "移出团队",
   "owner": "所属成员",
+  "loginAccount": "登录账号",
   "personalHint": "个人连接只用于本人的助理。归属写在提示词中，其他成员仍可调用；修改连接会影响使用它的所有团队"
 }
