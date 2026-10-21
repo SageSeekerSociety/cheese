@@ -19,7 +19,6 @@
   "tier": {
     "default": "Default · included",
     "included": "Included",
-    "testing": "Beta",
     "byo": "Bring your own API key",
     "premium": "Premium"
   }

@@ -56,20 +56,13 @@ _AI_COPY: dict[str, tuple[str, str]] = {
         "包含（平台补贴）",
         "平台托管的通用大模型，开箱即用，适合绝大多数项目。",
     ),
-    "claude-opus": (
-        "仅团队内测",
-        "原生 Claude Opus，仅团队 dogfooding 使用，不对外开放。",
-    ),
 }
-_TIER_PRICE = {"byo": "自带 API 密钥", "testing": "仅团队内测"}
+_TIER_PRICE = {"byo": "自带 API 密钥"}
 
 
-def ai_listings(
-    registry: ProfileRegistry, owner_handle: str | None = None
-) -> list[PoolListing]:
-    """Every AI pool in the catalog. `available` reflects credentials + whether
-    this owner may select it (a testing-tier profile is unavailable off-dogfood)."""
-    selectable = {v.name for v in registry.selectable(owner_handle)}
+def ai_listings(registry: ProfileRegistry) -> list[PoolListing]:
+    """Every AI pool in the catalog. `available` reflects credentials."""
+    selectable = {v.name for v in registry.selectable()}
     out: list[PoolListing] = []
     for name, p in registry.all():
         price, desc = _AI_COPY.get(name, (_TIER_PRICE.get(p.tier, "—"), f"{p.label}。"))

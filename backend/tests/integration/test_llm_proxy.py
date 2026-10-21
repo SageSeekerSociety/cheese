@@ -435,8 +435,8 @@ async def test_admission_refusal_posts_nothing_with_no_turn_running(client):
 @pytest.mark.anyio
 async def test_admission_says_which_pool_serves_the_project(client, monkeypatch):
     """The proxy asks once and learns both things: may it run, and where does
-    it go (#243). Where it goes is a project setting, so supply can change
-    without touching the proxy or restarting the sandbox."""
+    it go (#243). Where it goes follows the model the project picked, so it
+    can change without touching the proxy or restarting the sandbox."""
     from app.core.config import settings as app_settings
     from app.domain.project.repositories import ProjectRepository
 
@@ -458,7 +458,7 @@ async def test_admission_says_which_pool_serves_the_project(client, monkeypatch)
     async with client.test_factory() as session:
         project = await ProjectRepository(session).get(uuid.UUID(pid))
         assert project is not None
-        project.settings = {"supply": "subscription"}
+        project.settings = {"default_model": "sonnet"}
         await session.commit()
 
     body = client.post("/llm/admission", headers=headers).json()["data"]
@@ -476,19 +476,13 @@ async def test_admission_refuses_by_name_when_it_cannot_resolve_a_model(
     resolved is refused, in the resolver's own words, and never quietly served
     from the other pool."""
     from app.domain.agent import gateway_catalog
-    from app.domain.project.repositories import ProjectRepository
 
     pid = _make_project(client)
     token = mint_scoped_token(project_id=pid)
     headers = {"Authorization": f"Bearer {token}"}
 
-    async with client.test_factory() as session:
-        project = await ProjectRepository(session).get(uuid.UUID(pid))
-        assert project is not None
-        # A project on the pool, on a deployment whose pool serves nothing —
-        # an operator pulling the last model out of the catalogue does this.
-        project.settings = {"supply": "gateway"}
-        await session.commit()
+    # A project with no model of its own, on a deployment whose pool serves
+    # nothing — an operator pulling the last model out of the catalogue does this.
     monkeypatch.setattr(gateway_catalog, "offerable", lambda: [])
 
     body = client.post("/llm/admission", headers=headers).json()["data"]

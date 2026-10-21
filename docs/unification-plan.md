@@ -58,8 +58,7 @@ story; one frontend token/API; no fallbacks.
       is reachable natively from the shell via the rail project tiles.
 - [ ] **P4 native Task/Team → Project** (needs a product decision — see below).
 - [x] **P5 kill fallbacks**: avatars load from the backend `/avatars` (fixed the
-      dead `:7777` base URL, not a fallback); AI pool is the Claude subscription
-      profile via `AGENT_DEFAULT_PROFILE` (GLM pool is out of balance).
+      dead `:7777` base URL, not a fallback).
 
 ## P4 open decision
 

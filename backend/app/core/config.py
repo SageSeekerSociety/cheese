@@ -486,25 +486,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # even without a signal (an accept card, a changed document).
     topic_naming_follow_messages: int = 30
 
-    # ExecutionProfile "claude-opus" (tier=testing): native Claude for the team's
-    # own dogfooding. Only selectable when claude_auth_token is set (an Anthropic
-    # API key). base_url unset → Anthropic's default endpoint. Not the multi-user
-    # product path — that defaults to the pool (see app/domain/agent/profiles.py).
-    claude_model: str = "claude-opus-4-8"
-    claude_base_url: str | None = None
-    claude_auth_token: str | None = None
-    # Subscription auth (走订阅): a long-lived OAuth token from `claude setup-token`
-    # (a personal Max/Pro seat — ToS-compliant for dogfooding). Preferred over an
-    # API key; when set, the sandbox `claude` runs on the subscription, not pay-
-    # per-use API credits. Injected as CLAUDE_CODE_OAUTH_TOKEN.
-    claude_oauth_token: str | None = None
-    # ExecutionProfile "claude-fable" (tier=testing): the Fable frontier model on
-    # the same personal seat/credentials as claude-opus — a second dogfooding
-    # channel so we can compare models on real platform work.
-    fable_model: str = "claude-fable-5"
-    # Owner handles allowed to select tier=testing profiles (dogfooding only —
-    # see profiles.py / review Finding 7). Comma-separated in env.
-    dogfood_owner_handles: list[str] = []
     # Handles that are platform administrators — the people who run the admin
     # screens (members, models, stats, spaces, integrations). Feedback triage is
     # a separate roster, `feedback_triage_handles` below. JSON list in env,
@@ -575,11 +556,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # tester. Not shared with the proposal cap above: that one is per TOPIC and
     # protects a room's reading; this one is per PERSON and protects the list.
     feedback_reports_per_author_per_day: int = 30
-    # Which registered profile is the platform default ("our AI pool"). Normally
-    # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
-    # whole platform on the subscription seat — e.g. a demo where the GLM pool is
-    # out of balance. The chosen profile must have credentials or boot fails fast.
-    agent_default_profile: str = "default"
     agent_system_prompt: str = (
         "你是知是平台里的 AI 队友。你贯穿一个项目的全过程，"
         "了解项目的频道、任务、决策和进展。用自然清楚的语言交流，"
