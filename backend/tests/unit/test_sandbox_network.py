@@ -964,7 +964,10 @@ def test_the_machines_rules_are_written_once_for_every_sandbox():
 # What Docker's daemon puts at the top of FORWARD and POSTROUTING each time it
 # starts, ahead of whatever was there.
 DOCKER_AHEAD = {
-    ("filter", "FORWARD"): ["-A FORWARD -j DOCKER-USER", "-A FORWARD -j DOCKER-FORWARD"],
+    ("filter", "FORWARD"): [
+        "-A FORWARD -j DOCKER-USER",
+        "-A FORWARD -j DOCKER-FORWARD",
+    ],
     ("nat", "POSTROUTING"): [
         "-A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE"
     ],
