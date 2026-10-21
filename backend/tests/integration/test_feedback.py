@@ -3079,7 +3079,7 @@ def test_an_agent_is_a_refusal_in_the_add_form_and_absent_from_the_picker(
 
     refused = _add_admin(client, by=as_admin, target=agent)
     assert refused.status_code == 400, refused.text
-    assert "agent" in refused.json()["message"]
+    assert "AI 队友" in refused.json()["message"]
 
     # 同一个搜索找得到真人，却找不到 agent —— 否则上面那条「搜不到」是空搜索在过关。
     seed_user(client, "cheese-human")

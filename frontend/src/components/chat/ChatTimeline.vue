@@ -595,7 +595,7 @@ const rowLabels = computed(() =>
             <div
               v-if="!notice && ((threadable && m.thread) || under(m.id).length)"
               class="tl-thread msg-work"
-              :class="{ 'msg-work--mine': became(m)?.tone === 'mine' }"
+              :class="{ 'msg-work--mine': became(m)?.mine }"
               :data-feed-of="m.id"
             >
               <div v-if="threadable && m.thread" class="msg-work__talk">

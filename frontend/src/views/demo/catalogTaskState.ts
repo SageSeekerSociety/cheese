@@ -197,7 +197,7 @@ function cardLine(task: RoomTask): TaskLine {
     mine: false,
     accepted: null,
     at: task.updated_at,
-    latest: '最后说的一句：只有状态下面没话要说时才写它',
+    latest: '报名表的字段已经定下来，接着写填表说明',
   }
 }
 
