@@ -960,6 +960,7 @@ def start_sandbox(
                 claude=claude,
                 sockets=sockets,
                 fds=fds,
+                programs=[execution_root(owner) / "runtime/git"],
                 network=connect,
             ),
             start_new_session=True,

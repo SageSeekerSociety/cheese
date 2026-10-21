@@ -572,6 +572,11 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
         rooms = []
         for path in paths:
             rooms += ["--bind", str(path), str(path)]
+        # The git the connector placed under the owner's home where the system
+        # had none good enough (`cli/internal/devenv`), shown back read-only.
+        found = Path(shutil.which("git") or "git").resolve()
+        if Path.home() in found.parents:
+            rooms += ["--ro-bind", str(found.parents[1]), str(found.parents[1])]
         argv = [
             "bwrap",
             "--unshare-all",
