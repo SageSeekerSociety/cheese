@@ -56,7 +56,7 @@
   "gatewayMissingList": "The gateway's {path} response has no {field} list",
   "gatewayModelExists": "The model {name} already exists: to give it another upstream, add a source to it",
   "gatewayLastOfferedModel": "{name} is the last offered model: pausing, deleting or unlisting it would leave agent settings with no model to pick. Offer another model first",
-  "sourceNeedsPrices": "Every source needs an input and an output price: the platform bills all of a model's usage by its prices. For an upstream that charges nothing, mark the source free (input and output written as 0)",
+  "sourceNeedsPrices": "Every source needs both an input and an output price; one may be 0 (such as a transcription model's output), and both at 0 is a free source, which must say so: the platform bills all of a model's usage by its prices",
   "sourcePriceCleared": "A price can be changed, not cleared: this edit clears {prices}",
   "gatewayModelNotFound": "The model {name} doesn't exist",
   "gatewayModelTimeout": "The model didn't finish answering within {seconds} seconds",
