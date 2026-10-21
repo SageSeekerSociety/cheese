@@ -212,6 +212,7 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
         "pr_number",
         "pr_url",
         "version",
+        "reviewer",
         "subject",
         "since",
     }
@@ -401,6 +402,7 @@ def test_an_unmirrored_pending_card_really_is_waiting_for_review(client):
         "pr_number": None,
         "pr_url": None,
         "version": 1,
+        "reviewer": row["card"]["reviewer"],
         "subject": None,
         "since": row["card"]["since"],
     }

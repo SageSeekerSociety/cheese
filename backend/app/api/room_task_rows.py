@@ -88,8 +88,9 @@ async def task_out(db, task, card=None) -> dict:
 
 def card_row(card, version: int | None) -> dict | None:
     """The card a task row carries: where it rides (PR) and, for a card in
-    review, what the row's second line says — 「第 N 版」 (``version``, how many
-    cards the task has filed), what was handed in, and since when. ``card`` is
+    review, what the row's second line says — whom it waits on (the card's own
+    reviewer), 「第 N 版」 (``version``, how many cards the task has filed),
+    what was handed in, and since when. ``card`` is
     the `AcceptCard` row or the `RailCard` value; both carry these fields."""
     if card is None:
         return None
@@ -99,6 +100,8 @@ def card_row(card, version: int | None) -> dict | None:
         "pr_number": card.pr_number,
         "pr_url": card.pr_url,
         "version": version,
+        # 卡递给谁审阅：改由别人审阅之后，任务上建时定的那位就不对了。
+        "reviewer": card.reviewer_handle,
         "subject": card.change_subject or card.deliverable_name or None,
         "since": _iso(card.created_at),
     }

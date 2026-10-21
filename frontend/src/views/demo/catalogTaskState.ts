@@ -120,6 +120,7 @@ const CASES: Case[] = [
         since: ago(3 * 60 * MIN),
         version: 2,
         subject: '登录表单加「记住我」',
+        reviewer: 'bobby',
       },
     },
     title: '作业 3 的参考答案',

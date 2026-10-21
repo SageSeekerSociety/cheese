@@ -90,6 +90,27 @@ describe('等审', () => {
     expect(state.line).toBe('待 林晓 审阅')
   })
 
+  it('卡还在跑检查、修检查时下一步在平台手上，不说在等谁审阅', () => {
+    for (const phrase of [
+      'gate_running',
+      'awaiting_checks',
+      'fixing_checks',
+      'resolving_conflict',
+      'updating_branch',
+    ] as const) {
+      const state = taskState(task(phrase, { reviewer_handle: 'chenmo', card: { ...card, reviewer: 'chenmo' } }), ctx)
+      expect(state.line).not.toContain('审阅')
+    }
+  })
+
+  it('改由别人审阅之后，看板和侧栏写卡上的审阅人，不写任务建时定的那位', () => {
+    // 项目级列表和侧栏的行不带 waiting_on，只有卡上的审阅人说得准。
+    const row = task('awaiting_review', { reviewer_handle: 'chenmo', card: { ...card, reviewer: 'linxiao' } })
+    const state = taskState(row, ctx)
+    expect(state.line).toContain('待 林晓 审阅')
+    expect(state.line).not.toContain('待你审阅')
+  })
+
   it('检查没过时下一步在负责人手上，不说在等谁审阅', () => {
     const state = taskState(task('checks_failed', { reviewer_handle: 'linxiao', card }), ctx)
     expect(state.line).not.toContain('审阅')

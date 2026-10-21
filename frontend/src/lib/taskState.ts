@@ -92,14 +92,7 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
   Partial<
     Pick<
       RoomTask,
-      | 'progress_note'
-      | 'progress_set_at'
-      | 'session_running'
-      | 'moving'
-      | 'waiting_on'
-      | 'awaits_me'
-      | 'reviewer_handle'
-      | 'card'
+      'progress_note' | 'progress_set_at' | 'session_running' | 'moving' | 'waiting_on' | 'awaits_me' | 'card'
     >
   >
 
@@ -171,9 +164,11 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
           : ''
       break
     case 'review': {
-      // 检查没过时下一步在负责人手上，不是在等谁审阅：那一句不写。
-      const reviewer = phrase === 'checks_failed' ? null : row.waiting_on ?? row.reviewer_handle ?? null
+      // 只有卡真在等人审阅（`awaiting_review`）时才写在等谁，名字取卡上的审阅人：任务
+      // 建时定的那位可能已经改由别人审阅。跑检查、修检查、解冲突时下一步在平台和队友手上，
+      // 检查没过时在负责人手上，都不是在等谁审阅，那一句不写。
       const card = row.card
+      const reviewer = phrase === 'awaiting_review' ? row.waiting_on ?? card?.reviewer ?? null : null
       const since = card?.since ? relTime(card.since) : ''
       const reviewsMine = reviewer === ctx.viewer || (phrase === 'awaiting_review' && row.awaits_me === true)
       line = joined([

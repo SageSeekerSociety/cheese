@@ -373,6 +373,8 @@ export interface ThreadCard {
   version?: number | null
   /** 被审阅的是什么：改动的标题，或文件名。 */
   subject?: string | null
+  /** 这张卡递给谁审阅（可能已经改由别人审阅，和任务建时定的那位不同）。 */
+  reviewer?: string | null
 }
 
 export interface TopicProgress {
