@@ -415,7 +415,7 @@ container's own `pg_dump -Fc`, reads the archive back with `pg_restore --list`,
 which must list the data of `LiteLLM_ProxyModelTable` and
 `LiteLLM_VerificationToken`, and only then renames it to
 `~/backups/gateway/gateway-litellm-<UTC timestamp>.dump`. The box keeps the
-newest 28 dumps (7 days). Each dump is then copied to the R2 bucket under the
+newest 8 dumps (2 days; a dump was 0.85 GB on 2026-10-21). Each dump is then copied to the R2 bucket under the
 dev prefix (`db/gateway-litellm-<UTC timestamp>.dump`, `deploy/r2-upload.py`),
 where the bucket's lifecycle rule deletes it after 30 days. The database and
 its local dumps are on the same box, so a failed upload fails the run. The

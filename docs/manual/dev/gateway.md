@@ -190,7 +190,7 @@ GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
 
 网关数据库是管理页加的模型和价格、每个项目的虚拟 key 与预算、花销日志的唯一一份；`config.yaml` 只能找回随镜像发的那几个基线模型。
 
-- **Gateway DB backup** 工作流（`.github/workflows/gateway-db-backup.yml`）在 dev runner 上每 6 小时跑一次（UTC 00:23、06:23、12:23、18:23），也可以手动触发。它调 `deploy/gateway-db-backup.sh`：用容器自己的 `pg_dump -Fc` 转储 `litellm`，`pg_restore --list` 读回来、必须列出 `LiteLLM_ProxyModelTable` 和 `LiteLLM_VerificationToken` 的数据，过了才改名成 `~/backups/gateway/gateway-litellm-<UTC 时间>.dump`。本机留最新 28 份（7 天）。
+- **Gateway DB backup** 工作流（`.github/workflows/gateway-db-backup.yml`）在 dev runner 上每 6 小时跑一次（UTC 00:23、06:23、12:23、18:23），也可以手动触发。它调 `deploy/gateway-db-backup.sh`：用容器自己的 `pg_dump -Fc` 转储 `litellm`，`pg_restore --list` 读回来、必须列出 `LiteLLM_ProxyModelTable` 和 `LiteLLM_VerificationToken` 的数据，过了才改名成 `~/backups/gateway/gateway-litellm-<UTC 时间>.dump`。本机留最新 8 份（2 天；2026-10-21 一份约 0.85 GB）。
 - 每份随后用 `deploy/r2-upload.py` 传到 R2 的 dev 前缀下（`db/gateway-litellm-<UTC 时间>.dump`），桶的生命周期规则 30 天后删。数据库和本机那几份在同一台机器上，所以上传失败整次运行就算失败。
 - 恢复命令（看内容、只捞回几行、整库替换）见 `deploy/gateway/README.md` 的 Backups 一节。整库恢复会丢掉转储之后写进去的一切：花销、新项目的 key、模型改动。
 
