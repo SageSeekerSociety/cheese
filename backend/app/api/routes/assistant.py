@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_consumptions, get_session_host
 from app.api.refusal import refuse
 from app.api.request_deps import AuthUser, DbSession
@@ -53,6 +54,7 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.assistant import changes
 from app.domain.space.services import SpaceService
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -147,6 +149,16 @@ async def read_conversation(
     then finds it ready."""
     row = await _owned(db, auth.user_id, conversation_id)
     messages = await assistant.AssistantConversations(db).messages(row.id)
+    undone = await changes.undone_of(
+        db,
+        auth.user_id,
+        [
+            e["id"]
+            for m in messages
+            for e in (m.parts or {}).get("edits") or []
+            if isinstance(e.get("id"), int)
+        ],
+    )
     if people.available():
         spawn(
             _prestart(people, conversation_session(auth.user_id, row.id)),
@@ -167,12 +179,25 @@ async def read_conversation(
                     "text": m.text,
                     "stopped": m.stopped,
                     "at": m.created_at.isoformat(),
-                    **({"parts": m.parts} if m.parts else {}),
+                    **({"parts": _undone_now(m.parts, undone)} if m.parts else {}),
                 }
                 for m in messages
             ],
         }
     )
+
+
+def _undone_now(parts: dict, undone: dict[int, list]) -> dict:
+    """A kept answer's parts, its changes saying what is undone of them now."""
+    if not parts.get("edits"):
+        return parts
+    return {
+        **parts,
+        "edits": [
+            {**e, "undone": undone[e["id"]]} if e.get("id") in undone else e
+            for e in parts["edits"]
+        ],
+    }
 
 
 async def _prestart(
@@ -347,3 +372,68 @@ async def stop(
     if redis is not None:
         await assistant.stop(redis, people, auth.user_id, row.id)
     return ok({})
+
+
+class UndoIn(BaseModel):
+    #: One part of the change (a draft's field as 芝士 names it); all of it
+    #: when left out.
+    part: str | None = None
+
+
+class UndoneOut(BaseModel):
+    """What undoing (or redoing) did: every change of the answer it touched,
+    as it is now, and what the kind of change says about it — a draft's
+    fields put back and its version, or the document written back."""
+
+    changes: list[dict]
+    draft: int | None = None
+    version: int | None = None
+    fields: dict | None = None
+    document: str | None = None
+
+
+@router.post(
+    "/changes/{changeId}/undo",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(UndoneOut),
+)
+async def undo_change(
+    change_id: Annotated[int, Path(alias="changeId", ge=1)],
+    body: UndoIn,
+    db: DbSession,
+    auth: AuthUser,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Undo what 芝士 changed while answering, as the person: a draft's field
+    back to what it was before the answer, a document's passages back to what
+    they were."""
+    return ok(
+        await changes.undo(
+            db, resolver, user_id=auth.user_id, change_id=change_id, part=body.part
+        )
+    )
+
+
+@router.post(
+    "/changes/{changeId}/redo",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(UndoneOut),
+)
+async def redo_change(
+    change_id: Annotated[int, Path(alias="changeId", ge=1)],
+    body: UndoIn,
+    db: DbSession,
+    auth: AuthUser,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Put back what was undone of a change: as 芝士 left it."""
+    return ok(
+        await changes.undo(
+            db,
+            resolver,
+            user_id=auth.user_id,
+            change_id=change_id,
+            part=body.part,
+            redo=True,
+        )
+    )

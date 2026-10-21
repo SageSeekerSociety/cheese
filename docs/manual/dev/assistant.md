@@ -4,7 +4,7 @@ kind: 流程
 summary: 项目之外的芝士：一个人和芝士的那一条对话怎么存、在哪里跑、能做什么、怎么扣钱，全站唯一的面板怎么接到页面上，以及它和人一起写题目草稿。
 covers:
   - backend/app/domain/agent/personal/
-  - backend/app/domain/assistant/models.py
+  - backend/app/domain/assistant/
   - backend/app/api/routes/assistant.py
   - backend/app/api/routes/tasks/drafts.py
   - backend/app/domain/task/drafts.py
@@ -12,6 +12,9 @@ covers:
   - frontend/src/components/assistant/AssistantPanel.vue
   - frontend/src/components/assistant/AssistantTurn.vue
   - frontend/src/components/tasks/AgentLayer.vue
+  - frontend/src/components/agent/AgentMark.vue
+  - frontend/src/composables/useAgentPointer.ts
+  - frontend/src/api/agentChanges.ts
   - frontend/src/stores/agentThread.ts
   - frontend/src/stores/agent.ts
   - frontend/src/layouts/AgentHost.vue
@@ -39,7 +42,7 @@ covers:
 页面不接线，只登记两件事，都是栈（后登记的在上面，组件卸载或被 keep-alive 收起时自己撤下）：
 
 - `useAgentContext`：这一页是什么（`page`，芝士读到的「当前页面」），以及面板在这一页的问候、开场问题、输入框提示、能不能交文件。没登记的页面用通用的说法，不附「当前页面」。
-- `useAgentSurface`（可选）：芝士写进这一页时页面怎么动——`tool_args` 边到边填、`edit` 定稿、`published` 之后、撤销，以及面板上那一轮怎么画（改动卡能不能撤销、第几道）。题目页登记了 `published`（芝士保存了这道题的修改，页面重读）；发布页和改题页由 `useDraftAgent` 登记整套。
+- `useAgentSurface`（可选）：芝士写进这一页时页面怎么动——`tool_args` 边到边填、`change` 定稿、`published` 之后、撤销，以及面板上那一轮怎么画（改动卡能不能撤销、第几道）。题目页登记了 `published`（芝士保存了这道题的修改，页面重读）；发布页和改题页由 `useDraftAgent` 登记整套。
 
 桌面上面板默认停在右边（把页面挤窄，芝士往表单里写时并排看得见），可以取消固定，变成右下角的浮层；这一项记在浏览器里（`cheesex.agentDocked`）。发布页、改题页在桌面上打开时，停在右边的面板自动打开。手机上从底部升起。
 ## 会话 {#session}
@@ -78,7 +81,7 @@ covers:
 
 ## 一次提问 {#ask}
 
-`POST /api/assistant/conversations/{id}/ask`，带上问题、问的时候眼前是哪一页（`page`：`{kind: "task" | "draft", id}`，省略时是对话挂着的那样东西）和交给芝士的文件（`files`：先经 `POST /attachments` 传上去的 id 和名字）。以 server-sent events 流式返回：`queued`（在等会话机空出来）、`thinking`（模型开始推理；只说它在推理，推理的内容不发）、`delta`（文字）、`tool`（芝士开始调一个工具，带调用 id）、`tool_args`（这次调用的参数原文，边写边流，带 `at`）、`tool_failed`（这次调用报错了）、`edit`（芝士写进了草稿，见[题目草稿](#drafts)）、`published`（芝士发布了一份草稿）、`error`、`done`（`stopped`：被人停下了）。
+`POST /api/assistant/conversations/{id}/ask`，带上问题、问的时候眼前是哪一页（`page`：`{kind: "task" | "draft", id}`，省略时是对话挂着的那样东西）和交给芝士的文件（`files`：先经 `POST /attachments` 传上去的 id 和名字）。以 server-sent events 流式返回：`queued`（在等会话机空出来）、`thinking`（模型开始推理；只说它在推理，推理的内容不发）、`delta`（文字）、`tool`（芝士开始调一个工具，带调用 id）、`tool_args`（这次调用的参数原文，边写边流，带 `at`）、`tool_failed`（这次调用报错了）、`change`（芝士写进了草稿，带这次改动记下的编号，见[题目草稿](#drafts)和[改动与撤销](#changes)）、`published`（芝士发布了一份草稿）、`error`、`done`（`stopped`：被人停下了）。
 
 **眼前的页面随问题说**：页面写成一段「当前页面」（题目页是题目说明、这个人的领取和题目材料；草稿页是整份草稿，带 version、空间 id 和这个空间可选的分类、标签、邮箱域名组、能当导师的人——芝士的工具按空间 id 办事），放在问题前面。前端只传页面的种类和 id，正文由服务端按提问人的权限写出（`personal/pages.py`）：每种页面是 `PAGES` 里的一行，写明怎么写出这一页、在这里提问记作哪种用量；加一种页面就是加一个渲染器和一行，提问的路由不用改。请求里的种类列在 `PageKind`，测试保证它和 `PAGES` 一致；不认识的种类在问模型之前就以参数错误拒绝。
 
@@ -95,9 +98,22 @@ covers:
 两只手往里写：
 
 - **人**在发布页、改题页上改，页面停手 600ms 后把改了的那几格存进去（`PATCH /task-drafts/{id}`）。还没有草稿时，第一次改动或第一次问芝士才建（`POST /task-drafts`），地址栏 `?draft=` 记下它。每写一次 `version` 加一，`marks` 记着每一格人最后一次写它时的 `version`。
-- **芝士**用 `cheese_task_write` 写，说的是它自己的字段名（`AGENT_FIELDS`：分类、标签写名字，截止时间写这个人时区的「YYYY-MM-DD HH:MM」，详情写 Markdown，也可以按原文替换几处）。它带着读草稿时的 `version`：人在那之后写过的格子保持人的版本，返回里列在 `kept`。写完往这一问的流里推一条 `edit`：草稿 id、改了哪几格（各自原来是什么）、`kept`、芝士留给人确认的 `notes`。
+- **芝士**用 `cheese_task_write` 写，说的是它自己的字段名（`AGENT_FIELDS`：分类、标签写名字，截止时间写这个人时区的「YYYY-MM-DD HH:MM」，详情写 Markdown，也可以按原文替换几处）。它带着读草稿时的 `version`：人在那之后写过的格子保持人的版本，返回里列在 `kept`。写完记下这次改动（见[改动与撤销](#changes)），往这一问的流里推一条 `change`：改动编号、草稿 id、改了哪几格（各自原来是什么）、`kept`、芝士留给人确认的 `notes`、已撤销的格子。
 
 发布（`POST /task-drafts/{id}/publish`，或芝士的 `cheese_task_publish`）把草稿当成 `POST /tasks` 或 `PATCH /tasks/{id}` 的请求体，走同一段建题、改题代码（`routes/tasks/_writes.py`），然后删掉草稿、把对话改挂到题目上。页面点「发布」「保存更改」时，先把表单校验过的样子存进草稿，再发布草稿。
+
+## 改动与撤销 {#changes}
+
+芝士答题时往人的东西里写的每一次——题目草稿的几格、文档的几段——都记成一行 `assistant_changes`（`domain/assistant/changes.py`）：记在这次回答的编号（委托凭据里的 `work`）下，写明是谁问的、写的是哪种东西（`kind`：`draft`、`doc`）、哪一份（`target`）、改了什么（`payload`），以及人已经撤销了哪几项（`undone`）。写路由用 `changes.report` 记，草稿那边再把它推到这一问的流里；文档里的选区框在回答结束时按编号读回这一轮的改动。
+
+撤销、恢复是同一对接口，不管写的是什么：`POST /assistant/changes/{id}/undo`、`/redo`，可以带 `part` 只撤一项（草稿是芝士的字段名），不带就是全部。只有问的那个人能撤销，以本人的名义写回，走本人写这样东西时的那道检查。怎么写回由写这种东西的模块登记（`changes.register`，草稿在 `routes/tasks/drafts.py`，文档在 `routes/living_docs.py`）：
+
+| 种类 | 一项是 | 撤销 | 恢复 |
+|---|---|---|---|
+| `draft` | 一格（`AGENT_FIELDS` 的键） | 放回这一轮第一次写它之前的值 | 放回这一轮最后一次写的值 |
+| `doc` | 整次（`text`） | 这一轮对这篇文档改的几段倒着换回原文 | 再按原样改一遍 |
+
+文档在那之后又改了、换不回去时整次拒绝（「这段文字之后又被修改过，无法撤销」）。返回这一轮里被牵动的每一次改动现在的样子，面板照着划掉；打开以前的话题时，存下的回答里的改动也按这张表标出已撤销的项。改动记下之前的旧回答没有编号，只给看。
 
 ## 面板 {#panel}
 
@@ -105,12 +121,12 @@ covers:
 
 发布页、改题页上，表单跟着芝士动（`useTaskDraft`、`useDraftAgent`）：
 
-- `tool_args` 流进来时，页面把参数读成表单的几格先填上（`lib/taskDraftAgent.ts` 的 `previewOf`，只填能确定的值），这几格这时不算人改的；`edit` 到了，用服务端的值覆盖预览，记成已存；`tool_failed` 就收回预览。只改详情里几处（`description_edits`）时，预览在现在的详情上把已经写出来的那几处换掉。
-- 参数常常一大块一起到，`lib/typist.ts` 按格子定节奏：边读那段 JSON 边认出在写哪个字段，一格的字每秒 60 个，字多就加快，短格子最多 1 秒、详情和评分标准最多 2 秒写完；换到下一格前停 0.22 秒，让指针先过去；定位用的字段（草稿 id、要替换的原文）一下子放完。调用结束、`edit`、`published` 都排在放完之后。
+- `tool_args` 流进来时，页面把参数读成表单的几格先填上（`lib/taskDraftAgent.ts` 的 `previewOf`，只填能确定的值），这几格这时不算人改的；`change` 到了，用服务端的值覆盖预览，记成已存；`tool_failed` 就收回预览。只改详情里几处（`description_edits`）时，预览在现在的详情上把已经写出来的那几处换掉。
+- 参数常常一大块一起到，`lib/typist.ts` 按格子定节奏：边读那段 JSON 边认出在写哪个字段，一格的字每秒 60 个，字多就加快，短格子最多 1 秒、详情和评分标准最多 2 秒写完；换到下一格前停 0.22 秒，让指针先过去；定位用的字段（草稿 id、要替换的原文）一下子放完。调用结束、`change`、`published` 都排在放完之后。
 - 要整格重写、原来有字时，停的那一下把原来的字选中；改详情里的一段时，先选中原文，再跟着新文字走（`useAgentPointer` 在编辑器里找那段字，`AgentLayer` 画选中）。
-- 页面跟着芝士滚：换到一格时把它滚进视野，详情写长了光标要出屏时往下滚；人刚自己滚过页面就不跟。
-- 表单上一层是 `AgentLayer`：整张表单一个指针。写名称、详情时是带「芝士」名字的文字光标，停在字的末尾；写选项、数字、日期、列表时是箭头。正在写的那一格描着边，写过的格子标「芝士已填写」，人改过这一格后标记消失。位置由 `useAgentPointer` 量 `data-agent-field` 标着的那几格。
-- 撤销一格：放回芝士这一轮第一次改它之前的值，当作人改的存下。对话里眼前这份草稿一轮只有一张改动卡，同一格写了几次只留最后一次。
+- 页面跟着芝士滚：换到一格时平滑滚进视野；字写到看不见的地方时立刻滚过去，先滚那一格自己（详情超过最大高度后在框里滚），再滚页面。人刚自己滚过就不跟。
+- 表单上一层是 `AgentLayer`：整张表单一个指针。写名称、详情时是带「芝士」名字的文字光标，停在字的末尾；写选项、数字、日期、列表时是箭头。正在写的那一格描着边，写过的格子标「芝士已填写」，人改过这一格后标记消失。位置由 `useAgentPointer` 量 `data-agent-field` 标着的那几格：芝士在答时每一帧都量，不在答时格子变了大小也量。描边只在换格子时滑过去，光标不带过渡，免得落在字后面。「芝士已填写 撤销」那一小行是 `AgentMark`，以后别的页面上芝士改过的地方也用它。
+- 撤销一格走 `POST /assistant/changes/{id}/undo`：服务端放回芝士这一轮第一次改它之前的值，当作人改的存下，表单照着填回（`useTaskDraft.restored`），不再存一遍。对话里眼前这份草稿一轮只有一张改动卡，同一格写了几次只留最后一次。
 
 一份文件拆出几道题时，芝士在同一段对话里建的几份新题目草稿排在表单上方（`TaskDraftStrip`）：点了切换，对话还是那一段，不重读；芝士正在写的那份转圈，还没建好的先占一格。「全部发布」先存下眼前这份，再一份份发布（`POST /task-drafts/{id}/publish`）：草稿列表的 `missing`（后端 `drafts.missing`，名称、详情、参与方式、难度）不空的那份不发，标出缺几项，切过去时表单标出缺的格子。
 

@@ -13,7 +13,7 @@ def test_the_stream_is_kept_as_steps_edits_and_published():
         ("3700-0", "tool_args", {"call": "c1", "text": 'b 3"}', "at": 11}),
         (
             "3900-0",
-            "edit",
+            "change",
             {"draft": 41, "changed": {"name": {"before": "", "after": "Lab 3"}}},
         ),
         ("4000-0", "tool", {"name": "cheese_task_publish", "call": "c2"}),

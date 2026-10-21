@@ -24,16 +24,7 @@
       :style="{ left: `${mark.x}px`, top: `${mark.y}px` }"
       :data-testid="`agent-mark-${mark.key}`"
     >
-      <CheeseAvatar :size="14" aria-hidden="true" />
-      <span>{{ t('tasks.agentLayer.filled') }}</span>
-      <button
-        type="button"
-        class="al__undo"
-        :aria-label="t('tasks.assistant.changes.undoOne', { field: mark.label })"
-        @click="emit('undo', mark.key)"
-      >
-        {{ t('tasks.agentLayer.undo') }}
-      </button>
+      <AgentMark :label="mark.label" @undo="emit('undo', mark.key)" />
     </div>
 
     <div
@@ -62,7 +53,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import AgentMark from '@/components/agent/AgentMark.vue'
 
 /** 和 `--dur-base` 一样长。 */
 const GLIDE_MS = 220
@@ -84,7 +75,7 @@ export interface AgentBox {
   key?: string
 }
 
-export interface AgentMark {
+export interface AgentMarkSpot {
   /** 芝士的字段名。 */
   key: string
   label: string
@@ -96,7 +87,7 @@ const props = withDefaults(
   defineProps<{
     pointer: AgentPointer | null
     outline: AgentBox | null
-    marks: AgentMark[]
+    marks: AgentMarkSpot[]
     /** 芝士选中、要换掉的那段字（每行一块）。 */
     selection?: AgentBox[]
     /** 光标旁边写的名字。 */
@@ -157,26 +148,9 @@ onBeforeUnmount(() => {
 
 .al__mark {
   position: absolute;
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
   padding: 0 2px 0 4px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  white-space: nowrap;
   transform: translateX(-100%);
   pointer-events: auto;
-}
-
-.al__undo {
-  padding: 0 2px;
-  color: var(--accent-ink);
-  border-radius: var(--radius-sm);
-}
-
-.al__undo:hover {
-  text-decoration: underline;
 }
 
 .al__pointer {

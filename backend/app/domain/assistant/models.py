@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -99,3 +100,34 @@ class AssistantMessage(UuidPk, Timestamps, Base):
     #: (``published``), as the question's stream told them. NULL for a question
     #: asked before it was kept, and for the person's own messages.
     parts: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class AssistantChange(Timestamps, Base):
+    """One write a 芝士 made while answering a question: what it changed, kept
+    so the person who asked can see it and undo it (``assistant.changes``).
+
+    ``work`` is the answer it was made in (the delegated credential's): the
+    writes of one answer are listed by it. ``kind`` names what was written —
+    ``draft`` (a 题目 draft, ``target`` its id) or ``doc`` (a living document,
+    ``target`` its id) — and ``payload`` is what that kind says it changed.
+    ``undone`` lists the parts of it the person undid, in the kind's own keys.
+    """
+
+    __tablename__ = "assistant_changes"
+    __table_args__ = (
+        Index("ix_assistant_changes_work", "work", "id"),
+        # The person's own, and gone with their account.
+        Index("ix_assistant_changes_user_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    work: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    target: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    undone: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )

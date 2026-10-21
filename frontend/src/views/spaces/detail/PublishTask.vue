@@ -9,7 +9,7 @@
 // 表单要的分类、话题、域名组、模板都从 pinia 的 `space` store 来，这一页自己装，**装完才
 // 挂表单**：`fetchCategories()` 在 `currentSpaceId` 为空时直接返回，装晚了分类下拉是空的。
 // `?categoryId=`（从某个分类的列表过来）在这里读。
-import type { AgentBox, AgentMark, AgentPointer } from '@/components/tasks/AgentLayer.vue'
+import type { AgentBox, AgentMarkSpot, AgentPointer } from '@/components/tasks/AgentLayer.vue'
 import type { SpaceTeaching, TaskDraft, TaskDraftFields, TaskDraftSummary, TaskFormSubmitData } from '@/types'
 import type { StripItem } from './TaskDraftStrip.vue'
 
@@ -511,7 +511,7 @@ watch(
 
 const pointer = computed<AgentPointer | null>(() => layer.pointer.value)
 const outline = computed<AgentBox | null>(() => layer.outline.value)
-const marks = computed<AgentMark[]>(() => layer.marks.value)
+const marks = computed<AgentMarkSpot[]>(() => layer.marks.value)
 const ready = computed(() => spaceReady.value && draftReady.value)
 </script>
 

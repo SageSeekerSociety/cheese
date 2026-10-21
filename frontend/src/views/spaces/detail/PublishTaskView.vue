@@ -5,7 +5,7 @@
 //
 // 题目边写边存成草稿（`@/types/taskDrafts`）。顶栏的「草稿」列出我在这个空间的草稿，
 // 点哪份打开哪份；旁边写着存到哪了。
-import type { AgentBox, AgentMark, AgentPointer } from '@/components/tasks/AgentLayer.vue'
+import type { AgentBox, AgentMarkSpot, AgentPointer } from '@/components/tasks/AgentLayer.vue'
 import type { PickedAttachment } from '@/composables/useAttachmentUploads'
 import type { SaveState } from '@/composables/useTaskDraft'
 import type { NavTarget } from '@/lib/navTarget'
@@ -81,7 +81,7 @@ const props = withDefaults(
     /** 芝士那一层。 */
     pointer: AgentPointer | null
     outline: AgentBox | null
-    marks: AgentMark[]
+    marks: AgentMarkSpot[]
     /** 芝士选中、要换掉的那段字。 */
     selection?: AgentBox[]
     agentName: string

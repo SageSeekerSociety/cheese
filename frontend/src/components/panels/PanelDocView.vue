@@ -140,6 +140,8 @@ const props = withDefaults(
     answerToComment?: (conversation: string, quote: string, question: string) => Promise<string>
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
+    /** 撤销、恢复 AI 队友一次回答对这篇的修改（`/assistant/changes`）。 */
+    undoAgentChanges?: (changes: number[], redo: boolean) => Promise<unknown>
     // ---- 修改记录 ----
     /** 最近一次编辑：谁（读成名字）、什么时候。 */
     lastEdit?: { name: string; at: string } | null
@@ -184,6 +186,7 @@ const props = withDefaults(
     suggestionReasons: () => ({}),
     fetchSuggestionReasons: undefined,
     applyDocEdits: undefined,
+    undoAgentChanges: undefined,
     lastEdit: null,
     nameOf: (handle: string) => handle,
     avatarOf: () => '',
@@ -361,7 +364,7 @@ const agentOptions = {
   ask: () => props.askAgent,
   stop: () => props.stopAgent,
   editable: () => decides.value,
-  applyEdits: () => props.applyDocEdits,
+  undoChanges: () => props.undoAgentChanges,
   toComment: () => props.answerToComment,
   agentName: () => props.agentName,
   onError: (message: string) => props.setError(message),

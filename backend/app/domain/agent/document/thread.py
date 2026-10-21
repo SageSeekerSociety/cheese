@@ -61,7 +61,7 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.delivery.mention import mentioned_handles
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.living_doc import collab, work_edits
+from app.domain.living_doc import collab
 from app.domain.living_doc.comments import CommentThreads
 from app.domain.living_doc.services import Documents
 
@@ -293,8 +293,6 @@ class Replies:
         else:
             said = text
         redis = get_redis_client()
-        if redis is not None:
-            await work_edits.take(redis, consumption.work_id)
         if stopped:
             # What it had written when it was stopped stays, marked as stopped.
             said = "\n\n".join(part for part in (written.strip(), STOPPED) if part)

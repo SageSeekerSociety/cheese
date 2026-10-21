@@ -5,12 +5,12 @@
 //
 // 回答是流式的（server-sent events）：`queued` 在等会话机空出来，`delta` 是文字，
 // `tool` 是芝士开始调一个工具，`tool_args` 是那次调用边写边流过来的参数（页面拿它
-// 先把表单填上），`tool_failed` 是那次调用报错了，`edit` 是芝士写进了草稿、改了哪几格
-// （定数，页面用它覆盖预览），`published` 是它发布了一份草稿，`error` 是没答上来的
+// 先把表单填上），`tool_failed` 是那次调用报错了，`change` 是芝士写进了草稿、改了哪几格
+// （定数，页面用它覆盖预览；服务端记下了它，撤销按它的编号来），`published` 是它发布了一份草稿，`error` 是没答上来的
 // 原因，`done` 收尾。回答在服务端答到底，跟这条连接无关：连接断了就从断的地方接着读。
 import { computed, ref } from 'vue'
 
-import { request } from '@/api'
+import { type AgentChange, AgentChangesApi, request } from '@/api'
 import { followEventStream, getEventStream, type OnEvent, postEventStream, StreamRefused } from '@/api/eventStream'
 import { t } from '@/i18n'
 import { isCreditRefusal } from '@/lib/creditUsage'
@@ -46,9 +46,11 @@ interface StoredParts {
 }
 
 /** 芝士往草稿里写的一次：改了哪几格（各自原来是什么），哪几格因为人改过而没动，以及
- *  它留给人确认的地方。`undone` 是人已经撤销的格子。 */
+ *  它留给人确认的地方。`undone` 是人已经撤销的格子。`undoable` 是服务端记下了这一次
+ *  （`id` 是它的编号）；更早的回答里的写入没有记下，只给看。 */
 export interface AssistantEdit {
   id: number
+  undoable: boolean
   draft: number
   taskId: number | null
   created: boolean
@@ -300,8 +302,10 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   function toEdit(payload: Record<string, unknown>): AssistantEdit {
+    const kept = typeof payload.id === 'number'
     return {
-      id: ++editSeq,
+      id: kept ? (payload.id as number) : -++editSeq,
+      undoable: kept,
       draft: Number(payload.draft),
       taskId: typeof payload.taskId === 'number' ? payload.taskId : null,
       created: payload.created === true,
@@ -310,7 +314,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
       changed: (payload.changed as AssistantEdit['changed']) ?? {},
       kept: Array.isArray(payload.kept) ? (payload.kept as string[]) : [],
       notes: Array.isArray(payload.notes) ? (payload.notes as AssistantEdit['notes']) : [],
-      undone: [],
+      undone: Array.isArray(payload.undone) ? (payload.undone as string[]) : [],
     }
   }
 
@@ -359,7 +363,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         on.toolEnded?.(step.call, step.name, true)
         return { ...step, state: 'failed', error: typeof payload.text === 'string' ? payload.text : '' }
       })
-    } else if (event === 'edit') {
+    } else if (event === 'change') {
       const edit = toEdit(payload)
       edits.value = [...edits.value, edit]
       on.edit?.(edit)
@@ -450,12 +454,20 @@ export function createAssistant(opts: AssistantOptions = {}) {
     }
   }
 
-  /** 人撤销了一次写入里的某一格：面板把它划掉。 */
-  function markUndone(editId: number, field: string) {
-    const strike = (list: AssistantEdit[] | undefined) =>
-      list?.map((e) => (e.id === editId && !e.undone.includes(field) ? { ...e, undone: [...e.undone, field] } : e))
-    edits.value = strike(edits.value) ?? []
+  /** 服务端说这几次写入现在撤销了哪几格：面板照着划掉或恢复。 */
+  function settleChanges(changed: AgentChange[]) {
+    const now = new Map(changed.map((c) => [c.id, c.undone]))
+    const strike = (list: AssistantEdit[]) =>
+      list.map((e) => (now.has(e.id) ? { ...e, undone: now.get(e.id) ?? [] } : e))
+    edits.value = strike(edits.value)
     messages.value = messages.value.map((m) => (m.edits ? { ...m, edits: strike(m.edits) } : m))
+  }
+
+  /** 撤销一次写入里的一格（芝士的字段名）：服务端写回这一轮之前的样子。 */
+  async function undo(changeId: number, part?: string) {
+    const done = await AgentChangesApi.undo(changeId, part)
+    settleChanges(done.changes)
+    return done
   }
 
   /** 停下正在答的这一个：等候中的直接不答了，写了一半的留下这一半。 */
@@ -486,6 +498,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     older,
     ask,
     stop,
-    markUndone,
+    undo,
+    settleChanges,
   }
 }

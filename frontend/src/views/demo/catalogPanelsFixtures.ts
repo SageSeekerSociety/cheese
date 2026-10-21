@@ -436,6 +436,7 @@ export function docBundle(
     imageSrc: view.imageSrc,
     canvas: memoryCanvas(),
     applyEdits: refuseWrite,
+    undoAgentChanges: refuseWrite,
   }
 }
 

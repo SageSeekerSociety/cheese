@@ -249,17 +249,22 @@ export function useTaskDraft(options: DraftOptions) {
     marks.value = next
   }
 
-  /** 人撤销了芝士改的一格：放回它改之前的样子，当作人改的存下。 */
-  async function undo(edit: AssistantEdit, agentKey: string) {
-    if (draft.value?.id !== edit.draft || !form) return
-    const back: TaskDraftFields = {}
-    for (const key of AGENT_FIELDS[agentKey] ?? [])
-      if (key in edit.changed) (back as Record<string, unknown>)[key] = edit.changed[key].before ?? null
+  /** 人撤销了芝士写的几格（或又恢复了）：服务端已经以人的名义写好，这里填进表单、记成
+   *  已存。这几格是人的了，不再标「芝士已填写」。 */
+  async function restored(draftId: number, fields: TaskDraftFields, version: number) {
+    if (draft.value?.id !== draftId) return
+    draft.value = { ...draft.value, version }
+    saved = { ...saved, ...fields }
     const next = { ...marks.value }
-    delete next[agentKey]
+    for (const [agentKey, targets] of Object.entries(AGENT_FIELDS))
+      if (targets.some((k) => k in fields)) delete next[agentKey]
     marks.value = next
-    const shown = await put(back)
-    changed(shown)
+    if (!form) return
+    const shown = await put(fields)
+    for (const key of Object.keys(fields) as TaskDraftField[])
+      if (key in shown) (saved as Record<string, unknown>)[key] = shown[key]
+    if ('description' in fields && shown.descriptionMarkdown !== undefined)
+      saved.descriptionMarkdown = shown.descriptionMarkdown
   }
 
   /** 草稿已经发布：这份没了。 */
@@ -289,7 +294,7 @@ export function useTaskDraft(options: DraftOptions) {
     preview,
     ended,
     settle,
-    undo,
+    restored,
     gone,
   }
 }

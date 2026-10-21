@@ -322,6 +322,35 @@ describe('芝士这一轮做了什么', () => {
       ['cheese_task_write', 'failed', null],
     ])
     expect(answer.edits?.[0].changed).toEqual({ deadline: { before: 1, after: 2 } })
+    // Kept before the server kept writes: shown, not undone.
+    expect(answer.edits?.[0].undoable).toBe(false)
+  })
+
+  it('a write is told by its kept id, and undoing it strikes what the server says is undone', async () => {
+    const write = { id: 7, kind: 'draft', draft: 41, changed: { rank: { before: 2, after: 3 } }, undone: [] }
+    const undone: string[] = []
+    serve(() => events(['change', write], ['done', {}]))
+    const answer = fetch
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/assistant/changes/7/undo')) {
+        undone.push(JSON.parse(String(init?.body)).part)
+        return envelope({ changes: [{ ...write, undone: ['difficulty'] }], draft: 41, version: 5, fields: { rank: 2 } })
+      }
+      return answer(url, init)
+    })
+    const seen: number[] = []
+    const a = createAssistant({ on: { edit: (edit) => seen.push(edit.id) } })
+    await a.load()
+
+    await a.ask('难一点', '答不上来')
+    expect(seen).toEqual([7])
+    expect(a.messages.value[1].edits?.[0]).toMatchObject({ id: 7, undoable: true, undone: [] })
+
+    const done = await a.undo(7, 'difficulty')
+
+    expect(undone).toEqual(['difficulty'])
+    expect(done.fields).toEqual({ rank: 2 })
+    expect(a.messages.value[1].edits?.[0].undone).toEqual(['difficulty'])
   })
 
   it('a new topic keeps the last one above it, and earlier topics are read back on asking', async () => {

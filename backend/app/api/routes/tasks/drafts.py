@@ -9,9 +9,10 @@ Two sets of routes over the same drafts:
 * ``/task-drafts/agent/*``: 芝士's tools (``sandbox/cheese``), reached with the
   credential a question is answered with (``DELEGATED_ROUTES``), and so acting
   as the person who asked. They speak 芝士's words (``drafts.AGENT_FIELDS``),
-  answer in text it can read, and tell the page what changed: each write goes
-  out on the question's own stream as an ``edit``, which the page applies to
-  the form as it is shown.
+  answer in text it can read, and tell the page what changed: each write is
+  kept (``assistant.changes``, to be undone) and goes out on the question's
+  own stream as a ``change``, which the page applies to the form as it is
+  shown.
 
 A draft is the person's own. Somebody else's reads as missing.
 """
@@ -49,6 +50,7 @@ from app.db.session import get_db
 from app.domain.agent import gateway_catalog
 from app.domain.agent.personal import service as assistant
 from app.domain.agent.session_host.consumptions import Consumptions
+from app.domain.assistant import changes
 from app.domain.attachment.reading import read_document
 from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.services import SpaceService
@@ -505,30 +507,31 @@ async def agent_write(
     )
     if row.conversation_id is None and conversation is not None:
         row.conversation_id = conversation
-    await db.commit()
     notes = [
         {"field": str(n.get("field") or ""), "text": str(n.get("text") or "")}
         for n in body.notes
         if isinstance(n, dict) and n.get("text")
     ]
-    if asked is not None:
-        await questions.publish(
-            asked,
-            "edit",
-            {
-                "draft": row.id,
-                "taskId": row.task_id,
-                "created": created,
-                "version": row.version,
-                "name": (row.fields or {}).get("name") or "",
-                "changed": {
-                    k: {"before": b, "after": a}
-                    for k, (b, a) in written.changed.items()
-                },
-                "kept": written.kept,
-                "notes": notes,
+    told = await _report(
+        db,
+        resolver,
+        row.id,
+        {
+            "draft": row.id,
+            "taskId": row.task_id,
+            "created": created,
+            "version": row.version,
+            "name": (row.fields or {}).get("name") or "",
+            "changed": {
+                k: {"before": b, "after": a} for k, (b, a) in written.changed.items()
             },
-        )
+            "kept": written.kept,
+            "notes": notes,
+        },
+    )
+    await db.commit()
+    if asked is not None and told is not None:
+        await questions.publish(asked, "change", told)
     return ok(
         {
             "draft": row.id,
@@ -689,6 +692,57 @@ async def _question(resolver: ActorResolverDep, questions: Questions):
     if asked is None or asked.kind != assistant.KIND:
         return None
     return asked
+
+
+async def _report(db, resolver: ActorResolverDep, draft_id: int, payload: dict):
+    """Keep 芝士's write into a draft, to be shown and undone; what the page is
+    told of it. None when no question of a person's made it."""
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        return None
+    row = await changes.report(
+        db,
+        user_id=claims.user_id,
+        work=claims.work,
+        kind="draft",
+        target=draft_id,
+        payload=payload,
+    )
+    return changes.view(row)
+
+
+def _draft_parts(payload: dict) -> list[str]:
+    """A draft write's parts: the fields as 芝士 names them, each one or a few
+    form fields (``AGENT_FIELDS``)."""
+    changed = payload.get("changed") or {}
+    return [
+        key
+        for key, targets in drafts.AGENT_FIELDS.items()
+        if any(t in changed for t in targets)
+    ]
+
+
+async def _put_back(db, resolver, same, parts: list[str], redo: bool) -> dict:
+    """Put fields of a draft back as they were before the answer wrote them
+    (the first write's ``before``), or as it left them (the last's ``after``),
+    as the person's own write: a field it puts back is the person's again."""
+    user_id = await _person(resolver)
+    row = await drafts.mine(db, user_id, int(same[0].target))
+    order = list(reversed(same)) if redo else list(same)
+    fields: dict[str, Any] = {}
+    for part in parts:
+        for target in drafts.AGENT_FIELDS[part]:
+            for change in order:
+                values = (change.payload.get("changed") or {}).get(target)
+                if values is not None:
+                    fields[target] = values["after" if redo else "before"]
+                    break
+    if fields:
+        drafts.person_writes(row, fields)
+    return {"draft": row.id, "version": row.version, "fields": fields}
+
+
+changes.register("draft", parts=_draft_parts, apply=_put_back)
 
 
 def _conversation_of(asked):

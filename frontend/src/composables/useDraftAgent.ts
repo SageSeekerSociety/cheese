@@ -3,12 +3,15 @@
 import type { useTaskDraft } from '@/composables/useTaskDraft'
 import type { DraftTerms } from '@/lib/taskDraftAgent'
 import type { AssistantEdit } from '@/stores/agentThread'
+import type { TaskDraftFields } from '@/types'
 
 import { computed, onScopeDispose, ref } from 'vue'
+import { toast } from 'vuetify-sonner'
 
+import { ApiError } from '@/api'
+import { t } from '@/i18n'
 import { panelMessages, resultView, stepView, writesView } from '@/lib/assistantView'
 import { partialValue } from '@/lib/partialJson'
-import { AGENT_FIELDS } from '@/lib/taskDraftAgent'
 import { createTypist } from '@/lib/typist'
 import { agentThread, useAgentSurface } from '@/stores/agent'
 
@@ -60,31 +63,19 @@ export function useDraftAgent(options: DraftAgentOptions) {
 
   const canUndo = () => options.canUndo?.() ?? true
   const terms = () => options.terms()
-  const undoable = (e: AssistantEdit) => canUndo() && e.draft === draft.id.value
+  const undoable = (e: AssistantEdit) => canUndo() && e.undoable && e.draft === draft.id.value
 
-  function editById(id: number): AssistantEdit | undefined {
-    return (
-      assistant.edits.value.find((e) => e.id === id) ??
-      assistant.messages.value.flatMap((m) => m.edits ?? []).find((e) => e.id === id)
-    )
-  }
-
-  /** 和这次写入同一轮的几次写入（还在答的这一轮，或已经答完的那条）。 */
-  function turnOf(id: number): AssistantEdit[] {
-    if (assistant.edits.value.some((e) => e.id === id)) return assistant.edits.value
-    return assistant.messages.value.find((m) => m.edits?.some((e) => e.id === id))?.edits ?? []
-  }
-
-  const touches = (edit: AssistantEdit, key: string) => (AGENT_FIELDS[key] ?? []).some((f) => f in edit.changed)
-
-  /** 撤销一格：这一轮里芝士可能写过它几次（卡上只留最后一次），放回第一次写之前的样子，
-   * 几次都记成撤销了。 */
+  /** 撤销一格：服务端放回这一轮写它之前的样子（芝士可能写过它几次，卡上只留最后一次），
+   *  当作人改的存下；表单照着填回。人还没存的改动先存掉，免得盖过去。 */
   async function undo(changeId: number, key: string) {
-    const edit = editById(changeId)
-    if (!edit) return
-    const same = turnOf(changeId).filter((e) => e.draft === edit.draft && touches(e, key))
-    await draft.undo(same[0] ?? edit, key)
-    for (const e of same.length ? same : [edit]) assistant.markUndone(e.id, key)
+    await draft.flush()
+    try {
+      const done = await assistant.undo(changeId, key)
+      if (done.draft != null && done.fields && done.version != null)
+        await draft.restored(done.draft, done.fields as TaskDraftFields, done.version)
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : t('tasks.assistant.changes.undoFailed'))
+    }
   }
 
   /** 卡上的「全部撤销」：这张卡上还没撤销的每一格。 */

@@ -9,7 +9,7 @@
 // 字写到看不见的地方时滚过去：先滚那一格自己（详情超过最大高度后在框里滚），再滚页面。
 // 跟着字滚是立刻到位的，平滑滚动每一帧重新起步，只会越落越远；换到另一格时才平滑滚过去。
 import type { Ref } from 'vue'
-import type { AgentBox, AgentMark, AgentPointer } from '@/components/tasks/AgentLayer.vue'
+import type { AgentBox, AgentMarkSpot, AgentPointer } from '@/components/tasks/AgentLayer.vue'
 
 import { onBeforeUnmount, ref, watch } from 'vue'
 
@@ -118,7 +118,7 @@ function findText(root: HTMLElement, text: string, after?: Range | null): Range 
 export function useAgentPointer(options: PointerOptions) {
   const pointer = ref<AgentPointer | null>(null)
   const outline = ref<AgentBox | null>(null)
-  const marks = ref<AgentMark[]>([])
+  const marks = ref<AgentMarkSpot[]>([])
   /** 芝士选中、要换掉的那段字。 */
   const selection = ref<AgentBox[]>([])
   /** 改的那一段原文在哪（新文字从这里往后找）。 */

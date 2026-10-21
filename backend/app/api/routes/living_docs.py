@@ -40,19 +40,20 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    UnprocessableEntityError,
 )
-from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.announce import who_started_the_open_turn
 from app.domain.agent.chat import ChatService
 from app.domain.agent_instance.adapters import project_team
+from app.domain.assistant import changes
 from app.domain.block import citations
 from app.domain.block.documents import whose_document
 from app.domain.canvas.block import canvas_ids
 from app.domain.canvas.services import Settled, settle
 from app.domain.conversation import services as conversations
 from app.domain.identity.services import IdentityService
-from app.domain.living_doc import collab, work_edits
+from app.domain.living_doc import collab
 from app.domain.living_doc import links as doc_links
 from app.domain.living_doc.overview import overview_document
 from app.domain.living_doc.schemas import (
@@ -747,7 +748,17 @@ async def edit_doc_passages(
         agent_authors=agent_authors,
     )
     if delegation is not None:
-        await work_edits.record(get_redis_client(), delegation.work, edits)
+        if delegation.user_id is not None and delegation.work:
+            # Kept for whoever asked, to be shown and undone (``changes``).
+            await changes.report(
+                db,
+                user_id=delegation.user_id,
+                work=delegation.work,
+                kind="doc",
+                target=doc.id,
+                payload={"document": str(doc.id), "mode": mode, "edits": edits},
+            )
+            await db.commit()
     else:
         changed = result.get("edits") or edits
         await db.refresh(doc)
@@ -953,3 +964,46 @@ async def store_document(
     await db.commit()
     await announce(doc, stored, chat)
     return stored.answer
+
+
+def _doc_parts(payload: dict) -> list[str]:
+    """A document write is undone whole; a suggestion is not undone here (it
+    is turned down in the document)."""
+    return ["text"] if payload.get("mode") == "direct" and payload.get("edits") else []
+
+
+async def _write_back(db, resolver: ActorResolver, same, parts, redo: bool) -> dict:
+    """Undo 芝士's writes of an answer into a document — each passage back to
+    what it was, latest first — or redo them, as the person and with the
+    checks a person's edit goes through. A passage changed since cannot be
+    put back, and nothing is."""
+    del parts  # a document write has one part
+    reached = await reach(db, resolver, uuid.UUID(same[0].target), enforce=True)
+    if not reached.actor.authenticated:
+        raise AuthenticationRequiredError(say("docEditNeedsWriter"))
+    await require_writable(db, reached, Permission.edit_content)
+    doc, actor = reached.doc, reached.actor
+    writes = [c for c in same if c.payload.get("mode") == "direct"]
+    if redo:
+        edits = [dict(e) for c in writes for e in c.payload.get("edits") or []]
+    else:
+        edits = [
+            {"old": e["new"], "new": e["old"]}
+            for c in reversed(writes)
+            for e in reversed(c.payload.get("edits") or [])
+        ]
+    agent_authors = await _agent_authors(db, doc.id)
+    await db.commit()
+    try:
+        await collab.edit(
+            doc.id,
+            edits=[{"old": e["old"], "new": e["new"]} for e in edits],
+            actor=actor.handle,
+            agent_authors=agent_authors,
+        )
+    except (ConflictError, UnprocessableEntityError) as exc:
+        raise ConflictError(say("assistantChangeMoved")) from exc
+    return {"document": str(doc.id)}
+
+
+changes.register("doc", parts=_doc_parts, apply=_write_back)
