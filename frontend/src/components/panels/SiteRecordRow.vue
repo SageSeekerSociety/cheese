@@ -10,11 +10,16 @@ import MarkdownView from '../common/MarkdownView.vue'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{
-  block: Block
-  raw: boolean
-  loadImage: (digest: string) => Promise<string>
-}>()
+const props = withDefaults(
+  defineProps<{
+    block: Block
+    raw: boolean
+    loadImage: (digest: string) => Promise<string>
+    /** 名册 handle → 名字：平台写的一句话里点到人（`<@handle>`）时照它换成名字。 */
+    memberNames?: Record<string, string>
+  }>(),
+  { memberNames: () => ({}) }
+)
 const parts = computed(() => recordParts(props.block).filter((p) => props.raw || p.kind !== 'thinking'))
 const json = computed(() =>
   props.block.meta?.before_launch
@@ -25,7 +30,10 @@ const kind = computed(() => {
   const record = props.block.meta?.record as Record<string, unknown> | undefined
   return String(record?.method ?? record?.type ?? props.block.meta?.event_type ?? '')
 })
-const platformText = computed(() => noticeText(props.block))
+// 认不出的 handle 留 handle，不留 `<@…>` 记号。
+const platformText = computed(() =>
+  noticeText(props.block).replace(/<@([^>\s]+)>/g, (_, handle: string) => props.memberNames[handle] ?? handle)
+)
 const images = ref<Record<string, string>>({})
 const imageError = ref(false)
 const long = (text = '') => text.length > 900 || text.split('\n').length > 12

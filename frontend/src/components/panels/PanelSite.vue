@@ -183,6 +183,7 @@ async function switchView(mode: 'overview' | 'raw') {
             :nodes="recordTree(viewMode === 'raw' ? turn.entries : overviewRecords(turn.entries))"
             :raw="viewMode === 'raw'"
             :load-image="loadImage"
+            :member-names="memberNames"
           />
         </section>
       </div>

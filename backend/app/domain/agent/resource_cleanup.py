@@ -189,6 +189,131 @@ def windows_holders(paths: list[Path]) -> list[int]:
     return found
 
 
+#: Where Linux shows each process's working directory, root, executable, open
+#: files and mapped files. Read there rather than by lsof, which a stock Linux
+#: image need not have: the Debian cloud image behind the MicroCloud VM offering
+#: has none, and every sandbox destroy on those hosts failed for it (dev,
+#: 2026-10-20). macOS has no /proc and ships lsof.
+PROC = Path("/proc")
+
+
+def proc_index(paths: list[Path]) -> set:
+    """Every file and directory under these, as (device, inode): what a process
+    holding something of the room holds, whatever path it reaches it by. A
+    process in another mount namespace names the room differently (a private
+    session sees its directory as `/work`), and on a platform host the homes are
+    also reachable through the data disk they are bound from; the inode is the
+    same in every case. `lsof +D` matches the same way.
+
+    The walk goes by directory descriptors and never follows a symlink below
+    the paths given: what is inside the room is the room's to change while it
+    is walked, and a directory it swaps for a link to `/usr/lib` must not make
+    every process with libc mapped one to end."""
+    found = set()
+
+    def enter(descriptor: int) -> tuple:
+        """Index this directory and its files; the subdirectories it lists are
+        opened one at a time as the walk reaches them, so the descriptors held
+        open are as many as the tree is deep."""
+        info = os.fstat(descriptor)
+        found.add((info.st_dev, info.st_ino))
+        subdirectories = []
+        for entry in os.scandir(descriptor):
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    subdirectories.append(entry.name)
+                    continue
+                info = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            found.add((info.st_dev, info.st_ino))
+        return descriptor, iter(subdirectories)
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    for path in paths:
+        try:
+            top = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
+        except OSError:
+            continue
+        stack = []
+        try:
+            stack.append(enter(top))
+        except OSError:
+            os.close(top)
+        while stack:
+            descriptor, pending = stack[-1]
+            name = next(pending, None)
+            if name is None:
+                os.close(descriptor)
+                stack.pop()
+                continue
+            try:
+                child = os.open(name, flags, dir_fd=descriptor)
+            except OSError:
+                continue  # gone, or now a link: nothing of the room's to follow
+            try:
+                stack.append(enter(child))
+            except OSError:
+                os.close(child)
+    return found
+
+
+def _holds(pid: Path, index: set) -> bool:
+    """Whether this process's working directory, root, executable, an open file
+    or a mapped file is one of `index`. A link the kernel does not let this user
+    follow (another user's process) is not this user's to end either."""
+    links = [pid / "cwd", pid / "root", pid / "exe"]
+    try:
+        links += [Path(fd.path) for fd in os.scandir(pid / "fd")]
+    except OSError:
+        pass
+    for link in links:
+        try:
+            info = os.stat(link)
+        except OSError:
+            continue
+        if (info.st_dev, info.st_ino) in index:
+            return True
+    try:
+        with open(pid / "maps") as maps:
+            for line in maps:
+                fields = line.split(None, 5)
+                if len(fields) < 5 or fields[4] == "0":
+                    continue
+                major, minor = fields[3].split(":")
+                device = os.makedev(int(major, 16), int(minor, 16))
+                if (device, int(fields[4])) in index:
+                    return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def proc_holders(paths: list[Path], index: set | None = None) -> list[int]:
+    """What `lsof +D` answers, read from /proc: the processes whose working
+    directory, root, executable, an open file or a mapped file lies inside
+    these. `index` is `proc_index(paths)`, when the caller already has it."""
+    if index is None:
+        index = proc_index(paths)
+    own = {os.getpid(), os.getppid()}
+    found = []
+    for entry in os.scandir(PROC):
+        if not entry.name.isdigit() or int(entry.name) in own:
+            continue
+        if _holds(Path(entry.path), index):
+            found.append(int(entry.name))
+    return sorted(found)
+
+
+def proc_command(pid: int) -> str:
+    """A process's pid and command line, as `ps -o pid=,args=` would print it."""
+    try:
+        args = (PROC / str(pid) / "cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return str(pid)
+    return f"{pid} " + " ".join(a.decode(errors="replace") for a in args if a)[:150]
+
+
 def run_command(
     argv: list[str], *, cwd: Path | None = None, pass_fds: tuple[int, ...] = ()
 ) -> subprocess.CompletedProcess:
@@ -319,7 +444,8 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
 def check_no_writers(paths: list[Path]) -> None:
     """Refuse if anything holds a file or a working directory under these.
 
-    ONE lsof call, never one per path. `lsof +D` spends about two seconds
+    On Linux the processes are read from /proc (`proc_holders`); elsewhere
+    by lsof. ONE lsof call, never one per path. `lsof +D` spends about two seconds
     walking every process's descriptors before it so much as looks at the
     directory, so its cost is per INVOCATION and not per tree: measured
     2026-09-18, an empty directory costs the same 1.97s as a repository, five
@@ -333,12 +459,17 @@ def check_no_writers(paths: list[Path]) -> None:
     present = [str(path) for path in paths if path.exists()]
     if not present:
         return
-    if sys.platform == "win32":
-        pids = windows_holders([Path(path) for path in present])
+    if sys.platform == "win32" or PROC.is_dir():
+        if sys.platform == "win32":
+            pids = windows_holders([Path(path) for path in present])
+            named = [str(pid) for pid in pids]
+        else:
+            pids = proc_holders([Path(path) for path in present])
+            named = [proc_command(pid) for pid in pids]
         if pids:
             raise StillRunning(
                 "resource still has processes holding files or working "
-                "directories: " + ", ".join(str(pid) for pid in pids)
+                "directories: " + ", ".join(named)
             )
         return
     result = run_command(["lsof", "-t", "+D", *present])
@@ -367,6 +498,8 @@ def holders(paths: list[Path]) -> list[int]:
         return []
     if sys.platform == "win32":
         return windows_holders([Path(path) for path in present])
+    if PROC.is_dir():
+        return proc_holders([Path(path) for path in present])
     result = run_command(["lsof", "-t", "+D", *present])
     own = {os.getpid(), os.getppid()}
     return [
@@ -379,11 +512,19 @@ def holders(paths: list[Path]) -> list[int]:
 def end_holders(paths: list[Path]) -> None:
     """Terminate whatever still holds the room, gently first, then not.
 
-    lsof names the processes; each gets SIGTERM, ten seconds to act on it,
+    `holders` names the processes; each gets SIGTERM, ten seconds to act on it,
     then SIGKILL. A tmux pane whose process dies reads as dead to the next
     `request_exit`, which closes the session the ordinary way.
     """
-    pids = holders(paths)
+    index = None
+    if sys.platform != "win32" and PROC.is_dir():
+        # The room is walked once; only the processes are read again each poll.
+        index = proc_index([path for path in paths if path.exists()])
+
+    def current() -> list[int]:
+        return holders(paths) if index is None else proc_holders(paths, index)
+
+    pids = current()
     for signal_number, wait in ((15, 10.0), (9, 2.0)):
         helper = portable(paths) if sys.platform == "win32" else None
         if helper is not None:
@@ -398,7 +539,7 @@ def end_holders(paths: list[Path]) -> None:
         deadline = time.monotonic() + wait
         while pids and time.monotonic() < deadline:
             time.sleep(0.1)
-            pids = [pid for pid in pids if pid in set(holders(paths))]
+            pids = [pid for pid in pids if pid in set(current())]
         if not pids:
             return
 
