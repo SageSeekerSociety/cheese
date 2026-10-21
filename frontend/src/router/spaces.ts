@@ -84,9 +84,11 @@ export default {
           name: 'SpacesDetailPublishTask',
           // 页头由页面自己画：那两条路的切换放在页头的操作区里。
           component: () => import('@/views/spaces/detail/PublishTask.vue'),
+          // 一层页面栈：手机上不画底栏，芝士从页头打开（底栏会盖住屏幕底下的东西）。
           meta: {
             titleKey: 'tasks.publish.title',
             backTo: 'SpacesDetailTasksList',
+            hideTabs: true,
           },
         },
         {
@@ -137,6 +139,7 @@ export default {
           meta: {
             titleKey: 'navigation.pages.taskEdit',
             backTo: 'TasksDetail',
+            hideTabs: true,
           },
         },
       ],
@@ -144,6 +147,13 @@ export default {
     // 管理那一段（所有者与管理员）：都在 manage/ 下，侧栏「管理」四格各对一条。
     // 这四条都挂着 `spaceManageGuard`（见文件头）：非管理员直接被领到下面那条
     // `SpaceManageDenied`，不再靠页面自己拉到 403 才报错。
+    {
+      // 我在这个空间的草稿：新题目和对已发布题目的修改（侧栏「我的草稿」）。
+      path: 'drafts',
+      name: 'SpacesDetailDrafts',
+      component: () => import('@/views/spaces/detail/MyDrafts.vue'),
+      meta: { titleKey: 'spaces.detail.myDrafts.title' },
+    },
     {
       // 非管理员被守卫领到的落脚处。它自己**不挂**守卫（挂了会自己领自己），画的
       // 是「你没有管理权限 + 回到题目列表」那扇门。

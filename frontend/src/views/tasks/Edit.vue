@@ -27,6 +27,7 @@ import { useTaskData } from './composables'
 
 import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
+import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -322,14 +323,13 @@ const panelEvents = {
       <BaseButton v-if="unsaved" kind="ghost" :disabled="saving" @click="discard">{{
         t('tasks.edit.discard')
       }}</BaseButton>
-      <BaseButton
-        v-if="mdAndUp && !agentDocked"
-        kind="secondary"
-        prepend-icon="mdi-creation-outline"
-        data-testid="edit-agent-dock"
-        @click="agentDocked = true"
-        >{{ t('work.agentAvatar.defaultName') }}</BaseButton
-      >
+      <AgentEntryButton
+        v-if="!mdAndUp || !agentDocked"
+        :name="t('work.agentAvatar.defaultName')"
+        :compact="!mdAndUp"
+        :data-testid="mdAndUp ? 'edit-agent-dock' : 'edit-agent-open'"
+        @click="mdAndUp ? (agentDocked = true) : (agentOpen = true)"
+      />
       <BaseButton kind="ghost" :disabled="saving" @click="navigateToDetail">{{ t('global.cancel') }}</BaseButton>
       <BaseButton
         v-if="rejected"
@@ -413,14 +413,9 @@ const panelEvents = {
   <v-navigation-drawer v-if="mdAndUp && agentDocked" permanent location="right" width="380" class="te__agent">
     <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
   </v-navigation-drawer>
-  <template v-else-if="!mdAndUp">
-    <BaseButton class="te__agent-open" kind="secondary" @click="agentOpen = true">{{
-      t('tasks.assistant.label')
-    }}</BaseButton>
-    <v-bottom-sheet v-model="agentOpen">
-      <div class="te__sheet"><AssistantPanel v-bind="panelProps" closable v-on="panelEvents" /></div>
-    </v-bottom-sheet>
-  </template>
+  <v-bottom-sheet v-else-if="!mdAndUp" v-model="agentOpen">
+    <div class="te__sheet"><AssistantPanel v-bind="panelProps" closable v-on="panelEvents" /></div>
+  </v-bottom-sheet>
 </template>
 
 <style scoped>
@@ -505,13 +500,6 @@ const panelEvents = {
 .te__agent :deep(.v-navigation-drawer__content) {
   display: flex;
   flex-direction: column;
-}
-
-.te__agent-open {
-  position: fixed;
-  right: 16px;
-  bottom: calc(16px + env(safe-area-inset-bottom));
-  z-index: 5;
 }
 
 .te__sheet {

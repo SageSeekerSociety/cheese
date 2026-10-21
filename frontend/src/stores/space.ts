@@ -25,6 +25,8 @@ export const useSpaceStore = defineStore('space', () => {
 
   /** 待审核的题目数：侧栏「待审核」旁边那个数。只有管理员那一侧会去读。 */
   const pendingAuditCount = ref(0)
+  /** 我在这个空间的草稿数：侧栏「我的草稿」旁边那个数，有草稿才显示那一格。 */
+  const myDraftCount = ref(0)
 
   /** 我在这个空间里的角色：管理员名单（含所有者）里有我就是那个角色，否则是成员。 */
   const myRole = computed<SpaceAdminRoleType | 'MEMBER'>(() => {
@@ -78,6 +80,10 @@ export const useSpaceStore = defineStore('space', () => {
     pendingAuditCount.value = count
   }
 
+  const setMyDraftCount = (count: number) => {
+    myDraftCount.value = count
+  }
+
   return {
     currentSpace,
     currentSpaceId,
@@ -87,6 +93,7 @@ export const useSpaceStore = defineStore('space', () => {
     loadingCategories,
     domainGroups,
     pendingAuditCount,
+    myDraftCount,
     myRole,
     isManager,
     isOwner,
@@ -96,5 +103,6 @@ export const useSpaceStore = defineStore('space', () => {
     setLoadingCategories,
     setDomainGroups,
     setPendingAuditCount,
+    setMyDraftCount,
   }
 })

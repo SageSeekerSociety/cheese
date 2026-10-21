@@ -519,6 +519,10 @@
     "s4": {
       "name": "Several tasks from one file",
       "note": "Above the form, the tasks Cheese made from one file: the first is published, the second shows 1 missing after Publish all, the third is being filled in. Publish all (2) sits at the end."
+    },
+    "s5": {
+      "name": "Cheese tucked away",
+      "note": "With the panel closed, the header keeps an entry with the face and name; on a phone, the face alone."
     }
   },
   "basicInfoView": {
@@ -1635,6 +1639,17 @@
     "s4": {
       "name": "Three tasks from one file",
       "note": "A file handed over with nothing typed. The first task fills the open draft and is listed field by field; the other two are new drafts, one line each, opened by their names."
+    }
+  },
+  "myDraftsView": {
+    "about": "My drafts: tasks not yet published in this space, and unsaved changes to published ones. Open one by its name; deleting asks first.",
+    "s1": {
+      "name": "A few drafts",
+      "note": "Two new tasks and one set of changes, marked as such; the source names the imported file."
+    },
+    "s2": {
+      "name": "None",
+      "note": "After the last one is deleted."
     }
   }
 }

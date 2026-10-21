@@ -28,6 +28,7 @@ import { useDisplay } from 'vuetify'
 import TaskDraftMenu from './TaskDraftMenu.vue'
 import TaskDraftStrip from './TaskDraftStrip.vue'
 
+import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -206,14 +207,13 @@ defineExpose({
             t('spaces.detail.publishTask.blocking', { n: blocking })
           }}</span>
           <span v-else class="pub__note">{{ t('spaces.detail.publishTask.needsReview') }}</span>
-          <BaseButton
-            v-if="mdAndUp && !agentDocked"
-            kind="secondary"
-            prepend-icon="mdi-creation-outline"
-            data-testid="publish-agent-dock"
-            @click="agentDocked = true"
-            >{{ agentName }}</BaseButton
-          >
+          <AgentEntryButton
+            v-if="!mdAndUp || !agentDocked"
+            :name="agentName"
+            :compact="!mdAndUp"
+            :data-testid="mdAndUp ? 'publish-agent-dock' : 'publish-agent-open'"
+            @click="mdAndUp ? (agentDocked = true) : (agentOpen = true)"
+          />
           <BaseButton kind="ghost" :disabled="publishing" @click="emit('cancel')">{{ t('global.cancel') }}</BaseButton>
           <BaseButton
             kind="primary"
@@ -339,19 +339,9 @@ defineExpose({
     <v-navigation-drawer v-if="mdAndUp && agentDocked" permanent location="right" width="380" class="pub__agent">
       <slot name="agent" />
     </v-navigation-drawer>
-    <template v-else-if="!mdAndUp">
-      <BaseButton
-        class="pub__agent-open"
-        kind="secondary"
-        prepend-icon="mdi-creation-outline"
-        data-testid="publish-agent-open"
-        @click="agentOpen = true"
-        >{{ agentName }}</BaseButton
-      >
-      <v-bottom-sheet v-model="agentOpen">
-        <div class="pub__sheet"><slot name="agent" /></div>
-      </v-bottom-sheet>
-    </template>
+    <v-bottom-sheet v-else-if="!mdAndUp" v-model="agentOpen">
+      <div class="pub__sheet"><slot name="agent" /></div>
+    </v-bottom-sheet>
   </div>
 </template>
 
@@ -405,6 +395,13 @@ defineExpose({
   }
 }
 
+/* 手机上顶栏已经写着「发布题目」，这一行只留草稿和操作。 */
+@container (max-width: 480px) {
+  .pub__crumb {
+    display: none;
+  }
+}
+
 .pub__crumb-parent:hover {
   color: var(--ink);
 }
@@ -443,13 +440,6 @@ defineExpose({
 .pub__agent :deep(.v-navigation-drawer__content) {
   display: flex;
   flex-direction: column;
-}
-
-.pub__agent-open {
-  position: fixed;
-  right: 16px;
-  bottom: calc(16px + env(safe-area-inset-bottom));
-  z-index: 5;
 }
 
 .pub__sheet {

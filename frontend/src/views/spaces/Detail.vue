@@ -72,6 +72,11 @@ watch(
   { immediate: true }
 )
 
+// 侧栏「我的草稿」旁边的数：换了空间重读一次（发布页、草稿页改动时它们自己更新）。
+watch(currentSpaceId, (id) => {
+  if (id && !underReview.value) void spaceData.fetchMyDraftCount()
+})
+
 onMounted(async () => {
   await getSpace(Number(route.params.spaceId))
 })

@@ -16,6 +16,7 @@ import { toast } from 'vuetify-sonner'
 import { SpacesApi } from '@/api/spaces'
 import { TagsApi } from '@/api/tags'
 import { TaskBoardApi } from '@/api/taskBoard'
+import { TaskDraftsApi } from '@/api/taskDrafts'
 import { t } from '@/i18n'
 import { useSpaceStore } from '@/stores/space'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/types/apiSpaces'
@@ -29,6 +30,7 @@ export function useSpaceData() {
       space.setSpace(null)
       space.setCategories([])
       space.setPendingAuditCount(0)
+      space.setMyDraftCount(0)
     }
     space.setCurrentSpaceId(spaceId)
 
@@ -56,6 +58,18 @@ export function useSpaceData() {
       if (spaceId === space.currentSpaceId) space.setPendingAuditCount(data.page.total ?? 0)
     } catch (error) {
       console.error('fetch pending audit count failed', error)
+    }
+  }
+
+  /** 侧栏「我的草稿」旁边的数。读不到就当没有，不打扰。 */
+  const fetchMyDraftCount = async () => {
+    const spaceId = space.currentSpaceId
+    if (!spaceId) return
+    try {
+      const drafts = await TaskDraftsApi.list(spaceId)
+      if (spaceId === space.currentSpaceId) space.setMyDraftCount(drafts.length)
+    } catch {
+      if (spaceId === space.currentSpaceId) space.setMyDraftCount(0)
     }
   }
 
@@ -288,6 +302,7 @@ export function useSpaceData() {
 
   return {
     fetchPendingAuditCount,
+    fetchMyDraftCount,
     fetchSpace,
     updateSpace,
     updateTemplates,
