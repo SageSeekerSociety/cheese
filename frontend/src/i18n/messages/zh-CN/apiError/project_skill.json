@@ -4,7 +4,7 @@
   "skillAbsorbsTeamOnly": "只能吸收 team 下的记忆（形如 team/xxx.md）：项目技能是全项目共用的，个人的偏好不并进去：{path}",
   "skillAdd": "添加技能",
   "skillConfirmSave": "确认保存",
-  "skillDecline": "拒绝芝士提议的技能",
+  "skillDecline": "拒绝{agent}提议的技能",
   "skillDelete": "删除",
   "skillFieldsRequired": "技能要有名称、用途和正文",
   "skillFileContentNotText": "{path}：内容要是文本",

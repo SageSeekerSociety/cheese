@@ -258,6 +258,7 @@ def _topic_out(
     answered: Collection[uuid.UUID] | None = None,
     incomplete: Mapping[uuid.UUID, datetime] | None = None,
     moving: Collection[uuid.UUID] | None = None,
+    seats: Mapping[uuid.UUID, str | None] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
     derived from the topic's blocks; who is busy in it right now and whom it is
@@ -285,6 +286,8 @@ def _topic_out(
     # incomplete_since`）：这间房自己那条线、它的支线，或者它名下一件**还没关**的活
     # （`_unresolved_failures` 那一份）。算不出来就是 `None`，不亮。
     out.incomplete_since = (incomplete or {}).get(topic.id)
+    # 这间房的 AI 队友坐在哪一席（`TopicOut.agent_handle`）：`seats` 一次算一整页。
+    out.agent_handle = (seats or {}).get(topic.id)
     # 有没有人回复了我、而我还没处理（侧栏黄灯的另一半，`TopicOut.replied_to_me`）：
     # 同一页一次算完，这里只查表；没有登录的人拿到空集，也就是不亮。
     out.replied_to_me = topic.id in (answered or ())
@@ -439,6 +442,8 @@ async def list_topics(
     incomplete, incomplete_tasks = await _unresolved_failures(
         db, [t.id for t in topics], tasks_of_room
     )
+    # 每间房的 AI 队友坐在哪一席：名册一次读完一整页，不逐间问。
+    seats = await TopicMemberService(db).addressable_agent_handles(project_id, room_ids)
     rails = await rail_tasks(
         db,
         actor,
@@ -466,6 +471,7 @@ async def list_topics(
                 answered=answered,
                 incomplete=incomplete,
                 moving=moving_ids,
+                seats=seats,
             ),
             "my_tasks": rails[t.id],
         }
@@ -596,6 +602,9 @@ async def get_topic(
     incomplete, incomplete_tasks = await _unresolved_failures(
         db, [topic.id], tasks_of_room
     )
+    seats = await TopicMemberService(db).addressable_agent_handles(
+        topic.project_id, [topic.id]
+    )
     rails = await rail_tasks(
         db,
         actor,
@@ -622,6 +631,7 @@ async def get_topic(
                 answered=answered,
                 incomplete=incomplete,
                 moving=moving_ids,
+                seats=seats,
             ),
             "my_tasks": rails[topic.id],
         }

@@ -598,7 +598,15 @@ class IntegrationService:
                 draft.project_id, draft.topic_id, item["path"]
             )
             if hashlib.sha256(data).hexdigest() != item["sha256"]:
-                raise ValidationError(say("mailAttachmentChanged", name=item["name"]))
+                # The teammate who drafted it is the one to ask for a new
+                # draft; a screen draws the seat as that teammate's name.
+                raise ValidationError(
+                    say(
+                        "mailAttachmentChanged",
+                        name=item["name"],
+                        agent=f"<@{draft.created_by}>",
+                    )
+                )
             files.append((item["name"], data))
         message = self._message(row, draft, files)
         try:

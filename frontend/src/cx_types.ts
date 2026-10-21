@@ -100,6 +100,9 @@ export interface Topic {
   // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
   // 状态，有的是成员在做什么（backend `agent/realtime/activity.py`）。只有 list/get 话题时才带。
   activity?: MemberActivity[]
+  // 这间房的 AI 队友坐在名册上哪一席：没人点名的话交给它，行上那句状态说到队友时叫的也是
+  // 它（backend `TopicOut.agent_handle`）。一位都没坐是 null。只有 list/get 话题时才带。
+  agent_handle?: string | null
   // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
   joined?: boolean
   // 这个话题在等我拍板：有点名给我的待办验收卡、没答的决策请求，或芝士停在

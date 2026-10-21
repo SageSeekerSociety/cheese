@@ -612,6 +612,8 @@ async def mail_draft(
                     # checks is what the teammate wrote, in the room it was written.
                     "mail": {
                         "owner": row.owner_handle,
+                        # 写它的那位队友：卡上那句「由 X 起草」叫它的名字。
+                        "drafted_by": speaker,
                         "account": row.label,
                         "to": draft.to,
                         "cc": draft.cc,

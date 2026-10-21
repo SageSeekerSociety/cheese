@@ -40,7 +40,7 @@
   "integrationNotSharedWithProject": "{owner} 没有把这个连接授权给这个项目使用；请他在「我的连接」里勾选这个项目",
   "integrationSignInOwner": "连接只能由本人登录后管理",
   "mailAllRecipientsRefused": "邮件服务器拒收了全部收件人：{recipients}",
-  "mailAttachmentChanged": "附件「{name}」在起草之后被改过，发出去的会和你确认的不一样；请让芝士重新起草",
+  "mailAttachmentChanged": "附件「{name}」在起草之后被改过，现在发出去会和你确认的不一样。草稿还在，让{agent}重新起草一封",
   "mailAttachmentNotFound": "这封邮件没有第 {number} 个附件",
   "mailAttachmentNotInRoom": "附件「{path}」不在频道文件里：先用 cheese show 把它放进频道",
   "mailAttachmentsTooLarge": "附件合计超过 20 MB",

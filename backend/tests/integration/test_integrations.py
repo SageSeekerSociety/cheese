@@ -198,6 +198,8 @@ def test_the_room_line_names_the_teammate_that_drafted(client, mailbox):
     [card] = _room_events(client, room, person, "mail_drafted")
     assert card["content"].startswith(f"<@{seat}> "), card["content"]
     assert "芝士" not in card["content"]
+    # 卡上说「由 X 起草」时叫的是写它的那位，不是项目默认的队友。
+    assert card["meta"]["mail"]["drafted_by"] == seat
 
 
 def _room_events(client, room, person, event_type):
@@ -251,6 +253,10 @@ def test_an_attachment_changed_after_drafting_is_not_sent(client, mailbox):
 
     assert r.status_code >= 400 and "被改过" in r.text
     assert mailbox.sent == []
+    # Who to ask for a new draft is the teammate that wrote it, by its seat —
+    # a screen draws that as the name the project gave it, never 芝士.
+    said = r.json()["error"]["message"]
+    assert f"<@{room_agent_seat(client, room)}>" in said and "芝士" not in said
 
 
 def test_a_failed_send_is_reported_as_failed(client, mailbox):

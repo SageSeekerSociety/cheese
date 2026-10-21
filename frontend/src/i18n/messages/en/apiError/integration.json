@@ -40,7 +40,7 @@
   "integrationNotSharedWithProject": "{owner} hasn't authorized this connection for this project. Ask them to select this project in “My connections”",
   "integrationSignInOwner": "Sign in to manage your own connections",
   "mailAllRecipientsRefused": "The mail server refused every recipient: {recipients}",
-  "mailAttachmentChanged": "The attachment “{name}” was changed after the draft was written, so what goes out would differ from what you confirmed. Ask Cheese to draft it again",
+  "mailAttachmentChanged": "The attachment “{name}” was changed after the draft was written, so sending it now would differ from what you confirmed. The draft is still here; ask {agent} to draft it again",
   "mailAttachmentNotFound": "This email has no attachment number {number}",
   "mailAttachmentNotInRoom": "The attachment “{path}” isn't among the channel's files. Put it in the channel with cheese show first",
   "mailAttachmentsTooLarge": "The attachments add up to more than 20 MB",
