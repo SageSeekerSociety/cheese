@@ -31,7 +31,7 @@ from app.core.sentences import say
 from app.domain.conversation.services import room_of
 from app.domain.delivery_events import SettleCard
 from app.domain.event_about import EventAbout
-from app.domain.session_record.tail import SessionTail, tails
+from app.domain.session_record.tail import SessionTail, tails, working_seats
 from app.domain.topic.models import (
     NotifyLevel,
     RoomCleanup,
@@ -386,46 +386,43 @@ class TopicService:
         self,
         room_id: uuid.UUID,
         *,
-        live_turn: dict | None,
+        alive_for_s: float | None,
         threshold_s: float | None = None,
     ) -> dict:
-        """Is this room sitting on a turn that died? A queryable verdict.
+        """Is a session in this room stopped in the middle of a call? A
+        queryable verdict.
 
-        The 8-hour incident (2026-08-11) was not that a turn died — turns die,
-        containers get recreated, children get OOM-killed. It was that nothing
-        on the platform could be ASKED about it: `status` still read `active`,
-        the last thing the agent did was an ordinary tool call, and the only way
-        to find out was for a human to notice the silence. The orphan sweep now
-        cleans such turns up, but a sweep is a background actor: it tells you
-        when it acts, not when you ask.
+        The 8-hour incident (2026-08-11) was not that work died — containers
+        get recreated, children get OOM-killed. It was that nothing on the
+        platform could be ASKED about it: `status` still read `active`, the last
+        thing the agent did was an ordinary tool call, and the only way to find
+        out was for a human to notice the silence.
 
-        The verdict rests on two facts that a long-running turn cannot both
-        fail, which is what keeps it from crying wolf over slow work:
+        Every fact read here is one the platform can check:
 
-        1. **No heartbeat.** `live_turn` is what the runner is really executing
-           for this room. `silent_for_s` is since the newer of two signs: a
-           frame the turn published, or the runner answering a read — the latter
-           arrives every `READ_WAIT_S` even through a long think or a long tool
-           call, activity the DB never sees. Present and recently heard ⇒ alive,
-           full stop.
-        2. **A session stopped mid-call.** A seat's session in this room wrote a
-           tool call and never its result (`session_record.tail`), in a turn the
-           platform still holds open, and has written nothing since for longer
-           than the threshold. That is the shape a turn leaves when it is cut off
-           between doing something and hearing back. A turn that ends leaves its
-           result record, and a turn the platform ended (failed, timed out,
-           swept) is closed, so neither counts. The calls are read in Claude
-           Code's record shape only: a Codex or pi session is not checked.
+        1. **Its runner says the session is at work** (`session_states`). A
+           session its runner declared idle, or that exited, is not doing
+           anything that could be stuck, whatever its records stopped at.
+        2. **Its records stop in the middle of a call.** The session wrote a
+           tool call and never its result (`session_record.tail`), and has
+           written nothing since for longer than the threshold.
+        3. **Its runner has not answered either.** ``alive_for_s`` is how long
+           since the runner holding a session in this room last answered a read
+           (`realtime.broker.note_alive`), which it does every `READ_WAIT_S`
+           through a long think or a long command. Heard recently ⇒ alive: a
+           runner runs its own clocks on stuck work and says so. None means
+           this process reads no session here: nobody is listening for it.
+
+        The calls are read in Claude Code's record shape only, and only Claude
+        Code reports its session's state: a Codex or pi session is not checked.
         """
         if threshold_s is None:
             threshold_s = settings.turn_stall_signal_s
-        heartbeat_s = None if live_turn is None else live_turn.get("silent_for_s")
-        alive = live_turn is not None and (
-            heartbeat_s is not None and heartbeat_s <= threshold_s
-        )
+        alive = alive_for_s is not None and alive_for_s <= threshold_s
         # The room's OWN sessions: a task's conversation is its own, and a room
         # that has gone quiet while one of its tasks works is still quiet.
         sessions = await tails(self._session, room_id)
+        at_work = await working_seats(self._session, room_id)
         now = datetime.now(UTC)
 
         def silence(tail: SessionTail) -> int:
@@ -435,7 +432,9 @@ class TopicService:
             (
                 tail
                 for tail in sessions
-                if tail.open_call is not None and silence(tail) > threshold_s
+                if (tail.agent_handle, tail.harness) in at_work
+                and tail.open_call is not None
+                and silence(tail) > threshold_s
             ),
             None,
         )
@@ -447,17 +446,17 @@ class TopicService:
             "threshold_s": round(threshold_s),
             "silent_for_s": None if latest is None else silence(latest),
             "last_record": _stall_tail_summary(latest),
-            "live_turn": live_turn,
+            "runner_answered_s": None if alive_for_s is None else round(alive_for_s),
         }
         if alive or stopped is None:
             return signal
         signal["stalled"] = True
-        # Whose turn died: the seat whose session stopped mid-call.
+        # Whose work stopped: the seat whose session stopped mid-call.
         signal["member"] = stopped.agent_handle
-        # Which of the two ways it died, because they send whoever reads this to
-        # different places: a process that is not running the turn at all versus
-        # one holding a task that stopped producing.
-        signal["reason"] = "no_live_turn" if live_turn is None else "silent_turn"
+        # Which of the two ways, because they send whoever reads this to
+        # different places: no process here is reading the session at all,
+        # versus one that reads it and has stopped hearing from its runner.
+        signal["reason"] = "not_read" if alive_for_s is None else "runner_silent"
         return signal
 
     # ---- 话题级未读 (Feishu-style badges) -------------------------------

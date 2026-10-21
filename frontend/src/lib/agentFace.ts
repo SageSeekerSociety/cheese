@@ -23,7 +23,6 @@ export interface AgentFace {
 const FACE: Record<SiteState, FaceState> = {
   thinking: 'think',
   compacting: 'think',
-  acting: 'work',
   waiting: 'wait',
   retrying: 'stuck',
 }

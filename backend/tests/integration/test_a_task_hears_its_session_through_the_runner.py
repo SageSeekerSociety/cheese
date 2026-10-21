@@ -47,8 +47,7 @@ class _Chat:
         self.live = SimpleNamespace(unread_inputs={})
         self.told: list[tuple[uuid.UUID, str]] = []
         self.stop_work_in_closed_tasks = AsyncMock()
-        self.remind_silent_turns = AsyncMock()
-        self.remind_stale_checklists = AsyncMock()
+        self.compute = SimpleNamespace(working_conversations=set)
         self.sweep_memory_dreams = AsyncMock()
 
     async def notify_running_session(self, topic_id: uuid.UUID, notice: str) -> bool:

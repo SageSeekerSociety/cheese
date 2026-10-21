@@ -1,4 +1,4 @@
-"""GET /api/topics/{id}/status → `stall`: did a turn die on this topic?
+"""GET /api/topics/{id}/status → `stall`: is a session here stopped mid-call?
 
 The 8-hour incident (2026-08-11): three topics stopped mid-work — container
 recreate, OOM-killed child, sandbox image swap — and every surface kept saying
@@ -8,21 +8,22 @@ be ASKED "is this one dead?". These tests are that question, and its answer
 must hold up against the case that makes it hard: a turn legitimately grinding
 away for hours must never be reported dead.
 
-What a turn did is read from its session's raw records: a turn cut off between
-starting a tool and hearing back has written the call and not its result.
+What a session did is read from its raw records: work cut off between starting
+a tool and hearing back has written the call and not its result. Whether it is
+still at work is what its runner declares (`session_states`), and whether the
+runner is still there is whether it answered a read lately. No turn interval is
+read: the work here is written straight into the records, with no turn row.
 """
 
 import asyncio
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from sqlalchemy import update
-
-from app.api.deps import get_work_runner
-from app.domain.agent.models import AgentTurn
+from app.domain.agent import session_state
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.session_record import service as session_records
-from app.main import app
 from tests.integration.conftest import post_project
 
 SEAT = "cheese"
@@ -72,29 +73,28 @@ _ENDED = {"type": "result", "subtype": "success", "result": "跑完了"}
 _PROMPT = {"type": "user", "message": {"role": "user", "content": "跑一下测试"}}
 
 
+def _declares(client, topic_id: str, status: str) -> None:
+    """The runner of the seat's session in the room says it is ``status``."""
+    key = session_state.SeatKey(uuid.UUID(topic_id), SEAT, "claude-code")
+
+    async def _run() -> None:
+        await session_state.register(client.test_factory, key)
+        async with client.test_factory() as session:
+            await session_state.declare(session, key, status)
+            await session.commit()
+
+    asyncio.run(_run())
+
+
 def _turn(client, topic_id: str, records: list[dict], *, age: timedelta) -> uuid.UUID:
-    """A turn of the seat's session that wrote ``records``, the last of them
-    ``age`` ago, which the platform still holds open."""
+    """Work of the seat's session that wrote ``records``, the last of them
+    ``age`` ago, and that its runner still declares running."""
     room = uuid.UUID(topic_id)
     work = uuid.uuid4()
     last = datetime.now(UTC) - age
     first = last - timedelta(seconds=len(records))
 
     async def _run() -> None:
-        async with client.test_factory() as session:
-            session.add(
-                AgentTurn(
-                    id=work,
-                    conversation_id=room,
-                    continuation_id=work,
-                    author="user-1",
-                    content="跑一下测试",
-                    started_at=first,
-                    delivered_at=first,
-                    agent_handle=SEAT,
-                )
-            )
-            await session.commit()
         await session_records.append(
             client.test_factory,
             SimpleNamespace(
@@ -111,22 +111,14 @@ def _turn(client, topic_id: str, records: list[dict], *, age: timedelta) -> uuid
         )
 
     asyncio.run(_run())
+    _declares(client, topic_id, "running")
     return work
 
 
-def _close(client, work: uuid.UUID) -> None:
-    """The platform ends the turn: it failed, timed out or the sweep took it."""
-
-    async def _run() -> None:
-        async with client.test_factory() as session:
-            await session.execute(
-                update(AgentTurn)
-                .where(AgentTurn.id == work)
-                .values(stopped_at=datetime.now(UTC))
-            )
-            await session.commit()
-
-    asyncio.run(_run())
+def _close(client, topic_id: str) -> None:
+    """The runner says the session is idle: the work ended, failed or was
+    taken away."""
+    _declares(client, topic_id, "idle")
 
 
 def _stall(client, topic_id: str) -> dict:
@@ -143,9 +135,9 @@ def test_a_turn_that_died_mid_tool_is_reported_stalled(client):
 
     stall = _stall(client, tid)
     assert stall["stalled"] is True
-    # Nobody is executing this topic, which is why the silence counts.
-    assert stall["reason"] == "no_live_turn"
-    assert stall["live_turn"] is None
+    # No process here reads the session, which is why the silence counts.
+    assert stall["reason"] == "not_read"
+    assert stall["runner_answered_s"] is None
     assert 2600 < stall["silent_for_s"] < 2800
     # The verdict shows its work: the call a reader can go and look at.
     assert stall["last_record"]["open_call"]["tool"] == "Bash"
@@ -186,7 +178,7 @@ def test_a_turn_that_died_right_after_showing_something_is_reported_stalled(clie
 
     stall = _stall(client, tid)
     assert stall["stalled"] is True
-    assert stall["reason"] == "no_live_turn"
+    assert stall["reason"] == "not_read"
 
 
 def test_a_topic_that_just_acted_is_not_stalled(client):
@@ -245,18 +237,16 @@ def test_a_turn_that_ended_with_a_call_unanswered_is_not_a_stall(client):
     assert _stall(client, tid)["stalled"] is False
 
 
-def test_the_signal_goes_quiet_once_the_platform_has_ended_the_turn(client):
-    """The orphan sweep tears a wedged turn down and the room is told. After
-    that the topic SAYS what happened, so it is no longer an unanswered
+def test_the_signal_goes_quiet_once_the_runner_says_the_session_is_idle(client):
+    """The runner ends wedged work itself and says the session is idle. After
+    that the room SAYS what happened, so it is no longer an unanswered
     question — and a signal that keeps firing past its own fix is one people
     learn to ignore."""
     tid = _topic(client)
-    work = _turn(
-        client, tid, [_PROMPT, _call("toolu_1", "pytest -q")], age=timedelta(hours=6)
-    )
+    _turn(client, tid, [_PROMPT, _call("toolu_1", "pytest -q")], age=timedelta(hours=6))
     assert _stall(client, tid)["stalled"] is True
 
-    _close(client, work)
+    _close(client, tid)
     assert _stall(client, tid)["stalled"] is False
 
 
@@ -268,67 +258,38 @@ def test_an_empty_topic_is_not_stalled(client):
     assert stall["silent_for_s"] is None
 
 
-class _RunnerWithLiveTurn:
-    """A runner that IS executing a turn on this topic, still publishing frames.
-
-    Stands in for the real one because a live turn cannot be held across a
-    blocking HTTP call from a test; that the real runner reports a genuinely
-    streaming turn this way is pinned separately in
-    tests/unit/test_runtime.py::test_live_turn_for_topic_tracks_a_running_turn.
-    """
-
-    def __init__(self, topic_id: str, *, silent_for_s: float) -> None:
-        self._topic_id = topic_id
-        self._silent_for_s = silent_for_s
-
-    def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
-        if str(topic_id) != self._topic_id:
-            return None
-        return {"turn_id": "t-1", "silent_for_s": self._silent_for_s}
-
-    def topic_work(self, topic_id: uuid.UUID) -> dict | None:
-        return None
-
-    def active_work_count(self) -> int:
-        return 1
-
-    async def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
-        return 0
+def _runner_answered(topic_id: str, *, ago: float) -> None:
+    """The runner holding the room's session last answered a read ``ago``
+    seconds back (`note_alive`)."""
+    broker = get_broker()
+    broker.note_alive(topic_id)
+    broker._last_alive_at[topic_id] = time.monotonic() - ago
 
 
-def test_a_turn_still_running_is_never_called_dead(client):
-    """The load-bearing case. A turn deep in one long tool call writes nothing
-    for as long as that call takes, so its records alone cannot tell it from a
-    corpse. The heartbeat is what separates them, and it has to win."""
+def test_work_still_running_is_never_called_dead(client):
+    """The load-bearing case. A session deep in one long tool call writes
+    nothing for as long as that call takes, so its records alone cannot tell
+    it from a corpse. Its runner answering is what separates them, and it has
+    to win."""
     tid = _topic(client)
     _turn(client, tid, [_PROMPT, _call("toolu_1", "pytest -q")], age=timedelta(hours=3))
-    assert _stall(client, tid)["stalled"] is True  # ...with no turn running
+    assert _stall(client, tid)["stalled"] is True  # ...with nobody listening
 
-    app.dependency_overrides[get_work_runner] = lambda: _RunnerWithLiveTurn(
-        tid, silent_for_s=12.0
-    )
-    try:
-        stall = _stall(client, tid)
-        assert stall["stalled"] is False
-        assert stall["live_turn"]["silent_for_s"] == 12.0
-    finally:
-        app.dependency_overrides.pop(get_work_runner, None)
+    _runner_answered(tid, ago=12.0)
+    stall = _stall(client, tid)
+    assert stall["stalled"] is False
+    assert stall["runner_answered_s"] == 12
 
 
-def test_a_turn_that_is_live_but_long_silent_is_still_caught(client):
-    """A task can outlive what it was driving: the container dies, the stream
-    never ends, and the turn sits in the runner producing nothing. Being
-    "running" is not proof of life — the heartbeat is."""
+def test_a_runner_long_silent_is_still_caught(client):
+    """The machine can outlive what it was driving, or go away under it: the
+    session still reads as running, and its runner has stopped answering.
+    Having answered once is not proof of life — answering lately is."""
     tid = _topic(client)
     _turn(client, tid, [_PROMPT, _call("toolu_1", "pytest -q")], age=timedelta(hours=3))
 
-    app.dependency_overrides[get_work_runner] = lambda: _RunnerWithLiveTurn(
-        tid, silent_for_s=3 * 3600
-    )
-    try:
-        stall = _stall(client, tid)
-        assert stall["stalled"] is True
-        # Named apart from the process-is-gone case: this one still holds a task.
-        assert stall["reason"] == "silent_turn"
-    finally:
-        app.dependency_overrides.pop(get_work_runner, None)
+    _runner_answered(tid, ago=3 * 3600)
+    stall = _stall(client, tid)
+    assert stall["stalled"] is True
+    # Named apart from the nobody-is-reading case: this one was being read.
+    assert stall["reason"] == "runner_silent"

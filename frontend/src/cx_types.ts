@@ -150,8 +150,6 @@ export interface BlockMeta extends AskBlockMeta {
   // 这一步的工具报错回来了，以及它最后说的那截。成功的步骤两个都没有。
   failed?: boolean
   error?: string
-  // Output byte count reported with the tool's status.
-  output_bytes?: number
   platform?: boolean
   // 现场工具的显示名；action 则表示平台动作指向的资源。
   as_tool?: string

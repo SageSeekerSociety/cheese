@@ -138,7 +138,7 @@ class MemberWaits:
         decides when the mark comes on.
 
         ``threads``: 这些房间的支线，调用方已经问过的那一份（见
-        `topics_signals.working_in_threads`）。没给就自己问。
+        `topics_signals.at_work`）。没给就自己问。
         """
         if not topic_ids:
             return {}

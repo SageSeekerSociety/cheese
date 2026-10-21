@@ -271,7 +271,7 @@ def test_a_channel_is_never_named_by_the_platform(client, alice, gateway):
         headers=alice,
     )
     assert r.status_code == 200, r.text
-    for reason in ("message", "turn", "signal"):
+    for reason in ("message", "idle", "signal"):
         assert _run(client, room, reason) is None
     assert gateway["asked"] == []
 
@@ -323,7 +323,7 @@ def test_a_task_turned_from_a_message_is_named_by_that_message(client, alice, ga
     _say(client, tid, "hello.md 里那句介绍按什么口径写？", author="cheese-0123456789ab")
 
     gateway["answers"].append({"keep": False, "title": "hello.md 项目介绍"})
-    renamed = _run(client, tid, "turn")
+    renamed = _run(client, tid, "idle")
 
     assert renamed is not None
     assert _shown(client, tid) == ("hello.md 项目介绍", "auto")
@@ -516,7 +516,7 @@ def test_a_title_that_never_fits_is_cut_to_fit(client, alice, gateway):
         {"keep": False, "title": "季度预算编制流程说明 Word 文档"}
     ] * 10
 
-    renamed = _run(client, rid, "turn")
+    renamed = _run(client, rid, "idle")
 
     assert renamed is not None
     assert title_fits(renamed.title)
@@ -556,7 +556,7 @@ def test_keeping_a_stored_title_too_wide_does_not_leave_it_too_wide(
         {"keep": True, "title": "季度预算编制流程说明 Word 文档"},
     ]
 
-    renamed = _run(client, rid, "turn")
+    renamed = _run(client, rid, "idle")
 
     assert renamed is not None
     assert renamed.previous == "季度预算编制流程说明 Word 文档"
@@ -591,13 +591,13 @@ def test_the_first_turn_checks_the_name_once(client, alice, gateway):
 
     # Still right: kept, and the task counts as calibrated.
     gateway["answers"].append({"keep": True, "title": "dev 外网访问慢排查"})
-    assert _run(client, rid, "turn") is None
+    assert _run(client, rid, "idle") is None
     row = _row(client, rid)
     assert row.title == "dev 外网访问慢排查" and row.title_calibrated is True
 
     # Calibration does not run twice; a later turn with no signal asks nothing.
     asked = len(gateway["asked"])
-    assert _run(client, rid, "turn") is None
+    assert _run(client, rid, "idle") is None
     assert len(gateway["asked"]) == asked
 
 
@@ -609,7 +609,7 @@ def test_a_calibration_that_renames_does_so_quietly(client, alice, gateway):
     # is not empty; what is pinned here is that the rename adds nothing to it.
     said = [b.id for b in _events(client, rid)]
     gateway["answers"].append({"keep": False, "title": "Valkey 连接池耗尽"})
-    renamed = _run(client, rid, "turn")
+    renamed = _run(client, rid, "idle")
     assert renamed is not None and renamed.previous == "dev 外网访问慢排查"
     assert _shown(client, rid) == ("Valkey 连接池耗尽", "auto")
     assert [b.id for b in _events(client, rid)] == said
@@ -619,7 +619,7 @@ def test_a_calibration_that_renames_does_so_quietly(client, alice, gateway):
 def test_following_up_needs_a_signal_and_respects_the_throttle(client, alice, gateway):
     rid = _named(client, alice, gateway)
     gateway["answers"].append({"keep": True, "title": "dev 外网访问慢排查"})
-    _run(client, rid, "turn")
+    _run(client, rid, "idle")
     asked = len(gateway["asked"])
 
     # An ordinary message is no reason to look again.
@@ -658,7 +658,7 @@ def test_a_persons_name_is_never_overwritten(client, alice, gateway):
     r = client.post(f"/topics/{rid}/title", json={"title": "我的名字"}, headers=alice)
     assert r.status_code == 200 and _shown(client, rid) == ("我的名字", "human")
     asked = len(gateway["asked"])
-    for reason in ("message", "turn", "signal"):
+    for reason in ("message", "idle", "signal"):
         assert _run(client, rid, reason) is None
     assert len(gateway["asked"]) == asked
     assert _row(client, rid).title == "我的名字"
@@ -697,11 +697,11 @@ def test_a_task_a_teammate_created_keeps_its_title_until_its_direction_changes(
     client, alice, gateway
 ):
     """The AI teammate that creates a task names it, and the platform does not
-    second-guess it after the first turn; only a change of direction does."""
+    second-guess it once its session first goes idle; only a change of direction does."""
     tid = _by_teammate(client, alice, "迁移旧数据")
     assert _shown(client, tid) == ("迁移旧数据", "auto")
     _say(client, tid, "先从用户表开始")
-    for reason in ("message", "turn"):
+    for reason in ("message", "idle"):
         assert _run(client, tid, reason) is None
     assert gateway["asked"] == []
 

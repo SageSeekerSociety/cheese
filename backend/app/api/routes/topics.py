@@ -37,7 +37,6 @@ from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
-from app.domain.agent.session_state import running_conversations
 from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.agent_instance.adapters import project_team, room_teammate
 from app.domain.agent_session.services import AgentSessionService
@@ -160,7 +159,7 @@ async def _awaiting_an_answer(
     里问的那道题，题落在那条活自己的线上，可这个频道也在等那个人回答。少了任务这一
     头，人就看得见「有一条待办」而侧栏一处都不亮。
 
-    ``threads``：调用方已经问过的那一份（`topics_signals.working_in_threads` 要的是
+    ``threads``：调用方已经问过的那一份（`topics_signals.at_work` 要的是
     同一个答案）。这里会往上面叠任务，所以先拷一份，不动调用方那份。``tasks_by_room`` 是调用方已经查过的同一批房间的 `tasks_of_rooms`；不传就自己问。
     """
     thread_rooms = await threads_of_rooms(db, room_ids) if threads is None else threads
@@ -328,7 +327,6 @@ def _topic_out(
 async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
-    broker: Annotated[InProcessBroker, Depends(get_broker)],
     resolver: ActorResolverDep,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
@@ -371,11 +369,12 @@ async def list_topics(
         db, room_ids, threads=room_threads, tasks_by_room=tasks_by_room
     )
     asks_me = _asks_me(asked, _viewer(actor))
-    # 这一页里哪几个话题**自己那条线**上的会话在干活（runner 报的
-    # `session_state`）—— `presentation` 那一格读的是它：看板一格是房间自己的格
-    # 子，它名下的活有它们自己的格子
+    # 这一页里谁在干活：每间房自己那条线上、和它的支线里，runner 报着在干活的
+    # 会话（`session_states`）。`presentation` 那一格读的是房间自己那条线：看板
+    # 一格是房间自己的格子，它名下的活有它们自己的格子
     # （`test_a_rooms_board_cell_does_not_follow_a_task_running_under_it`）。
-    running_ids = await running_conversations(db, room_ids)
+    working = await topics_signals.at_work(db, room_ids, threads=room_threads)
+    running_ids = set(working.rooms)
     relevance = await service.relevance_for_topics(
         topics,
         _viewer(actor),
@@ -398,10 +397,6 @@ async def list_topics(
         now=now,
         stuck_rooms=topics_signals.stuck_on_checks(live),
         threads=room_threads,
-    )
-    # 支线里在跑的轮次也是「在管这间房」，`waits` 里这些成员要去掉（一次查完）。
-    threads_working = await topics_signals.working_in_threads(
-        db, broker, [t.id for t in topics], threads=room_threads
     )
     # 哪几间房里有「交付完了、而这个人还没点开看过」的活——侧栏的长绿靠它。一次
     # 查一整页（`room_task/repositories.unseen_deliveries`），频道行和它下面的活行
@@ -443,9 +438,9 @@ async def list_topics(
                 managed,
                 asked,
                 asks_me,
-                activity=broker.activity.snapshot(str(t.id)),
+                activity=working.rooms.get(t.id),
                 waits=waits.get(t.id),
-                working_in_threads=threads_working.get(t.id),
+                working_in_threads=working.threads.get(t.id),
                 unseen=unseen,
                 answered=answered,
                 incomplete=incomplete,
@@ -503,7 +498,6 @@ async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
 async def get_topic(
     topic_id: uuid.UUID,
     db: DbSession,
-    broker: Annotated[InProcessBroker, Depends(get_broker)],
     resolver: ActorResolverDep,
 ) -> dict:
     """One room's header.
@@ -532,7 +526,7 @@ async def get_topic(
     actor = await _actor_in_place(resolver, place)
     # 这几处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
     # 遍（`_awaiting_an_answer`、`MemberWaits.for_rooms`、
-    # `topics_signals.working_in_threads`）。
+    # `topics_signals.at_work`）。
     room_threads = await threads_of_rooms(db, [topic.id])
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics(
@@ -556,11 +550,9 @@ async def get_topic(
         stuck_rooms=topics_signals.stuck_on_checks(live),
         threads=room_threads,
     )
-    threads_working = await topics_signals.working_in_threads(
-        db, broker, [topic.id], threads=room_threads
-    )
-    # 同 `list_topics`：`running_ids` 是这行自己的线。
-    running_ids = await running_conversations(db, [topic.id])
+    # 同 `list_topics`：谁在这间房自己那条线上、和它的支线里干活。
+    working = await topics_signals.at_work(db, [topic.id], threads=room_threads)
+    running_ids = set(working.rooms)
     viewer = _viewer(actor)
     unseen = (
         await TaskService(db).unseen_deliveries([topic.id], viewer) if viewer else set()
@@ -592,9 +584,9 @@ async def get_topic(
                 managed_ids=managed,
                 asked=asked,
                 asks_me=_asks_me(asked, viewer),
-                activity=broker.activity.snapshot(str(topic.id)),
+                activity=working.rooms.get(topic.id),
                 waits=waits.get(topic.id),
-                working_in_threads=threads_working.get(topic.id),
+                working_in_threads=working.threads.get(topic.id),
                 unseen=unseen,
                 answered=answered,
                 incomplete=incomplete,
@@ -971,6 +963,7 @@ async def topic_status(
     topic_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+    broker: Annotated[InProcessBroker, Depends(get_broker)],
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
@@ -980,10 +973,11 @@ async def topic_status(
     status`) or a debugging human doesn't have to poll several endpoints and
     guess. Read path, open like the rest of the MVP read surface.
 
-    ``stall`` answers the question nothing here could answer before: did a turn
-    die on this topic? ``turn`` cannot — it is a ring buffer of what turns did,
-    so it is empty after a restart and says `running` about a turn killed with
-    the process. See ``TopicService.stall_signal``."""
+    ``stall`` answers the question nothing here could answer before: is a
+    session here stopped in the middle of a call? ``turn`` cannot — it is a
+    ring buffer of what turns did, so it is empty after a restart and says
+    `running` about a turn killed with the process. See
+    ``TopicService.stall_signal``."""
     topics = TopicService(db)
     place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
@@ -994,8 +988,7 @@ async def topic_status(
     credits = await UsageService(db).project_credits(place.project_id)
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
-        place.room_id,
-        live_turn=runner.live_work_for_topic(topic_id),
+        place.room_id, alive_for_s=broker.alive_for_s(str(place.room_id))
     )
     return ok(
         {

@@ -1315,6 +1315,6 @@ export default function (pi: any) {
     announceExits(pi, spec);
   }
   // No reminder to publish lives here. A room that has heard nothing for a while
-  // is reminded by the platform (ChatService.remind_silent_turns), which steers
+  // is reminded by the platform (QuietSessionReminders.silence), which steers
   // the same notice into a running turn on every harness.
 }

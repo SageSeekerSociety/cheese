@@ -269,9 +269,11 @@ class TurnLifecycle:
             frame = {"type": "turn_finished", "turn_id": str(work_id), "agent": agent}
         await get_broker().publish(str(topic_id), frame)
         if not active:
-            # The agent has said what it understood: the moment to check the
-            # name a task got from its opening line (room_task/naming.py).
-            naming.nudge(topic_id, "turn")
+            # The session went idle — the runner says so (a Claude Code session's
+            # `SessionIdle`), or a harness that reports no session state ended its
+            # work — so the agent has said what it understood: the moment to check
+            # the name a task got from its opening line (room_task/naming.py).
+            naming.nudge(topic_id, "idle")
 
             nudge_messages(self, topic_id)
 

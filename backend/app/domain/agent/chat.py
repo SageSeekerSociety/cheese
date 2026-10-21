@@ -15,7 +15,6 @@ Turn intake, transport steps, durable writes and live state have separate owners
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime
 from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -132,10 +131,6 @@ from app.domain.agent.turn.intake.rooms import room_roster
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
 from app.domain.agent.turn.state.live import LiveWork
-
-# 一轮还跑着的时候平台往它里面说的两句话（沉默、清单停在原地），连同各自的扫底。
-# 用 `TurnNotices` 收窄到 `ChatService` 对外的几样，所以这里不用反向被 import。
-from app.domain.agent.turn.steps import reminders
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn_usage import record_turn_usage
@@ -203,7 +198,7 @@ class ChatService(
         # `app.domain.agent.gateway`). None = off.
         self._gateway = gateway
         # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
-        # 由 harness 在两个时刻问它：输入之前、这一轮结束之后。这一簇连同它按
+        # 由 harness 在两个时刻问它：输入之前、会话停下来之后（runner 报会话空闲）。这一簇连同它按
         # 房间记的四份状态都在 `memory_ledger.py` 里；它会用到的协作者显式
         # 传进去（`gateway` 要先建好），留在 `ChatService` 上的
         # 只有 `_lock_for` 和 `_model_kwargs` 两件同事还在用的东西。
@@ -322,15 +317,11 @@ class ChatService(
         """
         return self._work_runner
 
-    async def remind_silent_turns(self) -> int:
-        """Queue an internal reminder while a room response is still running."""
-        return await reminders.remind_silent_turns(self, datetime.now(UTC))
-
-    async def remind_stale_checklists(self) -> int:
-        """Ask a running turn whose own checklist stopped moving to write it
-        again. Both sweeps share one interval: each asks whether something
-        visible about this turn has stopped moving."""
-        return await reminders.remind_stale_checklists(self, datetime.now(UTC))
+    @property
+    def compute(self) -> ComputePool:
+        """The sessions this process holds, and which of them are at work
+        (`turn.steps.reminders.QuietSessionReminders`)."""
+        return self._compute
 
     async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None:
         """Commit identity-bound effects before the journal may acknowledge.

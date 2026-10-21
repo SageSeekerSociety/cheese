@@ -216,3 +216,39 @@ def test_a_rooms_board_cell_follows_its_session_as_its_runner_declares_it(client
 
     _the_rooms_session_declares(client, ids["room"], "idle")
     assert cells() == (Building.idle, Building.idle)
+
+
+def test_a_member_is_working_in_a_room_while_its_runner_says_its_session_runs(
+    client,
+):
+    """Who is at work in a room is what its sessions' runners declare, on the
+    room's header and in the room list alike, and in no other process's turn
+    books: no turn runs here for it."""
+    ids = _seeded(client)
+    seat = "cheese-0123456789ab"
+    from app.domain.agent import session_state
+
+    key = session_state.SeatKey(uuid.UUID(ids["room"]), seat, "claude-code")
+
+    def declares(status: str) -> None:
+        async def _declare() -> None:
+            await session_state.register(client.test_factory, key)
+            async with client.test_factory() as s:
+                await session_state.declare(s, key, status)
+                await s.commit()
+
+        client.portal.call(_declare)
+
+    def working() -> tuple[list[str], list[str]]:
+        header = client.get(f"/topics/{ids['room']}").json()["data"]
+        listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]
+        row = next(t for t in listed["data"] if t["id"] == ids["room"])
+        return (
+            [a["member"] for a in header["activity"] if a["kind"] == "working"],
+            [a["member"] for a in row["activity"] if a["kind"] == "working"],
+        )
+
+    declares("running")
+    assert working() == ([seat], [seat])
+    declares("idle")
+    assert working() == ([], [])

@@ -28,6 +28,7 @@ from app.domain.agent.harness import (
     harness_name,
     harness_on,
 )
+from app.domain.agent.session_state import reports_lifecycle
 
 if TYPE_CHECKING:
     from app.domain.agent.harness import SessionRef
@@ -314,6 +315,15 @@ class ComputePool:
                 return runtime
         return None
 
+    def working_seats(self, topic_id: uuid.UUID) -> set[tuple[str, str]]:
+        """Every seat whose session in this room is at work, as its own handle
+        and the handle it acts under — the seats this process holds."""
+        return {
+            seat
+            for runtime in self._runtimes()
+            for seat in runtime.working_seats(topic_id)
+        }
+
     def working_seat(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> tuple[str, str] | None:
@@ -444,7 +454,7 @@ def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
     # lifecycle protocol is handed the same two limits when it is registered
     # (`session_host.starting.register`) and ends it there.
     def policy(name: str) -> dict:
-        own = not HARNESSES[name].reports_lifecycle
+        own = not reports_lifecycle(name)
         return {
             "hard_ceiling_s": settings.agent_turn_hard_ceiling_s,
             "no_progress_s": settings.agent_no_progress_s if own else 0.0,
