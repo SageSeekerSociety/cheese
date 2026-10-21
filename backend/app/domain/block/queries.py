@@ -219,6 +219,30 @@ async def latest_messages(
     return list(page.items)
 
 
+async def messages_page(
+    db: AsyncSession, conversation_id: uuid.UUID, *, limit: int, skip: int = 0
+) -> tuple[list[Block], int]:
+    """A page of the conversation's messages read back from its newest, oldest
+    of the page first, and how many messages it has in all. ``skip`` is how
+    many of the newest the page leaves to the pages before it."""
+    shown = (
+        Block.conversation_id == conversation_id,
+        Block.kind == BlockKind.message,
+        SHOWN_ROWS,
+    )
+    rows = (
+        await db.scalars(
+            select(Block)
+            .where(*shown)
+            .order_by(Block.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+    ).all()
+    total = await db.scalar(select(func.count()).select_from(Block).where(*shown))
+    return list(reversed(rows)), int(total or 0)
+
+
 async def newest_shown_seq(db: AsyncSession, conversation_id: uuid.UUID) -> int | None:
     """The number (`Block.seq`) of the last block stored in this conversation
     that the room shows (`shown`); None for one that shows nothing yet."""

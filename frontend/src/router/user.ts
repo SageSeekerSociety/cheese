@@ -42,6 +42,12 @@ export default {
           component: () => import('@/views/user/settings/Notifications.vue'),
         },
         {
+          // 芝士：哪些事一定先问、用自己的话补充的规矩，和最近替这个人做了什么。
+          path: 'assistant',
+          name: 'UserSettingsAssistant',
+          component: () => import('@/views/user/settings/Assistant.vue'),
+        },
+        {
           // 邀请好友：自己的邀请码、还剩几个名额、邀请得了什么、邀请来的人走到了哪一步。
           path: 'invites',
           name: 'UserSettingsInvites',
