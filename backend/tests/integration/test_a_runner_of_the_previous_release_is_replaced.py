@@ -801,7 +801,10 @@ async def test_a_drain_left_by_another_runner_does_not_count_for_this_one(
         later = _backend(client, hub, tmp_path)
         await later.recover_sessions()
         await asyncio.sleep(1.0)
+        # Still draining: neither interrupted nor replaced under its work.
         assert hub.interrupted == 0
+        assert later._compute.draining(topic, AGENT)
+        assert await _resumes(client, topic) == []
         await later.stop_listening(0)
 
     client.portal.call(first_runner)
