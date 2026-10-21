@@ -862,3 +862,71 @@ def test_a_document_nothing_links_reads_as_before():
     said = run("cheese_doc_get", {}, host)
 
     assert "链接" not in said
+
+
+@pytest.mark.parametrize(
+    ("ref", "page", "plan"),
+    [
+        (
+            "ml-course/channels/3",
+            2,
+            ("/assistant/agent/read", {"ref": "ml-course/channels/3", "page": 2}),
+        ),
+        ("spaces/4/tasks/87", 1, ("/task-drafts/agent/read", {"task": 87})),
+        ("drafts/12", 1, ("/task-drafts/agent/read", {"draft": 12})),
+        ("files/30", 2, ("/task-drafts/agent/file", {"file": 30, "pages": "21-40"})),
+        ("spaces/4", 1, ("/task-drafts/agent/materials", {"space": 4})),
+        (
+            "spaces/4/materials/9",
+            1,
+            (
+                "/task-drafts/agent/materials",
+                {"space": 4, "material": 9, "pages": "1-20"},
+            ),
+        ),
+    ],
+)
+def test_read_takes_a_ref_to_where_that_kind_is_read(ref, page, plan):
+    """One tool reads everything by its ref: a project's own things on 芝士's
+    route, a 题目, a draft, a file or a space's materials where the publish
+    page's tools read them, a PDF twenty pages to a page."""
+    got = cheese.request_plan("cheese_read", {"ref": ref, "page": page}, {})
+    assert (got["path"], got["body"]) == plan
+
+
+def test_a_space_s_materials_are_listed_with_the_refs_that_read_them():
+    host = Host(
+        {
+            ("POST", "/task-drafts/agent/materials"): {
+                "materials": [{"id": 9, "name": "讲义.pdf"}]
+            }
+        }
+    )
+    said = cheese.run_platform_tool("cheese_read", {"ref": "spaces/4"}, host)
+    assert "讲义.pdf（spaces/4/materials/9）" in said
+
+
+@pytest.mark.parametrize(
+    ("args", "plan"),
+    [
+        ({"query": "端口"}, ("/assistant/agent/search", {"query": "端口"})),
+        (
+            {"query": "端口", "where": "ml-course"},
+            ("/assistant/agent/search", {"query": "端口", "project": "ml-course"}),
+        ),
+        (
+            {"where": "spaces/4"},
+            ("/task-drafts/agent/search", {"space": 4, "query": ""}),
+        ),
+    ],
+)
+def test_search_looks_in_projects_or_in_a_space(args, plan):
+    got = cheese.request_plan("cheese_search", args, {})
+    assert (got["path"], got["body"]) == plan
+
+
+def test_help_searches_the_manual_or_reads_one_page_of_it():
+    asked = cheese.request_plan("cheese_help", {"query": "验收"}, {})
+    read = cheese.request_plan("cheese_help", {"page": "accept"}, {})
+    assert (asked["path"], asked["body"]) == ("/docs/agent/search", {"query": "验收"})
+    assert (read["path"], read["body"]) == ("/docs/agent/read", {"page": "accept"})

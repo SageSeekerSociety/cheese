@@ -82,6 +82,7 @@ import {
   sendingProposal,
   sendProposal,
   toggleAgent,
+  undoChange,
 } from '@/stores/agent'
 
 const { mdAndUp } = useDisplay()
@@ -178,8 +179,14 @@ const panelEvents = {
   older: () => void agentThread.older().catch(() => undefined),
   close: () => (agentOpen.value = false),
   dock: (next: boolean) => (docked.value = next),
-  undo: (change: number, key: string) => agentSurface.value?.undo?.(change, key),
-  undoAll: (rows: { change: number; key: string }[]) => agentSurface.value?.undoAll?.(rows),
+  undo: (change: number, key: string) =>
+    agentSurface.value?.undo ? agentSurface.value.undo(change, key) : void undoChange(change, key),
+  undoAll: (rows: { change: number; key: string }[]) =>
+    agentSurface.value?.undoAll
+      ? agentSurface.value.undoAll(rows)
+      : void (async () => {
+          for (const row of rows) await undoChange(row.change, row.key)
+        })(),
   jump: (key: string) => (agentSurface.value?.jump ?? layer.jump)(key),
   openDraft: (id: number) => agentSurface.value?.openDraft?.(id),
   openTask: (id: number) => (agentSurface.value?.openTask ?? openTask)(id),

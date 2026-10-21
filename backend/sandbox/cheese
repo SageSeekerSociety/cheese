@@ -1207,7 +1207,7 @@ PLATFORM_TOOLS = ToolTable(
 TASK_WRITE_DESCRIPTION = (
     "写一道题：写进草稿，用户在页面上同时看到每一格被填上。只改你给出的字段，"
     "没给的保持原样。三种写法：给 draft 改那份草稿；给 task 改已发布的题目"
-    "（写进它的修改草稿，cheese_task_publish 之后才生效）；都不给就在 space 里"
+    "（写进它的修改草稿，cheese_problem_publish 之后才生效）；都不给就在 space 里"
     "新建一份草稿（source 写它来自的文件名）。\n"
     "\n"
     "写题目要具体：大学课程难度，要求、交付物、评分标准都能直接照着做。描述不要再用"
@@ -1354,6 +1354,155 @@ TASK_WRITE_FIELDS = {
 DELEGATED_TOOLS = ToolTable(
     (
         _tool(
+            "cheese_inbox",
+            "等用户处理的事，和他「待办」页上的一样：待他审阅的改动、要他回答的问题、"
+            "要他决定的提醒、邀请和申请、出的题目上待批准的领取和待评审的提交。每件写"
+            "明是什么、在哪、什么时候，以及读它或答复它用的编号。最近的在前。",
+            {"project": _text("只看这个项目的（项目短名）；省略看全部")},
+        ),
+        _tool(
+            "cheese_search",
+            "按关键词搜用户能看到的工作内容：频道、消息、任务、文档段落、周报、资料库文件、"
+            "产物，或一个空间里的题目和他的草稿。不给 where 搜他最近的几个项目；where "
+            "给项目短名只搜那个项目，给 spaces/4 搜那个空间的题目（query 留空列出最近的"
+            "题目）。每条命中写着在哪和读它的编号。每个词都要命中，没找到就换个说法或"
+            "少几个词。平台怎么用的问题用 cheese_help。",
+            {
+                "query": _text("关键词，空格分开"),
+                "where": _text("项目短名，或 spaces/空间 id；省略搜全部项目"),
+            },
+        ),
+        _tool(
+            "cheese_help",
+            "知是的使用文档：给 query 按关键词检索（怎么建项目、验收、设备、额度……），"
+            "返回相关的页、小节、链接和摘录；给 page 读一整页原文（页名如 accept、"
+            "quickstart，或检索结果里的链接）。用户问平台怎么用时先查再答，答案里附上"
+            "查到的链接。",
+            {
+                "query": _text("关键词或问题"),
+                "page": _text("页名或链接，如 accept、/docs/accept#is-merge"),
+            },
+        ),
+        _tool(
+            "cheese_read",
+            "给编号读一样东西。编号就是它页面地址里 /projects/ 后面那段：项目 "
+            "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它的审阅卡 "
+            "ml-course/tasks/12/review，文档 ml-course/docs/5；项目以外的：题目 "
+            "spaces/4/tasks/87，草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
+            "（列出全部）和 spaces/4/materials/9；me 是用户参加的题目和各自的截止时间，"
+            "settings 是他的通知设置。"
+            "编号从当前页面、待办和别的读取结果里来。"
+            "长的分段读：结果末尾写着下一段的 page。",
+            {
+                "ref": _text("编号"),
+                "page": {
+                    "type": "integer",
+                    "description": "第几段（消息从最新往前数第几页；PDF 每段 20 页），默认 1",
+                },
+            },
+            ["ref"],
+        ),
+        _tool(
+            "cheese_message_send",
+            "以用户的名义发一条消息到一个频道或任务（where 给它的编号，如 "
+            "ml-course/channels/3）。用户的话具体说到了这条消息（发给谁、说什么）就直接"
+            "发出；否则变成面板里的一张卡片，用户确认后才发。结果会说是哪一种，照实告诉"
+            "用户，没发出的不要说发了。",
+            {
+                "where": _text("频道或任务的编号"),
+                "text": _text("消息正文，用户的口吻，Markdown"),
+            },
+            ["where", "text"],
+        ),
+        _tool(
+            "cheese_task_open",
+            "以用户的名义开一个任务，交给项目的 AI 队友去做：开在一个频道里（where 给"
+            "频道编号），标题和交代写清楚要做什么、依据什么、做到什么算完。要改项目里"
+            "的文档、代码，或做要花时间的活时用它，你自己不动手。和发消息一样，用户没"
+            "具体说到时会变成卡片等他确认。",
+            {
+                "where": _text("频道的编号"),
+                "title": _text("任务标题，一句话"),
+                "text": _text("交代：要做什么、依据什么、做到什么算完"),
+            },
+            ["where", "title", "text"],
+        ),
+        _tool(
+            "cheese_review_decide",
+            "以审阅人（用户）的身份采纳或退回一张审阅卡（ref 给审阅卡编号，如 "
+            "ml-course/tasks/12/review）。退回要写说明（text），说清哪里不对、要怎么改。"
+            "先用 cheese_read 读过这张卡再决定。用户没具体说到时会变成卡片等他确认。",
+            {
+                "ref": _text("审阅卡的编号"),
+                "choice": {"type": "string", "enum": ["accept", "reject"]},
+                "text": _text("退回的说明"),
+            },
+            ["ref", "choice"],
+        ),
+        _tool(
+            "cheese_inbox_respond",
+            "答复待办里要用户选择的一件事（ref 用待办里写的「答复用」或提醒编号）：提醒"
+            "的选项（choice 写选项原文），邀请或转让的接受、拒绝（accept / decline），在"
+            "他设备上运行命令的允许、拒绝（allow / refuse）。用户没具体说到时会变成卡片。",
+            {
+                "ref": _text("待办里那件事的编号"),
+                "choice": _text("选项原文，或 accept / decline / allow / refuse"),
+            },
+            ["ref", "choice"],
+        ),
+        _tool(
+            "cheese_member_set",
+            "以用户的名义管成员：where 给项目短名或频道编号，who 给对方的 handle。"
+            "项目里：不在项目的人发邀请（role 为 member 或 mentor），已在的人改角色"
+            "（admin / member / mentor），remove 为 true 时移出。频道里：加进来，或 "
+            "remove 移出。只能做用户自己有权限做的；移出成员、降低权限默认要用户确认。",
+            {
+                "where": _text("项目短名或频道编号"),
+                "who": _text("对方的 handle"),
+                "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
+                "remove": {"type": "boolean"},
+            },
+            ["where", "who"],
+        ),
+        _tool(
+            "cheese_channel_create",
+            "以用户的名义在一个项目里建频道（where 给项目短名）：名称、说明，"
+            "members_only 为 true 是只有成员看得到的私密频道。",
+            {
+                "where": _text("项目短名"),
+                "title": _text("频道名称"),
+                "text": _text("频道说明"),
+                "members_only": {"type": "boolean"},
+            },
+            ["where", "title"],
+        ),
+        _tool(
+            "cheese_settings_set",
+            "改用户自己的设置，直接改、面板上能撤销，一次一项。where 省略是他的通知设置："
+            "key 为 in_app（站内通知 on/off）、push（推送 on/off）、email（instant / "
+            "digest / off）、quiet_hours（off，或 22:00-08:00 这样的时段）、digest（汇总"
+            "频率 daily / weekly / off）。where 给频道编号时改那个频道给他的提醒：key 写 "
+            "level，value 为 all（所有新消息）、mentions（只在 @他和他参与的支线有回复时）"
+            "或 mute（静音）。改之前可以先用 cheese_read 读 settings 看现在的设置。",
+            {
+                "where": _text("频道编号；省略是通知设置"),
+                "key": _text("哪一项"),
+                "value": _text("改成什么"),
+            },
+            ["key", "value"],
+        ),
+        _tool(
+            "cheese_web_fetch",
+            "读一个网页（平台去抓，读不出正文时会换办法再试）。带 prompt 返回答案，不带"
+            "返回整页 Markdown。它读一个网址，不是搜索引擎；网址里不要写进用户工作里的"
+            "内容。",
+            {
+                "url": _text("网址"),
+                "prompt": _text("想从这一页知道什么"),
+            },
+            ["url"],
+        ),
+        _tool(
             "cheese_project_search",
             "按关键词搜这个项目：频道名、消息、文档段落、评论、周报、任务卡、资料库文件名、"
             "产物。只搜提问人能看的频道。返回每条命中在哪个频道、谁写的和一段摘录。"
@@ -1395,7 +1544,7 @@ DELEGATED_TOOLS = ToolTable(
         _tool(
             "cheese_task_get",
             "读一道题的全部字段：草稿（draft）或已发布的题目（task），二选一。字段名和 "
-            "cheese_task_write 写入时用的一样。草稿带 version：写入时原样带上，"
+            "cheese_problem_write 写入时用的一样。草稿带 version：写入时原样带上，"
             "用户在那之后改过的格子不会被覆盖。",
             {
                 "draft": {"type": "integer", "description": "草稿 id"},
@@ -1403,12 +1552,12 @@ DELEGATED_TOOLS = ToolTable(
             },
         ),
         _tool(
-            "cheese_task_write",
+            "cheese_problem_write",
             TASK_WRITE_DESCRIPTION,
             TASK_WRITE_FIELDS,
         ),
         _tool(
-            "cheese_task_publish",
+            "cheese_problem_publish",
             "发布一份草稿：新题目发布出去（空间需要审核时进入待审核），已发布题目的草稿"
             "则把修改保存到题目上。和用户点「发布」「保存」是同一个操作。草稿发布后就"
             "没有了，对话跟着题目走。用户说发布、保存时再调用。",
@@ -1425,32 +1574,6 @@ DELEGATED_TOOLS = ToolTable(
                 "pages": _text("PDF 的页码范围，如 1-20；省略读前 20 页"),
             },
             ["file"],
-        ),
-        _tool(
-            "cheese_message_draft",
-            "替用户起草一条要发到项目里的消息：发到一个频道、任务或支线（topic，"
-            "编号见当前页面或聊天记录）。不会发出去：面板里出现一张卡片，用户看过、"
-            "可以改，点了才以他的名义发出。用户让你回复、通知、催一下别人时用它；"
-            "起草完一句话说写了什么，不要说已经发了。",
-            {
-                "topic": _text("频道、任务或支线的编号"),
-                "text": _text("消息正文，用户的口吻，Markdown"),
-            },
-            ["topic", "text"],
-        ),
-        _tool(
-            "cheese_task_draft",
-            "替用户起草一个任务，交给项目的 AI 队友去做：开在一个频道里（topic 给频道，"
-            "或频道里任何一处的编号），标题和交代写清楚要做什么、做到什么算完。"
-            "不会开出去：面板里出现一张卡片，用户确认后以他的名义开任务，交代作为第一条"
-            "消息发进去，AI 队友随之开始做。要改项目里的文档、代码，或做要花时间的活时用它，"
-            "你自己不动手。",
-            {
-                "topic": _text("频道的编号，或频道里任何一处的编号"),
-                "title": _text("任务标题，一句话"),
-                "text": _text("交代：要做什么、依据什么、做到什么算完"),
-            },
-            ["topic", "title", "text"],
         ),
         _tool(
             "cheese_space_materials",
@@ -1675,6 +1798,73 @@ def _canvas_change(change) -> dict:
     return out
 
 
+#: What lives outside projects, read where the publish page's tools read it.
+_READ_ELSEWHERE = (
+    (re.compile(r"spaces/(\d+)/tasks/(\d+)"), "problem"),
+    (re.compile(r"spaces/(\d+)/materials/(\d+)"), "material"),
+    (re.compile(r"spaces/(\d+)"), "materials"),
+    (re.compile(r"drafts/(\d+)"), "draft"),
+    (re.compile(r"files/(\d+)"), "file"),
+)
+#: How many pages of a PDF one read says.
+_PDF_PAGES = 20
+
+
+def _read_kind(ref: str):
+    """Which of `_READ_ELSEWHERE` ``ref`` is, with its numbers; None for a
+    project's own things, which `/assistant/agent/read` reads."""
+    text = ref.strip().strip("/")
+    for pattern, kind in _READ_ELSEWHERE:
+        m = pattern.fullmatch(text)
+        if m:
+            return kind, [int(g) for g in m.groups()]
+    return None
+
+
+def _pdf_pages(page: int) -> str:
+    return f"{(page - 1) * _PDF_PAGES + 1}-{page * _PDF_PAGES}"
+
+
+def _read_plan(args: dict) -> dict:
+    page = args.get("page") or 1
+    if not isinstance(page, int) or page < 1:
+        raise ValueError("page 是从 1 开始的整数")
+    if args["ref"].strip().strip("/") == "me":
+        return {"method": "GET", "path": "/tasks/joined"}
+    if args["ref"].strip().strip("/") == "settings":
+        return {"method": "POST", "path": "/notifications/preferences/agent/read", "body": {}}
+    found = _read_kind(args["ref"])
+    if found is None:
+        body = {"ref": args["ref"], "page": page}
+        return {"method": "POST", "path": "/assistant/agent/read", "body": body}
+    kind, ids = found
+    if kind == "problem":
+        body = {"task": ids[1]}
+        return {"method": "POST", "path": "/task-drafts/agent/read", "body": body}
+    if kind == "draft":
+        body = {"draft": ids[0]}
+        return {"method": "POST", "path": "/task-drafts/agent/read", "body": body}
+    if kind == "file":
+        body = {"file": ids[0], "pages": _pdf_pages(page)}
+        return {"method": "POST", "path": "/task-drafts/agent/file", "body": body}
+    body = {"space": ids[0]}
+    if kind == "material":
+        body.update(material=ids[1], pages=_pdf_pages(page))
+    return {"method": "POST", "path": "/task-drafts/agent/materials", "body": body}
+
+
+def _say_read(args: dict, data, environ) -> str:
+    if args["ref"].strip().strip("/") == "me":
+        return _say_my_tasks(args, data, environ)
+    found = _read_kind(args["ref"])
+    kind = found[0] if found else None
+    if kind == "file":
+        return _say_document(args, data, environ)
+    if kind in ("material", "materials"):
+        return _say_materials(args, data, environ)
+    return (data or {}).get("text") or ""
+
+
 def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     """The one backend request a platform tool is, as data.
 
@@ -1872,6 +2062,37 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             raise ValueError("Missing CHEESE_TOPIC")
         query = urllib.parse.urlencode({"path": path})
         return {"method": "GET", "path": f"/topics/{topic}/preview/file?{query}"}
+    if tool == "cheese_inbox":
+        return {
+            "method": "POST",
+            "path": "/assistant/agent/inbox",
+            "body": _given(args, "project"),
+        }
+    if tool == "cheese_read":
+        return _read_plan(args)
+    if tool == "cheese_settings_set":
+        where = (args.get("where") or "").strip()
+        if where and where != "me":
+            body = {"where": where, "level": args["value"]}
+            return {"method": "POST", "path": "/assistant/agent/notify", "body": body}
+        body = {"key": args["key"], "value": args["value"]}
+        return {"method": "POST", "path": "/notifications/preferences/agent/set", "body": body}
+    if tool == "cheese_search":
+        where = (args.get("where") or "").strip().strip("/")
+        space = re.fullmatch(r"spaces/(\d+)", where)
+        if space:
+            body = {"space": int(space.group(1)), "query": args.get("query") or ""}
+            return {"method": "POST", "path": "/task-drafts/agent/search", "body": body}
+        if not (args.get("query") or "").strip():
+            raise ValueError("cheese_search 需要 query（只有搜空间里的题目时可以留空）")
+        body = {"query": args["query"], **({"project": where} if where else {})}
+        return {"method": "POST", "path": "/assistant/agent/search", "body": body}
+    if tool == "cheese_help":
+        if args.get("page"):
+            return {"method": "POST", "path": "/docs/agent/read", "body": {"page": args["page"]}}
+        if not args.get("query"):
+            raise ValueError("cheese_help 要 query 或 page 之一")
+        return {"method": "POST", "path": "/docs/agent/search", "body": {"query": args["query"]}}
     if tool == "cheese_my_tasks":
         return {"method": "GET", "path": "/tasks/joined"}
     if tool == "cheese_task_search":
@@ -1882,22 +2103,11 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         if not body:
             raise ValueError("cheese_task_get 需要 draft 或 task 之一")
         return {"method": "POST", "path": "/task-drafts/agent/read", "body": body}
-    if tool == "cheese_task_write":
+    if tool == "cheese_problem_write":
         return {"method": "POST", "path": "/task-drafts/agent/write", "body": args}
-    if tool == "cheese_task_publish":
+    if tool == "cheese_problem_publish":
         body = {"draft": args["draft"]}
         return {"method": "POST", "path": "/task-drafts/agent/publish", "body": body}
-    if tool == "cheese_message_draft":
-        body = {"kind": "message", "topic": args["topic"], "text": args["text"]}
-        return {"method": "POST", "path": "/assistant/proposals", "body": body}
-    if tool == "cheese_task_draft":
-        body = {
-            "kind": "task",
-            "topic": args["topic"],
-            "title": args["title"],
-            "text": args["text"],
-        }
-        return {"method": "POST", "path": "/assistant/proposals", "body": body}
     if tool == "cheese_file_read":
         body = {"file": args["file"], **_given(args, "pages")}
         return {"method": "POST", "path": "/task-drafts/agent/file", "body": body}
@@ -3512,7 +3722,56 @@ def _chat_send(args: dict, host) -> str:
     return _say_chat_send(args, data, host.environ)
 
 
+def _act(body: dict, host):
+    """Ask the gate (`/assistant/agent/act`); when it lets the action
+    through, make its calls as the person with the pass it gave. What the last
+    call answered, and what 芝士 is told; None for the answer when it was
+    turned into a card or not done."""
+    data = host.request(
+        {"method": "POST", "path": "/assistant/agent/act", "body": body}
+    ).get("data") or {}
+    if not data.get("done"):
+        why = data.get("reason") or "需要用户确认"
+        if data.get("card"):
+            return None, (
+                f"还没有执行：已在面板中请用户确认（{why}）。告诉用户确认卡片在面板中，"
+                "不要说已经执行。"
+            )
+        return None, f"没有做：{why}。"
+    answered, made = None, None
+    for call in data.get("calls") or []:
+        plan = dict(call)
+        if made is not None:
+            plan["path"] = plan["path"].replace("{prev}", str(made))
+        plan["pass"] = data["pass"]
+        answered = host.request(plan).get("data")
+        made = answered.get("id") if isinstance(answered, dict) else None
+    return answered, data.get("said") or "已完成。"
+
+
+def _acting(kind: str, *fields: str):
+    def step(args: dict, host) -> str:
+        body = {"kind": kind, **_given(args, *fields)}
+        return _act(body, host)[1]
+
+    return step
+
+
+def _web_fetch(args: dict, host):
+    answered, said = _act(
+        {"kind": "fetch", **_given(args, "url", "prompt")}, host
+    )
+    return _say_fetch(args, answered, host.environ) if answered is not None else said
+
+
 _STEPS = {
+    "cheese_message_send": _acting("message", "where", "text"),
+    "cheese_task_open": _acting("task", "where", "title", "text"),
+    "cheese_review_decide": _acting("review", "ref", "choice", "text"),
+    "cheese_inbox_respond": _acting("respond", "ref", "choice"),
+    "cheese_member_set": _acting("member", "where", "who", "role", "remove"),
+    "cheese_channel_create": _acting("channel", "where", "title", "text", "members_only"),
+    "cheese_web_fetch": _web_fetch,
     "chat_send": _chat_send,
     "cheese_task": _task,
     "cheese_chat_get": _chat_get,
@@ -3534,9 +3793,9 @@ _STEPS = {
     "cheese_feedback_release": _feedback_release,
     "cheese_run_records": _run_records,
     "cheese_wait_environment": _wait_machine,
-    "cheese_task_write": lambda args, host: _task_step("cheese_task_write", args, host),
-    "cheese_task_publish": lambda args, host: _task_step(
-        "cheese_task_publish", args, host
+    "cheese_problem_write": lambda args, host: _task_step("cheese_problem_write", args, host),
+    "cheese_problem_publish": lambda args, host: _task_step(
+        "cheese_problem_publish", args, host
     ),
 }
 
@@ -3673,7 +3932,7 @@ def _task_step(tool: str, args: dict, host) -> str:
         if why is None:
             raise
         raise PlatformToolError(f"未完成：{why.rstrip('。')}。") from exc
-    if tool == "cheese_task_publish":
+    if tool == "cheese_problem_publish":
         task = data.get("task") or {}
         if data.get("saved"):
             return f"已保存题目 {task.get('id')}「{task.get('name')}」的修改。"
@@ -3720,12 +3979,21 @@ def _say_task_search(args, data, env) -> str:
             if t.get("deadline")
             else ""
         )
-        lines.append(
-            f"- 题目 {t.get('id')}「{t.get('name')}」{state}{due}：{t.get('intro') or ''}"
+        space = re.fullmatch(r"spaces/(\d+)", (args.get("where") or "").strip("/"))
+        name = (
+            f"题目「{t.get('name')}」（spaces/{space.group(1)}/tasks/{t.get('id')}）"
+            if space
+            else f"题目 {t.get('id')}「{t.get('name')}」"
         )
+        lines.append(f"- {name}{state}{due}：{t.get('intro') or ''}")
     for d in data.get("drafts") or []:
         what = f"题目 {d['taskId']} 的未保存修改" if d.get("taskId") else "新题目"
-        lines.append(f"- 草稿 {d.get('id')}「{d.get('name') or '未命名'}」（{what}）")
+        name = (
+            f"草稿「{d.get('name') or '未命名'}」（drafts/{d.get('id')}）"
+            if "where" in args
+            else f"草稿 {d.get('id')}「{d.get('name') or '未命名'}」"
+        )
+        lines.append(f"- {name}（{what}）")
     return "\n".join(lines) or "没有找到。换个关键词，或把 query 留空看最近的题目。"
 
 
@@ -3742,18 +4010,31 @@ def _say_document(args, data, env):
     if data.get("pages"):
         head += f"（共 {data['pages']} 页，这里是第 {data.get('first')}–{data.get('last')} 页）"
     tail = ""
+    reading = "ref" in args
     if data.get("pages") and data.get("last", 0) < data["pages"]:
-        tail += f"\n\n还有第 {data['last'] + 1} 页起没有读：用 pages 接着读。"
+        tail += (
+            f"\n\n还有第 {data['last'] + 1} 页起没有读：读同一个编号，"
+            f"page={(args.get('page') or 1) + 1}。"
+            if reading
+            else f"\n\n还有第 {data['last'] + 1} 页起没有读：用 pages 接着读。"
+        )
     if data.get("cut"):
-        tail += "\n\n文字太长，后面截掉了：缩小 pages 的范围再读。"
+        tail += (
+            "\n\n文字太长，后面截掉了。"
+            if reading
+            else "\n\n文字太长，后面截掉了：缩小 pages 的范围再读。"
+        )
     return Said(f"{head}\n\n{data.get('text') or ''}{tail}", data.get("images") or [])
 
 
 def _say_materials(args, data, env):
     data = data or {}
     if "materials" in data:
+        found = _read_kind(args["ref"]) if "ref" in args else None
         rows = [
-            f"- 资料 {m.get('id')}：{m.get('name')}"
+            f"- {m.get('name')}（spaces/{found[1][0]}/materials/{m.get('id')}）"
+            if found
+            else f"- 资料 {m.get('id')}：{m.get('name')}"
             for m in data.get("materials") or []
         ]
         return "\n".join(rows) or "这个空间的资料库是空的。"
@@ -3993,13 +4274,14 @@ _SAY = {
     "cheese_memory_read": _say_memory_read,
     "cheese_attachment_read": _say_attachment_read,
     "cheese_my_tasks": _say_my_tasks,
-    "cheese_message_draft": lambda a, d, e: (
-        f"已起草发到「{(d or {}).get('topicName')}」的消息，等用户在面板里确认发送；"
-        "还没有发出去。"
+    "cheese_inbox": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_read": _say_read,
+    "cheese_settings_set": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_search": lambda a, d, e: (
+        _say_task_search(a, d, e) if "tasks" in (d or {}) else (d or {}).get("text") or ""
     ),
-    "cheese_task_draft": lambda a, d, e: (
-        f"已起草任务「{(d or {}).get('title')}」，开在频道「{(d or {}).get('channelName')}」，"
-        "等用户在面板里确认；还没有开。"
+    "cheese_help": lambda a, d, e: (
+        _say_docs_read(a, d, e) if a.get("page") else _say_docs_search(a, d, e)
     ),
     "cheese_task_search": _say_task_search,
     "cheese_task_get": lambda a, d, e: (d or {}).get("text") or "",
@@ -4064,6 +4346,8 @@ class LocalHost:
         ):
             if self.environ.get(name):
                 req.add_header(header, self.environ[name])
+        if plan.get("pass"):
+            req.add_header("X-Cheese-Pass", plan["pass"])
         # Generous because one caller is slow: reading a web page can climb a
         # ladder of fetch strategies ending in a real browser, which measured
         # 22 s on a page that answered and longer on one that tried every rung.
