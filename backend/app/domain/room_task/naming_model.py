@@ -26,7 +26,7 @@ from dataclasses import dataclass
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core import model_roles
 from app.domain.gateway_chat import Usage, response_cost
 from app.domain.room_task.models import PLACEHOLDER_TITLE, Task
 from app.domain.room_task.title_width import (
@@ -204,7 +204,7 @@ async def _ask(
                 f"{gateway_base()}/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
                 json={
-                    "model": settings.topic_naming_model,
+                    "model": model_roles.model("topic_naming_model"),
                     "messages": messages,
                     "max_tokens": _ANSWER_TOKENS,
                     "temperature": 0.2,
@@ -257,7 +257,7 @@ async def _record_usage(factory: SessionFactory, answer: Answer, task: Task) -> 
             await Ledger(session).record_project_call(
                 task.project_id,
                 kind=USAGE_KIND,
-                model=settings.topic_naming_model,
+                model=model_roles.model("topic_naming_model"),
                 input_tokens=answer.usage.prompt_tokens,
                 output_tokens=answer.usage.completion_tokens,
                 cost_usd=answer.cost_usd,

@@ -60,6 +60,7 @@ from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.agent import gateway_catalog
 from app.domain.agent.device_hub import DeviceOffline, device_hub
+from app.domain.agent.gateway_models import roles as model_role_store
 from app.domain.agent.preview_owner import reuse_preview_owner_connections
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_instance.services import AgentInstanceService
@@ -440,6 +441,10 @@ async def lifespan(application: FastAPI):
         gateway_catalog.keep_fresh(get_llm_gateway()),
         name="gateway model catalogue",
     )
+    # Which gateway model each platform model role runs on, as an administrator
+    # pointed it (`app.core.model_roles`): read off the request path, the same
+    # way. Until the first pass lands every role reads its Settings field.
+    background.spawn(model_role_store.keep_fresh(), name="platform model roles")
 
     async def hand_over() -> None:
         # Hand the running work to the next process, in the order that lets

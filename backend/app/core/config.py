@@ -293,6 +293,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # through the Anthropic-compatible gateway (spec §9: 不绑定模型). For Zhipu
     # GLM: base_url=https://open.bigmodel.cn/api/anthropic, token=ZHIPU_API_KEY.
     # Swapping to LiteLLM / Anthropic later is just env, no code change.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     agent_model: str = "glm-5.2"
     # Which models each harness that does NOT speak the platform gateway may
     # be pointed at ({"codex": ["gpt-5.2"]}). A harness that speaks the gateway
@@ -427,6 +429,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # The gateway model 问芝士 answers with. Its virtual key is minted through
     # `llm_gateway_admin_base`; what it spends is charged to the asker's
     # personal credits, so the model must be priced on the gateway.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     docs_assistant_model: str = "deepseek-flash"
     # Whether 问芝士 searches and reads the docs itself, over the three tools in
     # `docs_site/tools.py`, instead of answering from one round of retrieval.
@@ -438,6 +442,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # --- A person's 芝士 outside any project (app/domain/agent/personal, #2285) ---
     # The gateway model it answers with; charged to the asker's personal
     # credits at what the gateway spent, so the model must be priced there.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     assistant_model: str = "deepseek-flash"
     docs_question_retention_days: int = 90
     # How long a docs sign-in lasts before the reader goes through the
@@ -449,10 +455,14 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # through the gateway, on a virtual key of its own capped at this budget
     # per 30 days. Unset gateway admin credentials = an unnamed task's own
     # session is reminded to name it with `cheese_title`.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     topic_naming_model: str = "deepseek-flash"
     topic_naming_budget_usd: float = 10.0
     topic_naming_timeout_seconds: float = 15.0
     # 「让芝士看看」：环境准备失败时，读日志和两段脚本给出原因和改法的那一问。
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
@@ -461,6 +471,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # small model that tidies the transcript into a message. Recorded per
     # person in voice_inputs and per project in resource_usage; while
     # voice_input_charged is off the rows cost the project no credits.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     voice_asr_model: str = "qwen-audio-asr"
     voice_polish_model: str = "deepseek-flash"
     voice_input_charged: bool = False
@@ -875,6 +887,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     memory_migration_timeout_s: float = 600.0
     # The gateway model that sorts old memories, and what its key may spend per
     # 30 days: the platform runs it, so no person's credits pay for it.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     memory_migration_model: str = "deepseek-flash"
     memory_migration_budget_usd: float = 10.0
     # 一次问模型的旧记忆条数（见 `migration.MIGRATION_CHUNK`）。

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 
-from app.core.config import settings
+from app.core import model_roles
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, mint_session_token
@@ -102,7 +102,7 @@ async def ensure(
         effort = launched_env.pop(EFFORT_ENV, None)
         spec = SessionSpec(
             system_prompt=system_prompt,
-            model=model or settings.agent_model,
+            model=model or model_roles.model("agent_model"),
             gone_after_s=pkg.RUNNER_GONE_S,
             resume_token=resume_token,
             model_settings=ModelSettings(effort=effort),

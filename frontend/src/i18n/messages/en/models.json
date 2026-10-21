@@ -13,7 +13,8 @@
     "budgetFailed": "Could not set the limit. Try again.",
     "section": {
       "budgets": "Limits",
-      "audit": "Recent actions"
+      "audit": "Recent actions",
+      "roles": "Platform model roles"
     },
     "gateway": {
       "unconfigured": "This deployment has no gateway admin key, so models and limits can neither be read nor written.",
@@ -155,6 +156,11 @@
     "unblocked": "Unblocked “{name}”",
     "budgetSet": "Updated the limit for “{name}”",
     "dismiss": "Dismiss this notice"
+  },
+  "caution": {
+    "title": "Before you change {name}",
+    "confirm": "Continue",
+    "roles": "{name} runs these platform roles: {roles}. Pausing or deleting it is refused until they point at another model; an edit here changes them too."
   },
   "confirm": {
     "delete": {
@@ -339,5 +345,29 @@
     "line": "{price} per million tokens: {before} → {after}.",
     "effect": "From now on all usage of {name} is charged at the new prices.",
     "confirm": "Change prices"
+  },
+  "roles": {
+    "hint": "The jobs the platform runs on a model it picks itself. A change applies at once, with no redeploy; a project's own default model and subagent default still win in that project.",
+    "now": "Now: {model}",
+    "unset": "Not set: falls back to the project's default model",
+    "fallback": "Deployment default ({model})",
+    "fallbackNone": "Not set (the project's default model)",
+    "separator": ", ",
+    "loadFailed": "Couldn't load the platform model roles",
+    "failed": "Couldn't change the role",
+    "notice": {
+      "set": "{role} now points at the chosen model"
+    },
+    "role": {
+      "agent_model": "Default model",
+      "subagent_model": "Subagent default",
+      "assistant_model": "Personal assistant",
+      "docs_assistant_model": "Docs assistant",
+      "topic_naming_model": "Topic naming",
+      "environment_diagnosis_model": "Environment diagnosis",
+      "voice_asr_model": "Voice input: speech to text",
+      "voice_polish_model": "Voice input: transcript tidy-up",
+      "memory_migration_model": "Memory migration"
+    }
   }
 }

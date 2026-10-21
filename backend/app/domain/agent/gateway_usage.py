@@ -39,13 +39,14 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import model_roles
 from app.core.background import hold
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
-from app.domain.agent.model_catalog import catalog, project_pool
+from app.domain.agent.model_catalog import catalog, project_pool, subagent_default
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.queries import _model_policy_call, _Proposed, task_credit_context
 from app.domain.agent.room.sessions import RoomSessions
@@ -344,15 +345,16 @@ async def _model_kwargs(
     # 走到这里还没过的，是平台自己发起的那一轮 —— 记忆整理（dream），
     # 它不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
     async with sessions() as session:
+        policy = gate.policy_of(
+            project.settings,
+            (await team_terms(session, project.team_id)).model_tiers,
+            overseas_approved=await overseas_approved(session, project.team_id),
+        )
         proposed = await service._pass_policy_gate(
             session,
             topic_id,
             _model_policy_call(project, agent),
-            gate.policy_of(
-                project.settings,
-                (await team_terms(session, project.team_id)).model_tiers,
-                overseas_approved=await overseas_approved(session, project.team_id),
-            ),
+            policy,
             actor=acting_agent or agent.handle,
         )
         if proposed is not None:
@@ -360,10 +362,8 @@ async def _model_kwargs(
             raise gate.OverTier(proposed.proposal.content)
     supply = bound.supply
     model = bound.wire_model
-    child_default = (project.settings or {}).get("default_subagent_model") or (
-        project.settings or {}
-    ).get("default_model")
     child_choices = catalog(project.settings)
+    child_default = subagent_default(project.settings, child_choices, policy)
     # An unused invalid child default must not block a valid main override.
     # Preserve it for the child request's admission refusal, never replace it.
     child_model = child_default
@@ -755,7 +755,7 @@ async def charge_turn_spend(
         gateway,
         key,
         Charge(
-            model=settings.agent_model,
+            model=model_roles.model("agent_model"),
             topic_id=topic_id,
             turn_id=turn_id,
         ),

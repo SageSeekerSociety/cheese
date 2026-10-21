@@ -17,6 +17,7 @@
 
 import json
 import uuid
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -27,6 +28,7 @@ from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_admin import GatewayAdmin
 from app.domain.agent.gateway_models import GatewayModelsService, reset_cache
+from app.domain.agent.models import PlatformModelRole
 from app.domain.agent.schemas import (
     ModelCreate,
     ModelUpdate,
@@ -42,9 +44,24 @@ class _StubDb:
 
     def __init__(self) -> None:
         self.added: list[object] = []
+        # Platform model roles an administrator pointed (`platform_model_roles`).
+        self.roles: dict[str, PlatformModelRole] = {}
 
     def add(self, obj: object) -> None:
+        if isinstance(obj, PlatformModelRole):
+            self.roles[obj.role] = obj
+            return
         self.added.append(obj)
+
+    async def scalars(self, _statement: object) -> object:
+        rows = list(self.roles.values())
+        return SimpleNamespace(all=lambda: rows)
+
+    async def get(self, _cls: object, key: str) -> PlatformModelRole | None:
+        return self.roles.get(key)
+
+    async def delete(self, obj: PlatformModelRole) -> None:
+        self.roles.pop(obj.role, None)
 
     async def flush(self) -> None:
         return None
@@ -83,6 +100,8 @@ class _Gateway:
     def __init__(self, rows: list[dict] | None = None) -> None:
         self.rows: list[dict] = json.loads(json.dumps(rows or []))
         self.requests: list[httpx.Request] = []
+        # Virtual keys by alias -> the models each may call (`/key/update`).
+        self.keys: dict[str, list[str]] = {}
 
     def _find(self, model_id: str) -> dict | None:
         return next((r for r in self.rows if r["model_info"]["id"] == model_id), None)
@@ -124,6 +143,12 @@ class _Gateway:
             return httpx.Response(200, json={})
         if path == "/model/delete":
             self.rows = [r for r in self.rows if r["model_info"]["id"] != body["id"]]
+            return httpx.Response(200, json={})
+        if path == "/key/update":
+            alias = body.get("key_alias")
+            if alias not in self.keys:
+                return httpx.Response(404, json={"detail": "no key holds the alias"})
+            self.keys[alias] = list(body["models"])
             return httpx.Response(200, json={})
         if path in ("/model/block", "/model/unblock"):
             row = self._find(body["model_id"])

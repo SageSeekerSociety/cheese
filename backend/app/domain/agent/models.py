@@ -168,6 +168,23 @@ class GatewayAdminAudit(UuidPk, Timestamps, Base):
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class PlatformModelRole(Timestamps, Base):
+    """Which gateway model a platform model role runs on, as an administrator
+    pointed it (``app.core.model_roles`` lists the roles and reads them).
+
+    One row per role that has been pointed; a role with no row reads its
+    ``Settings`` field, so a deployment that never touches the page behaves as
+    it did before the table existed. Who pointed it and when is in
+    ``gateway_admin_audit`` (action ``role.set``), next to the model edits a
+    role is checked against.
+    """
+
+    __tablename__ = "platform_model_roles"
+
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model: Mapped[str] = mapped_column(String(200))
+
+
 class TurnResume(UuidPk, Base):
     """A resume the platform owes one seat after its turn failed on a transient
     model-service error (`agent.turn_resume`).

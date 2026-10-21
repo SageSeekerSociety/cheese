@@ -121,6 +121,8 @@ export interface GatewayModelInfo {
   selectable: boolean
   priced: boolean
   offered: boolean
+  /** 跑在它上面的平台模型角色；有角色时停用、删除都会被拒，先把角色指走。 */
+  roles?: string[]
   blocked_reasons: string[]
   unpriced_reason: string | null
   upstream: GatewayUpstream
@@ -341,4 +343,27 @@ export function setGatewayProjectBudget(projectId: string, maxBudgetUsd: number 
 
 export function getGatewayAudit(limit: number): Promise<GatewayAuditPayload> {
   return request<GatewayAuditPayload>(`/admin/gateway/audit${gatewayQuery({ limit })}`)
+}
+
+/** 一个平台模型角色（默认模型、语音输入、话题命名……）现在跑在哪个网关模型上。
+ *  `chosen`：管理员在页面上指过；没指过时读部署的设置项（`fallback`）。
+ *  `offered_only`：只能指到上架的模型。 */
+export interface PlatformRole {
+  role: string
+  model: string | null
+  fallback: string | null
+  chosen: boolean
+  offered_only: boolean
+}
+
+export function getPlatformRoles(): Promise<{ roles: PlatformRole[] }> {
+  return request<{ roles: PlatformRole[] }>('/admin/gateway/roles')
+}
+
+/** 把一个角色指到 `model`；`null` 回到部署的设置项。立即生效，有审计。 */
+export function setPlatformRole(role: string, model: string | null): Promise<{ role: string; model: string | null }> {
+  return request<{ role: string; model: string | null }>(`/admin/gateway/roles/${encodeURIComponent(role)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ model }),
+  })
 }

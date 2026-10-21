@@ -26,6 +26,7 @@ from app.api.refusal import refuse
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
+from app.core import model_roles
 from app.core.config import settings
 from app.core.errors import SystemBusyError
 from app.core.sentences import say
@@ -80,7 +81,7 @@ async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
         distill = (
             settings.anthropic_base_url,
             settings.anthropic_auth_token,
-            settings.agent_model,
+            model_roles.model("agent_model"),
         )
 
     outcome = await fetch_url(

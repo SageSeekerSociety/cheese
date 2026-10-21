@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core import model_roles
 from app.domain.assistant.models import (
     AssistantGateCheck,
     AssistantMessage,
@@ -98,7 +98,7 @@ def key_spec() -> KeySpec:
     return KeySpec(
         name="assistant-gate-gateway-key",
         alias="assistant-gate",
-        model=settings.assistant_model,
+        model=model_roles.model("assistant_model"),
         budget_usd=200.0,
         rpm=600,
     )
@@ -110,7 +110,9 @@ async def gatekeeper(session: AsyncSession) -> GatewayChat | None:
     key = await service_key(session, key_spec())
     if key is None:
         return None
-    return GatewayChat(key, settings.assistant_model, max_tokens=QUICK_TOKENS)
+    return GatewayChat(
+        key, model_roles.model("assistant_model"), max_tokens=QUICK_TOKENS
+    )
 
 
 @dataclass(frozen=True)
@@ -282,7 +284,7 @@ async def keep(
         await Ledger(session).record(
             await payer_for_person(session, user_id),
             credits=0.0,
-            model=settings.assistant_model,
+            model=model_roles.model("assistant_model"),
             input_tokens=verdict.usage.prompt_tokens,
             output_tokens=verdict.usage.completion_tokens,
             cache_read_tokens=verdict.usage.cache_read_tokens,
