@@ -39,7 +39,7 @@ from app.domain.integration.models import (
     Integration,
     MailDraft,
 )
-from app.domain.integration.ports import RoomFiles
+from app.domain.integration.ports import RoomFiles, TeammateNames
 
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
@@ -322,9 +322,12 @@ def guard_mail_hosts(config: dict) -> None:
 
 
 class IntegrationService:
-    def __init__(self, session: AsyncSession, room_files: RoomFiles):
+    def __init__(
+        self, session: AsyncSession, room_files: RoomFiles, teammates: TeammateNames
+    ):
         self._session = session
         self._room_files = room_files
+        self._teammates = teammates
 
     async def owned(self, owner_user_id: int) -> list[Integration]:
         return list(
@@ -599,12 +602,15 @@ class IntegrationService:
             )
             if hashlib.sha256(data).hexdigest() != item["sha256"]:
                 # The teammate who drafted it is the one to ask for a new
-                # draft; a screen draws the seat as that teammate's name.
+                # draft, called by its name: the refusal is read in a toast
+                # on 「我的连接」 as well as on the room's card.
                 raise ValidationError(
                     say(
                         "mailAttachmentChanged",
                         name=item["name"],
-                        agent=f"<@{draft.created_by}>",
+                        agent=await self._teammates.name_of(
+                            draft.project_id, draft.created_by
+                        ),
                     )
                 )
             files.append((item["name"], data))

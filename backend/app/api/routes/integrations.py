@@ -28,6 +28,7 @@ from app.core.errors import (
     message_key,
 )
 from app.core.sentences import exception_text, listing, say, with_keys
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.identity.actor import Actor
@@ -54,6 +55,7 @@ from app.domain.notice_meta import (
 )
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
+from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -68,7 +70,26 @@ def _service(db: AsyncSession) -> IntegrationService:
     assembles the route's dependencies hands it in — the shape
     `app.domain.user.ports` uses for the same reason.
     """
-    return IntegrationService(db, library)
+    return IntegrationService(db, library, _Teammates(db))
+
+
+class _Teammates:
+    """`integration.ports.TeammateNames`, answered by the project's roster of
+    teammates (`agent_instance`, a layer above `integration`)."""
+
+    def __init__(self, db: AsyncSession):
+        self._db = db
+
+    async def name_of(self, project_id: uuid.UUID, seat: str) -> str:
+        project = await ProjectRepository(self._db).get(project_id)
+        named = (
+            None
+            if project is None
+            else await AgentInstanceService(self._db).for_seat_handle(project, seat)
+        )
+        if named is not None and str(named.name_source) != "default":
+            return named.display_name
+        return say("teammateDefaultName")
 
 
 class MailIn(BaseModel):
