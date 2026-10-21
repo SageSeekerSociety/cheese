@@ -15,6 +15,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { taskRowActions } from '../commands/taskActions'
+import { copyTaskLink } from '../commands/taskLink'
 import { topicActions } from '../commands/topicActions'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { myHandle } from '../me'
@@ -72,7 +73,11 @@ export function useTopicRailRoutes(projectId: () => string | null, on: TopicRail
   /** 侧栏里给一件任务做得了的事：和任务页右上角同一份清单，只留扫列表时敢点的
    *  「重命名」「复制链接」（见 `commands/taskActions.ts`）。 */
   function taskActionsFor(task: TaskActionTask): MenuCommand[] {
-    return taskRowActions(task, router, { rename: () => on.renameTask(task) }, myHandle())
+    return taskRowActions(
+      task,
+      { rename: () => on.renameTask(task) },
+      { me: myHandle(), copyLink: () => copyTaskLink(router, task) }
+    )
   }
 
   return { routeName, openPage, prefetchPage, openProject, cancelPrefetch, actionsFor, taskActionsFor }

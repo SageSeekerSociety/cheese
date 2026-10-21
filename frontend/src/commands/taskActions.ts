@@ -6,10 +6,7 @@
 //
 // 权限也在这里判：改名归参加这件活的人（负责人或协作者，和后端 `topics_title.py` 同
 // 一条），转交、关闭、重新打开只归负责人。
-import type { Router } from 'vue-router'
 import type { MenuCommand } from '.'
-
-import { copyLink, linkOf } from './copy'
 
 import { t } from '@/i18n'
 
@@ -36,6 +33,9 @@ export interface TaskViewer {
   me: string
   /** 这件活里还有别人可以接（负责人不能转给自己）。 */
   canHandOver: boolean
+  /** 复制这件任务的链接。没有 router 的宿主（单测、组件预览）给 null，那一件就不画：
+   *  算链接要 router，而这一份不许自己去读路由（组件那一层不认路由）。 */
+  copyLink?: (() => void) | null
 }
 
 /** 我参不参加这件活：负责人或协作者。 */
@@ -47,29 +47,17 @@ export function takesPartInTask(
 }
 
 /** 一件任务能做得到的全部事，按它此刻的样子（开着 / 关了、我是不是参与的人）。 */
-export function taskActions(
-  task: TaskActionTask,
-  router: Router | null,
-  on: TaskActionHandlers,
-  viewer: TaskViewer
-): MenuCommand[] {
+export function taskActions(task: TaskActionTask, on: TaskActionHandlers, viewer: TaskViewer): MenuCommand[] {
   const actions: MenuCommand[] = []
   if (takesPartInTask(task, viewer.me))
     actions.push({ id: 'task.rename', title: t('work.task.rename'), icon: 'mdi-pencil-outline', run: on.rename })
-  // 复制链接谁都能做：看得见这件活的人就有它的地址。没有 router 的宿主（单测、组件
-  // 预览）不算链接，那一件就不画。
-  if (router)
+  // 复制链接谁都能做：看得见这件活的人就有它的地址。
+  if (viewer.copyLink)
     actions.push({
       id: 'task.copyLink',
       title: t('work.room.menu.copyLink'),
       icon: 'mdi-link-variant',
-      run: () =>
-        void copyLink(
-          linkOf(router, {
-            name: 'workspace-task',
-            params: { projectId: task.project_id, topicId: task.room_id, taskId: task.id },
-          })
-        ),
+      run: viewer.copyLink,
     })
   if (task.owner_handle !== viewer.me) return actions
   if (task.status === 'open') {
@@ -92,15 +80,13 @@ const ROW_ACTION_IDS = new Set(['task.rename', 'task.copyLink'])
 
 export function taskRowActions(
   task: TaskActionTask,
-  router: Router | null,
   on: Pick<TaskActionHandlers, 'rename'>,
-  me: string
+  viewer: Pick<TaskViewer, 'me' | 'copyLink'>
 ): MenuCommand[] {
   const full = taskActions(
     task,
-    router,
     { ...on, handOver: () => {}, close: () => {}, reopen: () => {} },
-    { me, canHandOver: false }
+    { me: viewer.me, canHandOver: false, copyLink: viewer.copyLink }
   )
   return full.filter((action) => ROW_ACTION_IDS.has(action.id))
 }

@@ -41,14 +41,15 @@ const props = withDefaults(
     /** 这一行正在就地改名。 */
     renaming?: boolean
     /** 这一行的 ⋯ 里有哪些项：和任务页右上角同一份清单（`commands/taskActions.ts`），
-     *  父级已经按「行里敢点的」筛过。要 router 才算得出链接，所以由父级给。 */
-    actions: (task: RailTask) => MenuCommand[]
+     *  父级已经按「行里敢点的」筛过。要 router 才算得出链接，所以由父级给；不给
+     *  （组件预览、只画一行的宿主）就没有 ⋯，不是少传了参数。 */
+    actions?: (task: RailTask) => MenuCommand[]
   }>(),
-  { depth: 0, unread: 0, light: null, page: false, renaming: false }
+  { depth: 0, unread: 0, light: null, page: false, renaming: false, actions: undefined }
 )
 
 const fillingIn = computed(() => props.task.filling_in === true)
-const actionsOf = computed(() => props.actions(props.task))
+const actionsOf = computed(() => (props.actions ? props.actions(props.task) : []))
 
 const emit = defineEmits<{
   (e: 'select', task: { roomId: string; taskId: string }): void

@@ -13,7 +13,6 @@ import { useDisplay } from 'vuetify'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
-import { useNavigation } from '@/composables/useNavigation'
 
 import { takesPartInTask, taskActions } from '@/commands/taskActions'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -53,6 +52,8 @@ const props = defineProps<{
   setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
+  /** 复制这件任务的链接。页面给：这一层不认路由（组件只凭 props 画）。 */
+  copyLink?: () => void
 }>()
 
 const emit = defineEmits<{
@@ -195,19 +196,17 @@ async function confirmHandOver() {
 
 // ⋯ 里的清单和侧栏任务行是同一份（`commands/taskActions.ts`）：这里露出全部，侧栏
 // 只留「重命名」「复制链接」。权限也在那一份里判，不再在这几个模板分支里各写一遍。
-const nav = useNavigation()
 const menuActions = computed<MenuCommand[]>(() =>
   props.task
     ? taskActions(
         props.task,
-        nav?.router ?? null,
         {
           rename: () => (renameOpen.value = true),
           handOver: () => (handOverOpen.value = true),
           close: () => (closeOpen.value = true),
           reopen: () => void props.reopen(),
         },
-        { me: ME, canHandOver: otherPeople.value.length > 0 }
+        { me: ME, canHandOver: otherPeople.value.length > 0, copyLink: props.copyLink ?? null }
       )
     : []
 )
