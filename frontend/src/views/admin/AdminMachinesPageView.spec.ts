@@ -178,7 +178,7 @@ function mount(props: Record<string, unknown>) {
 
 describe('机器', () => {
   it('provider 连续失败、平台在拒绝新会话时，页面说出来', () => {
-    const refusing = /Refusing new sessions now|此刻在拒绝新会话/
+    const refusing = /Not starting new AI teammates now|此刻不再接新的 AI 队友/
     const calm = mount({ overview: overview() })
     expect(calm.queryByText(refusing)).toBeNull()
     calm.unmount()

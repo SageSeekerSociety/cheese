@@ -5,7 +5,7 @@
     "evidence": "Evidence",
     "note": "This feedback will be attributed to the AI teammate that found it, and you will be recorded as the submitter — both are kept, so \"how much of what Cheese raised actually got filed\" has an answer.",
     "repro": "Repro steps",
-    "session": "Session and environment",
+    "session": "Run and environment",
     "title": "From Cheese's investigation",
     "whatHappened": "What happened"
   },

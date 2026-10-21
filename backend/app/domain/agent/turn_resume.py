@@ -284,7 +284,16 @@ async def _record_schedule(
         content = say(key)
     else:
         minutes = max(1, math.ceil((row.due_at - now).total_seconds() / 60))
-        content = say(_WAIT_KEYS[row.reason], minutes=minutes)
+        content = (
+            # The upgrade's line names whose work picks up again.
+            say(
+                _WAIT_KEYS[row.reason],
+                minutes=minutes,
+                agent=f"<@{row.recipient_handle}>",
+            )
+            if row.reason == "runner_replaced"
+            else say(_WAIT_KEYS[row.reason], minutes=minutes)
+        )
     kept = await record(
         session,
         conversation_id=row.conversation_id,

@@ -5,7 +5,7 @@
     "materialsDangling": "编号 {ids} 已经不在资料库里（删掉了，或者改成了「仅管理员」）。保存前请把它们去掉。",
     "materialsDanglingDrop": "去掉 {id}",
     "materialsEmpty": "资料库里还没有文件，先去「资料库」传一份。",
-    "materialsError": "资料库读不出来，先别改这一项。",
+    "materialsError": "资料库读取失败，这一项先保持不变。",
     "materialsExpand": "展开资料库清单",
     "materialsHint": "从这个空间的资料库勾选。留空 = 不带课件；「仅管理员」档不在清单里。",
     "materialsLibrary": "空间资料库",

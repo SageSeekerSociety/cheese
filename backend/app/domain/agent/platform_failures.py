@@ -281,9 +281,15 @@ PROMPT_UNDELIVERED_MESSAGE = (
 TURN_TIMEOUT_MESSAGE = say("turnTimeoutShort")
 #: A turn the platform's upgrade cut short: the runner the previous release
 #: started was replaced by one of this release's, on the same conversation.
-#: The turn is started again by itself (``resumable_failures``).
+#: The turn is started again by itself (``resumable_failures``), so its line
+#: says so and names the teammate whose work picks up again.
 RUNNER_REPLACED_CODE = "runner_replaced"
-RUNNER_REPLACED_MESSAGE = say("sessionReplacedForUpgrade")
+
+
+def runner_replaced_message(agent_handle: str) -> NoticeText:
+    """The line a turn the upgrade cut short ends with."""
+    return say("sessionReplacedForUpgrade", agent=f"<@{agent_handle}>")
+
 
 # The platform's OWN wording for "the machine this topic is pinned to is not
 # answering". It sits next to the classification it belongs to, and the device

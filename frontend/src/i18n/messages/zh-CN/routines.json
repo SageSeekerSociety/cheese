@@ -52,7 +52,7 @@
   "deleteFailed": "未能删除",
   "editTitle": "修改「{title}」",
   "pickRoom": "先选一个频道：工作在那个频道里执行，结果也放在那里",
-  "saveFailed": "没有保存成功",
+  "saveFailed": "保存失败",
   "intro": "到点或项目里发生某件事时，频道里的 AI 队友自己开工，做完把结果放进频道并通知你。在频道里说「每周一早上整理一次进展」，{name}也会建一条，存下来就在跑。",
   "loading": "读取例行事务",
   "today": "今天 {time}",
@@ -90,7 +90,7 @@
     "preset": "平台预置",
     "mine": "项目里存的",
     "mineNote": "（项目成员共用）",
-    "saveFailed": "模板没存上",
+    "saveFailed": "模板保存失败",
     "when": {
       "daily": "每天 {time}",
       "weekly": "每{days} {time}",

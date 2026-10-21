@@ -120,7 +120,7 @@ describe('单题看板的「小队构成」', () => {
   it('没读出来时画失败说明，不画一张全 0 的看板', async () => {
     const view = mount([], { failed: true, failureReason: '服务端打盹了' })
 
-    expect(view.getByText('这道题的数据没读出来')).toBeTruthy()
+    expect(view.getByText('这道题的数据加载失败')).toBeTruthy()
     expect(view.getByText('服务端打盹了')).toBeTruthy()
     expect(view.queryByText('领取人数')).toBeNull()
     expect(panel('小队构成')).toBeUndefined()

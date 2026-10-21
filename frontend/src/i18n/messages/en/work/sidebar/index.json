@@ -24,7 +24,7 @@
   "tasksFailed": "Couldn't load them. Click to retry",
   "tasksLoading": "Loading…",
   "topics": "Channels",
-  "turnFailed": "{agent}'s last run failed",
+  "turnFailed": "{agent} didn't finish last time",
   "underwayHint": "Tasks still open in the project and not yet being written up",
   "workingTip": "{name} is working here"
 }

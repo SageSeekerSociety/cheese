@@ -21,10 +21,10 @@
   "personalTeam": "个人",
   "projectMenu": "项目菜单",
   "switchProject": "切换项目",
-  "tasksFailed": "没读出来，点一下重试",
+  "tasksFailed": "加载失败，点一下重试",
   "tasksLoading": "正在读取…",
   "topics": "频道",
-  "turnFailed": "{agent}最近一轮报错了",
+  "turnFailed": "{agent}上次没做完",
   "underwayHint": "在项目里还开着、也还没在收尾的任务",
   "workingTip": "{name}正在这里工作"
 }

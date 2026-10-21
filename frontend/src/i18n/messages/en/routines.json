@@ -90,7 +90,7 @@
     "preset": "From the platform",
     "mine": "Saved in this project",
     "mineNote": "(shared with everyone in the project)",
-    "saveFailed": "The template wasn't saved",
+    "saveFailed": "Couldn't save the template",
     "when": {
       "daily": "Every day at {time}",
       "weekly": "Every {days} at {time}",
