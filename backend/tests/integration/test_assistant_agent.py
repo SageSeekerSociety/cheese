@@ -7,6 +7,13 @@ import uuid
 from sqlalchemy import select
 
 from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.assistant import gate
+from app.domain.assistant.models import (
+    AssistantConversation,
+    AssistantGateCheck,
+    AssistantMessage,
+)
+from app.domain.gateway_chat import Completion, Usage
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic
 from tests.conftest import seed_user
@@ -124,3 +131,186 @@ def test_a_search_finds_across_the_persons_projects_with_refs(client):
         headers=_as(_personal(client, "carol")),
     )
     assert "没有搜到" in other.json()["data"]["text"]
+
+
+class _Gatekeeper:
+    """The gate's model: answers each look from ``says`` in turn and keeps
+    what it was shown."""
+
+    def __init__(self, *says: str) -> None:
+        self.says = list(says)
+        self.shown: list[str] = []
+
+    async def complete(self, *, system, prompt, timeout, max_tokens=None, extra=None):
+        self.shown.append(prompt)
+        return Completion(self.says.pop(0), Usage(100, 1, 80, 0), 0.0001)
+
+
+def _asked_in(client, handle: str, said: str) -> str:
+    """A conversation of ``handle``'s with their 芝士, where they said ``said``."""
+
+    seed_user(client, handle)
+    user_id = _ledger_user(client, handle)[0]
+
+    async def make():
+        async with client.test_factory() as db:
+            conversation = AssistantConversation(
+                user_id=user_id, place_kind="none", place_id="", title=said[:20]
+            )
+            db.add(conversation)
+            await db.flush()
+            db.add(
+                AssistantMessage(
+                    conversation_id=conversation.id, seq=1, role="user", text=said
+                )
+            )
+            await db.commit()
+            return str(conversation.id)
+
+    return asyncio.run(make())
+
+
+def _acting(client, handle: str, conversation: str) -> str:
+    seed_user(client, handle)
+    return mint_delegated_credential(
+        user_id=_ledger_user(client, handle)[0],
+        handle=handle,
+        work=str(uuid.uuid4()),
+        ttl_s=300,
+        read_only=False,
+        conversation=conversation,
+    )
+
+
+def _checks(client, handle: str) -> list:
+    user_id = _ledger_user(client, handle)[0]
+
+    async def read():
+        async with client.test_factory() as db:
+            return list(
+                await db.scalars(
+                    select(AssistantGateCheck)
+                    .where(AssistantGateCheck.user_id == user_id)
+                    .order_by(AssistantGateCheck.id)
+                )
+            )
+
+    return asyncio.run(read())
+
+
+def test_a_message_the_person_asked_for_is_sent_as_them_through_the_gate(
+    client, monkeypatch
+):
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    conversation = _asked_in(client, "alice", "跟大家说周五组会改到下午三点")
+    token = _acting(client, "alice", conversation)
+    keeper = _Gatekeeper("放")
+
+    async def looks(session):
+        return keeper
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+
+    r = client.post(
+        "/assistant/agent/act",
+        json={
+            "kind": "message",
+            "where": f"{slug}/channels/{number}",
+            "text": "周五组会改到下午三点",
+        },
+        headers=_as(token),
+    )
+
+    assert r.status_code == 200, r.text
+    got = r.json()["data"]
+    assert got["done"] is True
+    # The gate read what she said, and the action; nothing 芝士 said.
+    assert "[用户] 跟大家说周五组会改到下午三点" in keeper.shown[0]
+    assert "周五组会改到下午三点" in keeper.shown[0].split("<要判断的这件事>")[1]
+    # The call it hands back is the one the channel page makes, as her.
+    [call] = got["calls"]
+    sent = client.post(
+        call["path"],
+        json=call["body"],
+        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+    )
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["data"]["author"] == "alice"
+    # Once: the pass is spent.
+    again = client.post(
+        call["path"],
+        json={**call["body"], "request_id": str(uuid.uuid4())},
+        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+    )
+    assert again.status_code == 403
+    [check] = _checks(client, "alice")
+    assert (check.verdict, check.stage, check.kind) == ("allowed", "quick", "message")
+    assert check.cache_read_tokens == 80
+
+
+def test_without_the_gate_the_route_refuses_the_persons_cheese(client):
+    room, _ = _room(client)
+    token = _acting(client, "alice", _asked_in(client, "alice", "你好"))
+    r = client.post(
+        f"/topics/{room}/messages",
+        json={"content": "我自己发", "request_id": str(uuid.uuid4())},
+        headers=_as(token),
+    )
+    assert r.status_code == 403
+
+
+def test_a_message_the_person_did_not_ask_for_becomes_a_card(client, monkeypatch):
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    token = _acting(client, "alice", _asked_in(client, "alice", "帮我看看综合频道"))
+    keeper = _Gatekeeper("拦", "用户只让看看，没让发消息。\n结论：拦")
+
+    async def looks(session):
+        return keeper
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+
+    r = client.post(
+        "/assistant/agent/act",
+        json={"kind": "message", "where": f"{slug}/channels/{number}", "text": "收到"},
+        headers=_as(token),
+    )
+
+    got = r.json()["data"]
+    assert got["done"] is False and "pass" not in got
+    assert got["card"]["kind"] == "message" and got["card"]["text"] == "收到"
+    assert got["reason"] == "用户只让看看，没让发消息。"
+    [check] = _checks(client, "alice")
+    assert (check.verdict, check.stage) == ("asked", "reasoned")
+
+
+def test_removing_someone_is_asked_by_the_persons_rule_with_no_model(
+    client, monkeypatch
+):
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    token = _acting(client, "alice", _asked_in(client, "alice", "把 bob 移出综合频道"))
+
+    async def no_model(session):
+        raise AssertionError("a rule settles it")
+
+    monkeypatch.setattr(gate, "gatekeeper", no_model)
+
+    r = client.post(
+        "/assistant/agent/act",
+        json={
+            "kind": "member",
+            "where": f"{slug}/channels/{number}",
+            "who": "bob",
+            "remove": True,
+        },
+        headers=_as(token),
+    )
+
+    got = r.json()["data"]
+    assert got["done"] is False
+    assert got["card"]["kind"] == "act"
+    assert got["card"]["calls"][0]["method"] == "DELETE"
+    [check] = _checks(client, "alice")
+    assert check.stage == "rule"

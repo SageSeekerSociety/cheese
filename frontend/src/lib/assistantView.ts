@@ -83,13 +83,23 @@ export interface PanelResult {
 /** 每种工具这一行跟的那个参数。 */
 const STEP_ARG: Record<string, string> = {
   cheese_task_search: 'query',
-  cheese_task_write: 'name',
+  cheese_problem_write: 'name',
   cheese_file_read: 'pages',
   cheese_docs_search: 'query',
   cheese_docs_read: 'page',
   cheese_chat_search: 'query',
   cheese_project_search: 'query',
   cheese_task_draft: 'title',
+  cheese_read: 'ref',
+  cheese_search: 'query',
+  cheese_help: 'query',
+  cheese_message_send: 'where',
+  cheese_task_open: 'title',
+  cheese_review_decide: 'ref',
+  cheese_inbox_respond: 'ref',
+  cheese_member_set: 'who',
+  cheese_channel_create: 'title',
+  cheese_web_fetch: 'url',
 }
 
 export function stepView(step: AssistantStep): PanelStep {

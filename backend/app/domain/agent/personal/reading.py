@@ -307,3 +307,23 @@ async def read(reader: Reader, access: Access, ref: Ref, page: int = 1) -> str:
     if render is None:
         raise NotFoundError.for_resource("ref", ref.kind)
     return await render(reader, access, ref, max(1, page))
+
+
+async def latest_card(session: AsyncSession, task_id: uuid.UUID) -> AcceptCard | None:
+    """The review card a task rides on now: its latest."""
+    latest = (await latest_cards_by_task(session, [task_id])).get(task_id)
+    return await session.get(AcceptCard, latest.id) if latest is not None else None
+
+
+async def numbered(
+    session: AsyncSession, ref: Ref, kind: address.Numbered
+) -> tuple[Project, address.Addressed]:
+    """The project and the numbered thing a project ref names; not found
+    otherwise. Whether the person may see it is the caller's to judge."""
+    project = await address.project_by_ref(session, ref.slug or "")
+    if project is None:
+        raise NotFoundError.for_resource("project", ref.slug or "")
+    found = await address.thing_by_number(session, project.id, kind, ref.number or 0)
+    if found is None:
+        raise NotFoundError.for_resource(kind.value, ref.number or 0)
+    return project, found

@@ -12,6 +12,8 @@ import uuid
 
 from app.api.auth import ActorResolver
 from app.api.doc_access import reach
+from app.domain.agent.personal import service as personal
+from app.domain.assistant import proposals
 from app.domain.room_task.place import place_or_404
 from app.domain.topic.services import TopicService
 
@@ -52,3 +54,31 @@ class ProjectPages:
             actor, project_id=project_id, topics=topics
         )
         return [t for t in topics if t.id in readable]
+
+
+async def show_proposal(db, questions, claims, kind: str, payload: dict) -> dict:
+    """Keep what 芝士 put to the person to confirm, and show it on the
+    question's stream as a card (``proposal``); the card as the panel takes
+    it. Committed: the card outlives the request."""
+    row = await proposals.propose(
+        db, user_id=claims.user_id, work=claims.work, kind=kind, payload=payload
+    )
+    await db.commit()
+    shown = proposals.view(row)
+    try:
+        asked = await questions.get(claims.work)
+    except RuntimeError:  # no Valkey: nobody to tell
+        asked = None
+    if asked is not None and asked.kind == personal.KIND:
+        await questions.publish(asked, "proposal", shown)
+    return shown
+
+
+def where_of(place) -> str:
+    """How a conversation is named on a card: a channel by its name, a task or
+    a 支线 by its title."""
+    if place.task is not None:
+        return place.task.title
+    if place.thread is not None:
+        return place.thread.title
+    return place.room.title

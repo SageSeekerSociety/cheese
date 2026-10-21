@@ -38,7 +38,7 @@ from app.core.sandbox_auth import mint_delegated_credential
 from app.core.sentences import error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
 from app.domain.agent.personal import billing
-from app.domain.agent.personal.prompt import earlier, page
+from app.domain.agent.personal.prompt import about, earlier, now_line, page
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
 from app.domain.agent.session_host.answer import (
     Answer,
@@ -60,7 +60,7 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
-from app.domain.user.services import usernames_by_ids
+from app.domain.user.services import timezones_by_ids, usernames_by_ids
 
 logger = logging.getLogger(__name__)
 
@@ -474,6 +474,7 @@ async def ask(
             parts={"files": [name for _, name in files]} if files else None,
         )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
+        timezone = (await timezones_by_ids(session, [user_id])).get(user_id)
         await session.commit()
 
     async def said() -> Prompt:
@@ -487,15 +488,24 @@ async def ask(
             project_id=None if project is None else str(project),
             ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
             read_only=False,
+            conversation=str(conversation_id),
         )
         # The page goes with the question itself: a preface is said only to a
         # session that has not been spoken to yet.
         said = "\n\n".join(part for part in (page(context), question) if part)
         if files:
-            said += "\n\n附上的文件（用 cheese_file_read 读取）：\n" + "\n".join(
-                f"- {name}（文件 id {file_id}）" for file_id, name in files
+            said += "\n\n附上的文件（用 cheese_read 读）：\n" + "\n".join(
+                f"- {name}（files/{file_id}）" for file_id, name in files
             )
-        return Prompt(work, said, acting=acting, preface=earlier(before))
+        # The clock goes at the end of the question, never in the rules: what
+        # the session sends first stays the same all day.
+        said += "\n\n" + now_line(timezone)
+        preface = "\n\n".join(
+            part
+            for part in (about(handle or str(user_id), timezone), earlier(before))
+            if part
+        )
+        return Prompt(work, said, acting=acting, preface=preface)
 
     return await consumptions.begin(
         kind=KIND,

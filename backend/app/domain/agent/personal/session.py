@@ -71,28 +71,27 @@ def effort(model: str) -> str | None:
     return EFFORT if EFFORT in honoured else None
 
 
-#: What a person's 芝士 may do (`sandbox/cheese`), the same wherever it is asked:
-#: what the person may do there, as them. The page they have open is said with
-#: each question (``prompt.page``); it never narrows the tools.
+#: What a person's 芝士 may do (`sandbox/cheese`), the same wherever it is asked
+#: and for everyone, in this order: the list is part of every request's
+#: unchanging start, which the model's cache matches on. One tool per kind of
+#: thing the person deals with; reading and searching are one each, since
+#: everything reads the same way by its ref (`assistant.refs`). What others see
+#: goes through its gate (`assistant.gate`). The page the person has open is
+#: said with each question (``prompt.page``); it never narrows the tools.
 TOOLS = (
-    "cheese_task_search",
-    "cheese_task_get",
-    "cheese_task_write",
-    "cheese_task_publish",
-    "cheese_file_read",
-    "cheese_space_materials",
-    "cheese_my_tasks",
-    "cheese_docs_search",
-    "cheese_docs_read",
-    # In a project (asked from one of its pages): read it, and draft what the
-    # person would say there. Nothing here changes the project.
-    "cheese_chat_list",
-    "cheese_chat_search",
-    "cheese_chat_get",
-    "cheese_doc_get",
-    "cheese_project_search",
-    "cheese_message_draft",
-    "cheese_task_draft",
+    "cheese_inbox",
+    "cheese_inbox_respond",
+    "cheese_read",
+    "cheese_search",
+    "cheese_help",
+    "cheese_message_send",
+    "cheese_task_open",
+    "cheese_review_decide",
+    "cheese_member_set",
+    "cheese_channel_create",
+    "cheese_web_fetch",
+    "cheese_problem_write",
+    "cheese_problem_publish",
 )
 
 

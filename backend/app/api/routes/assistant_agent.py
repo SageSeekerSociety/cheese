@@ -12,28 +12,36 @@ what they may see on the site, and nothing their pages would not show them.
 
 from __future__ import annotations
 
+import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Annotated, Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.api.assistant_deps import ProjectPages
+from app.api.assistant_deps import ProjectPages, show_proposal, where_of
 from app.api.auth import ActorResolverDep
 from app.api.awaiting_asks import MembershipAsk, RunAsk, TaskAsk
 from app.api.awaiting_deps import all_waiting
+from app.api.deps import get_consumptions
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import AuthenticationRequiredError, BadRequestError
+from app.auth.project_roles import standing
+from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.personal import reading
-from app.domain.assistant import refs
+from app.domain.agent.session_host.consumptions import Consumptions
+from app.domain.assistant import gate, passes, refs
 from app.domain.notification.preferences import local_time
 from app.domain.project import address
 from app.domain.project.services import ProjectService
 from app.domain.room_task.awaiting import WaitingItem
 from app.domain.user.services import timezones_by_ids
+
+Questions = Annotated[Consumptions, Depends(get_consumptions)]
 
 router = APIRouter(
     prefix="/assistant/agent", tags=["assistant"], dependencies=[ROUTE_DECIDES]
@@ -244,3 +252,515 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
     reader = reading.Reader(session=db, user_id=me.user_id, timezone=me.timezone)
     text = await reading.read(reader, ProjectPages(db, resolver), ref, body.page)
     return ok({"text": text})
+
+
+# What 芝士 does that others see (`assistant.gate`). Each kind of action is
+# written out here: what the gate reads, the calls that do it — the routes
+# the person's own pages call, made as the person — and, when the gate asks
+# first, the card the person confirms instead.
+
+_MESSAGE = "app.api.routes.topics_messages.send_chat_message"
+_DOORS = {
+    "task": "app.api.routes.topics_tasks.create_task",
+    "accept": "app.api.routes.accept.accept_card",
+    "reject": "app.api.routes.accept.reject_card",
+    "alert": "app.api.routes.alerts.resolve_notification",
+    "invite": "app.api.routes.members.respond_to_invitation",
+    "transfer": "app.api.routes.members.respond_to_transfer",
+    "run": "app.api.routes.local_mcp.decide",
+    "project_invite": "app.api.routes.members.invite_member",
+    "project_remove": "app.api.routes.members.remove_member",
+    "project_role": "app.api.routes.members.set_member_role",
+    "channel_add": "app.api.routes.topic_members.add_topic_member",
+    "channel_remove": "app.api.routes.topic_members.remove_topic_member",
+    "channel": "app.api.routes.topics.create_topic",
+    "fetch": "app.api.routes.fetch.read_url",
+}
+#: How a role is named to the person.
+_ROLE = {"owner": "所有者", "admin": "管理员", "member": "成员", "mentor": "导师"}
+#: Roles from the highest: a move down the list lowers someone.
+_RANK = ("owner", "admin", "member", "mentor")
+
+
+@dataclass
+class _Plan:
+    """An action written out: what the gate reads, the calls that do it, the
+    routes and places those calls go through, and the card the person
+    confirms if the gate asks first (None: asked means not done)."""
+
+    action: gate.Action
+    calls: list[dict]
+    doors: list[tuple[str, str | None]]
+    card: tuple[str, dict] | None = None
+    #: What 芝士 is told once the calls are made.
+    done: str = ""
+
+
+class ActIn(BaseModel):
+    kind: Literal["message", "task", "review", "respond", "member", "channel", "fetch"]
+    #: A message: where (a channel or a task) and what. A task: in which
+    #: channel, its title and what it is for (``text``).
+    where: str = ""
+    text: str = ""
+    title: str = ""
+    #: A review: its card's ref, ``accept`` or ``reject``, and why (``text``).
+    #: An inbox item: its ref and the answer (``choice``).
+    ref: str = ""
+    choice: str = ""
+    #: A member: who (``who``), and ``role`` to give or ``remove``.
+    who: str = ""
+    role: str = ""
+    remove: bool = False
+    #: A channel: whether only its members see it.
+    members_only: bool = False
+    #: A web page, and what to learn from it.
+    url: str = ""
+    prompt: str = ""
+
+
+def _need(value: str, what: str) -> str:
+    if not value.strip():
+        raise BadRequestError(say("assistantActNeeds", what=what))
+    return value.strip()
+
+
+def _place_ref(ref: refs.Ref) -> address.Numbered:
+    if ref.kind == "channel":
+        return address.Numbered.channel
+    if ref.kind == "task":
+        return address.Numbered.task
+    raise BadRequestError(say("assistantRefUnknown", ref=ref.kind))
+
+
+async def _place(db, access: ProjectPages, raw: str):
+    """The channel or task a ref names, as the person may see it."""
+    ref = refs.parse(raw)
+    if ref is None:
+        raise BadRequestError(say("assistantRefUnknown", ref=raw))
+    project, found = await reading.numbered(db, ref, _place_ref(ref))
+    return project, await access.topic(found.id), ref
+
+
+async def _message(db, access, body: ActIn, me: Person) -> _Plan:
+    text = _need(body.text, "text")
+    project, place, ref = await _place(db, access, _need(body.where, "where"))
+    name = where_of(place)
+    everyone = (
+        place.task is None and place.thread is None and str(place.room.kind) == "root"
+    )
+    return _Plan(
+        gate.Action(
+            "message",
+            f"在{'任务' if place.task else '频道'}「{name}」（{body.where}，项目"
+            f"「{project.name}」）以用户的名义发一条消息：\n{text}",
+            ("to_everyone",) if everyone else (),
+        ),
+        [
+            {
+                "method": "POST",
+                "path": f"/topics/{place.conversation_id}/messages",
+                "body": {"content": text, "request_id": str(uuid.uuid4())},
+            }
+        ],
+        [(_MESSAGE, str(place.conversation_id))],
+        card=(
+            "message",
+            {
+                "topic": str(place.conversation_id),
+                "topicName": name,
+                "text": text,
+                "project": str(project.id),
+            },
+        ),
+        done=f"已在「{name}」发出。",
+    )
+
+
+async def _task(db, access, body: ActIn, me: Person) -> _Plan:
+    title, text = _need(body.title, "title"), _need(body.text, "text")
+    project, place, _ = await _place(db, access, _need(body.where, "where"))
+    room = place.room
+    return _Plan(
+        gate.Action(
+            "task",
+            f"在频道「{room.title}」（项目「{project.name}」）以用户的名义开一个任务"
+            f"「{title}」，交给项目的 AI 队友去做，交代：\n{text}",
+        ),
+        [
+            {
+                "method": "POST",
+                "path": f"/topics/{room.id}/tasks",
+                "body": {"title": title},
+            },
+            {
+                "method": "POST",
+                "path": "/topics/{prev}/messages",
+                "body": {"content": text, "request_id": str(uuid.uuid4())},
+            },
+        ],
+        [(_DOORS["task"], str(room.id)), (_MESSAGE, None)],
+        card=(
+            "task",
+            {
+                "channel": str(room.id),
+                "channelName": room.title,
+                "title": title,
+                "brief": text,
+                "project": str(project.id),
+            },
+        ),
+        done=f"已在频道「{room.title}」开了任务「{title}」，AI 队友会接着做。",
+    )
+
+
+async def _review(db, access, body: ActIn, me: Person) -> _Plan:
+    ref = refs.parse(_need(body.ref, "ref"))
+    if ref is None or ref.kind not in ("review", "task"):
+        raise BadRequestError(say("assistantRefUnknown", ref=body.ref))
+    project, found = await reading.numbered(db, ref, address.Numbered.task)
+    place = await access.topic(found.id)
+    card = await reading.latest_card(db, found.id)
+    if card is None:
+        raise BadRequestError(say("assistantNoReviewCard"))
+    shown = refs.review(project.slug, found.number)
+    if body.choice == "accept":
+        verb, call = (
+            "采纳",
+            {
+                "method": "POST",
+                "path": f"/accept-cards/{card.id}/accept",
+                "body": {"decided_by": me.handle, "head_sha": card.pr_head_sha},
+            },
+        )
+    elif body.choice == "reject":
+        note = _need(body.text, "text")
+        verb, call = (
+            f"退回，说明：{note}",
+            {
+                "method": "POST",
+                "path": f"/accept-cards/{card.id}/reject",
+                "body": {"decided_by": me.handle, "note": note},
+            },
+        )
+    else:
+        raise BadRequestError(say("assistantActNeeds", what="choice: accept / reject"))
+    door = _DOORS["accept" if body.choice == "accept" else "reject"]
+    return _Plan(
+        gate.Action(
+            "review",
+            f"以审阅人的身份处理任务「{place.task.title}」的审阅卡（{shown}，项目"
+            f"「{project.name}」，改动：{card.change_subject or '未写'}）：{verb}",
+        ),
+        [call],
+        [(door, None)],
+        card=("act", {}),
+        done=f"已{verb.split('，')[0]}任务「{place.task.title}」的审阅卡。",
+    )
+
+
+async def _respond(db, body: ActIn, me: Person) -> _Plan:
+    ref = refs.parse(_need(body.ref, "ref"))
+    choice = _need(body.choice, "choice")
+    if ref is None or ref.kind not in ("alert", "invite", "transfer", "run"):
+        raise BadRequestError(say("assistantCannotAnswerHere"))
+    waiting = await all_waiting(db, handle=me.handle, user_id=me.user_id)
+    if ref.kind == "alert":
+        item = next(
+            (
+                i
+                for i in waiting
+                if isinstance(i, WaitingItem) and str(i.alert_id) == ref.id
+            ),
+            None,
+        )
+        if item is None:
+            raise NotFoundError.for_resource("alert", ref.id or "")
+        if item.options and choice not in item.options:
+            raise BadRequestError(
+                say("assistantActNeeds", what=" / ".join(item.options))
+            )
+        return _Plan(
+            gate.Action(
+                "respond",
+                f"答复项目「{item.project_name}」里要用户决定的提醒「{item.headline}」："
+                f"选「{choice}」",
+            ),
+            [
+                {
+                    "method": "POST",
+                    "path": f"/alerts/{ref.id}/resolve",
+                    "body": {"chosen": choice},
+                }
+            ],
+            [(_DOORS["alert"], None)],
+            card=("act", {}),
+            done=f"已答复「{item.headline}」：{choice}。",
+        )
+    if choice not in ("accept", "decline", "allow", "refuse"):
+        raise BadRequestError(say("assistantActNeeds", what="choice: accept / decline"))
+    yes = choice in ("accept", "allow")
+    if ref.kind == "run":
+        run = next(
+            (i for i in waiting if isinstance(i, RunAsk) and i.id == ref.id), None
+        )
+        if run is None:
+            raise NotFoundError.for_resource("run", ref.id or "")
+        return _Plan(
+            gate.Action(
+                "respond",
+                f"{'允许' if yes else '不允许'}项目「{run.project_name}」在用户的设备 "
+                f"{run.device} 上运行 MCP 服务器 {run.server}（命令：{run.command}）",
+            ),
+            [
+                {
+                    "method": "POST",
+                    "path": f"/mcp/approvals/{ref.id}",
+                    "body": {"allow": yes},
+                }
+            ],
+            [(_DOORS["run"], None)],
+            card=("act", {}),
+            done=f"已{'允许' if yes else '拒绝'}运行 {run.server}。",
+        )
+    ask = next(
+        (i for i in waiting if isinstance(i, MembershipAsk) and i.id == ref.id), None
+    )
+    if ask is None:
+        raise NotFoundError.for_resource(ref.kind, ref.id or "")
+    path = "invitations" if ref.kind == "invite" else "transfers"
+    return _Plan(
+        gate.Action(
+            "respond",
+            f"{'接受' if yes else '拒绝'} {ask.person.name}{_ASK[ask.kind]}"
+            f"「{ask.place.name}」",
+        ),
+        [
+            {
+                "method": "POST",
+                "path": f"/{path}/{ref.id}/respond",
+                "body": {"accept": yes},
+            }
+        ],
+        [(_DOORS[ref.kind], None)],
+        card=("act", {}),
+        done=f"已{'接受' if yes else '拒绝'}「{ask.place.name}」的{_ASK[ask.kind][-4:]}。",
+    )
+
+
+async def _member(db, access, body: ActIn, me: Person) -> _Plan:
+    who = _need(body.who, "who").lstrip("@")
+    ref = refs.parse(_need(body.where, "where"))
+    if ref is None:
+        raise BadRequestError(say("assistantRefUnknown", ref=body.where))
+    if ref.kind == "channel":
+        project, place, _ = await _place(db, access, body.where)
+        room = place.room
+        if body.remove:
+            return _Plan(
+                gate.Action(
+                    "member",
+                    f"把 {who} 移出频道「{room.title}」（项目「{project.name}」）",
+                    ("remove_member",),
+                ),
+                [{"method": "DELETE", "path": f"/topics/{room.id}/members/{who}"}],
+                [(_DOORS["channel_remove"], str(room.id))],
+                card=("act", {}),
+                done=f"已把 {who} 移出频道「{room.title}」。",
+            )
+        return _Plan(
+            gate.Action(
+                "member", f"把 {who} 加进频道「{room.title}」（项目「{project.name}」）"
+            ),
+            [
+                {
+                    "method": "POST",
+                    "path": f"/topics/{room.id}/members",
+                    "body": {"handle": who},
+                }
+            ],
+            [(_DOORS["channel_add"], str(room.id))],
+            card=("act", {}),
+            done=f"已把 {who} 加进频道「{room.title}」。",
+        )
+    if ref.kind != "project":
+        raise BadRequestError(say("assistantRefUnknown", ref=body.where))
+    project = await address.project_by_ref(db, ref.slug or "")
+    if project is None:
+        raise NotFoundError.for_resource("project", ref.slug or "")
+    await access.project(project.id)
+    pid = str(project.id)
+    held = await standing(db, project.id, who)
+    seat = held.seat.value if held is not None else None
+    if body.remove:
+        return _Plan(
+            gate.Action(
+                "member",
+                f"把 {who}（{_ROLE.get(seat or '', '不在项目里')}）移出项目「{project.name}」",
+                ("remove_member",),
+            ),
+            [{"method": "DELETE", "path": f"/projects/{pid}/members/{who}"}],
+            [(_DOORS["project_remove"], pid)],
+            card=("act", {}),
+            done=f"已把 {who} 移出项目「{project.name}」。",
+        )
+    role = body.role or "member"
+    if role not in ("admin", "member", "mentor"):
+        raise BadRequestError(
+            say("assistantActNeeds", what="role: admin / member / mentor")
+        )
+    if seat is None:
+        if role == "admin":
+            raise BadRequestError(say("assistantInviteThenAdmin"))
+        return _Plan(
+            gate.Action(
+                "member",
+                f"邀请 {who} 以{_ROLE[role]}身份加入项目「{project.name}」",
+            ),
+            [
+                {
+                    "method": "POST",
+                    "path": f"/projects/{pid}/invitations",
+                    "body": {"user_handle": who, "role": role},
+                }
+            ],
+            [(_DOORS["project_invite"], pid)],
+            card=("act", {}),
+            done=f"已邀请 {who} 加入项目「{project.name}」，等对方接受。",
+        )
+    lowers = _RANK.index(role) > _RANK.index(seat)
+    return _Plan(
+        gate.Action(
+            "member",
+            f"把 {who} 在项目「{project.name}」的角色从{_ROLE[seat]}改成{_ROLE[role]}",
+            ("lower_role",) if lowers else (),
+        ),
+        [
+            {
+                "method": "PUT",
+                "path": f"/projects/{pid}/members/{who}/role",
+                "body": {"role": role},
+            }
+        ],
+        [(_DOORS["project_role"], pid)],
+        card=("act", {}),
+        done=f"已把 {who} 改成{_ROLE[role]}。",
+    )
+
+
+async def _channel(db, access, body: ActIn, me: Person) -> _Plan:
+    title = _need(body.title, "title")
+    ref = refs.parse(_need(body.where, "where"))
+    if ref is None or ref.kind != "project":
+        raise BadRequestError(say("assistantRefUnknown", ref=body.where))
+    project = await address.project_by_ref(db, ref.slug or "")
+    if project is None:
+        raise NotFoundError.for_resource("project", ref.slug or "")
+    await access.project(project.id)
+    about = body.text.strip()
+    private = "私密" if body.members_only else ""
+    return _Plan(
+        gate.Action(
+            "channel",
+            f"在项目「{project.name}」建一个{private}频道「{title}」"
+            + (f"，说明：{about}" if about else ""),
+        ),
+        [
+            {
+                "method": "POST",
+                "path": "/topics",
+                "body": {
+                    "project_id": str(project.id),
+                    "title": title,
+                    **({"description": about} if about else {}),
+                    "members_only": body.members_only,
+                },
+            }
+        ],
+        [(_DOORS["channel"], str(project.id))],
+        card=("act", {}),
+        done=f"已在项目「{project.name}」建好频道「{title}」。",
+    )
+
+
+def _fetch(body: ActIn) -> _Plan:
+    url = _need(body.url, "url")
+    asked = f"，想知道：{body.prompt.strip()}" if body.prompt.strip() else ""
+    return _Plan(
+        gate.Action("fetch", f"读网页 {url}{asked}"),
+        [
+            {
+                "method": "POST",
+                "path": "/fetch",
+                "body": {
+                    "url": url,
+                    **({"prompt": body.prompt} if body.prompt else {}),
+                },
+            }
+        ],
+        [(_DOORS["fetch"], None)],
+        card=None,
+    )
+
+
+@router.post("/act", include_in_schema=False)
+async def agent_act(
+    body: ActIn,
+    resolver: ActorResolverDep,
+    db: DbSession,
+    questions: Questions,
+) -> dict:
+    """An action 芝士 is about to take for the person, through its gate: let
+    through (``done``, with the pass and the calls that do it) or turned into
+    a card the person confirms (``asked``, and why)."""
+    started = time.monotonic()
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    me = await _person(resolver, db)
+    access = ProjectPages(db, resolver)
+    if body.kind == "message":
+        plan = await _message(db, access, body, me)
+    elif body.kind == "task":
+        plan = await _task(db, access, body, me)
+    elif body.kind == "review":
+        plan = await _review(db, access, body, me)
+    elif body.kind == "respond":
+        plan = await _respond(db, body, me)
+    elif body.kind == "member":
+        plan = await _member(db, access, body, me)
+    elif body.kind == "channel":
+        plan = await _channel(db, access, body, me)
+    else:
+        plan = _fetch(body)
+    conversation = uuid.UUID(claims.conversation) if claims.conversation else None
+    verdict = await gate.judge(
+        db, user_id=me.user_id, conversation_id=conversation, action=plan.action
+    )
+    await gate.keep(
+        db,
+        user_id=me.user_id,
+        conversation_id=conversation,
+        work=claims.work,
+        action=plan.action,
+        verdict=verdict,
+        started=started,
+    )
+    await db.commit()
+    if verdict.allowed:
+        token = await passes.issue(claims.work, plan.doors)
+        if token is not None:
+            return ok(
+                {"done": True, "pass": token, "calls": plan.calls, "said": plan.done}
+            )
+    if plan.card is None:
+        return ok({"done": False, "reason": verdict.reason, "card": None})
+    kind, payload = plan.card
+    if kind == "act":
+        payload = {
+            "summary": plan.action.summary,
+            "reason": verdict.reason,
+            "calls": plan.calls,
+            "said": plan.done,
+        }
+    card = await show_proposal(db, questions, claims, kind, payload)
+    return ok({"done": False, "reason": verdict.reason, "card": card})

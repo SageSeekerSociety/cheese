@@ -40,8 +40,6 @@ from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import (
-    AuthenticationRequiredError,
-    BadRequestError,
     NotFoundError,
 )
 from app.core.redis import get_redis_client
@@ -58,7 +56,6 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant import changes, proposals
-from app.domain.room_task.place import place_or_404
 from app.domain.space.services import SpaceService
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -477,79 +474,6 @@ async def redo_change(
             redo=True,
         )
     )
-
-
-class ProposeIn(BaseModel):
-    """What a person's 芝士 drafts (``cheese_message_draft``,
-    ``cheese_task_draft``): a message to ``topic`` (a channel, a task or a
-    支线), or a task to open in the channel ``topic`` is in."""
-
-    kind: Literal["message", "task"]
-    topic: uuid.UUID
-    text: str = Field(default="", max_length=8000)
-    title: str = Field(default="", max_length=300)
-
-
-def _where(place) -> str:
-    """How the place is named on a card: a channel by its name, a task or a
-    支线 by its title."""
-    if place.task is not None:
-        return place.task.title
-    if place.thread is not None:
-        return place.thread.title
-    return place.room.title
-
-
-@router.post("/proposals", include_in_schema=False, dependencies=[ROUTE_DECIDES])
-async def propose(
-    body: ProposeIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    questions: Questions,
-) -> dict:
-    """Keep what 芝士 drafted for the person to send, and show it on the
-    question's stream as a card (``proposal``). Nothing is sent: the person
-    sends it, as themself. Where it would go has to be somewhere the person
-    may speak, in the project the question was asked from."""
-    claims = resolver.delegation()
-    if claims is None or claims.user_id is None or not claims.work:
-        raise AuthenticationRequiredError(say("invalidToken"))
-    place = await place_or_404(db, body.topic)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(actor, project_id=place.project_id, room=place.room)
-    text, title = body.text.strip(), body.title.strip()
-    if body.kind == "message":
-        if not text:
-            raise BadRequestError(say("assistantProposalNeedsText"))
-        payload = {
-            "topic": str(place.conversation_id),
-            "topicName": _where(place),
-            "text": text,
-        }
-    else:
-        if not title or not text:
-            raise BadRequestError(say("assistantProposalNeedsTitle"))
-        payload = {
-            "channel": str(place.room_id),
-            "channelName": place.room.title,
-            "title": title,
-            "brief": text,
-        }
-    payload["project"] = str(place.project_id)
-    row = await proposals.propose(
-        db, user_id=claims.user_id, work=claims.work, kind=body.kind, payload=payload
-    )
-    await db.commit()
-    shown = proposals.view(row)
-    try:
-        asked = await questions.get(claims.work)
-    except RuntimeError:  # no Valkey: nobody to tell
-        asked = None
-    if asked is not None and asked.kind == assistant.KIND:
-        await questions.publish(asked, "proposal", shown)
-    return ok(shown)
 
 
 class SettleIn(BaseModel):
