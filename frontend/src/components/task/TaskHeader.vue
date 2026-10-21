@@ -3,6 +3,7 @@
 // 左边是「# 房间 / 任务名」和任务此刻的状态；右边是负责人和协作者（点开看谁在做、
 // 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名归负责人和协作者，转交、
 // 关闭只归负责人）。
+import type { MenuCommand } from '@/commands'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
 
@@ -13,6 +14,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
+import { takesPartInTask, taskActions } from '@/commands/taskActions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -50,6 +52,8 @@ const props = defineProps<{
   setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
+  /** 复制这件任务的链接。页面给：这一层不认路由（组件只凭 props 画）。 */
+  copyLink?: () => void
 }>()
 
 const emit = defineEmits<{
@@ -61,7 +65,7 @@ const { mdAndUp } = useDisplay()
 const ME = myHandle()
 const isOwner = computed(() => !!props.task && props.task.owner_handle === ME)
 const isOpen = computed(() => props.task?.status === 'open')
-const takesPart = computed(() => isOwner.value || (!!props.task && (props.task.contributor_handles ?? []).includes(ME)))
+const takesPart = computed(() => !!props.task && takesPartInTask(props.task, ME))
 const ownerName = computed(() => {
   const handle = props.task?.owner_handle ?? ''
   return props.memberNames[handle] || handle
@@ -188,6 +192,29 @@ async function confirmHandOver() {
   } finally {
     handingOver.value = false
   }
+}
+
+// ⋯ 里的清单和侧栏任务行是同一份（`commands/taskActions.ts`）：这里露出全部，侧栏
+// 只留「重命名」「复制链接」。权限也在那一份里判，不再在这几个模板分支里各写一遍。
+const menuActions = computed<MenuCommand[]>(() =>
+  props.task
+    ? taskActions(
+        props.task,
+        {
+          rename: () => (renameOpen.value = true),
+          handOver: () => (handOverOpen.value = true),
+          close: () => (closeOpen.value = true),
+          reopen: () => void props.reopen(),
+        },
+        { me: ME, canHandOver: otherPeople.value.length > 0, copyLink: props.copyLink ?? null }
+      )
+    : []
+)
+// 两条既有用例按这两个 test id 找按钮：其余项不必有。
+function actionTestId(id: string): string | undefined {
+  if (id === 'task.rename') return 'task-rename'
+  if (id === 'task.reopen') return 'task-reopen'
+  return undefined
 }
 </script>
 
@@ -403,26 +430,13 @@ async function confirmHandOver() {
       </template>
       <v-list density="compact" role="menu" :aria-label="t('work.task.more')">
         <v-list-item
+          v-for="action in menuActions"
+          :key="action.id"
           role="menuitem"
-          :title="t('work.task.rename')"
-          data-testid="task-rename"
-          @click="renameOpen = true"
-        />
-        <template v-if="isOwner && isOpen">
-          <v-list-item
-            v-if="otherPeople.length"
-            role="menuitem"
-            :title="t('work.task.handOver')"
-            @click="handOverOpen = true"
-          />
-          <v-list-item role="menuitem" :title="t('work.task.close')" @click="closeOpen = true" />
-        </template>
-        <v-list-item
-          v-else-if="isOwner"
-          role="menuitem"
-          :title="t('work.task.reopen')"
-          data-testid="task-reopen"
-          @click="reopen()"
+          :title="action.title"
+          :prepend-icon="action.icon"
+          :data-testid="actionTestId(action.id)"
+          @click="action.run?.()"
         />
       </v-list>
     </v-menu>
