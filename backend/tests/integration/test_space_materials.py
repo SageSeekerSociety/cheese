@@ -96,9 +96,10 @@ class _Board:
             f"/spaces/{self.space_id}/materials", headers=_auth(token)
         )
 
-    def download(self, token: str, material_id: int):
+    def download(self, token: str, material_id: int, *, preview: bool = False):
         return self.client.get(
             f"/spaces/{self.space_id}/materials/{material_id}/download",
+            params={"preview": "true"} if preview else None,
             headers=_auth(token),
         )
 
@@ -210,6 +211,31 @@ class TestSpaceMaterialLibrary:
         listed = board.list(board.owner.token).json()["data"]["materials"]
         row = next(r for r in listed if r["id"] == material_id)
         assert row["downloadCount"] == 1
+
+    def test_a_preview_is_not_a_download(self, board: _Board) -> None:
+        material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]
+
+        got = board.download(board.member.token, material_id, preview=True)
+        assert got.status_code == 200, got.text
+        assert got.content == PDF_BYTES
+
+        listed = board.list(board.owner.token).json()["data"]["materials"]
+        row = next(r for r in listed if r["id"] == material_id)
+        assert row["downloadCount"] == 0
+
+    def test_a_preview_still_checks_the_tier(self, board: _Board) -> None:
+        material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]
+        board.set_visibility(board.owner.token, material_id, "admins")
+
+        got = board.download(board.member.token, material_id, preview=True)
+        assert got.status_code == 403
+
+    def test_each_row_names_its_uploader(self, board: _Board) -> None:
+        material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]
+
+        listed = board.list(board.member.token).json()["data"]["materials"]
+        row = next(r for r in listed if r["id"] == material_id)
+        assert row["uploaderName"]
 
     def test_admins_tier_is_hidden_from_members(self, board: _Board) -> None:
         material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]

@@ -126,11 +126,13 @@ export const SpacesApi = {
     ),
   deleteMaterial: (spaceId: number, materialId: number) =>
     axiosMutation({ url: `/spaces/${spaceId}/materials/${materialId}`, method: 'DELETE' }, true),
-  downloadMaterial: async (spaceId: number, materialId: number): Promise<Blob> =>
+  /** `preview`：页面上点开看一眼，不记一次下载。 */
+  downloadMaterial: async (spaceId: number, materialId: number, preview = false): Promise<Blob> =>
     (
       await axiosNewApi.request<Blob>({
         url: `/spaces/${spaceId}/materials/${materialId}/download`,
         method: 'GET',
+        params: preview ? { preview: true } : undefined,
         responseType: 'blob',
       })
     ).data,

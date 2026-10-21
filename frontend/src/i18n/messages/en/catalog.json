@@ -558,25 +558,6 @@
       "note": "All six empty means 'nothing said': the materials list also failed to load this time, but failing to load isn't the same as gone, so it isn't treated as invalid — that field becomes an explanatory line, offering no candidates."
     }
   },
-  "spaceMaterialsView": {
-    "about": "Space settings 'Materials': visible to all members; those marked 'Admins only' are hidden from members and unreadable by their AI. Each row can be downloaded, have its visibility changed, or be taken down.",
-    "s1": {
-      "name": "Has materials, admin sees all",
-      "note": "Default cell: three materials in one list; each row shows type, size, upload date, download count and how many places reference it; the account can manage, so every row has entries to change visibility and take down."
-    },
-    "s2": {
-      "name": "Nothing yet",
-      "note": "Materials empty: says 'No materials', doesn't draw a blank block."
-    },
-    "s3": {
-      "name": "List still loading",
-      "note": "Not loaded yet: spins in place, doesn't say 'No materials' first — that would read 'not loaded' as 'none'."
-    },
-    "s4": {
-      "name": "Upload form open",
-      "note": "The form that appears after pressing 'Upload material': pick a file, set visibility (all members / admins only), both required."
-    }
-  },
   "briefView": {
     "about": "Task detail 'Brief' tab: the task brief (rich text) and the materials list; whether it's clickable and how many times it's downloadable is said by the server. The section isn't drawn when there are no materials.",
     "s1": {
@@ -1650,6 +1631,37 @@
     "s2": {
       "name": "None",
       "note": "After the last one is deleted."
+    }
+  },
+  "spaceLibraryView": {
+    "about": "The space's Library page in the sidebar: members see files open to all members; admins see both tiers. Clicking a row previews it on the right; admins upload from the header and change visibility or remove from each row's ⋯ menu.",
+    "s1": {
+      "name": "Admin",
+      "note": "Four files, each row showing who uploaded it, when and its size; the admins-only file carries a tag."
+    },
+    "s2": {
+      "name": "Member",
+      "note": "No upload button and no admins-only files; the ⋯ menu only offers Download."
+    },
+    "s3": {
+      "name": "One file open",
+      "note": "The text file previews in the right pane. Admins also see its download count and how many guidance settings list it."
+    },
+    "s4": {
+      "name": "Nothing yet",
+      "note": "Says “No files yet” and draws no search box."
+    },
+    "s5": {
+      "name": "Still loading",
+      "note": "A spinner in place, not “No files yet” first."
+    },
+    "s6": {
+      "name": "One file open on a phone",
+      "note": "The file fills the page with Download at the bottom; the top bar's ← returns to the list."
+    },
+    "s7": {
+      "name": "Upload dialog",
+      "note": "Pick a file, then who can see it; each choice says who that is. Upload stays disabled until a file is chosen."
     }
   }
 }

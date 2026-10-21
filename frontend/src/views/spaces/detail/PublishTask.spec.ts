@@ -147,7 +147,7 @@ function makeRouter() {
       { path: '/spaces/:spaceId/manage/audit', name: 'SpacesDetailAuditTasks', component: stub },
       { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: stub },
       // 指导那一节里的「上传到资料库」照这个地址跳；不登记它，vue-router 每次都抱怨一句。
-      { path: '/spaces/:spaceId/manage/settings/materials', component: stub },
+      { path: '/spaces/:spaceId/library', component: stub },
     ],
   })
 }
