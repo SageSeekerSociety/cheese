@@ -1,7 +1,7 @@
 ---
 title: 个人芝士
 kind: 流程
-summary: 项目之外的芝士：一个人和芝士的那一条对话怎么存、在哪里跑、能做什么、怎么扣钱，全站唯一的面板怎么接到页面上，以及它和人一起写题目草稿。
+summary: 一个人自己的芝士：全站唯一的面板、一条对话怎么存、在哪里跑、能做什么、怎么扣钱，面板怎么接到页面上，它和人一起写题目草稿，以及在项目里怎么替人读、起草、派活。
 covers:
   - backend/app/domain/agent/personal/
   - backend/app/domain/assistant/
@@ -18,6 +18,8 @@ covers:
   - frontend/src/lib/draftChangeView.ts
   - frontend/src/lib/typist.ts
   - frontend/src/api/agentChanges.ts
+  - frontend/src/api/agentProposals.ts
+  - frontend/src/components/agent/AgentProposal.vue
   - frontend/src/stores/agentThread.ts
   - frontend/src/stores/agent.ts
   - frontend/src/layouts/AgentHost.vue
@@ -29,7 +31,7 @@ covers:
 
 项目之外的芝士：一个人和芝士的那一条对话怎么存、在哪里跑、能做什么、怎么扣钱，全站唯一的面板怎么接到页面上，以及它和人一起写题目草稿。方向与规则见 #2285。
 
-> 讲：对话怎么存、会话在哪里跑、工具、一次提问从准入到扣费、题目草稿。不讲：项目里的 AI 队友（见[一轮对话](/dev/turn)），额度本身（见[计费流程](/dev/billing#personal)）。
+> 讲：对话怎么存、会话在哪里跑、工具、一次提问从准入到扣费、题目草稿、在项目里起草要发的消息和任务。不讲：项目里干活的 AI 队友（见[一轮对话](/dev/turn)），额度本身（见[计费流程](/dev/billing#personal)）。
 
 ## 对话 {#conversations}
 
@@ -40,7 +42,7 @@ covers:
 
 ## 面板接到页面上 {#host}
 
-面板全站只有一个，挂在应用外壳里（`layouts/AgentHost.vue`），对话和面板状态在模块里（`stores/agent.ts`、`stores/agentThread.ts`）：外壳在落地页和应用之间会重新挂载，芝士答到一半不跟着丢，换页时照样答完。入口三处：桌面左侧导航栏底部的芝士头像、手机顶栏右侧的芝士头像、`Ctrl/Cmd+J`。项目里的页面不画入口，开着的面板走进项目时收起：那里是项目的 AI 队友。退出登录时对话、待交的文件一并清掉。
+面板全站只有一个，挂在应用外壳里（`layouts/AgentHost.vue`），对话和面板状态在模块里（`stores/agent.ts`、`stores/agentThread.ts`）：外壳在落地页和应用之间会重新挂载，芝士答到一半不跟着丢，换页时照样答完。入口三处：桌面左侧导航栏底部的芝士头像、手机顶栏右侧的芝士头像、`Ctrl/Cmd+J`。项目里也是同一个面板、同一条对话，记这个人自己的额度，见[在项目里](#in-projects)。面板头部只写「芝士」。退出登录时对话、待交的文件一并清掉。
 
 页面不接线，只登记两件事，都是栈（后登记的在上面，组件卸载或被 keep-alive 收起时自己撤下）：
 
@@ -120,6 +122,15 @@ covers:
 | `doc` | 整次（`text`） | 这一轮对这篇文档改的几段倒着换回原文 | 再按原样改一遍 |
 
 文档在那之后又改了、换不回去时整次拒绝（「这段文字之后又被修改过，无法撤销」）。返回这一轮里被牵动的每一次改动现在的样子，面板照着划掉；打开以前的话题时，存下的回答里的改动也按这张表标出已撤销的项。改动记下之前的旧回答没有编号，只给看。
+
+## 在项目里 {#in-projects}
+
+面板里的芝士在项目里也是这个人自己的：替他做事，记他的额度。项目里真正干活的是频道和任务里的 AI 队友，记项目的额度；面板里的芝士只读、起草、派活，不改项目的文档和代码。
+
+- **当前页面**：项目外框（`views/workspace/ProjectShell.vue`）按地址登记这一页：打开了文档是 `doc`，在频道、任务或支线里是 `topic`，别的页是 `project`，编号都是 UUID（`personal/pages.py`）。能不能读，由请求自己的身份解析器按打开那一页的同一个判据判断，而且按读来判（`ActorResolver.for_reading`）：归档项目的页也能问。频道页附上最近 12 条消息，文档页只附标题和编号，正文由工具按需去读。
+- **凭据**：在项目的页上问，这一问的委托凭据带上这个项目（不带频道），工具以这个人的身份只进这个项目。这样的凭据（没有队友、没有频道）照旧能到不指定项目的那些路由（他自己的题目和草稿）；为某个频道签的凭据仍然不能（`resolver._resolve_delegated`）。会话本身没有项目，执行工具时从这一问的凭据里补上 `CHEESE_PROJECT`，不覆盖会话自己的（`pi/runner.py`）。
+- **工具**：读聊天记录（`cheese_chat_list`、`cheese_chat_search`、`cheese_chat_get`，`topic` 传页面上给的编号）、读文档（`cheese_doc_get`）、搜项目（`cheese_project_search`），以及两件起草：`cheese_message_draft`（发到频道、任务或支线的一条消息）、`cheese_task_draft`（开在频道里的任务：标题和交代）。读聊天记录的两条路由加进了 `DELEGATED_ROUTES`。
+- **起草与确认**：起草只写一行 `assistant_proposals`（`domain/assistant/proposals.py`），在这一问的流里推一条 `proposal`，面板画成一张待确认的卡（`components/agent/AgentProposal.vue`），正文和任务标题确认前能改。人点「发送」时，前端以他的身份走他手动发消息、开任务的那几条路（`stores/agent.ts` 的 `sendProposal`）：消息带着起草时定下的请求号，重发只落一条；任务先开出来，再把交代作为第一条消息发进去，任务的 AI 队友随之开始做。发出后 `POST /api/assistant/proposals/{id}` 记下发出了（和发出的消息、开出的任务），或者人说「不用了」。打开以前的话题时，存下的回答里的卡按这张表标出现在的样子。芝士自己没有能发出去的工具。
 
 ## 面板 {#panel}
 

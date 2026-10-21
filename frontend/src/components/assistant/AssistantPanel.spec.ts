@@ -52,10 +52,10 @@ describe('AssistantPanel', () => {
     expect(view.emitted('send')).toEqual([['']])
   })
 
-  it('says who is answering and whose it is, as two separate parts', () => {
+  it('says who is answering: there is one 芝士, so nothing says whose', () => {
     const view = mount()
     expect(view.getByText('芝士')).toBeTruthy()
-    expect(view.getByText('个人')).toBeTruthy()
+    expect(view.queryByText('个人')).toBeNull()
   })
 
   it('does not take a second question, or a new topic, while 芝士 is still answering', async () => {

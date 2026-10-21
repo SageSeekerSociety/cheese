@@ -11,7 +11,7 @@ import type { TaskRubricLine, TaskSubmissionSchemaEntry } from '@/types'
 import dayjs from 'dayjs'
 
 import { t } from '@/i18n'
-import { stepView } from '@/lib/assistantView'
+import { proposalView, stepView } from '@/lib/assistantView'
 import { AGENT_FIELDS } from '@/lib/taskDraftAgent'
 
 /** 每个字段在表单上叫什么。 */
@@ -274,5 +274,6 @@ export function panelMessages(
     steps: (m.steps ?? []).map(stepView),
     ...writesView(m.edits ?? [], terms, current, canUndo, ordinal),
     results: (m.published ?? []).map(resultView),
+    proposals: (m.proposals ?? []).map(proposalView),
   }))
 }

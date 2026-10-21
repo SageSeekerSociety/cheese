@@ -1,7 +1,7 @@
 // 芝士一轮里做的事，在面板上画成什么：每一步（动词 + 一个参数），改动卡，结果。这里是
 // 不管写的是什么都一样的那一半——面板拿的形状，和每一步怎么说；写进题目草稿的改动卡、
 // 发布的结果怎么说在 `lib/draftChangeView.ts`。
-import type { AssistantStep } from '@/stores/agentThread'
+import type { AssistantProposal, AssistantStep } from '@/stores/agentThread'
 
 import { t } from '@/i18n'
 import { partialStringField } from '@/lib/partialJson'
@@ -49,6 +49,31 @@ export interface PanelWrites {
   changes: PanelChange[]
 }
 
+/** 芝士起草、等人确认的一件事，卡上画的样子。`where` 是发到哪（频道、任务或支线的名字），
+ *  `title` 只有任务有；`text` 是消息正文或任务的交代，确认前人能改。 */
+export interface PanelProposal {
+  id: number
+  kind: AssistantProposal['kind']
+  state: AssistantProposal['state']
+  where: string
+  title?: string
+  text: string
+  /** 开出的任务：卡上给「查看」。 */
+  task?: string
+}
+
+export function proposalView(p: AssistantProposal): PanelProposal {
+  return {
+    id: p.id,
+    kind: p.kind,
+    state: p.state,
+    where: (p.kind === 'task' ? p.channelName : p.topicName) ?? '',
+    ...(p.kind === 'task' ? { title: p.title ?? '' } : {}),
+    text: (p.kind === 'task' ? p.brief : p.text) ?? '',
+    ...(p.result?.task ? { task: p.result.task } : {}),
+  }
+}
+
 export interface PanelResult {
   taskId: number
   title: string
@@ -62,6 +87,9 @@ const STEP_ARG: Record<string, string> = {
   cheese_file_read: 'pages',
   cheese_docs_search: 'query',
   cheese_docs_read: 'page',
+  cheese_chat_search: 'query',
+  cheese_project_search: 'query',
+  cheese_task_draft: 'title',
 }
 
 export function stepView(step: AssistantStep): PanelStep {

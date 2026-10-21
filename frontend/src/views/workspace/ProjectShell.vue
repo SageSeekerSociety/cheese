@@ -15,6 +15,7 @@ import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } from '@/query/project'
 import { useProjectFeed } from '@/query/projectFeed'
+import { useAgentContext } from '@/stores/agent'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
@@ -44,6 +45,31 @@ const { navigating } = trackNavigations(router)
 // The route is the single source of truth for "what am I looking at" — the
 // store only mirrors it so background refreshes know which badge not to light.
 const ids = computed(() => routeIds(route.params))
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// 芝士在项目里读的是眼前这一页：打开的文档，所在的频道、任务或支线，别的页就是这个项目。
+// 编号还没换成 UUID（短编号刚进来）时先当项目。
+useAgentContext(() => {
+  const { docId, threadId, taskId, topicId, projectId } = ids.value
+  const place = [threadId, taskId, topicId].find((id) => id && UUID.test(id))
+  const page =
+    docId && UUID.test(docId)
+      ? ({ kind: 'doc', id: docId } as const)
+      : place
+        ? ({ kind: 'topic', id: place } as const)
+        : projectId && UUID.test(projectId)
+          ? ({ kind: 'project', id: projectId } as const)
+          : null
+  return {
+    page,
+    greeting: t('tasks.assistant.project.greeting'),
+    starters: [
+      t('tasks.assistant.project.starters.mine'),
+      place ? t('tasks.assistant.project.starters.recap') : t('tasks.assistant.project.starters.progress'),
+      t('tasks.assistant.project.starters.handOff'),
+    ],
+  }
+})
 watch(
   () => [ids.value.topicId, ids.value.taskId, route.params.peer, props.projectId] as const,
   ([topicId, taskId, peer, projectId]) => {

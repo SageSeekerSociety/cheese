@@ -68,7 +68,6 @@
       "check": "Check it as a student would"
     }
   },
-  "personal": "Personal",
   "newTopic": "New topic",
   "olderTopics": "Earlier topics",
   "dock": "Pin to the right",
@@ -77,5 +76,30 @@
     "greeting": "Ask a question, or tell me what to do.",
     "placeholder": "Ask or describe a task",
     "hint": "Answers are written by AI and may be wrong."
+  },
+  "project": {
+    "greeting": "I can read this project's channels and documents, draft messages for you to send, or hand work to the project's AI teammate. You confirm before anything is sent.",
+    "starters": {
+      "mine": "Is there anything here I need to handle?",
+      "recap": "Summarize the recent discussion here",
+      "progress": "What has happened in this project lately?",
+      "handOff": "Hand this to the AI teammate"
+    }
+  },
+  "proposal": {
+    "waiting": "Waiting for you",
+    "sent": "Sent to {where}",
+    "opened": "Opened task {title}",
+    "dismissed": "Set aside",
+    "to": "To",
+    "channel": "Channel",
+    "title": "Title",
+    "message": "Message",
+    "brief": "Brief",
+    "send": "Send",
+    "openTask": "Open task",
+    "dismiss": "Set aside",
+    "view": "View",
+    "failed": "Couldn't send"
   }
 }

@@ -46,8 +46,8 @@
 // 桌面上默认停在右边，把页面挤窄（芝士往表单里写时，表单和面板并排看得见）；取消固定就是
 // 右下角的一张浮层，页面宽度不变。手机上从底下升起来。
 //
-// 项目里叫出的是项目自己的芝士（还没有做），所以在项目里不出现：入口不画，快捷键不响应，
-// 开着的面板走进项目时收起。
+// 项目里也是同一个芝士：替这个人读、起草要发的话、把活派给项目里的 AI 队友（发出去要他
+// 确认），记他自己的额度。
 //
 // 这一页登记了表单（`AgentSurface.form`）时，芝士那一层也由这里画，送进表单的外框里：
 // 指针、正在写的那一格的描边、「芝士已填写」和撤销。
@@ -61,7 +61,6 @@ import { defineCommands } from '@/commands'
 import AgentLayer from '@/components/agent/AgentLayer.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
-import { routeIds } from '@/lib/addresses'
 import { myHandle } from '@/me'
 import AccountService from '@/services/account'
 import {
@@ -75,9 +74,13 @@ import {
   agentView,
   askAgent,
   attachToAgent,
+  dismissProposal,
   earlierView,
+  projectOfOpenedTask,
   removeAgentFile,
   resetAgent,
+  sendingProposal,
+  sendProposal,
   toggleAgent,
 } from '@/stores/agent'
 
@@ -86,7 +89,7 @@ const route = useRoute()
 const router = useRouter()
 const docked = agentDocked
 
-const available = computed(() => AccountService._loggedIn.value && !routeIds(route.params).projectId)
+const available = computed(() => AccountService._loggedIn.value)
 // 退出登录：上一个人的对话不留给下一个人。
 watch(
   () => AccountService._loggedIn.value,
@@ -153,6 +156,8 @@ const panelProps = computed(() => {
     steps: view.steps,
     changes: view.changes,
     results: view.results,
+    proposals: view.proposals,
+    sendingProposal: sendingProposal.value,
     files: agentFiles.value.map((f) => ({ name: f.name, mime: f.mime, uploading: f.uploading })),
     context: context.intro ?? '',
     greeting: context.greeting ?? t('tasks.assistant.anywhere.greeting'),
@@ -179,6 +184,12 @@ const panelEvents = {
   openDraft: (id: number) => agentSurface.value?.openDraft?.(id),
   openTask: (id: number) => (agentSurface.value?.openTask ?? openTask)(id),
   attach: (files: File[]) => void attachToAgent(files),
+  sendProposal: (id: number, edited: { title?: string; text: string }) => void sendProposal(id, edited),
+  dismissProposal: (id: number) => void dismissProposal(id),
+  openPlace: (task: string) => {
+    const projectId = projectOfOpenedTask(task)
+    if (projectId) void router.push({ name: 'workspace-task', params: { projectId, taskId: task } })
+  },
   removeFile: (index: number) => removeAgentFile(index),
 }
 </script>

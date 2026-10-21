@@ -6,7 +6,8 @@
 // 回答是流式的（server-sent events）：`queued` 在等会话机空出来，`delta` 是文字，
 // `tool` 是芝士开始调一个工具，`tool_args` 是那次调用边写边流过来的参数（页面拿它
 // 先把表单填上），`tool_failed` 是那次调用报错了，`change` 是芝士写进了草稿、改了哪几格
-// （定数，页面用它覆盖预览；服务端记下了它，撤销按它的编号来），`published` 是它发布了一份草稿，`error` 是没答上来的
+// （定数，页面用它覆盖预览；服务端记下了它，撤销按它的编号来），`published` 是它发布了一份草稿，
+// `proposal` 是它替人起草了一条要发到项目里的消息、或一个要开的任务（人确认后才发出），`error` 是没答上来的
 // 原因，`done` 收尾。回答在服务端答到底，跟这条连接无关：连接断了就从断的地方接着读。
 import { computed, ref } from 'vue'
 
@@ -41,6 +42,7 @@ interface StoredParts {
   steps?: { call: string; name: string; args: string; failed?: string; ms?: number }[]
   edits?: Record<string, unknown>[]
   published?: AssistantPublished[]
+  proposals?: AssistantProposal[]
   /** 问题带的文件名。 */
   files?: string[]
 }
@@ -60,6 +62,26 @@ export interface AssistantEdit {
   kept: string[]
   notes: { field: string; text: string }[]
   undone: string[]
+}
+
+/** 芝士替人起草、等人确认的一件事：一条消息（发到频道、任务或支线），或一个要开的任务
+ *  （标题和交代，交代作为任务里的第一条消息发进去）。`request` 是发这条消息用的请求号：
+ *  重发只落一条。`state` 是还在等（pending）、已发出（sent，`result` 是发出的那条消息或
+ *  开出的任务），或人说不用了（dismissed）。 */
+export interface AssistantProposal {
+  id: number
+  kind: 'message' | 'task'
+  state: 'pending' | 'sent' | 'dismissed'
+  request: string
+  project: string
+  topic?: string
+  topicName?: string
+  text?: string
+  channel?: string
+  channelName?: string
+  title?: string
+  brief?: string
+  result?: { topic?: string; message?: string; task?: string }
 }
 
 /** 芝士发布了一份草稿（或把修改保存到了题目上）。 */
@@ -83,12 +105,14 @@ export interface AssistantMessage {
   steps?: AssistantStep[]
   edits?: AssistantEdit[]
   published?: AssistantPublished[]
+  proposals?: AssistantProposal[]
 }
 
-/** 问的时候眼前是哪一页：芝士看到的「当前页面」就是它。 */
+/** 问的时候眼前是哪一页：芝士看到的「当前页面」就是它。题目和草稿按编号，项目里的频道、
+ *  任务、支线（topic）、文档（doc）和项目本身（project）按 UUID。 */
 export interface AssistantPage {
-  kind: 'task' | 'draft'
-  id: number
+  kind: 'task' | 'draft' | 'topic' | 'doc' | 'project'
+  id: number | string
 }
 
 /** 页面要知道的那几件事：表单跟着它们动。 */
@@ -133,6 +157,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const steps = ref<AssistantStep[]>([])
   const edits = ref<AssistantEdit[]>([])
   const published = ref<AssistantPublished[]>([])
+  const proposals = ref<AssistantProposal[]>([])
   /** 在等会话机空出来，还没开始答。 */
   const queued = ref(false)
   /** 没答上来、额度用完之类要告诉人的那一句。 */
@@ -285,7 +310,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   /** 存下的那一轮，读回成面板上的步骤、改动和结果。 */
-  function kept(parts: StoredParts): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'files'> {
+  function kept(parts: StoredParts): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'proposals' | 'files'> {
     return {
       ...(parts.files?.length ? { files: parts.files } : {}),
       steps: (parts.steps ?? []).map((step) => ({
@@ -298,6 +323,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
       })),
       edits: (parts.edits ?? []).map(toEdit),
       published: parts.published ?? [],
+      proposals: parts.proposals ?? [],
     }
   }
 
@@ -367,6 +393,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
       const edit = toEdit(payload)
       edits.value = [...edits.value, edit]
       on.edit?.(edit)
+    } else if (event === 'proposal') {
+      proposals.value = [...proposals.value, payload as unknown as AssistantProposal]
     } else if (event === 'published') {
       const done = payload as unknown as AssistantPublished
       published.value = [...published.value, done]
@@ -388,6 +416,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     steps.value = []
     edits.value = []
     published.value = []
+    proposals.value = []
     let answer = ''
     let failed = false
     let stopped = false
@@ -429,7 +458,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
       notice.value = fallback
     } finally {
       settleSteps()
-      const did = steps.value.length > 0 || edits.value.length > 0 || published.value.length > 0
+      const did =
+        steps.value.length > 0 || edits.value.length > 0 || published.value.length > 0 || proposals.value.length > 0
       if (current.value === conversation && ((answer && !failed && done) || stopped || did))
         messages.value = [
           ...messages.value,
@@ -441,6 +471,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
             steps: steps.value,
             edits: edits.value,
             published: published.value,
+            proposals: proposals.value,
           },
         ]
       if (current.value === conversation) {
@@ -450,8 +481,16 @@ export function createAssistant(opts: AssistantOptions = {}) {
         steps.value = []
         edits.value = []
         published.value = []
+        proposals.value = []
       }
     }
+  }
+
+  /** 一件起草的事现在怎样了（人发出了，或说不用了）：面板照着改那张卡。 */
+  function settleProposal(id: number, state: AssistantProposal['state'], result?: AssistantProposal['result']) {
+    const mark = (list: AssistantProposal[]) => list.map((p) => (p.id === id ? { ...p, state, result } : p))
+    proposals.value = mark(proposals.value)
+    messages.value = messages.value.map((m) => (m.proposals ? { ...m, proposals: mark(m.proposals) } : m))
   }
 
   /** 服务端说这几次写入现在撤销了哪几格：面板照着划掉或恢复。 */
@@ -488,6 +527,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     steps,
     edits,
     published,
+    proposals,
     queued,
     notice,
     creditRefused,
@@ -500,5 +540,6 @@ export function createAssistant(opts: AssistantOptions = {}) {
     stop,
     undo,
     settleChanges,
+    settleProposal,
   }
 }

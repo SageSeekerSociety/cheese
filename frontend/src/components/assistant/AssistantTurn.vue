@@ -117,27 +117,46 @@
     </div>
 
     <slot />
+
+    <AgentProposal
+      v-for="proposal in proposals"
+      :key="proposal.id"
+      :proposal="proposal"
+      :busy="sending === proposal.id"
+      @send="(id, edited) => emit('sendProposal', id, edited)"
+      @dismiss="(id) => emit('dismissProposal', id)"
+      @open="(task) => emit('openPlace', task)"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 // 芝士的一轮回答（`AssistantPanel` 里的一段）：它调的工具一行一步，答完收成一行「N 步」；
 // 写进草稿的改动是一张卡，每格能撤销；留给人确认的地方是另一张卡；发布的结果带一个
-// 「查看题目」。话本身由外面那一层塞进默认插槽。只拿 props、只发事件。
-import type { PanelChange, PanelResult, PanelStep } from '@/lib/assistantView'
+// 「查看题目」。话本身由外面那一层塞进默认插槽；话后面是它替人起草、等人确认的消息和任务
+// （`AgentProposal`）。只拿 props、只发事件。
+import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import AgentProposal from '@/components/agent/AgentProposal.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 
-const props = defineProps<{
-  steps: PanelStep[]
-  changes: PanelChange[]
-  results: PanelResult[]
-  /** 这一轮还在答：步骤不收起。 */
-  live?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    steps: PanelStep[]
+    changes: PanelChange[]
+    results: PanelResult[]
+    /** 替人起草、等人确认的消息和任务。 */
+    proposals?: PanelProposal[]
+    /** 正在发出的那一件。 */
+    sending?: number | null
+    /** 这一轮还在答：步骤不收起。 */
+    live?: boolean
+  }>(),
+  { proposals: () => [], sending: null, live: false }
+)
 
 const emit = defineEmits<{
   undo: [changeId: number, key: string]
@@ -145,6 +164,10 @@ const emit = defineEmits<{
   jump: [key: string]
   openDraft: [draftId: number]
   openTask: [taskId: number]
+  sendProposal: [id: number, edited: { title?: string; text: string }]
+  dismissProposal: [id: number]
+  /** 打开芝士起草、人发出的那个任务。 */
+  openPlace: [task: string]
 }>()
 
 const { t } = useI18n()
