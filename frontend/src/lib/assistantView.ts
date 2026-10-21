@@ -106,6 +106,7 @@ const STEP_ARG: Record<string, string> = {
   cheese_member_set: 'who',
   cheese_channel_create: 'title',
   cheese_web_fetch: 'url',
+  cheese_web_search: 'query',
   cheese_settings_set: 'key',
 }
 

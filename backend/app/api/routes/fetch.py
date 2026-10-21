@@ -16,15 +16,25 @@ import uuid
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.response import ok
+from app.api.auth.resolver import ActorResolver
+from app.api.refusal import refuse
+from app.api.request_deps import DbSession
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import SystemBusyError
+from app.core.sentences import say
+from app.domain.fetch.search import MAX_QUERY_CHARS, SearchUnavailable
+from app.domain.fetch.search import search as search_web
 from app.domain.fetch.service import fetch as fetch_url
+from app.domain.identity.actor import Actor
+from app.domain.usage.ledger import Payer, payer_for_person, payer_for_project
+from app.domain.usage.search import charge_search, search_refusal
 
 router = APIRouter(prefix="", tags=["fetch"])
 
@@ -94,6 +104,81 @@ async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
             "trail": outcome.trail(),
         }
     )
+
+
+class WebSearchResult(BaseModel):
+    title: str
+    url: str
+    snippet: str
+    date: str | None = None
+
+
+class WebSearchOut(BaseModel):
+    results: list[WebSearchResult]
+
+
+async def _search_payer(
+    db: AsyncSession, resolver: ActorResolver, actor: Actor
+) -> Payer | None:
+    """Who pays for this caller's search: whoever pays for the work's model
+    calls, read from what the credential says rather than from the query.
+
+    A delegated credential reaches this route only as a person's own 芝士,
+    through its gate (``GATED_ROUTES``), and that person pays, as for its
+    model calls. A room agent's scoped token names its project. A person
+    signed in pays themselves. The global sandbox override names nobody and
+    is charged to nobody."""
+    delegation = resolver.delegation()
+    if delegation is not None:
+        if delegation.user_id is None:
+            return None
+        return await payer_for_person(db, delegation.user_id)
+    project = resolver.credential_project()
+    if project is not None:
+        return await payer_for_project(db, project)
+    if actor.via == "token" and actor.user_id is not None:
+        return await payer_for_person(db, actor.user_id)
+    return None
+
+
+@router.get(
+    "/web-search",
+    summary="Search the web for an agent",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(WebSearchOut),
+)
+async def web_search(
+    db: DbSession,
+    actor: ActorResolverDep,
+    q: Annotated[str, Query(min_length=1, max_length=MAX_QUERY_CHARS)],
+    limit: Annotated[int, Query(ge=1, le=20)] = 8,
+    topic: uuid.UUID | None = None,
+    project: uuid.UUID | None = None,
+):
+    """Results (title, URL, summary, date) from DeepSeek's search API.
+
+    The same caller rule as `/fetch`: a signed-in person or an agent's scoped
+    token, which verifies only against the room it names. A search is admitted
+    and charged the way the work's model calls are (``usage.search``): a payer
+    out of credits is refused before DeepSeek is asked, and only a search that
+    returned results is charged, as DeepSeek bills only those.
+    """
+    caller = await actor.require_verified_caller(topic_id=topic, project_id=project)
+    if not settings.deepseek_api_key:
+        raise SystemBusyError(say("webSearchNotConfigured"))
+    payer = await _search_payer(db, actor, caller)
+    if payer is not None:
+        refused = await search_refusal(db, payer)
+        if refused is not None:
+            return refuse(429, refused.message, refused.retry_after_s())
+    try:
+        found = await search_web(q, settings.deepseek_api_key, limit=limit)
+    except SearchUnavailable as exc:
+        raise SystemBusyError(say("webSearchUnavailable", reason=str(exc))) from exc
+    if payer is not None and found:
+        await charge_search(db, payer, topic_id=topic, user_id=caller.user_id)
+        await db.commit()
+    return ok({"results": [vars(r) for r in found]})
 
 
 class PageCheckIn(BaseModel):
