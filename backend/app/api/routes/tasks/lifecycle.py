@@ -338,7 +338,12 @@ async def get_tasks(
         raise BadRequestError(f"Invalid sortBy: {sort_by}")
     if sort_order not in {"asc", "desc"}:
         raise BadRequestError(f"Invalid sortOrder: {sort_order}")
-    if lifecycle is not None and lifecycle not in {"ended", "recruiting", "notEnded"}:
+    if lifecycle is not None and lifecycle not in {
+        "ended",
+        "recruiting",
+        "closed",
+        "notEnded",
+    }:
         raise BadRequestError(f"Invalid lifecycle: {lifecycle}")
 
     # 将 approved 字符串映射到数据库中的 SMALLINT（ApproveType ordinal）。

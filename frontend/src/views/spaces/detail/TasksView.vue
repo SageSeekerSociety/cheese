@@ -38,6 +38,11 @@ defineProps<{
   refreshing: boolean
   tasks: Task[]
   total: number
+  /** 「全部」里已截止或名额已满的那些：收在列表末尾，点开才画。别的范围是空的。 */
+  closedTasks: Task[]
+  closedTotal: number
+  closedHasMore: boolean
+  closedLoadingMore: boolean
   publishedLoading: boolean
   publishedFailed: boolean
   publishedError: string | null
@@ -48,6 +53,7 @@ const emit = defineEmits<{
   'update:scope': [scope: TaskScope]
   'update:pendingOnly': [on: boolean]
   loadMore: []
+  loadMoreClosed: []
   loadPublishedTasks: []
 }>()
 
@@ -55,6 +61,7 @@ const selectedTopics = defineModel<number[]>('selectedTopics', { required: true 
 const sortKey = defineModel<TaskSortKey>('sort', { required: true })
 const searchQuery = defineModel<string>('search', { required: true })
 const selectedCategoryIdModel = defineModel<number | null>('selectedCategory', { required: true })
+const closedOpen = defineModel<boolean>('closedOpen', { default: false })
 
 const { t } = useI18n()
 </script>
@@ -127,10 +134,42 @@ const { t } = useI18n()
         @load-more="emit('loadMore')"
       >
         <template #empty>
-          <BaseEmptyState icon="mdi-trophy" :title="t('spaces.detail.tasks.noTasks')" />
+          <BaseEmptyState
+            icon="mdi-trophy"
+            :title="closedTotal ? t('spaces.detail.tasks.noOpenTasks') : t('spaces.detail.tasks.noTasks')"
+          />
         </template>
+        <!-- The folded row below ends this list; an end marker above it would say nothing follows. -->
+        <template v-if="closedTotal" #no-more><span /></template>
         <TaskRow v-for="task in tasks" :key="task.id" :task="task" :to="rowTo(task)" />
       </InfiniteScroll>
+
+      <!-- Closed or full: below everything that can still be claimed, folded until asked for. -->
+      <section v-if="closedTotal && !hasMore && !refreshing" class="tasks-closed" data-testid="tasks-closed">
+        <button
+          type="button"
+          class="tasks-closed__toggle"
+          :aria-expanded="closedOpen"
+          @click="closedOpen = !closedOpen"
+        >
+          <v-icon size="18" class="tasks-closed__chevron" :class="{ 'tasks-closed__chevron--open': closedOpen }"
+            >mdi-chevron-right</v-icon
+          >
+          <span>{{ t('spaces.detail.tasks.closed', { n: closedTotal }) }}</span>
+        </button>
+        <InfiniteScroll
+          v-if="closedOpen"
+          :loading="closedLoadingMore"
+          :has-more="closedHasMore"
+          :initial-loading="false"
+          :is-empty="closedTasks.length === 0"
+          :shown="closedTasks.length"
+          :total="closedTotal"
+          @load-more="emit('loadMoreClosed')"
+        >
+          <TaskRow v-for="task in closedTasks" :key="task.id" :task="task" :to="rowTo(task)" />
+        </InfiniteScroll>
+      </section>
     </div>
   </v-sheet>
 </template>
@@ -152,5 +191,31 @@ const { t } = useI18n()
 
 .tasks-list {
   padding: 0 16px 16px;
+}
+
+.tasks-closed__toggle {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+  padding: 14px 8px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.tasks-closed__toggle:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+.tasks-closed__chevron {
+  transition: transform var(--dur-quick) var(--ease-standard);
+}
+
+.tasks-closed__chevron--open {
+  transform: rotate(90deg);
 }
 </style>

@@ -204,7 +204,9 @@
       "nearestDeadline": "Ending soon"
     },
     "topic": "Tag",
-    "topicCount": "{n} tags"
+    "topicCount": "{n} tags",
+    "closed": "Closed or full ({n})",
+    "noOpenTasks": "No tasks open to claim"
   },
   "templateForm": {
     "cancel": "Cancel",
