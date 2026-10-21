@@ -1,31 +1,22 @@
-// 发布页、改题页上的芝士：对话挂在哪、它写草稿时表单怎么跟着动、面板上画什么、人怎么
-// 撤销它改的格子、怎么把文件交给它。两页只在「对话挂在哪」上不一样：发布页的对话挂在
-// 草稿上，改题页的挂在那道题上（和题目页「问芝士」是同一段）。
-import type { Ref } from 'vue'
-import type { PanelFile } from '@/components/assistant/AssistantPanel.vue'
-import type { AssistantEdit, AssistantHome } from '@/composables/useAssistant'
+// 发布页、改题页登记的可写面：芝士写这份草稿时表单怎么跟着动、面板上的改动卡怎么画、人怎么
+// 撤销它改的格子。对话本身是全站那一条（`stores/agent.ts`），这里不再自己开。
 import type { useTaskDraft } from '@/composables/useTaskDraft'
 import type { DraftTerms } from '@/lib/taskDraftAgent'
+import type { AssistantEdit } from '@/stores/agentThread'
 
 import { computed, onScopeDispose, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
-import { useAssistant } from '@/composables/useAssistant'
-
-import { AttachmentsApi } from '@/api/attachments'
-import { t } from '@/i18n'
 import { panelMessages, resultView, stepView, writesView } from '@/lib/assistantView'
 import { partialValue } from '@/lib/partialJson'
 import { AGENT_FIELDS } from '@/lib/taskDraftAgent'
 import { createTypist } from '@/lib/typist'
+import { agentThread, useAgentSurface } from '@/stores/agent'
 
 type Draft = ReturnType<typeof useTaskDraft>
 
 export interface DraftAgentOptions {
   draft: Draft
   terms: () => DraftTerms
-  /** 对话挂在哪：发布页是草稿，改题页是题目。 */
-  home: () => AssistantHome | null
   /** 有表单可撤销。 */
   canUndo?: () => boolean
   /** 芝士新建、发布或改了别的草稿：草稿列表要重读。 */
@@ -34,16 +25,15 @@ export interface DraftAgentOptions {
   publishedHere?: (taskId: number) => void
   /** 一份文件拆出几道题时，这份草稿是第几道（改动卡上写「第 N 道」）。 */
   ordinal?: (draftId: number) => number | undefined
-}
-
-interface ShownFile {
-  id: number | null
-  name: string
-  mime: string
+  /** 面板上「跳到这一格」。 */
+  jump?: (key: string) => void
+  openDraft?: (id: number) => void
+  openTask?: (id: number) => void
 }
 
 export function useDraftAgent(options: DraftAgentOptions) {
   const { draft } = options
+  const assistant = agentThread
 
   // 芝士写的参数按打字的节奏放进表单（见 lib/typist.ts）；调用结束、写进草稿、发布都排在
   // 放完之后。
@@ -68,83 +58,9 @@ export function useDraftAgent(options: DraftAgentOptions) {
     else if ('space' in given) writingTarget.value = { draft: null, name }
   }
 
-  const assistant = useAssistant({
-    home: options.home,
-    page: () => (draft.id.value ? { kind: 'draft', id: draft.id.value } : null),
-    prepare: async () => {
-      await draft.flush()
-      await draft.ensure()
-    },
-    on: {
-      toolArgs: (call, name, raw) => {
-        if (name !== 'cheese_task_write') return
-        typist.feed(call, raw)
-        aimOf(raw)
-      },
-      toolEnded: (_call, name, failed) => {
-        if (name !== 'cheese_task_write') return
-        then(() => void draft.ended(failed))
-        if (failed) writingTarget.value = null
-      },
-      edit: (edit) =>
-        then(() => {
-          writingTarget.value = null
-          void draft.settle(edit)
-          if (edit.draft !== draft.id.value || edit.created) options.draftsChanged?.()
-        }),
-      published: (done) =>
-        then(() => {
-          if (done.draft === draft.id.value) {
-            draft.gone()
-            options.publishedHere?.(done.task.id)
-          }
-          options.draftsChanged?.()
-        }),
-      conversation: (id) => {
-        if (draft.draft.value) draft.draft.value = { ...draft.draft.value, conversationId: id }
-      },
-    },
-  })
-
-  /** 交给芝士的文件：先传上去，下一个问题带上它们。 */
-  const files = ref<(ShownFile & { uploading: boolean })[]>([])
-
-  async function attach(picked: File[]) {
-    for (const file of picked) {
-      const row = ref({ id: null as number | null, name: file.name, mime: file.type, uploading: true })
-      files.value = [...files.value, row.value]
-      try {
-        const done = await AttachmentsApi.upload({ type: 'file', file })
-        files.value = files.value.map((f) => (f === row.value ? { ...f, id: done.id, uploading: false } : f))
-      } catch {
-        files.value = files.value.filter((f) => f !== row.value)
-        toast.error(t('tasks.assistant.files.failed'))
-      }
-    }
-  }
-
-  function removeFile(index: number) {
-    files.value = files.value.filter((_, i) => i !== index)
-  }
-
-  async function ask(text: string) {
-    const handed = files.value.filter((f) => f.id !== null).map((f) => ({ id: f.id as number, name: f.name }))
-    files.value = []
-    await assistant.ask(text, t('tasks.assistant.failed'), handed)
-  }
-
   const canUndo = () => options.canUndo?.() ?? true
   const terms = () => options.terms()
-
   const undoable = (e: AssistantEdit) => canUndo() && e.draft === draft.id.value
-
-  const panel = computed(() => ({
-    messages: panelMessages(assistant.messages.value, terms(), undoable, draft.id.value ?? null, options.ordinal),
-    steps: assistant.steps.value.map(stepView),
-    ...writesView(assistant.edits.value, terms(), draft.id.value ?? null, undoable, options.ordinal),
-    results: assistant.published.value.map(resultView),
-    files: files.value.map((f): PanelFile => ({ name: f.name, mime: f.mime, uploading: f.uploading })),
-  }))
 
   function editById(id: number): AssistantEdit | undefined {
     return (
@@ -182,16 +98,61 @@ export function useDraftAgent(options: DraftAgentOptions) {
     if (changeId !== undefined) await undo(changeId, key)
   }
 
+  useAgentSurface(() => ({
+    prepare: async () => {
+      await draft.flush()
+      await draft.ensure()
+    },
+    on: {
+      toolArgs: (call, name, raw) => {
+        if (name !== 'cheese_task_write') return
+        typist.feed(call, raw)
+        aimOf(raw)
+      },
+      toolEnded: (_call, name, failed) => {
+        if (name !== 'cheese_task_write') return
+        then(() => void draft.ended(failed))
+        if (failed) writingTarget.value = null
+      },
+      edit: (edit) =>
+        then(() => {
+          writingTarget.value = null
+          void draft.settle(edit)
+          // The draft now names the topic that wrote it: the drafts one file split
+          // into are told apart from the rest by it.
+          const conversation = assistant.current.value
+          if (edit.draft === draft.id.value && conversation && draft.draft.value && !draft.draft.value.conversationId)
+            draft.draft.value = { ...draft.draft.value, conversationId: conversation }
+          if (edit.draft !== draft.id.value || edit.created) options.draftsChanged?.()
+        }),
+      published: (done) =>
+        then(() => {
+          if (done.draft === draft.id.value) {
+            draft.gone()
+            options.publishedHere?.(done.task.id)
+          }
+          options.draftsChanged?.()
+        }),
+    },
+    view: () => ({
+      messages: panelMessages(assistant.messages.value, terms(), undoable, draft.id.value ?? null, options.ordinal),
+      steps: assistant.steps.value.map(stepView),
+      ...writesView(assistant.edits.value, terms(), draft.id.value ?? null, undoable, options.ordinal),
+      results: assistant.published.value.map(resultView),
+    }),
+    undo: (change, key) => void undo(change, key),
+    undoAll: (rows) => void undoAll(rows),
+    jump: options.jump,
+    openDraft: options.openDraft,
+    openTask: options.openTask,
+  }))
+
   return {
     assistant,
-    panel,
-    files: files as Ref<(ShownFile & { uploading: boolean })[]>,
     writingTarget,
-    attach,
-    removeFile,
-    ask,
     undo,
     undoAll,
     undoMark,
+    busy: computed(() => assistant.busy.value),
   }
 }

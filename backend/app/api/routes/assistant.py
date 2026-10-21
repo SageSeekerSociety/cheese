@@ -1,10 +1,14 @@
-"""A person's 芝士 on a task page: its conversations there, and asking (#2285).
+"""A person's 芝士: their thread with it, and asking (#2285).
+
+A person has one thread with their 芝士, wherever they open it; each
+conversation is a topic in it, and 「新话题」 starts the next. The page a
+question is asked from goes with the question (``pages``), so the thread
+follows the person across pages.
 
 Everything here is the caller's own. A conversation that is someone else's
 answers exactly like one that does not exist (404), so an id confirms nothing.
-Asking about a task takes the same judgment as reading the task page
-(``_ensure_task_readable``): a person who cannot open the task cannot ask about
-it either.
+Asking from a page takes the same judgment as opening that page: a person who
+cannot open a task cannot ask about it either.
 
 A question is admitted only when it can be charged — the model is priced on the
 gateway, the person has a key there, and they have credits left this month —
@@ -50,8 +54,6 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.space.services import SpaceService
-from app.domain.task import drafts
-from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.user.services import timezones_by_ids
@@ -63,18 +65,6 @@ router = APIRouter(prefix="/assistant", tags=["assistant"])
 People = Annotated[SessionHost, Depends(get_session_host)]
 Questions = Annotated[Consumptions, Depends(get_consumptions)]
 Spaces = Annotated[SpaceService, Depends(get_space_service)]
-
-
-def _task_place(task_id: int) -> assistant.Place:
-    return assistant.Place("task", str(task_id))
-
-
-async def _readable_task(db, task_id: int, auth: AuthUserInfo):
-    task = await TaskService.of(db).get_task(task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
-    await ensure_task_readable(session=db, task=task, user_id=auth.user_id)
-    return task
 
 
 async def _owned(db, user_id: int, conversation_id: uuid.UUID):
@@ -97,36 +87,8 @@ def _conversation_out(row, questions: int | None = None) -> dict:
     return out
 
 
-@router.get("/tasks/{taskId}/conversations")
-async def list_task_conversations(
-    task_id: Annotated[int, Path(ge=1, alias="taskId")], db: DbSession, auth: AuthUser
-) -> dict:
-    """This person's conversations on this task, latest first."""
-    await _readable_task(db, task_id, auth)
-    store = assistant.AssistantConversations(db)
-    rows = await store.list(auth.user_id, _task_place(task_id))
-    counts = await store.question_counts([r.id for r in rows])
-    return ok(
-        {"conversations": [_conversation_out(r, counts.get(r.id, 0)) for r in rows]}
-    )
-
-
-@router.post(
-    "/tasks/{taskId}/conversations", status_code=201, dependencies=[ROUTE_DECIDES]
-)
-async def start_task_conversation(
-    task_id: Annotated[int, Path(ge=1, alias="taskId")], db: DbSession, auth: AuthUser
-) -> dict:
-    await _readable_task(db, task_id, auth)
-    row = await assistant.AssistantConversations(db).start(
-        auth.user_id, _task_place(task_id)
-    )
-    await db.commit()
-    return ok(_conversation_out(row, 0))
-
-
 class ConversationOut(BaseModel):
-    """A conversation as the panel lists it."""
+    """A topic as the panel lists it."""
 
     id: str
     title: str
@@ -134,25 +96,32 @@ class ConversationOut(BaseModel):
     questions: int | None = None
 
 
+@router.get("/conversations")
+async def list_conversations(db: DbSession, auth: AuthUser) -> dict:
+    """This person's topics with 芝士, latest first: the thread the panel shows,
+    wherever it is opened."""
+    store = assistant.AssistantConversations(db)
+    rows = await store.list(auth.user_id)
+    counts = await store.question_counts([r.id for r in rows])
+    return ok(
+        {"conversations": [_conversation_out(r, counts.get(r.id, 0)) for r in rows]}
+    )
+
+
 @router.post(
-    "/drafts/{draftId}/conversations",
+    "/conversations",
     status_code=201,
     dependencies=[ROUTE_DECIDES],
     **typed_response(ConversationOut),
 )
-async def start_draft_conversation(
-    draft_id: Annotated[int, Path(ge=1, alias="draftId")], db: DbSession, auth: AuthUser
-) -> dict:
-    """A conversation on a draft's page. The draft remembers it, so the page
-    opens on it again, and when the draft is published the conversation goes
-    with the 题目."""
-    row = await drafts.mine(db, auth.user_id, draft_id)
-    conversation = await assistant.AssistantConversations(db).start(
-        auth.user_id, assistant.Place("draft", str(draft_id))
+async def start_conversation(db: DbSession, auth: AuthUser) -> dict:
+    """A new topic: what was said before it is no longer read with the next
+    question. It is listed once a question is asked in it."""
+    row = await assistant.AssistantConversations(db).start(
+        auth.user_id, assistant.Place.personal(auth.user_id)
     )
-    row.conversation_id = conversation.id
     await db.commit()
-    return ok(_conversation_out(conversation, 0))
+    return ok(_conversation_out(row, 0))
 
 
 @router.get("/conversations/{conversationId}")

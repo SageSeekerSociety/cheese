@@ -503,7 +503,7 @@
     }
   },
   "publishTaskView": {
-    "about": "Publish page: the publish form on the left, saved as a draft as it is written; the header's Drafts lists my drafts in this space. Cheese is docked on the right; while it writes this draft, one named pointer on the form follows what it fills in.",
+    "about": "Publish page: the publish form on the left, saved as a draft as it is written; the header's Drafts lists my drafts in this space. Cheese is the app's one panel, docked on the right when this page opens on desktop; while it writes this draft, one named pointer on the form follows what it fills in.",
     "s1": {
       "name": "Writing a draft",
       "note": "Default cell: the form, with 'Drafts 3' and 'Draft saved' in the header, and 'Needs admin review after publishing' beside the publish button."
@@ -521,8 +521,8 @@
       "note": "Above the form, the tasks Cheese made from one file: the first is published, the second shows 1 missing after Publish all, the third is being filled in. Publish all (2) sits at the end."
     },
     "s5": {
-      "name": "Cheese tucked away",
-      "note": "With the panel closed, the header keeps an entry with the face and name; on a phone, the face alone."
+      "name": "Cheese closed",
+      "note": "With the panel closed, the header has a button that brings it back; while it is open the button is gone."
     }
   },
   "basicInfoView": {
@@ -1604,7 +1604,7 @@
     "about": "AI teammates in project settings choose a team connection, one of its models, and an execution device."
   },
   "assistantPanel": {
-    "about": "The personal Cheese panel, used on the task page, the publish page and the edit page. Each turn lists the tools Cheese called one per line and folds them when done; what it wrote into a draft is a card with an undo per field; what it asks the person to check and what it published are cards of their own.",
+    "about": "The person's own Cheese panel. There is one for the whole app, held by the app shell. Its head says who is answering and whose it is; each turn lists the tools Cheese used, one step a row, folded to one row when done; what it wrote into a draft is a card whose fields can be undone; what it left for the person to confirm and what it published are a card each. Earlier topics sit above, set apart by New topic.",
     "s1": {
       "name": "Publish page, nothing asked yet",
       "note": "An empty conversation: one line on what it can do, a few starters below, and a button to add files beside the box."
@@ -1620,6 +1620,10 @@
     "s4": {
       "name": "Three tasks from one file",
       "note": "A file handed over with nothing typed. The first task fills the open draft and is listed field by field; the other two are new drafts, one line each, opened by their names."
+    },
+    "s5": {
+      "name": "Earlier topics",
+      "note": "What was said before New topic sits above, to read only; Earlier topics reads further back. On desktop the panel can be pinned to the right or unpinned."
     }
   },
   "myDraftsView": {

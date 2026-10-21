@@ -386,16 +386,25 @@ def _task(client, *, name: str = "图像分类基线复现", **fields) -> int:
     return task_id
 
 
+#: The task page each topic in these tests is asked from: a person's topics
+#: are not tied to a page, the page goes with each question.
+_ASKED_FROM: dict[str, int] = {}
+
+
 def _start(client, task_id: int, headers: dict) -> str:
-    r = client.post(f"/assistant/tasks/{task_id}/conversations", headers=headers)
+    """A new topic, asked from ``task_id``'s page."""
+    r = client.post("/assistant/conversations", headers=headers)
     assert r.status_code == 201, r.text
-    return r.json()["data"]["id"]
+    conversation = r.json()["data"]["id"]
+    _ASKED_FROM[conversation] = task_id
+    return conversation
 
 
 def _ask(client, conversation: str, question: str, headers: dict):
+    page = {"kind": "task", "id": _ASKED_FROM[conversation]}
     return client.post(
         f"/assistant/conversations/{conversation}/ask",
-        json={"question": question},
+        json={"question": question, "page": page},
         headers=headers,
     )
 
@@ -525,7 +534,7 @@ def test_a_new_conversation_starts_without_the_old_ones_turns(client, gateway):
     sent = json.dumps(gateway.requests[-1], ensure_ascii=False)
     assert "数据增强要不要做" in sent and "学习率一般设多少" not in sent
 
-    listed = client.get(f"/assistant/tasks/{task_id}/conversations", headers=me)
+    listed = client.get("/assistant/conversations", headers=me)
     titles = [c["title"] for c in listed.json()["data"]["conversations"]]
     assert titles == ["数据增强要不要做？", "学习率一般设多少？"]
 
@@ -585,7 +594,7 @@ def test_a_conversation_is_its_owners_alone(client, gateway):
         == 404
     )
     assert _ask(client, mine, "给我看看他问了什么", stranger).status_code == 404
-    listed = client.get(f"/assistant/tasks/{task_id}/conversations", headers=stranger)
+    listed = client.get("/assistant/conversations", headers=stranger)
     assert listed.json()["data"]["conversations"] == []
     assert len(gateway.requests) == asked
 
@@ -605,9 +614,6 @@ def test_a_person_who_cannot_open_the_task_cannot_ask_about_it(client, gateway):
     asyncio.run(unpublish())
 
     assert _ask(client, conversation, "这道题难在哪？", me).status_code in (403, 404)
-    assert client.post(
-        f"/assistant/tasks/{task_id}/conversations", headers=me
-    ).status_code in (403, 404)
     assert gateway.requests == []
 
 
@@ -743,7 +749,7 @@ def test_a_refused_question_leaves_nothing_in_the_list(client, gateway):
 
     assert _ask(client, conversation, "从哪里入手？", me).status_code == 429
 
-    listed = client.get(f"/assistant/tasks/{task_id}/conversations", headers=me)
+    listed = client.get("/assistant/conversations", headers=me)
     assert listed.json()["data"]["conversations"] == []
 
 
@@ -1011,7 +1017,7 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     me = _auth(client, "asker")
     user_id, _, _ = _ledger_user(client, "asker")
     draft = _draft(client, user_id, _task(client))
-    r = client.post(f"/assistant/drafts/{draft}/conversations", headers=me)
+    r = client.post("/assistant/conversations", headers=me)
     assert r.status_code == 201, r.text
     conversation = r.json()["data"]["id"]
     page = {"kind": "draft", "id": draft}
@@ -1071,7 +1077,7 @@ def test_files_handed_over_alone_are_a_question_the_page_explains(client, gatewa
             await s.commit()
 
     asyncio.run(empty())
-    r = client.post(f"/assistant/drafts/{draft}/conversations", headers=me)
+    r = client.post("/assistant/conversations", headers=me)
     conversation = r.json()["data"]["id"]
     page = {"kind": "draft", "id": draft}
 
@@ -1097,21 +1103,37 @@ def test_files_handed_over_alone_are_a_question_the_page_explains(client, gatewa
     assert asked["text"] == "" and asked["parts"] == {"files": ["实验室课题.pdf"]}
 
 
-def test_a_published_draft_takes_its_conversation_to_the_task(client, gateway):
+def test_the_thread_lists_every_topic_and_a_new_one_is_the_persons(client, gateway):
+    """A person's topics are one thread wherever they were asked: ones started
+    on a 题目's page before topics were the person's are listed with the rest,
+    and a new topic belongs to the person, not to a page."""
     me = _auth(client, "asker")
     user_id, _, _ = _ledger_user(client, "asker")
-    draft = _draft(client, user_id, _task(client))
-    conversation = client.post(
-        f"/assistant/drafts/{draft}/conversations", headers=me
-    ).json()["data"]["id"]
+    task_id = _task(client)
 
-    async def publish() -> None:
+    async def older() -> None:
         from app.domain.agent.personal import service
 
         async with client.test_factory() as s:
-            await service.follow_task(s, uuid.UUID(conversation), 4242)
+            row = await service.AssistantConversations(s).start(
+                user_id, service.Place("task", str(task_id))
+            )
+            row.title = "上学期问过的"
             await s.commit()
-            row = await s.get(AssistantConversation, uuid.UUID(conversation))
-            assert (row.place_kind, row.place_id) == ("task", "4242")
 
-    asyncio.run(publish())
+    asyncio.run(older())
+    fresh = _start(client, task_id, me)
+    assert _ask(client, fresh, "从哪里入手？", me).status_code == 200
+
+    listed = client.get("/assistant/conversations", headers=me).json()["data"]
+    assert [c["title"] for c in listed["conversations"]] == [
+        "从哪里入手？",
+        "上学期问过的",
+    ]
+
+    async def placed() -> None:
+        async with client.test_factory() as s:
+            row = await s.get(AssistantConversation, uuid.UUID(fresh))
+            assert (row.place_kind, row.place_id) == ("personal", str(user_id))
+
+    asyncio.run(placed())

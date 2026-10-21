@@ -107,10 +107,8 @@ function setTeaching(value: SpaceTeaching) {
   teaching.value = value
   teachingOwn.value = !isTeachingBlank(value)
 }
-/** 窄屏上芝士是一张从下面拉起来的面板。 */
+/** 芝士的面板开着（面板是全站那一个，不在这一页里）：开着时页头不再给打开它的按钮。 */
 const agentOpen = defineModel<boolean>('agentOpen', { default: false })
-/** 宽屏上芝士停在右边；收起来以后顶栏多一个按钮把它叫回来。 */
-const agentDocked = defineModel<boolean>('agentDocked', { default: true })
 
 const emit = defineEmits<{
   cancel: []
@@ -218,11 +216,10 @@ defineExpose({
           }}</span>
           <span v-else class="pub__note">{{ t('spaces.detail.publishTask.needsReview') }}</span>
           <AgentEntryButton
-            v-if="!mdAndUp || !agentDocked"
+            v-if="mdAndUp && !agentOpen"
             :name="agentName"
-            :compact="!mdAndUp"
-            :data-testid="mdAndUp ? 'publish-agent-dock' : 'publish-agent-open'"
-            @click="mdAndUp ? (agentDocked = true) : (agentOpen = true)"
+            data-testid="publish-agent-open"
+            @click="agentOpen = true"
           />
           <BaseButton kind="ghost" :disabled="publishing" @click="emit('cancel')">{{ t('global.cancel') }}</BaseButton>
           <BaseButton
@@ -342,14 +339,6 @@ defineExpose({
         </div>
       </div>
     </div>
-
-    <!-- Docked like the task page's 问芝士: the drawer registers with the page frame. -->
-    <v-navigation-drawer v-if="mdAndUp && agentDocked" permanent location="right" width="380" class="pub__agent">
-      <slot name="agent" />
-    </v-navigation-drawer>
-    <v-bottom-sheet v-else-if="!mdAndUp" v-model="agentOpen">
-      <div class="pub__sheet"><slot name="agent" /></div>
-    </v-bottom-sheet>
   </div>
 </template>
 
@@ -443,16 +432,6 @@ defineExpose({
   width: min(var(--page-w), 100%);
   margin: 0 auto;
   padding: 8px 16px 96px;
-}
-
-.pub__agent :deep(.v-navigation-drawer__content) {
-  display: flex;
-  flex-direction: column;
-}
-
-.pub__sheet {
-  height: 78vh;
-  background: var(--surface);
 }
 
 .pub__teaching-label {

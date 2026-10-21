@@ -13,14 +13,13 @@ import type { AgentBox, AgentMark, AgentPointer } from '@/components/tasks/Agent
 import type { SpaceTeaching, TaskDraft, TaskDraftFields, TaskDraftSummary, TaskFormSubmitData } from '@/types'
 import type { StripItem } from './TaskDraftStrip.vue'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
-import { useAgentDock } from '@/composables/useAgentDock'
 import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
@@ -32,7 +31,6 @@ import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
 import { TaskDraftsApi } from '@/api/taskDrafts'
-import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { fieldLabel } from '@/lib/assistantView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { missingOf } from '@/lib/taskDraftAgent'
@@ -40,6 +38,7 @@ import { mentorOptions } from '@/lib/taskMentors'
 import { isTeachingBlank } from '@/lib/teaching'
 import { myAccount, myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
+import { agentDocked, agentOpen, askAgent, attachToAgent, openAgent, useAgentContext } from '@/stores/agent'
 import { useSpaceStore } from '@/stores/space'
 import { draftFieldsOf } from '@/types'
 
@@ -155,7 +154,6 @@ function fill(fields: TaskDraftFields) {
 
 /** 打开地址栏里的那份草稿；没有就是一份还没存的空白草稿。 */
 async function openDraft(id: number | null) {
-  const talking = agent.assistant.current.value
   draftReady.value = false
   publishedHere.value = false
   await draft.flush()
@@ -176,8 +174,6 @@ async function openDraft(id: number | null) {
   live.value = { ...(row?.fields ?? {}) }
   fill(row?.fields ?? {})
   draftReady.value = true
-  // 同一份文件拆出的几道题挂在同一段对话上：切过去对话不变，不重读。
-  if (!row?.conversationId || row.conversationId !== talking) await agent.assistant.reload()
   // 全部发布时这道没发出去：切过来就把缺的格子标出来。
   if (flagged.value && row && missingOf(row.fields ?? {}).length) {
     await nextTick()
@@ -187,10 +183,9 @@ async function openDraft(id: number | null) {
 
 /** 「从文件导入」：打开芝士，把文件交给它，不带话；文件在这一页是导入的意思，芝士知道。 */
 async function importFiles(files: File[]) {
-  if (mdAndUp.value) agentDocked.value = true
-  else agentOpen.value = true
-  await agent.attach(files)
-  await agent.ask('')
+  openAgent()
+  await attachToAgent(files)
+  await askAgent('')
 }
 
 function useTemplate(index: number) {
@@ -255,11 +250,10 @@ function pageApply(fields: TaskDraftFields): TaskDraftFields {
 const agent = useDraftAgent({
   draft,
   terms,
-  home: () =>
-    draft.draft.value
-      ? { kind: 'draft', id: draft.draft.value.id, conversationId: draft.draft.value.conversationId }
-      : null,
   draftsChanged: () => void refreshDrafts(),
+  jump: (key) => layer.jump(key),
+  openDraft: (id) => openOther(id),
+  openTask: (id) => openTask(id),
   publishedHere: () => (publishedHere.value = true),
   ordinal: (id) => {
     const at = stripIds.value.indexOf(id)
@@ -267,6 +261,19 @@ const agent = useDraftAgent({
   },
 })
 const { assistant } = agent
+// 芝士读到的是这份草稿；面板在发布页给出题的问候和开场问题，能交文件（从文件导入）。
+useAgentContext(() => ({
+  page: draft.id.value ? { kind: 'draft', id: draft.id.value } : null,
+  greeting: t('tasks.assistant.draft.greeting'),
+  starters: [
+    t('tasks.assistant.draft.starters.rubric'),
+    t('tasks.assistant.draft.starters.harder'),
+    t('tasks.assistant.draft.starters.check'),
+  ],
+  placeholder: t('tasks.assistant.draft.placeholder'),
+  hint: t('tasks.assistant.draft.hint'),
+  canAttach: true,
+}))
 
 const host = computed(() => (view.value?.host as unknown as HTMLElement | null) ?? null)
 const layer = useAgentPointer({
@@ -279,9 +286,11 @@ const layer = useAgentPointer({
   holding: draft.holding,
 })
 
-const agentOpen = ref(false)
-const agentDocked = useAgentDock()
 const { mdAndUp } = useDisplay()
+// 桌面上进这一页时，芝士停在右边就把它打开：表单和面板并排，芝士写进来看得见。
+onMounted(() => {
+  if (mdAndUp.value && agentDocked.value) openAgent()
+})
 
 // --- 一份文件拆出的几道题 ------------------------------------------------------------
 //
@@ -512,7 +521,6 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     v-model:teaching="teaching"
     v-model:teaching-own="teachingOwn"
     v-model:agent-open="agentOpen"
-    v-model:agent-docked="agentDocked"
     :ready="ready"
     :list-to="listTo"
     :form-key="formKey"
@@ -557,47 +565,5 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     @publish-all="publishAll"
     @undo="agent.undoMark"
   >
-    <template #agent>
-      <AssistantPanel
-        :personal-team-handle="myHandle()"
-        :conversations="assistant.conversations.value"
-        :current-id="assistant.current.value"
-        :title="assistant.title.value"
-        :messages="agent.panel.value.messages"
-        :streaming="assistant.streaming.value"
-        :tool="assistant.tool.value"
-        :queued="assistant.queued.value"
-        :notice="assistant.notice.value"
-        :credit-refused="assistant.creditRefused.value"
-        :busy="assistant.busy.value"
-        :steps="agent.panel.value.steps"
-        :changes="agent.panel.value.changes"
-        :results="agent.panel.value.results"
-        :files="agent.panel.value.files"
-        context=""
-        :greeting="t('tasks.assistant.draft.greeting')"
-        :starters="[
-          t('tasks.assistant.draft.starters.rubric'),
-          t('tasks.assistant.draft.starters.harder'),
-          t('tasks.assistant.draft.starters.check'),
-        ]"
-        :placeholder="t('tasks.assistant.draft.placeholder')"
-        :hint="t('tasks.assistant.draft.hint')"
-        can-attach
-        closable
-        @send="agent.ask"
-        @stop="assistant.stop().catch(() => undefined)"
-        @new="assistant.startNew"
-        @select="assistant.select"
-        @close="mdAndUp ? (agentDocked = false) : (agentOpen = false)"
-        @undo="agent.undo"
-        @undo-all="agent.undoAll"
-        @jump="layer.jump"
-        @open-draft="openOther"
-        @open-task="openTask"
-        @attach="agent.attach"
-        @remove-file="agent.removeFile"
-      />
-    </template>
   </PublishTaskView>
 </template>

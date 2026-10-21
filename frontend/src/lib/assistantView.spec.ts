@@ -1,4 +1,4 @@
-import type { AssistantEdit } from '@/composables/useAssistant'
+import type { AssistantEdit } from '@/stores/agentThread'
 
 import { describe, expect, it } from 'vitest'
 

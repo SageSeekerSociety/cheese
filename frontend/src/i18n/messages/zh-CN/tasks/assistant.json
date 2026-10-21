@@ -1,14 +1,10 @@
 {
   "ask": "问芝士",
   "close": "关闭",
-  "conversations": "这道题的对话",
   "failed": "芝士暂时答不上来，稍后再试。",
   "greeting": "关于这道题有什么想问的，都可以问我。",
   "hint": "回答由 AI 根据题目生成，可能有误，以题目原文和出题人的说明为准。",
   "label": "问芝士",
-  "listed": "{day} · {n} 个问题",
-  "newConversation": "新对话",
-  "noQuestions": "还没有提问",
   "placeholder": "问一个关于这道题的问题…",
   "queued": "正在排队，资源空出后自动开始",
   "reads": "芝士读过这道题的说明、要求和题目信息。",
@@ -70,5 +66,15 @@
       "rubric": "调整评分要点",
       "check": "以学生视角检查"
     }
+  },
+  "personal": "个人",
+  "newTopic": "新话题",
+  "olderTopics": "更早的话题",
+  "dock": "固定到右侧",
+  "undock": "取消固定",
+  "anywhere": {
+    "greeting": "有什么想问的，或者要我做的事，都可以说。",
+    "placeholder": "输入问题或要做的事",
+    "hint": "回答由 AI 生成，可能有误。"
   }
 }
