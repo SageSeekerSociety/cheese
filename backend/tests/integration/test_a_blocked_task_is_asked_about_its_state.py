@@ -16,6 +16,7 @@ from tests.integration.conftest import (
     post_message,
     room_agent_seat,
     room_socket,
+    session_auth_headers,
     task_agent_headers,
 )
 
@@ -59,6 +60,27 @@ def test_a_person_speaking_in_a_blocked_task_is_asked_to_report_again(
 
     heard = stub_hooks.last_prompt or ""
     assert blocked_report_reminder(None) in heard
+
+
+def test_a_closed_task_keeps_its_last_report_and_is_not_asked(client, stub_hooks):
+    """关闭不清这条上报，而关掉的活还能被人叫起来说话：那时看板显示的是关闭，
+    再叫它报状态只会被拒掉，所以不问。"""
+    project = new_project(client, owner="alice")
+    task, seat = _task(client, project)
+    _reported(client, project, task, seat, "blocked")
+    closed = client.post(
+        f"/topics/{task}/close",
+        json={"conclusion": "讨论完了"},
+        headers=session_auth_headers("alice"),
+    )
+    assert closed.status_code == 200, closed.text
+
+    with room_socket(client, task, "alice") as ws:
+        post_message(client, task, "alice", {"content": f"<@{seat}> 再确认一下"})
+        _until_done(ws)
+
+    heard = stub_hooks.last_prompt or ""
+    assert blocked_report_reminder(None) not in heard
 
 
 def test_a_task_that_is_working_is_not_asked(client, stub_hooks):

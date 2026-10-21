@@ -411,7 +411,13 @@ async def prepare(
             contributors=task.contributor_handles or (),
             closed=task.status == TaskStatus.closed,
         ),
-        blocked_report=task is not None and task.progress_state is TaskProgress.blocked,
+        # 只看还开着的活：关闭不清这条上报（`closing.close_task` 不碰它），而关掉的
+        # 活还能被人叫起来说话；那时看板显示的是关闭，再叫它报状态只会被 422 拒掉。
+        blocked_report=(
+            task is not None
+            and task.status is TaskStatus.open
+            and task.progress_state is TaskProgress.blocked
+        ),
         acting_agent=acting_agent,
         agent=agent,
         agent_pool=agent_pool,
