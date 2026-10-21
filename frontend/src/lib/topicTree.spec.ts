@@ -95,7 +95,7 @@ describe('话题树折叠', () => {
 
   it('折叠后藏起来的那几盏灯也冒到父行上，不只是未读', () => {
     const lit: Record<string, RowLight> = {
-      a1x: { kind: 'green' },
+      a1x: { kind: 'green', breathe: false },
       a2: { kind: 'yellow' },
     }
     const opts: VisibleRowsOptions = { lightOf: (id) => lit[id] ?? null }
@@ -116,11 +116,11 @@ describe('话题树折叠', () => {
     const shown = visibleRows(rows, {
       collapsed: new Set(['a', 'a1']),
       reveal: ancestorPathIds(topics, 'a1'),
-      lightOf: (id) => (id === 'a1x' ? { kind: 'green' } : null),
+      lightOf: (id) => (id === 'a1x' ? { kind: 'green', breathe: false } : null),
     })
     expect(idsOf(shown)).toEqual(['a', 'a1', 'b'])
     // a1x 藏在 a1 底下，所以亮的是 a1；a 不该重复亮一次。
-    expect(shown[1].hiddenLight).toEqual({ kind: 'green' })
+    expect(shown[1].hiddenLight).toEqual({ kind: 'green', breathe: false })
     expect(shown[0].hiddenLight).toBeNull()
   })
 

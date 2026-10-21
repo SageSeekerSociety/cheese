@@ -37,6 +37,7 @@ from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.session_state import running_conversations
 from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.agent_instance.adapters import project_team, room_teammate
 from app.domain.agent_session.services import AgentSessionService
@@ -257,12 +258,17 @@ def _topic_out(
     unseen: Collection[uuid.UUID] | None = None,
     answered: Collection[uuid.UUID] | None = None,
     incomplete: Mapping[uuid.UUID, datetime] | None = None,
+    moving: Collection[uuid.UUID] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
     derived from the topic's blocks; who is busy in it right now and whom it is
     waiting on (`activity` / `waits` — about members, never about the room); and
     与我的相关性, which depends on WHO is asking and so cannot live on the row
     at all.
+
+    `moving` is 「这间房此刻在不在往前走」—— 侧栏的呼吸绿：`moving` 是调用方已经
+    聚合好的「房间里、支线里、名下的活里有一处在跑」，房间自己那张卡走在交付链路上
+    也在这里补上（`presentation.room_presentation` 那一列）。
 
     `presentation` is the last of them: which column of the board this room is
     in and the one phrase to print on it, derived from the same facts the row
@@ -312,7 +318,6 @@ def _topic_out(
     asking_me = topic.id in (asks_me or set())
     out.joined = mine.joined
     out.awaits_me = mine.awaits_me or asking_me
-    data = out.model_dump(mode="json")
     facts = presentation.facts_for_room(
         topic,
         running_ids,
@@ -320,6 +325,13 @@ def _topic_out(
         awaiting_answer=topic.id in (asked or {}),
     )
     shown = presentation.room_presentation(facts, now=now or datetime.now(UTC))
+    # 侧栏的呼吸绿：房间里、支线里、名下的活里有一处在跑（调用方聚合好传进来），
+    # 或者房间自己那张卡走在交付链路上。和常亮绿是两档，见 `TopicOut.moving`。
+    out.moving = (
+        topic.id in (moving or ())
+        or shown.column is presentation.Column.delivering
+    )
+    data = out.model_dump(mode="json")
     data["presentation"] = shown.as_dict()
     return data
 
@@ -385,6 +397,16 @@ async def list_topics(
     )
     live = await topics_signals.live_cards(db, [t.id for t in topics])
     cards = topics_signals.own_cards(live)
+    # 侧栏的呼吸绿：房间里、支线里、名下的活里，任意一处有 runner 报着在跑的会话
+    # （`moving`，`TopicOut.moving`）。`at_work` 给前两处；名下活要自己接回来 ——
+    # 读的是全站那一小张在跑的会话，再在内存里挑，不为这一页绑一长串 id。
+    running = await running_conversations(db)
+    moving_ids = set(working.rooms) | set(working.threads)
+    moving_ids |= {
+        room_id for task_id, room_id in tasks_by_room.items() if task_id in running
+    }
+    # 走在交付链路上的活也算：房间自己那条线闲着，名下的活在等 CI / 换基 / 修检查。
+    moving_ids |= topics_signals.delivering_rooms(live)
     managed = (
         await TopicMemberService(db).managed_topic_ids(topics, actor.handle)
         if actor.authenticated
@@ -445,6 +467,7 @@ async def list_topics(
                 unseen=unseen,
                 answered=answered,
                 incomplete=incomplete,
+                moving=moving_ids,
             ),
             "my_tasks": rails[t.id],
         }
@@ -561,6 +584,14 @@ async def get_topic(
     # 同 `list_topics`：这一间房里有没有人回复了我、而我还没处理（侧栏黄灯）。
     answered = await service.replied_to_me([topic.id], viewer) if viewer else set()
     underway = await TaskService(db).tasks_of_rooms([topic.id])
+    # 同 `list_topics`：侧栏的呼吸绿问的是这间房、它的支线、它名下的活里有没有会话
+    # 在跑，或者有没有活走在交付链路上。
+    running = await running_conversations(db, [topic.id, *underway])
+    moving_ids = set(working.rooms) | set(working.threads)
+    moving_ids |= {
+        room_id for task_id, room_id in underway.items() if task_id in running
+    }
+    moving_ids |= topics_signals.delivering_rooms(live)
     tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
     for task_id, room_id in underway.items():
         tasks_of_room.setdefault(room_id, []).append(task_id)
@@ -591,6 +622,7 @@ async def get_topic(
                 unseen=unseen,
                 answered=answered,
                 incomplete=incomplete,
+                moving=moving_ids,
             ),
             "my_tasks": rails[topic.id],
         }

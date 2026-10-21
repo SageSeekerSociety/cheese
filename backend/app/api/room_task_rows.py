@@ -258,7 +258,12 @@ async def project_task_rows(
     not opened since (`delivered_of`; the sidebar's 长绿, `TopicRailTaskRow`),
     and when the earliest failure it has not recovered from began
     (`incomplete_of`; the sidebar's red light — see
-    `block/waits.MemberWaits.unresolved_failures`)."""
+    `block/waits.MemberWaits.unresolved_failures`).
+
+    ``moving`` is the sidebar's breathing green: a session of this task's
+    conversation is running (as the runner declares it), or its card is on the
+    delivery chain. A teammate's reported 「在做」 does not count — it can say so
+    and be gone."""
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
@@ -270,6 +275,9 @@ async def project_task_rows(
     now = datetime.now(UTC)
     # 第四次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
     last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
+    # 第五次：哪几条活的会话此刻真在跑 —— 侧栏呼吸绿的「有一轮在跑」那一半。
+    # 用 runner 报的会话状态，不用队友自己报的「在做」：那是纸面状态，会话可能已经停了。
+    running = await running_conversations(db, task_ids)
     items = []
     for task in tasks:
         card = cards.get(task.id)
@@ -318,6 +326,10 @@ async def project_task_rows(
                 "unseen_delivery": bool(delivered_of(task.id))
                 if delivered_of is not None
                 else False,
+                # 这条活此刻在不在往前走（侧栏的呼吸绿）：有一轮在跑，或者卡已经递出去、
+                # 走在交付链路上（看板那一列是 `delivering`）。
+                "moving": task.id in running
+                or shown.column is presentation.Column.delivering,
                 "stalled": presentation.is_stalled(
                     shown, last_activity=last_activity, now=now
                 ),

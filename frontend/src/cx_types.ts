@@ -120,6 +120,10 @@ export interface Topic {
   // （`lib/roomLight.ts`）。点开会推已读位，服务端下一份就不再这么说，之前由本地先灭
   // （`stores/workspace` 的 `forgetReadLights`）。只对负责人和协作者算，没登录一律 false。
   unseen_delivery?: boolean
+  // 这间房此刻在不在往前走：自己那条线、它的支线、名下的活里有会话在跑，或者有活
+  // 走在交付链路上——侧栏的呼吸绿看它（`lib/roomLight.ts`）。和 `unseen_delivery`
+  // 是两档绿。只有 list/get 话题时才带。
+  moving?: boolean
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
@@ -315,6 +319,9 @@ export interface RoomTask {
   // （`lib/roomLight.ts`），和频道行那一头同一个来源。别的调用方（项目级列表、
   // 频道里的全部任务）不带这一位，读作 false——不亮，不是「亮着但说不清」。
   unseen_delivery?: boolean
+  // 这条活此刻在不在往前走（侧栏的呼吸绿）：它自己的会话在跑，或者卡走在交付链路
+  // 上。和 `unseen_delivery` 是两档绿。侧栏行和项目级列表都带。
+  moving?: boolean
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
   // 落在哪一格、写哪句话。必有：状态只在后端算一次，前端不另推（见 lib/board.ts）。

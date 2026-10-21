@@ -133,6 +133,25 @@ def latest_per_place(cards: Sequence[CardRow]) -> dict[tuple, CardRow]:
     return {(c.topic_id, c.task_id): c for c in cards}
 
 
+def delivering_rooms(cards: Sequence[CardRow]) -> set[uuid.UUID]:
+    """这些房间里，哪几个**名下的活**已经递出去、走在交付链路上。
+
+    房间自己那张卡不算：`room_presentation` 已经把它说进 `presentation` 那一列了
+    （`own_cards`）。这一份补的是另一半 —— 一间房里一条活在等 CI / 换基 / 修检查时，
+    这间房自己那条线多半是闲着的，而它名下的活正在往前走（侧栏那盏呼吸绿：「这个频道
+    下有活正在往前走」）。缺了这一半，那种房间在侧栏上会一直不亮。
+
+    只认「卡说得出交付中」：判据在 `presentation.card_column`（和看板同一处），
+    这里不复述哪几种码算哪一列。
+    """
+    return {
+        card.topic_id
+        for card in latest_per_place(cards).values()
+        if card.task_id is not None
+        and presentation.card_column(card) is presentation.Column.delivering
+    }
+
+
 def stuck_on_checks(cards: Sequence[CardRow]) -> dict[uuid.UUID, StuckCard]:
     """房间（连同名下的活）里，最新那张卡停在「检查红 / 冲突，要 AI 修」上的。
 

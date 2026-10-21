@@ -13,6 +13,7 @@ const ago = (min: number) => new Date(NOW - min * 60_000).toISOString()
 const quiet = {
   awaitsMe: false,
   repliedToMe: false,
+  moving: false,
   unseenDelivery: false,
   incompleteSince: null as string | null,
   waitStalled: false,
@@ -62,19 +63,40 @@ describe('lightOf —— 每盏灯各自的判据', () => {
     expect(lightOf({ ...quiet, repliedToMe: true }, NOW)).toEqual({ kind: 'yellow' })
   })
 
-  it('做完了、我还没看过，是绿灯', () => {
-    expect(lightOf({ ...quiet, unseenDelivery: true }, NOW)).toEqual({ kind: 'green' })
+  it('做完了、我还没看过，是长绿（不动）', () => {
+    expect(lightOf({ ...quiet, unseenDelivery: true }, NOW)).toEqual({
+      kind: 'green',
+      breathe: false,
+    })
+  })
+
+  it('有活在往前走，是呼吸绿（在动）', () => {
+    expect(lightOf({ ...quiet, moving: true }, NOW)).toEqual({ kind: 'green', breathe: true })
+  })
+
+  it('呼吸绿压过长绿：还在往前走的时候，先说「在走」', () => {
+    expect(lightOf({ ...quiet, moving: true, unseenDelivery: true }, NOW)).toEqual({
+      kind: 'green',
+      breathe: true,
+    })
   })
 
   it('黄压过绿：有没看过的交付、同时又有事等我，黄更该被看见', () => {
     expect(lightOf({ ...quiet, awaitsMe: true, unseenDelivery: true }, NOW)).toEqual({ kind: 'yellow' })
+  })
+
+  it('红压过呼吸绿：出了问题时，先亮那盏说问题的灯', () => {
+    expect(lightOf({ ...quiet, moving: true, incompleteSince: ago(6) }, NOW)).toEqual({
+      kind: 'red',
+      why: 'unfinished',
+    })
   })
 })
 
 describe('brightest —— 收起来的一堆行挑一盏', () => {
   const red = { kind: 'red', why: 'unfinished' } as const
   const yellow = { kind: 'yellow' } as const
-  const green = { kind: 'green' } as const
+  const green = { kind: 'green', breathe: false } as const
   const blue = { kind: 'blue' } as const
 
   it('一盏都没有就是不亮', () => {
@@ -98,7 +120,8 @@ describe('brightest —— 收起来的一堆行挑一盏', () => {
 describe('lightTitle —— 灯上悬停那一句', () => {
   it('每种灯各说各的', () => {
     expect(lightTitle({ kind: 'yellow' })).toBe('有事等你')
-    expect(lightTitle({ kind: 'green' })).toBe('做完了，你还没看过')
+    expect(lightTitle({ kind: 'green', breathe: false })).toBe('做完了，你还没看过')
+    expect(lightTitle({ kind: 'green', breathe: true })).toBe('有活在往前走')
     expect(lightTitle({ kind: 'blue' })).toBe('我负责的')
   })
 
