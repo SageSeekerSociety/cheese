@@ -386,6 +386,47 @@ rate-limit, and documented quota errors; an unknown HTTP 500 is not labeled a
 network cause. Timing completion means HTTP EOF, while the supply probe also
 checks the Messages terminal event.
 
+## Backups
+
+The gateway database is the only copy of the models added on the admin page
+and their prices, of every project's virtual key and budget, and of the spend
+logs; `config.yaml` brings back only the baseline models.
+
+The Gateway DB backup workflow (`.github/workflows/gateway-db-backup.yml`)
+runs `deploy/gateway-db-backup.sh` on the dev runner every 6 hours (00:23,
+06:23, 12:23 and 18:23 UTC) and on demand. It dumps `litellm` with the
+container's own `pg_dump -Fc`, reads the archive back with `pg_restore --list`,
+which must list the data of `LiteLLM_ProxyModelTable` and
+`LiteLLM_VerificationToken`, and only then renames it to
+`~/backups/gateway/gateway-litellm-<UTC timestamp>.dump`. The box keeps the
+newest 28 dumps (7 days). Each dump is then copied to the R2 bucket under the
+dev prefix (`db/gateway-litellm-<UTC timestamp>.dump`, `deploy/r2-upload.py`),
+where the bucket's lifecycle rule deletes it after 30 days. The database and
+its local dumps are on the same box, so a failed upload fails the run. The
+script's log is `~/backups/gateway/backup.log`.
+
+Restore on the box, from a local dump or one taken from R2:
+
+```sh
+C=cheese-gateway-litellm-db-1
+DUMP=~/backups/gateway/gateway-litellm-<ts>.dump
+# What it holds:
+docker exec -i "$C" pg_restore --list < "$DUMP" | grep 'TABLE DATA'
+# A few lost rows (a deleted model): restore beside the live database, read
+# them, re-add them on the admin page, drop the copy.
+docker exec "$C" createdb -U litellm litellm_restore
+docker exec -i "$C" pg_restore -U litellm -d litellm_restore --no-owner --exit-on-error < "$DUMP"
+docker exec "$C" psql -U litellm -d litellm_restore -c 'SELECT model_name, model_info FROM "LiteLLM_ProxyModelTable"'
+docker exec "$C" dropdb -U litellm litellm_restore
+# The whole database (destructive: drops and recreates every object in it):
+docker exec -i "$C" pg_restore -U litellm -d litellm --clean --if-exists --no-owner --single-transaction --exit-on-error < "$DUMP"
+```
+
+A whole-database restore loses everything written after the dump was taken:
+spend, keys minted for new projects, and model edits. The gateway reads the
+model table every 30 seconds, so the admin models page lists the restored
+models within a minute; check it does.
+
 ## Two things that will bite
 
 **The port is on the docker0 bridge address.** `gateway-netns` publishes
