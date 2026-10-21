@@ -4,8 +4,9 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
+from pydantic import BaseModel
 
-from app.api.response import ok
+from app.api.response import ok, typed_response
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
@@ -68,6 +69,82 @@ from app.domain.user.repositories import (
 )
 
 router = APIRouter(prefix="/tasks")
+
+
+class FoundTask(BaseModel):
+    """One 题目 the command palette found: enough to name it and open it."""
+
+    id: int
+    name: str
+    spaceId: int
+    spaceName: str
+    deadline: int | None = None
+
+
+class FoundTasks(BaseModel):
+    tasks: list[FoundTask]
+
+
+#: How many of the person's spaces the palette searches, newest first.
+SEARCH_SPACES = 20
+#: How many 题目 it takes from each.
+SEARCH_PER_SPACE = 5
+
+
+# Before ``/{taskId}``: the first route that matches the path answers.
+@router.get(
+    "/search",
+    summary="Search Tasks In My Spaces",
+    **typed_response(FoundTasks),
+)
+async def search_my_tasks(
+    q: Annotated[str, Query(max_length=200)] = "",
+    limit: Annotated[int, Query(ge=1, le=20)] = 8,
+    db=Depends(get_db),
+    service: TaskService = Depends(get_task_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    """题目 in the spaces the person is in whose name or intro has the words,
+    seen as each space's list shows them to that person (the command palette,
+    Ctrl+K)."""
+    words = q.strip()
+    if not words or auth_user.user_id <= 0:
+        return ok({"tasks": []})
+    spaces = await SpaceRepository(session=db).list_spaces(
+        limit=SEARCH_SPACES, member_user_id=auth_user.user_id
+    )
+    administered = await SpaceAdminRelationRepository(session=db).administered(
+        auth_user.user_id, [space.id for space in spaces]
+    )
+    domain = await resolve_user_email_domain(db, auth_user.user_id)
+    found: list[dict] = []
+    for space in spaces:
+        is_admin = space.id in administered
+        tasks = await service.enumerate_tasks(
+            space_id=space.id,
+            approved=0,
+            keywords=words,
+            current_user_id=auth_user.user_id,
+            viewer_user_id=auth_user.user_id,
+            viewer_email_domain=domain,
+            viewer_is_space_admin=is_admin,
+            apply_space_task_visibility=not is_admin,
+            visible_task_limit=space.visible_task_limit,
+            limit=SEARCH_PER_SPACE,
+        )
+        found += [
+            {
+                "id": t.id,
+                "name": t.name,
+                "spaceId": space.id,
+                "spaceName": space.name,
+                "deadline": int(t.deadline.timestamp() * 1000) if t.deadline else None,
+            }
+            for t in tasks
+        ]
+        if len(found) >= limit:
+            break
+    return ok({"tasks": found[:limit]})
 
 
 @router.get(

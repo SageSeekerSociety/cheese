@@ -45,6 +45,30 @@ const GROUPS: ResultGroup[] = [
   },
 ]
 
+/** 搜「哈希」时「题目」那一组：我加入的空间里的题目，下面一行是空间名。 */
+const TASK_GROUPS: ResultGroup[] = [
+  {
+    key: 'space-tasks',
+    label: 'navigation.palette.spaceTasks',
+    rows: [
+      {
+        id: 'space-task:41',
+        title: '实现一个开放寻址哈希表',
+        subtitle: '数据结构（2026 秋）',
+        icon: 'mdi-trophy-outline',
+        range: [8, 10],
+      },
+      {
+        id: 'space-task:42',
+        title: '一致性哈希的负载实验',
+        subtitle: '分布式系统',
+        icon: 'mdi-trophy-outline',
+        range: [3, 5],
+      },
+    ],
+  },
+]
+
 /** 一条结果上按右键（手机上是长按）能做的事：回车那一件在最前，会坏事的那一件带 danger。 */
 const ACTIONS: MenuCommand[] = [
   { id: 'topic:open', title: '打开频道', icon: 'mdi-pound' },
@@ -145,6 +169,12 @@ export const PALETTE_ENTRIES: CatalogEntry[] = [
         note: '高亮的那一行是此刻回车会去的那一条；名字里对上输入的两个字带 <mark>。',
         props: { groups: GROUPS, selected: 0, input: '登录', searching: false, mdAndUp: true },
         expect: '登录页改成深色',
+      },
+      {
+        name: '搜到空间里的题目',
+        note: '「题目」一组只列我加入的空间里的题目；下面一行写着在哪个空间，点开进题目页。',
+        props: { groups: TASK_GROUPS, selected: 0, input: '哈希', searching: false, mdAndUp: true },
+        expect: '实现一个开放寻址哈希表',
       },
       {
         name: '什么都没搜到',

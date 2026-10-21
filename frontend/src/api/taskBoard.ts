@@ -22,7 +22,20 @@ import { AxiosProgressEvent } from 'axios'
 
 import { axiosMutation, axiosRequest } from './axiosHttp'
 
+/** 搜到的一道题目：叫什么、在哪个空间。 */
+export interface FoundTask {
+  id: number
+  name: string
+  spaceId: number
+  spaceName: string
+  deadline: number | null
+}
+
 export namespace TaskBoardApi {
+  /** Ctrl+K：我加入的空间里名字或简介含这些词的题目，照各空间列表给我看的那样。 */
+  export const search = (q: string) =>
+    axiosRequest<{ tasks: FoundTask[] }>({ url: '/tasks/search', method: 'GET', params: { q } }, true)
+
   export const create = (data: PostTaskRequestData) =>
     axiosRequest<{ task: Task }>({ url: '/tasks', method: 'POST', data }, true)
 

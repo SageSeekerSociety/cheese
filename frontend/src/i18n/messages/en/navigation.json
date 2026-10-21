@@ -131,7 +131,8 @@
     "searchIn": "Search in project",
     "leaveScope": "Remove project scope and search names across projects",
     "searchAll": "View all results",
-    "weekly": "Weekly report"
+    "weekly": "Weekly report",
+    "spaceTasks": "Tasks in spaces"
   },
   "sidebar": {
     "resize": "Drag to resize",

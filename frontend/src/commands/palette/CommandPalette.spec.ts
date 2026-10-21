@@ -37,6 +37,11 @@ const listTopicNames = vi.hoisted(() =>
   ])
 )
 vi.mock('@/api/projectSearch', async (original) => ({ ...(await original<object>()), searchProject }))
+// 空间里的题目也是远程搜的一类；这里的用例不看它，答空。
+vi.mock('@/api/taskBoard', async (original) => ({
+  ...(await original<object>()),
+  TaskBoardApi: { search: vi.fn().mockResolvedValue({ tasks: [] }) },
+}))
 vi.mock('@/api', async (original) => ({
   ...(await original<object>()),
   archiveTopic,
