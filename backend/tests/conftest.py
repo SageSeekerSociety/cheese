@@ -189,6 +189,8 @@ settings.queued_message_sweep_interval_s = 0
 # Stopping work in closed tasks would interrupt a test's stub session behind
 # its back; the tests about it run the look themselves.
 settings.closed_task_stop_interval_s = 0
+# Reads the platform model roles through the app's own engine, behind the test.
+settings.platform_model_roles_refresh_interval_s = 0
 # Request limits stay on, set far above anything a test does. Their rate state
 # lives in Redis, which no test resets, and across a suite the same handles
 # ("alice") and the same test client address are reused far faster than any

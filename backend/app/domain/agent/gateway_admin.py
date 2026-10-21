@@ -504,3 +504,23 @@ class GatewayAdmin:
             "/key/update",
             json={"key": key_hash, "max_budget": max_budget_usd},
         )
+
+    async def set_key_models(self, alias: str, models: list[str]) -> bool:
+        """Which models the virtual key under ``alias`` may call. False when no
+        key holds the alias yet (it is minted on first use, already with the
+        role's model).
+
+        By ``key_alias``: the platform's own keys are found by the alias they
+        were minted under (``service_keys.KeySpec.alias``), and LiteLLM 1.103.3's
+        ``/key/update`` looks a key up by it when ``key`` is left out, answering
+        404 when none holds it.
+        """
+        try:
+            await self._request(
+                "POST", "/key/update", json={"key_alias": alias, "models": models}
+            )
+        except GatewayRefused as exc:
+            if exc.status == 404:
+                return False
+            raise
+        return True

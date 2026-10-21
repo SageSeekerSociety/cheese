@@ -56,8 +56,10 @@
   "gatewayMissingList": "The gateway's {path} response has no {field} list",
   "gatewayModelExists": "The model {name} already exists: to give it another upstream, add a source to it",
   "gatewayLastOfferedModel": "{name} is the last offered model: pausing, deleting or unlisting it would leave agent settings with no model to pick. Offer another model first",
-  "sourceNeedsPrices": "Every source needs both an input and an output price; one may be 0 (such as a transcription model's output), and both at 0 is a free source, which must say so: the platform bills all of a model's usage by its prices",
-  "sourcePriceCleared": "A price can be changed, not cleared: this edit clears {prices}",
+  "gatewayModelHasRoles": "The platform model roles {roles} still run on {name}: point them at another model under Platform model roles before pausing or deleting it",
+  "roleNotFound": "There is no platform model role called {role}",
+  "roleNeedsOfferedModel": "This role can only point at an offered model: {name} is not offered (paused, unlisted or unpriced)",
+  "roleNeedsServedModel": "This role can only point at a served, priced model: {name} is paused or unpriced",
   "gatewayModelNotFound": "The model {name} doesn't exist",
   "gatewayModelTimeout": "The model didn't finish answering within {seconds} seconds",
   "gatewayNoModelId": "The gateway didn't return the new model's model_id",
@@ -142,5 +144,7 @@
   "teammateNotSeatedHere": "This AI teammate isn't in this channel, so it can't work here. Add it to the channel, or ask another teammate",
   "topicNotFound": "Channel not found",
   "turnForceStopped": "This turn was force-stopped",
-  "upstreamModelRequired": "The upstream model ID can't be empty"
+  "upstreamModelRequired": "The upstream model ID can't be empty",
+  "sourceNeedsPrices": "Every source needs both an input and an output price; one may be 0 (such as a transcription model's output), and both at 0 is a free source, which must say so: the platform bills all of a model's usage by its prices",
+  "sourcePriceCleared": "A price can be changed, not cleared: this edit clears {prices}"
 }

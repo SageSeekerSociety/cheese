@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import model_roles
 from app.core.config import settings
 from app.domain.agent import gateway_spend
 from app.domain.agent.gateway import LlmGateway
@@ -83,7 +84,9 @@ WRITING = "assistant_write"
 
 
 def person_charge(user_id: int, kind: str = ASKING) -> Charge:
-    return Charge(model=settings.assistant_model, kind=kind, user_id=user_id)
+    return Charge(
+        model=model_roles.model("assistant_model"), kind=kind, user_id=user_id
+    )
 
 
 async def settle(

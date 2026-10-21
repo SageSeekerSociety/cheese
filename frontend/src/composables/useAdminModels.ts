@@ -28,8 +28,10 @@ import type { ModelRow } from '@/lib/adminModels'
 import { onMounted, ref } from 'vue'
 
 import { useAdminModelsBudget } from '@/composables/adminModels/budget'
+import { useAdminModelsCaution } from '@/composables/adminModels/caution'
 import { useAdminModelsDerive } from '@/composables/adminModels/derive'
 import { useAdminModelsReads } from '@/composables/adminModels/reads'
+import { useAdminModelsRoles } from '@/composables/adminModels/roles'
 import { WINDOWS } from '@/composables/adminModels/shared'
 import { useAdminModelsSources } from '@/composables/adminModels/sources'
 import { useAdminModelsWrites } from '@/composables/adminModels/writes'
@@ -116,6 +118,18 @@ export function useAdminModels() {
     confirmSourceBlock,
   } = useAdminModelsSources({ writeError, notice, load, drawerReload })
 
+  // 平台模型角色那一段（`adminModels/roles.ts`）：指完一个角色，模型表也重拉。
+  const { roles, rolesLoading, rolesError, roleBusy, loadRoles, setRole } = useAdminModelsRoles({
+    writeError,
+    notice,
+    load,
+  })
+
+  // 动「别处在用」的模型之前先说清楚（`adminModels/caution.ts`）：下面这些入口都过它。
+  const { cautionTarget, cautionBody, heed, confirmCaution, closeCaution } = useAdminModelsCaution(models)
+  const byRow = (row: ModelRow) => row.name
+  const byName = (name: string) => name
+
   const { budgetOpen, budgetProject, budgetSaving, budgetError, openBudget, onBudgetSubmit } = useAdminModelsBudget({
     loadProjects,
     notice,
@@ -133,7 +147,10 @@ export function useAdminModels() {
     notice.value = null
   }
 
-  onMounted(load)
+  onMounted(() => {
+    void load()
+    void loadRoles()
+  })
 
   return {
     // 窗口与页头
@@ -174,20 +191,20 @@ export function useAdminModels() {
     formSaving,
     formError,
     openAdd,
-    openEdit,
+    openEdit: heed(byRow, openEdit),
     onFormSubmit,
     deleteTarget,
     deleting,
-    askDelete,
+    askDelete: heed(byRow, askDelete),
     closeDelete,
     confirmDelete,
     blockTarget,
     blocking,
-    askBlock,
+    askBlock: heed(byRow, askBlock),
     closeBlock,
     confirmBlock,
-    setTier,
-    setOverseas,
+    setTier: heed(byRow, setTier),
+    setOverseas: heed(byRow, setOverseas),
     // 详情抽屉
     drawerOpen,
     drawerName,
@@ -202,19 +219,19 @@ export function useAdminModels() {
     sourceSaving,
     sourceError,
     sourceBusy,
-    openAddSource,
-    openEditSource,
+    openAddSource: heed(byName, openAddSource),
+    openEditSource: heed(byName, openEditSource),
     onSourceSubmit,
     priceChange,
     confirmPriceChange,
     closePriceChange,
-    moveSource,
+    moveSource: heed(byName, moveSource),
     sourceDeleteTarget,
-    askSourceDelete,
+    askSourceDelete: heed(byName, askSourceDelete),
     closeSourceDelete,
     confirmSourceDelete,
     sourceBlockTarget,
-    askSourceBlock,
+    askSourceBlock: heed(byName, askSourceBlock),
     closeSourceBlock,
     confirmSourceBlock,
     // 额度段
@@ -224,6 +241,18 @@ export function useAdminModels() {
     budgetError,
     openBudget,
     onBudgetSubmit,
+    // 平台模型角色
+    roles,
+    rolesLoading,
+    rolesError,
+    roleBusy,
+    loadRoles,
+    setRole,
+    // 动「别处在用」的模型之前的那一问
+    cautionTarget,
+    cautionBody,
+    confirmCaution,
+    closeCaution,
     // 审计段
     auditExpanded,
     toggleAuditDiff,

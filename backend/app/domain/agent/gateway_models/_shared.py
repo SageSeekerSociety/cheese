@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
 from typing import TYPE_CHECKING
 
+from app.core import model_roles
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.agent.gateway_admin import GatewayAdminError
 from app.domain.agent.gateway_models_helpers import (
@@ -147,6 +148,7 @@ def _item(model: AdminModel, usage: UsageWindow) -> dict:
         "tier": model.tier,
         "overseas": model.overseas,
         "offered": offered,
+        "roles": model_roles.pointing_at(model.name),
         "blocked_reasons": [] if offered else _offered_reasons(model),
         "unpriced_reason": None if model.priced else model.supports_notes,
         "upstream": {

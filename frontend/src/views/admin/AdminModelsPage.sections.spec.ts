@@ -44,6 +44,7 @@ vi.mock('@/api', () => ({
   getGatewayProjects: (...a: unknown[]) => getGatewayProjects(...a),
   setGatewayProjectBudget: (...a: unknown[]) => setGatewayProjectBudget(...a),
   getGatewayAudit: (...a: unknown[]) => getGatewayAudit(...a),
+  getPlatformRoles: () => Promise.resolve({ roles: [] }),
 }))
 
 import AdminModelsPage from './AdminModelsPage.vue'

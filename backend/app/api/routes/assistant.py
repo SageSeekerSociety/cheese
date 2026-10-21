@@ -36,8 +36,8 @@ from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
+from app.core import model_roles
 from app.core.background import spawn
-from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.redis import get_redis_client
@@ -318,7 +318,7 @@ async def ask(
     page = None if shown is None else await _page(db, spaces, shown, auth, resolver)
     context = "" if page is None else page.text
 
-    rates = Rates.of(settings.assistant_model, await pricing.model_rates())
+    rates = Rates.of(model_roles.model("assistant_model"), await pricing.model_rates())
     key = await person_key(db, auth.user_id, async_session_factory)
     if rates is None or key is None or not people.available():
         return refuse(503, say("assistantNotOpen"), 60)

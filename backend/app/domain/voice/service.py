@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import model_roles
 from app.core.config import settings
 from app.core.errors import QuotaExceededError, SystemBusyError, ValidationError
 from app.core.sentences import say
@@ -86,11 +87,11 @@ def _key(name: str, model: str, budget_usd: float) -> KeySpec:
 
 
 def asr_key_spec() -> KeySpec:
-    return _key("asr", settings.voice_asr_model, 100.0)
+    return _key("asr", model_roles.model("voice_asr_model"), 100.0)
 
 
 def polish_key_spec() -> KeySpec:
-    return _key("polish", settings.voice_polish_model, 30.0)
+    return _key("polish", model_roles.model("voice_polish_model"), 30.0)
 
 
 def wav_seconds(audio: bytes) -> float:
@@ -157,12 +158,14 @@ class VoiceInputs:
             key = await service_key(self._session, asr_key_spec())
             if key is None:
                 raise SystemBusyError(say("voiceUnavailable"))
-            self._asr = GatewayChat(key, settings.voice_asr_model, max_tokens=0)
+            self._asr = GatewayChat(
+                key, model_roles.model("voice_asr_model"), max_tokens=0
+            )
         if self._polish is None:
             key = await service_key(self._session, polish_key_spec())
             if key is not None:
                 self._polish = GatewayChat(
-                    key, settings.voice_polish_model, max_tokens=1024
+                    key, model_roles.model("voice_polish_model"), max_tokens=1024
                 )
         return self._asr, self._polish
 
@@ -198,7 +201,7 @@ class VoiceInputs:
             raise SystemBusyError(say("voiceNotHeard")) from exc
         raw = heard.content.strip()
         await self._record(
-            project_id, topic_id, ASR_KIND, settings.voice_asr_model, heard
+            project_id, topic_id, ASR_KIND, model_roles.model("voice_asr_model"), heard
         )
         self._session.add(
             VoiceInput(
@@ -240,7 +243,11 @@ class VoiceInputs:
             logger.warning("voice polish failed: %s", exc)
             return ""
         await self._record(
-            project_id, topic_id, POLISH_KIND, settings.voice_polish_model, done
+            project_id,
+            topic_id,
+            POLISH_KIND,
+            model_roles.model("voice_polish_model"),
+            done,
         )
         return done.content.strip()
 

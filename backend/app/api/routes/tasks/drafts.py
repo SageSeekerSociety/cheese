@@ -37,7 +37,7 @@ from app.api.task_deps import (
 from app.api.task_serialization import _enrich_task_models, _task_to_api_model
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.space_access import may_publish_in_space, may_teach_task
-from app.core.config import settings
+from app.core import model_roles
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
@@ -623,7 +623,7 @@ async def agent_publish(
 
 def _pictures() -> bool:
     """Whether the model a person's 芝士 answers with can look at a page."""
-    return gateway_catalog.sees_pictures(settings.assistant_model)
+    return gateway_catalog.sees_pictures(model_roles.model("assistant_model"))
 
 
 class FileIn(BaseModel):
