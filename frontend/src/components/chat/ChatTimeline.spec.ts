@@ -1,7 +1,7 @@
 // The timeline hands what a person does on a row back to the panel, naming the
 // row it happened on.
 import type { Component } from 'vue'
-import type { Block } from '../../cx_types'
+import type { Block, ReplyPreview } from '../../cx_types'
 import type { TaskLine } from '../../lib/channelTasks'
 
 import { ref } from 'vue'
@@ -74,7 +74,7 @@ function mount(overrides: Record<string, unknown> = {}) {
       isMine: () => true,
       isExternal: () => false,
       avatarOf: () => null,
-      displayName: (m: Block) => m.author,
+      displayName: (m: Block | ReplyPreview) => m.author,
       noticeAgent: () => null,
       parentOf: () => undefined,
       showReplyCue: () => false,

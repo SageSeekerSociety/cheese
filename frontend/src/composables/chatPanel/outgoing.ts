@@ -6,7 +6,7 @@
 import type { Ref } from 'vue'
 import type { PostedMessage } from '../../api/messages'
 import type { useTimeline } from '../../components/room/composables/useTimeline'
-import type { Block, ChatAttachment, Topic } from '../../cx_types'
+import type { Block, ChatAttachment, ReplyPreview, Topic } from '../../cx_types'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { useChatComposer } from '../useChatComposer'
 import type { useChatPaging } from '../useChatPaging'
@@ -14,7 +14,6 @@ import type { useChatPaging } from '../useChatPaging'
 import { ApiError, attachmentRawUrl, downloadFile } from '../../api'
 import { postChatMessage } from '../../api/messages'
 import { SendRefused, useOutbox } from '../../components/room/composables/useOutbox'
-import { isPersonBlock } from '../../lib/authorship'
 import { outgoingMessageBody } from '../../lib/outgoingMessage'
 
 import { t } from '@/i18n'
@@ -47,13 +46,17 @@ export function usePanelOutgoing(deps: {
   // the message is just posted (spec §7.1 默认不 @). The composer lives in TopicView and
   // drives this via the exposed ref, so the input bar can span chat + doc.
   // B3: reply target — the message this next send threads under (reply_to).
-  function parentOf(m: Block): Block | undefined {
-    return m.reply_to ? deps.timeline.find(m.reply_to) : undefined
+  function parentOf(m: Block): Block | ReplyPreview | undefined {
+    if (!m.reply_to) return undefined
+    // The parent is usually in the loaded timeline. When it is not (an older
+    // page), the page carried a one-line preview with the reply; draw that.
+    return deps.timeline.find(m.reply_to) ?? m.reply_preview
   }
   function showReplyCue(m: Block): boolean {
-    // Only a person's replies are explicit threads. An AI message's reply_to is
-    // the implicit link to the message that triggered it — not a thread cue.
-    return isPersonBlock(m) && !!parentOf(m)
+    // A reply cue is the message's own reply_to, for people and teammates
+    // alike. An agent's message gets one only when it deliberately quotes
+    // (chat_send's reply_to); ordinary answers carry no edge.
+    return !!parentOf(m)
   }
 
   // 只给下载用：downloadFile 自己会带上 Authorization。显示图片不走这里。

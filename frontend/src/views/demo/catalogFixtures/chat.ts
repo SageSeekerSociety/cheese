@@ -5,7 +5,7 @@
  * 从 `../catalogFixtures.ts` 拆出来的一册：行还是剧本第 0 到第 1 步那一段，
  * 由 `./common` 算。条目在 `../catalogChat.ts`。
  */
-import type { Block, Topic } from '@/cx_types'
+import type { Block, ReplyPreview, Topic } from '@/cx_types'
 import type { Outgoing } from '@/lib/composerDrafts'
 
 import { ref } from 'vue'
@@ -67,7 +67,7 @@ const CHAT_BASE = {
   isMine: () => false,
   isExternal: () => false,
   avatarOf: () => null as string | null,
-  displayName: (b: Block) => NAMES[b.author] ?? b.author,
+  displayName: (b: Block | ReplyPreview) => NAMES[b.author] ?? b.author,
   noticeAgent: (b: Block) => (NAMES[b.author] ? { name: NAMES[b.author]!, handle: b.author } : null),
   parentOf: () => undefined,
   showReplyCue: () => false,
