@@ -48,6 +48,20 @@ describe('asking the AI teammate in a document comment', () => {
     scope.stop()
   })
 
+  // 备注名不是名册上的名字：后端只认名册上的名字和 handle，所以评论里 @ 的是
+  // 备注名时，写进正文的必须已经是 <@handle>，否则被 @ 的人收不到通知。
+  it('sends a person mentioned by their remark as their handle token', async () => {
+    const scope = effectScope()
+    const topic = { id: 't1', project_id: 'p1' } as Topic
+    const doc = scope.run(() =>
+      usePanelDoc({ topic, activityTick: 0, agentName: '芝士', agentHandle: 'cheese-a1' }, () => [
+        { handle: 'u1', label: '老王' },
+      ])
+    )!
+    expect(doc.withMentions('@老王 看一下这里')).toBe('<@u1> 看一下这里')
+    scope.stop()
+  })
+
   it('reads the token in a comment as the teammate’s name', () => {
     render(DocThreadCard, {
       props: {
