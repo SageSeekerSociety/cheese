@@ -8,8 +8,9 @@ import { fieldDefects, TOKEN_FIELDS } from './field-layout';
 test.describe.configure({ mode: 'parallel' });
 
 // These are real catalog fixtures, not whatever tasks the shared demo user has.
-// The frame indices are the registered collapsed-task row and page-form row in
-// frontend/src/views/demo/catalogRail.ts. No source-module imports are needed.
+// The frame index is the 0-based position in the entry's `states` array in
+// frontend/src/views/demo/catalogRail.ts — the same number `/demo/catalog/<entry>/frame/<n>`
+// takes. No source-module imports are needed.
 test.describe('sidebar channel row geometry', () => {
   type Box = { x: number; y: number; width: number; height: number };
 
@@ -91,7 +92,7 @@ test.describe('sidebar channel row geometry', () => {
   test('task arrow precedes the name and revealing more neither shifts nor covers the name or light', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     for (const theme of ['light', 'dark']) {
-      const row = await catalogRow(page, 10, theme);
+      const row = await catalogRow(page, 9, theme);
       // The standalone frame supplies real component markup; give it the same
       // constrained width as a sidebar rather than a whole desktop viewport.
       await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
@@ -129,9 +130,9 @@ test.describe('sidebar channel row geometry', () => {
   test.describe('400px touch page', () => {
     test.use({ viewport: { width: 400, height: 844 }, hasTouch: true, isMobile: true });
 
-    // State 15: page form with a real subtree and a collapsed yellow task block.
+    // State 14 (0-based): page form with a real subtree and a collapsed yellow task block.
     test('subtree and task controls each have separate hittable 44px targets', async ({ page }) => {
-      const row = await catalogRow(page, 15);
+      const row = await catalogRow(page, 14);
       const subtree = row.locator('.subtree-toggle');
       const arrow = row.locator('.task-fold__btn');
       const title = row.locator('.topic-title');
@@ -188,9 +189,10 @@ test.describe('sidebar channel row geometry', () => {
         ],
       });
 
-      // State 10 is the collapsed row with a yellow task light and menuOpen=false;
-      // state 13 stays untouched because it is the task-only alignment control.
-      const row = await catalogRow(page, 10);
+      // State 9 (0-based) is the collapsed row with a yellow task light and
+      // menuOpen=false; state 12 stays untouched because it is the task-only
+      // alignment control.
+      const row = await catalogRow(page, 9);
       await narrowFrame(page);
 
       expect(
@@ -227,8 +229,9 @@ test.describe('sidebar channel row geometry', () => {
       await expect(row.locator('.row-glyph')).toHaveCount(0);
     });
 
-    // State 11 is a channel with both controls, expanded and lightless: measure the
-    // controls, not a light, and do not assume the task arrow is collapsed.
+    // State 10 (0-based) is a channel with both controls, expanded and lightless:
+    // measure the controls, not a light, and do not assume the task arrow is
+    // collapsed.
     test('both fold controls keep separate 44px targets when the row is expanded', async ({ page }) => {
       const cdp = await page.context().newCDPSession(page);
       await cdp.send('Emulation.setEmulatedMedia', {
@@ -238,7 +241,7 @@ test.describe('sidebar channel row geometry', () => {
         ],
       });
 
-      const row = await catalogRow(page, 11);
+      const row = await catalogRow(page, 10);
       await narrowFrame(page);
       expect(await page.evaluate(() => matchMedia('(hover: none)').matches)).toBe(true);
       expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
@@ -271,14 +274,14 @@ test.describe('sidebar channel row geometry', () => {
 
   // 名称前的记号换成了「有子话题 / 有任务」的控件，但同层标题必须仍然从同一条竖线
   // 开始——参差只出现在层级之间，不因为这一行多了哪一个控件而变化。
-  // Catalog 11=子频道+任务，12=仅子频道，13=仅任务，0=都没有。
+  // Catalog (0-based) 10=子频道+任务，11=仅子频道，12=仅任务，0=都没有。
   test('same-level titles share one left edge with children, tasks, both or neither', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     const cases = [
       { state: 0, children: false, tasks: false },
-      { state: 11, children: true, tasks: true },
-      { state: 12, children: true, tasks: false },
-      { state: 13, children: false, tasks: true },
+      { state: 10, children: true, tasks: true },
+      { state: 11, children: true, tasks: false },
+      { state: 12, children: false, tasks: true },
     ];
     const lefts: number[] = [];
     for (const item of cases) {
@@ -292,10 +295,10 @@ test.describe('sidebar channel row geometry', () => {
   });
 
   // 私密频道的锁说的是「谁能进来」，有任务时不能拿任务箭头把它换掉；悬停说明也还在。
-  // Catalog 14=私密+任务。
+  // Catalog (0-based) 13=私密+任务。
   test('private channel keeps its lock and its private hint while tasks are collapsible', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    const row = await catalogRow(page, 14);
+    const row = await catalogRow(page, 13);
     await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
 
     const glyph = row.locator('.row-glyph');
