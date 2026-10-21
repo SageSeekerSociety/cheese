@@ -82,7 +82,7 @@ describe('线路草稿 · 免费与零价', () => {
       ...emptySourceDraft(),
       upstream: 'm',
       free,
-      prices: { input, output, cacheRead: '', cacheCreation: '' },
+      prices: { input, output, cacheRead: '', cacheCreation: '', cacheCreation1h: '' },
     }
   }
 

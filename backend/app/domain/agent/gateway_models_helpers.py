@@ -27,7 +27,7 @@ from app.domain.agent.schemas import api_base_allowed, split_upstream, upstream_
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 # 单价与能力在网关管理 API 与页面契约里用同一套语义键；流转成 litellm_params 的
 # `*_cost_per_token` 只发生在 `_prices_for_gateway` 一处。
-_PRICE_KEYS = ("input", "output", "cache_read", "cache_creation")
+_PRICE_KEYS = ("input", "output", "cache_read", "cache_creation", "cache_creation_1h")
 # 审计去敏要认的字段名（大小写、连字符/下划线都归一）——只剔凭据，`api_base` 不动。
 # 后三个是 OAuth token 的字段名：出现在审计素材里的这几种同样是凭据。
 _KEY_FIELD_NAMES = {"api_key", "apikey", "access_token", "refresh_token", "id_token"}
@@ -118,6 +118,33 @@ def _require_price_when_selectable(
         and _price_is_positive(prices.get("output"))
     ):
         raise BadRequestError(say("offeredNeedsPrices"))
+
+
+def _offered(model: AdminModel) -> bool:
+    """Would the picker offer it (the same test as the page's ``offered``)."""
+    return model.selectable and model.priced and not model.blocked
+
+
+def _price_only(model: AdminModel) -> bool:
+    """Paused and unlisted: nobody picks or calls it, and what is left of it is
+    its price. The backend still bills by that price under the model's name
+    (``usage.pricing``: the metering proxy's subscription usage is priced from
+    ``/model/info``), so a price-only model is held to an offered model's
+    price rule. The subscription's Claude models are rows of this kind."""
+    return model.blocked and not model.selectable
+
+
+def _needs_price(model: AdminModel) -> bool:
+    """Must every serving row of ``model`` be priced both ways: an offered model's
+    brake reads the price, and a price-only model is nothing but its price."""
+    return model.selectable or _price_only(model)
+
+
+def _require_another_offered(models: list[AdminModel], name: str) -> None:
+    """A write that stops ``name`` being offered must leave some model offered:
+    with none, every agent settings page is bare."""
+    if not any(m.name != name and _offered(m) for m in models):
+        raise BadRequestError(say("gatewayLastOfferedModel", name=name))
 
 
 def _source_prices(prices: dict | None, free: bool) -> dict:
@@ -339,6 +366,7 @@ def _config_yaml(model: AdminModel) -> str:
         "output": "output_cost_per_token",
         "cache_read": "cache_read_input_token_cost",
         "cache_creation": "cache_creation_input_token_cost",
+        "cache_creation_1h": "cache_creation_input_token_cost_above_1hr",
     }
     for key, field in fields.items():
         if key in model.prices:
@@ -416,6 +444,7 @@ def _item_from_payload(
         "tier": data.get("tier") or "included",
         "overseas": bool(data.get("overseas")),
         "offered": selectable and priced,
+        "price_only": False,
         # 网关还没读回这条新模型：`pending`。
         "blocked_reasons": [] if (selectable and priced) else ["pending"],
         "unpriced_reason": None if priced else "网关尚未读回单价",

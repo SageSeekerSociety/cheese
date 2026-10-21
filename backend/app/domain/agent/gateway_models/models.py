@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -19,11 +20,15 @@ from app.core.errors import BadRequestError
 from app.core.sentences import say
 from app.domain.agent.gateway_admin import UsageWindow
 from app.domain.agent.gateway_models._shared import _MID_SYSTEM, _WRITE_ERRORS
+from app.domain.agent.gateway_models.guards import _refuse_unserving
 from app.domain.agent.gateway_models_helpers import (
     _api_base_for,
     _daily_model_row,
+    _needs_price,
+    _offered,
     _prices_for_gateway,
     _refuse_config_write,
+    _require_another_offered,
     _require_price_when_selectable,
     _source_prices,
     _translated_to_chat,
@@ -278,12 +283,15 @@ async def _update(service: pkg.GatewayModelsService, name: str, data: dict) -> d
     # 不变式永远看**合并之后**的样子：把已上架模型的单价删成一半，和一开始就
     # 没价，对刹车是同一种损坏。有几条线路就逐个看。
     selectable = bool(data.get("selectable", current.selectable))
+    if _offered(current) and not selectable:
+        _require_another_offered(await service._require_models(), name)
+    needs_price = _needs_price(replace(current, selectable=selectable))
     prices = data.get("prices")
     for source in current.sources:
         effective = (
             source.prices if prices is None else _source_prices(prices, source.free)
         )
-        _require_price_when_selectable(selectable, effective, source.free)
+        _require_price_when_selectable(needs_price, effective, source.free)
 
     wanted = (data.get("capabilities") or {}).get(_MID_SYSTEM)
     if wanted is not False and any(
@@ -349,6 +357,7 @@ async def delete(service: pkg.GatewayModelsService, *, handle: str, name: str) -
 async def _delete(service: pkg.GatewayModelsService, name: str) -> None:
     current = await service._current_model(name)
     _refuse_config_write(current)
+    await _refuse_unserving(service, current)
     for source in current.sources:
         await service._admin.delete_model(  # type: ignore[union-attr]
             source.source_id
@@ -391,6 +400,8 @@ async def _set_blocked(
     # 网关不支持停用 config 模型 —— 页面上它对停用是只读的，这里也如实拒绝，
     # 而不是做一个只改平台数据的假象。
     _refuse_config_write(current, toggle=True)
+    if blocked:
+        await _refuse_unserving(service, current)
     for source in current.sources:
         await service._admin.set_blocked(  # type: ignore[union-attr]
             source.source_id, blocked

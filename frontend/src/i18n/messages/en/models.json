@@ -83,6 +83,7 @@
     "output": "Output",
     "cacheRead": "Cache read",
     "cacheCreation": "Cache write",
+    "cacheCreation1h": "Cache write (1 hour)",
     "unpriced": "Unpriced"
   },
   "usage": {
@@ -154,6 +155,11 @@
     "unblocked": "Unblocked “{name}”",
     "budgetSet": "Updated the limit for “{name}”",
     "dismiss": "Dismiss this notice"
+  },
+  "caution": {
+    "title": "Before you change {name}",
+    "confirm": "Continue",
+    "priceOnly": "{name} is paused and unlisted: it is here for its prices, which bill the subscription usage reported under this name. A price you change here changes what that usage costs."
   },
   "confirm": {
     "delete": {

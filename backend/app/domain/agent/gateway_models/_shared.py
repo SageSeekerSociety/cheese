@@ -24,6 +24,7 @@ from app.domain.agent.gateway_models_helpers import (
     _host_of,
     _item_from_payload,
     _offered_reasons,
+    _price_only,
     _redact,
     _scrub,
     _secrets_in,
@@ -147,6 +148,7 @@ def _item(model: AdminModel, usage: UsageWindow) -> dict:
         "tier": model.tier,
         "overseas": model.overseas,
         "offered": offered,
+        "price_only": _price_only(model),
         "blocked_reasons": [] if offered else _offered_reasons(model),
         "unpriced_reason": None if model.priced else model.supports_notes,
         "upstream": {

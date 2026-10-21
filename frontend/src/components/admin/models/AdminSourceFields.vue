@@ -206,6 +206,16 @@ function headerRowBad(h: HeaderDraft): boolean {
         hide-details
         @update:model-value="patchPrice('cacheCreation', $event)"
       />
+      <v-text-field
+        :model-value="draft.prices.cacheCreation1h"
+        autocomplete="off"
+        type="number"
+        variant="outlined"
+        density="comfortable"
+        :label="t('models.price.cacheCreation1h')"
+        hide-details
+        @update:model-value="patchPrice('cacheCreation1h', $event)"
+      />
     </div>
     <p v-if="problems.free" class="asf__hint asf__hint--bad t-meta-read">
       {{ t('models.source.field.zeroNeedsFree') }}

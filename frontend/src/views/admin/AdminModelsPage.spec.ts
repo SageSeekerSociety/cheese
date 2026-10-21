@@ -354,6 +354,24 @@ describe('模型管理 · 危险动作', () => {
     await waitFor(() => expect(deleteGatewayModel).toHaveBeenCalledWith('glm-4.7-runtime'))
   })
 
+  it('只为单价而在的模型：删除前先说它给订阅计价，取消就什么都不发', async () => {
+    getGatewayModels.mockResolvedValue(
+      modelsPayload([runtimeModel({ blocked: true, selectable: false, price_only: true })])
+    )
+    const page = mountPage()
+    await page.findByText('GLM 4.7')
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.table.action.delete' }))
+    expect(await page.findByText('models.caution.priceOnly')).toBeTruthy()
+    expect(page.queryByText('models.confirm.delete.title')).toBeNull()
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.dialog.cancel' }))
+    await fireEvent.click(page.getByRole('button', { name: 'models.table.action.delete' }))
+    await fireEvent.click(await page.findByRole('button', { name: 'models.caution.confirm' }))
+    await fireEvent.click(await page.findByRole('button', { name: 'models.confirm.delete.confirm' }))
+    await waitFor(() => expect(deleteGatewayModel).toHaveBeenCalledTimes(1))
+  })
+
   it('config 来源的模型那一行只读：不给编辑/删除/停用按钮，给「查看改法」入口', async () => {
     getGatewayModels.mockResolvedValue(modelsPayload([configModel()]))
     const page = mountPage()

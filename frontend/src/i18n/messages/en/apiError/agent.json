@@ -55,6 +55,7 @@
   "gatewayAdminNotConfigured": "The gateway admin credential isn't configured",
   "gatewayMissingList": "The gateway's {path} response has no {field} list",
   "gatewayModelExists": "The model {name} already exists: to give it another upstream, add a source to it",
+  "gatewayLastOfferedModel": "{name} is the last offered model: pausing, deleting or unlisting it would leave agent settings with no model to pick. Offer another model first",
   "gatewayModelNotFound": "The model {name} doesn't exist",
   "gatewayModelTimeout": "The model didn't finish answering within {seconds} seconds",
   "gatewayNoModelId": "The gateway didn't return the new model's model_id",

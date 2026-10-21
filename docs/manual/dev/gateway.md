@@ -129,6 +129,8 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 - **协议**：`anthropic` → `anthropic/<上游名>`（原生 Messages）；`openai-chat` → `hosted_vllm/<上游名>`（只有 chat/completions 的中转站与 OpenCode Go；不能用 `openai/`，那会被翻成 Responses API）；`openai-responses` → `openai/<上游名>`。不选协议时 `upstream_model` 就是完整的 LiteLLM 模型串。原生 Messages 的地址不带 `/v1`（LiteLLM 自己拼 `/v1/messages`，服务层把多填的 `/v1` 去掉）；Chat 线路的地址要带到 `/v1`。
 - **Chat 线路让整组折叠 system 消息**：Messages 翻成 chat/completions 会丢掉对话中间的 system 消息（实测 glm-5.2、MiMo），所以一个模型一旦有 `openai-chat` 线路，组里每一行都标 `supports_mid_conversation_system: false`，服务层加线路时顺手改齐运行时的行；config.yaml 的行没标就拒，先去改 config。
 - **消费上限跟着上游走**：`cheese_spend_cap_usd`（`spend_cap.py`）按上游模型（`litellm_params.model`）的总账计，不分是哪一行、哪个模型名打的。所以在页面上改一条运行时线路的上限（请求体 `spend_cap_usd`，`null` 是清掉），服务层把同一上游的每一条运行时线路都改成同一个数；同一上游有 config.yaml 的行且上限不同就拒，先把那一行移出 config 或改 config。改上限不用发布网关。
+- **只为单价而在的模型**：停用且未上架的模型（订阅里那几个 Claude 模型就是这种）没有人选、也没有调用打到它，留下的只有单价，而平台按这个名字的单价给计量代理上报的订阅用量记账（`usage.pricing`）。所以它和上架的模型守同一条：每条线路输入、输出都要有价；一小时缓存写入的单价（`cache_creation_1h`，即 `cache_creation_input_token_cost_above_1hr`）在页面上可填可改。页面在编辑、停用、删除它或动它的线路之前先弹框说明这一点。
+- **至少留一个上架的模型**：停用、删除、下架最后一个上架的模型，或停用、删除它最后一条在用的线路，服务层都拒绝，否则智能体设置里没有模型可选。
 - **免费**：唯一合法的零价是声明出来的——`cheese_free: true` 且输入、输出都写成 0（`price_is_set` 认它，`check_config.py` 同一条）；没标免费的零价一律拒。免费线路和付费线路在同一个模型里时，用量估价按付费线路里最高的那一档算，免费线路上的流量也一样（`usage.pricing`）。页面在混用时会提示这一点。
 - 目录对一个模型的判断看整组：有一行没停用就还能选，在用的每一行都有价（或声明免费）才算有价。
 

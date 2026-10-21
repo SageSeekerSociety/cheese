@@ -55,6 +55,7 @@
   "gatewayAdminNotConfigured": "未配置网关管理凭据",
   "gatewayMissingList": "网关 {path} 的响应里没有 {field} 列表",
   "gatewayModelExists": "模型 {name} 已经存在：要给它加一条上游，请用「添加线路」",
+  "gatewayLastOfferedModel": "模型 {name} 是最后一个上架的模型：停用、删除或下架它，智能体设置里就没有模型可选了。请先上架另一个模型",
   "gatewayModelNotFound": "模型 {name} 不存在",
   "gatewayModelTimeout": "模型 {seconds} 秒内没有答完",
   "gatewayNoModelId": "网关没有返回新模型的 model_id",

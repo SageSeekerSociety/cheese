@@ -25,9 +25,11 @@ from app.domain.agent.gateway_models._shared import (
     _MID_SYSTEM_FIELD,
     _WRITE_ERRORS,
 )
+from app.domain.agent.gateway_models.guards import _refuse_unserving_source
 from app.domain.agent.gateway_models_helpers import (
     _api_base_for,
     _bare_upstream,
+    _needs_price,
     _prices_for_gateway,
     _refuse_config_source,
     _require_price_when_selectable,
@@ -174,7 +176,7 @@ async def add_source(
         _validate_api_base(api_base)
         free = bool(data.get("free"))
         prices = _source_prices(data.get("prices"), free)
-        _require_price_when_selectable(model.selectable, prices, free)
+        _require_price_when_selectable(_needs_price(model), prices, free)
         # 模型那一层的元数据从已有那一行抄：同组每一行必须一字不差。
         catalogue = dict(model.sources[0].catalogue if model.sources else {})
         # A cap and a cache rule belong to the upstream model: another row
@@ -276,7 +278,7 @@ async def update_source(
             effective = _source_prices(
                 source.prices if prices is None else prices, free
             )
-            _require_price_when_selectable(model.selectable, effective, free)
+            _require_price_when_selectable(_needs_price(model), effective, free)
             kwargs["prices"] = _prices_for_gateway(effective)
             kwargs["free"] = free
         for field in ("order", "upstream_headers", "session_header"):
@@ -308,6 +310,7 @@ async def delete_source(
     async def work() -> dict:
         model, source = await service._current_source(name, source_id)
         _refuse_config_source(model, source)
+        await _refuse_unserving_source(service, model, source.source_id)
         await service._admin.delete_model(  # type: ignore[union-attr]
             source.source_id
         )
@@ -336,6 +339,8 @@ async def set_source_blocked(
     async def work() -> dict:
         model, source = await service._current_source(name, source_id)
         _refuse_config_source(model, source)
+        if blocked:
+            await _refuse_unserving_source(service, model, source.source_id)
         await service._admin.set_blocked(  # type: ignore[union-attr]
             source.source_id, blocked
         )

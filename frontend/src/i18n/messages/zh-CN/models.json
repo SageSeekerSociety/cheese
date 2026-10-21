@@ -83,6 +83,7 @@
     "output": "输出",
     "cacheRead": "缓存读",
     "cacheCreation": "缓存写",
+    "cacheCreation1h": "缓存写（1 小时）",
     "unpriced": "未定价"
   },
   "usage": {
@@ -154,6 +155,11 @@
     "unblocked": "已启用「{name}」",
     "budgetSet": "已更新「{name}」的额度",
     "dismiss": "关闭这条提示"
+  },
+  "caution": {
+    "title": "改动 {name} 之前",
+    "confirm": "继续",
+    "priceOnly": "{name} 停用且未上架：它在这里是为了它的单价，平台按这个名字的单价给订阅用量记账。这里改的价，就是那些用量今后的计价。"
   },
   "confirm": {
     "delete": {

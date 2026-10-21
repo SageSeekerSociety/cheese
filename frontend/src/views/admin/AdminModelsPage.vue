@@ -123,6 +123,10 @@ const {
   onBudgetSubmit,
   auditExpanded,
   toggleAuditDiff,
+  cautionTarget,
+  cautionBody,
+  confirmCaution,
+  closeCaution,
 } = useAdminModels()
 </script>
 
@@ -251,6 +255,17 @@ const {
       :saving="budgetSaving"
       :error="budgetError"
       @submit="onBudgetSubmit"
+    />
+
+    <!-- 动「别处在用」的模型之前：说清它在哪里起作用，确认后才打开表单或下一步的确认。 -->
+    <AdminModelsConfirmDialog
+      :model-value="!!cautionTarget"
+      :title="t('models.caution.title', { name: cautionTarget?.name ?? '' })"
+      :body="cautionBody"
+      :confirm-label="t('models.caution.confirm')"
+      :busy="false"
+      @update:model-value="closeCaution"
+      @confirm="confirmCaution"
     />
 
     <!-- 删除确认。说清后果（模型从网关移除、项目再也选不到它）。 -->

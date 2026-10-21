@@ -447,7 +447,8 @@ async def test_a_reorder_naming_a_config_source_writes_nothing_at_all():
 
 @pytest.mark.anyio
 async def test_pausing_one_source_leaves_the_model_offered():
-    gw = _Gateway()
+    # Another offered model: pausing the last one is refused.
+    gw = _Gateway([_KIMI_CONFIG])
     service = _service(gw)
     await _two_runtime_sources(gw, service)
     first = gw.group("glm")[0]["model_info"]["id"]
@@ -842,7 +843,8 @@ async def test_a_source_ordered_after_the_others_needs_no_say_so():
 
 @pytest.mark.anyio
 async def test_a_source_added_to_a_paused_model_stays_paused():
-    gw = _Gateway()
+    # Another offered model: pausing the last one is refused.
+    gw = _Gateway([_KIMI_CONFIG])
     service = _service(gw)
     await _two_runtime_sources(gw, service)
     await service.set_blocked(handle="admin", name="glm", blocked=True)
@@ -1074,3 +1076,112 @@ async def test_a_cap_that_disagrees_with_a_config_row_on_its_upstream_is_refused
 def test_a_cap_must_be_a_positive_amount(cap):
     with pytest.raises(ValidationError):
         SourceUpdate(spend_cap_usd=cap)
+
+
+# --- What config.yaml's check held the file to, held at the write -------------
+
+
+@pytest.mark.anyio
+async def test_the_last_offered_model_cannot_be_paused_deleted_or_unlisted():
+    """With no offered model, every agent settings page is bare."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _two_runtime_sources(gw, service)
+    first, second = (r["model_info"]["id"] for r in gw.group("glm"))
+    await service.set_source_blocked(
+        handle="admin", name="glm", source_id=first, blocked=True
+    )
+    reset_cache()
+    before = len(gw.writes())
+
+    for attempt in (
+        lambda: service.set_blocked(handle="admin", name="glm", blocked=True),
+        lambda: service.delete(handle="admin", name="glm"),
+        lambda: service.update(
+            handle="admin", name="glm", payload=ModelUpdate(selectable=False)
+        ),
+        lambda: service.set_source_blocked(
+            handle="admin", name="glm", source_id=second, blocked=True
+        ),
+        lambda: service.delete_source(handle="admin", name="glm", source_id=second),
+    ):
+        with pytest.raises(BadRequestError):
+            await attempt()
+    assert len(gw.writes()) == before
+
+    # With another offered model the same pause goes through.
+    gw.rows.append(json.loads(json.dumps(_KIMI_CONFIG)))
+    reset_cache()
+    await service.set_blocked(handle="admin", name="glm", blocked=True)
+
+
+_CLAUDE_PRICES = {
+    "input": 2e-6,
+    "output": 1e-5,
+    "cache_read": 2e-7,
+    "cache_creation": 2.5e-6,
+    "cache_creation_1h": 4e-6,
+}
+
+
+async def _price_only_model(service: GatewayModelsService) -> str:
+    """A subscription model's price row: unlisted, paused, no credential."""
+    await service.add(
+        handle="admin",
+        payload=ModelCreate(
+            name="claude-sonnet-5",
+            protocol="anthropic",
+            upstream_model="claude-sonnet-5",
+            prices=_CLAUDE_PRICES,
+        ),
+    )
+    reset_cache()
+    await service.set_blocked(handle="admin", name="claude-sonnet-5", blocked=True)
+    reset_cache()
+    return (await _listed(service, "claude-sonnet-5"))["sources"][0]["source_id"]
+
+
+@pytest.mark.anyio
+async def test_a_price_only_model_keeps_every_price_and_says_what_it_is():
+    """The backend bills subscription usage by these prices, the one-hour cache
+    write included, so the page shows them and edits them."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    source_id = await _price_only_model(service)
+
+    (row,) = gw.group("claude-sonnet-5")
+    assert row["litellm_params"]["cache_creation_input_token_cost_above_1hr"] == 4e-6
+    assert "api_key" not in row["litellm_params"]
+    item = await _listed(service, "claude-sonnet-5")
+    assert item["price_only"] is True
+    assert item["sources"][0]["prices"]["cache_creation_1h"] == 4e-6
+
+    await service.update_source(
+        handle="admin",
+        name="claude-sonnet-5",
+        source_id=source_id,
+        payload=SourceUpdate(prices={**_CLAUDE_PRICES, "cache_creation_1h": 8e-6}),
+    )
+    assert (
+        gw.group("claude-sonnet-5")[0]["litellm_params"][
+            "cache_creation_input_token_cost_above_1hr"
+        ]
+        == 8e-6
+    )
+
+
+@pytest.mark.anyio
+async def test_a_price_only_model_cannot_lose_its_input_or_output_price():
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    source_id = await _price_only_model(service)
+    before = len(gw.writes())
+
+    with pytest.raises(BadRequestError):
+        await service.update_source(
+            handle="admin",
+            name="claude-sonnet-5",
+            source_id=source_id,
+            payload=SourceUpdate(prices={"input": 2e-6}),
+        )
+    assert len(gw.writes()) == before

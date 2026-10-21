@@ -45,6 +45,8 @@ export interface GatewayPrices {
   output?: number | null
   cache_read?: number | null
   cache_creation?: number | null
+  /** 一小时缓存写入（Anthropic 与五分钟那档分开定价；订阅计费读它）。 */
+  cache_creation_1h?: number | null
 }
 
 export type GatewayCapabilities = Partial<
@@ -119,6 +121,8 @@ export interface GatewayModelInfo {
   selectable: boolean
   priced: boolean
   offered: boolean
+  /** 停用且未上架：只为单价而在（订阅计费按这个名字的单价记账）。 */
+  price_only?: boolean
   blocked_reasons: string[]
   unpriced_reason: string | null
   upstream: GatewayUpstream

@@ -41,7 +41,7 @@ export interface SourceDraft {
   apiKey: string
   order: string
   free: boolean
-  prices: { input: string; output: string; cacheRead: string; cacheCreation: string }
+  prices: { input: string; output: string; cacheRead: string; cacheCreation: string; cacheCreation1h: string }
   /** 编辑时请求头的值不回显，所以「改头」是一个显式动作：没动过就整份不发。 */
   headersTouched: boolean
   headers: HeaderDraft[]
@@ -64,7 +64,7 @@ export function emptySourceDraft(order = ORDER_MIN): SourceDraft {
     apiKey: '',
     order: String(order),
     free: false,
-    prices: { input: '', output: '', cacheRead: '', cacheCreation: '' },
+    prices: { input: '', output: '', cacheRead: '', cacheCreation: '', cacheCreation1h: '' },
     headersTouched: true,
     headers: [],
     existingHeaderNames: [],
@@ -96,6 +96,7 @@ export function draftFromSource(source: SourceRow): SourceDraft {
       output: perMillionText(source.prices.output),
       cacheRead: perMillionText(source.prices.cache_read),
       cacheCreation: perMillionText(source.prices.cache_creation),
+      cacheCreation1h: perMillionText(source.prices.cache_creation_1h),
     },
     headersTouched: false,
     headers: [],
@@ -193,7 +194,13 @@ export function draftProblems(draft: SourceDraft): DraftProblems {
   const order = Number(draft.order)
   const input = perToken(draft.prices.input)
   const output = perToken(draft.prices.output)
-  const anyPriceInvalid = [draft.prices.input, draft.prices.output, draft.prices.cacheRead, draft.prices.cacheCreation]
+  const anyPriceInvalid = [
+    draft.prices.input,
+    draft.prices.output,
+    draft.prices.cacheRead,
+    draft.prices.cacheCreation,
+    draft.prices.cacheCreation1h,
+  ]
     .map(perToken)
     .some((v) => v === undefined)
   const zero = (v: number | null | undefined) => v === 0
@@ -243,6 +250,7 @@ export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): Gateway
       output: draft.free ? 0 : perToken(draft.prices.output) ?? null,
       cache_read: perToken(draft.prices.cacheRead) ?? null,
       cache_creation: perToken(draft.prices.cacheCreation) ?? null,
+      cache_creation_1h: perToken(draft.prices.cacheCreation1h) ?? null,
     },
     session_header: draft.sessionHeader.trim(),
   }
