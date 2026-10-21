@@ -66,7 +66,7 @@ const entries = computed(() =>
 </script>
 
 <template>
-  <!-- 和「# 综合」、频道行同一种行：同一个 16px 图标槽、同一条文字左缘。 -->
+  <!-- Keep the same title column as root and channel rows. -->
   <v-list
     v-if="!page && entries.length"
     density="compact"
@@ -135,8 +135,10 @@ const entries = computed(() =>
 .nav-row :deep(.v-list-item__spacer) {
   width: 8px !important;
 }
+/* Match the channel leading region plus Vuetify's 8px spacer. */
 .nav-row :deep(.v-list-item__prepend) {
   align-items: center;
+  width: 44px;
 }
 .row-slot {
   flex: none;
@@ -151,5 +153,17 @@ const entries = computed(() =>
 }
 .nav-row.pinned-row {
   min-height: 36px;
+}
+@media (hover: none) {
+  .nav-row :deep(.v-list-item__prepend) {
+    width: 100px;
+  }
+  .row-slot {
+    width: 44px;
+    height: 44px;
+  }
+  .nav-row.pinned-row {
+    min-height: 44px;
+  }
 }
 </style>
