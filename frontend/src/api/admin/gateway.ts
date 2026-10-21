@@ -79,6 +79,8 @@ export interface GatewaySource {
   priced: boolean
   header_names: string[]
   session_header: string | null
+  /** 上游模型的累计消费上限（美元），没有上限是 `null`。按上游计：同一上游的每条线路一样。 */
+  spend_cap_usd: number | null
 }
 
 /** 一条线路自己的字段：新建模型时的第一条、加线路、改线路三处共用。
@@ -98,6 +100,9 @@ export interface GatewaySourceFields {
   session_header?: string
   /** 只在加线路时：这个优先级会接走在用线路的流量，人已经明确同意。 */
   make_primary?: boolean
+  /** 只在改线路时：上游模型的累计消费上限（美元），`null` 清掉，不传不动。服务端把它
+   *  写到同一上游的每一条运行时线路上。 */
+  spend_cap_usd?: number | null
 }
 
 /** 清单里的一个模型（契约 §3.1）。

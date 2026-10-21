@@ -50,6 +50,10 @@ export interface SourceDraft {
   sessionHeader: string
   /** 加线路时，这个优先级会让它接走在用线路的流量：要人明确勾上才放行（`wouldLead`）。 */
   makePrimary: boolean
+  /** 编辑时：上游模型的累计消费上限（美元），空是没有上限。 */
+  spendCap: string
+  /** 编辑时这条线路现有的上限：没改就不发，免得一次无关的编辑去改同一上游的别的线路。 */
+  spendCapWas: number | null
 }
 
 export function emptySourceDraft(order = ORDER_MIN): SourceDraft {
@@ -66,6 +70,8 @@ export function emptySourceDraft(order = ORDER_MIN): SourceDraft {
     existingHeaderNames: [],
     sessionHeader: '',
     makePrimary: false,
+    spendCap: '',
+    spendCapWas: null,
   }
 }
 
@@ -96,6 +102,8 @@ export function draftFromSource(source: SourceRow): SourceDraft {
     existingHeaderNames: [...source.header_names],
     sessionHeader: source.session_header ?? '',
     makePrimary: false,
+    spendCap: source.spend_cap_usd === null ? '' : String(source.spend_cap_usd),
+    spendCapWas: source.spend_cap_usd,
   }
 }
 
@@ -129,6 +137,14 @@ function perToken(text: string): number | null | undefined {
   const n = Number(v)
   if (!Number.isFinite(n) || n < 0) return undefined
   return n / 1_000_000
+}
+
+/** 上限框的文本 → 美元。空串给 null（没有上限），不是正数给 undefined（不合法）。 */
+function spendCapUsd(text: string): number | null | undefined {
+  const v = text.trim()
+  if (v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/
@@ -170,6 +186,7 @@ export interface DraftProblems {
   free: boolean
   headers: boolean
   sessionHeader: boolean
+  spendCap: boolean
 }
 
 export function draftProblems(draft: SourceDraft): DraftProblems {
@@ -195,6 +212,7 @@ export function draftProblems(draft: SourceDraft): DraftProblems {
       (draft.headers.some((h) => headerNameProblem(h.name) !== null || !headerValueOk(h.value)) ||
         new Set(names).size !== names.length),
     sessionHeader: draft.sessionHeader.trim() !== '' && headerNameProblem(draft.sessionHeader) !== null,
+    spendCap: spendCapUsd(draft.spendCap) === undefined,
   }
 }
 
@@ -211,8 +229,9 @@ export function draftPriced(draft: SourceDraft): boolean {
   return typeof input === 'number' && input > 0 && typeof output === 'number' && output > 0
 }
 
-/** 草稿 → 请求体。`mode = 'edit'` 时没填的凭据 / 地址、没动过的请求头都不发（不发 =
- *  不动），凭据还要显式声明 `api_key_unchanged`。免费线路不发输入输出价：服务端写 0。 */
+/** 草稿 → 请求体。`mode = 'edit'` 时没填的凭据 / 地址、没动过的请求头、没改的消费上限
+ *  都不发（不发 = 不动），凭据还要显式声明 `api_key_unchanged`。免费线路不发输入输出价：
+ *  服务端写 0。 */
 export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): GatewaySourceFields {
   const out: GatewaySourceFields = {
     protocol: draft.protocol === 'other' ? null : draft.protocol,
@@ -234,5 +253,7 @@ export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): Gateway
   if (draft.headersTouched) {
     out.upstream_headers = Object.fromEntries(draft.headers.map((h) => [h.name.trim(), h.value]))
   }
+  const cap = spendCapUsd(draft.spendCap)
+  if (mode === 'edit' && cap !== undefined && cap !== draft.spendCapWas) out.spend_cap_usd = cap
   return out
 }

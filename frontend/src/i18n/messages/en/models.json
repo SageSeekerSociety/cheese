@@ -289,6 +289,8 @@
       "free": "Free source",
       "freeHint": "The upstream doesn't charge per token (a free model, a flat subscription): input and output are priced at 0, which is not the same as unpriced.",
       "zeroNeedsFree": "An input or output price of 0 is only allowed on a free source, and a free source's input and output prices can only be 0.",
+      "spendCap": "Spend cap (USD)",
+      "spendCapHint": "The most this upstream model may be charged in total, across every source on it: once the gateway's own ledger reaches it, calls are refused. Saving it here sets it on every runtime source on the same upstream. Leave empty for no cap.",
       "headers": "Static headers",
       "existingHeaders": "Current: {names} (values aren't shown; setting them again replaces the whole set)",
       "noHeaders": "No headers.",

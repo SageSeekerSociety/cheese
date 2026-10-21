@@ -116,6 +116,7 @@
   "sessionFilesNotSent": "无法刷新设备上的会话文件：{detail}",
   "sourceChatFoldsSystem": "模型 {name} 有走 OpenAI 兼容 Chat 的线路：翻成 chat/completions 会丢掉对话中间的 system 消息，「能收对话中间的 system 消息」只能是关",
   "sourceChatNeedsConfigFlag": "模型 {name} 在 deploy/gateway/config.yaml 里的线路没有标 supports_mid_conversation_system: false。走 OpenAI 兼容 Chat 的线路会丢掉对话中间的 system 消息，整组都得标；请先改 config.yaml 并发布网关",
+  "sourceSpendCapInConfig": "模型 {name} 在 deploy/gateway/config.yaml 里有一条 {upstream} 的线路，它的消费上限与这次填的不同。同一个上游的上限按它的总账计，每条线路都得一样；请先把那一行移出 config.yaml，或在那里改上限并发布网关",
   "sourceConfigReadOnly": "模型 {name} 的这条线路由 deploy/gateway/config.yaml 声明，网关不接受在运行时改它；要改请编辑 deploy/gateway/config.yaml 并发布网关。",
   "sourceFreeNeedsZeroPrices": "免费线路的输入与输出单价都必须写成 0",
   "sourceHeaderDuplicate": "请求头 {name} 写了不止一次",

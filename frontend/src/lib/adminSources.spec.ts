@@ -36,6 +36,7 @@ function source(over: Partial<SourceRow> = {}): SourceRow {
     priced: true,
     header_names: ['user-agent'],
     session_header: 'x-opencode-session',
+    spend_cap_usd: null,
     ...over,
   }
 }
@@ -126,6 +127,33 @@ describe('线路草稿 · 请求头', () => {
   it('会话头名同一条规则', () => {
     expect(draftProblems({ ...emptySourceDraft(), sessionHeader: 'Authorization' }).sessionHeader).toBe(true)
     expect(draftProblems({ ...emptySourceDraft(), sessionHeader: 'x-opencode-session' }).sessionHeader).toBe(false)
+  })
+})
+
+describe('线路草稿 · 消费上限', () => {
+  it('没改上限：不发，同一上游的别的线路不被这次编辑碰到', () => {
+    expect(draftToFields(draftFromSource(source({ spend_cap_usd: 2000 })), 'edit')).not.toHaveProperty('spend_cap_usd')
+  })
+
+  it('改了发新数，清空发 null', () => {
+    const draft = draftFromSource(source({ spend_cap_usd: 2000 }))
+    expect(draftToFields({ ...draft, spendCap: '3000' }, 'edit').spend_cap_usd).toBe(3000)
+    expect(draftToFields({ ...draft, spendCap: '' }, 'edit').spend_cap_usd).toBeNull()
+  })
+
+  it('原来没有上限、现在填上', () => {
+    const draft = draftFromSource(source())
+    expect(draftToFields({ ...draft, spendCap: '500' }, 'edit').spend_cap_usd).toBe(500)
+  })
+
+  it.each(['0', '-1', 'abc'])('%s 不放行', (spendCap) => {
+    expect(draftValid({ ...draftFromSource(source()), spendCap })).toBe(false)
+  })
+
+  it('加线路不发上限：服务端从同一上游的线路抄', () => {
+    expect(draftToFields({ ...emptySourceDraft(), upstream: 'm', spendCap: '500' }, 'add')).not.toHaveProperty(
+      'spend_cap_usd'
+    )
   })
 })
 

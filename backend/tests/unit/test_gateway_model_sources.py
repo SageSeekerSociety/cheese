@@ -925,3 +925,152 @@ async def test_a_source_on_the_same_upstream_keeps_its_cap_and_cache_rule():
     assert new_row["litellm_params"]["model"] == config_row["litellm_params"]["model"]
     assert new_row["model_info"]["cheese_spend_cap_usd"] == 1000
     assert new_row["model_info"]["cheese_no_explicit_cache"] is True
+
+
+# --- Spend cap: one per upstream model, set from the page ----------------------
+
+_ARGON = "gemini/gemini-4-argon"
+
+
+async def _argon_rows(service: GatewayModelsService) -> None:
+    """Two runtime models on the argon upstream (one with a second source), and
+    one source on another upstream."""
+    for name in ("argon", "argon-b"):
+        await service.add(
+            handle="admin",
+            payload=ModelCreate(name=name, upstream_model=_ARGON, **_PAID),
+        )
+    await service.add_source(
+        handle="admin",
+        name="argon",
+        payload=SourceCreate(
+            **_PAID, upstream_model=_ARGON, order=1, make_primary=True
+        ),
+    )
+    await service.add_source(
+        handle="admin",
+        name="argon",
+        payload=SourceCreate(**_PAID, upstream_model="gemini/other", order=2),
+    )
+    reset_cache()
+
+
+def _caps(gw: _Gateway) -> list[object]:
+    return [r["model_info"].get("cheese_spend_cap_usd") for r in gw.rows]
+
+
+async def _cap_on_page(service: GatewayModelsService, name: str) -> list[tuple]:
+    item = await _listed(service, name)
+    return [(s["upstream_raw"], s["spend_cap_usd"]) for s in item["sources"]]
+
+
+async def _set_cap(
+    service: GatewayModelsService, name: str, source_id: str, cap: float | None
+) -> None:
+    await service.update_source(
+        handle="admin",
+        name=name,
+        source_id=source_id,
+        payload=SourceUpdate(spend_cap_usd=cap),
+    )
+    reset_cache()
+
+
+@pytest.mark.anyio
+async def test_a_cap_set_on_one_source_holds_on_every_source_of_its_upstream():
+    """spend_cap.py counts a cap against the upstream's whole bill, so a second
+    key or model name on the same upstream must not run under another cap."""
+    gw = _Gateway()
+    db = _StubDb()
+    service = _service(gw, db)
+    await _argon_rows(service)
+
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+
+    on_argon = [r for r in gw.rows if r["litellm_params"]["model"] == _ARGON]
+    assert len(on_argon) == 3
+    assert [r["model_info"]["cheese_spend_cap_usd"] for r in on_argon] == [2500] * 3
+    other = next(r for r in gw.rows if r["litellm_params"]["model"] == "gemini/other")
+    assert "cheese_spend_cap_usd" not in other["model_info"]
+    assert sorted(await _cap_on_page(service, "argon")) == [
+        (_ARGON, 2500.0),
+        (_ARGON, 2500.0),
+        ("gemini/other", None),
+    ]
+    audit = db.added[-1]
+    assert (audit.action, audit.result) == ("source.update", "ok")
+    assert audit.after["spend_cap_usd"] == 2500
+    assert len(audit.after["spend_cap_also_on"]) == 2
+
+
+@pytest.mark.anyio
+async def test_clearing_the_cap_lifts_it_on_every_source_of_its_upstream():
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    edited = gw.group("argon")[0]["model_info"]["id"]
+    await _set_cap(service, "argon", edited, 2500)
+
+    await _set_cap(service, "argon", edited, None)
+
+    assert [cap for _, cap in await _cap_on_page(service, "argon")] == [None] * 3
+    assert [cap for _, cap in await _cap_on_page(service, "argon-b")] == [None]
+
+
+@pytest.mark.anyio
+async def test_an_edit_that_does_not_name_the_cap_leaves_it():
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    edited = gw.group("argon")[0]["model_info"]["id"]
+    await _set_cap(service, "argon", edited, 2500)
+    before = _caps(gw)
+
+    await service.update_source(
+        handle="admin", name="argon", source_id=edited, payload=SourceUpdate(order=3)
+    )
+
+    assert _caps(gw) == before
+
+
+@pytest.mark.anyio
+async def test_a_cap_that_disagrees_with_a_config_row_on_its_upstream_is_refused():
+    """The config.yaml row cannot be rewritten from the page; letting the two
+    differ would refuse the same bill at two totals."""
+    gw = _Gateway([_argon_like_kimi()])
+    service = _service(gw)
+    await service.add_source(
+        handle="admin",
+        name="kimi-k3",
+        payload=SourceCreate(
+            protocol="anthropic",
+            upstream_model="kimi-k3",
+            api_base="https://api.moonshot.cn/anthropic",
+            order=1,
+            prices={"input": 2.8e-6, "output": 1.4e-5},
+            make_primary=True,
+        ),
+    )
+    runtime = gw.group("kimi-k3")[1]["model_info"]["id"]
+    reset_cache()
+    before = len(gw.writes())
+
+    with pytest.raises(BadRequestError) as refused:
+        await service.update_source(
+            handle="admin",
+            name="kimi-k3",
+            source_id=runtime,
+            payload=SourceUpdate(spend_cap_usd=1500, order=4),
+        )
+
+    assert "config.yaml" in str(refused.value)
+    assert len(gw.writes()) == before
+    # The config row's own figure is accepted: nothing disagrees.
+    await _set_cap(service, "kimi-k3", runtime, 1000)
+    assert _caps(gw) == [1000, 1000]
+
+
+@pytest.mark.parametrize("cap", [0, -5, float("inf")])
+def test_a_cap_must_be_a_positive_amount(cap):
+    with pytest.raises(ValidationError):
+        SourceUpdate(spend_cap_usd=cap)

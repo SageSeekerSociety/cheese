@@ -130,7 +130,9 @@ signatures, tool-call ids, thinking level), and `no_explicit_cache.py` strips
 because argon refuses explicit caching and LiteLLM would otherwise create a
 `cachedContents` object for every Claude Code request. Its key is capped at
 USD 2,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
-gateway database's daily spend, so the cap survives releases.
+gateway database's daily spend, so the cap survives releases. The cap is read
+from the deployment on every call, so on a runtime row it is changed on the
+admin models page without a release (see "Putting a model in front of people").
 
 `deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
 RUC key, and by DeepSeek's API when every RUC key fails or is past its 3
@@ -240,7 +242,9 @@ release.
 with the image, so a deployment's always-on models belong here; changing it
 means releasing the gateway. The marker is opt-in because the
 gateway also routes models that are not menu items — `glm-4.5` is where the
-subagent alias points.
+subagent alias points. A setting that has to change while the model is in use,
+such as a spend cap, does not belong in this file: put the model on a runtime
+row instead, where the admin page changes it without a release.
 
 A model whose route loses the system-role messages Claude Code puts in the
 middle of a conversation is marked `supports_mid_conversation_system: false`
@@ -253,6 +257,18 @@ runtime models (`STORE_MODEL_IN_DB` is on) without a release. Every write is
 audited with the acting handle, and a successful write refreshes the catalogue
 so the model is pickable immediately. Models declared in `config.yaml` appear
 there read-only, because the gateway refuses to write them.
+
+A spend cap (`cheese_spend_cap_usd`, enforced by `spend_cap.py`) is changed the
+same way: edit any runtime source on that upstream model and set its spend cap,
+or clear it for no cap; the API equivalent is
+`PATCH /admin/gateway/models/{name}/sources/{source_id}` with
+`{"spend_cap_usd": 3000}` or `{"spend_cap_usd": null}`. The cap counts
+everything the upstream model (`litellm_params.model`) has been charged, whichever
+row carried the calls, so the edit writes the same cap on every runtime row on
+that upstream, under any model name. A source added to a model beside a row on
+the same upstream copies that row's cap.
+A `config.yaml` row on the same upstream cannot be rewritten from the page; while
+one declares a different cap, the edit is refused.
 
 Both routes owe one invariant, and the service behind the admin page enforces it
 as surely as `check_config.py` enforces it for the file: a selectable model with
