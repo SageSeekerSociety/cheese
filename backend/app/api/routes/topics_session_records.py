@@ -7,8 +7,8 @@ harness wrote them, oldest first and paged. `turn_id` narrows it to one turn.
 
 `POST /topics/{topic_id}/session-records`: one status record the machine
 itself reports for 现场 (a sync that failed). It is not a harness journal
-entry; `harness` keeps it apart from every agent's run, and it is read back
-with the turn it belongs to.
+entry; `harness` keeps it apart from every agent's run, and it carries no
+turn — 现场 draws it as a platform line of its own.
 
 The same door as 现场 (`topics_transcript.py`): whoever may read the
 conversation's transcript may read its raw record.
