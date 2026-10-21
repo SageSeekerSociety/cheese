@@ -31,7 +31,7 @@ def test_beta_credits_are_claimed_once_and_go_to_the_personal_balance(client, ac
     }
     first = client.post("/users/me/credits/beta", headers=headers)
     assert first.status_code == 200, first.text
-    assert first.json()["data"] == {"credits": 500, "issued": True}
+    assert first.json()["data"] == {"credits": 500, "points": 0, "issued": True}
     assert (
         client.post("/users/me/credits/beta", headers=headers).json()["data"]["issued"]
         is False
@@ -60,7 +60,7 @@ def test_feedback_rewards_require_triage_and_are_not_repeatable(client, actors):
     assert client.post(url, headers=actors["admin"]).status_code == 403
     awarded = client.post(url, headers=actors["triager"])
     assert awarded.status_code == 200, awarded.text
-    assert awarded.json()["data"] == {"credits": 100, "issued": True}
+    assert awarded.json()["data"] == {"credits": 100, "points": 100, "issued": True}
     assert client.post(url, headers=actors["triager"]).json()["data"]["issued"] is False
     assert sum(p["credits_total"] for p in _packs(client, actors["owner"])) == 100
     detail = client.get(f"/feedback/{feedback_id}", headers=actors["owner"]).json()[
@@ -200,6 +200,8 @@ def test_reward_history_belongs_only_to_the_authenticated_person(client, actors)
     assert other.json()["data"] == {
         "feedback_count": 0,
         "feedback_credits": 0,
+        "invite_credits": 0,
+        "points": 0,
         "items": [],
     }
 

@@ -147,8 +147,10 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   let loadingPage = false
   let reloadQueued = false
 
-  // 这一栏已经有东西时，再读一遍是安静的：不换骨架屏、不跳回底部——换成骨架屏再
-  // 换回来，就是整栏闪一下。
+  // 这一栏读过一次之后，再读一遍是安静的：不换骨架屏、不跳回底部——换成骨架屏再
+  // 换回来，就是整栏闪一下。判据是「读过一次」而不是「手上有几行」：一个还没人干过
+  // 活的房间每读一次都回空，按行数判的话它就会每三秒把骨架屏摆出来一次，空状态和
+  // 加载态来回闪。
   //
   // 每次读的都是**当前视角**的最近一页，和打开时一样。换了视角就是换了一个人的
   // 时间线：那一页到手之前手上那份还是上一位的（照旧渲染，不闪骨架屏），到手之后
@@ -158,19 +160,22 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   // 后台刷新失败不动屏上的东西：那几行还是好的，只是旧了三秒。把它们换成一条
   // 「请求等待超时」的红条，等于一次读慢了就让人看不成现场；下一次刷新会再试。
   // 打开（屏上还没有东西）、换视角、换对话这三种失败才报错——那几页本来就不在屏上。
+  let loadedOnce = false
   async function loadPage() {
     const tid = hooks.topicId()
     if (!tid) return
     const author = hooks.viewing()
     const switched = author !== loadedFor
     const switchedTopic = tid !== loadedTopic
-    const quiet = transcript.value.length > 0
-    if (!quiet && errorMsg.value === null) loading.value = true
+    // 第一次读：屏上当时什么都没有，摆骨架。之后一律安静地换。
+    const firstRead = !loadedOnce
+    if (firstRead && errorMsg.value === null) loading.value = true
     try {
       const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE, author })
       // 读的人可能已经又换了一个视角：这一页不是他现在要的，丢掉。骨架屏由下面的
       // finally 收掉，不能让它留在半路。
       if (hooks.topicId() !== tid || hooks.viewing() !== author) return
+      loadedOnce = true
       loadedFor = author
       loadedTopic = tid
       errorMsg.value = null
@@ -178,7 +183,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       hooks.noteStarts(tx.turn_starts)
       // 跟不跟，读读者自己滚出来的那个状态，而不是此刻量一次：请求在路上的这几百毫秒
       // 里他可能已经往上翻了，而量到的那一下还停在底部——那就把他拽回去了。
-      const follow = switched || !quiet || hooks.following.value
+      const follow = switched || firstRead || hooks.following.value
       // 窗口下面被裁过、读的人还在历史中间：把最新的一页拼上去，会在两段之间留一个
       // 从没取过的洞。这时什么也别动——他回到末尾时，那次 load 会重新接上。
       if (!(hasNewer.value && !follow)) {
@@ -187,7 +192,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
         const anchor = follow ? null : hooks.captureAnchor()
         transcript.value = mergeSite(tx.data, transcript.value, switched)
         hasNewer.value = false
-        if (switched || !quiet) {
+        if (switched || firstRead) {
           hasOlder.value = tx.has_more === true
           olderCursor = tx.oldest_id ?? null
         }
@@ -200,7 +205,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
         }
       }
     } catch (e) {
-      if (!quiet || switched || switchedTopic) {
+      if (firstRead || switched || switchedTopic) {
         errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
       }
     } finally {

@@ -114,26 +114,25 @@ export const VIEW_ENTRIES: CatalogEntry[] = [
   {
     id: 'welcome-view',
     title: 'WelcomeView',
-    about: '新账号的新手引导：五个问题一屏一问，右边的「你的项目」随回答长出来；点「建好项目」才把回答交给页面去建。',
+    about: '新账号的新手引导：两个问题一屏一问，右边的「你的项目」随回答长出来；点「建好项目」才把回答交给页面去建。',
     file: 'src/views/welcome/WelcomeView.vue',
     component: WelcomeView,
     needs: UI_T_R,
     args: {
       me: { username: 'lin', nickname: '林小满', work_role: null, organization: null },
-      desktop: false,
       busy: false,
       failure: '',
     },
     states: [
       {
         name: '第一次进来',
-        note: '从称呼问起，名字预填账号上的昵称；不想答可以跳过引导。',
+        note: '从身份问起，称呼用账号上的昵称；不想答可以跳过引导。',
         props: {},
-        expect: '芝士怎么称呼你？',
+        expect: '你主要用知是做什么？',
       },
       {
         name: '从帮助菜单再走一遍',
-        note: '称呼答过了，从身份问起，上次选的身份已经按下。',
+        note: '上次选的身份已经按下，没有「跳过引导」。',
         props: {
           again: true,
           me: { username: 'lin', nickname: '林小满', work_role: 'teacher', organization: '中国人民大学' },

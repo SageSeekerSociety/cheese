@@ -53,10 +53,13 @@ withDefaults(
 
 .agent-entry--compact {
   /* Only the face shows. The box is 44 wide so a neighbour's own tap target cannot cover
-     part of it; `.tap-target` takes the height to 44 as well. */
+     part of it; `.tap-target` takes the height to 44 as well. The gap on its left is for the
+     other direction: a 40-wide neighbour (the channel header's ⋯) reaches 2px past its own
+     edge to make 44, and without the gap that strip would open 芝士 instead. */
   position: relative;
   justify-content: center;
   min-width: 44px;
+  margin-left: 4px;
   padding: 0;
 }
 

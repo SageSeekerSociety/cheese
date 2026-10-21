@@ -106,7 +106,13 @@ _NEVER = re.compile(
     r"|\bsuspended\b"
     r"|invalid[ _](api[ _]key|x-api-key|request|_request_error)"
     r"|authentication_error|permission_error|\bunauthori[sz]ed\b"
-    r"|credit balance is too low",
+    r"|credit balance is too low"
+    # Our own gateway's lifetime cap on an upstream key
+    # (`deploy/gateway/spend_cap.py`): past it every call is refused until
+    # somebody raises the cap or moves the model off that key. LiteLLM words
+    # the refusal as a rate limit, so without this it resumes until the streak
+    # runs out (2026-10-21, gemini-4-argon at $1005.08 of $1000).
+    r"|\bspend[ _]cap\b",
     re.I,
 )
 # A 4xx other than "too many requests" / "request timeout" is the request or the

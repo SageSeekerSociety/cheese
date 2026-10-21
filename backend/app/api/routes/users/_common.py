@@ -208,13 +208,12 @@ async def _issue_2fa_pending_token(
 def _normalize_registration_invite_code(
     invite_code: str | None, *, required: bool
 ) -> str | None:
-    """Return the required normalized code, or ignore it in open-registration mode."""
-    if not required:
-        return None
+    """The normalized code, or None when none was given. Open registration keeps
+    a code that came along: it is how a friend's invitation is credited."""
     normalized = (invite_code or "").strip()
-    if not normalized:
+    if not normalized and required:
         raise UnprocessableEntityError("Invite code is required")
-    return normalized
+    return normalized or None
 
 
 def _signup_consent(documents: dict[str, str] | None, method: str | None) -> str | None:

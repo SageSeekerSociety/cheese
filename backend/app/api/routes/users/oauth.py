@@ -68,6 +68,7 @@ from app.domain.identity.handles import is_reserved_username
 from app.domain.invite.services import InviteCodeService
 from app.domain.legal.services import ConsentService
 from app.domain.oauth.services import OAuthService
+from app.domain.usage import referrals
 from app.domain.user.login_security import LoginDelay, TOTPService
 from app.domain.user.passwords import require_new_password
 from app.domain.user.services import (
@@ -1034,7 +1035,7 @@ async def oauth_create_user(
     except UnprocessableEntityError as exc:
         return _oauth_error_redirect("INVITE_CODE_REQUIRED", str(exc))
     invite_service = InviteCodeService(session)
-    if invite_code:
+    if invite_code and settings.require_invite_code:
         try:
             await invite_service.validate_code(invite_code)
         except ValueError as exc:
@@ -1097,12 +1098,16 @@ async def oauth_create_user(
         )
         if invite_code:
             try:
-                await invite_service.consume_code(invite_code)
+                consumed = await invite_service.consume_code(invite_code)
             except ValueError as exc:
-                await session.rollback()
-                return _oauth_error_redirect(
-                    "INVALID_INVITE_CODE", str(_invite_code_error(exc))
-                )
+                if settings.require_invite_code:
+                    await session.rollback()
+                    return _oauth_error_redirect(
+                        "INVALID_INVITE_CODE", str(_invite_code_error(exc))
+                    )
+                consumed = None
+            if consumed is not None:
+                await referrals.record_referral(session, consumed, user.id)
         response = await _complete_oauth_binding(
             request=request,
             session=session,

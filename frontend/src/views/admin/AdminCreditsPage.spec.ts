@@ -23,6 +23,12 @@ vi.mock('@/api/creditOffers', () => ({
   handleCreditRequest: vi.fn(),
 }))
 
+vi.mock('@/api/invites', () => ({
+  listInviteCodes: () => Promise.resolve({ codes: [] }),
+  createInviteCode: vi.fn(),
+  deactivateInviteCode: vi.fn(),
+}))
+
 vi.mock('@/api/adminCredits', () => ({
   listPlans: (...a: unknown[]) => listPlans(...a),
   listCreditTeams: (...a: unknown[]) => listCreditTeams(...a),

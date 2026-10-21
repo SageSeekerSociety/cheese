@@ -11,8 +11,8 @@ from app.domain.agent.mentions import (
     person_mentions,
     project_refs_text,
 )
+from app.domain.agent.queries import _agent_at
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
-from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.project.reads import load_project
 from app.domain.room_task.place import PlaceResolver
@@ -26,9 +26,9 @@ class SentText:
 
     room: Topic
     text: str
-    # The names its mentions were read against; None where that way of sending
-    # announces no mentions at all (a card's conversation).
-    roster: list[dict] | None
+    # The names its mentions were read against — every way of sending reads
+    # one, so an edit can announce what the same text sent would have.
+    roster: list[dict]
     by_agent: bool
 
 
@@ -38,20 +38,18 @@ async def text_as_sent(
     """What sending ``content`` as ``author`` where ``block`` is would have
     stored. An edit stores exactly that, by calling the same code.
 
-    On a card it is `say_on_task`'s rewrite, for anyone. In the room the author
-    is an agent when it holds one of the room's agent seats, the question the
-    publication routes ask; its text goes through both halves of the
+    Wherever the message is — a channel, a task's conversation, a 支线 — the
+    author is an agent when it holds one of the room's agent seats, the question
+    the publication routes ask; its text goes through both halves of the
     publication rewrite, with the arguments a publication passes (no roster, no
     topic list). A person's goes through `person_mentions`, as
-    `post_user_message` does."""
+    `post_user_message` does. A task's conversation used to take a third path
+    that read no roster, so an edit there announced no mentions at all."""
     place = await PlaceResolver(session).conversation(block.conversation_id)
     if place is None:
         raise NotFoundError(say("topicNotFound"))
     topic = place.room
     by_agent = await TopicMemberService(session).holds_an_agent_seat(topic, author)
-    if place.task is not None:
-        text = await project_refs_text(session, topic.project_id, topic.id, content)
-        return SentText(topic, text, None, by_agent)
     if by_agent:
         text = await project_refs_text(session, topic.project_id, topic.id, content)
         roster = await room_roster(session, topic.project_id, topic)
@@ -59,6 +57,8 @@ async def text_as_sent(
     project = await load_project(session, topic.project_id)
     if project is None:
         raise NotFoundError(say("projectNotFound"))
-    agent = await AgentInstanceService(session).for_topic(topic, project)
+    # The teammate a task was given answers there, not the room's — the same
+    # answer `prepare_human` gives the message writer.
+    agent = await _agent_at(session, place)
     mentions = await person_mentions(session, topic, content, agent, dm=_is_dm(topic))
     return SentText(topic, mentions.content, mentions.roster, False)

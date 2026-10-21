@@ -46,6 +46,8 @@ class GrantSource(StrEnum):
     TASK_EARMARK = "task_earmark"
     PURCHASE = "purchase"
     ADMIN_GRANT = "admin_grant"
+    # A beta, feedback or invitation reward (``incentives.CreditIncentives``).
+    REWARD = "reward"
 
 
 class Plan(Timestamps, Base):
@@ -104,7 +106,9 @@ class PlanWindowUse(Base):
 
 
 class CreditReward(Timestamps, Base):
-    """One campaign participation or accepted feedback can issue one pack."""
+    """One campaign participation, accepted feedback or invitation step can
+    issue one pack. ``points`` is the contribution score the same event earns:
+    it only ever adds up, and it is still recorded when no credits are paid."""
 
     __tablename__ = "credit_rewards"
 
@@ -116,6 +120,7 @@ class CreditReward(Timestamps, Base):
         index=True,
     )
     credits: Mapped[int] = mapped_column(Integer)
+    points: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     reason: Mapped[str] = mapped_column(String(128))
     actor_handle: Mapped[str] = mapped_column(String(64))
 
@@ -204,7 +209,8 @@ class ComputeGrant(UuidPk, Timestamps, Base):
             postgresql_where=text("source = 'plan_period'"),
         ),
         CheckConstraint(
-            "source IN ('plan_period', 'task_earmark', 'purchase', 'admin_grant')",
+            "source IN ('plan_period', 'task_earmark', 'purchase', 'admin_grant', "
+            "'reward')",
             name="ck_compute_grants_source",
         ),
     )

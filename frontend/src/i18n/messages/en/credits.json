@@ -110,6 +110,7 @@
     "planFailed": "Couldn't change the plan",
     "packPlan": "Plan credits · {month}",
     "packGrant": "Granted by an admin",
+    "packReward": "Reward",
     "packPurchase": "Purchase",
     "packTask": "Task “{task}”",
     "packTaskUnknown": "Task credits",
@@ -140,5 +141,34 @@
     "cancel": "Cancel",
     "submit": "Grant",
     "failed": "Couldn't grant credits"
+  },
+  "inviteCodes": {
+    "title": "Invite codes",
+    "label": "Invite codes",
+    "showPersonal": "Show personal codes ({n})",
+    "personal": "Personal",
+    "column": {
+      "code": "Code",
+      "uses": "Used / allowed",
+      "note": "Note",
+      "created": "Created",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "active": "Active",
+    "inactive": "Deactivated",
+    "maxUses": "Uses allowed",
+    "note": "Note",
+    "create": "Create code",
+    "copy": "Copy",
+    "copied": "Invite code copied",
+    "deactivate": "Deactivate",
+    "deactivateTitle": "Deactivate invite code {code}?",
+    "deactivateBody": "No one can sign up with this code afterwards. Accounts already created are not affected.",
+    "empty": "No invite codes",
+    "loadFailed": "Could not load invite codes",
+    "createFailed": "Could not create the code",
+    "deactivateFailed": "Could not deactivate the code",
+    "retry": "Retry"
   }
 }

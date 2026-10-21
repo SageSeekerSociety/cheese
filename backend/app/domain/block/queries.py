@@ -31,7 +31,7 @@ from app.domain.block.asked import Awaited
 from app.domain.block.indexed_rows import QUEUED_MESSAGE_ROWS, SHOWN_ROWS
 from app.domain.block.models import READ_FAILED_META_KEY, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import BlockOut, reply_preview
 
 #: A message held back on purpose until its seat is free (`agent.pending_messages
 #: .defer_message`): waiting however old it is.
@@ -76,6 +76,29 @@ async def message_reply_target(
 ) -> Block | None:
     """Load the same-session reply target for conversation-edge validation."""
     return await BlockRepository(session).get(block_id)
+
+
+async def reply_previews(
+    session: AsyncSession, blocks: Iterable[Block]
+) -> dict[uuid.UUID, dict]:
+    """Previews for the replies among ``blocks``, keyed by the replying block.
+
+    One query for the whole page, not one per reply. A parent from another
+    conversation is not used: a reply is same-conversation by construction, and
+    an older or corrupt edge must not carry a line across conversations.
+    """
+    items = list(blocks)
+    parent_ids = {b.reply_to for b in items if b.reply_to is not None}
+    if not parent_ids:
+        return {}
+    rows = await session.scalars(select(Block).where(Block.id.in_(parent_ids)))
+    parents = {p.id: p for p in rows}
+    previews: dict[uuid.UUID, dict] = {}
+    for b in items:
+        parent = parents.get(b.reply_to) if b.reply_to is not None else None
+        if parent is not None and parent.conversation_id == b.conversation_id:
+            previews[b.id] = reply_preview(parent)
+    return previews
 
 
 async def block_by_id(session: AsyncSession, block_id: uuid.UUID) -> Block | None:
@@ -194,6 +217,30 @@ async def latest_messages(
         conversation_id, limit=limit, kinds=[BlockKind.message]
     )
     return list(page.items)
+
+
+async def messages_page(
+    db: AsyncSession, conversation_id: uuid.UUID, *, limit: int, skip: int = 0
+) -> tuple[list[Block], int]:
+    """A page of the conversation's messages read back from its newest, oldest
+    of the page first, and how many messages it has in all. ``skip`` is how
+    many of the newest the page leaves to the pages before it."""
+    shown = (
+        Block.conversation_id == conversation_id,
+        Block.kind == BlockKind.message,
+        SHOWN_ROWS,
+    )
+    rows = (
+        await db.scalars(
+            select(Block)
+            .where(*shown)
+            .order_by(Block.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+    ).all()
+    total = await db.scalar(select(func.count()).select_from(Block).where(*shown))
+    return list(reversed(rows)), int(total or 0)
 
 
 async def newest_shown_seq(db: AsyncSession, conversation_id: uuid.UUID) -> int | None:

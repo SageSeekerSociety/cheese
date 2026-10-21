@@ -14,7 +14,6 @@ import type { RailTask } from './moreTasks'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailLight from './TopicRailLight.vue'
 
 import { t } from '@/i18n'
@@ -26,7 +25,7 @@ const props = withDefaults(
     selected: boolean
     /** 这一行此刻画哪盏灯（父级带钟算的）；不亮是 null。 */
     light?: RowLight | null
-    /** 任务里别人说了几句我还没读（只对负责人和协作者算，只算人说的）。 */
+    /** 任务里别人说了几句我还没读（只对负责人和协作者算，人和 AI 都算）。 */
     unread?: number
     // 它的频道在树里的第几层：竖线跟着频道的图标列走。
     depth?: number
@@ -75,7 +74,7 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
     type="button"
     class="rail-task"
     :class="{ 'rail-task--selected': selected, 'rail-task--filled': fillingIn, 'rail-task--pending': pending }"
-    :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
+    :style="{ '--task-indent': 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
     :title="fillingIn ? t('work.sidebar.fillInTip') : undefined"
     @click="choose"
@@ -90,7 +89,6 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
       :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
       >{{ taskTitle(task) }}</span
     >
-    <TopicRailBadge v-if="unread > 0" :count="unread" />
     <TopicRailLight v-if="light" :light="light" />
   </button>
 </template>
@@ -104,6 +102,7 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
   width: 100%;
   min-height: 32px;
   padding-block: 0;
+  padding-inline-start: calc(var(--task-indent) + 20px);
   padding-inline-end: 12px;
   border: 0;
   border-radius: var(--radius-md);
@@ -132,8 +131,7 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
 }
 /* 选中沿用频道行那一档：底色 --line-2，标题再重一层。这条 rail 的底是 --canvas，
    --fill 在它上面只有 1.027:1，拿它当选中等于没画（同 TopicRailRow.vue 那段注释）。
-   字重落在行上、由标题继承：未读那颗 650 比它重，选中一行未读的任务仍是未读的样子。
-   选中的行不复用 hover 档——否则鼠标一扫过，选中态反而变浅。 */
+   字重落在行上、由标题继承。选中的行不复用 hover 档——否则鼠标一扫过，选中态反而变浅。 */
 .rail-task--selected,
 .rail-task--selected:hover {
   background: var(--line-2);
@@ -158,6 +156,7 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 未读只给名称加粗，不再另挂数字。 */
 .rail-task__title--unread {
   font-weight: 650;
 }
@@ -169,5 +168,19 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
 .rail-task--filled:hover .rail-task__title,
 .rail-task--filled.rail-task--selected .rail-task__title {
   color: var(--ink);
+}
+.topic-rail--page .rail-task {
+  padding-inline-start: calc(var(--task-indent) + 76px);
+}
+.topic-rail--page .rail-task::before {
+  left: calc(var(--guide-x) + 14px);
+}
+@media (hover: none) {
+  .rail-task {
+    padding-inline-start: calc(var(--task-indent) + 76px);
+  }
+  .rail-task::before {
+    left: calc(var(--guide-x) + 14px);
+  }
 }
 </style>

@@ -279,7 +279,6 @@ useCommands(() =>
       :error="store.topicsError"
       :active-docs="activeDocs"
       :unread-map="store.unreadMap"
-      :muted-of="store.isMuted"
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @select-task="openTask"

@@ -108,14 +108,27 @@ TASK_CASES = [
         Column.delivering,
         Delivering.gate_running,
     ),
-    # 等采纳的卡按合并态镜像的「谁的活」分列 (#718)。
+    # 等采纳的卡按合并态镜像的「谁的活」分列 (#718)。必跑检查还在跑是 blocked：
+    # 结论还没出来，采纳点不了，等 CI。
     (
-        "CI 在跑",
+        "必跑检查还在跑",
         task(
-            card=card(AcceptStatus.pending, merge_state_word="unstable", merge_who="ci")
+            card=card(AcceptStatus.pending, merge_state_word="blocked", merge_who="ci")
         ),
         Column.delivering,
         Delivering.awaiting_checks,
+    ),
+    # unstable 是「可采纳」那一档：只剩非必跑检查还在跑，采纳按钮是亮的，球在
+    # 验收人手上。写成「等 CI」会让这张卡永远不亮黄灯（#4562 的现场）。
+    (
+        "只剩非必跑检查在跑，可以采纳",
+        task(
+            card=card(
+                AcceptStatus.pending, merge_state_word="unstable", merge_who="human"
+            )
+        ),
+        Column.needs_you,
+        NeedsYou.awaiting_review,
     ),
     # 同一个「CI 红了」，平台已经派芝士去修 → 平台在推，不该催人。
     (

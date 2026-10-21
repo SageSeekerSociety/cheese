@@ -33,7 +33,13 @@ FREE = "cheese_free"
 NO_EXPLICIT_CACHE = "cheese_no_explicit_cache"
 SPEND_CAP = "cheese_spend_cap_usd"
 _UPSTREAM_INFO_KEYS = frozenset({NO_EXPLICIT_CACHE, SPEND_CAP})
-_SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE}) | (
+# Whether this deployment runs Anthropic's server web search
+# (deploy/gateway/web_search.py). It describes one server, not the model or
+# its upstream string: RUC's vLLM and a DeepSeek relay both call
+# anthropic/deepseek-flash, and only one of them searches. A new source never
+# takes it from another row; it is marked after it has been measured.
+WEB_SEARCH = "supports_web_search"
+_SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE, WEB_SEARCH}) | (
     _UPSTREAM_INFO_KEYS
 )
 
@@ -71,7 +77,11 @@ def catalogue_info(info: Mapping[str, object]) -> dict[str, object]:
         # 每一个显式写了的 supports_* 都抄：`supports_output_config`、
         # `supports_max_reasoning_effort` 决定思考档能不能送到上游，少抄一个，
         # 落到新线路的请求就悄悄丢了 effort。没写（None）的是网关自己的默认，不抄。
-        or (key.startswith("supports_") and isinstance(value, bool))
+        or (
+            key.startswith("supports_")
+            and key not in _SOURCE_INFO_KEYS
+            and isinstance(value, bool)
+        )
     }
 
 

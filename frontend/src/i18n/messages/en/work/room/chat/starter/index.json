@@ -10,5 +10,5 @@
   "researchText": "Look up the material for me, cite your sources, and write it up as a report. Show me the outline first, and write it in full once I confirm. What I want to understand is: ",
   "tidy": "Tidy up or rewrite a document",
   "tidyHint": "Slides, papers, reports, spreadsheets",
-  "tidyText": "Tidy up or rewrite the attached material for me. Show me how you plan to change it first, and start once I confirm. What I want is: "
+  "tidyText": "Tidy up or rewrite my material. Show me how you plan to change it first, and start once I confirm. What I want is: "
 }

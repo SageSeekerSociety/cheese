@@ -12,8 +12,12 @@ from app.core.sentences import say
 from app.domain.agent.turn.store.events import EventAuthorResolver
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.output_effects import append_output
-from app.domain.block.queries import any_output_event_exists, last_turn_output
-from app.domain.block.schemas import BlockOut
+from app.domain.block.queries import (
+    any_output_event_exists,
+    last_turn_output,
+    message_reply_target,
+)
+from app.domain.block.schemas import BlockOut, reply_preview
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
@@ -241,6 +245,17 @@ async def persist_assistant_message(
                 session, topic, block, author, roster, flag_unresolved=True
             )
         payload = BlockOut.model_validate(block).model_dump(mode="json")
+        # A reply carries a one-line preview of what it answers, so a reader
+        # whose timeline does not hold the parent still sees which line this is.
+        # The parent itself stays out of the page and out of the reader.
+        if reply_to is not None:
+            parent = await message_reply_target(session, reply_to)
+            if parent is not None and parent.conversation_id == landed.conversation_id:
+                preview = reply_preview(parent)
+                payload["reply_preview"] = preview
+                for attachment in attachment_payloads:
+                    if attachment.get("reply_to") is not None:
+                        attachment["reply_preview"] = preview
         if publication_key is not None:
             await idem.record_result(
                 session,
