@@ -1,7 +1,7 @@
 """agent_sessions: when the drain of a runner another release started began
 
 Revision ID: b7d3e19a4c52
-Revises: e4a7c2d9b6f1
+Revises: 91c99cd9144d
 
 A runner of another lifecycle protocol that is at work is drained before it is
 replaced, for at most RUNNER_DRAIN_S. The cap counts from when the drain began,
@@ -19,7 +19,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "b7d3e19a4c52"
-down_revision: str | Sequence[str] | None = "e4a7c2d9b6f1"
+down_revision: str | Sequence[str] | None = "91c99cd9144d"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

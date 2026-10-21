@@ -82,7 +82,14 @@ from app.domain.agent.gateway_admin import (
     ModelUsage,  # noqa: F401
     UsageWindow,
 )
-from app.domain.agent.gateway_models import _shared, answers, models, projects, sources
+from app.domain.agent.gateway_models import (
+    _shared,
+    answers,
+    models,
+    projects,
+    roles,
+    sources,
+)
 from app.domain.agent.gateway_models._shared import (
     _DEFAULT_DAYS,  # noqa: F401
     _MID_SYSTEM,  # noqa: F401
@@ -238,6 +245,12 @@ class GatewayModelsService:
 
     async def detail(self, *, name: str, days: int) -> dict:
         return await models.detail(self, name=name, days=days)
+
+    async def roles(self) -> dict:
+        return await roles.listing(self)
+
+    async def set_role(self, *, handle: str, role: str, model: str | None) -> dict:
+        return await roles.set_role(self, handle=handle, role=role, model=model)
 
     def _series(self, name: str, usage: UsageWindow) -> list[dict]:
         return models._series(name, usage)

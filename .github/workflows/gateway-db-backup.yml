@@ -26,6 +26,7 @@ jobs:
     env:
       GATEWAY_BACKUP_DIR: /home/nictheboy/backups/gateway
       CHEESE_R2_ENV: /home/nictheboy/ops/r2.env
+      UV: /home/nictheboy/.local/bin/uv
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Dump, verify and prune the local copies
@@ -34,27 +35,26 @@ jobs:
           path="$(bash deploy/gateway-db-backup.sh)"
           echo "path=$path" >> "$GITHUB_OUTPUT"
       - name: Prepare the R2 upload dependency
+      # uv, not `python3 -m venv`: the box's python3 has no ensurepip (no
+      # python3.X-venv package), so a venv cannot be made that way. uv makes
+      # its environments itself, and caches them. Called by absolute path: the
+      # runner service's PATH is not the login shell's.
         run: |
-          VENV="$RUNNER_TEMP/gateway-backup-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          python3 -m venv "$VENV"
-          "$VENV/bin/pip" install --disable-pip-version-check boto3==1.40.61
+          [ -x "$UV" ] || { echo "::error::uv is not at $UV on this runner"; exit 1; }
+          "$UV" run --no-project --with boto3==1.40.61 python3 -c 'import boto3'
       - name: Copy the dump off-site to R2
         env:
           DUMP: ${{ steps.dump.outputs.path }}
         # The uploader's output goes to the box's log only: this repository's
         # Actions logs are public and an SDK error can carry the endpoint URL.
         run: |
-          VENV="$RUNNER_TEMP/gateway-backup-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           set -a
           # shellcheck disable=SC1090
           . "$CHEESE_R2_ENV"
           set +a
-          if "$VENV/bin/python" deploy/r2-upload.py "$DUMP" >>"$GATEWAY_BACKUP_DIR/backup.log" 2>&1; then
+          if "$UV" run --no-project --with boto3==1.40.61 python3 deploy/r2-upload.py "$DUMP" >>"$GATEWAY_BACKUP_DIR/backup.log" 2>&1; then
             echo "uploaded $(basename "$DUMP") to R2"
           else
             echo "::error::R2 upload failed (details in $GATEWAY_BACKUP_DIR/backup.log on the box); the local dump $DUMP is kept"
             exit 1
           fi
-      - name: Remove the upload environment
-        if: ${{ always() }}
-        run: rm -rf -- "$RUNNER_TEMP/gateway-backup-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"

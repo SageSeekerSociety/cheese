@@ -25,6 +25,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import get_current_session_id
+from app.core import model_roles
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import async_session_factory
 from app.core.errors import (
@@ -246,7 +247,9 @@ async def ask(
         return refuse(503, say("askCheeseDocsUnreadable"), 30)
 
     # The question is the asker's, so its cost comes out of their credits.
-    rates = Rates.of(settings.docs_assistant_model, await pricing.model_rates())
+    rates = Rates.of(
+        model_roles.model("docs_assistant_model"), await pricing.model_rates()
+    )
     if rates is None:
         await limits.release(auth.user_id)
         return refuse(503, say("askCheeseNotOpen"), 60)
@@ -378,7 +381,7 @@ async def _settle(
                 await Ledger(session).charge_priced(
                     await payer_for_person(session, user_id),
                     user_id=user_id,
-                    model=settings.docs_assistant_model,
+                    model=model_roles.model("docs_assistant_model"),
                     rates=rates,
                     input_tokens=result.prompt_tokens,
                     output_tokens=result.completion_tokens or 0,

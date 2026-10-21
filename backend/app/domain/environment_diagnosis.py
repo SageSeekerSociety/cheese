@@ -22,6 +22,7 @@ from dataclasses import dataclass
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import model_roles
 from app.core.config import settings
 from app.domain.gateway_chat import Usage, response_cost
 from app.domain.service_keys import KeySpec, gateway_base, service_key
@@ -67,7 +68,7 @@ def _key_spec() -> KeySpec:
     return KeySpec(
         name="environment-diagnosis-gateway-key",
         alias="environment-diagnosis",
-        model=settings.environment_diagnosis_model,
+        model=model_roles.model("environment_diagnosis_model"),
         budget_usd=settings.environment_diagnosis_budget_usd,
         rpm=60,
     )
@@ -134,7 +135,7 @@ async def diagnose(
                 f"{gateway_base()}/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
                 json={
-                    "model": settings.environment_diagnosis_model,
+                    "model": model_roles.model("environment_diagnosis_model"),
                     "messages": [
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": _material(config, failure)},
@@ -156,7 +157,7 @@ async def diagnose(
         await Ledger(session).record_project_call(
             project_id,
             kind=USAGE_KIND,
-            model=settings.environment_diagnosis_model,
+            model=model_roles.model("environment_diagnosis_model"),
             input_tokens=usage.prompt_tokens,
             output_tokens=usage.completion_tokens,
             cost_usd=cost_usd,

@@ -60,6 +60,7 @@ from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.agent import gateway_catalog
 from app.domain.agent.device_hub import DeviceOffline, device_hub
+from app.domain.agent.gateway_models import roles as model_role_store
 from app.domain.agent.preview_owner import reuse_preview_owner_connections
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_instance.services import AgentInstanceService
@@ -125,6 +126,19 @@ async def lifespan(application: FastAPI):
     except Exception as exc:  # a missing table (pre-migration) must not crash boot
         get_logger("cheesex.runtime").warning(
             "agent-user seed skipped", reason=str(exc)[:120]
+        )
+
+    # Which gateway model each platform model role runs on, as an administrator
+    # pointed it (`app.core.model_roles`), read before this process serves: a
+    # role read from its Settings field after an administrator moved it (and
+    # its key) would be refused at the gateway. The periodic job "platform
+    # model roles refresh" keeps it current. Never blocks boot either.
+    try:
+        async with async_session_factory() as session:
+            await model_role_store.refresh(session)
+    except Exception as exc:  # same rule as the seed above
+        get_logger("cheesex.runtime").warning(
+            "platform model roles read skipped", reason=str(exc)[:120]
         )
 
     # Every project agent is a collaborator with an identity of its own — a user
