@@ -18,11 +18,12 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.chapter_rows import chapter_rows
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
+from app.domain.chapter.schemas import ChapterMarkOut, ChapterOut
 from app.domain.chapter.services import Chapters
 from app.domain.room_task.place import place_or_404
 
@@ -44,7 +45,7 @@ async def _conversation(db, resolver, conversation_id: uuid.UUID, *, acting: boo
     return place, actor
 
 
-@router.get("/{topic_id}/chapters")
+@router.get("/{topic_id}/chapters", **typed_response(list[ChapterOut]))
 async def list_chapters(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -54,7 +55,11 @@ async def list_chapters(
     return ok(await chapter_rows(db, place.conversation_id))
 
 
-@router.put("/{topic_id}/chapters/{block_id}", dependencies=[ROUTE_DECIDES])
+@router.put(
+    "/{topic_id}/chapters/{block_id}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ChapterMarkOut),
+)
 async def add_chapter(
     topic_id: uuid.UUID,
     block_id: uuid.UUID,
@@ -71,7 +76,11 @@ async def add_chapter(
     return ok({"block_id": str(block_id), "chapter": True})
 
 
-@router.delete("/{topic_id}/chapters/{block_id}", dependencies=[ROUTE_DECIDES])
+@router.delete(
+    "/{topic_id}/chapters/{block_id}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ChapterMarkOut),
+)
 async def remove_chapter(
     topic_id: uuid.UUID,
     block_id: uuid.UUID,
