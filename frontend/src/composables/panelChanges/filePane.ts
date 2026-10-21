@@ -12,7 +12,7 @@ import type { PanelChangesProps } from './types'
 
 import { computed, onBeforeUnmount, ref } from 'vue'
 
-import { downloadFile, listFiles, readFile, workspaceFileRawUrl } from '../../api'
+import { downloadFile, listFiles, readFile, RequestTimeoutError, workspaceFileRawUrl } from '../../api'
 import { parseDiffLines } from '../../lib/diff'
 import { useTopicMemory } from '../useTopicMemory'
 
@@ -255,6 +255,10 @@ export function usePanelFilePane(deps: FilePaneDeps) {
       if (openPath.value && !listed.some((f) => f.path === openPath.value)) openPath.value = null
     } catch (e) {
       if (epoch() !== epochAt || opts.silent) return
+      // 现场工作区没在读取预算里答上来：树上的文件来自差异，清单只是「打开其他
+      // 文件」用的。拿一句请求超时把整格顶掉，比少一份清单糟得多；组合根会把来源
+      // 切到已提交版本，再读一次这份清单。
+      if (fileSource.value === 'live' && e instanceof RequestTimeoutError) return
       errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
     } finally {
       done?.()
