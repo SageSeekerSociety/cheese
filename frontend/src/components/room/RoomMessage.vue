@@ -8,7 +8,7 @@
 // 它不认识名册，也不认识时间线：显示名、头像、时间、被回复的那一条，都是房间
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
-import type { Block, TodoItem, Topic } from '../../cx_types'
+import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
 import type { RefNames } from '../../lib/refChip'
 
@@ -46,8 +46,8 @@ const props = defineProps<{
   block: Block
   /** 这里已经不能回答提问了（任务关了、频道归档了）：选项不再给点。 */
   askClosed?: boolean
-  /** 被回复的那一条；没有就是 null（AI 的 reply_to 是隐式的，不画引用条）。 */
-  parent: Block | null
+  /** 被回复的那一条；不在当前页时是随页带来的一行预览；没有就是 null。 */
+  parent: Block | ReplyPreview | null
   parentName: string | null
   /** 同一个人连着说的第一条——只有它带头像和名字。 */
   runStart: boolean

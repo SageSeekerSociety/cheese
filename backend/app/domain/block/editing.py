@@ -34,7 +34,7 @@ from app.domain.block.models import (
 )
 from app.domain.block.ports import Dispatcher, Notifier, RecordInstruction
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import BlockOut, reply_preview
 
 # The task an edit belongs to: its id and the room it is in. A bare table —
 # `room_task` imports this domain, so reaching its service from here closes a
@@ -163,7 +163,13 @@ async def edit_message[Sent: EditedText](
             record_instruction=record_instruction,
         )
     payload = BlockOut.model_validate(block).model_dump(mode="json")
-    # The frame replaces the line whole, so it carries what else is on it.
+    # The frame replaces the line whole, so it carries what else is on it —
+    # including the one-line preview a reply shows when its parent is not in the
+    # reader's page.
+    if block.reply_to is not None:
+        parent = await blocks.get(block.reply_to)
+        if parent is not None and parent.conversation_id == block.conversation_id:
+            payload["reply_preview"] = reply_preview(parent)
     payload["reactions"] = await blocks.reactions_for_block(block.id)
     await session.commit()
     # A card's lines go out on the card's channel, where they are shown.

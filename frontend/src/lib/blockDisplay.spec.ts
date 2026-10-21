@@ -87,6 +87,17 @@ describe('replySnippet', () => {
     expect(replySnippet(said('wang', '<@cheese-3fa2> 看下 <#t9>'), maps)).toBe('@芝士 看下 #第三节图表')
     expect(replySnippet(said('cheese-3fa2', '<@lixue> 改好了'), maps)).toBe('@李雪 改好了')
   })
+
+  it('父消息不在页里时，引用条读随页带来的那一行', () => {
+    const preview = {
+      id: 'old',
+      kind: 'message',
+      author_type: 'participant' as const,
+      author: 'lixue',
+      content: '报价按 3 万走',
+    }
+    expect(replySnippet(preview, maps)).toBe('报价按 3 万走')
+  })
 })
 
 type Step = { subject: string; status: TodoItem['status'] }
