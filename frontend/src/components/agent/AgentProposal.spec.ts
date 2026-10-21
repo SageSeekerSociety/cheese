@@ -77,10 +77,10 @@ describe('AgentProposal', () => {
       state: 'pending',
       where: '',
       text: '把 bob 移出频道「综合」',
-      reason: '你设了「移除成员」要先问你',
+      reason: '你设置了「移除成员」需要确认',
     })
     expect(view.getByText('把 bob 移出频道「综合」')).toBeTruthy()
-    expect(view.getByText('你设了「移除成员」要先问你')).toBeTruthy()
+    expect(view.getByText('你设置了「移除成员」需要确认')).toBeTruthy()
 
     await fireEvent.click(view.getByRole('button', { name: '确认' }))
 

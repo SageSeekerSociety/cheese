@@ -31,7 +31,7 @@ from app.domain.feature_stats import stats
 
 FEATURE_ID = "personal-assistant"
 TITLE = "个人芝士"
-SUMMARY = "把关放行和拦下了什么、花了多少，对话的缓存命中"
+SUMMARY = "代用户执行的操作、需确认比例与费用，以及提示词缓存命中率"
 
 
 async def _gate(session: AsyncSession, since, until) -> dict[str, Any]:

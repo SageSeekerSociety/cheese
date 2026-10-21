@@ -228,7 +228,7 @@ def test_a_message_the_person_asked_for_is_sent_as_them_through_the_gate(
     assert got["done"] is True
     # The gate read what she said, and the action; nothing 芝士 said.
     assert "[用户] 跟大家说周五组会改到下午三点" in keeper.shown[0]
-    assert "周五组会改到下午三点" in keeper.shown[0].split("<要判断的这件事>")[1]
+    assert "周五组会改到下午三点" in keeper.shown[0].split("<要判断的操作>")[1]
     # The call it hands back is the one the channel page makes, as her.
     [call] = got["calls"]
     sent = client.post(
@@ -265,7 +265,7 @@ def test_a_message_the_person_did_not_ask_for_becomes_a_card(client, monkeypatch
     room, _ = _room(client)
     slug, number = _names(client, room)
     token = _acting(client, "alice", _asked_in(client, "alice", "帮我看看综合频道"))
-    keeper = _Gatekeeper("拦", "用户只让看看，没让发消息。\n结论：拦")
+    keeper = _Gatekeeper("拦", "你只让芝士查看频道，没有提到发消息。\n结论：拦")
 
     async def looks(session):
         return keeper
@@ -281,7 +281,7 @@ def test_a_message_the_person_did_not_ask_for_becomes_a_card(client, monkeypatch
     got = r.json()["data"]
     assert got["done"] is False and "pass" not in got
     assert got["card"]["kind"] == "message" and got["card"]["text"] == "收到"
-    assert got["reason"] == "用户只让看看，没让发消息。"
+    assert got["reason"] == "你只让芝士查看频道，没有提到发消息。"
     [check] = _checks(client, "alice")
     assert (check.verdict, check.stage) == ("asked", "reasoned")
 
@@ -400,7 +400,7 @@ def test_the_person_sets_their_rules_and_sees_what_was_done_for_them(
         json={"kind": "message", "where": f"{slug}/channels/{number}", "text": "收到"},
         headers=_as(token),
     )
-    assert "要先问：建频道先问我" in keeper.shown[0]
+    assert "需要确认：建频道先问我" in keeper.shown[0]
 
     done = client.get("/assistant/activity", headers=me).json()["data"]["items"]
     assert [(i["kind"], i["verdict"], i["stage"]) for i in done] == [

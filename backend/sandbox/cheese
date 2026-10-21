@@ -3731,11 +3731,11 @@ def _act(body: dict, host):
         {"method": "POST", "path": "/assistant/agent/act", "body": body}
     ).get("data") or {}
     if not data.get("done"):
-        why = data.get("reason") or "把关没有放行"
+        why = data.get("reason") or "需要用户确认"
         if data.get("card"):
             return None, (
-                f"还没有做：需要用户确认，已放进面板等他点（{why}）。告诉用户卡片在面板里，"
-                "不要说已经做了。"
+                f"还没有执行：已在面板中请用户确认（{why}）。告诉用户确认卡片在面板中，"
+                "不要说已经执行。"
             )
         return None, f"没有做：{why}。"
     answered, made = None, None

@@ -352,8 +352,8 @@ async def _message(db, access, body: ActIn, me: Person) -> _Plan:
     return _Plan(
         gate.Action(
             "message",
-            f"在{'任务' if place.task else '频道'}「{name}」（{body.where}，项目"
-            f"「{project.name}」）以用户的名义发一条消息：\n{text}",
+            f"在{'任务' if place.task else '频道'}「{name}」（项目「{project.name}」）"
+            f"发消息：\n{text}",
             ("to_everyone",) if everyone else (),
         ),
         [
@@ -384,8 +384,8 @@ async def _task(db, access, body: ActIn, me: Person) -> _Plan:
     return _Plan(
         gate.Action(
             "task",
-            f"在频道「{room.title}」（项目「{project.name}」）以用户的名义开一个任务"
-            f"「{title}」，交给项目的 AI 队友去做，交代：\n{text}",
+            f"在频道「{room.title}」（项目「{project.name}」）开任务「{title}」，"
+            f"交给项目的 AI 队友，交代：\n{text}",
         ),
         [
             {
@@ -423,7 +423,6 @@ async def _review(db, access, body: ActIn, me: Person) -> _Plan:
     card = await reading.latest_card(db, found.id)
     if card is None:
         raise BadRequestError(say("assistantNoReviewCard"))
-    shown = refs.review(project.slug, found.number)
     if body.choice == "accept":
         verb, call = (
             "采纳",
@@ -449,8 +448,9 @@ async def _review(db, access, body: ActIn, me: Person) -> _Plan:
     return _Plan(
         gate.Action(
             "review",
-            f"以审阅人的身份处理任务「{place.task.title}」的审阅卡（{shown}，项目"
-            f"「{project.name}」，改动：{card.change_subject or '未写'}）：{verb}",
+            f"{verb.split('，')[0]}任务「{place.task.title}」的审阅卡（项目"
+            f"「{project.name}」，改动：{card.change_subject or '未写'}）"
+            + (f"，{verb.split('，', 1)[1]}" if "，" in verb else ""),
         ),
         [call],
         [(door, None)],
@@ -483,8 +483,8 @@ async def _respond(db, body: ActIn, me: Person) -> _Plan:
         return _Plan(
             gate.Action(
                 "respond",
-                f"答复项目「{item.project_name}」里要用户决定的提醒「{item.headline}」："
-                f"选「{choice}」",
+                f"答复项目「{item.project_name}」的提醒「{item.headline}」："
+                f"选择「{choice}」",
             ),
             [
                 {
@@ -509,7 +509,7 @@ async def _respond(db, body: ActIn, me: Person) -> _Plan:
         return _Plan(
             gate.Action(
                 "respond",
-                f"{'允许' if yes else '不允许'}项目「{run.project_name}」在用户的设备 "
+                f"{'允许' if yes else '拒绝'}项目「{run.project_name}」在你的设备 "
                 f"{run.device} 上运行 MCP 服务器 {run.server}（命令：{run.command}）",
             ),
             [
@@ -560,7 +560,7 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
             return _Plan(
                 gate.Action(
                     "member",
-                    f"把 {who} 移出频道「{room.title}」（项目「{project.name}」）",
+                    f"将 {who} 移出频道「{room.title}」（项目「{project.name}」）",
                     ("remove_member",),
                 ),
                 [{"method": "DELETE", "path": f"/topics/{room.id}/members/{who}"}],
@@ -570,7 +570,7 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
             )
         return _Plan(
             gate.Action(
-                "member", f"把 {who} 加进频道「{room.title}」（项目「{project.name}」）"
+                "member", f"将 {who} 加入频道「{room.title}」（项目「{project.name}」）"
             ),
             [
                 {
@@ -596,7 +596,7 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
         return _Plan(
             gate.Action(
                 "member",
-                f"把 {who}（{_ROLE.get(seat or '', '不在项目里')}）移出项目「{project.name}」",
+                f"将 {who}（{_ROLE.get(seat or '', '不在项目中')}）移出项目「{project.name}」",
                 ("remove_member",),
             ),
             [{"method": "DELETE", "path": f"/projects/{pid}/members/{who}"}],
@@ -632,7 +632,7 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
     return _Plan(
         gate.Action(
             "member",
-            f"把 {who} 在项目「{project.name}」的角色从{_ROLE[seat]}改成{_ROLE[role]}",
+            f"将 {who} 在项目「{project.name}」的角色从{_ROLE[seat]}改为{_ROLE[role]}",
             ("lower_role",) if lowers else (),
         ),
         [
@@ -662,7 +662,7 @@ async def _channel(db, access, body: ActIn, me: Person) -> _Plan:
     return _Plan(
         gate.Action(
             "channel",
-            f"在项目「{project.name}」建一个{private}频道「{title}」"
+            f"在项目「{project.name}」新建{private}频道「{title}」"
             + (f"，说明：{about}" if about else ""),
         ),
         [
@@ -685,9 +685,9 @@ async def _channel(db, access, body: ActIn, me: Person) -> _Plan:
 
 def _fetch(body: ActIn) -> _Plan:
     url = _need(body.url, "url")
-    asked = f"，想知道：{body.prompt.strip()}" if body.prompt.strip() else ""
+    asked = f"，了解：{body.prompt.strip()}" if body.prompt.strip() else ""
     return _Plan(
-        gate.Action("fetch", f"读网页 {url}{asked}"),
+        gate.Action("fetch", f"读取网页 {url}{asked}"),
         [
             {
                 "method": "POST",
