@@ -34,7 +34,7 @@ from app.domain.machine import claude_dist
 
 logger = logging.getLogger("cheese.machine.enrollment")
 
-# One attempt should be slow enough to survive a cold apt/curl on a fresh
+# One attempt should be slow enough to survive a cold download on a fresh
 # machine, and fast enough that a stuck one doesn't wedge the sweep.
 SSH_TIMEOUT_S = 180.0
 
@@ -117,6 +117,12 @@ DATA_DISK_LINE = re.compile(r"^CHEESE_SANDBOX_DISK_BYTES=([0-9]+)$", re.MULTILIN
 # mkfs.xfs without -f: a disk that carries any signature is refused, not
 # wiped. A host with no such disk is not enrolled: it could not hold a sandbox
 # to a disk limit, and no sandbox runs without one.
+#
+# The mkfs.xfs is the platform's, which cheesehost placed with the host tools
+# as it connected (`cli/internal/devenv`), not a package of the machine's. It
+# is told the feature set of the newest long-term kernel no newer than the
+# machine's own (its `lts_*.conf`): a newer mkfs's defaults can make a
+# filesystem an older kernel refuses to mount.
 DATA_DISK = """
 disk=""
 for link in /dev/disk/by-id/*drive-scsi1; do
@@ -126,16 +132,26 @@ if [ -z "$disk" ]; then
   echo "no data disk (scsi1) for the sandboxes' homes" >&2
   exit 1
 fi
-for tool in mkfs.xfs xfs_quota; do
-  command -v "$tool" >/dev/null 2>&1 && continue
-  sudo -n apt-get install -y -q xfsprogs >/dev/null 2>&1 \\
-    || {{ sudo -n apt-get update -q >/dev/null 2>&1 \\
-          && sudo -n apt-get install -y -q xfsprogs >/dev/null 2>&1; }} \\
-    || {{ echo "$tool is missing and could not be installed" >&2; exit 1; }}
+tools="$HOME/.cheese/runtime/host-tools"
+if [ ! -x "$tools/bin/mkfs.xfs" ]; then
+  echo "cheesehost placed no mkfs.xfs at $tools" >&2
+  exit 1
+fi
+kernel=$(uname -r | cut -d. -f1,2)
+features=""
+for conf in $(ls "$tools"/mkfs/lts_*.conf | sort -V); do
+  lts=${{conf##*/lts_}}
+  lts=${{lts%.conf}}
+  [ "$(printf '%s\\n%s\\n' "$lts" "$kernel" | sort -V | head -n 1)" = "$lts" ] \\
+    && features=$conf
 done
+if [ -z "$features" ]; then
+  echo "kernel $kernel is older than any the platform's mkfs.xfs formats for" >&2
+  exit 1
+fi
 kind=$(sudo -n blkid -o value -s TYPE "$disk" || true)
 if [ -z "$kind" ]; then
-  sudo -n mkfs.xfs -q "$disk"
+  sudo -n "$tools/bin/mkfs.xfs" -q -c options="$features" "$disk"
 elif [ "$kind" != xfs ]; then
   echo "the data disk $disk holds $kind, not XFS" >&2
   exit 1
@@ -216,57 +232,10 @@ case "$arch" in
   aarch64|arm64) target=linux-arm64 ;;
   *) echo "unsupported arch: $arch" >&2; exit 1 ;;
 esac
-# Tools the machine must have before it is worth enrolling. Every one of these
-# failures is SILENT if left to be discovered later, which is why they are fatal
-# here:
-#   tmux    — the connector hosts every session in it and exits immediately
-#     without one, yet `link connect` still reports success (systemctl returns
-#     before the process falls over);
-#   git     — the agent clones the project into its work dir and pushes the topic
-#     branch back. Without git the turn runs in an EMPTY directory, reports
-#     success, and the work is never seen by anyone.
-#   python3 — the platform's own programs ON a machine are python3, not shell:
-#     `cheese` (the agent's whole platform surface — publishing a message, a
-#     document, an artifact) and the environment helper the launcher runs before
-#     every agent start, whose exit code it propagates (`agent/device_provider`).
-#     The connector is Go and comes up fine without python3, so the machine
-#     reports healthy and every room on it dies at environment preparation.
-#   ip, iptables-restore — every session's executor on a Cloud machine runs
-#     in a bubblewrap sandbox (`remote_execution/confinement.sandbox_argv`) with a
-#     network of its own that the machine connects and filters
-#     (`remote_execution/sandbox_host.py`), and a session that cannot have one
-#     does not start. Both are root's, in sbin. bwrap itself is not here:
-#     cheesehost places the platform's (`cli/internal/devenv`).
-# None of them is guaranteed by the image: MicroCloud's LXC template lists git
-# but not tmux, and the VM template installs neither (it adds only curl + Docker
-# on top of a stock Debian cloud image). Depending on which offering a machine
-# came from is exactly the kind of assumption that fails quietly.
 echo CHEESE_STARTUP:tools
-PATH="$PATH:/usr/sbin:/sbin"
-# MicroCloud reports a machine running while cloud-init is still at work on it,
-# and on its VM template that work is an `apt-get dist-upgrade` holding the
-# dpkg lock for a minute or two after boot: every install below failed on the
-# lock (dev, 2026-10-04, the VM offering). Let it finish first.
-if command -v cloud-init >/dev/null 2>&1; then
-  cloud-init status --wait >/dev/null 2>&1 || true
-fi
-for tool in tmux git python3 ip iptables-restore; do
-  command -v "$tool" >/dev/null 2>&1 && continue
-  case "$tool" in
-    ip) package=iproute2 ;;
-    iptables-restore) package=iptables ;;
-    *) package="$tool" ;;
-  esac
-  sudo -n apt-get install -y -q "$package" >/dev/null 2>&1 \
-    || {{ sudo -n apt-get update -q >/dev/null 2>&1 \
-          && sudo -n apt-get install -y -q "$package" >/dev/null 2>&1; }} \
-    || {{ echo "$tool is missing and could not be installed" >&2; exit 1; }}
-done
-{data_disk}
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 export PATH="$HOME/.local/bin:$PATH"
-# claude — the agent itself, and the same argument as tmux/git above with one
-# more turn of the screw. A machine with no claude, or one too old, does not
+# claude — the agent itself. A machine with no claude, or one too old, does not
 # fail here: it enrolls cleanly, reports healthy, and then every topic assigned
 # to it never starts, because the launcher refuses a build below the floor.
 # A loud failure now beats a silent one per topic later (#489, #501 are the
@@ -347,6 +316,26 @@ CHEESE_CONFIG_EOF
 # from it would eat the rest of the script.
 echo CHEESE_STARTUP:connect
 "$HOME/.local/bin/cheesehost" link connect < /dev/null
+# What the connector and its rooms run on, which `link connect` just placed
+# where the system's own is missing or too old (`cli/internal/devenv`): tmux,
+# which the connector keeps every screen in and exits without, while systemd
+# still reports it started; git, without which a room's turn runs in an empty
+# directory and reports success; python3, which the platform's own programs on
+# a machine are. Nothing comes from the machine's packages, so a machine where
+# one could not be placed is refused here, while somebody reads the output.
+runtime="$HOME/.cheese/runtime"
+for tool in tmux git python3; do
+  case "$tool" in python3) dir=python ;; *) dir=$tool ;; esac
+  PATH="$runtime/$dir/bin:$PATH" command -v "$tool" >/dev/null 2>&1 \\
+    || {{ echo "$tool is missing and cheesehost could not place it" >&2; exit 1; }}
+done
+# Ubuntu from 23.10 lets a program make a user namespace only where an
+# AppArmor profile names it, and no profile names the bwrap cheesehost placed.
+# On a machine the platform opened, the platform is the owner who allows it.
+if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+  sudo -n "$HOME/.local/bin/cheesehost" sandbox allow < /dev/null
+fi
+{data_disk}
 # A retried enrollment writes a new device identity. Starting an active service
 # leaves the old token in memory, so the room waits for a device that never joins.
 systemctl --user restart cheese
@@ -369,7 +358,7 @@ fi
 #
 # The connector asks for itself and never elevates, because the machine it runs
 # on is usually somebody's laptop. This one is not: the platform opened it, and
-# the same passwordless sudo installed tmux above. `enable-linger` needs it only
+# the same passwordless sudo set up its data disk. `enable-linger` needs it only
 # where the image ships no polkit — logind then denies the unprivileged request
 # outright — so try once, and judge on what linger actually says afterwards.
 if [ "$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null)" != "Linger=yes" ]; then

@@ -699,10 +699,11 @@ def platform_file(platform_dir, name):
 # Where `sandbox_host.py` is installed, root's and outside every release: the
 # connector user runs it through `sudo -n`, and only root may change it.
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
-# The programs a Cloud machine's sandbox network needs, by the package that has
-# them. bwrap is not among them: cheesehost places the platform's own.
-SANDBOX_PACKAGES = {"ip": "iproute2", "iptables-restore": "iptables"}
-SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Root's copies of the programs it runs, from the host tools cheesehost places
+# (`cli/internal/devenv`): it runs nothing the connector user could replace. A
+# copy of `sandbox_host.TOOLS`, held to it by test_footprint_root.py.
+SANDBOX_TOOLS = "/usr/local/libexec/cheese-sandbox-tools"
+HOST_TOOLS = ("ip", "xtables-nft-multi", "xfs_quota")
 
 
 def sudo(command, failure):
@@ -711,7 +712,7 @@ def sudo(command, failure):
         capture_output=True,
         text=True,
         timeout=300,
-        env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+        env=os.environ,
     )
     if result.returncode:
         raise RuntimeError(failure + ": " + result.stderr.strip()[-500:])
@@ -734,8 +735,10 @@ def sandbox_tools(release, platform_machine):
     Other systems have no isolated environment yet (`NO_SANDBOX`). On Linux
     the sandbox is made with the bwrap cheesehost places (`placed_bubblewrap`),
     whatever the system has. A machine the platform provisioned
-    (`platform_machine`) also needs `ip`, iptables and this release's
-    `sandbox_host.py` as `SANDBOX_HOST`, installed here. A machine a person
+    (`platform_machine`) also needs this release's `sandbox_host.py` as
+    `SANDBOX_HOST` and root's copies of the host tools it runs, which
+    cheesehost placed beside bwrap (`SANDBOX_TOOLS`), installed here: nothing
+    comes from the system's packages. A machine a person
     enrolled is theirs: nothing is installed there, its sandbox has no network
     or limits of its own (that takes root), and its bwrap must be able to make a
     user namespace, or the room is refused with what to change. Either way a
@@ -747,35 +750,34 @@ def sandbox_tools(release, platform_machine):
         raise SandboxUnavailable(key, system=sys.platform)
     if not platform_machine:
         return enrolled_bubblewrap()
-    missing = [
-        package
-        for program, package in SANDBOX_PACKAGES.items()
-        if shutil.which(program, path=SYSTEM_PATH) is None
-    ]
-    if missing:
-        install = ["apt-get", "install", "-y", "-q", *missing]
-        try:
-            sudo(install, "installing " + " ".join(missing) + " failed")
-        except RuntimeError:
-            sudo(["apt-get", "update", "-q"], "apt-get update failed")
-            sudo(install, "installing " + " ".join(missing) + " failed")
-    source = release / "remote-execution/sandbox_host.py"
-    try:
-        current = Path(SANDBOX_HOST).read_bytes() == source.read_bytes()
-    except OSError:
-        current = False
-    if not current:
-        # Beside it, then renamed over it: a sandbox starting meanwhile runs
-        # the old one or the new one, never half of either.
-        staged = SANDBOX_HOST + "." + uuid.uuid4().hex
-        failure = "installing the sandbox helper failed"
-        sudo(
-            ["install", "-D", "-o", "root", "-g", "root", "-m", "0755"]
-            + [str(source), staged],
-            failure,
-        )
-        sudo(["mv", "-f", staged, SANDBOX_HOST], failure)
+    placed = execution_root(Path.home()) / "runtime/host-tools/bin"
+    for name in HOST_TOOLS:
+        if not os.access(placed / name, os.X_OK):
+            raise RuntimeError(f"cheesehost has not placed {name} at {placed}")
+    for source, target in (
+        (release / "remote-execution/sandbox_host.py", SANDBOX_HOST),
+        *((placed / name, f"{SANDBOX_TOOLS}/{name}") for name in HOST_TOOLS),
+    ):
+        install_as_root(source, target)
     return placed_bubblewrap()
+
+
+def install_as_root(source, target):
+    """`source` at `target`, root's, unless it is there already. Beside it,
+    then renamed over it: a sandbox starting meanwhile runs the old one or the
+    new one, never half of either."""
+    try:
+        if Path(target).read_bytes() == Path(source).read_bytes():
+            return
+    except OSError:
+        pass
+    staged = target + "." + uuid.uuid4().hex
+    failure = "installing " + target + " failed"
+    sudo(
+        ["install", "-D", "-o", "root", "-g", "root", "-m", "0755", str(source), staged],
+        failure,
+    )
+    sudo(["mv", "-f", staged, target], failure)
 
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"

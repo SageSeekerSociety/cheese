@@ -2,8 +2,10 @@
 document toolchain, the forge CLIs, ripgrep for the search under pi's grep and
 find, browser automation, and the runtime the connector itself needs where
 the system lacks it (Python and a POSIX shell on Windows, a recent enough Python
-elsewhere), and on Linux the bwrap a room's sandbox is made with, which it
-places whatever the system has.
+elsewhere, and on Linux a recent enough tmux and git), and on Linux what a
+room's sandbox is made with, which it places whatever the system has: bwrap,
+and the host tools a platform host gives its sandboxes a network and a disk
+limit with.
 
 The single source for these — versions, where each artifact comes from, and its
 digest. It lives in the agent layer for the same reason claude's pin lives in
@@ -59,6 +61,11 @@ PBS_PYTHON_VERSION = "3.13.16"
 #: The bwrap a Linux connector places for its rooms' sandboxes, whatever the
 #: system has (`cli/internal/devenv`): built by `scripts/build-bubblewrap.sh`.
 BUBBLEWRAP_REVISION = "0.13.0-cheese.1"
+#: What else a Linux connector places (`cli/internal/devenv`), built by
+#: `scripts/build-host-tools.sh`: the host tools (ip, iptables, mkfs.xfs,
+#: xfs_quota) whatever the system has, and tmux and git where the system's are
+#: missing or too old.
+HOST_TOOLS_REVISION = "1"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -87,6 +94,10 @@ _FJ_BASE = (
 _BWRAP_BASE = (
     "https://github.com/SageSeekerSociety/cheese/releases/download/"
     f"bubblewrap-v{BUBBLEWRAP_REVISION}/bubblewrap-{BUBBLEWRAP_REVISION}"
+)
+_HOST_TOOLS_BASE = (
+    "https://github.com/SageSeekerSociety/cheese/releases/download/"
+    f"host-tools-v{HOST_TOOLS_REVISION}"
 )
 _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 
