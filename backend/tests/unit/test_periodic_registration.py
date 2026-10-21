@@ -472,6 +472,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("run record expiry", 110),
         ("session record seal", 60),
         ("session record retention", 600),
+        ("retired site archive", 60),
         ("notification email drain", 111),
         ("notification push drain", 112),
         ("notification digest", 113),

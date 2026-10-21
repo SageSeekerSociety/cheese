@@ -68,6 +68,7 @@ PERIODIC_JOB_NAMES = (
     "run record expiry",
     "session record seal",
     "session record retention",
+    "retired site archive",
     "notification email drain",
     "notification push drain",
     "notification digest",
