@@ -282,12 +282,15 @@ invoice; a model missing from the picker gets noticed, a brake that quietly
 stopped working does not.
 
 The other rules `check_config.py` used to hold the file to are held at the
-write as well. A paused and unlisted model (`price_only`: the subscription's
-Claude rows, which bill subscription usage by name) needs both an input and an
-output price, and the page edits its one-hour cache-write price. The last
-offered model cannot be paused, deleted or unlisted, and a model a platform
-model role runs on (voice input, the default model, ...) cannot be paused or
-deleted until the role points elsewhere. One rule is held by nothing:
+write as well. Every row, offered or not, needs both an input and an output
+price (the only zeros are a declared free row's), because usage under a
+model's name is billed by them, the subscription's Claude rows included; a
+price a row has can be changed, never cleared, and the page edits the
+one-hour cache-write price too. A price change on the page is confirmed
+first, showing each price old to new. The last offered model cannot be
+paused, deleted or unlisted, and a model a platform model role runs on (voice
+input, the default model, ...) cannot be paused or deleted until the role
+points elsewhere. One rule is held by nothing:
 deepseek-flash's `max_input_tokens` must leave 128,000 output tokens inside
 DeepSeek's 1,048,576 window. The page does not write that key, so only a row
 written straight to the gateway can break it; check it there.
