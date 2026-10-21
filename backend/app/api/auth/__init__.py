@@ -73,6 +73,11 @@ DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.assistant_agent.agent_inbox": False,
     "app.api.routes.assistant_agent.agent_read": False,
     "app.api.routes.project_context.agent_search": False,
+    # Searching the web without its gate, unlike reading a page: the query goes
+    # only to DeepSeek, which as the model's provider already holds the whole
+    # conversation, so a search reaches no one new. A page's address reaches
+    # whatever host it names (`read_url` in GATED_ROUTES).
+    "app.api.routes.fetch.web_search": False,
     # What it does that others see goes through its gate first, which hands
     # back a pass for the routes in `GATED_ROUTES`.
     "app.api.routes.assistant_agent.agent_act": True,
@@ -86,9 +91,9 @@ DELEGATED_ROUTES: dict[str, bool] = {
 
 #: The routes a person's own 芝士 reaches only with a pass its gate issued for
 #: that call (`assistant.gate`, `assistant.passes`): what others see — a
-#: message, a task, a decision, a member, a channel — and reading or searching
-#: the web, which can carry what it read out in an address or a query. The pass is the gate's
-#: verdict; without one the route refuses the credential.
+#: message, a task, a decision, a member, a channel — and reading a web page,
+#: whose address can carry what it read out to the host it names. The pass is
+#: the gate's verdict; without one the route refuses the credential.
 GATED_ROUTES: frozenset[str] = frozenset(
     {
         "app.api.routes.topics_messages.send_chat_message",
@@ -106,7 +111,6 @@ GATED_ROUTES: frozenset[str] = frozenset(
         "app.api.routes.topics.create_topic",
         "app.api.routes.local_mcp.decide",
         "app.api.routes.fetch.read_url",
-        "app.api.routes.fetch.web_search",
     }
 )
 

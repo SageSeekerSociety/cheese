@@ -135,6 +135,11 @@ class ActorResolver:
         named = (claims or {}).get("t")
         return uuid.UUID(named) if named else None
 
+    def credential_claims(self) -> dict | None:
+        """The claims of the presented session credential (a scoped token);
+        None for anything else."""
+        return scoped_token_claims(self._cheese_token) if self._cheese_token else None
+
     def credential_project(self) -> uuid.UUID | None:
         """The project the presented session credential was minted in; None for
         a person or a token naming no project."""

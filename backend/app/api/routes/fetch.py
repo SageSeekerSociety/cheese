@@ -16,26 +16,30 @@ import uuid
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.auth.resolver import ActorResolver
+from app.api.deps import get_chat_service
+from app.api.model_keys import credit_refusal, dreams, task_credit_context_of
 from app.api.refusal import refuse
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core import model_roles
 from app.core.config import settings
-from app.core.errors import SystemBusyError
+from app.core.errors import ForbiddenError, SystemBusyError
 from app.core.sentences import say
-from app.domain.fetch.search import MAX_QUERY_CHARS, SearchUnavailable
+from app.domain.agent.chat import ChatService
+from app.domain.agent.personal.keys import stored_key
+from app.domain.fetch.search import MAX_QUERY_CHARS, SearchRefused, SearchUnavailable
 from app.domain.fetch.search import search as search_web
 from app.domain.fetch.service import fetch as fetch_url
 from app.domain.identity.actor import Actor
-from app.domain.usage.ledger import Payer, payer_for_person, payer_for_project
-from app.domain.usage.search import charge_search, search_refusal
+from app.domain.project.services import ProjectService
+from app.domain.usage.balance import Refusal
 
 router = APIRouter(prefix="", tags=["fetch"])
 
@@ -118,39 +122,61 @@ class WebSearchOut(BaseModel):
     results: list[WebSearchResult]
 
 
-async def _search_payer(
+async def _search_key(
     db: AsyncSession,
+    chat: ChatService,
     resolver: ActorResolver,
     actor: Actor,
     *,
     topic: uuid.UUID | None,
     project: uuid.UUID | None,
-) -> Payer | None:
-    """Who pays for this caller's search: whoever pays for the work's model
-    calls, read from what the credential says rather than from the query.
+) -> tuple[str | None, Refusal | None]:
+    """The gateway key this caller's model calls are made on, which its search
+    is made on too, and why it may not spend now.
 
-    A delegated credential reaches this route only as a person's own 芝士,
-    through its gate (``GATED_ROUTES``), and that person pays, as for its
-    model calls. An agent pays from its project: a room agent's scoped token
-    names it, and a project agent credential authenticates only for the
-    project the request names (the resolver checked the two match), so that
-    one. A person signed in pays themselves. The global sandbox override names
-    nobody and is charged to nobody."""
+    A person's own 芝士 (a delegated credential naming no agent) searches on
+    that person's key; whether they may spend was judged when they asked
+    (``assistant.ask``), as for its model calls. An agent searches on the key
+    its model calls use, admitted as they are (``model_keys``): a room agent's
+    scoped token names its project and, for a task, whose credits it spends; a
+    project credential authenticates only for the project the request names;
+    a document question's answer is its project's work. Anyone else — a person
+    signed in, the global sandbox override — has no key and gets no search."""
     delegation = resolver.delegation()
+    claims: dict = {}
     if delegation is not None:
-        if delegation.user_id is None:
-            return None
-        return await payer_for_person(db, delegation.user_id)
-    if actor.via == "cheese":
+        if delegation.agent is None:
+            if delegation.user_id is None:
+                return None, None
+            return await stored_key(db, delegation.user_id), None
+        named = uuid.UUID(delegation.project_id) if delegation.project_id else None
+    elif actor.via == "cheese":
+        claims = resolver.credential_claims() or {}
         named = (
-            resolver.credential_project()
+            (uuid.UUID(claims["p"]) if claims.get("p") else None)
             or project
             or (await resolver.project_of_topic(topic) if topic else None)
         )
-        return None if named is None else await payer_for_project(db, named)
-    if actor.via == "token" and actor.user_id is not None:
-        return await payer_for_person(db, actor.user_id)
-    return None
+    else:
+        return None, None
+    owner = await ProjectService(db).get(named) if named else None
+    if owner is None:
+        return None, None
+    context = await task_credit_context_of(db, owner, claims)
+    refused = await credit_refusal(db, owner, context)
+    if refused is not None:
+        return None, refused
+    if context is not None:
+        key = await chat.project_gateway_key(
+            owner.id,
+            task_id=context.task_id,
+            credit_owner_handle=context.owner_handle,
+        )
+    else:
+        key = await chat.project_gateway_key(
+            owner.id, dream=await dreams(db, owner, claims)
+        )
+    return key, None
 
 
 @router.get(
@@ -162,34 +188,39 @@ async def _search_payer(
 async def web_search(
     db: DbSession,
     actor: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     q: Annotated[str, Query(min_length=1, max_length=MAX_QUERY_CHARS)],
     limit: Annotated[int, Query(ge=1, le=20)] = 8,
     topic: uuid.UUID | None = None,
     project: uuid.UUID | None = None,
 ):
-    """Results (title, URL, summary, date) from DeepSeek's search API.
+    """Results (title, URL, summary, date) from the gateway's DeepSeek search.
 
     The same caller rule as `/fetch`: a signed-in person or an agent's scoped
-    token, which verifies only against the room it names. A search is admitted
-    and charged the way the work's model calls are (``usage.search``): a payer
-    out of credits is refused before DeepSeek is asked, and only a search that
-    returned results is charged, as DeepSeek bills only those.
+    token, which verifies only against the room it names. The search is made
+    on the caller's own gateway key (``_search_key``), so it is admitted,
+    priced and charged with that key's model calls: a payer out of credits is
+    refused before DeepSeek is asked, and the key's spend, the search's
+    included, is drained into credits when the turn or question is charged.
     """
     caller = await actor.require_verified_caller(topic_id=topic, project_id=project)
-    if not settings.deepseek_api_key:
+    if not settings.anthropic_base_url:
         raise SystemBusyError(say("webSearchNotConfigured"))
-    payer = await _search_payer(db, actor, caller, topic=topic, project=project)
-    if payer is not None:
-        refused = await search_refusal(db, payer)
-        if refused is not None:
-            return refuse(429, refused.message, refused.retry_after_s())
+    key, refused = await _search_key(
+        db, chat, actor, caller, topic=topic, project=project
+    )
+    if refused is not None:
+        return refuse(429, refused.message, refused.retry_after_s())
+    if not key:
+        raise ForbiddenError(say("webSearchNoKey"))
     try:
-        found = await search_web(q, settings.deepseek_api_key, limit=limit)
+        found = await search_web(
+            q, gateway=settings.anthropic_base_url, key=key, limit=limit
+        )
+    except SearchRefused:
+        return refuse(429, say("webSearchBudgetSpent"))
     except SearchUnavailable as exc:
         raise SystemBusyError(say("webSearchUnavailable", reason=str(exc))) from exc
-    if payer is not None and found:
-        await charge_search(db, payer, topic_id=topic, user_id=caller.user_id)
-        await db.commit()
     return ok({"results": [vars(r) for r in found]})
 
 
