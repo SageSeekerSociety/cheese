@@ -44,15 +44,9 @@ fine where a reactive, cross-tab value is what you want.
 component, one stage per state, no backend/login/environment. To add one:
 `node scripts/catalog-scaffold.mjs <src/...vue>` prints the entry skeleton (every
 sentence a person owes is `TODO(catalog)`); paste it into a `catalog*.ts` volume
-that `catalog.ts` imports and spreads; run
-`pnpm exec vitest run src/views/demo/catalog.spec.ts`; then
-`pnpm run lint:catalog:update`. Steps in Chinese:
+that `catalog.ts` imports and spreads; and run
+`pnpm exec vitest run src/views/demo/catalog.spec.ts`. Steps in Chinese:
 [`../docs/manual/dev/frontend.md#catalog`](../docs/manual/dev/frontend.md#catalog).
-
-**Every grade-A component must be catalogued or pending.** `pnpm run lint:catalog`
-fails on a grade-A component in neither `catalog.ts` and its volumes nor the
-`pending` list in `catalog-baseline.json`, and that list may only shrink. A
-layout or a shell is not a candidate.
 
 ## A new scene runs standalone from day one
 
@@ -111,20 +105,17 @@ Metric-page merge handling:
 
 ## Caps and conventions
 
-- Files under `src/` over **1000 lines** may not grow.
-  `.claude/scripts/check-file-sizes.py` judges each changed file against its size
-  at the merge base with `origin/main`.
 - `pnpm run lint` is the read-only ESLint (`lint:fix` writes); never gate on the
   writing form. Design tokens and the two themes:
   [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).
-- From the repository root, `task ci:fast` before you push runs the checks your
-  changed paths select; `task fe:check` runs the whole frontend check.
+- The pull request's CI runs the frontend suite your change selects; `task
+  fe:check` runs the whole frontend check on a machine that can hold it.
 - `pnpm run test:ratchet` tests the check scripts themselves
   (`scripts/*.test.mjs`) and takes minutes. Run it locally when the change
   touches `scripts/`, an `eslint*.config.mjs` or a `*-baseline.json`, and then
   only the test file for the script you changed
-  (`node --test scripts/<name>.test.mjs`). `task ci:fast` never selects it. CI
-  runs the whole set on every frontend change, and a few of those tests also
+  (`node --test scripts/<name>.test.mjs`). CI runs the whole set on every
+  frontend change, and a few of those tests also
   read the rest of the tree (`mdi-` icon names across `src/`, `index.html`,
   `demo.html`, `nginx.conf`, `src/styles/fonts.css`, `src/views/demo/`,
   `tsconfig.app.json`), so an ordinary change can still turn it red there.

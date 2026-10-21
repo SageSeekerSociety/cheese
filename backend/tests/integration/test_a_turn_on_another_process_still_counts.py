@@ -3,11 +3,12 @@
 Two ``ChatService`` objects share one database and nothing else — no lock, no
 cache, exactly as two backend processes do. The authority on 「这一轮在跑」 is
 the open ``AgentTurn`` row, so the second service must recognise the first's
-turn from the row alone: the board reads the task as running, a message meant
-for it is merged into that turn rather than opening a second one beside it, and
-once the row closes the second service stops counting it. The old process-local
-``hook_work`` could see none of that — the row is what carries 「在跑」 across
-processes.
+turn from the row alone, and once the row closes the second service stops
+counting it. The board is not one of the things that follows the turn: a task
+shows what its teammate last said, and an open turn does not change it. Words
+for a working session are another matter: only the process reading that
+session can put them into it (`ComputePool.working_seat`), so the second
+service does not claim to have done so.
 
 The row here is a REAL one, opened through the turn lifecycle with its own
 author and content — the marks only confirm it (they invent nothing), which is
@@ -23,10 +24,8 @@ from sqlalchemy import select
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
-from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import stub_compute
@@ -55,47 +54,6 @@ def _service(client) -> ChatService:
     )
 
 
-class _Screen:
-    """Stands in for the session the turn runs on: it records what the platform
-    pushed at it and answers the way a live transport does."""
-
-    def __init__(self, session: SessionRef, work_id: uuid.UUID, receipts) -> None:
-        self.session = session
-        self.work_id = work_id
-        self.receipts = receipts
-        self.native_session_id = str(uuid.uuid4())
-        self.pushed: list[str] = []
-
-    async def steer(
-        self,
-        topic_id,
-        text,
-        images=None,
-        *,
-        register_input,
-        expected_work_id=None,
-        agent_handle=None,
-        owes_reply=False,
-    ) -> bool:
-        # The cross-process turn is named by its row: the id steers the input,
-        # the seat aims it — never a guess at another seat in the room.
-        assert expected_work_id == self.work_id, expected_work_id
-        assert agent_handle == self.session.agent_handle, agent_handle
-        identity = InputIdentity(
-            self.session.project_id,
-            self.session.topic_id,
-            self.session.agent_handle,
-            self.session.harness,
-            self.native_session_id,
-            uuid.uuid4(),
-            expected_work_id,
-        )
-        await register_input(identity)
-        await self.receipts(InputReceipt(identity, "accepted"))
-        self.pushed.append(text)
-        return True
-
-
 def _a_room(client):
     """A project and a room of alice's, and the seat its agent works from."""
     project = post_project(client, json={"name": "Handover"}, owner="alice").json()[
@@ -110,8 +68,7 @@ def _a_room(client):
 
 
 def _a_reviewed_task(client):
-    """A started task alice reviews — she is on this task's list whichever way
-    the board reads it, and the board is what this test watches."""
+    """A started task alice reviews: its card waits on her, turn or no turn."""
     project, room, seat = _a_room(client)
     task = delivery_task(client, room)
     filed = client.post(
@@ -192,8 +149,7 @@ def _phrase(client, task_id: str) -> str | None:
 
 
 def _task_phrase(client, room: str, task_id: str) -> str | None:
-    """The task's board presentation — the one cell 「运行中」 is drawn in, and
-    the same facts `/awaiting-me` runs on."""
+    """The task's board presentation — the same facts `/awaiting-me` runs on."""
     r = client.get(f"/topics/{room}/tasks")
     assert r.status_code == 200, r.text
     for row in r.json()["data"]["data"]:
@@ -219,7 +175,7 @@ def test_an_open_turn_is_busy_without_a_local_mark(client):
     assert client.portal.call(reader.has_running_turn, topic, "cheese") is False
 
 
-def test_a_message_from_another_backend_lands_in_the_running_turn(client):
+def test_a_turn_on_another_backend_is_running_here_until_its_row_closes(client):
     project, room, task_id, seat = _a_reviewed_task(client)
     conversation = uuid.UUID(task_id)
     work = uuid.uuid4()
@@ -233,51 +189,32 @@ def test_a_message_from_another_backend_lands_in_the_running_turn(client):
     # The app is served by B: what the sidebar reads must come from the row.
     app.dependency_overrides[get_chat_service] = lambda: b
 
-    # The board — where 「运行中」 is drawn, and the same facts `/awaiting-me`
-    # uses — says the task is running, off the row B never cached. Without the
-    # row it would read its card's 「待你审阅」.
-    assert _task_phrase(client, room, task_id) == "running"
-    # So the card does not linger as a stale 「待你审阅」 in alice's list: the
-    # run B now sees is what took that item out of her hands.
-    assert _phrase(client, task_id) is None
+    # The board does not follow the turn: the task's teammate has said nothing
+    # about its work, so its card speaks — 「待你审阅」, on the board and in
+    # alice's list alike.
+    assert _task_phrase(client, room, task_id) == "awaiting_review"
+    assert _phrase(client, task_id) is not None
 
-    # A message that lands on B is merged into A's turn: steered at the expected
-    # work id and its seat, its input stamped seen_by that same seat.
-    screen = _Screen(
-        SessionRef(uuid.UUID(project), conversation, seat, harness=CLAUDE_CODE),
-        work,
-        b.confirm_prompt_receipt,
-    )
-    b._compute.steer = screen.steer  # type: ignore[method-assign]
-    delivered = client.portal.call(
-        b.merge_into_running_turn,
-        conversation,
-        [],
-        "还有一句 @芝士",
-        "alice",
-        None,
-        seat,
-    )
-    assert delivered is True, delivered
-    assert len(screen.pushed) == 1
-    seen = _rows(client, NativeInput, conversation)
-    assert [row.seen_by for row in seen] == [seat], [row.seen_by for row in seen]
-
-    # No second turn was opened beside A's.
-    assert len(_rows(client, AgentTurn, conversation)) == 1
-
-    # The lifecycle ends it; A lets go. B stops counting it, the board stops
-    # calling it running, and a later message opens its own turn instead.
-    _close_row(client, work)
-    client.portal.call(a.live.mark_turn_inactive, conversation, work)
-    assert client.portal.call(b.has_running_turn, conversation) is False
-    assert _task_phrase(client, room, task_id) != "running"
+    # A message that lands on B is not put into A's session: B reads no
+    # session at work there, so it leaves the message to the queue.
     assert (
         client.portal.call(
-            b.merge_into_running_turn, conversation, [], "又一句", "alice", None, seat
+            b.merge_into_running_session,
+            conversation,
+            [],
+            "还有一句 @芝士",
+            "alice",
+            None,
+            seat,
         )
         is None
     )
+    assert _rows(client, NativeInput, conversation) == []
+
+    # The lifecycle ends it; A lets go. B stops counting it.
+    _close_row(client, work)
+    client.portal.call(a.live.mark_turn_inactive, conversation, work)
+    assert client.portal.call(b.has_running_turn, conversation) is False
 
 
 def test_a_mark_confirms_the_row_and_never_invents_one(client, monkeypatch, caplog):

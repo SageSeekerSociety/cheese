@@ -177,7 +177,7 @@ def _what_the_server_answered(exc: BaseException | None) -> list[str]:
         lines.append(f"状态：{status}")
     try:
         body = response.text
-    except Exception:  # noqa: BLE001 — a body that will not read is not the news
+    except Exception:  # a body that will not read is not the news
         return lines
     if not isinstance(body, str) or not body.strip():
         return lines
@@ -304,7 +304,7 @@ def _cut_by_release(record: logging.LogRecord) -> bool:
         return isinstance(exc, asyncio.CancelledError) and _SHUTDOWN_CUT in str(exc)
     try:
         return _SHUTDOWN_CUT in record.getMessage()
-    except Exception:  # noqa: BLE001 — a bad format string is not our bug
+    except Exception:  # a bad format string is not our bug
         return False
 
 
@@ -352,7 +352,7 @@ class AlertOnError(logging.Handler):
         else:
             try:
                 title = record.getMessage()
-            except Exception:  # noqa: BLE001 — a bad format string is not our bug
+            except Exception:  # a bad format string is not our bug
                 title = str(event)
         title = title or record.name
         lines = [
@@ -405,7 +405,7 @@ class AlertOnError(logging.Handler):
                 return
             title, lines, key = self._summary(record)
             alerting.send(f"后端报错：{title}", lines, key=key, when=record.created)
-        except Exception:  # noqa: BLE001 — logging must never raise into a caller
+        except Exception:  # logging must never raise into a caller
             pass
 
 
@@ -481,7 +481,7 @@ def configure_logging() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
-def get_logger(name: str):  # noqa: ANN201 — structlog's own typing
+def get_logger(name: str):  # structlog's own typing
     return structlog.get_logger(name)
 
 
@@ -524,10 +524,10 @@ class ResponseIntegrityAudit:
     is nothing declared to compare against.
     """
 
-    def __init__(self, app) -> None:  # noqa: ANN001 — ASGI app
+    def __init__(self, app) -> None:  # ASGI app
         self.app = app
 
-    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+    async def __call__(self, scope, receive, send) -> None:
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
@@ -538,7 +538,7 @@ class ResponseIntegrityAudit:
         status: int | None = None
         started = False
 
-        async def _send(message) -> None:  # noqa: ANN001 — ASGI message
+        async def _send(message) -> None:  # ASGI message
             nonlocal declared, sent, status, started
             if message["type"] == "http.response.start":
                 started = True

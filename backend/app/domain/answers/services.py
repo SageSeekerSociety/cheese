@@ -1,10 +1,23 @@
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.answers.models import Answer
-from app.domain.answers.repositories import AnswerRepository
+from app.domain.answers.repositories import AnswerRepository, AnswerStats
+from app.domain.questions.lookup import ensure_question_exists
 from app.domain.questions.models import VoteType
 from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.author_dto import profile_to_author
 from app.domain.user.repositories import UserProfileRepository
+
+#: What a row shows when the stats query returned nothing for it. The query
+#: covers every requested id, so this is only a guard, never a normal path.
+_EMPTY_ANSWER_STATS: AnswerStats = {
+    "positive_count": 0,
+    "negative_count": 0,
+    "user_vote": None,
+    "favorite_count": 0,
+    "is_favorite": False,
+    "comment_count": 0,
+    "view_count": 0,
+}
 
 
 def _answer_to_dto(answer: Answer, author: dict | None = None) -> dict:
@@ -67,6 +80,10 @@ class AnswersService:
         profiles = await self._profile_repo.get_profiles_by_user_ids(author_ids)
         # 一次问清这批人各自挑没挑过头像，别一个个查。
         chosen = await self._profile_repo.chosen_avatar_ids(author_ids)
+        # 同理，统计一次问清整页的回答，不随条数增加轮次。
+        stats = await self._repo.answer_stats_for_ids(
+            answer_ids=[row.id for row in rows], viewer_id=viewer_id
+        )
         items: list[dict] = []
         for row in rows:
             dto = _answer_to_dto(
@@ -75,7 +92,7 @@ class AnswersService:
                     profiles.get(row.created_by_id), chosen.get(row.created_by_id)
                 ),
             )
-            await self._attach_answer_stats(dto, answer_id=row.id, viewer_id=viewer_id)
+            self._attach_answer_stats(dto, stats.get(row.id, _EMPTY_ANSWER_STATS))
             items.append(dto)
 
         returned = len(items)
@@ -97,37 +114,32 @@ class AnswersService:
         }
         return items, page
 
-    async def _attach_answer_stats(
-        self, dto: dict, *, answer_id: int, viewer_id: int | None
-    ) -> None:
+    @staticmethod
+    def _attach_answer_stats(dto: dict, stats: AnswerStats) -> None:
         """Add the user-facing stats the frontend Answer type requires.
 
-        Comment/view counts are placeholders (no DB column yet); attitudes and
-        favorite state are real. Keeping this in one place so list and detail
-        always agree.
+        The counters arrive already resolved for the viewer (see
+        ``AnswerRepository.answer_stats_for_ids``). Keeping this in one place
+        so list and detail always agree — and always in this key order, which
+        the response contract pins.
         """
-        counts = await self._repo.count_votes(answer_id)
-        positive_count = counts.get(VoteType.POSITIVE.value, 0)
-        negative_count = counts.get(VoteType.NEGATIVE.value, 0)
+        positive_count = stats["positive_count"]
+        negative_count = stats["negative_count"]
         user_attitude = "UNDEFINED"
-        if viewer_id:
-            vote = await self._repo.get_user_vote(answer_id, viewer_id)
-            if vote == VoteType.POSITIVE.value:
-                user_attitude = "POSITIVE"
-            elif vote == VoteType.NEGATIVE.value:
-                user_attitude = "NEGATIVE"
+        if stats["user_vote"] == VoteType.POSITIVE.value:
+            user_attitude = "POSITIVE"
+        elif stats["user_vote"] == VoteType.NEGATIVE.value:
+            user_attitude = "NEGATIVE"
         dto["attitudes"] = {
             "positive_count": positive_count,
             "negative_count": negative_count,
             "difference": positive_count - negative_count,
             "user_attitude": user_attitude,
         }
-        dto["favorite_count"] = await self._repo.count_favorites(answer_id)
-        dto["is_favorite"] = (
-            await self._repo.is_favorited(answer_id, viewer_id) if viewer_id else False
-        )
-        dto["comment_count"] = await self._repo.count_comments(answer_id)
-        dto["view_count"] = await self._repo.count_views(answer_id)
+        dto["favorite_count"] = stats["favorite_count"]
+        dto["is_favorite"] = stats["is_favorite"]
+        dto["comment_count"] = stats["comment_count"]
+        dto["view_count"] = stats["view_count"]
         dto["is_group"] = False
 
     async def create_answer(
@@ -154,9 +166,7 @@ class AnswersService:
         )
 
     async def _ensure_question_exists(self, question_id: int) -> None:
-        question = await self._question_repo.get_by_id(question_id)
-        if question is None:
-            raise NotFoundError("Question not found", data={"id": question_id})
+        await ensure_question_exists(self._question_repo, question_id)
 
     async def _ensure_answer_exists(self, answer_id: int) -> Answer:
         answer = await self._repo.get_by_id(answer_id)
@@ -234,7 +244,10 @@ class AnswersService:
             answer,
             author=profile_to_author(profile, chosen.get(answer.created_by_id)),
         )
-        await self._attach_answer_stats(dto, answer_id=answer_id, viewer_id=user_id)
+        stats = await self._repo.answer_stats_for_ids(
+            answer_ids=[answer_id], viewer_id=user_id
+        )
+        self._attach_answer_stats(dto, stats.get(answer_id, _EMPTY_ANSWER_STATS))
 
         question = await self._question_repo.get_by_id(answer.question_id)
         question_dto = None

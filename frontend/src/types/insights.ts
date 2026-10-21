@@ -21,22 +21,6 @@ export type InsightMedia = {
   meta: ImageMeta | VideoMeta
 }
 
-export type InsightMediaImage = {
-  material_id: number
-  created_at: number
-  type: 'image'
-  url: string
-  meta: ImageMeta
-}
-
-export type InsightMediaVideo = {
-  material_id: number
-  created_at: number
-  type: 'video'
-  url: string
-  meta: VideoMeta
-}
-
 export type InsightAttachment = {
   type: 'file' | 'link'
   url: string

@@ -1,6 +1,6 @@
 """守卫：名册只有一个读法，没人再就地拼第二份。
 
-这是一条**静态**测试，和 ``test_no_adhoc_auth_helpers`` 同一个例外：要守的东西本身
+这是一条**静态**测试，和 ``test_author_type_two_values`` 同一个例外：要守的东西本身
 就是源码树的一条性质。拼名册的那些写法每一处都答得出正确的 JSON——它们唯一的症状
 是两份答案会在某一个读者身上分叉，而上一次分叉的那个读者是 agent，人看不见（一个
 agent 列不出同项目的另一个 agent，结论 12 因此在代码上无法执行）。
@@ -71,3 +71,22 @@ def test_nobody_stitches_a_roster_out_of_people_and_agents():
         "名册不在调用点拼：人和队友是同一张名册的两个来源，合的地方只有一处。\n"
         + "\n".join(offenders)
     )
+
+
+def test_member_provenance_does_not_hide_a_teammate_from_roster_readers():
+    from app.domain.membership.roster import Member, rows_of
+
+    rows = rows_of(
+        [
+            Member(
+                handle="cheese-123456789abc",
+                name="Claude",
+                agent=True,
+                owner_handle="alice",
+            )
+        ]
+    )
+
+    assert {row["handle"]: row.get("owner_handle") for row in rows} == {
+        "cheese-123456789abc": "alice"
+    }

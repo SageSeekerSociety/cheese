@@ -28,6 +28,7 @@ from app.domain.agent.harness import (
     harness_name,
     harness_on,
 )
+from app.domain.agent.session_state import reports_lifecycle
 
 if TYPE_CHECKING:
     from app.domain.agent.harness import SessionRef
@@ -145,7 +146,6 @@ class ComputePool:
         images: "list[Image] | None" = None,
         *,
         register_input: "InputRegistrar",
-        expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
     ) -> bool:
@@ -153,9 +153,8 @@ class ComputePool:
         or was recovered.
 
         ``agent_handle`` aims the words at one seat. Without it the seats of
-        the room are tried one by one and each answers only for the seat whose
-        open work matches — a seat that is not working, or whose work is not
-        the expected one, says False and the next seat is asked.
+        the room are tried one by one — a seat whose session is not working
+        says False and the next seat is asked.
         """
         candidates = [
             runtime
@@ -172,7 +171,6 @@ class ComputePool:
                 text,
                 images=images,
                 register_input=register_input,
-                expected_work_id=expected_work_id,
                 agent_handle=agent_handle,
                 owes_reply=owes_reply,
             )
@@ -317,6 +315,31 @@ class ComputePool:
                 return runtime
         return None
 
+    def working_seats(self, topic_id: uuid.UUID) -> set[tuple[str, str]]:
+        """Every seat whose session in this room is at work, as its own handle
+        and the handle it acts under — the seats this process holds."""
+        return {
+            seat
+            for runtime in self._runtimes()
+            for seat in runtime.working_seats(topic_id)
+        }
+
+    def working_seat(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> tuple[str, str] | None:
+        """The seat whose session in this room is at work, as its own handle
+        and the handle it acts under: the one ``agent_handle`` names (by
+        either), or, unnamed, the room's only one. None when there is none —
+        or, unnamed, when several are, since picking one would be a guess.
+        Only a seat this process holds: words can be put only into a session
+        this process reads."""
+        seats = {
+            seat
+            for runtime in self._runtimes()
+            for seat in runtime.working_seats(topic_id, agent_handle)
+        }
+        return seats.pop() if len(seats) == 1 else None
+
     def work_in_flight(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> uuid.UUID | None:
@@ -426,13 +449,17 @@ def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
     # deferred-import: breaks the cycle session_host.host -> agent.compute
     from app.domain.agent.session_host.host import SessionHost
 
-    # One liveness policy for every harness (``docs/agent-liveness.md``): the
-    # room ends a turn on its evidence, whichever runner produced it.
-    policy = {
-        "hard_ceiling_s": settings.agent_turn_hard_ceiling_s,
-        "no_progress_s": settings.agent_no_progress_s,
-        "unread_grace_s": settings.agent_unread_grace_s,
-    }
+    # The room ends stuck work on its own clocks only for a harness whose
+    # runner does not (``Harness.reports_lifecycle``): one that reports in the
+    # lifecycle protocol is handed the same two limits when it is registered
+    # (`session_host.starting.register`) and ends it there.
+    def policy(name: str) -> dict:
+        own = not reports_lifecycle(name)
+        return {
+            "hard_ceiling_s": settings.agent_turn_hard_ceiling_s,
+            "no_progress_s": settings.agent_no_progress_s if own else 0.0,
+            "unread_grace_s": settings.agent_unread_grace_s if own else 0.0,
+        }
 
     # 一个骨架挂不挂得上一条通道，看它能不能把工具送到那条通道的手上。被
     # `CentralChannel` 包起来的，会话在中心机、手在执行机，所以只挂声明了
@@ -451,7 +478,7 @@ def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
     # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
     host = host or SessionHost()
     backends: list[RoomSessions] = [
-        RoomSessions(CentralChannel(DeviceChannel()), harness, host, **policy)
+        RoomSessions(CentralChannel(DeviceChannel()), harness, host, **policy(harness))
         for harness in HARNESSES
         if forwards(harness)
     ]
@@ -461,10 +488,10 @@ def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
     # the device transport.
     owned = {
         (CLAUDE_CODE, False): RoomSessions(
-            OwnerChannel(DeviceChannel()), CLAUDE_CODE, host, **policy
+            OwnerChannel(DeviceChannel()), CLAUDE_CODE, host, **policy(CLAUDE_CODE)
         ),
         (CLAUDE_CODE, True): RoomSessions(
-            AccountChannel(DeviceChannel()), CLAUDE_CODE, host, **policy
+            AccountChannel(DeviceChannel()), CLAUDE_CODE, host, **policy(CLAUDE_CODE)
         ),
     }
     return ComputePool(backends, owned)

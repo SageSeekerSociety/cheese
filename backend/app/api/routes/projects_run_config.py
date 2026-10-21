@@ -86,7 +86,7 @@ from app.domain.agent.environment import (
     parse,
     project_default,
 )
-from app.domain.agent_instance.configuration import model_choices
+from app.domain.agent.model_catalog import model_choices
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.environments import check_allowed, offered_specs
@@ -136,7 +136,7 @@ async def get_default_model(
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get(project_id)
     if project is None:
-        raise NotFoundError("Project not found")
+        raise NotFoundError(say("projectNotFound"))
     access = await UsageService(db).model_access(project.team_id)
     return ok(_default_model_state(project.settings, access))
 
@@ -208,7 +208,7 @@ async def get_compute_configs(
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get(project_id)
     if project is None:
-        raise NotFoundError("Project not found")
+        raise NotFoundError(say("projectNotFound"))
     # Whether this caller may move the agents already on a device elsewhere
     # (``list_device_sessions``), which stays a manager's. The default itself
     # is anyone's in the project.
@@ -235,7 +235,9 @@ async def get_compute_configs(
                     "device_id": d.device_id,
                     "name": d.name,
                     "online": device_hub.is_online(d.device_id),
-                    "owned": actor.via == "token" and actor.user_id == d.owner_user_id,
+                    "owned": actor.via == "token"
+                    and actor.user_id is not None
+                    and await sql_device_service(db).may_manage(d, actor.user_id),
                 }
                 for d in devices
             ],
@@ -271,16 +273,12 @@ async def list_device_sessions(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require(project_id, actor, Permission.edit_settings)
-    listed, hidden = [], 0
-    for topic, session in await device_sessions(db, project_id, device_id):
-        try:
-            await resolver.authorize_topic(
-                actor, project_id=project_id, topic_id=topic.id
-            )
-        except ForbiddenError:
-            hidden += 1
-            continue
-        listed.append(session)
+    placed = await device_sessions(db, project_id, device_id)
+    readable = await resolver.readable_topic_ids(
+        actor, project_id=project_id, topics=[topic for topic, _ in placed]
+    )
+    listed = [session for topic, session in placed if topic.id in readable]
+    hidden = len(placed) - len(listed)
     return ok({"sessions": listed, "hidden": hidden})
 
 
@@ -309,7 +307,7 @@ async def save_compute_configs(
     actor = await member_setting_actor(resolver, project_id)
     project = await ProjectService(db).get(project_id)
     if project is None:
-        raise NotFoundError("Project not found")
+        raise NotFoundError(say("projectNotFound"))
     patch: dict[str, object] = {}
     remove: list[str] = []
     if "default" in body.model_fields_set and body.default is not None:

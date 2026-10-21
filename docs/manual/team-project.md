@@ -194,7 +194,7 @@ parts:
     at: 3
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
-    button: 交给芝士
+    button: 发送并交给芝士（⌘/Ctrl+Enter）
     at: 3
 ```
 :::

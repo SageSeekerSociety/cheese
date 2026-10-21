@@ -21,6 +21,7 @@ import type { DocThreadsBundle } from '../../composables/useDocThreads'
 import type { useMentionOutside } from '../../composables/useMentionOutside'
 import type { PanelDocBundle, PanelDocument } from '../../composables/usePanelDoc'
 import type { Topic } from '../../cx_types'
+import type { DocAuthor } from '../../lib/docAuthors'
 import type { DocReviewRequest } from '../../lib/docReview'
 
 import { computed, ref, watch } from 'vue'
@@ -47,6 +48,8 @@ const props = withDefaults(
     agentHandle?: string | null
     /** 画在一整页里，见 PanelDocView。 */
     bare?: boolean
+    /** 文档的作者，标题下面那一行，见 PanelDocView。 */
+    authors?: DocAuthor[]
     /** 顶栏画到页面上的哪个位置，见 PanelDocView。 */
     barTo?: string
     /** 跟着外面那一列一起滚，见 PanelDocView。 */
@@ -67,6 +70,7 @@ const props = withDefaults(
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     bare: false,
+    authors: () => [],
     commentOutside: undefined,
     barTo: undefined,
     flow: false,
@@ -207,6 +211,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :notified-mentions="doc.notifiedMentions.value"
     :fetch-notified-mentions="doc.fetchNotifiedMentions"
     :bare="props.bare"
+    :authors="props.authors"
     :untitled="!!props.taskId"
     :bar-to="props.barTo"
     :flow="props.flow"
@@ -238,6 +243,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :stop-agent="doc.stopAgent"
     :answer-to-comment="doc.answerToComment"
     :apply-doc-edits="doc.applyEdits"
+    :undo-agent-changes="doc.undoAgentChanges"
     :last-edit="doc.lastEdit.value"
     :name-of="doc.nameOf"
     :avatar-of="avatarOf"

@@ -105,7 +105,6 @@ def test_each_section_of_a_merged_run_carries_its_own_status(capsys):
         [
             ("emit", 0, '{"settings_profile": {"name": "p"}}'),
             ("check", 1, "first-match guard: 2 provable shadow(s)"),
-            ("check-annotations", 0, "route annotations complete (1 addresses)"),
         ]
     )
 
@@ -115,8 +114,6 @@ def test_each_section_of_a_merged_run_carries_its_own_status(capsys):
         '{"settings_profile": {"name": "p"}}\n'
         "## route-index section check status 1\n"
         "first-match guard: 2 provable shadow(s)\n"
-        "## route-index section check-annotations status 0\n"
-        "route annotations complete (1 addresses)\n"
     )
 
     assert print_sections([("emit", 0, "{}"), ("check", 0, "")]) == 0

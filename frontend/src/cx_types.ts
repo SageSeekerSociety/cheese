@@ -6,7 +6,7 @@ import type { EnvironmentFailure } from './types/environment'
 export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
 export type { DeviceScreen } from './types/deviceSessions'
-export type { WaitingAsk, WaitingFace, WaitingItem, WaitingRun, WaitingWork } from './types/waiting'
+export type { WaitingAsk, WaitingFace, WaitingItem, WaitingRun, WaitingTask, WaitingWork } from './types/waiting'
 // 下面这四节领域类型搬去了 ./types/ 里各自一个模块（采纳卡/验收、资源池市场/节点看板/
 // 算力额度、self-hosted 设备连接器、反馈）。这里只把名字转出去，`@/cx_types` 对外的
 // 名字一个都没变 —— 模式同下面 profile 那一节；搬出去是因为本文件顶在行数上限上。
@@ -111,25 +111,15 @@ export interface Topic {
   // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）；多久算太久由侧栏按当下的钟
   // 判（`lib/replyWait.ts`）。只有 list/get 话题时才带。
   waits?: MemberWait[]
-  // 上一次有**输出**是什么时候：在跑的那一轮最后一帧（后端取整到分钟）。None =
-  // 此刻没有在跑的轮次，或者那个戳没记着——后端不编，前端也不编，「显示在跑、但五
-  // 分钟没动静」的红灯就靠它（`lib/roomLight.ts`）。只有 list/get 话题时才带。
-  last_output_at?: string | null
   // 这间房里**还没恢复**的轮次失败从什么时候开始（后端 `block/waits.py` 的
   // `unresolved_failures`）：这间房自己那条线、它的支线，或者它名下一件还没关的活里
-  // 最早的一条。None = 没有未恢复的失败。侧栏红灯的另一半看它——不只「在跑却没动静」，
-  // 也包括「停下报错、五分钟没人接手」（`lib/roomLight.ts` 判那五分钟）。只有 list/get
-  // 话题时才带。
+  // 最早的一条。None = 没有未恢复的失败。停下报错、五分钟没人接手，侧栏画红灯
+  // （`lib/roomLight.ts` 判那五分钟）。只有 list/get 话题时才带。
   incomplete_since?: string | null
-  // 这间房（或它名下的活）「交付完了、而**我**从那以后还没点开看过」——侧栏的长绿看它
+  // 这间房（或它名下的活）「交付完了、而**我**从那以后还没点开看过」——侧栏的绿灯看它
   // （`lib/roomLight.ts`）。点开会推已读位，服务端下一份就不再这么说，之前由本地先灭
   // （`stores/workspace` 的 `forgetReadLights`）。只对负责人和协作者算，没登录一律 false。
   unseen_delivery?: boolean
-  // 这间房里有没有活在往前走：有一轮在跑，或者走在交付链路上（等闸门、等 CI、修
-  // 检查、解冲突、换基）—— 含**它名下的活**那一半（后端 `presentation.work_moving`，
-  // 判据只写在那一处）。侧栏的呼吸绿看它（`lib/roomLight.ts`）。只有 list/get 话题时
-  // 才带，别处一律 false：私聊和项目本体没有「名下的活」这一层。
-  moving?: boolean
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
@@ -160,9 +150,6 @@ export interface BlockMeta extends AskBlockMeta {
   // 这一步的工具报错回来了，以及它最后说的那截。成功的步骤两个都没有。
   failed?: boolean
   error?: string
-  // 这一步打印了多少（字节，抹掉凭据之后）。有它就说明后端留了一截末尾可看，
-  // 那一截本身不在这里，摊开时再取（api.getStepOutput）。
-  output_bytes?: number
   platform?: boolean
   // 现场工具的显示名；action 则表示平台动作指向的资源。
   as_tool?: string
@@ -183,17 +170,20 @@ export interface BlockMeta extends AskBlockMeta {
   quoted_context?: import('./lib/quotedContext').QuotedContext
 }
 
-/** 一段脚本里调过的一样工具（pi 的 codemode），记在脚本那一步的 `meta.calls` 上。 */
-export interface ScriptCall {
-  tool: string
-  arg: string
-  failed?: boolean
-}
-
 export interface ChecklistMeta {
   items: TodoItem[]
   /** 做完时队友写的一句结果。 */
   result: string | null
+}
+
+/** A reply's parent when the reader's page does not hold it: one line, not the block. */
+export interface ReplyPreview {
+  id: string
+  kind: string
+  author_type: AuthorType
+  author: string
+  content: string
+  mime_type?: string | null
 }
 
 export interface Block {
@@ -209,6 +199,9 @@ export interface Block {
   // this page is still sending.
   seq?: number
   reply_to?: string | null
+  // What the parent said, when the page does not carry the parent itself. The
+  // cue draws this line; the parent never enters the timeline.
+  reply_preview?: ReplyPreview
   anchor_quote?: string | null
   // Render-by-type: mimeType of an artifact block (set on kind=artifact).
   mime_type?: string | null
@@ -284,6 +277,14 @@ export interface RoomTask {
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
   document_id?: string | null // 实况文档；第一次打开任务时才建
   conclusion?: string | null
+  // 做它的 AI 队友最后一次报的状态（后端 `room_task/progress.py`）：看板那一格已经按它
+  // 算好在 `presentation` 里，这几位是页头那一句的出处。没报过时都是 null。
+  progress_state?: TaskProgressState | null
+  progress_note?: string | null
+  progress_set_at?: string | null
+  progress_set_by?: string | null
+  // 它报完之后会话结束了：页头在它报的那一句旁边写「已离开」，不改它报的。
+  agent_left_at?: string | null
   base_branch?: string | null
   base_task_id?: string | null
   historical_delivery_id?: string | null
@@ -305,21 +306,12 @@ export interface RoomTask {
   awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
   waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
-  // 在跑的那一轮上一次有**输出**是什么时候（侧栏这份行才带；说不出来是 null，后端
-  // 取整到分钟）：侧栏任务行的红灯看它（`lib/roomLight.ts`）。和频道行那一头同一个
-  // 来源、同一个形状。None = 没有在跑的轮次，或者那个进程说不了——那种「不知道」不
-  // 当成「很新」用，也不当成卡住（不画红）。
-  last_output_at?: string | null
   // 这条活上**还没恢复**的轮次失败从什么时候开始（侧栏这份行才带；`block/waits.py`
-  // 的 `unresolved_failures`）：一条活停下来报错、五分钟还没人接手，也和「在跑却没
-  // 动静」一样画红灯（`lib/roomLight.ts` 判那五分钟）。判据是「那一轮的队友又说话了」
+  // 的 `unresolved_failures`）：一条活停下来报错、五分钟还没人接手，画红灯
+  // （`lib/roomLight.ts` 判那五分钟）。判据是「那一轮的队友又说话了」
   // 或者「这里又开了一轮」，不是「过了多久」。别的调用方不带这一位，读作 null——不亮。
   incomplete_since?: string | null
-  // 这条活在不在往前走（侧栏这份行才带）：有一轮在跑，或者走在交付链路上。判据在
-  // 后端 `presentation.work_moving`，和频道行那一头同一个来源。别的调用方不带这一位，
-  // 读作 false——不亮，不是「亮着但说不清」。
-  moving?: boolean
-  // 这件活交付完了、而**我**从那以后还没点开看过（侧栏这份行才带）：侧栏的长绿看它
+  // 这件活交付完了、而**我**从那以后还没点开看过（侧栏这份行才带）：侧栏的绿灯看它
   // （`lib/roomLight.ts`），和频道行那一头同一个来源。别的调用方（项目级列表、
   // 频道里的全部任务）不带这一位，读作 false——不亮，不是「亮着但说不清」。
   unseen_delivery?: boolean
@@ -343,9 +335,12 @@ export interface RoomTask {
  */
 export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 
-type BuildingPhrase = 'running' | 'started' | 'idle' | 'draft'
+/** 任务的 AI 队友自己报的状态（后端 `TaskProgress`）。 */
+export type TaskProgressState = 'working' | 'waiting' | 'blocked'
+
+type BuildingPhrase = 'running' | 'waiting' | 'started' | 'idle' | 'draft'
 type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
-type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer'
+type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer' | 'blocked'
 type DonePhrase = 'accepted' | 'completed' | 'closed' | 'archived'
 export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | DonePhrase
 
@@ -695,10 +690,11 @@ export interface ForgeConnection {
   url: string | null
 }
 
-export interface ForgeAttribution {
-  requester_coauthor: boolean | null
-  effective: boolean
-  deployment_default: boolean
+/** Who a project's deliveries are credited to: the task owner, or the AI teammate. */
+export type CommitCreditMode = 'owner' | 'agent'
+
+export interface CommitCredit {
+  mode: CommitCreditMode
 }
 
 // A user's OAuth/App connections — GET /users/{userId}/oauth/connections

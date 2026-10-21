@@ -1,9 +1,4 @@
-"""What the API lists: a project's own agents, and a reader's own connections.
-
-Both are reads over what the rest of this package already answers — everyone in
-the project sees whose each agent is and what it runs on; the machine it is on,
-and whether that machine is online, only its owner does.
-"""
+"""Project teammates and available team connections."""
 
 import uuid
 from typing import Any
@@ -17,9 +12,8 @@ from app.domain.agent_instance.own.ownership import (
     connections_of,
     owned_rows_in_project,
 )
-from app.domain.agent_instance.own.settings import allows
-from app.domain.device.mcp_machines import names as device_names
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.project.models import Project
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle
 
@@ -31,12 +25,7 @@ async def listing(
     is_online,
     project_settings: dict[str, Any] | None,
 ) -> list[dict]:
-    """The members' own agents a project has: whose each one is, who may call
-    it, and the model connection it runs on (None once that is gone) and
-    whether the project allows that connection. Everyone
-    in the project reads that much; the machine holding the connection, and
-    whether it is online, only its owner reads (``machine`` is None for
-    everyone else)."""
+    """Project readers see its teammates, team connections and credential devices."""
 
     active = [
         (instance, owned)
@@ -57,30 +46,27 @@ async def listing(
         )
     }
     faces = await faces_by_handle(db, [owner.username for owner in owners.values()])
-    machines = await device_names(
-        db,
-        [
-            owned.device_id
-            for _, owned in active
-            if viewer_user_id == owned.owner_user_id and owned.device_id is not None
-        ],
-    )
+    project = await db.get(Project, project_id)
     rows = []
     for instance, owned in active:
         login = connections[instance.id]
-        owner = owners.get(owned.owner_user_id)
-        mine = viewer_user_id is not None and viewer_user_id == owned.owner_user_id
+        owner = (
+            owners.get(owned.owner_user_id)
+            if login is None or login.owner_user_id is not None
+            else None
+        )
         machine = None
-        if mine and owned.device_id is not None and owned.device_id in machines:
+        if login is not None and owned.device_id is not None and project is not None:
             machine = {
-                "name": machines[owned.device_id],
+                "name": login.storage_name(project.team_id, viewer_user_id),
                 "online": bool(is_online(owned.device_id)),
             }
         rows.append(
             {
                 "handle": agent_instance_handle(instance.id),
                 "name": instance.display_name,
-                "callers": owned.callers.value,
+                "model": (instance.configuration or {}).get("model"),
+                "device_id": (instance.configuration or {}).get("execution_device_id"),
                 "owner_handle": owner.username if owner else None,
                 "owner_name": (
                     faces.get(owner.username, (None, None))[0] or owner.username
@@ -92,7 +78,7 @@ async def listing(
                     "plan": login.plan,
                     "model": login.model,
                     "on_account": login.on_account,
-                    "allowed": allows(login, project_settings),
+                    "allowed_models": list(login.allowed_models),
                 }
                 if login is not None
                 else None,
@@ -105,26 +91,27 @@ async def listing(
 async def my_connections(
     db: AsyncSession,
     project_id: uuid.UUID,
-    viewer_user_id: int,
+    viewer_user_id: int | None,
     project_settings: dict[str, Any] | None,
     is_online,
 ) -> list[dict]:
-    """The reader's own connections, for them to add to this project: each
-    with whether it is already here and whether the project allows its kind."""
+    """Team connections available for this project, including existing uses."""
     here = {
-        _connection_key(device_id, account_id)
-        for device_id, account_id in (
+        _connection_key(login_id, account_id)
+        for login_id, account_id in (
             await db.execute(
-                select(OwnAgent.device_id, OwnAgent.account_connection_id)
+                select(OwnAgent.login_id, OwnAgent.account_connection_id)
                 .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
                 .where(
                     AgentInstance.project_id == project_id,
                     AgentInstance.is_active.is_(True),
-                    OwnAgent.owner_user_id == viewer_user_id,
                 )
             )
         ).all()
     }
+    project = await db.get(Project, project_id)
+    if project is None:
+        return []
     return [
         {
             "id": login.id,
@@ -134,11 +121,12 @@ async def my_connections(
             "name": login.name,
             "service_host": login.service_host,
             "on_account": login.on_account,
-            "machine_name": login.device_name,
-            # One the account holds runs on the platform's session host.
+            "machine_name": login.storage_name(project.team_id, viewer_user_id),
+            "owner_user_id": login.owner_user_id,
             "online": login.on_account or bool(is_online(login.device_id)),
             "added": login.id in here,
-            "allowed": allows(login, project_settings),
+            "allowed_models": list(login.allowed_models),
         }
-        for login in await logins(db, viewer_user_id)
+        for login in await logins(db, project.team_id)
+        if login.owner_user_id is None or login.owner_user_id == viewer_user_id
     ]

@@ -53,8 +53,7 @@ async def _remind(session: AsyncSession, now: datetime) -> int:
     last_said = await TaskService(session).last_block_at_for_tasks(ids)
     cards = await latest_cards_by_task(session, ids)
     asked = await awaiting_an_answer(session, ids)
-    topics = TopicService(session)
-    reminded = 0
+    due = []
     for task in tasks:
         shown = presentation.task_presentation(
             presentation.facts_for_task(
@@ -62,19 +61,26 @@ async def _remind(session: AsyncSession, now: datetime) -> int:
             ),
             now=now,
         )
-        # 「在跑」不问跑轮次的进程：一轮在跑就会一直落 block，安静三天的任务不会有
-        # 一轮正在跑。
         since = presentation.quiet_since(
-            shown,
-            running=False,
-            last_activity=last_said.get(task.id) or task.created_at,
+            shown, last_activity=last_said.get(task.id) or task.created_at
         )
         if since is None:
             continue
         quiet = now - since
         if not (presentation.QUIET_NOTICE_AFTER <= quiet < presentation.STALLED_AFTER):
             continue
-        room = await topics.get(task.room_id)
+        due.append((task, since, quiet))
+    if not due:
+        return 0
+    rooms = {
+        t.id: t
+        for t in await TopicService(session).get_many(
+            {task.room_id for task, _, _ in due}
+        )
+    }
+    reminded = 0
+    for task, since, quiet in due:
+        room = rooms.get(task.room_id)
         if room is None or str(room.status) == "archived":
             continue
         content = say("taskQuiet", title=task.title, days=quiet.days)

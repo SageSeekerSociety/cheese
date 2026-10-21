@@ -116,11 +116,13 @@ class UserRepository:
 
     async def is_username_taken(self, username: str) -> bool:
         """Case-insensitive, matching ``uq_user_username_lower`` — and a team's
-        handle takes the name too: users and teams share one namespace."""
+        handle takes the name too: users and teams share one namespace.
+
+        A closed account keeps its name for good (``app.domain.account.deletion``):
+        rooms, rosters and reviews still name it, and a newcomer under that name
+        would inherit them."""
         lowered = username.lower()
-        user = select(User.id).where(
-            func.lower(User.username) == lowered, User.deleted_at.is_(None)
-        )
+        user = select(User.id).where(func.lower(User.username) == lowered)
         team = select(Team.id).where(
             func.lower(Team.handle) == lowered, Team.deleted_at.is_(None)
         )
@@ -184,12 +186,16 @@ class UserRepository:
             user.hashed_password = hashed_password
             await self._session.flush()
 
-    async def get_by_ids(self, user_ids: Sequence[int]) -> dict[int, User]:
+    async def get_by_ids(
+        self, user_ids: Sequence[int], *, include_closed: bool = False
+    ) -> dict[int, User]:
+        """Live accounts by id; ``include_closed`` adds closed ones, for records
+        that keep naming them (``app.domain.account.deletion``)."""
         if not user_ids:
             return {}
-        stmt: Select[tuple[User]] = select(User).where(
-            User.id.in_(list(user_ids)), User.deleted_at.is_(None)
-        )
+        stmt: Select[tuple[User]] = select(User).where(User.id.in_(list(user_ids)))
+        if not include_closed:
+            stmt = stmt.where(User.deleted_at.is_(None))
         result = await self._session.execute(stmt)
         users = list(result.scalars().all())
         return {u.id: u for u in users}
@@ -292,16 +298,17 @@ class UserProfileRepository:
         self._session = session
 
     async def get_profiles_by_user_ids(
-        self, user_ids: Sequence[int]
+        self, user_ids: Sequence[int], *, include_closed: bool = False
     ) -> dict[int, UserProfile]:
+        """Live profiles by user id; ``include_closed`` adds a closed account's,
+        which closing has already renamed to 「已注销用户」."""
         if not user_ids:
             return {}
         stmt: Select[tuple[UserProfile]] = select(UserProfile).where(
-            and_(
-                UserProfile.user_id.in_(list(user_ids)),
-                UserProfile.deleted_at.is_(None),
-            )
+            UserProfile.user_id.in_(list(user_ids))
         )
+        if not include_closed:
+            stmt = stmt.where(UserProfile.deleted_at.is_(None))
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
         return {row.user_id: row for row in rows}

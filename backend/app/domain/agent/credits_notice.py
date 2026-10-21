@@ -46,7 +46,7 @@ async def note_credits_refusal(
             flipped = await repo.mark_credits_refused(turn_id, datetime.now(UTC))
             if flipped:
                 await session.commit()
-    except Exception:  # noqa: BLE001 — see docstring
+    except Exception:  # see docstring
         logger.exception("could not stamp credits-refused for topic %s", topic_id)
         return
     if not flipped or turn_id is None:
@@ -61,7 +61,7 @@ async def note_credits_refusal(
                 str(topic_id),
                 error_frame(line, type="error", persisted=True),
             )
-    except Exception:  # noqa: BLE001 — see docstring
+    except Exception:  # see docstring
         logger.exception("could not post credits-refused notice for topic %s", topic_id)
 
 
@@ -80,6 +80,6 @@ async def spent_reason(
                 return None
             balance = await Ledger(session).balance(payer)
             return str(balance.refusal().message)
-    except Exception:  # noqa: BLE001 — the room still gets the general line
+    except Exception:  # the room still gets the general line
         logger.exception("could not read the credits refusal for %s", project_id)
         return None

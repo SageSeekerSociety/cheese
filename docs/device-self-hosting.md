@@ -2,7 +2,7 @@
 
 Enrolled devices provide execution for ordinary rooms: project files, shell commands, environment scripts, custom stdio MCP processes and preview. Claude Code runs, under its runner, on the central session host configured by `AGENT_SESSION_DEVICE_ID`. Both locations use the existing connector, with separate recorded placement and storage. See `remote-execution.md` for setup and migration.
 
-设备是**纯算力**：它不含 agent 身份，agent 由项目/话题在请求开始时独立解析（agent = 屏幕，不是机器）。设备永远向服务器**拨出**（非入站），带退避重连 + 心跳，所以躲在 NAT/防火墙后的笔记本也能托管 agent、**零入站端口**。
+设备是**纯算力**：它不含 agent 身份，agent 由项目/频道在请求开始时独立解析（agent = 屏幕，不是机器）。设备永远向服务器**拨出**（非入站），带退避重连 + 心跳，所以躲在 NAT/防火墙后的笔记本也能托管 agent、**零入站端口**。
 
 ---
 
@@ -10,13 +10,13 @@ Enrolled devices provide execution for ordinary rooms: project files, shell comm
 
 > 执行环境（沙箱，还是整台机器）见 **#2320** 和 `where-a-turn-runs.md` §四。本节只讲**已落地、改代码必须守住**的一条约束。
 
-只适用于 **Hosted**（人接入的常驻机器）：那是别人的笔记本、别人的 `claude`，他借我们算力，不是把机器交给我们。**Cloud 不适用**——平台按话题开的一次性机器，随便处置。
+只适用于 **Hosted**（人接入的常驻机器）：那是别人的笔记本、别人的 `claude`，他借我们算力，不是把机器交给我们。**Cloud 不适用**——平台按频道开的一次性机器，随便处置。
 
 **判据：除了我们放进去的东西，机器上任何一样在我们来之前是什么样，走之后还是什么样。**
 
 - Cheese installs its Claude build at `~/.cheese/claude/versions/<pin>`. It leaves the owner's version store and `~/.local/bin/claude` unchanged.
 - Session configuration, home and worktrees live under Cheese-owned directories. Machine credentials are read from the owner's configuration under the existing authorization; the launcher writes neither the owner's `~/.claude` nor project configuration. Native skills live in the session's `$CLAUDE_CONFIG_DIR/skills/`.
-- This boundary applies to the Cheese integration. A session on an enrolled machine runs its tools in a bubblewrap sandbox (a `devices_of:<owner>` spec), and over the whole machine only when the machine's owner chose that machine for it (`self_hosted`, `where-a-turn-runs.md` §四). Nothing is installed with the owner's sudo: a Linux machine without unprivileged user namespaces says so on its owner's devices page and is given no sandbox.
+- This boundary applies to the Cheese integration. A session on an enrolled machine runs its tools in a bubblewrap sandbox (a `team_devices` spec), and over the whole machine only when an administrator of the device's team chose that machine for it (`self_hosted`, `where-a-turn-runs.md` §四). Nothing is installed with the owner's sudo: a Linux machine without unprivileged user namespaces says so on its team's devices page and is given no sandbox.
 - 装在**他能写的目录**——否则自更新永远失败，且无声（#501）。
 
 ### 为什么这条特别容易破
@@ -68,15 +68,44 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
 
 **macOS 没有 linger 的对应物，也不打算造一个。** LaunchAgent 活在机主的登录会话里（实测：job 落在 `gui/501` 域，`type = login`、`creator = loginwindow`；非 root `launchctl bootstrap user/501` 直接 `Bootstrap failed: 5`）。他登录时起、登出时停、下次登录再起。**一台没人登录的 Mac 不托管**——这是「不问别人要管理员密码」的诚实代价，不是漏了一个 case。真要 headless Mac，那是 LaunchDaemon、是一个新决定，不是在这里留一个开关等着被捡起来。
 
-**机器上已经有 root 装的 cheese service 时，`link connect` 拒绝安装**，并打印删掉它的命令。桌面端在 Mac 上接入前先找这个服务，有就用系统的管理员密码框把它移除，不让人去终端。同一个账户下跑两个 connector 比一个都没有更糟：共用一份 device 凭据、共用同一个 tmux server，互相收养又互相拆掉对方的屏幕。
+If a machine-wide cheese service is already installed, `link connect` refuses installation and prints its removal commands. The Mac desktop app removes that service through the administrator dialog before connecting. Separate enrollments run as separate user services; two processes using the same profile would still share a device credential and tmux server.
+
+### Enrollment profiles
+
+An enrollment is an execution resource. Each profile keeps its own device credential, service, workspace, tmux socket and runtime state. The existing installation is the `default` profile and keeps its config, service name and socket without re-enrollment.
+
+To add another enrollment, run `cheesehost auth login <origin>/connector` again. It keeps the existing enrollment and prints the new name (`profile-2`, then `profile-3`, and so on). To choose a name, use:
+
+```sh
+cheesehost --profile research auth login <origin>/connector
+cheesehost --profile research link connect
+cheesehost --profile research status
+cheesehost --profile research uninstall
+```
+
+Commands without `--profile` address `default`. An explicit login to an already enrolled profile refuses to replace its credential. `--config` remains available for a specific config file and cannot be combined with `--profile`.
+
+| Resource | Default profile | Named profile `research` |
+| --- | --- | --- |
+| Config | `<user-config>/cheese/config.json` | `<user-config>/cheese/profiles/research/config.json` |
+| Workspace | `~/.cheese/` | `~/.cheese/profiles/research/` |
+| Service | `cheese` | `cheese-research` |
+| State | Beside the config | Beside the profile config |
+| tmux | Original per-user socket | Separate stable socket for this profile |
+
+`<user-config>` is `~/.config` on Linux unless `XDG_CONFIG_HOME` is set, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows. The desktop app reuses an enrollment of the selected team, or creates a named `team-<id>` profile for a new team.
+
+The connector supplies `CHEESE_PROFILE_ROOT` to execution commands and screens. Backend paths, harness state, executor releases, sandbox records and cleanup resolve that root on the machine. The connector announces `profiles` in `hello`; a connector that does not (one built before profiles) is a default-profile machine, and the hub writes `.cheese` into the paths it resolves itself until its update lands. Uninstall removes the selected profile's service, config and workspace. Uninstalling `default` preserves the other profiles under `profiles/`.
+
+Claude credentials record their own team and personal owner, independently of any execution-device enrollment. A profile chooses their local storage and connector transport. Subscription directories live at `<profile-root>/logins/claude-logins/<id>`; an existing first login keeps `<profile-root>/logins/claude-login`. Login, status, logout, probes and session launches select that profile. On first start, the connector moves the old shared store into the single profile, preserving its macOS Keychain entries; when several profiles exist, the default profile inherits it. Old paths are removed after the move; one recreated afterwards by a session started before it is left in place and no longer read. Uninstall removes the selected profile's logins. While another profile remains, shared binaries, runtime skill cache and the connector's PATH entry stay; the last uninstall removes the whole installation.
 
 ---
 
 ## 1. 设备入册流程
 
-完整链路（装 → 登录 → 批准 → 上线 → 绑定 → 选用）：
+完整链路（装 → 选择团队并批准 → 上线 → 选用）：
 
-1. **装连接器（目标机器上）**。在「设置 → 设备 → 添加设备」复制这条，或在目标机器直接跑：
+1. **装连接器（目标机器上）**。在团队的「设备 → 接入设备」复制这条，或在目标机器直接跑：
    ```bash
    curl -fsSL <origin>/connector/install.sh | sh
    ```
@@ -86,17 +115,17 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
    ```powershell
    irm <origin>/connector/install.ps1 | iex
    ```
-   它把 `cheesehost.exe` 放到 `%LOCALAPPDATA%\cheese\bin` 并加进用户 PATH，不需要管理员；`cheesehost uninstall` 会把这条 PATH 一并去掉。校验与 `install.sh` 相同。
+   It puts `cheesehost.exe` in `%LOCALAPPDATA%\cheese\bin` and adds it to the user's PATH without administrator rights. Uninstalling the last enrollment removes the binary and that PATH entry; uninstalling one of several leaves them. Checksum verification follows `install.sh`.
 
 2. **`cheesehost link connect <origin>/connector`**。这台机器还没登录，它先走登录：CLI 打 `POST /connector/auth/device/start`，拿回 `device_code`，打印一个 `approve_url`（指向前端 `/connect?code=<code>`），然后**阻塞轮询** `POST /connector/auth/device/poll`，等人批准。
 
-3. **人在网页批准**。打开 `approve_url`，登录后落到前端 `/connect` 审批页（批准**在登录态后面**，没有裸批准按钮）：可给节点改名、可选绑定一个项目，提交即 `POST /connector/connect`——把设备绑到当前用户为 owner，签发**不过期的 durable token**（只能服务端撤销）。
+3. **人在网页批准**。打开 `approve_url`，登录后落到前端 `/connect` 审批页（批准**在登录态后面**，没有裸批准按钮）：可给节点改名、选择所属团队（默认个人团队），提交即 `POST /connector/connect`，写入唯一的 `team_id` 并保留接入人的身份作为来源记录，签发**不过期的 durable token**（只能服务端撤销）。
 
 4. **同一条命令接着上线**。CLI 轮询拿到 token，写入 `~/.config/cheese/config.json`，随即拨出 `WS /connector/agent`，用 durable token 鉴权。握手成功后这台机器在 `device_hub` 里标记为在线。`cheesehost link auto-connect` 可让它开机自动重连。**这一步不需要 sudo**：service 装在当前账户下（Linux 顺带 `loginctl enable-linger`，macOS 是 LaunchAgent），细节和它的边界见 §0。
 
-5. **绑定项目/团队**。在「设置 → 设备」或各团队的「工作电脑」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
+5. **团队管理**。设备接入后即属于所选团队。团队管理员在「设备」页改名或移除接入，所有团队项目均可使用。接入人离开团队后没有额外管理权。没有项目级绑定或借给其他团队的操作；同一台电脑为另一团队接入独立 profile。
 
-6. **话题选 device 算力**。两种姿势：
+6. **频道选 device 算力**。两种姿势：
    - **全局**：不配 Cloud 的部署，整个算力池就是 DeviceChannel，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
    - Room and project settings select `device` or `cloud` for execution. The catalogue requires an online enrolled device before offering it.
    - Each room retains its selected execution device and its separately recorded session host. An offline device prevents further execution; the platform does not move its worktree to another machine automatically.
@@ -116,7 +145,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 | **curl** | `install.sh` 用 curl 下二进制 | 必须 |
 | **sha256sum**（coreutils）/ **shasum** / **openssl**（任一） | `install.sh` 算下载文件的 sha256，与响应头 `X-Checksum-SHA256` 比对 | 必须，Linux 上有前两个、macOS 上有后两个，三个都没有则拒绝安装 |
 | **tmux** | 把 runner 和它握着的 `claude` 养在持久会话里，链路掉线不丢进程 | 必须。连接器没有 tmux 就直接退出，所以 `link connect` 在批准之前先找一遍 tmux，找不到就停下并说明怎么装；桌面端在 Mac 上自带一份 |
-| **git** | agent 把项目 clone 进工作目录、把话题分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
+| **git** | agent 把项目 clone 进工作目录、把频道分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
 | **python3**（3.11 以上） | 会话的运行程序（runner）、执行器，以及平台发到机器上跑的小工具（计量隧道、`cheese serve` 的预览隧道）。只用标准库，机器上不需要 venv、不需要 `pip install` | 必须。机器上的 `python3` 低于 3.11 或者没有时（每台 Mac 自带的 `/usr/bin/python3` 都是 3.9），连接器从服务器的 toolchain 路由取一份固定版本（python-build-standalone）放到 `~/.cheese/runtime/python`，排到自己 PATH 的最前面；会话窗口也带着这个 PATH 启动。取不到时连接照常，后台服务下次启动再取 |
 | **claude** (Claude Code CLI) | Central model session, or native file tools on an executor | Required; supplied by the platform |
 | **cheesehost** 连接器 | `install.sh` 装到 `~/.local/bin/`；必须装在**该服务自己能写的目录**里，否则自更新永远失败且无声（#501） |
@@ -128,11 +157,15 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 平台字符串用**厂商的词汇**（`linux-x64`、`linux-arm64-musl`），不是我们的 `<os>-<arch>`——我们的命名表达不了 musl，而只有机器知道自己的 libc。
 
-### 机主自己的 Claude Code 登录
+### Claude subscription credentials
 
-机主可以把自己的 Claude 账号或 API key 交给这台机器上平台运行的 Claude Code（#2991）：在机器上运行 `cheesehost claude login`。它先向服务器问平台钉的版本（`GET <origin>/connector/claude/pin`），机器上没有就从上面那条路由下载到 `~/.cheese/claude/versions/<version>`，再以 `CLAUDE_CONFIG_DIR=~/.cheese/claude-login` 运行 `claude auth login`。登录只在这个目录里，机主自己的 `~/.claude` 不读也不写，两边各有一对 token、各自续期。`cheesehost claude status` 和 `cheesehost claude logout` 查看和注销这份登录。机主也可以不用 Claude 账号，改用兼容 Anthropic 接口的其他模型服务：`cheesehost claude login --base-url <地址> --model <模型>`，密钥从环境变量 `CHEESE_MODEL_TOKEN` 读，没有就在终端里问。三项存在 `~/.cheese/claude-login/model-service.json`（只有机主可读），有这个文件时启动会话导出 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`，并把 `ANTHROPIC_MODEL`、三档默认模型和分身模型都设成这个模型；平台探测登录时只带回模型名，不带密钥。不带 `--base-url` 再登录一次，或者 `logout`，都会删掉这个文件。
+Add a subscription from the team's Models page. The desktop app runs the login on the current computer with its current profile. On the web, run the displayed `cheesehost claude login --server <server> --ticket <ticket>` command on the computer that will store the login. The single-use authorization expires after 15 minutes. This creates a model credential without enrolling an execution device, and each authorization creates an independent login directory.
 
-机器每次连上，后端经 `hub.exec(["python3", "-"])` 在机器上跑 `claude auth status`（不调用模型），把答案记进 `device_claude_login`（`harness/claude_code/owner_login.py`）。只问人接入的机器，云机器不问。
+The connector asks `GET <origin>/connector/claude/pin` for the pinned version, downloads it to `~/.cheese/claude/versions/<version>` when needed, and runs `claude auth login` with the login's own `CLAUDE_CONFIG_DIR`. `cheesehost --profile <profile> claude login --login <id>` signs an existing login in again. `claude status` lists the selected profile's logins; `claude logout <id>` removes one, with the id optional when there is only one. Each login has its own refresh cycle; the owner's `~/.claude` is untouched.
+
+Add API keys and Anthropic-compatible model services through the team's Models page. Their keys are encrypted on the platform and have no storage computer.
+
+When a credential host connects, the backend runs `claude auth status` through its connector for each registered subscription, without calling a model. It updates the registered login's status, including the Claude account email and organization the command reports, which the team's Models page shows to tell logins apart (a personal login's account only to its owner); it does not discover credentials from execution-device ownership. A credential-only host and an enrolled execution device can use the same transport.
 
 **入册时缺任何一样都是 fatal**，理由同 §0：留到后面发现的失败，全都出现在没人看的地方。
 
@@ -154,7 +187,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 每台 Device 都有自己的文件系统边界，物理上是否碰巧与后端同机不改变协议：
 
-- Each device stores room state under `$HOME/.cheese/home/{project_id}/{resource_id}`. The room directory is `room/` under that home, and task checkouts live under `.cheese/tasks/{task_id}`. A closed task's checkout is removed once its work is on the forge: when the task closes, or when the device next connects if it was offline then. One holding uncommitted files, unpushed commits or a running process is kept. A reclaimed room receives a new resource UUID when reopened.
+- Each device stores room state under `home/{project_id}/{resource_id}` within its profile's workspace root. The room directory is `room/` under that home, and task checkouts live under the room's `.cheese/tasks/{task_id}`. A closed task's checkout is removed once its work is on the forge: when the task closes, or when the device next connects if it was offline then. One holding uncommitted files, unpushed commits or a running process is kept. A reclaimed room receives a new resource UUID when reopened.
 - `cheese worktree` fetches each task branch through authenticated Git HTTP. The central Stop hook runs a checkpoint that invokes `cheese-sync` on that execution device to publish task work.
 - Image attachments travel inside the message written to the session; no file is staged on either machine.
 - 后端从不把自己的 topic workspace 路径翻译成设备路径，也不跳过复制。仓库中没有“后端与设备共享 workspace”的配置或分支。
@@ -180,29 +213,33 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 ### 5.1 屏幕面板显示什么
 
-- **「设置 → 设备」**（`/users/settings/devices`）：每台设备一个绿/灰圆点（在线/离线，来自 `device_hub.is_online`）、算力节点 id、在为哪些小队提供算力、运行中的 agent 现场 chip（每个 screen 带自己的 agent handle——设备本身不是 agent）。空白 = 还没连接的设备。
-- **「现场」面板**：浏览器里**只读**的真终端，字节级 relay 设备上那块 screen 的输出。screen 里跑的是 runner，`claude` 在它下面 headless 运行，所以这里看不到 `claude` 的界面；只能发 `resize` 控制帧，**不能敲键**。空白/连不上 = screen 没开，或你无权看（无权与未知 screen 以同样的 1008 关闭，不可枚举）。
+- **团队「设备」页**（`/teams/:handle/compute`）：列出团队的接入、在线状态和只读登录摘要。管理员可以改名、移除和接入设备。桌面端「设置 → 这台设备」只读列出本机各次接入、所属团队和管理页链接。
+- **「现场」面板**：读这个会话的原始记录（`session_records`，见[会话记录](manual/dev/session-records.md)），默认是概览，也可以切到原始视图看思考、完整的工具输入输出和 JSON。screen 里跑的是 runner，`claude` 在它下面 headless 运行；产品里没有直接看那块 screen 终端的面板。
 
-### 5.2 会话记录走哪条路径
+### 5.2 会话记录和生命周期事件走哪条路径
 
 ```
 设备侧                                          后端侧
-claude -p 的 stdout（stream-json）               读循环按游标向 runner 要新记录
-  → runner 按到达顺序编号、写进本地日志           → 镜像进后端那份日志（同一编号，
-     （records.sqlite）                             重复的一页只落一次）
-  → 子 agent / workflow 的记录文件也由它跟读      → 翻译成房间事件，落地之后推进游标
+claude -p 的 stdout（stream-json）               读循环带着登记的 epoch 向 runner 要新东西
+  → runner 按到达顺序编号、写进本地日志           → 记录：存进会话记录（同一编号只存一次），
+     （records.sqlite）                             翻译成房间事件显示；什么都不由它决定
+  → 子 agent / workflow 的记录文件也由它跟读      → 事件：连同它的效果在一次事务里落库，
+  → runner 把看到的事实写进待确认的事件队列          推进座位的偏移，然后才确认
+     （输入写入/读到/丢弃、运行/空闲、进程退出）
 ```
 
-**记录的持久层是 runner 那份日志，不是后端。** 后端一时够不着，runner 照记；后端回来从游标
-接着读，一条不丢。日志在会话机上按时间过期清理。
+**记录和事件的持久层都是 runner，不是后端。** 后端一时够不着，runner 照记；事件在确认之前一直
+留着，后端回来从头再拿，已经落过的那一条按 `(座位, epoch, 序号)` 什么都不改。日志在会话机上按
+时间过期清理。
 
 - **事件没回来**：先看 runner 活着没有（`ping`）、它的日志有没有在长；再看设备到后端的
   连接器链路是否在线。
-- **事件重复**：记录按编号导入，同一页读两次只落一次；翻译出的事件按记录自己的 id 去重。
+- **事件重复**：记录按编号存，同一页读两次只存一次；翻译出的事件按记录自己的 id 去重；生命周期
+  事件按座位的偏移只落一次。
 
 ### 5.3 设备离线时的表现
 
-- **设备掉线**：`device_hub.is_online` 转 false，「设置 → 设备」里该设备变灰「离线」，并写着上次在线的时间（`device.last_seen_at`：连上时记一次，连接期间最多每分钟记一次）。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，已经发出、正在等回话的调用立刻失败（`LinkInterrupted`，结果未知，不会重发），不会等到各自超时。掉线后 15 秒内（`RECONNECT_GRACE_S`）新来的调用等机器重连并发来 hello 再发出；过了这段时间仍没回来，或者这个进程从没见过这台机器，调用立刻失败（`DeviceOffline`）。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
+- **设备掉线**：`device_hub.is_online` 转 false，团队的「设备」页里该设备显示「离线」，并写着上次在线的时间（`device.last_seen_at`：连上时记一次，连接期间最多每分钟记一次）。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，已经发出、正在等回话的调用立刻失败（`LinkInterrupted`，结果未知，不会重发），不会等到各自超时。掉线后 15 秒内（`RECONNECT_GRACE_S`）新来的调用等机器重连并发来 hello 再发出；过了这段时间仍没回来，或者这个进程从没见过这台机器，调用立刻失败（`DeviceOffline`）。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
 - **会话的环境要用的设备离线**：这次工具调用答「「设备」没有连上平台」（不进沙箱时）或「这个规格的电脑现在都不在线」（某人设备的沙箱），对话和平台工具照常，**不会换到别的规格或别人的设备上**。
 - **解绑/撤销 token**：`DELETE /my/devices/{id}` 或服务端撤销 durable token → 该设备所有 screen 失效、`device_hub` 标记离线、市场 listing 里「自己的设备」在没有别的在线设备时变为不可选。
 
@@ -217,6 +254,6 @@ cheesehost link connect https://<你的站点>/connector    # 先登录：打印
 # 人浏览器打开 approve_url → 登录 → 批准（可命名/绑项目）
 # 同一条命令拿到 token 后装用户级 service 上线——全程不需要 sudo
 
-# 平台侧：在团队「工作电脑」页把设备绑给团队（或在「设置 → 设备」绑项目）
-# 话题选 device 算力（不配 Cloud 时就是默认，也可以在房间的工作电脑选择里显式选）
+# 平台侧：在批准页选择所属团队，然后在团队「设备」页管理
+# 频道选 device 算力（不配 Cloud 时就是默认，也可以在房间的工作电脑选择里显式选）
 ```

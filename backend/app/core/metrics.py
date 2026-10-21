@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock
@@ -116,6 +117,10 @@ class MetricsRegistry:
         self._gauges: dict[str, Gauge] = {}
         self._histograms: dict[str, Histogram] = {}
         self._start_time = datetime.now(UTC)
+        #: Distinct per process. A reader that only saw `uptime_seconds` cannot
+        #: tell a restarted process (uptime small again) from the same process
+        #: whose earlier sample is missing; the instance and start time can.
+        self._instance = uuid.uuid4().hex
 
     def counter(self, name: str, labels: dict[str, str] | None = None) -> Counter:
         key = self._key(name, labels)
@@ -146,11 +151,6 @@ class MetricsRegistry:
                 self._histograms[key] = Histogram(**kwargs)
             return self._histograms[key]
 
-    def histograms_named(self, name: str) -> list[Histogram]:
-        """这个名下**所有**标签组合的直方图（一个标签组合一条）。"""
-        with self._lock:
-            return [h for h in self._histograms.values() if h.name == name]
-
     def _key(self, name: str, labels: dict[str, str] | None) -> str:
         if not labels:
             return name
@@ -160,6 +160,12 @@ class MetricsRegistry:
     def export(self) -> dict[str, Any]:
         with self._lock:
             return {
+                # `uptime_seconds` is how long this sample covers (since this
+                # process started); instance + started_at say whether the
+                # counters below survived a restart. Counters are process
+                # totals and must not be read as a fixed hourly window.
+                "instance": self._instance,
+                "started_at": self._start_time.isoformat(),
                 "uptime_seconds": (
                     datetime.now(UTC) - self._start_time
                 ).total_seconds(),

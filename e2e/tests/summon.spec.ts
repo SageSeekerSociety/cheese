@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { api, apiLogin, openFirstProject } from './helpers';
 
-// 「交给芝士」这颗按钮的立场是：**正文是唯一的真相，按钮只是它的镜子。** 组件测试
+// 发送键旁边那颗队友头像的立场是：**正文是唯一的真相，头像只是它的镜子。** 组件测试
 // 已经钉住了镜子本身（点一下写进去、手打 @ 它自己亮）。这里钉的是组件测试够不到的
 // 那一段接缝——按钮在真的输入框旁边点得到，写进去的那个 @ 真的随消息发了出去，并且
 // 在时间线上真的解析成了 @ 它。这一段断掉的样子恰好是「点了没反应」，而两侧各自的
@@ -18,24 +18,23 @@ async function openFirstTopic(page: Page) {
   const composer = page.locator('.composer-input .ProseMirror').first();
   // 输入框要等这个话题的 WS 连上才可用。
   await expect(composer).toBeEnabled({ timeout: 20_000 });
-  // 房间名册到了，「交给」按钮才开（名册没到时写进正文的 @ 会指错人，见最后一条）。
+  // 房间名册到了，队友头像才开（名册没到时写进正文的 @ 会指错人，见最后一条）。
   // 名册随订阅的房间快照一起来，等的是「这条测试要测的东西已经就位」。
-  await expect(page.locator('.summon-btn')).toBeEnabled({ timeout: 15_000 });
+  await expect(page.locator('.summon__btn')).toBeEnabled({ timeout: 15_000 });
   return composer;
 }
 
-// 这个房间的 AI 队友叫什么，从按钮自己的标签上读，不写死「芝士」：队友是建话题时
-// 选的，名字跟着它走。读 textContent 而不是 innerText：名字窄到装不下时是 CSS 截断
-// 的，innerText 在一些浏览器上会跟着给出省略号，而这里要的是原文。
+// 这个房间的 AI 队友叫什么，从头像的读屏名字上读，不写死「芝士」：队友是建话题时
+// 选的，名字跟着它走。没交给时它读作「（发送并）交给<名字>（⌘/Ctrl+Enter）……」。
 // 名字要拼进正则里，先转义（队友名字是人取的，不保证不含正则元字符）。
 function escapeRe(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function agentNameFrom(button: Locator) {
-  const label = (await button.locator('.summon-btn-label').evaluate((el) => el.textContent)) ?? '';
-  const name = label.replace(/^交给/, '').trim();
-  expect(name, '按钮上读不到 AI 队友的名字').not.toBe('');
+  const label = (await button.getAttribute('aria-label')) ?? '';
+  const name = label.match(/交给(.+?)[（，]/)?.[1]?.trim() ?? '';
+  expect(name, '头像上读不到 AI 队友的名字').not.toBe('');
   return name;
 }
 
@@ -46,7 +45,7 @@ test.describe('把消息交给芝士', () => {
 
   test('按钮把 @ 写进正文，再点一下拿回来；手打 @ 它自己亮', async ({ page }) => {
     const composer = await openFirstTopic(page);
-    const button = page.locator('.summon-btn');
+    const button = page.locator('.summon__btn');
     // 名册没到时按钮是关着的（那时候写进去的 @ 只是一行字）。
     await expect(button).toBeEnabled({ timeout: 15_000 });
     const agent = await agentNameFrom(button);
@@ -55,7 +54,8 @@ test.describe('把消息交给芝士', () => {
     await expect(button).toHaveAttribute('aria-pressed', 'false');
 
     await button.click();
-    await expect(composer.locator('.mention')).toHaveText(new RegExp(`@${escapeRe(agent)}`));
+    // 输入框里那枚标签是队友的小头像加名字（「@」只在发出去之后的时间线上）。
+    await expect(composer.locator('.mention')).toHaveText(new RegExp(`^${escapeRe(agent)}$`));
     await expect(button).toHaveAttribute('aria-pressed', 'true');
 
     // 再点一下要把正文恢复原样——按钮不存自己的状态，取消只能是把那几个字删掉。
@@ -70,7 +70,7 @@ test.describe('把消息交给芝士', () => {
 
   test('点按钮发出去的消息，在时间线上真的 @ 到了它', async ({ page }) => {
     const composer = await openFirstTopic(page);
-    const button = page.locator('.summon-btn');
+    const button = page.locator('.summon__btn');
     await expect(button).toBeEnabled({ timeout: 15_000 });
     const agent = await agentNameFrom(button);
 
@@ -89,7 +89,7 @@ test.describe('把消息交给芝士', () => {
 
   test('⌘/Ctrl+Enter 一个 @ 都不用打，发出去的消息自己说明它叫了谁', async ({ page }) => {
     const composer = await openFirstTopic(page);
-    const button = page.locator('.summon-btn');
+    const button = page.locator('.summon__btn');
     await expect(button).toBeEnabled({ timeout: 15_000 });
     const agent = await agentNameFrom(button);
 
@@ -146,7 +146,7 @@ test.describe('把消息交给芝士', () => {
     const composer = page.locator('.composer-input .ProseMirror').first();
     await expect(composer).toBeEnabled({ timeout: 30_000 });
 
-    const button = page.locator('.summon-btn');
+    const button = page.locator('.summon__btn');
     await expect(button).toBeVisible();
     await expect(button).toBeDisabled();
     // 键盘那一头同样关着：名册没到时它只是一次普通发送，正文里不会多出任何 @。
@@ -173,14 +173,12 @@ test.describe('把消息交给芝士', () => {
     await expect(sent.locator(`.mention[data-handle="${seat!.member_handle}"]`)).toBeVisible();
   });
 
-  // 手机宽度上「交给谁」照样写全。名字比「交给」两个字长，所以这条测的是把名字放
-  // 回去之后那一行还站不站得住：按钮不被挤出屏幕、不和发送叠在一起、名字不被截断。
+  // 手机宽度上那一行站得住：头像不被挤出屏幕、不和发送叠在一起，点它 @ 照样进正文。
   //
   // 手机宽度必须是**打开就这么宽**，不能把桌面窗口拖窄了测：工作台的分栏宽度是挂载
-  // 时算出来的，拖窄之后整个输入框会塌成 0 宽（和这颗按钮无关——600px 上标签还好好
-  // 显示着就已经塌了）。照那条路走，测到的是另一个毛病。所以先把视口调好再进这个
-  // 话题；走 URL 是因为手机上左边那条项目栏是收起来的，点不进去。
-  test('手机宽度上名字还在，输入框那一行不换行', async ({ page }) => {
+  // 时算出来的，拖窄之后整个输入框会塌成 0 宽。所以先把视口调好再进这个话题；走 URL
+  // 是因为手机上左边那条项目栏是收起来的，点不进去。
+  test('手机宽度上头像和发送在同一行，点它照样把 @ 写进正文', async ({ page }) => {
     const projects = (await api(page, 'get', '/projects')).data as { id: string }[];
     const project = projects[0];
     expect(project, 'alice 名下没有项目').toBeTruthy();
@@ -192,32 +190,24 @@ test.describe('把消息交给芝士', () => {
     const composer = page.locator('.composer-input .ProseMirror').first();
     await expect(composer).toBeEnabled({ timeout: 30_000 });
 
-    const button = page.locator('.summon-btn');
-    await expect(button).toBeVisible();
-    // 名字还在，而且是「交给<队友名>」整句，不是被收成「交给」两个字。
-    const label = button.locator('.summon-btn-label');
-    await expect(label).toBeVisible();
+    const button = page.locator('.summon__btn');
+    await expect(button).toBeEnabled({ timeout: 15_000 });
     const agent = await agentNameFrom(button);
-    expect(agent.length).toBeGreaterThan(0);
 
-    // 同一行：按钮和发送键的垂直中心对得上，说明没有谁被挤到下一行去。
+    // 同一行：头像和发送键的垂直中心对得上，说明没有谁被挤到下一行去。
     const send = page.locator('.composer-send');
     const [b, sd] = [await button.boundingBox(), await send.boundingBox()];
-    expect(b, '按钮没有布局盒子').not.toBeNull();
+    expect(b, '头像没有布局盒子').not.toBeNull();
     expect(sd, '发送键没有布局盒子').not.toBeNull();
     const center = (box: { y: number; height: number }) => box.y + box.height / 2;
     expect(Math.abs(center(b!) - center(sd!))).toBeLessThan(4);
-    // 名字没被截断（省略号只在画面上，DOM 里量不到，所以量宽度差）。
-    const clipped = await label.evaluate((el) => el.scrollWidth - el.clientWidth);
-    expect(clipped, '手机上名字被截断了').toBeLessThanOrEqual(1);
-    // 而且按钮没被挤出屏幕，也没压到发送键上。
+    // 而且头像没被挤出屏幕，也没压到发送键上。
     expect(b!.x + b!.width).toBeLessThanOrEqual(375);
     expect(b!.x + b!.width).toBeLessThanOrEqual(sd!.x + 1);
 
-    // 收窄之后照样是那颗按钮：点一下，@ 还是进正文。
     await composer.fill('这条是说给人听的');
     await button.click();
-    // 看到的是名字标签加这句话（藏起来的那串 <@handle> 不算看到的字）。
-    await expect(composer).toHaveText(new RegExp(`^@${escapeRe(agent)} 这条是说给人听的$`), { useInnerText: true });
+    // 看到的是队友名字标签加这句话（藏起来的那串 <@handle> 不算看到的字）。
+    await expect(composer).toHaveText(new RegExp(`^${escapeRe(agent)} 这条是说给人听的$`), { useInnerText: true });
   });
 });

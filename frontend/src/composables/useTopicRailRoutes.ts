@@ -57,8 +57,8 @@ export function useTopicRailRoutes(projectId: () => string | null, on: TopicRail
   /** 侧栏里给一条话题做得了的事（悬停的 ⋯、长按的面板都问它）。 */
   function actionsFor(topic: Topic): MenuCommand[] {
     // 只收窄侧栏入口；顶栏和命令面板仍保留各自的完整操作。
-    // 先由共享动作算权限，未加入的频道用「加入」替代「退出」。
-    const order = ['topic.newTask', 'topic.allTasks', 'topic.rename', 'topic.leave', 'topic.join']
+    // 先由共享动作算权限与 root 规则，侧栏只留这四项。
+    const order = ['topic.newTask', 'topic.allTasks', 'topic.rename', 'topic.leave']
     return topicActions(topic, router, { rename: () => on.rename(topic) })
       .filter((action) => order.includes(action.id))
       .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))

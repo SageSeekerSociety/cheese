@@ -48,7 +48,7 @@ async def test_check_takes_the_topic_lock_before_it_reads_anything():
     body = FeedbackProposalIn(
         title="沙箱里 make 装不上依赖",
         what_happened="make 停在 could not resolve host",
-        user_said="用户没有就这个问题说过话",
+        user_said_absent=True,
     )
 
     fingerprint = await proposals.ProposalService(session).check(TOPIC, body)

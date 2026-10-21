@@ -31,13 +31,14 @@
 │   ├── AI 队友 agents.md
 │   ├── 任务 tasks.md
 │   ├── 待办与通知 inbox.md
-│   ├── 定时与触发 routines.md
+│   ├── 例行事务 routines.md
 │   ├── 文件与成果 files.md
 │   ├── 提交 submissions.md
 │   ├── 验收与采纳 accept.md
 │   ├── 环境 environment.md
 │   ├── 自有设备 devices.md
 │   ├── 额度 quota.md
+│   ├── 额度奖励与积分 rewards.md
 │   ├── 反馈中心 feedback.md
 │   ├── 发布成果 sites.md
 │   ├── 连接与集成 connections.md
@@ -89,7 +90,7 @@
 | `team-challenge.md` | 以团队身份领取团队题目，一起做、一起交 | 详细规则链接题目、团队、提交 |
 | `resubmit.md` | 看评审结果，和芝士改完，提交新版本 | 提交规则见 `submissions.md` |
 | `publish-a-challenge.md` | 建空间、发邀请码、发布题目、批准领取、评审提交 | 详细规则链接空间、提交 |
-| `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `spaces.md` |
+| `guide-the-teammate.md` | 设置整块板和单道题的「AI 队友辅导」 | 字段说明见 `spaces.md` |
 | `publish-a-site.md` | 让芝士做网页、预览、采纳、发布和更新网站 | 限制见 `sites.md` |
 | `use-your-computer.md` | 接入自己的 Mac 或 Windows 电脑，让频道改用它，把本地数据交给芝士 | 服务器接入、隔离和自己的 Claude Code 见 `devices.md`；任务环境见 `environment.md` |
 | `connect-a-service.md` | 以 Notion 为例：让芝士在项目里声明 MCP 服务、在项目设置里连接、让芝士读页面、断开 | 连接的种类、状态和权限见 `connections.md` |
@@ -102,22 +103,23 @@
 | 页面 | 完整解释的内容 | 不负责的内容与去向 |
 |---|---|---|
 | `challenges.md` | 给做题的人：加入空间、题目列表、题目页、问芝士、领取与批准、无法领取、题目的项目 | 管理空间与出题见 `spaces.md`；提交见 `submissions.md` |
-| `spaces.md` | 给管理空间的人：新建空间、邀请码、成员与角色、发布题目的表单、审核题目、领取者与评审、资料库、给 AI 队友的指导 | 做题的一侧见 `challenges.md`；评审细节见 `submissions.md` |
+| `spaces.md` | 给管理空间的人：新建空间、邀请码、成员与角色、发布题目的表单、审核题目、领取者与评审、资料库、AI 队友辅导 | 做题的一侧见 `challenges.md`；评审细节见 `submissions.md` |
 | `teams.md` | 创建团队、邀请成员、加入申请、已发送邀请、团队成员管理、招募广场当前边界 | 项目成员归 `projects.md`；AI 队友归 `agents.md` |
 | `projects.md` | 创建项目、与赛题的关系、所属团队、项目成员与邀请、主要入口与「总览」、上游仓库、项目与成果的关系 | 文件操作归 `files.md`；队友配置归 `agents.md`；赛题提交归 `submissions.md` |
-| `rooms.md` | 新建频道、加入与退出、频道通知、默认 AI 队友、页面区域、频道总览、支线、置顶、频道成员、重命名与归档、消息与执行的关系、环境入口、项目目标和频道说明 | 队友配置与触发规则归 `agents.md`；环境规则归 `environment.md`，自有设备归 `devices.md`；任务列表归 `tasks.md`；定时与触发归 `routines.md` |
+| `rooms.md` | 新建频道、加入与退出、频道通知、默认 AI 队友、页面区域、频道总览、支线、置顶、频道成员、重命名与归档、消息与执行的关系、环境入口、项目目标和频道说明 | 队友配置与例行事务归 `agents.md`；环境规则归 `environment.md`，自有设备归 `devices.md`；任务列表归 `tasks.md`；例行事务归 `routines.md` |
 | `agents.md` | 创建与配置 AI 队友、真实表单字段、设置默认队友、在频道成员中调整队友、触发处理消息、运行方式、模型、已验证限制 | 不承担完整入门流程、设备连接或进度管理；不承诺未验证的记忆机制 |
 | `tasks.md` | 看任务的几处入口、「全部任务」的分组与状态、任务名称、任务详情、与频道执行过程的关系 | 「待办」里每一种理由归 `inbox.md`；不重复项目介绍、队友配置或最终提交 |
 | `inbox.md` | 「待办」的入口和数字、「等你处理」的每一种理由、「动态」、「提醒我」、通知渠道（站内、浏览器推送、邮件、桌面端）、通知设置与免打扰 | 单个频道的通知级别归 `rooms.md`；任务状态归 `tasks.md` |
-| `routines.md` | 定时与触发规则的建立、确认、管理和每一次执行在频道里的样子 | 频道本身归 `rooms.md`；环境在线与否归 `environment.md` |
+| `routines.md` | 例行事务的建立、确认、管理和每一次执行在频道里的样子 | 频道本身归 `rooms.md`；环境在线与否归 `environment.md` |
 | `files.md` | 上传及限制、文件进入时间线、查找生成文件、查看与编辑成果、单文件下载、成果相关的「改动 / 现场 / 预览」入口 | Site 发布归 `sites.md`；赛题提交归 `submissions.md`；不编造整个项目打包下载 |
 | `submissions.md` | 学生提交条件、入口、表单与文件要求、已验证的提交限制；发布者查看提交与提交记录 | 与 Agent 交付的验收与采纳分开；不把单一赛题的限制推断成所有赛题通用规则 |
 | `accept.md` | Agent 交付后的验收、采纳、实际入口与操作结果 | 不负责赛题提交或普通文件下载；未验证的验收与合并关系不能写成正式规则 |
 | `environment.md` | 两种环境与沙箱规格、每位 AI 队友的环境和项目 → 频道 → 任务三层的新会话默认、项目的环境分布、环境准备失败、云端资源紧张 | 接入设备和隔离归 `devices.md`；计费归 `quota.md` |
-| `devices.md` | 接入 Mac / Windows 电脑和服务器、网页批准、提供给团队、隔离环境与整台电脑、用自己的 Claude Code、设备离线 | 环境的选择归 `environment.md`；不能把选择设备写成选择本地目录 |
-| `quota.md` | 团队「额度」页、个人「芝士额度」、耗尽提示和当前可操作范围 | 设备连接归 `devices.md`；不编造自行调整或发放额度入口 |
+| `devices.md` | 接入 Mac / Windows 电脑和服务器、网页批准、设备的团队归属、隔离环境与整台电脑、用自己的 Claude Code、设备离线 | 环境的选择归 `environment.md`；不能把选择设备写成选择本地目录 |
+| `quota.md` | 团队「额度」页、个人团队「额度」、耗尽提示和当前可操作范围 | 设备连接归 `devices.md`；不编造自行调整或发放额度入口 |
+| `rewards.md` | 额度奖励与积分的区别、内测体验额度、反馈奖励、邀请好友（个人邀请码、名额、双方奖励、邀请进度、分享文档的注册链接）、额度奖励的使用顺序与有效期、查看位置、每月上限 | 额度的扣除和用完归 `quota.md`；提交反馈归 `feedback.md`；空间邀请码归 `spaces.md` |
 | `sites.md` | 导出与发布中的 Site 发布、发布结果与管理入口、当前能力和限制 | 普通文件下载归 `files.md`；不承诺整个项目导出 |
-| `account.md` | 创建账号、登录方式、第一次用第三方账号登录、添加邮箱、通行密钥、密码与安全、两步验证、桌面端登录、个人资料与个人主页、实名信息、界面语言与外观 | 通知设置归 `inbox.md`；设备归 `devices.md`；芝士额度归 `quota.md` |
+| `account.md` | 创建账号、登录方式、第一次用第三方账号登录、添加邮箱、通行密钥、密码与安全、两步验证、桌面端登录、个人资料与个人主页、实名信息、界面语言与外观 | 通知设置归 `inbox.md`；设备归 `devices.md`；额度归 `quota.md` |
 | `connections.md` | 个人连接（邮箱、飞书）与项目连接（GitHub、MCP 服务）：在哪里管理、用谁的账号、连接状态、芝士能做什么、断开 | 连接 GitHub 仓库的步骤归 `projects.md`；完整的 Notion 流程归 `connect-a-service.md` |
 | `skills.md` | 项目技能的字段、芝士怎么用、平台自带的技能、手写 / 芝士提议 / 导入三种来源、版本与删除、权限 | 一步步新建技能归 `add-a-skill.md` |
 

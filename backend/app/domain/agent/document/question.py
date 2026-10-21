@@ -39,12 +39,12 @@ from app.core.sentences import say
 from app.domain.agent.admission import Hold, Pool, Slot, enter, holding
 from app.domain.agent.document.machine import machine_to_read
 from app.domain.agent.harness.prompt import WRITING
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.session_host.consumptions import Consumption
 from app.domain.agent.session_host.contract import SessionRef
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent.skills import load_skills
 from app.domain.agent.supply import GATEWAY
-from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -382,11 +382,14 @@ def system_prompt(
         # the whole document guide are in the prompt rather than a skill the
         # agent may not load. The guide points at its blocks reference by the
         # path it has as a skill; here that file follows under the same name.
+        # The mini-app guide is a skill of its own elsewhere, and follows here
+        # under that skill's name, with its reference after it.
         WRITING,
         load_skills(["cheese-docs"]),
         "## references/blocks.md\n\n" + load_skills(["doc-blocks"]),
-        "## references/apps.md\n\n" + load_skills(["doc-apps"]),
         "## references/live-doc.md\n\n" + load_skills(["doc-live"]),
+        "## miniapp 技能\n\n" + load_skills(["miniapp"]),
+        "## miniapp 技能的 references/apps.md\n\n" + load_skills(["doc-apps"]),
     ]
     if goals:
         parts.append(f"## 项目目标\n<项目目标>\n{goals}\n</项目目标>")

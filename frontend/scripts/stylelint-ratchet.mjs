@@ -1,18 +1,13 @@
 #!/usr/bin/env node
-// Runs stylelint and compares the design-system rules against
-// stylelint-baseline.json.
+// Runs stylelint's design-token rules with zero tolerance.
 //
-//   node scripts/stylelint-ratchet.mjs            check (exit 1 on any new violation)
-//   node scripts/stylelint-ratchet.mjs --update   rewrite the baseline downward
+//   node scripts/stylelint-ratchet.mjs            check (exit 1 on any violation)
 //   node scripts/stylelint-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
-// `--files <glob>` (repeatable) and `--baseline <file>` judge other files
-// against another baseline. They exist so ratchet-report.test.mjs can run this
-// script on a fixture instead of linting the whole tree a second time.
+// `--files <glob>` (repeatable) judges fixtures without linting the whole tree.
 //
-// The comparison logic lives in stylelint-ratchet-core.mjs and is unit-tested;
-// this file is only the I/O around it. Structure deliberately mirrors
-// tsc-ratchet.mjs — including the two failure modes that matter:
+// Report parsing lives in stylelint-ratchet-core.mjs. Two failures must stay
+// distinguishable from a clean tree:
 //
 //   * a stylelint that is merely MISSING must not look like a clean tree, and
 //   * a non-zero exit with no parsed report is a crash, not "zero violations".
@@ -20,20 +15,13 @@
 // It never passes --fix. A gate that rewrites the checkout can exit 0 on a
 // violation it silently repaired; `pnpm run lint:style:fix` is the writing form.
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
-import {
-  compare,
-  formatReport,
-  parseStylelintReport,
-  syntaxErrors,
-  tightenedBaseline,
-  violationDetails,
-} from './stylelint-ratchet-core.mjs'
+import { asJson, cannotJudge, emit, plainResult, verdict } from './ratchet-report.mjs'
+import { formatReport, parseStylelintReport, syntaxErrors, violationDetails } from './stylelint-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -42,13 +30,13 @@ function options(name) {
   return process.argv.flatMap((arg, i) => (arg === name ? [process.argv[i + 1]] : []))
 }
 
-function option(name, fallback) {
-  return options(name)[0] ?? fallback
-}
-
-const BASELINE = resolve(ROOT, option('--baseline', 'stylelint-baseline.json'))
-const update = process.argv.includes('--update')
 const ID = 'stylelint-tokens'
+
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i]
+  if (arg === '--files' && process.argv[i + 1]) i++
+  else if (arg !== '--json') cannotJudge({ id: ID }, `unknown option: ${arg}`)
+}
 
 // The docs site (docs/site) takes its colours from src/style.css too, so its one
 // stylesheet is held to the same rules. It sits outside this directory, where
@@ -106,8 +94,7 @@ try {
 const toRelativePath = (source) => relative(ROOT, source)
 
 // Before counting anything: a file stylelint could not parse counts as zero
-// violations, which looks like progress. Stop here instead — and stop on
-// --update too, or the unreadable file gets frozen in at its fake zero.
+// violations, which looks clean. Stop here instead.
 const broken = syntaxErrors(report, toRelativePath)
 if (broken.length) {
   console.error('stylelint could not parse these files:')
@@ -117,36 +104,10 @@ if (broken.length) {
 
 const current = parseStylelintReport(report, toRelativePath)
 
-const baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, 'utf8')).files ?? {} : {}
-
-if (update) {
-  const next = tightenedBaseline(baseline, current)
-  writeFileSync(
-    BASELINE,
-    `${JSON.stringify(
-      {
-        _comment:
-          'Frozen design-token violations (hardcoded colours, off-ladder radii). The ' +
-          'ratchet blocks any NEW one; these are pre-existing and may only go down. ' +
-          'Regenerate with `pnpm run lint:style:update`. See docs/design-system.md.',
-        files: next,
-      },
-      null,
-      2
-    )}\n`
-  )
-  const total = Object.values(next).reduce((a, b) => a + b, 0)
-  console.log(`baseline updated: ${total} violation(s) across ${Object.keys(next).length} file(s)`)
-  process.exit(0)
-}
-
-const result = compare(baseline, current)
+const result = plainResult(current)
 
 if (asJson) {
-  // Per-file counts, every file still over its frozen count, passing or not:
-  // the snapshot's details are per file and the board groups the debt that way,
-  // so a green run that still carries debt is data, not an empty list. The
-  // human report below keeps its line-level selection.
+  // Keep the board's per-file breakdown; a plain check has frozen=0.
   const details = Object.entries(current)
     .filter(([, count]) => count > 0)
     .map(([file, count]) => ({ file, count }))
@@ -154,8 +115,6 @@ if (asJson) {
   process.exit(result.ok ? 0 : 1)
 }
 
-const details = result.ok
-  ? []
-  : violationDetails(report, toRelativePath, new Set(result.regressions.map((r) => r.file)))
+const details = violationDetails(report, toRelativePath, new Set(Object.keys(current)))
 console.log(formatReport(result, details))
 process.exit(result.ok ? 0 : 1)

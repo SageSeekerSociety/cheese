@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
 import * as ownAgents from '../api/ownAgents'
-import { SudoCancelledError, withSudo } from '../utils/sudo'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
@@ -32,10 +31,6 @@ vi.mock('../components/settings/ArchiveProjectSection.vue', () => ({
     emits: ['archive'],
     template: '<section><button class="archive-confirmed" @click="$emit(\'archive\')">归档</button></section>',
   },
-}))
-vi.mock('../utils/sudo', () => ({
-  SudoCancelledError: class SudoCancelledError extends Error {},
-  withSudo: vi.fn(),
 }))
 vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
   // i18n-data: a stand-in for the real block, titled as it is
@@ -69,23 +64,17 @@ beforeEach(() => {
   me.id = null
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
   vi.mocked(ownAgents.getOwnAgents).mockResolvedValue({
-    allowed: true,
-    kinds: ['subscription', 'api_key', 'model_service'],
-    service_hosts: [],
     can_manage: false,
     agents: [],
     my_connections: [],
+    devices: [],
   })
   asRole('member', [])
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.getGithubConnection).mockResolvedValue({ connected: false })
   vi.mocked(api.getForgeConnection).mockResolvedValue({ kind: 'github_app', connected: false, repo: null, url: null })
-  vi.mocked(api.getForgeAttribution).mockResolvedValue({
-    requester_coauthor: null,
-    effective: true,
-    deployment_default: true,
-  })
+  vi.mocked(api.getCommitCredit).mockResolvedValue({ mode: 'owner' })
 })
 
 // 设置画在盖住整个窗口的一层里（挂在 body 上），一次画一栏：打开哪一栏由 `section` 定。
@@ -135,8 +124,9 @@ describe('project settings', () => {
       expect(wrapper.element.querySelector('[data-testid="github-repository"]')).toBeNull()
       // Nobody has an account on the platform's forge: a link there lands on a sign-in page.
       expect(wrapper.element.querySelector('[data-testid="forge-repository"] a')).toBeNull()
-      expect(wrapper.element.querySelector('[data-testid="forge-attribution"]')?.textContent).toContain('当前已开启')
-      expect(api.setForgeAttribution).not.toHaveBeenCalled()
+      // Commit credit is the project's own choice, whichever forge holds the code.
+      expect(wrapper.element.querySelector('[data-testid="forge-attribution"]')).not.toBeNull()
+      expect(api.setCommitCredit).not.toHaveBeenCalled()
     } finally {
       wrapper.unmount()
     }
@@ -193,62 +183,31 @@ describe('project settings', () => {
     }
   })
 
-  describe('disconnecting the GitHub account', () => {
-    const connection = {
-      id: 5,
-      providerId: 'github_app',
-      providerName: 'GitHub',
-      providerUserId: '42',
-      connectedAt: null,
-      login: 'octocat',
-      tokenExpires: null,
-      hasRefreshToken: false,
+  it('shows the GitHub sign-in account and leaves disconnecting it to account security', async () => {
+    me.id = '7'
+    vi.mocked(api.listOAuthConnections).mockResolvedValue({
+      connections: [
+        {
+          id: 5,
+          providerId: 'github_app',
+          providerName: 'GitHub',
+          providerUserId: '42',
+          connectedAt: null,
+          login: 'octocat',
+          tokenExpires: null,
+          hasRefreshToken: false,
+        },
+      ],
+    })
+    const wrapper = await openSettings('repository')
+    try {
+      await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
+      const labels = Array.from(wrapper.element.querySelectorAll('button'), (b) => b.textContent?.trim())
+      expect(labels).not.toContain('断开')
+      expect(labels).not.toContain('解除关联')
+    } finally {
+      wrapper.unmount()
     }
-
-    beforeEach(() => {
-      me.id = '7'
-      vi.mocked(api.listOAuthConnections).mockResolvedValue({ connections: [connection] })
-    })
-
-    const disconnect = (element: HTMLElement) =>
-      Array.from(element.querySelectorAll('button'))
-        .find((b) => b.textContent?.trim() === '断开')!
-        .click()
-
-    it('confirms identity for the unlink, then disconnects with the ticket', async () => {
-      vi.mocked(withSudo).mockImplementation(async (_purpose, operation) => operation('ticket-1'))
-      vi.mocked(api.deleteOAuthConnection).mockResolvedValue()
-      const wrapper = await openSettings('repository')
-      try {
-        await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
-        disconnect(wrapper.element)
-
-        await vi.waitFor(() => expect(api.deleteOAuthConnection).toHaveBeenCalledWith('7', 5, 'ticket-1'))
-        expect(withSudo).toHaveBeenCalledWith('oauth:unbind', expect.any(Function))
-        await vi.waitFor(() => expect(wrapper.element.textContent).not.toContain('octocat'))
-      } finally {
-        wrapper.unmount()
-      }
-    })
-
-    it('keeps the connection and says nothing when the confirmation is cancelled', async () => {
-      vi.mocked(withSudo).mockRejectedValue(new SudoCancelledError())
-      const wrapper = await openSettings('repository')
-      try {
-        await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
-        const alerts = () => Array.from(wrapper.element.querySelectorAll('[role="alert"]'), (a) => a.textContent)
-        const before = alerts()
-        disconnect(wrapper.element)
-
-        await vi.waitFor(() => expect(withSudo).toHaveBeenCalled())
-        await new Promise((resolve) => setTimeout(resolve))
-        expect(api.deleteOAuthConnection).not.toHaveBeenCalled()
-        expect(wrapper.element.textContent).toContain('octocat')
-        expect(alerts()).toEqual(before)
-      } finally {
-        wrapper.unmount()
-      }
-    })
   })
 
   it('does not offer project-wide model or role controls', async () => {
@@ -315,12 +274,11 @@ describe('project settings', () => {
   })
 
   it.each([
-    ['agents', ['AI 队友', '默认模型', '成员自己的 Claude Code']],
     // 在哪运行、怎么准备、还能跑多久：环境一页说完。
-    ['environment', ['默认环境', '脚本与环境变量', '额度']],
+    ['environment', ['默认环境', '脚本与环境变量', '额度', '项目和成员预算']],
     // 分支保护是合并规则，不是仓库连接。
     ['merge', ['分支保护']],
-    ['repository', ['GitHub 仓库地址', '连接 GitHub 仓库', '提交署名', '连接 GitHub 账号']],
+    ['repository', ['GitHub 仓库地址', '连接 GitHub 仓库', '提交署名']],
     // 导出打包整个项目，不和任何一栏混在一起。
     ['export', ['导出项目']],
   ])('puts the right blocks in the %s section', async (section, blocks) => {

@@ -105,7 +105,7 @@ describe('返回上一级', () => {
     ['/spaces/42/tasks/publish', '/spaces/42/tasks'],
     ['/spaces/42/manage/settings/templates/create', '/spaces/42/manage/settings/templates'],
     ['/spaces/42/manage/settings/templates/2/edit', '/spaces/42/manage/settings/templates'],
-    ['/spaces/42/tasks', '/spaces'],
+    ['/spaces/42/tasks', '/home'],
     ['/teams/12/members', '/home'],
     ['/projects/project-a/members/linxia', '/projects/project-a/members'],
   ])('direct entry to %s returns to %s without browser history', async (path, parent) => {
@@ -118,7 +118,7 @@ describe('返回上一级', () => {
     await waitFor(() => expect(router.currentRoute.value.path).toBe(parent))
   })
 
-  it.each(['/spaces', '/teams/mine', '/projects/project-a'])(
+  it.each(['/inbox', '/teams/mine', '/projects/project-a'])(
     'does not offer a return to nowhere on %s',
     async (path) => {
       const { queryByRole } = await open(path)

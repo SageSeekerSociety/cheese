@@ -176,7 +176,6 @@ class ContractHarness:
         images: list[dict] | None = None,
         *,
         register_input: InputRegistrar,
-        expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
     ) -> bool:
@@ -226,6 +225,18 @@ class ContractHarness:
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> uuid.UUID | None:
         return None
+
+    def working_seats(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> list[tuple[str, str]]:
+        """A held conversation takes words whenever it is held: it has no
+        model behind it to be idle."""
+        return [
+            (held.ref.agent_handle, held.ref.agent_handle)
+            for held in self._held.values()
+            if held.ref.topic_id == topic_id
+            and agent_handle in (None, held.ref.agent_handle)
+        ]
 
     async def recover(self, device_id: str | None = None) -> list[SessionRef]:
         return [held.ref for held in self._held.values()]

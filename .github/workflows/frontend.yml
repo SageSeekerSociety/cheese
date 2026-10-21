@@ -29,7 +29,7 @@ name: Frontend Test
 #           run (the accessibility ratchet, since folded into `eslint .`) was
 #           still here.
 #   check   everything else: the ratchets that are not eslint (scenes, scene
-#           debt, catalog, stylelint, i18n, global fallbacks), the ratchets' own
+#           debt, stylelint, i18n, global fallbacks), the ratchets' own
 #           unit tests, the collaboration service, and the two checks that need
 #           the backend's Python environment — the API type ratchet and the
 #           request paths. 211 s of checks, ~235 s with the setup, measured
@@ -139,19 +139,15 @@ jobs:
         run: pnpm run lint
 
       # Component boundaries: nothing under src/components/** may import the
-      # network layer (`@/api`, `@/services/*`, `@/network/*`) or vue-router.
-      # Ratcheted, for the same reason as the stylelint gate below — the tree
-      # starts at 127 violations across 82 components, and a rule that goes red
-      # everywhere on day one gets switched off. A component takes props and
-      # emits events; if it fetches, it cannot be tested or reused without a
-      # server, which is why this one is worth the baseline machinery.
+      # network layer (`@/api`, `@/services/*`, `@/network/*`) or vue-router,
+      # and any violation fails. A component takes props and emits events; if
+      # it fetches, it cannot be tested or reused without a server.
       #
-      # Read-only like every other step here (the writer is
-      # `pnpm run lint:boundary:update`). Its own tests are in
+      # Read-only like every other step here. Its own tests are in
       # scripts/import-boundary-ratchet.test.mjs, which the Ratchet unit tests
       # step in the other job runs — including the case that plants a violating
       # component and requires this command to fail on it.
-      - name: Component boundaries (eslint ratchet)
+      - name: Component boundaries (eslint)
         run: pnpm run lint:boundary
 
       # Web Storage: nothing under src/ may reference localStorage or
@@ -159,15 +155,11 @@ jobs:
       # quota is full, and they are absent outside a browser — one throw in a
       # setup() or a watcher takes the render or the interaction with it.
       # src/lib/browserStorage.ts is the one place that accepts those failure
-      # modes, and it never throws. Ratcheted like the steps above: the
-      # references already in the tree are frozen in
-      # browser-storage-baseline.json and only new ones fail, so the migration
-      # can be paid down file by file. Read-only; the writer is `pnpm run
-      # lint:storage:update`, which only lowers counts. Its own tests are
-      # scripts/browser-storage-ratchet.test.mjs (run by the Ratchet unit tests
+      # modes, and it never throws. Any direct reference fails. Read-only. Its
+      # own tests are scripts/browser-storage-ratchet.test.mjs (run by the Ratchet unit tests
       # step in the other job), including the plant that requires this command
       # to fail.
-      - name: Direct Web Storage (eslint ratchet)
+      - name: Direct Web Storage (eslint)
         run: pnpm run lint:storage
 
   # The checks that are not one of the three eslint runs — plus the two that need
@@ -255,45 +247,17 @@ jobs:
       - name: Scene debt rule self-tests
         run: python3 ../.claude/scripts/scene-debt-ratchet.py --self-test
 
-      # The catalog ratchet: every component under src/ (src/views/demo/
-      # excluded) that renders from props alone — grade A, the same grade the
-      # Scenes step uses — is in the /demo/catalog preview site, where
-      # catalog.spec.ts mounts it and notices the day it stops rendering alone.
-      # The ones that are not yet are listed as pending in
-      # frontend/catalog-baseline.json, and that list may only shrink: a
-      # component that is new, or that just became A, has to get a catalog
-      # entry (frontend/AGENTS.md, "The component preview site").
+      # Design system: no hardcoded colours, because a literal cannot follow
+      # the dark theme. Any colour violation fails; there is no allowance.
+      # Spec: docs/design-system.md.
       #
-      # "In the catalog" is read from the code, not from a `file:` label:
-      # src/views/demo/catalog.ts, or a catalog*.ts volume it imports and
-      # spreads into CATALOG (transitively; *Fixtures.ts not read), imports the
-      # .vue and uses it as an entry's `component:`. Comments are stripped
-      # first; a `component:` in demoRouter.ts or an unimported volume counts
-      # for nothing.
-      # python3 stdlib only, like the Scenes step.
-      #
-      # Read-only like every other step here; the writer is
-      # `pnpm run lint:catalog:update`, which only ever REMOVES from the
-      # pending list. Its own tests are `python3 .claude/scripts/catalog-ratchet.py
-      # --self-test`, which repo-guards.yml runs in its Guards self-test step.
-      - name: Catalog (preview-ratchet)
-        run: pnpm run lint:catalog
-
-      # Design system: no hardcoded colours, radii on the 6/8/12/999 ladder.
-      # Enforced through a ratchet (stylelint-baseline.json) because the tree
-      # starts at 537 violations across 88 files — a rule that goes red
-      # everywhere on day one gets switched off, not fixed. Only NEW violations
-      # fail. Spec and paydown map: docs/design-system.md.
-      #
-      # Note this gates FOUR rules, not everything stylelint reports: the config
-      # also carries property-order and class-naming rules that have never run
-      # in CI (stylelint appeared in no workflow before this step) and sit at
-      # 2842 findings. Widening the gate to those is a separate decision — see
-      # DESIGN_RULES in scripts/stylelint-ratchet-core.mjs.
+      # Note this gates the three colour rules in DESIGN_RULES
+      # (scripts/stylelint-ratchet-core.mjs), not everything stylelint reports:
+      # layout and naming rules the shared configs carry are not judged.
       #
       # Same read-only discipline as every other step here: this script never
       # passes --fix. Measured on this tree: ~22s.
-      - name: Design tokens (stylelint ratchet)
+      - name: Design tokens (stylelint)
         run: pnpm run lint:style
 
       # Bilingual UI: no Chinese typed straight into a template or a string
@@ -302,13 +266,9 @@ jobs:
       # and the English UI stays Chinese while every check passes. Zero
       # tolerance: the only Chinese allowed is data, marked on its own line with
       # `// i18n-data: <reason>` (`<!-- … -->` in a template). Spec: docs/i18n.md §5.
-      # A Chinese HTML comment counts too, and is the one kind held by a ratchet
-      # instead of refused outright: the production build strips comments, vitest
-      # and `vite dev` do not, so the Han reaches the DOM the no-Chinese specs
-      # read. 1422 lines in 230 files are frozen in
-      # frontend/i18n-comments-baseline.json; `lint:i18n:update` tightens it.
+      # Comments are prose and are not scanned.
       #
-      # Pure node, no dependency, about a second. Read-only unless `--update`.
+      # Pure node, no dependency, about a second. Read-only.
       - name: Hardcoded Chinese (i18n)
         run: pnpm run lint:i18n
 
@@ -395,12 +355,11 @@ jobs:
         run: uv sync --frozen --no-dev
         working-directory: backend
 
-      # Not a plain `vue-tsc --noEmit`: the errors the tree already has are frozen
-      # in tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
-      # Runs through scripts/typecheck.mjs, which generates src/api/openapi.d.ts
+      # vue-tsc, failing on any type error. Runs through scripts/typecheck.mjs,
+      # which generates src/api/openapi.d.ts
       # first: the judging project imports it — src/cx_types.ts, and
       # src/types/{canvas,ownAgents,modelConnections}.ts directly.
-      - name: Type check (ratchet)
+      - name: Type check
         env:
           # Node's default heap lands around 2GB and vue-tsc on this tree peaks
           # near 1.7GB — too close to the edge to leave to chance. Raising it

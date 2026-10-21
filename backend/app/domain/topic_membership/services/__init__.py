@@ -40,6 +40,7 @@ channel private; only someone who manages the project turns one back.
 # 还在这儿，它建的就是门面这个类。
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,6 +76,10 @@ from app.domain.topic_membership.schemas import TopicMemberOut
 from . import housekeeping
 from .housekeeping import _public
 
+if TYPE_CHECKING:
+    # deferred-import: cycle membership.roster -> topic_membership.services
+    from app.domain.membership.roster import Member
+
 __all__ = ["CHEESE_HANDLE", "TopicMemberService", "addressable_seat"]
 
 
@@ -83,6 +88,9 @@ class TopicMemberService:
         self._session = session
         self._repo = TopicMembershipRepository(session)
         self._topics = TopicRepository(session)
+        # The project roster `_on_project` last read, kept so a request can hand
+        # it to the writer's own session instead of that session reading it again.
+        self.roster_read: tuple[Member, ...] | None = None
 
     async def _ensure_topic(self, topic_id: uuid.UUID) -> None:
         if await self._topics.get(topic_id) is None:
@@ -301,6 +309,11 @@ class TopicMemberService:
     async def owner_of(self, topic_id: uuid.UUID) -> str | None:
         return await housekeeping.owner_of(self, topic_id)
 
+    async def owners_of(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, str | None]:
+        return await housekeeping.owners_of(self, topic_ids)
+
     async def topic_ids_for_member(
         self, topic_ids: list[uuid.UUID], member_handle: str
     ) -> set[uuid.UUID]:
@@ -425,9 +438,15 @@ class TopicMemberService:
     async def may_bring_in(self, topic: Topic, actor: str) -> bool:
         """May ``actor`` add someone to this channel: a person in it whose role
         lets them bring people into channels, or someone who manages it. An AI
-        teammate's seat lets it act in the channel, not invite."""
+        teammate's seat lets it act in the channel, not invite. Everyone in the
+        project is in 综合 without a seat of their own, and a role that lets
+        them bring people in already says they are in the project."""
         if (
-            await self._repo.get(topic_id=topic.id, member_handle=actor) is not None
+            (
+                topic.kind == TopicKind.root
+                or await self._repo.get(topic_id=topic.id, member_handle=actor)
+                is not None
+            )
             and not await IdentityService(self._session).is_agent(actor)
             and await self.may_open_channels(topic.project_id, actor)
         ):
@@ -572,10 +591,8 @@ class TopicMemberService:
         # deferred-import: cycle membership.roster -> topic_membership.services
         from app.domain.membership.roster import roster
 
-        return any(
-            m.handle == handle
-            for m in await roster(self._session, project_id, team=team)
-        )
+        self.roster_read = await roster(self._session, project_id, team=team)
+        return any(m.handle == handle for m in self.roster_read)
 
     async def remove(self, *, topic_id: uuid.UUID, handle: str, actor: str) -> None:
         await self.require_manager(topic_id, actor)

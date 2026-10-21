@@ -10,10 +10,9 @@ hand out is held in Valkey until the turn lets it go.
 import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
 
 from app.domain.agent.admission import Lease
 from app.domain.memory.scopes import MemoryScope
@@ -33,88 +32,6 @@ WriteThrough = Callable[[uuid.UUID, uuid.UUID], Awaitable[bool]]
 #: mark_turn_inactive 时问一次——缓存松手而库里的行还开着，是缓存唯一不该替它遮
 #: 掩的事，但收场仍归生命周期，这里不代它关。
 ConfirmClosed = Callable[[uuid.UUID, uuid.UUID], Awaitable[bool]]
-
-
-@dataclass(frozen=True, slots=True)
-class DurableTurnSeat:
-    """A live turn known only from its durable row.
-
-    What the process-local ``hook_work`` would have told a reader in one
-    process — the seat the turn authors under and the seat whose session answers
-    for it — reconstructed from the open ``AgentTurn`` row, so the cross-process
-    half of 「这条消息该进哪一轮」 sees a turn this process never assembled.
-    ``agent_handle`` is the one column the row holds for both questions; it is
-    ``None`` on a row that reached the table before it was assembled.
-    """
-
-    agent_instance_handle: str | None
-    acting_agent: str | None
-
-
-class TurnSeat(Protocol):
-    """What names whose turn it is: the two seats a live turn is read by.
-
-    Both ``HookWorkState`` (this process's own work) and ``DurableTurnSeat`` (a
-    row another process opened) carry these, and that is the whole reason the
-    pickers below can ask one question of a mixed set — the durable row cannot
-    offer more, and a caller aiming a steer or stamping ``seen_by`` needs only
-    these two. Declared as a Protocol so the reader of a turn does not name
-    either concrete class. Read-only members: a class's ``acting_agent: str``
-    then satisfies it, which a writable ``str | None`` member would reject.
-    """
-
-    @property
-    def agent_instance_handle(self) -> str | None: ...
-
-    @property
-    def acting_agent(self) -> str | None: ...
-
-
-def pick_unambiguous_entry[StateT: TurnSeat](
-    entries: Iterable[tuple[uuid.UUID, StateT | None]],
-    matches: Callable[[StateT], bool] | None,
-    *,
-    strict: bool,
-) -> tuple[uuid.UUID, StateT | None] | None:
-    """The one live turn an inbound message belongs to, with the state naming it.
-
-    With no ``matches``, a single live turn on the topic is the answer. With
-    several (parallel seats in one room) only an exact ``matches`` hit decides,
-    and only when exactly one hits: delivering to a guessed turn is worse than
-    holding the message for none. A live id with no state cannot be ruled out —
-    the old single-slot tolerance — unless ``strict``, which refuses to deliver
-    without a state. Shared by the process-local set and the durable rows so the
-    two answer the question the same way. Returns the state beside the id so a
-    caller can aim the steer and name ``seen_by`` at the turn's own seat.
-
-    Generic in the state so a caller keeping one concrete kind (the local
-    ``HookWorkState``) reads that kind back, while the mixed authority set is
-    typed as the ``TurnSeat`` they share.
-    """
-    entries = list(entries)
-    if not entries:
-        return None
-    if matches is None:
-        return entries[0] if len(entries) == 1 else None
-    hits: list[tuple[uuid.UUID, StateT | None]] = []
-    for work_id, state in entries:
-        if state is None:
-            if not strict:
-                hits.append((work_id, None))
-        elif matches(state):
-            hits.append((work_id, state))
-    return hits[0] if len(hits) == 1 else None
-
-
-def pick_unambiguous[StateT: TurnSeat](
-    entries: Iterable[tuple[uuid.UUID, StateT | None]],
-    matches: Callable[[StateT], bool] | None,
-    *,
-    strict: bool,
-) -> uuid.UUID | None:
-    """The id alone — `pick_unambiguous_entry` without the state."""
-    picked = pick_unambiguous_entry(entries, matches, strict=strict)
-    return picked[0] if picked is not None else None
 
 
 @dataclass
@@ -143,28 +60,16 @@ class HookWorkState:
     user_text: str
     started_at: datetime
     agent_instance_handle: str | None = None
+    # Where this seat's reading stands once this turn finishes cleanly. The
+    # blocks this turn answers for are `pending_ids`; the window also carried
+    # other seats' messages, which are read but not stamped. None when this
+    # process assembled no prompt (a session recovered on the way up).
+    read_through: tuple[datetime, uuid.UUID] | None = None
     # The model this turn's session was launched on, for the usage row a turn
     # with no reported usage still writes. "" where this process never
     # assembled a turn for the session (a screen recovered on the way up).
     model: str = ""
     assistant_count: int = 0
-    last_chat_at: datetime | None = None
-    # When this turn was last told it had gone quiet — NOT whether it has been.
-    # A flag meant one reminder per silent stretch, so a turn that worked for
-    # three hours without publishing was asked once, at the ten-minute mark, and
-    # then left alone for the remaining two hours and fifty minutes. The room
-    # showing nothing for that long is the complaint this reminder exists for.
-    last_progress_reminder_at: datetime | None = None
-    # Same shape, other thing: when this turn was last called on to bring its own
-    # checklist up to date. 一轮可以一直在说话、清单却停在开工那一版，而清单是看
-    # 的人唯一能看见「做到哪了」的地方——`silence_reminder` 数不着它。这里是已提醒
-    # 的时刻，不是清单本身的时刻：清单自己的时刻在 `TopicProgress.updated_at`，
-    # 那才是它会因为一次写入而变新的地方。
-    last_checklist_reminder_at: datetime | None = None
-    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。结果回来时要
-    #: 写上输出、挂了要标红的就是那一块。只在内存里、只活这一轮：重启丢掉的只是几
-    #: 截输出和几个红点，不是记录。
-    steps: dict[str, uuid.UUID] = field(default_factory=dict)
 
     # The topic branch's commits as of turn start — what makes "this turn's
     # changes" answerable at turn end. A task rather than a value, because the
@@ -327,7 +232,7 @@ class LiveWork:
             if self._confirm_closed is not None:
                 try:
                     closed = await self._confirm_closed(topic_id, work_id)
-                except Exception:  # noqa: BLE001 — a failed confirm is not a close
+                except Exception:  # a failed confirm is not a close
                     logger.exception(
                         "could not confirm turn %s closed (topic=%s)", work_id, topic_id
                     )
@@ -355,35 +260,3 @@ class LiveWork:
         active.discard(work_id)
         if not active:
             self.active_turn_ids.pop(topic_id, None)
-
-    def consuming_work_id(
-        self,
-        topic_id: uuid.UUID,
-        matches: Callable[[HookWorkState], bool] | None = None,
-        *,
-        strict: bool = False,
-    ) -> uuid.UUID | None:
-        """The live turn an inbound message belongs to, if unambiguous — the
-        turns THIS process is holding. `authority.consuming_turn` adds the rows
-        another process opened and asks the same question of both."""
-        active = self.active_turn_ids.get(topic_id)
-        if not active:
-            return None
-        entries = [
-            (work_id, self.hook_work.get((topic_id, work_id))) for work_id in active
-        ]
-        return pick_unambiguous(entries, matches, strict=strict)
-
-    def attributed_work_id(self, topic_id: uuid.UUID, author: str) -> uuid.UUID | None:
-        """Which live hook work a room publication with no turn id belongs to."""
-        live = [s for (t, _), s in self.hook_work.items() if t == topic_id]
-        own = [s for s in live if s.acting_agent == author]
-        if len(own) == 1:
-            return own[0].work_id
-        if len(own) > 1:
-            active = self.active_turn_ids.get(topic_id, ())
-            hits = [s.work_id for s in own if s.work_id in active]
-            return hits[0] if len(hits) == 1 else None
-        if len(live) == 1:
-            return live[0].work_id
-        return None

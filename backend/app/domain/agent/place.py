@@ -60,6 +60,17 @@ def footprint_root() -> str:
     return _ROOT
 
 
+#: How a machine path names the enrollment's root: the connector running that
+#: enrollment supplies CHEESE_PROFILE_ROOT (`.cheese`, or a named profile's
+#: `.cheese/profiles/<name>`), and expands this where it resolves a path itself.
+ROOT_PLACEHOLDER = "${CHEESE_PROFILE_ROOT:-" + _ROOT + "}"
+
+
+def machine_root() -> str:
+    """Execution root, resolved by the enrollment process on the machine."""
+    return f"$HOME/{ROOT_PLACEHOLDER}"
+
+
 def session_platform_dirs() -> tuple[str, ...]:
     """The platform's directories inside a SESSION home, current one first."""
     return (_ROOT, _PREVIOUS_SESSION_DIR)
@@ -125,7 +136,7 @@ def launcher_path(topic_id: uuid.UUID, seat: str = "") -> str:
     caller that has no seat (recovery of a screen from before seats) asks for
     the room's.
     """
-    return f"$HOME/{_ROOT}/launch/{topic_id}-{seat_name(seat)}.sh"
+    return f"{machine_root()}/launch/{topic_id}-{seat_name(seat)}.sh"
 
 
 def seat_dir(home: str, seat: str = "") -> str:
@@ -174,22 +185,28 @@ CHECKOUT_DIR = "room"
 #: cleanup script, held to this one by `tests/unit/test_footprint_root.py`.
 SANDBOXES_DIR = "sandboxes"
 
-#: Under the footprint root, once per machine: the Claude Code login its owner
-#: gives the platform (`cheesehost claude login`), kept apart from the owner's
-#: own `~/.claude`. A session of the owner's own Claude Code keeps its own
-#: `CLAUDE_CONFIG_DIR` and reads this one as its credential store
-#: (`CLAUDE_SECURESTORAGE_CONFIG_DIR`), so every such session on the machine
-#: shares one login and Claude Code's own refresh renews it for all of them.
-#: The connector writes it (`cli/internal/claudecode`) and the backend's probe
-#: reads it; both copies are held to this one by
-#: `tests/unit/test_footprint_root.py`.
-CLAUDE_LOGIN_DIR = "claude-login"
+#: Under the enrollment root: the first Claude Code login its team gives the
+#: platform on a machine (`cheesehost claude login`), kept apart from the
+#: owner's own `~/.claude`, which the machine calls `login_kind.FIRST_LOGIN`.
+#: A session of the owner's own Claude Code keeps its own `CLAUDE_CONFIG_DIR`
+#: and reads its login's directory as its credential store
+#: (`CLAUDE_SECURESTORAGE_CONFIG_DIR`), so every session on the machine with
+#: that login shares it and Claude Code's own refresh renews it for all of
+#: them. On macOS the login is a Keychain item named after this path; the
+#: connector retains that item's namespace when moving the old shared directory.
+#: The connector writes it
+#: (`cli/internal/claudecode`) and the backend's probe reads it; both copies
+#: are held to this one by `tests/unit/test_footprint_root.py`.
+CLAUDE_LOGIN_DIR = "logins/claude-login"
 
-#: In the login directory: another model service its owner set instead of the
-#: login (`cheesehost claude login --base-url`), as `{base_url, token, model}`.
-#: The launch exports it and the probe reports its model; the connector writes
-#: it (`claudecode.serviceFile`), held to this name by the same test.
-MODEL_SERVICE_FILE = "model-service.json"
+#: Under the enrollment root: every further login, one directory each, named by
+#: what the machine calls it. Held to the connector's copy by the same test.
+CLAUDE_LOGINS_DIR = "logins/claude-logins"
+
+
+#: In a migrated login: a security command retaining its original Keychain
+#: items while credential files are read from the enrollment's new directory.
+CLAUDE_KEYCHAIN_DIR = "keychain"
 
 #: A member's own Claude Code on a connection their account holds (#2991): its
 #: session host is the deployment's, and the connection reaches the launch as
@@ -199,6 +216,10 @@ MODEL_SERVICE_FILE = "model-service.json"
 #: ``OWN_MODEL_AUTH`` is ``api_key`` (an Anthropic key, sent as ``x-api-key``)
 #: or ``bearer`` (a model service's, as ``ANTHROPIC_AUTH_TOKEN``).
 OWN_KEY = "CHEESE_OWN_KEY"
+#: A member's own Claude Code on a login on its owner's machine: which of the
+#: machine's logins its session signs in with, as the machine calls it
+#: (`login_kind.FIRST_LOGIN` for the one in `CLAUDE_LOGIN_DIR`).
+OWN_LOGIN_ID = "CHEESE_OWN_LOGIN_ID"
 OWN_MODEL_BASE_URL = "OWN_MODEL_BASE_URL"
 OWN_MODEL_KEY = "OWN_MODEL_KEY"
 OWN_MODEL_AUTH = "OWN_MODEL_AUTH"

@@ -78,6 +78,8 @@ async def _events_for(
     session: AsyncSession, routine: Routine, since: datetime
 ) -> list[tuple[str, str, datetime]]:
     """(occurrence key, human description, when) for events after `since`."""
+    if not routine.trigger:
+        return []
     trigger = RoutineTrigger(routine.trigger)
     in_room = routine.spec.get("scope") == "room"
     found: list[tuple[str, str, datetime]] = []
@@ -150,20 +152,35 @@ async def _fire_events(session: AsyncSession) -> int:
             .with_for_update(of=Routine, skip_locked=True)
         )
     )
-    fired = 0
+    # 先算每条规则的新事件，事件为空时照旧提前 continue（空趟不额外查 routine_runs）；
+    # 有待触发事件的规则在进触发循环前用一条 GROUP BY 一次数完最近一小时的触发次数。
+    due: list[tuple[Routine, list[tuple[str, str, datetime]]]] = []
     for routine in rows:
         since = routine.event_cursor or routine.created_at
         events = await _events_for(session, routine, since)
         if not events:
             continue
-        recent = await session.scalar(
-            select(func.count(RoutineRun.id)).where(
-                RoutineRun.routine_id == routine.id,
-                RoutineRun.created_at > now() - timedelta(hours=1),
-                RoutineRun.status != RunStatus.skipped.value,
+        due.append((routine, events))
+    if not due:
+        return 0
+    ids = [routine.id for routine, _events in due]
+    recent = {
+        routine_id: int(count)
+        for routine_id, count in (
+            await session.execute(
+                select(RoutineRun.routine_id, func.count(RoutineRun.id))
+                .where(
+                    RoutineRun.routine_id.in_(ids),
+                    RoutineRun.created_at > now() - timedelta(hours=1),
+                    RoutineRun.status != RunStatus.skipped.value,
+                )
+                .group_by(RoutineRun.routine_id)
             )
-        )
-        budget = EVENT_RUNS_PER_HOUR - int(recent or 0)
+        ).all()
+    }
+    fired = 0
+    for routine, events in due:
+        budget = EVENT_RUNS_PER_HOUR - recent.get(routine.id, 0)
         for key, detail, _when in events:
             run = await _fire(
                 session,

@@ -3,16 +3,14 @@
   "close": "关闭设置",
   "closeHint": "关闭设置（Esc）",
   "connections": "连接",
-  "devices": "设备",
   "general": "通用",
   "groups": {
     "account": "账号",
     "app": "桌面端",
     "devices": "设备与连接"
   },
-  "modelConnections": "模型连接",
+  "invites": "邀请好友",
   "notifications": "通知",
   "realName": "实名信息",
-  "title": "个人设置",
-  "usage": "芝士额度"
+  "title": "个人设置"
 }

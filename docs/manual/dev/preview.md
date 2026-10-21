@@ -1,5 +1,5 @@
 ---
-title: 话题预览
+title: 频道预览
 kind: 流程
 summary: 房间里的预览怎么托管、怎么鉴权，和项目网站共用哪一套、分开在哪；一份文件落进哪一种查看器，读者指着它说一句话时发出去的是什么。
 covers:
@@ -17,7 +17,7 @@ covers:
   - frontend/src/lib/quotedContext.ts
 ---
 
-# 话题预览 {#preview}
+# 频道预览 {#preview}
 
 房间里的预览怎么托管、怎么鉴权。项目网站和它用同一套内容域与凭证交换，但快照、入口和上限是另一个部件。
 
@@ -27,7 +27,7 @@ covers:
 
 |          | 地址                               | 内容                                     |
 | -------- | ---------------------------------- | ---------------------------------------- |
-| 话题预览 | `preview-<话题或任务 id>.<SITES_DOMAIN>` | 选中的文件或正在运行的应用，随工作区变化 |
+| 频道预览 | `preview-<频道或任务 id>.<SITES_DOMAIN>` | 选中的文件或正在运行的应用，随工作区变化 |
 | 项目网站 | `<项目 id>.<SITES_DOMAIN>`         | 发布的那个快照                           |
 
 内容域名和平台域名不共用可注册域，平台 cookie 永远不会发到内容域上。预览和网站的内容里拿不到任何平台凭证（`backend/app/api/preview_host.py`）。
@@ -39,7 +39,7 @@ covers:
 ## 凭证怎么换 {#grant}
 
 1. 平台签一张 30 秒有效的预览凭证。
-2. 内容主机用它换一个 8 小时的 cookie，HttpOnly。https 部署下还带 Secure、SameSite=None 和 Partitioned；项目网站那份是 SameSite=Lax，不带 Partitioned。话题预览的实现在 `backend/app/api/preview_host.py`，项目网站在 `backend/app/domain/site/hosting.py`。
+2. 内容主机用它换一个 8 小时的 cookie，HttpOnly。https 部署下还带 Secure、SameSite=None 和 Partitioned；项目网站那份是 SameSite=Lax，不带 Partitioned。频道预览的实现在 `backend/app/api/preview_host.py`，项目网站在 `backend/app/domain/site/hosting.py`。
 3. 之后每个 HTTP 请求和 WebSocket 连接都重新检查房间访问权：私有房间要求是房间成员。WebSocket 最晚在会话到期时断开。
 
 在预览里运行的应用可以正常用自己的 cookie 登录：这些 cookie 会被改写成只属于该主机的 Partitioned cookie；应用自己的 Bearer 鉴权原样转发。
@@ -56,7 +56,7 @@ actors:
     sub: 前端与主 API
   - key: host
     label: 预览内容主机
-    sub: preview-<话题 id>.专用域
+    sub: preview-<频道 id>.专用域
   - key: machine
     label: 工作机器
     sub: 会话所在那台

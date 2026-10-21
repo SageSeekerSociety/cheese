@@ -45,6 +45,7 @@ const {
   loading,
   refreshing,
   errorMsg,
+  liveFallback,
   noRepo,
   fileDiffs,
   diffByPath,
@@ -85,6 +86,7 @@ const {
   toggleCompare,
   // 动作
   loadAll,
+  retryLive,
   selectFile,
   closeFile,
   selectVersion,
@@ -110,6 +112,10 @@ function setDraft(v: string) {
 // ⋯ 里的刷新和首屏那次加载走同一条路，只是不转圈。
 function refresh() {
   void loadAll({ silent: true })
+}
+// 「现场工作区没有及时响应」那条说明上的重试：回到现场来源，重新读。
+function onRetryLive() {
+  void retryLive()
 }
 function onSelectFile(path: string) {
   void selectFile(path)
@@ -141,6 +147,7 @@ defineExpose({ openFile })
     :loading="loading"
     :refreshing="refreshing"
     :error-msg="errorMsg"
+    :live-fallback="liveFallback"
     :no-repo="noRepo"
     :file-diffs="fileDiffs"
     :diff-by-path="diffByPath"
@@ -184,6 +191,7 @@ defineExpose({ openFile })
     @select-file="onSelectFile"
     @close-file="closeFile"
     @select-version="onSelectVersion"
+    @retry-live="onRetryLive"
     @toggle-dir="toggleDir"
     @refresh="refresh"
     @download="onDownload"

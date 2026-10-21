@@ -150,6 +150,24 @@
               </template>
             </InboxRow>
 
+            <!-- A task I teach: claims to approve, submissions to review; the row opens where
+                 that is done (the roster, or the submissions). -->
+            <InboxRow
+              v-else-if="item.kind === 'task_queue'"
+              :to="taskQueueTo(item)"
+              :time="relTime(item.at)"
+              :at="item.at"
+              data-testid="waiting-task-queue"
+            >
+              <template #lead>
+                <v-icon icon="mdi-trophy-outline" size="16" />
+              </template>
+              <template #title>
+                <span class="waiting__ask waiting__ask--warn">{{ taskQueueAsk(item) }}</span>
+                <span data-user-content>{{ item.taskName }}</span>
+              </template>
+            </InboxRow>
+
             <!-- An invitation or join request: who sent it, the two answers always shown.
                  No mark-read / delete: answering is how it leaves. -->
             <InboxRow v-else :time="relTime(item.at)" :at="item.at">
@@ -191,7 +209,7 @@
 </template>
 
 <script setup lang="ts">
-import type { WaitingAsk, WaitingItem, WaitingRun, WaitingWork } from '@/cx_types'
+import type { WaitingAsk, WaitingItem, WaitingRun, WaitingTask, WaitingWork } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
@@ -229,7 +247,7 @@ const emit = defineEmits<{
   allow: [item: WaitingRun, yes: boolean]
 }>()
 
-/** 这一件要你做什么。负责人那一条按停在哪一格说：检查没过，或被退回。 */
+/** 这一件要你做什么。负责人那一条按停在哪一格说：检查没过、卡住了，或被退回。 */
 function askOf(item: WaitingWork): { text: string; tone: 'warn' | 'danger' } {
   if (item.reason === 'reviewer') return { text: t('home.inbox.reason.reviewer'), tone: 'warn' }
   if (item.reason === 'reporter') return { text: t('home.inbox.reason.reporter'), tone: 'warn' }
@@ -237,6 +255,7 @@ function askOf(item: WaitingWork): { text: string; tone: 'warn' | 'danger' } {
   if (item.reason === 'decide') return { text: t('home.inbox.reason.decide'), tone: 'warn' }
   if (item.reason === 'read') return { text: t('home.inbox.reason.read'), tone: 'warn' }
   if (item.phrase === 'checks_failed') return { text: t('home.inbox.reason.checksFailed'), tone: 'danger' }
+  if (item.phrase === 'blocked') return { text: t('home.inbox.reason.blocked'), tone: 'warn' }
   return { text: t('home.inbox.reason.bounced'), tone: 'warn' }
 }
 
@@ -254,7 +273,8 @@ function iconOf(item: WaitingWork): string {
     case 'read':
       return 'mdi-text-box-outline'
     default:
-      return item.phrase === 'checks_failed' ? 'mdi-close-circle-outline' : 'mdi-undo-variant'
+      if (item.phrase === 'checks_failed') return 'mdi-close-circle-outline'
+      return item.phrase === 'blocked' ? 'mdi-alert-circle-outline' : 'mdi-undo-variant'
   }
 }
 
@@ -306,6 +326,19 @@ function askTitleOf(item: WaitingAsk): string {
   return t('home.inbox.invite.request', { person })
 }
 
+/** 题目那一行要你做什么：批准几份领取、批改几份提交，两样都有就都写。 */
+function taskQueueAsk(item: WaitingTask): string {
+  const parts = []
+  if (item.claims) parts.push(t('home.inbox.task.claims', { n: item.claims }))
+  if (item.reviews) parts.push(t('home.inbox.task.reviews', { n: item.reviews }))
+  return parts.join(t('home.inbox.task.and'))
+}
+
+/** 批准领取和批改提交都在「领取者」页签：「我的提交」只有自己的那一份。 */
+function taskQueueTo(item: WaitingTask) {
+  return { name: 'TasksParticipants', params: { spaceId: String(item.spaceId), taskId: String(item.taskId) } }
+}
+
 interface Group {
   key: string
   name: string
@@ -322,6 +355,13 @@ const placeKindOf = (item: WaitingAsk) =>
 const groups = computed(() => {
   const out: Group[] = []
   for (const item of props.items) {
+    if (item.kind === 'task_queue') {
+      const key = `space:${item.spaceId}`
+      const group = out.find((g) => g.key === key)
+      if (group) group.items.push(item)
+      else out.push({ key, name: item.spaceName, projectId: null, items: [item] })
+      continue
+    }
     const inProject = item.kind === 'work' || item.kind === 'mcp_run'
     const key = inProject ? `project:${item.projectId}` : `${placeKindOf(item)}:${item.placeId}`
     const group = out.find((g) => g.key === key)

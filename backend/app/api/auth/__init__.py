@@ -58,6 +58,17 @@ DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.docs_site.agent_search_docs": False,
     "app.api.routes.docs_site.agent_read_docs": False,
     "app.api.routes.tasks.participation.list_joined_tasks": False,
+    "app.api.routes.tasks.drafts.agent_search": False,
+    "app.api.routes.tasks.drafts.agent_read": False,
+    "app.api.routes.tasks.drafts.agent_write": True,
+    "app.api.routes.tasks.drafts.agent_publish": True,
+    "app.api.routes.tasks.drafts.agent_file": False,
+    "app.api.routes.tasks.drafts.agent_materials": False,
+    # A person's own 芝士 in a project: it reads the channels the person may,
+    # and drafts what they would say there; the person sends it.
+    "app.api.routes.topics.read_chat_history": False,
+    "app.api.routes.topics.read_chat_message": False,
+    "app.api.routes.assistant.propose": True,
 }
 
 

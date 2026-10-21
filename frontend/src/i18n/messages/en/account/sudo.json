@@ -2,6 +2,7 @@
   "action": {
     "addPasskey": "add a passkey",
     "changePassword": "change your password",
+    "closeAccount": "close your account",
     "deletePasskey": "delete a passkey",
     "deleteRealName": "delete your real-name information",
     "disableTOTP": "turn off two-step verification",

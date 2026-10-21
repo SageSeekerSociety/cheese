@@ -17,7 +17,7 @@ import threading
 
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_doc_agent import _tool
-from tests.integration.test_doc_agent import sessions as sessions  # noqa: F401
+from tests.integration.test_doc_agent import sessions as sessions
 from tests.integration.test_doc_edits import ALICE_PARAGRAPH, _doc, _document
 from tests.support.living_doc import document_of
 
@@ -71,7 +71,10 @@ def test_a_shortcut_changes_the_selection_and_the_box_gets_the_change(client, se
     )
 
     assert status == 200
-    assert _done(events)["edits"] == [{"old": "讲范围", "new": "讲边界"}]
+    changed = _done(events)["changes"]
+    assert [(c["kind"], c["edits"], c["undone"]) for c in changed] == [
+        ("doc", [{"old": "讲范围", "new": "讲边界"}], [])
+    ]
     assert "李老师写的第二段，讲边界。" in _doc(client, task)["content"]
     latest = client.get(
         f"/documents/{document_of(client, task)}/history",
@@ -89,7 +92,7 @@ def test_a_shortcut_that_only_asks_cannot_change_the_document(client, sessions):
     status, events = _ask(client, task, preset="check", selection=_selection("范围"))
 
     assert status == 200
-    assert _done(events)["edits"] == []
+    assert _done(events)["changes"] == []
     assert ALICE_PARAGRAPH in _doc(client, task)["content"]
 
 
@@ -106,7 +109,7 @@ def test_nothing_asked_about_a_read_only_document_changes_it(client, sessions):
     )
 
     assert status == 200
-    assert _done(events)["edits"] == []
+    assert _done(events)["changes"] == []
     assert ALICE_PARAGRAPH in _doc(client, task)["content"]
 
 
@@ -194,7 +197,7 @@ def test_a_stopped_answer_keeps_what_was_written(client, sessions):
     asking.join(20)
     status, events = answered[0]
     assert status == 200
-    assert _done(events) == {"answer": "这一段讲的是", "edits": [], "stopped": True}
+    assert _done(events) == {"answer": "这一段讲的是", "changes": [], "stopped": True}
 
 
 def test_a_question_waits_for_a_full_host_and_is_then_answered(client, sessions):

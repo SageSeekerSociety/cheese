@@ -32,6 +32,7 @@ import type {
 
 import { axiosMutation, axiosNewApi, axiosRequest } from './axiosHttp'
 import { spaceAnalytics } from './spaceAnalytics'
+import { changesSpaces } from './spacesChanged'
 
 /** Spaces have always used the new API origin; JSON calls expose only the payload. */
 export const SpacesApi = {
@@ -42,9 +43,11 @@ export const SpacesApi = {
       true
     ),
   resubmit: (id: number, data: PostSpaceRequestData) =>
-    axiosRequest<{ application: SpaceApplication }>(
-      { url: `/space-applications/${id}/resubmit`, method: 'POST', data },
-      true
+    changesSpaces(
+      axiosRequest<{ application: SpaceApplication }>(
+        { url: `/space-applications/${id}/resubmit`, method: 'POST', data },
+        true
+      )
     ),
   reviews: (status: string, offset = 0, limit = 50) =>
     axiosRequest<{ items: SpaceApplication[] }>(
@@ -57,16 +60,18 @@ export const SpacesApi = {
       true
     ),
   create: (data: PostSpaceRequestData) =>
-    axiosRequest<{ space: Space; inviteCode: SpaceInviteCode | null }>({ url: '/spaces', method: 'POST', data }, true),
+    changesSpaces(
+      axiosRequest<{ space: Space; inviteCode: SpaceInviteCode | null }>({ url: '/spaces', method: 'POST', data }, true)
+    ),
   join: (data: PostSpaceJoinRequestData) =>
-    axiosRequest<{ space: Space }>({ url: '/spaces/join', method: 'POST', data }, true),
+    changesSpaces(axiosRequest<{ space: Space }>({ url: '/spaces/join', method: 'POST', data }, true)),
   listMembers: (spaceId: number) =>
     axiosRequest<{ members: SpaceMember[] }>({ url: `/spaces/${spaceId}/members`, method: 'GET' }, true),
   addMember: (spaceId: number, data: PostSpaceMemberRequestData) =>
     axiosRequest<{ member: SpaceMember }>({ url: `/spaces/${spaceId}/members`, method: 'POST', data }, true),
   removeMember: (spaceId: number, userId: number) =>
     axiosMutation({ url: `/spaces/${spaceId}/members/${userId}`, method: 'DELETE' }, true),
-  leave: (spaceId: number) => axiosMutation({ url: `/spaces/${spaceId}/leave`, method: 'POST' }, true),
+  leave: (spaceId: number) => changesSpaces(axiosMutation({ url: `/spaces/${spaceId}/leave`, method: 'POST' }, true)),
   listAnnouncements: (spaceId: number) =>
     axiosRequest<SpaceAnnouncementList>({ url: `/spaces/${spaceId}/announcements`, method: 'GET' }, true),
   publishAnnouncement: (spaceId: number, data: PostSpaceAnnouncementRequestData) =>
@@ -121,17 +126,19 @@ export const SpacesApi = {
     ),
   deleteMaterial: (spaceId: number, materialId: number) =>
     axiosMutation({ url: `/spaces/${spaceId}/materials/${materialId}`, method: 'DELETE' }, true),
-  downloadMaterial: async (spaceId: number, materialId: number): Promise<Blob> =>
+  /** `preview`：页面上点开看一眼，不记一次下载。 */
+  downloadMaterial: async (spaceId: number, materialId: number, preview = false): Promise<Blob> =>
     (
       await axiosNewApi.request<Blob>({
         url: `/spaces/${spaceId}/materials/${materialId}/download`,
         method: 'GET',
+        params: preview ? { preview: true } : undefined,
         responseType: 'blob',
       })
     ).data,
   update: (spaceId: number, data: PatchSpaceRequestData) =>
     axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}`, method: 'PATCH', data }, true),
-  del: (spaceId: number) => axiosMutation({ url: `/spaces/${spaceId}`, method: 'DELETE' }, true),
+  del: (spaceId: number) => changesSpaces(axiosMutation({ url: `/spaces/${spaceId}`, method: 'DELETE' }, true)),
   detail: (spaceId: number, params: { queryClassificationTopics?: boolean; queryMyRank?: boolean } = {}) =>
     axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}`, method: 'GET', params }, true),
   list: (params: { pageSize?: number; pageStart?: number; sort_by: string; sort_order: string }) =>

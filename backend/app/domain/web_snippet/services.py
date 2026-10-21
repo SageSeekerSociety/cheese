@@ -2,16 +2,14 @@
 
 import secrets
 import uuid
-from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core import blob_store
 from app.core.errors import NotFoundError
 from app.core.sentences import say
-from app.domain.library.blobs import LocalBlobs
 from app.domain.web_snippet.check import Ran
 from app.domain.web_snippet.models import WebSnippet, WebSnippetVersion
 
@@ -25,10 +23,6 @@ KEY_LENGTH = 8
 
 def _new_key() -> str:
     return "".join(secrets.choice(_KEY_LETTERS) for _ in range(KEY_LENGTH))
-
-
-def _blobs() -> LocalBlobs:
-    return LocalBlobs(Path(settings.workspace_root))
 
 
 def shot_name(width: int, theme: str) -> str:
@@ -116,7 +110,7 @@ class Snippets:
         if ran is not None:
             for name, png in ran.shots.items():
                 key = f".web-snippets/{project_id}/{snippet.id}/{number}-{name}.png"
-                _blobs().put(key, png)
+                await blob_store.local().put(key, png)
                 shots[name] = key
         version = WebSnippetVersion(
             snippet_id=snippet.id,
@@ -146,6 +140,11 @@ class Snippets:
         }
 
     @staticmethod
-    def shot(version: WebSnippetVersion, name: str) -> bytes | None:
+    async def shot(version: WebSnippetVersion, name: str) -> bytes | None:
         key = version.shots.get(name)
-        return _blobs().get(key) if key else None
+        if not key:
+            return None
+        try:
+            return await blob_store.local().get(key)
+        except blob_store.BlobMissingError:
+            return None

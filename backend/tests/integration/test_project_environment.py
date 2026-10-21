@@ -334,3 +334,35 @@ def test_applying_holds_no_room_lock_while_the_machine_is_reset(client, monkeypa
     assert outcome["response"].status_code == 422, outcome["response"].text
     after = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
     assert after["pinned_revision"] == before["pinned_revision"]
+
+
+def test_team_devices_form_one_sandbox_pool_regardless_of_enroller(client):
+    from sqlalchemy import select
+
+    from app.domain.device.supply import Supply
+    from app.domain.device.wiring import sql_device_service
+    from app.domain.machine import environments
+    from app.domain.project.models import Project
+    from app.domain.user.models import User
+
+    pid, _ = project(client)
+    seed_user(client, "bob")
+
+    async def enroll_and_offer():
+        async with client.test_factory() as db:
+            row = await db.get(Project, uuid.UUID(pid))
+            devices = sql_device_service(db)
+            for handle in ["alice", "bob"]:
+                user = await db.scalar(select(User.id).where(User.username == handle))
+                await devices.approve(
+                    await devices.start(handle),
+                    owner_user_id=user,
+                    team_id=row.team_id,
+                    supply=Supply.self_hosted,
+                )
+            await db.flush()
+            return await environments.offered_specs(db, row)
+
+    specs = client.portal.call(enroll_and_offer)
+    [pool] = [spec for spec in specs if spec["spec"] == "team_devices"]
+    assert pool["label"] == "团队设备"

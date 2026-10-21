@@ -8,7 +8,7 @@ import type { RailMemberMark } from '@/lib/memberActivity'
 import type { RowLight } from '@/lib/roomLight'
 import type { VisibleRow } from '@/lib/topicTree'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import TopicRailLight from './TopicRailLight.vue'
 import TopicRailTaskFold from './TopicRailTaskFold.vue'
@@ -32,7 +32,7 @@ const props = defineProps<{
   menuOpen: boolean
   /** 父级带钟算出来的：这一行里有没有成员卡住了（自己的，不含收起来的后代）。 */
   stalled: boolean
-  /** 卡住成员的原因，仅供唯一状态灯的文字说明。 */
+  /** 父级算好的成员动态。频道行不再画头像，保留这份契约供父级沿用。 */
   marks?: RailMemberMark[]
   /** 这一行此刻画哪盏灯（父级带钟算的）；不亮是 null。 */
   light?: RowLight | null
@@ -66,24 +66,23 @@ const emit = defineEmits<{
 }>()
 
 // 每行只显示一盏：保留已有状态事实和优先级，不另取任务或重算状态。
+// 红灯的 `why` 沿用 lib/roomLight.ts：成员卡住等太久是 `waiting`，不是另一套判断。
 const rowLight = computed<RowLight | null>(() =>
   brightest([
     props.light,
     props.row.hiddenLight,
-    props.stalled || props.row.hiddenStalled ? { kind: 'red', breathe: false } : null,
+    props.stalled || props.row.hiddenStalled ? { kind: 'red', why: 'waiting' } : null,
     props.tasksCollapsed ? props.taskLight : null,
   ])
 )
 
+// 合成后的灯若来自「收起的子频道里有成员卡住」，把这件事说出来；
+// 自己或隐藏后代本来就带红灯时，它们的理由更具体，由 `lightTitle` 说。
 const rowLightLabel = computed(() => {
-  if (props.stalled)
-    return (
-      props.marks
-        ?.filter((mark) => mark.state === 'stalled')
-        .map((mark) => mark.title)
-        .join('\n') || undefined
-    )
-  return props.row.hiddenStalled ? t('work.sidebar.hiddenStalled') : undefined
+  const ownOrHiddenRed = props.light?.kind === 'red' || props.row.hiddenLight?.kind === 'red'
+  if (!ownOrHiddenRed && props.row.hiddenStalled && rowLight.value?.kind === 'red')
+    return t('work.sidebar.hiddenStalled')
+  return undefined
 })
 
 // Status: only show when notable (archived / draft); active is implicit. Shown as a
@@ -119,6 +118,31 @@ function onMenuToggle(open: boolean) {
   if (!open) menuPoint.value = null
   emit('update:menu-open', open)
 }
+
+// 点下去到新页面出来之间，这一行一直亮着。只靠按下的那一下不够：手指抬起后它又变回
+// 原样，等得久的人会以为没点到。选中态到了就熄；一直没选中（跳转被挡下）最多亮十秒。
+const pending = ref(false)
+let pendingTimer: number | undefined
+function choose(): void {
+  // 点的就是当前这一行：不跳转，也就没有「等它选中」这回事，别亮着不放。
+  if (props.selected) {
+    emit('select', props.row.topic.id)
+    return
+  }
+  pending.value = true
+  window.clearTimeout(pendingTimer)
+  pendingTimer = window.setTimeout(() => (pending.value = false), 10_000)
+  emit('select', props.row.topic.id)
+}
+watch(
+  () => props.selected,
+  (on) => {
+    if (!on) return
+    pending.value = false
+    window.clearTimeout(pendingTimer)
+  }
+)
+onBeforeUnmount(() => window.clearTimeout(pendingTimer))
 </script>
 
 <template>
@@ -134,6 +158,7 @@ function onMenuToggle(open: boolean) {
     :class="{
       'rail-channel-page': page,
       'is-active': selected,
+      'is-pending': pending,
       'is-sub': row.depth > 0,
       'is-menu-open': menuOpen,
     }"
@@ -141,7 +166,7 @@ function onMenuToggle(open: boolean) {
       paddingInlineStart: 8 + row.depth * 20 + 'px',
       '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
     }"
-    @click="emit('select', row.topic.id)"
+    @click="choose"
     @mouseenter="emit('hover', row.topic.id)"
     @mouseleave="emit('leave')"
     @focusin="emit('hover', row.topic.id)"
@@ -315,6 +340,15 @@ function onMenuToggle(open: boolean) {
 }
 /* 选中的行 hover 不能倒退回 hover 档——否则鼠标一扫过，选中态反而变浅。 */
 .topic-row.is-active:hover {
+  background: var(--line-2);
+}
+/* 按下去那一帧就换底色。触屏上没有 hover，点了之后页面要等一下才换，中间这一下
+   要是也没有变化，看起来就像没点到。 */
+.topic-row:active {
+  background: var(--line-2);
+}
+/* 手指抬起之后到新页面出来之前，这一行保持亮着（见脚本里的 pending）。 */
+.topic-row.is-pending {
   background: var(--line-2);
 }
 

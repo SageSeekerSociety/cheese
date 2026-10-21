@@ -14,6 +14,9 @@ name: Remote Bash equivalence
 
 on:
   workflow_call:
+  # A branch that changes what this checks dispatches it to see it run before
+  # merging: a pull request leaves this suite to main.
+  workflow_dispatch:
 
 permissions:
   contents: read

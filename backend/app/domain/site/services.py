@@ -233,7 +233,7 @@ async def publication_source(session: AsyncSession, project_id: uuid.UUID) -> di
         and row["bytes"] <= MAX_ENTRY_BYTES
         and _asset_path(row["path"])
     ]
-    candidates = []
+    bundles = []
     for entry in entries:
         directory = str(PurePosixPath(entry["path"]).parent)
         bundle = _files_under(files, directory)
@@ -241,9 +241,14 @@ async def publication_source(session: AsyncSession, project_id: uuid.UUID) -> di
             _validate_bundle(bundle)
         except ValidationError:
             continue
-        html = (await reader.committed_blobs([entry["oid"]]))[entry["oid"]]
+        bundles.append((entry, directory, bundle))
+    # One read of the forge for every entry that passed, rather than one per
+    # entry: whichever bundle is refused above never asks for its blob.
+    blobs = await reader.committed_blobs([entry["oid"] for entry, _, _ in bundles])
+    candidates = []
+    for entry, directory, bundle in bundles:
         try:
-            if _static_entry(bundle, html):
+            if _static_entry(bundle, blobs[entry["oid"]]):
                 candidates.append({"directory": directory, "entry_file": entry["path"]})
         except ValidationError:
             continue

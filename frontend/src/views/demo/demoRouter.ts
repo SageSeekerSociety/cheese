@@ -26,6 +26,7 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
 
 /** 目录中按 name 指路的链接都要有对应路由；路径与正式路由一致，才能画出正确的 href。 */
 const catalogTargets = [
+  { path: '/home', name: 'HomeHub', component: blank },
   { path: '/account/signin', name: 'SignIn', component: blank },
   { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
   // 空间设置那一层的七条子路由（`settings/Index.vue` 的 `SECTIONS`，名字与路径照
@@ -60,16 +61,19 @@ const catalogTargets = [
   { path: '/teams/:handle/docs', name: 'TeamsDetailDocs', component: blank },
   { path: '/teams/:handle/docs/:docId', name: 'TeamsDocument', component: blank },
   { path: '/teams/:handle/compute', name: 'TeamsDetailCompute', component: blank },
+  { path: '/teams/:handle/models', name: 'TeamsDetailModels', component: blank },
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
   { path: '/inbox', name: 'inbox', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
-  { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
+  { path: '/plans', name: 'CreditPlans', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },
+  { path: '/spaces/:spaceId/tasks/:taskId/submissions', name: 'TasksSubmissions', component: blank },
   { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
+  { path: '/spaces/:spaceId/library', name: 'SpacesLibrary', component: blank },
   { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
-  { path: '/spaces', name: 'HomeSpaces', component: blank },
+  { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
   // 题目那一层（`catalogScenesPages3.ts` 里题卡、单份回答、回答列表三件）互相指路：题卡上
   // 「查看该回答」、回答卡片上面那颗「查看全部 N 条回答」都按名字指。名字与路径照
   // `router/question.ts` 那棵子树；名字缺了按名字解析的那一条会当场抛，整段渲染不出来。

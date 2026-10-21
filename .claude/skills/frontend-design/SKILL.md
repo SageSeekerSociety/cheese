@@ -17,8 +17,8 @@ description: >
 
 ## 为什么需要它
 
-规范里能上闸门的部分已经上了：写死的颜色、跑偏的圆角有 stylelint，Vuetify 固定调色板名有
-`check-repo-rules.sh`。**剩下的全是机器判不了的**——一个动画在说什么、一句中文像不像人话、
+规范里能上闸门的部分已经上了：写死的颜色有 stylelint，Vuetify 固定调色板名有
+`check-repo-rules.sh`。圆角档位和排版一样没有闸门，靠这一遍看。**剩下的全是机器判不了的**——一个动画在说什么、一句中文像不像人话、
 一个 hover 该不该动位置。那部分没有闸门，只能靠有人真的去看一遍。
 
 所以这个 skill 的价值不在"跑命令"，在**它列全了要看的东西**：漏掉的那条永远是没人想起来的那条。
@@ -41,13 +41,11 @@ git diff --name-only origin/main...HEAD -- 'frontend/**'   # 一次改动
 
 ```bash
 cd frontend
-pnpm run lint:style                        # 写死颜色 + 圆角档位，棘轮只拦新增
+pnpm run lint:style                        # 写死颜色，一处就红
 cd .. && bash .claude/scripts/check-repo-rules.sh   # Vuetify 固定调色板名（stylelint 看不见模板）
 ```
 
-两个都绿只说明**没有新增**。存量冻在基线里，所以"绿"不等于这个文件干净——你正在读的这个
-文件很可能就在基线里，别照着它抄。基线在 `frontend/stylelint-baseline.json` 和
-`frontend/palette-baseline.json`，想知道手上这个文件有没有额度就去查它。
+两个都绿只说明写死颜色和固定调色板名检查通过；继续看下面没有闸门的部分。
 
 ## 2. 动效（规范 §9，没有闸门）
 

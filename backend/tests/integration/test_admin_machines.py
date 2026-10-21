@@ -7,7 +7,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
-from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
+from app.domain.machine.models import (
+    CloudHost,
+    MachineStatus,
+    SandboxHome,
+    WarmMachine,
+)
 from app.domain.run_record.models import RunRecord
 from tests.integration.conftest import post_project, session_auth_headers
 
@@ -107,6 +112,53 @@ def test_each_host_shows_its_sandboxes_and_the_pool_counts_who_waits(client, adm
     assert data["pool"]["hosts"] == 2
     assert data["pool"]["used"] == 2
     assert data["pool"]["waiting"] == 1
+
+
+def test_an_unclaimed_warm_machine_is_listed_with_its_name_size_and_stage(
+    client, admin
+):
+    """A warm machine runs and is billed before any session claims it, so the
+    page names it and its size; one already claimed is a host, one deleted is gone."""
+
+    def warm(state: str, name: str, machine_id: int) -> WarmMachine:
+        return WarmMachine(
+            state=state,
+            machine_id=machine_id,
+            create_request={
+                "hostname": name,
+                "cores": 4,
+                "memoryMb": 16384,
+                "diskGb": 40,
+            },
+        )
+
+    async def build(s):
+        s.add_all(
+            [
+                warm("ready", "warm-spare", 101),
+                warm("preparing", "warm-booting", 102),
+                warm("claimed", "warm-taken", 103),
+                warm("deleted", "warm-gone", 104),
+            ]
+        )
+
+    _seed(client, build)
+
+    data = client.get("/admin/stats/machines", headers=admin).json()["data"]
+    listed = {
+        w["hostname"]: (
+            w["machine_id"],
+            w["state"],
+            w["cores"],
+            w["memory_mb"],
+            w["disk_gb"],
+        )
+        for w in data["warm"]
+    }
+    assert listed == {
+        "warm-spare": (101, "ready", 4, 16384, 40),
+        "warm-booting": (102, "preparing", 4, 16384, 40),
+    }
 
 
 def test_the_pool_says_it_refuses_new_sessions_while_the_provider_keeps_failing(

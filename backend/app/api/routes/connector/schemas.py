@@ -4,10 +4,9 @@
 字段与注释逐行原样搬来 —— 形状只有一处可看。谁用哪个模型见各子模块的 import。
 """
 
-import uuid
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from app.domain.device.login_kind import ConnectionKind
 
@@ -20,32 +19,53 @@ class DevicePollRequest(BaseModel):
     device_code: str
 
 
+class RunningDeviceSessionOut(BaseModel):
+    session_id: str
+    agent_name: str
+    agent_name_source: str | None
+    project_id: str
+    project_name: str
+    team_id: int
+    team_name: str
+    conversation_id: str
+    conversation_kind: Literal["room", "task", "thread"]
+    conversation_title: str
+    room_id: str
+    roles: list[Literal["center", "executor"]]
+    since: str
+
+
+class RunningDeviceSessionsOut(BaseModel):
+    sessions: list[RunningDeviceSessionOut]
+
+
 class ConnectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     device_code: str
     # The human-chosen name for this compute node (optional — blank keeps the name the
     # cli proposed at device-flow start, avoiding an "unnamed" node).
     device_name: str | None = None
-    project_id: uuid.UUID | None = None
+    team_id: int | None = None
 
 
 class RenameDeviceRequest(BaseModel):
     name: str
 
 
-class BindTeamRequest(BaseModel):
-    team_id: int
-
-
 class ClaudeCodeLoginOut(BaseModel):
     """What a machine last said about its owner's Claude Code login."""
 
+    id: str
+    local_id: str
     installed: bool
     logged_in: bool
-    #: `claude.ai` for a subscription, the API key kind, or `model_service`.
+    #: `claude.ai` for a subscription login.
     auth_method: str | None
     subscription_type: str | None
-    model: str | None
-    service_host: str | None
+    #: Which Claude account the login is, as `claude auth status` names it;
+    #: None until the machine is next checked.
+    account_email: str | None = None
+    account_org: str | None = None
     #: What its owner named the connection; None until they do.
     name: str | None
     checked_at: str
@@ -54,6 +74,11 @@ class ClaudeCodeLoginOut(BaseModel):
 
 
 class ModelConnectionOut(ClaudeCodeLoginOut):
+    owner_user_id: int | None = None
+    owner_name: str | None = None
+    can_manage: bool = False
+    can_remove: bool = False
+    allowed_models: list[str]
     device_id: str
     device_name: str
     online: bool
@@ -61,11 +86,39 @@ class ModelConnectionOut(ClaudeCodeLoginOut):
     last_used_at: str | None
 
 
+class DeviceScreenOut(BaseModel):
+    sid: str
+    agent_handle: str
+    agent_user_id: str
+    project_id: str | None
+    topic_id: str | None
+    agent_name: str | None
+    agent_name_source: str | None
+
+
+class EnrollmentDeviceOut(BaseModel):
+    device_id: str
+    name: str
+    online: bool
+    team_id: int
+    last_seen_at: str | None
+    screens: list[DeviceScreenOut]
+
+
+class AccessibleDevicesOut(BaseModel):
+    devices: list[EnrollmentDeviceOut]
+
+
 class AccountConnectionOut(BaseModel):
     """A model connection the caller's account holds: an Anthropic API key or
     a model service, kept sealed by the platform. Never the key."""
 
     id: str
+    owner_user_id: int | None = None
+    owner_name: str | None = None
+    can_manage: bool = False
+    can_remove: bool = False
+    allowed_models: list[str]
     kind: ConnectionKind
     #: What its owner calls it.
     name: str | None
@@ -80,7 +133,22 @@ class AccountConnectionOut(BaseModel):
     created_at: str
 
 
+class PlatformModelOut(BaseModel):
+    id: str
+    label: str
+
+
+class ConnectionModels(BaseModel):
+    allowed_models: list[
+        Annotated[
+            str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)
+        ]
+    ]
+
+
 class ModelConnectionsOut(BaseModel):
+    can_manage: bool
+    platform_models: list[PlatformModelOut]
     #: The logins the caller's machines hold.
     connections: list[ModelConnectionOut]
     #: The connections the caller's account holds.
@@ -91,6 +159,11 @@ class AccountConnectionIn(BaseModel):
     """An API key or a model service to keep on the caller's account."""
 
     kind: Literal[ConnectionKind.api_key, ConnectionKind.model_service]
+    allowed_models: list[
+        Annotated[
+            str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)
+        ]
+    ]
     key: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1024)
     ]
@@ -120,11 +193,3 @@ class ConnectionRename(BaseModel):
     """What its owner calls a model connection; empty takes the name away."""
 
     name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)]
-
-
-class ModelServiceRequest(BaseModel):
-    base_url: Annotated[
-        str, StringConstraints(strip_whitespace=True, pattern=r"^https?://[^\s/]+")
-    ]
-    token: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    model: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^\S+$")]

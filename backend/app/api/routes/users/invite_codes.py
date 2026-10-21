@@ -1,4 +1,4 @@
-"""邀请码管理（平台管理员）。"""
+"""邀请码：平台管理员发的码，和每个人自己的那张（`/users/me/invites`）。"""
 
 from typing import TYPE_CHECKING, Annotated
 
@@ -11,15 +11,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.admin_deps import PlatformAdminDep
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.errors import NotFoundError
 from app.db.session import get_db
 
 if TYPE_CHECKING:
     pass
 
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.routes.users._common import CreateInviteCodeRequest
 from app.api.write_access import ROUTE_DECIDES
 from app.domain.invite.services import InviteCodeService
+from app.domain.review.queries import has_accepted
+from app.domain.usage import referrals
+from app.domain.usage.schemas import MyInvitesOut
+from app.domain.user.services import user_by_id
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -118,3 +123,24 @@ async def deactivate_invite_code(
     await service.deactivate_code(code_id)
     await session.commit()
     return ok(None, "Invite code deactivated.")
+
+
+@router.get(
+    "/me/invites",
+    summary="My own invite code and the friends who came in on it",
+    **typed_response(MyInvitesOut),
+)
+async def my_invites(
+    auth_user: Annotated[AuthUserInfo, Depends(require_auth_user)],
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """The code is made on first view; a code made here is committed with the
+    request so the same one comes back next time."""
+    user = await user_by_id(session, auth_user.user_id)
+    if user is None:
+        raise NotFoundError()
+    found = await referrals.overview(
+        session, user, has_accepted=lambda: has_accepted(session, user.username)
+    )
+    await session.commit()
+    return ok(MyInvitesOut.model_validate(found).model_dump(mode="json"))

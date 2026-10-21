@@ -32,6 +32,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import wait_for_record
 
 
 class FirstPromptOnly(StubChannel):
@@ -83,11 +84,13 @@ def _rows(client, model, topic: uuid.UUID, *where) -> list:
 
 
 def _age_records_after(stub: StubChannel, topic: uuid.UUID, sequence: int) -> int:
-    """Make what the session recorded after ``sequence`` older than the reader
-    lands: as if the backend had been away, or stuck, that long."""
+    """Make what the session recorded after ``sequence``, and every event its
+    runner has not had taken yet, older than the reader lands: as if the
+    backend had been away, or stuck, that long."""
     journal = stub._session_for(topic).state / "records.sqlite"
     then = (datetime.now(UTC) - timedelta(seconds=STALE_S + 600)).isoformat()
     with sqlite3.connect(journal, timeout=10) as connection:
+        connection.execute("UPDATE lifecycle SET at = ?", (then,))
         return connection.execute(
             "UPDATE records SET recorded_at = ? WHERE sequence > ?", (then, sequence)
         ).rowcount
@@ -117,7 +120,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/late-turn-end-ws",
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=client.test_request_factory),
         )
 
     before = FirstPromptOnly()
@@ -136,10 +139,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
         # is read inside that work.
         before.starts(topic)
         before.uses(topic, "Bash", command="sleep 600")
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "sleep 600" in str(record))
         seat = next(
             turn.agent_handle
             for turn in _rows(client, AgentTurn, topic)

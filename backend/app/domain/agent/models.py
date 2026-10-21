@@ -29,7 +29,9 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -227,3 +229,73 @@ class TurnResume(UuidPk, Base):
         DateTime(timezone=True), nullable=True
     )
     dropped_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class SessionState(Base):
+    """One seat's session as its runner declares it (`harness/driven/lifecycle.py`).
+
+    A seat is (conversation, agent, harness): the key ``agent_sessions`` is
+    written under. ``worker_epoch`` is the registration the platform issued its
+    runner last; a runner, or a platform process, holding an older one can no
+    longer change anything here (``session_state.take``). ``worker_status`` is
+    what the runner said the session is doing, ``idle`` or ``running``, and
+    ``changed_at`` when it last said something different. Whether the session
+    is reachable is not here: that is a lease the reading process holds, and
+    unreachable is not a status the session has.
+    """
+
+    __tablename__ = "session_states"
+    __table_args__ = (
+        CheckConstraint(
+            "worker_status IN ('idle', 'running')",
+            name="ck_session_states_worker_status",
+        ),
+        Index(
+            "ix_session_states_running",
+            "conversation_id",
+            postgresql_where=text("worker_status = 'running'"),
+        ),
+    )
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    harness: Mapped[str] = mapped_column(String(32), primary_key=True)
+    worker_epoch: Mapped[int] = mapped_column(BigInteger)
+    worker_status: Mapped[str] = mapped_column(String(16))
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    #: When the runner last reported the session's process gone.
+    exited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class SessionOffset(Base):
+    """How far the platform has applied what one registration of a seat's
+    runner reported: the consumer offset, committed in the same transaction as
+    the effects of the events it covers (``session_state.take``).
+
+    Events of one runner arrive in sequence order and are applied in it, so an
+    event at or below ``applied_seq`` for its ``(seat, epoch)`` has been
+    applied, and applying it again is a no-op: the unique key of an event is
+    ``(seat, epoch, seq)``, and this row is the high-water mark of it. An event
+    is acknowledged to the runner only once ``projected_seq`` covers it too.
+    """
+
+    __tablename__ = "session_offsets"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    harness: Mapped[str] = mapped_column(String(32), primary_key=True)
+    epoch: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    applied_seq: Mapped[int] = mapped_column(BigInteger)
+    #: How far what follows from those events outside this transaction (the
+    #: room's books, what is told) has been done: an event above it and at or
+    #: below ``applied_seq`` was applied, and what follows from it is done again
+    #: when it is delivered again (``session_state.projected``).
+    projected_seq: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0"
+    )
+    #: How far the room has landed the closing results those events carried:
+    #: done again, the rest of an event's projection does not hand the room
+    #: the same result twice (`session_state.result_landed`).
+    landed_seq: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")

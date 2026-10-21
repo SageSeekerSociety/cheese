@@ -195,6 +195,25 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             link=link,
         )
 
+    if type_ in ("TASK_NOTICE", "TASK_DUE_SOON"):
+        # 空间里一道题目上的事（`task_notices`）：那句话就是标题，按钮去题目页。
+        content = _text(payload, "content") or "题目有一条新消息"
+        return Letter(
+            subject=_clip(content, _SUBJECT_LIMIT),
+            eyebrow=_text(payload, "spaceName") or "题目",
+            headline=content,
+            details=tuple(
+                (k, v)
+                for k, v in (
+                    ("空间", _text(payload, "spaceName")),
+                    ("题目", _text(payload, "taskName")),
+                )
+                if v
+            ),
+            action="查看题目",
+            link=link,
+        )
+
     if type_ == "ROOM_NOTICE":
         content = _text(payload, "content") or "平台有一条提示"
         return Letter(

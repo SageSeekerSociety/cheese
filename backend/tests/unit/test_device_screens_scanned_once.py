@@ -72,8 +72,7 @@ def _device(device_id: str) -> types.SimpleNamespace:
     return types.SimpleNamespace(
         device_id=device_id,
         name=device_id,
-        project_ids=[],
-        team_ids=[],
+        team_id=7,
         last_seen_at=None,
         supply=Supply.cloud,
     )
@@ -85,7 +84,7 @@ class _Resolver:
 
 
 class _Service:
-    async def list_owned(self, user_id: int):
+    async def list_enrolled_by(self, user_id: int):
         return [_device(d) for d in DEVICES]
 
 

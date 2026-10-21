@@ -1,12 +1,14 @@
 """A room that asks for the sandbox it already has gets another machine, and a
-machine whose disk is full stops being handed new sandboxes.
+session whose sandbox ran out of space is told so where it is.
 
 FB-101, on dev on 2026-10-16: a Cloud host's disk filled up, so every tool call
 of the session on it was answered 502 — the ``prepare`` each call makes was
 refused for want of space, and the machine's refusal reached the room as an
-error. Two things were wrong. Asking for the sandbox the session already had was
-a no-op, so a room could not get off the host by asking; and a host whose disk
-was full went on being offered to sessions, so the next call landed on it again.
+error. Asking for the sandbox the session already had was a no-op, so a room
+could not get off the host by asking. Each sandbox's home now has a disk quota
+of its own (``sandbox_host.py``), so a write refused for want of space means the
+session's own space ran out: the room is told its disk is full and keeps the
+host its work is on.
 
 The hosts, the pool and the tool call here are the ones of
 ``test_sandbox_idle_stop``: a tool call asks for its hands the way the session's
@@ -22,9 +24,11 @@ from app.core.device_failures import DeviceCallError
 from app.domain.agent import execution
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost
+from app.domain.machine.sandbox_wait import DISK_FULL
 from tests.executor_release import running
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
@@ -34,6 +38,7 @@ from tests.integration.test_sandbox_idle_stop import (
     tool_call,
     working_on,
 )
+from tests.support.devices import enrollment_team
 
 STANDARD = {"kind": "sandbox", "spec": "standard"}
 
@@ -62,8 +67,7 @@ def _enrolled(cloud, *device_ids: str) -> None:
     """The machines' device rows, as enrolling a host leaves behind
     (``HostPool.enroll``). A lease whose machine has no device row is dropped by
     the next attempt as one of a machine that was unbound, so without these the
-    attempt after a host is left never dials anything and the lease's machine is
-    never read again."""
+    attempt never prepares the executor it found running there."""
     onward = cloud.seats[0].session.hex[:8]
 
     async def seed():
@@ -74,6 +78,7 @@ def _enrolled(cloud, *device_ids: str) -> None:
             for device_id in device_ids:
                 db.add(
                     DeviceRow(
+                        team_id=await enrollment_team(sql_device_service(db), owner.id),
                         device_id=device_id,
                         name=device_id,
                         token=f"token-{device_id}",
@@ -136,31 +141,24 @@ def test_a_room_asked_for_the_sandbox_it_has_is_moved_to_another_machine(
     assert _hands(cloud, seat) == "host-b"
 
 
-def test_the_machine_left_for_its_disk_is_not_dialed_again(cloud, monkeypatch):
-    """The attempt after the full host is left keeps the lease of the machine
-    just left: it names that machine, and dialing it answers with that machine's
-    own refusal again, which ``_install`` records against the host this attempt
-    was placed on. The healthy host was marked as one that ran out of space and
-    the session's call failed, over a machine that had nothing wrong with it."""
-    # What the whole check does each time the hands are asked for again: the
-    # window in which hands just checked are handed out unchecked is not
-    # what this is about (`session_work.VERIFIED_FOR`).
+def test_a_prepare_refused_for_want_of_space_keeps_the_session_where_it_is(
+    cloud, monkeypatch
+):
+    """The session's executor is running, and the ``prepare`` its tool call makes
+    is refused because the sandbox has no room left. On a host the sandbox's home
+    has a quota of its own, so the space that ran out is the session's: the room
+    is told its disk is full and stays on its host, and the host is not marked
+    full."""
     monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     _two_rooms_on_two_hosts(cloud, monkeypatch)
     _enrolled(cloud, "host-a", "host-b")
     seat = cloud.seats[0]
-    full = host_of(cloud, seat).id
-    dialed: list[tuple[str, str]] = []
+    home = host_of(cloud, seat).id
 
     async def call(target, method, _params, **_kwargs):
-        device = target["device_id"]
-        dialed.append((device, method))
         if method == "ping":
-            # A running executor of this release, in a sandbox: the attempt
-            # prepares it in place rather than installing one — which is how
-            # the machine just left gets dialed again.
             return {**running(), "sandbox": True}
-        if device == "host-a":
+        if target["device_id"] == "host-a":
             raise DeviceCallError(NO_ROOM)
         return {}
 
@@ -168,30 +166,22 @@ def test_the_machine_left_for_its_disk_is_not_dialed_again(cloud, monkeypatch):
 
     answering = tool_call(cloud, seat)
 
-    assert "unavailable" not in answering, answering
-    assert answering["target"]["device_id"] == "host-b", "the session stayed put"
-    # The host that was left was asked for its hands once, not again on the
-    # attempt that was placed on the other one.
-    assert dialed == [("host-a", "ping"), ("host-a", "prepare"), ("host-b", "ping")]
-    assert host_of(cloud, seat).id != full
-    assert not _is_full(cloud, "host-b"), "a healthy host was marked as full"
+    assert DISK_FULL in answering.get("unavailable", ""), answering
+    assert host_of(cloud, seat).id == home, "the session was moved off its host"
+    assert not _is_full(cloud, "host-a"), "the host was marked full"
 
 
-def test_a_machine_that_ran_out_of_space_is_left_and_takes_no_new_sandbox(
+def test_an_install_refused_for_want_of_space_keeps_the_session_where_it_is(
     cloud, monkeypatch
 ):
-    """The host of the session's sandbox had no room, so the install there
-    could not get through. The session is placed on another host and works on,
-    and no new sandbox is offered the full host until a reading finds room
-    again — the disk guard's own mark (`disk_full_since`, read and cleared
-    every minute)."""
-    # What the whole check does each time the hands are asked for again: the
-    # window in which hands just checked are handed out unchecked is not
-    # what this is about (`session_work.VERIFIED_FOR`).
+    """The install on the session's host could not get through for want of
+    space. The room is told its disk is full and keeps its host, where its work
+    is; another host would give it an empty home. Whether a host's disk as a
+    whole is short is the disk guard's reading, not this refusal's."""
     monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     _two_rooms_on_two_hosts(cloud, monkeypatch)
-    seat, other, third = cloud.seats
-    full = host_of(cloud, seat).id
+    seat = cloud.seats[0]
+    home = host_of(cloud, seat).id
 
     real = cloud.hosts.exec
 
@@ -204,21 +194,8 @@ def test_a_machine_that_ran_out_of_space_is_left_and_takes_no_new_sandbox(
 
     monkeypatch.setattr(cloud.hosts, "exec", exec_)
 
-    # The room is not handed the machine's error: the failed install is one the
-    # session is placed away from, and its call is answered by another host —
-    # within the call, since the attempt that failed is retried while the caller
-    # still waits (`ensure`).
     answering = tool_call(cloud, seat)
 
-    assert "unavailable" not in answering, answering
-    assert answering["target"]["device_id"] == "host-b", "the session stayed put"
-    assert host_of(cloud, seat).id != full
-    # And the host it left takes nobody: it has a slot free, so placement would
-    # offer it — this third room's sandbox goes to another host, a new one the
-    # pool brings up, rather than the one whose disk just refused a write.
-    third_gets = tool_call(cloud, third)
-    landed = host_of(cloud, third)
-    assert landed is not None, third_gets
-    assert landed.id != full, "the host whose disk was full was offered again"
-    # The room that was already on the other host keeps it.
-    assert _hands(cloud, other) == "host-b"
+    assert DISK_FULL in answering.get("unavailable", ""), answering
+    assert host_of(cloud, seat).id == home, "the session was moved off its host"
+    assert not _is_full(cloud, "host-a"), "the host was marked full"

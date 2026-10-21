@@ -31,6 +31,8 @@ export function useRoomRoster(options: {
   author: string
   /** 名册拉不到时说给用户听——静默的表现是「@ 不出芝士」而屏幕上没有解释。 */
   onError: (message: string) => void
+  /** 已注销账号的 handle：它们留下的消息署「已注销用户」，不署那个 handle。 */
+  closed?: () => ReadonlySet<string>
 }) {
   // 这个房间里有谁。
   //
@@ -54,13 +56,6 @@ export function useRoomRoster(options: {
   )
   const rosterLoaded = computed(() => !!options.topic() && roster.data.value !== undefined)
   const roomMembers = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])
-  // 私密频道里 @ 一个不在频道里的人，他收不到通知（后端 TopicMemberService.reached），
-  // 那一处画成提到而不是 @chip（lib/refChip 的 reachable）。名册没到之前不下结论。
-  const reachable = computed(() =>
-    options.topic()?.members_only && rosterLoaded.value
-      ? new Set(roomMembers.value.map((row) => row.member_handle))
-      : undefined
-  )
   // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出芝士」，
   // 而屏幕上没有任何东西说明为什么。
   watch(
@@ -109,6 +104,19 @@ export function useRoomRoster(options: {
     () => roomAgentSeat.value ?? (rosterLoaded.value ? seatOf(projectDefaultAgent.value) : null)
   )
 
+  // 私密频道里 @ 一个不在频道里的人，他收不到通知（后端 TopicMemberService.reached），
+  // 那一处画成提到而不是 @chip（lib/refChip 的 reachable）。名册没到之前不下结论。
+  //
+  // 这个房间的 AI 队友要算进去：老房间没有自己的 AI 座位，`agentSeat` 退回项目默认那位，
+  // 它不在话题名册上，可 @ 它照样叫得动它。漏掉它，消息里那个 @ 被画成「只是提到」，
+  // 输入框和编辑框画的却是实心 @，同一句话三处三个样子。
+  const reachable = computed(() => {
+    if (!(options.topic()?.members_only && rosterLoaded.value)) return undefined
+    const handles = roomMembers.value.map((row) => row.member_handle)
+    const seat = agentSeat.value?.handle
+    return new Set(seat ? [...handles, seat] : handles)
+  })
+
   /** 界面上称呼它用的名字。名册没到时谁也不猜，就写「芝士」。 */
   const agentName = computed(() => agentSeat.value?.label || t('work.room.defaultAgentName'))
 
@@ -117,20 +125,17 @@ export function useRoomRoster(options: {
     // 名册没到（切话题的那一瞬间）房间那半就是空的：宁可少一行，也不能把**上一个
     // 房间**的座位留在名单里——那一位的名字也写着「芝士」，@ 出来却是个不在这儿的
     // handle。人在项目名册上照样 @ 得到，缺的只是这一个房间自己的那几行。
-    // 成员自己的 Claude Code 只有它答应的人叫得动（#2991）：主人，以及主人放开给项目
-    // 时项目里的人。叫不动的不列；叫得动的就算还没坐进这个频道也列，第一次 @ 它就会入座。
-    const room = (rosterLoaded.value ? roomMembers.value : [])
-      .filter((m) => mayCall(memberByHandle.value.get(m.member_handle)))
-      .map((m) => ({
-        handle: m.member_handle,
-        label: memberName(m) || m.member_handle,
-        // 房间名册这一行就带着「他自己挑过的头像」；@ 菜单原来只配色块，所以同一个人
-        // 在菜单里只有首字母、在消息行里却有真图。没挑过就是 null，交给首字母。
-        avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
-        agent: !!m.agent,
-        external: isExternal(m.member_handle),
-        role: m.role,
-      }))
+    // Personal agents can be mentioned by anyone and join on their first mention.
+    const room = (rosterLoaded.value ? roomMembers.value : []).map((m) => ({
+      handle: m.member_handle,
+      label: memberName(m) || m.member_handle,
+      // 房间名册这一行就带着「他自己挑过的头像」；@ 菜单原来只配色块，所以同一个人
+      // 在菜单里只有首字母、在消息行里却有真图。没挑过就是 null，交给首字母。
+      avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
+      agent: !!m.agent,
+      external: isExternal(m.member_handle),
+      role: m.role,
+    }))
     const inRoom = new Set(room.map((r) => r.handle))
     // 不在这间房里的 AI 队友不列：它只在自己坐着的房间里被 @ 叫得动，在这里 @ 它
     // 什么也不会发生（后端点名只认这间房的席位），列出来就是一个点了没反应的名字。
@@ -140,7 +145,7 @@ export function useRoomRoster(options: {
     // 没加入这个频道，所以排在频道里的人后面。名册没到时说不准谁在谁不在，那一刻不分。
     const rest = options
       .members()
-      .filter((m) => !inRoom.has(m.user_handle) && (!m.agent || (m.owner_handle && mayCall(m))) && m.active !== false)
+      .filter((m) => !inRoom.has(m.user_handle) && (!m.agent || m.owner_handle) && m.active !== false)
       .map((m) => ({
         handle: m.user_handle,
         label: m.name || m.user_handle,
@@ -155,11 +160,6 @@ export function useRoomRoster(options: {
   // 项目名册（房间名册上没有来路这一栏）。
   function isExternal(handle: string): boolean {
     return isExternalMember(memberByHandle.value.get(handle))
-  }
-  // 这一行要是成员自己的 Claude Code，这条消息的作者叫不叫得动它；别的行都叫得动。
-  function mayCall(row: ProjectMemberRow | undefined): boolean {
-    if (!row?.owner_handle) return true
-    return row.owner_handle === options.author || row.callers === 'project'
   }
   // handle → 名册行。**不要**改用 mentionNames：那张表额外塞了 all/here 两个保留
   // 键（渲染成「所有人」「在线成员」），一个恰好叫 all 的用户会被显示成「所有人」。
@@ -195,9 +195,11 @@ export function useRoomRoster(options: {
   function agentDisplayName(handle: string): string {
     return agentNameOf(handle) || t('work.room.defaultAgentName')
   }
-  function displayName(m: Block): string {
+  function displayName(m: Pick<Block, 'author_type' | 'author'>): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)
-    return memberByHandle.value.get(m.author)?.name || m.author
+    const name = memberByHandle.value.get(m.author)?.name
+    if (name) return name
+    return options.closed?.().has(m.author) ? t('account.closedUser') : m.author
   }
   // 真头像加载失败过的 URL —— 退回彩色首字母，不留破图。
   //

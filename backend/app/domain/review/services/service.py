@@ -162,6 +162,18 @@ class AcceptService:
             admits_reviewer=admits_reviewer,
         )
 
+    async def redeliver(
+        self,
+        task_id: uuid.UUID,
+        *,
+        actor: str,
+        deliver: str | None = None,
+        deliver_url: str | None = None,
+    ) -> AcceptCard:
+        return await cards.redeliver(
+            self, task_id, actor=actor, deliver=deliver, deliver_url=deliver_url
+        )
+
     async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
         return await notices._announce_filed(self, topic=topic, card=card, task=task)
 
@@ -341,10 +353,19 @@ class AcceptService:
         )
 
     async def accept(
-        self, *, card_id: uuid.UUID, decided_by: str, head_sha: str | None = None
+        self,
+        *,
+        card_id: uuid.UUID,
+        decided_by: str,
+        head_sha: str | None = None,
+        deliverable_revision: str | None = None,
     ) -> AcceptCard:
         return await _accept.accept(
-            self, card_id=card_id, decided_by=decided_by, head_sha=head_sha
+            self,
+            card_id=card_id,
+            decided_by=decided_by,
+            head_sha=head_sha,
+            deliverable_revision=deliverable_revision,
         )
 
     async def _accept_github(
@@ -545,7 +566,7 @@ class AcceptService:
             self, card=card, delivered_head=delivered_head
         )
 
-    async def _app_pr_client(self, topic: Topic):  # noqa: ANN202 — GitHubPRClient
+    async def _app_pr_client(self, topic: Topic):  # GitHubPRClient
         return await polling._app_pr_client(self, topic=topic)
 
     async def mark_ready(self, room_id: uuid.UUID, task_id: uuid.UUID) -> dict:
@@ -661,6 +682,7 @@ class AcceptService:
         protection: BranchProtection,
         chat_service,
         runner,
+        opened_by: str | None = None,
     ) -> None:
         return await merge_queue._merge_armed_card(
             self,
@@ -673,6 +695,7 @@ class AcceptService:
             protection=protection,
             chat_service=chat_service,
             runner=runner,
+            opened_by=opened_by,
         )
 
     async def _note_needs_human(

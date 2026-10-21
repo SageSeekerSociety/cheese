@@ -202,7 +202,7 @@ describe('对话栏自己的输入栏', () => {
     await flush()
     await fireEvent.click(getByRole('button', { name: /查资料，写成一份报告/ }))
     const box = composerBox(container)!
-    expect(box.querySelector('.mention')?.textContent).toBe('@芝士')
+    expect(box.querySelector('.mention')?.textContent).toBe('芝士')
     expect(composerText(box)).toContain('<@cheese-topica>')
     expect(composerText(box)).toContain('报告')
     expect(document.activeElement).toBe(box)
@@ -295,6 +295,45 @@ describe('对话栏自己的输入栏', () => {
     })
     const { rerender, queryByRole } = mountPanel({}, 'starter-answered')
     await rerender({ topic: { ...topic('starter-answered'), kind: 'root' } })
+    await flush()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
+  })
+
+  // 交给芝士的第一件事没回成：人已经知道该跟它说什么了，起手卡不能再摆回他那条
+  // 消息上面，挡住失败原因和「重试」。
+  it('keeps the starter drafts away once 芝士 took a turn, even one that failed', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listBlocks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'm3',
+          conversation_id: 'starter-failed',
+          kind: 'message',
+          content: '@芝士 帮我写一份课程报告。题目和要求是：TCP 拥塞控制算法对比',
+          author: 'alice',
+          author_type: 'participant',
+          created_at: '2026-09-16T10:00:00Z',
+          thread: {
+            id: 't3',
+            room_id: 'starter-failed',
+            root_block_id: 'm3',
+            reply_count: 0,
+            last_reply_at: null,
+            last_reply: null,
+            participants: [],
+            tasks: [],
+            failed: true,
+          },
+        } as never,
+      ],
+      total: 1,
+      has_more: false,
+      oldest_id: 'm3',
+      has_newer: false,
+      newest_id: null,
+    })
+    const { rerender, queryByRole } = mountPanel({}, 'starter-failed')
+    await rerender({ topic: { ...topic('starter-failed'), kind: 'root' } })
     await flush()
     expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
   })
@@ -664,21 +703,24 @@ describe('对话栏自己的输入栏', () => {
     })
   })
 
-  // 「交给芝士」这颗按钮唯一被允许做的事，就是替你打那五个字。它自己不存状态：
+  /** 发送键旁边那颗队友头像（它的名字跟着状态变，所以按位置找）。 */
+  const summonButton = (container: Element) => container.querySelector<HTMLButtonElement>('.summon__btn')!
+
+  // 发送键旁边那颗队友头像唯一被允许做的事，就是替你打那个 @。它自己不存状态：
   // 一个能和正文说不一样的话的开关（亮着、正文里却没有 @），会让「这条到底算不
   // 算叫了它」变成没人答得上来的问题——上一版正是因为这个被整颗删掉的。
   it('点「交给芝士」把 @ 写进正文，再点一下拿掉', async () => {
-    const { container, getByRole } = mountPanel({}, 'topic-summon-btn')
+    const { container } = mountPanel({}, 'topic-summon-btn')
     await flush()
 
     const box = composerBox(container)!
     await fillComposer(box, '看看这个')
-    const btn = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) })
+    const btn = summonButton(container)
     expect(btn.getAttribute('aria-pressed')).toBe('false')
 
     await fireEvent.click(btn)
     expect(composerText(box), '按钮没把 @ 写进正文——那它就是个只有它自己知道的开关').toBe('<@cheese-topica> 看看这个')
-    expect(box.querySelector('.mention')?.textContent).toBe('@芝士')
+    expect(box.querySelector('.mention')?.textContent).toBe('芝士')
     expect(btn.getAttribute('aria-pressed')).toBe('true')
 
     await fireEvent.click(btn)
@@ -687,11 +729,11 @@ describe('对话栏自己的输入栏', () => {
   })
 
   it('手打 @芝士，按钮自己亮起来', async () => {
-    const { container, getByRole } = mountPanel({}, 'topic-summon-mirror')
+    const { container } = mountPanel({}, 'topic-summon-mirror')
     await flush()
 
     const box = composerBox(container)!
-    const btn = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) })
+    const btn = summonButton(container)
     expect(btn.getAttribute('aria-pressed')).toBe('false')
     await fillComposer(box, '@芝士 看看这个')
     expect(btn.getAttribute('aria-pressed'), '正文里 @ 了它，按钮却没亮——两边说的不是同一件事').toBe('true')
@@ -716,10 +758,10 @@ describe('对话栏自己的输入栏', () => {
       })
     )
 
-    const { container, getByRole } = mountPanel({}, 'topic-late-roster')
+    const { container } = mountPanel({}, 'topic-late-roster')
     await flush()
 
-    const before = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) }) as HTMLButtonElement
+    const before = summonButton(container)
     expect(before.disabled, '房间名册还没到，按钮却已经能点了——这时候它认的是项目名册上那行共用的芝士').toBe(true)
 
     release()
@@ -727,7 +769,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     await fillComposer(box, '看看这个')
-    await fireEvent.click(getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) }))
+    await fireEvent.click(summonButton(container))
     expect(composerText(box)).toBe('<@cheese-topicL> 看看这个')
 
     box.focus()

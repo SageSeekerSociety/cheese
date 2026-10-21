@@ -1,6 +1,6 @@
 """守卫：参与者身上没有「它是不是 agent」这一栏。
 
-和 ``test_author_type_two_values.py`` / ``test_no_adhoc_auth_helpers.py`` 一样，这是
+和 ``test_author_type_two_values.py`` 一样，这是
 一条**静态**测试 —— 被测的东西本身就是源码树的一个性质，属于 AGENTS.md 那条「测行为、
 不读源码」的例外。
 

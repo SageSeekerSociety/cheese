@@ -38,4 +38,4 @@ def test_the_platforms_specs_follow_what_it_can_provision() -> None:
 
 
 def test_peoples_computers_are_available_once_one_is_connected() -> None:
-    assert _available(_settings(cloud=False), device_online=True) == {"devices_of"}
+    assert _available(_settings(cloud=False), device_online=True) == {"team_devices"}

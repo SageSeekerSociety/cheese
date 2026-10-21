@@ -183,7 +183,7 @@ class SpaceCategoryRepository:
         category_id: int,
         space_id: int,
     ) -> SpaceCategory | None:
-        """Return category by id and space id (including archived ones, excluding deleted)."""  # noqa: E501
+        """Return category by id and space id (including archived ones, excluding deleted)."""
         stmt: Select[tuple[SpaceCategory]] = select(SpaceCategory).where(
             SpaceCategory.id == category_id,
             SpaceCategory.space_id == space_id,
@@ -351,6 +351,17 @@ class SpaceAdminRelationRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def administered(self, user_id: int, space_ids: Sequence[int]) -> set[int]:
+        """Which of these spaces ``user_id`` is an owner or admin of."""
+        if not space_ids:
+            return set()
+        stmt = select(SpaceAdminRelation.space_id).where(
+            SpaceAdminRelation.user_id == user_id,
+            SpaceAdminRelation.space_id.in_(list(space_ids)),
+            SpaceAdminRelation.deleted_at.is_(None),
+        )
+        return {int(i) for i in (await self._session.execute(stmt)).scalars()}
 
     async def list_admins(self, space_id: int) -> Sequence[SpaceAdminRelation]:
         stmt: Select[tuple[SpaceAdminRelation]] = (

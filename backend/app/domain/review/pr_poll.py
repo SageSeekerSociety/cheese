@@ -12,15 +12,20 @@ it calls.
 import asyncio
 import logging
 import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import or_, select
 
 from app.core.sentences import say
-from app.domain.delivery_events import SettleCard
+from app.domain.delivery_events import DeliveryEvent, NotificationType, SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE,
+    EVENT_ACCEPT_READY,
     SEVERITY_INFO,
+    WHO_CHEESE,
     WHO_PLATFORM,
     notice,
 )
@@ -29,8 +34,16 @@ from app.domain.project.forge import (
     quota_serves_background,
 )
 from app.domain.project.models import ProjectForge
-from app.domain.review import archive, landing_watch, pr_publish
-from app.domain.review.models import AcceptCard
+from app.domain.review import archive, pr_publish
+from app.domain.review.github_pr import _NO_VERDICT_CONCLUSIONS, GitHubPRError
+from app.domain.review.github_pr.task_pr_metadata import (
+    TaskPrMetadata,
+    TaskPrMetadataFailure,
+    TaskPrMetadataResult,
+)
+from app.domain.review.github_pr_status import PullRequestStatus
+from app.domain.review.merge_state import RED_CONCLUSIONS
+from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.ports import (
     Announce,
     Chat,
@@ -39,7 +52,9 @@ from app.domain.review.ports import (
     SweepCheckouts,
     TaskTeammate,
 )
-from app.domain.review.task_landing import delivery_landed
+from app.domain.review.room_notices import tell_room_undelivered
+from app.domain.review.task_landing import delivery_landed, go_on_while_working
+from app.domain.room_task.closing import close_overdue
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -63,6 +78,43 @@ _transient_misses: dict[uuid.UUID, int] = {}
 # Keep the one-minute sweep within the forge API quota while covering old tasks.
 UNCARDED_TASKS_PER_TICK = 10
 _uncarded_task_cursor: uuid.UUID | None = None
+
+#: The three words `_checks_state` folds a PR's check runs into.
+CHECKS_RUNNING = "running"
+CHECKS_GREEN = "green"
+CHECKS_RED = "red"
+
+
+def _checks_state(runs: Sequence[dict]) -> str:
+    """这个提交上一批 check run 的净状态：``running`` / ``green`` / ``red``。
+
+    一个还在跑的检查意味着结论还不存在，所以「有在跑的」压过其余两条——包括
+    一条已经红的，重跑会把它变绿。
+
+    ``cancelled`` / ``stale`` 同样按「还没有结论」算，不折成绿：它们不是裁决。
+    被新推送顶掉的那次运行正是以 ``cancelled`` 收场的，把它读成全绿就会对着一个
+    还没人跑完的 head 说「可以递卡了」；`superseded_runs` 和卡面那句「已取消」
+    也是同一套词表（``_NO_VERDICT_CONCLUSIONS``）。``skipped`` 仍然是绿：路径过滤
+    不跑的那几个 job 在这套 CI 里是常态，把它们算成没结论会让这句话永远等不到。
+
+    全部跑完、没有一条是 :data:`~app.domain.review.merge_state.RED_CONCLUSIONS`
+    里的词、也没有一条是「没有裁决」的词，才算全绿。
+
+    一份 run 都没读到按 ``running`` 算：推送后到 workflow 起跑之间正是这个
+    空窗，那个时刻说「全绿」是错的；一直不报检查的仓库只是永远等不到这句话，
+    代价比误报小。
+    """
+    if not runs:
+        return CHECKS_RUNNING
+    if any(run.get("status") != "completed" for run in runs):
+        return CHECKS_RUNNING
+    if any(run.get("conclusion") in RED_CONCLUSIONS for run in runs):
+        return CHECKS_RED
+    if any(run.get("conclusion") in _NO_VERDICT_CONCLUSIONS for run in runs):
+        # 没有裁决的 run 既不是过也不是没过：等它被重跑/被顶替后的那次结论。
+        return CHECKS_RUNNING
+    return CHECKS_GREEN
+
 
 # How many of a tick's PRs are carried at once. No card or task PR depends on
 # another — each opens its own session and talks to the forge on its own — so
@@ -126,7 +178,7 @@ async def poll_open_prs(
                     await session.commit()
                     _transient_misses.pop(card_id, None)
                     return None
-                except Exception as exc:  # noqa: BLE001 — one card must not stop the rest
+                except Exception as exc:  # one card must not stop the rest
                     await session.rollback()
                     _report_card_failure(card_id, exc)
                     await _note_card_poll_crashed(
@@ -149,6 +201,13 @@ async def poll_open_prs(
     }
 
 
+@dataclass(frozen=True)
+class _TaskPrCandidate:
+    task_id: uuid.UUID
+    project_id: uuid.UUID
+    number: int
+
+
 async def poll_uncarded_task_prs(
     chat: Chat,
     announce: Announce,
@@ -165,7 +224,7 @@ async def poll_uncarded_task_prs(
     global _uncarded_task_cursor
     sessions = chat.session_factory
     query = (
-        select(Task.id)
+        select(Task.id, Task.project_id, Task.pr_number)
         .join(Topic, Topic.id == Task.room_id)
         .where(
             Task.pr_number.is_not(None),
@@ -175,9 +234,13 @@ async def poll_uncarded_task_prs(
             or_(Task.delivered_head.is_(None), Task.status == TaskStatus.open),
             Task.closing_since.is_(None),
             Topic.status != TopicStatus.archived,
+            # A card that is still waiting for its reviewer keeps the task in
+            # this poll: its checks turning green is news to the line too.
             ~select(AcceptCard.id)
             .where(
-                AcceptCard.task_id == Task.id, AcceptCard.pr_number == Task.pr_number
+                AcceptCard.task_id == Task.id,
+                AcceptCard.pr_number == Task.pr_number,
+                AcceptCard.status != AcceptStatus.pending,
             )
             .exists(),
         )
@@ -188,50 +251,101 @@ async def poll_uncarded_task_prs(
         query = query.where(Task.project_id == project_id)
     cursor = _uncarded_task_cursor if project_id is None else None
     async with sessions() as session:
-        task_ids = list(
-            await session.scalars(
-                query.where(Task.id > cursor) if cursor is not None else query
-            )
-        )
-        if cursor is not None and len(task_ids) < UNCARDED_TASKS_PER_TICK:
-            task_ids.extend(
-                await session.scalars(
-                    query.where(Task.id <= cursor).limit(
-                        UNCARDED_TASKS_PER_TICK - len(task_ids)
-                    )
+        rows = list(
+            (
+                await session.execute(
+                    query.where(Task.id > cursor) if cursor is not None else query
                 )
+            ).all()
+        )
+        if cursor is not None and len(rows) < UNCARDED_TASKS_PER_TICK:
+            rows.extend(
+                (
+                    await session.execute(
+                        query.where(Task.id <= cursor).limit(
+                            UNCARDED_TASKS_PER_TICK - len(rows)
+                        )
+                    )
+                ).all()
             )
-    if project_id is None and task_ids:
-        _uncarded_task_cursor = task_ids[-1]
+        candidates = [
+            _TaskPrCandidate(row.id, row.project_id, row.pr_number)
+            for row in rows
+            if row.pr_number is not None
+        ]
+    if project_id is None and candidates:
+        _uncarded_task_cursor = candidates[-1].task_id
 
     slots = asyncio.Semaphore(PRS_AT_ONCE)
 
-    async def advance(task_id: uuid.UUID) -> tuple[bool, bool, str | None]:
+    async def advance(
+        candidate: _TaskPrCandidate,
+        client,
+        quota,
+        metadata: dict[int, TaskPrMetadataResult] | None,
+    ) -> tuple[bool, bool, str | None]:
+        task_id = candidate.task_id
         """One task PR; returns (checked, merged, the failure to report)."""
         checked = merged = False
         try:
             async with slots:
                 async with sessions() as session:
                     task = await session.get(Task, task_id)
-                    if task is None or task.pr_number is None:
+                    if (
+                        task is None
+                        or task.pr_number != candidate.number
+                        or task.project_id != candidate.project_id
+                    ):
                         return checked, merged, None
-                    number, project = task.pr_number, task.project_id
-                    quota = await background_quota(project, session)
-                    client = await proposal_client(project, session)
-                # Asked once the session is closed, so no connection waits on it.
-                if not await quota_serves_background(quota):
-                    return checked, merged, None
-                if client is None:
-                    return checked, merged, None
-                status = await client.pr_status(number)
+                    number, project = candidate.number, candidate.project_id
+                    room_id, pr_url = task.room_id, task.pr_url
+                    previous = (task.pr_checks_head, task.pr_checks_state)
+                if metadata is None:
+                    # A provider without the batch operation keeps its own read.
+                    if not await quota_serves_background(quota):
+                        return checked, merged, None
+                    status = await client.pr_status(number)
+                else:
+                    value = metadata.get(number)
+                    if not isinstance(value, TaskPrMetadata) or value.number != number:
+                        reason = (
+                            value.reason
+                            if isinstance(value, TaskPrMetadataFailure)
+                            else "missing_metadata"
+                        )
+                        logger.warning("unreadable task PR metadata: %s", reason)
+                        raise GitHubPRError(say("upstreamUnavailable"))
+                    status = value
                 checked = True
                 if not status.merged:
+                    # The metadata read may have spent the remaining quota;
+                    # fresh merged facts need no further forge read to settle.
+                    if (
+                        metadata is not None
+                        and status.state == "open"
+                        and not await quota_serves_background(quota)
+                    ):
+                        return checked, merged, None
+                    await _wake_when_checks_pass(
+                        task_id,
+                        number,
+                        status,
+                        client,
+                        room_id=room_id,
+                        project_id=project,
+                        pr_url=pr_url,
+                        previous=previous,
+                        announce=announce,
+                        record_instruction=record_instruction,
+                        sessions=sessions,
+                    )
                     return checked, merged, None
                 async with sessions() as session:
                     task = await session.get(Task, task_id, with_for_update=True)
                     if (
                         task is None
                         or task.pr_number != number
+                        or task.project_id != project
                         or (task.status != TaskStatus.open and task.delivered_head)
                         or task.closing_since is not None
                     ):
@@ -275,14 +389,53 @@ async def poll_uncarded_task_prs(
                     )
                     await session.commit()
                     merged = True
-        except Exception as exc:  # noqa: BLE001 — one PR must not block the rest
+        except Exception as exc:  # one PR must not block the rest
             logger.warning(
                 "uncarded task PR poll failed for %s", task_id, exc_info=True
             )
             return checked, merged, f"{task_id}: {exc}"
         return checked, merged, None
 
-    outcomes = await asyncio.gather(*(advance(task_id) for task_id in task_ids))
+    projects: dict[uuid.UUID, list[_TaskPrCandidate]] = {}
+    for candidate in candidates:
+        projects.setdefault(candidate.project_id, []).append(candidate)
+
+    async def poll_project(project: uuid.UUID, picked: list[_TaskPrCandidate]):
+        try:
+            async with slots:
+                async with sessions() as session:
+                    quota = await background_quota(project, session)
+                    client = await proposal_client(project, session)
+                if client is None:
+                    return {item.task_id: (False, False, None) for item in picked}
+                reader = getattr(client, "task_pr_metadata", None)
+                metadata = None
+                if reader is not None:
+                    if not await quota_serves_background(quota):
+                        return {item.task_id: (False, False, None) for item in picked}
+                    metadata = await reader([item.number for item in picked])
+                    if not isinstance(metadata, dict):
+                        raise GitHubPRError(say("upstreamUnavailable"))
+        except Exception as exc:
+            logger.warning(
+                "task PR metadata batch failed for %s", project, exc_info=True
+            )
+            return {
+                item.task_id: (False, False, f"{item.task_id}: {exc}")
+                for item in picked
+            }
+        # Each provider advances after its own metadata, not after all GitHub
+        # queries; a Forgejo project still runs while a GitHub batch waits.
+        values = await asyncio.gather(
+            *(advance(item, client, quota, metadata) for item in picked)
+        )
+        return {item.task_id: value for item, value in zip(picked, values, strict=True)}
+
+    project_results = await asyncio.gather(
+        *(poll_project(project, picked) for project, picked in projects.items())
+    )
+    by_task = {key: value for group in project_results for key, value in group.items()}
+    outcomes = [by_task[item.task_id] for item in candidates]
     return {
         "tasks_checked": sum(1 for checked, _, _ in outcomes if checked),
         "tasks_merged": sum(1 for _, merged, _ in outcomes if merged),
@@ -290,7 +443,144 @@ async def poll_uncarded_task_prs(
     }
 
 
-async def watch_landings(
+async def _wake_when_checks_pass(
+    task_id: uuid.UUID,
+    number: int,
+    status: PullRequestStatus | TaskPrMetadata,
+    client,
+    *,
+    room_id: uuid.UUID,
+    project_id: uuid.UUID,
+    pr_url: str | None,
+    previous: tuple[str | None, str | None],
+    announce: Announce,
+    record_instruction: RecordInstruction,
+    sessions,
+) -> None:
+    """Say 「检查全绿，可以递卡了」 once, on the tick the state turns green.
+
+    `poll_open_prs` walks cards, so a task with a PR but no card is watched by
+    nobody: the line learns its checks passed whenever its own turn comes up,
+    which on a busy seat can be tens of minutes after CI finished (2026-10-18,
+    thirteen lines waited 97 minutes between green and filing their card,
+    measured over two weeks). This is that one word, said in the task's room
+    and recorded for its seat.
+
+    Silent unless this is a transition: the same head was ``running`` last tick
+    and this tick is ``green``. Nothing is said for a head never seen before
+    (the first tick of a process, a push), for a PR that is not open, for a
+    task that is no longer open, or on a forge whose client has no `check_runs`
+    (Forgejo's does, but the seam is optional and the GitHub shape is what this
+    reads).
+
+    The open-task re-read is the whole point of the sentence: it tells a line
+    to file its card, and this poll's query deliberately keeps closed tasks
+    whose PR is still open (`or_(delivered_head IS NULL, status == open)` —
+    that arm is what settles a PR somebody merged on the forge for a task they
+    had already closed). A close whose PR-close call failed, or a room archived
+    and unarchived, leaves exactly that state with the PR still open, and
+    without this check the closed task would be told to file a card nobody
+    will ever file — and `record_instruction` would write a Delivery row that
+    the dispatcher refuses with 「任务已不再开放」. The row is read again
+    rather than carried from the caller for the same reason the merged branch
+    re-reads it: the answer that matters is the one at the write.
+
+    GitHub answers a repeated read with 304 (`forge_etags`), which is not
+    charged to the installation's quota, so asking every tick costs nothing in
+    the steady state.
+    """
+    check_runs = getattr(client, "check_runs", None)
+    if check_runs is None or status.state != "open":
+        return
+    state = _checks_state(await check_runs(status.head_sha))
+    head = status.head_sha
+    if previous != (head, CHECKS_RUNNING) or state != CHECKS_GREEN:
+        if previous != (head, state):
+            await _remember_checks(
+                sessions, task_id, head, state, project_id=project_id, number=number
+            )
+        return
+    async with sessions() as session:
+        task = await session.get(Task, task_id, with_for_update=True)
+        if task is None or task.project_id != project_id or task.pr_number != number:
+            return
+        if task.status is not TaskStatus.open or task.closing_since is not None:
+            if task is not None:
+                _set_checks(task, head, state)
+                await session.commit()
+            return
+        # With a card waiting, the line has nothing to file: it waits for the
+        # reviewer, so the sentence says that instead.
+        waiting = await session.scalar(
+            select(AcceptCard.id)
+            .where(
+                AcceptCard.task_id == task_id,
+                AcceptCard.pr_number == number,
+                AcceptCard.status == AcceptStatus.pending,
+            )
+            .limit(1)
+        )
+        content = say(
+            "checksPassedAwaitingReview" if waiting else "checksPassed", pr=number
+        )
+        await record_instruction(
+            session,
+            DeliveryEvent(
+                id=uuid.uuid4(),
+                type=NotificationType.ROOM_NOTICE,
+                payload={
+                    "projectId": str(project_id),
+                    "topicId": str(room_id),
+                },
+                occurred_at=datetime.now(UTC),
+            ),
+            task_id=task_id,
+            content=content,
+        )
+        await announce(
+            session,
+            place_id=room_id,
+            task_id=task_id,
+            content=content,
+            meta=notice(
+                EVENT_ACCEPT_READY,
+                severity=SEVERITY_INFO,
+                who=WHO_CHEESE,
+                detail=pr_url or "",
+            ),
+        )
+        # Written with the sentence in one commit: a failed wake leaves the
+        # stored state at «running», so the next tick says it again.
+        _set_checks(task, head, state)
+        await session.commit()
+
+
+def _set_checks(task: Task, head: str, state: str) -> None:
+    task.pr_checks_head = head
+    task.pr_checks_state = state
+
+
+async def _remember_checks(
+    sessions,
+    task_id: uuid.UUID,
+    head: str,
+    state: str,
+    *,
+    project_id: uuid.UUID,
+    number: int,
+) -> None:
+    async with sessions() as session:
+        task = await session.get(Task, task_id, with_for_update=True)
+        if (
+            task is not None
+            and task.project_id == project_id
+            and task.pr_number == number
+        ):
+            _set_checks(task, head, state)
+            await session.commit()
+
+
+async def sweep_closings(
     chat: Chat,
     announce: Announce,
     *,
@@ -298,15 +588,23 @@ async def watch_landings(
     task_teammate: TaskTeammate,
     machines: SweepCheckouts | None = None,
 ) -> dict:
-    """Merged task PRs, watched on the default branch for a while: the checks
-    there and a deployment that includes them (`landing_watch`)."""
-    return await landing_watch.watch_landings(
-        chat,
-        announce,
+    """The tasks being written up: one whose AI teammate has gone on working
+    goes on to its next step (`task_landing.go_on_while_working`), and one
+    past its write-up deadline is closed and its room told what was left
+    undone (`room_task.closing.close_overdue`). ``machines`` removes a closed
+    task's checkouts on the machines holding it."""
+    sessions = chat.session_factory
+    gone_on = await go_on_while_working(
+        sessions,
         record_instruction=record_instruction,
         task_teammate=task_teammate,
-        machines=machines,
     )
+    async with sessions() as session:
+        closed = await close_overdue(session, chat, machines=machines)
+        for overdue in closed:
+            await tell_room_undelivered(session, overdue, announce=announce)
+        await session.commit()
+    return {"gone_on": len(gone_on), "closed": len(closed)}
 
 
 def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:
@@ -371,7 +669,7 @@ async def _note_card_poll_crashed(
                 task_teammate=task_teammate,
             ).note_poll_crashed(card_id, exc)
             await session.commit()
-    except Exception:  # noqa: BLE001 — never let the explanation kill the loop
+    except Exception:  # never let the explanation kill the loop
         logger.exception("could not record poll failure on card %s", card_id)
 
 
@@ -381,12 +679,16 @@ async def open_draft_prs(
     *,
     dispatch_pending: DispatchPending,
     record_instruction: RecordInstruction,
+    quiet_window_s: int | None = None,
 ) -> dict:
     """有东西就有 PR (#718 拍板①): give every batch with commits a draft PR,
     without waiting for anyone to file a card.
 
     The observation and every reason it is an observation rather than a hook
-    live in `pr_publish.sweep_draft_prs`; this is only the clock.
+    live in `pr_publish.sweep_draft_prs`; this is only the clock. The
+    periodic one passes ``quiet_window_s`` to keep the tick cheap; a catch-up
+    call (a reconnect, a lost event) leaves it ``None`` so every open batch is
+    looked at.
     """
 
     result = dict(
@@ -394,6 +696,7 @@ async def open_draft_prs(
             chat.session_factory,
             announce=announce,
             record_instruction=record_instruction,
+            quiet_window_s=quiet_window_s,
         )
     )
     await deliver_dependency_notices(chat, dispatch_pending=dispatch_pending)

@@ -13,9 +13,11 @@ from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block
 from app.domain.identity.handles import names_a_person
+from app.domain.identity.services import IdentityService
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
+from app.domain.room_task import progress
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -23,7 +25,10 @@ from app.domain.room_task.models import (
     TaskTitleSource,
 )
 from app.domain.room_task.repositories import TaskRepository
+from app.domain.team.models import TeamUserRelation
+from app.domain.team.protocol import TeamMemberRole
 from app.domain.topic.models import Topic, TopicReadState, TopicStatus
+from app.domain.user.models import User
 from app.domain.user.services import user_by_handle
 
 
@@ -31,6 +36,34 @@ class TaskService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = TaskRepository(session)
+
+    async def credit_owner(self, task: Task) -> str | None:
+        """A human owner pays for work; an AI's work stays with its requester."""
+        for handle in (task.owner_handle, task.created_by):
+            if (
+                handle
+                and names_a_person(handle)
+                and not await IdentityService(self._session).is_agent(handle)
+            ):
+                return handle
+        project = await self._session.get(Project, task.project_id)
+        if project is None:
+            return None
+        if (
+            project.owner_handle
+            and names_a_person(project.owner_handle)
+            and not await IdentityService(self._session).is_agent(project.owner_handle)
+        ):
+            return project.owner_handle
+        return await self._session.scalar(
+            select(User.username)
+            .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+            .where(
+                TeamUserRelation.team_id == project.team_id,
+                TeamUserRelation.role == TeamMemberRole.OWNER,
+                TeamUserRelation.deleted_at.is_(None),
+            )
+        )
 
     def rename(
         self,
@@ -86,15 +119,23 @@ class TaskService:
         )
         await self._session.refresh(task)
 
-    async def open_without_pr(self) -> list[Task]:
+    async def open_without_pr(
+        self, *, active_since: datetime | None = None
+    ) -> list[Task]:
         """Open tasks on live rooms that could still need a draft PR.
 
         A room that is archived is not worked in, so its tasks are left out
         like the PR pollers leave them out: every one of them costs a GitHub
         request on each sweep, and rooms archived before archiving closed
         their tasks still hold open ones whose branches never reached GitHub.
+
+        ``active_since``: only tasks whose last activity is at or after this
+        instant — the newest block in the task's own conversation, or its
+        creation when nobody has said anything. That is the same 「最后一次
+        活动」 the board shows. A caller that would rather not pay two GitHub
+        requests for every long-quiet branch passes it; ``None`` keeps them all.
         """
-        rows = await self._session.scalars(
+        stmt = (
             select(Task)
             .join(Topic, Topic.id == Task.room_id)
             .where(
@@ -104,6 +145,14 @@ class TaskService:
                 Topic.status != TopicStatus.archived,
             )
         )
+        if active_since is not None:
+            last_said = (
+                select(func.max(Block.created_at))
+                .where(Block.conversation_id == Task.id)
+                .scalar_subquery()
+            )
+            stmt = stmt.where(func.coalesce(last_said, Task.created_at) >= active_since)
+        rows = await self._session.scalars(stmt)
         return list(rows.all())
 
     async def claim_for_pr(self, task_id: uuid.UUID) -> Task | None:
@@ -172,7 +221,7 @@ class TaskService:
         侧栏就是拿这批行就地折出展示态的（`presentation.facts_for_task`），行本身
         不出这个进程、更不上线。等这边也开了 `queries.py`，这条就该只交纯值。
 
-        Consumers are task_liveness, facts_for_task and TaskOut.model_validate.
+        Consumers are facts_for_task and TaskOut.model_validate.
         Callers authorize and own this session and its transaction. This read
         does not explicitly begin, commit or roll back.
         """
@@ -190,8 +239,7 @@ class TaskService:
         """These threads' heartbeats, newest block per task, in one query.
 
         A narrow read out of this domain for callers that hold ids and need the
-        liveness signal the board draws from — the project rail is the one that
-        does. It is on the service and not on the repository because the
+        latest-activity time the project rail sorts by. It is on the service and not on the repository because the
         repository is this domain's own drawer and stays inside it: a caller
         outside `room_task` reaches for the service.
 
@@ -339,7 +387,7 @@ class TaskService:
 
         Ordered by the table and not by the argument, so that a set of ids
         always renders in one fixed order however it was assembled — the caller
-        is `Cheese-Task:`, and trailer order that depended on the order someone
+        is `Link:`, and trailer order that depended on the order someone
         typed `--task` would make two identical declarations produce two
         different commit messages.
         """
@@ -536,6 +584,9 @@ class TaskService:
         task.status = TaskStatus.open
         task.closed_at = None
         task.conclusion = None
+        # Reopened is 开启: what its teammate last reported was about the work
+        # that closed.
+        progress.clear(task)
         if task.branch_name is not None and task.delivered_head is not None:
             await self.next_step(task)
         else:

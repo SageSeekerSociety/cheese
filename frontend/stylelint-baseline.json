@@ -1,4 +1,0 @@
-{
-  "_comment": "Frozen design-token violations (hardcoded colours, off-ladder radii). The ratchet blocks any NEW one; these are pre-existing and may only go down. Regenerate with `pnpm run lint:style:update`. See docs/design-system.md.",
-  "files": {}
-}

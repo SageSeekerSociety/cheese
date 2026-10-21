@@ -23,7 +23,10 @@ from private import (  # noqa: E402
     inspect,
     release,
     target,
+    webfetch_egress,
 )
+
+TRANSPORT = SOURCE.parent / "webfetch_transport.cjs"
 
 sys.path.append(str(ROOT / "backend/app/domain/fetch"))
 from addresses import is_public  # noqa: E402
@@ -100,10 +103,35 @@ for probe in sys.argv[1:]:
 """
 
 
+#: Preloaded after the transport into the pinned build's own runtime: each URL
+#: requested the way WebFetch requests a page (its `Claude-User (` user agent),
+#: one JSON line out per URL, then exit before the CLI starts.
+PAGE_READS = r"""
+const http = require('node:http'), https = require('node:https');
+const read = url => new Promise(done => {
+  const protocol = url.startsWith('https:') ? https : http;
+  const request = protocol.request(url, { headers: { 'User-Agent': 'Claude-User (acceptance)' } }, response => {
+    response.resume();
+    response.on('end', () => done(`${response.statusCode}`));
+  });
+  request.on('error', error => done(`error ${error.message}`));
+  request.setTimeout(20000, () => request.destroy(new Error('timeout')));
+  request.end();
+});
+(async () => {
+  for (const url of JSON.parse(process.env.PAGE_READS)) {
+    console.log(JSON.stringify([url, await read(url)]));
+  }
+  process.exit(0);
+})();
+"""
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--docker-host")
+    parser.add_argument("--claude", help="the pinned build, for the WebFetch case")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     if args.docker_host:
@@ -272,6 +300,44 @@ def main():
             return {"lan": lan, **seen}
 
         record("network", network)
+
+        def page_reads():
+            # The chat's WebFetch reads from this host, in the CLI's own runtime,
+            # and must leave through the same proxy the container does.
+            lan = host_lan_address()
+            internal = [
+                f"http://{gateway}:{neighbour_port}/",
+                "http://169.254.169.254/latest/meta-data/",
+                *([] if is_public(lan) else [f"http://{lan}:{platform_port}/"]),
+            ]
+            # Absolute: Bun reads a relative --preload against nothing useful.
+            probe = (args.output / "page-reads.cjs").resolve()
+            probe.write_text(PAGE_READS)
+            read = subprocess.run(
+                [args.claude, "--version"],
+                env=dict(
+                    os.environ,
+                    BUN_OPTIONS=f"--preload={TRANSPORT} --preload={probe}",
+                    CHEESE_WEBFETCH_EGRESS=webfetch_egress(),
+                    PAGE_READS=json.dumps([public, "http://example.com/", *internal]),
+                ),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            seen = dict(
+                json.loads(line) for line in read.stdout.splitlines() if line[:1] == "["
+            )
+            assert seen.get(public) == "200", (seen, read.stderr)
+            assert seen.get("http://example.com/") == "200", (seen, read.stderr)
+            for url in internal:
+                assert seen.get(url, "").startswith(
+                    "error The private chat's egress refused"
+                ), (url, seen)
+            return seen
+
+        if args.claude:
+            record("page-reads", page_reads)
 
         def proxy_lost():
             # Without the proxy the container has no way out; the next start

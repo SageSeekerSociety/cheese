@@ -19,7 +19,7 @@
  * 单独一份文件：`catalogFixtures.ts` 已经九百多行，再加会顶到一千行的上限。条目在
  * `catalogPanels.ts`。
  */
-import type { Ref } from 'vue'
+import type { MaybeRef, Ref } from 'vue'
 import type { DocThreadsBundle } from '@/composables/useDocThreads'
 import type { PanelChangesBundle } from '@/composables/usePanelChanges'
 import type { PanelDocBundle } from '@/composables/usePanelDoc'
@@ -34,7 +34,7 @@ import type { SiteTurn } from '@/lib/siteLog'
 import type { AgentControlState } from '@/types/agentControl'
 import type { ThreadReply, ThreadRow } from '@/types/threads'
 
-import { computed, reactive, ref, shallowRef } from 'vue'
+import { computed, reactive, ref, shallowRef, unref } from 'vue'
 
 import { useDocPeople } from '@/composables/useDocPeople'
 
@@ -244,6 +244,7 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     loading: ref(v.loading),
     refreshing: ref(v.refreshing),
     errorMsg: ref(v.errorMsg),
+    liveFallback: ref(v.liveFallback),
     noRepo: ref(v.noRepo),
     fileDiffs: computed(() => v.fileDiffs),
     diffByPath: computed(() => v.diffByPath),
@@ -285,6 +286,7 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     comparisonError: ref(''),
     toggleCompare: noopAsync,
     loadAll: noopAsync,
+    retryLive: noopAsync,
     selectFile: noopAsync,
     closeFile: noop,
     selectVersion: noopAsync,
@@ -434,6 +436,7 @@ export function docBundle(
     imageSrc: view.imageSrc,
     canvas: memoryCanvas(),
     applyEdits: refuseWrite,
+    undoAgentChanges: refuseWrite,
   }
 }
 
@@ -453,11 +456,6 @@ export function docPeopleBundle() {
 }
 
 // ---- 现场 -------------------------------------------------------------------
-
-/** 第 2 步：芝士开了工作区、看了一眼、写了 README、提交推送 —— 一轮还在跑。 */
-export const SITE_WORKING = frame(2)
-/** 第 3 步：递了验收卡，这一轮收尾。 */
-export const SITE_DONE = frame(3)
 
 /** 会话栏那一包（`useSessionInspector` 的返回），停在「收着」。 */
 function inspectorBundle(state: AgentControlState | null): SessionInspectorBundle {
@@ -487,60 +485,40 @@ function inspectorBundle(state: AgentControlState | null): SessionInspectorBundl
 
 /** 现场那一包（`usePanelSite` 的返回）：手上这一窗就是剧本那一帧的 `site`。 */
 export function siteBundle(
-  over: { transcript?: Block[]; loading?: boolean; errorMsg?: string | null; connected?: boolean } = {}
+  over: {
+    transcript?: MaybeRef<Block[]>
+    loading?: boolean
+    errorMsg?: string | null
+    connected?: boolean
+    viewMode?: 'overview' | 'raw'
+  } = {}
 ): PanelSiteBundle {
-  const transcript = over.transcript ?? SITE_WORKING.site
-  const agents = [...new Set(transcript.filter((b) => b.meta?.tool).map((b) => b.author))]
+  const transcript = computed(() => unref(over.transcript) ?? SITE_RAW_RECORDS)
+  const mode = ref<'overview' | 'raw'>(over.viewMode ?? 'overview')
+  const selected = ref<string | null>(null)
+  const agents = computed(() => [...new Set(transcript.value.filter((b) => b.meta?.record).map((b) => b.author))])
   return {
     turnStarts: ref({}),
     scrollRef: ref(null),
-    overflowing: ref(new Set<string>()),
-    measured: ref(false),
-    measureClamp: noop,
-    agents: ref(agents),
-    viewing: computed(() => null),
-    transcript: ref(transcript),
+    agents,
+    viewing: computed(() => selected.value),
+    transcript: computed(() => transcript.value.filter((b) => selected.value === null || b.author === selected.value)),
     hasOlder: ref(false),
     loading: ref(over.loading ?? false),
     loadingOlder: ref(false),
     errorMsg: ref(over.errorMsg ?? null),
     onSiteScroll: noop,
     receive: noop,
-    selectAgent: noop,
+    selectAgent: (next) => {
+      selected.value = next
+    },
     inspector: inspectorBundle(over.connected ? { id: 'demo-session', connected: true, tasks: {} } : null),
-    loadStepOutput: async () => '',
+    loadImage: async () => '',
+    viewMode: mode,
+    selectView: (next) => {
+      mode.value = next
+    },
   }
-}
-
-/** 整段输出有多少字节（`SiteStepOutput` 的 `bytes` 说的就是这个）。 */
-function byteLength(text: string): number {
-  return new TextEncoder().encode(text).length
-}
-
-/** 一小段输出：`ls` 打印的就是工作区里那几样。 */
-const LS_OUTPUT = 'README.md\ndocs\n'
-export const LS_OUTPUT_BYTES = byteLength(LS_OUTPUT)
-export async function loadLsOutput(): Promise<string> {
-  return LS_OUTPUT
-}
-
-/** 一大段输出：一次构建把每个产物都报了一行，整段 48 KB 上下。 */
-const BUILD_LOG = (() => {
-  const lines = ['vite v7.1.4 building for production...', 'transforming...']
-  for (let i = 1; byteLength(lines.join('\n')) < 48 * 1024 - 64; i++) {
-    const kb = (((i * 37) % 900) + 12) / 10
-    lines.push(
-      `dist/assets/chunk-${String(i).padStart(4, '0')}.js   ${kb.toFixed(2)} kB │ gzip: ${(kb / 3).toFixed(2)} kB`
-    )
-  }
-  return `${lines.join('\n')}\n✓ built in 41.27s\n`
-})()
-export const BUILD_LOG_BYTES = byteLength(BUILD_LOG)
-/** 后端只留末尾 8 KiB，按 UTF-8 字节数，切断的半个字丢掉（`backend/app/domain/agent/step_output.py`
- *  的 `output_tail`）：取回来的就是那一截。 */
-export async function loadBuildTail(): Promise<string> {
-  const tail = new TextEncoder().encode(BUILD_LOG).slice(-8 * 1024)
-  return new TextDecoder().decode(tail).replace(/^\uFFFD+/, '')
 }
 
 // ---- 步骤清单 -----------------------------------------------------------------
@@ -604,29 +582,27 @@ export function threadTime(iso: string): string {
     : at.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
 }
 
-// ---- 定时与触发 -------------------------------------------------------------------
+// ---- 例行事务 -------------------------------------------------------------------
 
 function routine(over: Partial<Routine>): Routine {
   return {
     id: 'routine-weekly',
-    can_manage: true,
+    can_delete: true,
     room_archived: false,
     project_id: DEMO_PROJECT,
     topic_id: DEMO_TOPIC,
     title: '每周一整理课程进展',
     instructions: '把上周这个频道里的作业、提问和改动整理成一页，放进「周报」目录',
-    context_scope: '',
-    output_dir: '周报',
+    note: '结果按周分文件；只用资料库里的文件',
     trigger: 'schedule',
     trigger_text: '每周周一 09:00（Asia/Shanghai）',
     spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
     timezone: 'Asia/Shanghai',
     state: 'active',
+    last_run_status: 'succeeded',
     agent_handle: 'cheese',
     owner_handle: 'wang',
-    proposed_by: 'cheese',
-    confirmed_by: 'wang',
-    confirmed_at: '2026-09-28T01:00:00Z',
+    created_by: 'cheese',
     next_run_at: '2026-10-12T01:00:00Z',
     revision: 1,
     created_at: '2026-09-27T09:00:00Z',
@@ -635,20 +611,19 @@ function routine(over: Partial<Routine>): Routine {
   }
 }
 
-/** 一条在跑的周报，和芝士刚起草、等人确认的一条。 */
+/** 两条在跑的规则：一条按时间，一条等频道里发生某件事。 */
 export const ROUTINE_WEEKLY = routine({})
-export const ROUTINE_DRAFT = routine({
+export const ROUTINE_ACCEPTED = routine({
   id: 'routine-accepted',
   title: '作业被采纳后通知全班',
   instructions: '成果被采纳时，在频道里写一句这次改了什么',
-  output_dir: '',
+  note: '',
   trigger: 'card_accepted',
   trigger_text: '成果被采纳时',
   spec: { scope: 'room' },
-  state: 'draft',
-  confirmed_by: null,
-  confirmed_at: null,
   next_run_at: null,
+  // 事件触发的那条还没轮上过：行上画的是「启用中」，不是「没能执行」。
+  last_run_status: null,
 })
 
 /** 周报那条最近两次执行：一次成了，一次没成。 */
@@ -685,6 +660,30 @@ export const ROUTINE_RUNS: Record<string, RoutineRun[]> = {
   ],
 }
 
+/**
+ * 「看全部」那一页上的一整页：十条，成的那几次交回一份文件，没能执行的那几次带着原因。
+ *
+ * 一天一条往回排（第 index 天前），所以行上「今天 / 昨天 / 10月12日」三种写法都在。
+ */
+export const ROUTINE_RECORDS_RUNS: RoutineRun[] = Array.from({ length: 10 }, (_, index) => {
+  const at = new Date(Date.UTC(2026, 9, 14, 10, 2) - index * 86_400_000)
+  const missed = index % 3 === 1
+  return {
+    id: `page-run-${index}`,
+    routine_id: ROUTINE_WEEKLY.id,
+    trigger_detail: '',
+    routine_revision: 1,
+    scheduled_for: at.toISOString(),
+    status: missed ? 'failed' : 'succeeded',
+    summary: missed ? '' : '今天频道里决定的事和还没回音的线索，整理成一页',
+    outputs: missed ? [] : [`日报/2026-10-${String(14 - index).padStart(2, '0')}.md`],
+    error: missed ? '工作电脑没有连上' : '',
+    created_at: at.toISOString(),
+    started_at: at.toISOString(),
+    finished_at: at.toISOString(),
+  }
+})
+
 // ---- 现场：一行、组头、队友页签 ------------------------------------------------
 //
 // 现场拆出来的那几只（一步一行、说的话一行、一轮的组头、顶上按队友筛的那排）在
@@ -702,73 +701,78 @@ function seatsFrame(step: number) {
   return frameAt(SCENES.seats, step, Number.MAX_SAFE_INTEGER)
 }
 
-/** 那一段现场里的一步，按工具名找（同一段里工具名不重复）。 */
-function actOf(step: number, tool: string): Block {
-  const block = turnFrame(step).site.find((b) => b.meta?.tool === tool)
-  if (!block) throw new Error(`turn 剧本第 ${step} 步里没有 ${tool} 这一步`)
-  return block
-}
-
-/** 那一段现场里失败的那一步。 */
-function failedActOf(step: number): Block {
-  const block = turnFrame(step).site.find((b) => b.meta?.failed === true)
-  if (!block) throw new Error(`turn 剧本第 ${step} 步里没有失败的一步`)
-  return block
-}
-
-/** 那一段现场里芝士说的话，取最先或最后那一句（剧本的 `note` 落成叙述，`meta.progress`）。 */
-function sayOf(step: number, which: 'first' | 'last'): Block {
-  const says = turnFrame(step).site.filter((b) => b.meta?.progress === true)
-  const say = which === 'first' ? says[0] : says[says.length - 1]
-  if (!say) throw new Error(`turn 剧本第 ${step} 步里没有芝士说的话`)
-  return say
-}
-
-/** 一步：改一个文件。 */
-export const SITE_ACT_EDIT = actOf(4, 'Edit')
-/** 一步：跑一次测试。 */
-export const SITE_ACT_BASH = actOf(4, 'Bash')
-/** 一步：平台自己做的事（行上的圆点是实心的）。 */
-export const SITE_ACT_PLATFORM = actOf(4, 'chat_send')
-/** 失败了的一步：`git push` 的结果不知道，那句错跟着它。 */
-export const SITE_ACT_FAILED = failedActOf(5)
-/** 上面那一步摊开之后的输出：真实的现场里，记下了输出的那一步在 `meta.output_bytes`
- *  上写着有多大，`SiteStepOutput` 收着时说的就是它。 */
-export const SITE_ACT_BASH_OUTPUT: Block = {
-  ...SITE_ACT_BASH,
-  meta: { ...SITE_ACT_BASH.meta, output_bytes: LS_OUTPUT_BYTES },
-}
-
-/** 芝士说的话：回一句补充（收到补充：手机上也要检查）。 */
-export const SITE_SAY_SHORT = sayOf(4, 'first')
-/** 芝士说的话：交代一段经过（推送结果未知那一次）。 */
-export const SITE_SAY_LONG = sayOf(5, 'last')
-/**
- * 芝士说的一长段：现场里最长的那一种是「做完了交代一遍」—— 改了什么、验证过什么、
- * 还剩什么。剧本里它只说一句话（那一格讲的是「要说话必须 chat_send」），这一种照
- * 同一位、同一件事造：从第二个字起还是真的，行数够越过 12 行那条线。
- */
-export const SITE_SAY_DETAIL: Block = {
-  ...SITE_SAY_LONG,
-  id: 'site-say-detail',
-  content: [
-    '登录页改完了，两处都动过：',
-    '',
-    '- 主按钮换成琥珀色实心（`--color-accent-strong`），按下时再深一档；',
-    '- 「忘记密码」挪到输入框下面，没登录也点得到。',
-    '',
-    '验证过这些：',
-    '',
-    '1. `pnpm exec vitest run src/views/home`：4 个文件、12 条全过；',
-    '2. 宽度 390 / 768 / 1280 三档各截了一张，按钮不换行、不压住输入框；',
-    '3. Tab 到「忘记密码」有焦点圈，回车跳得过去。',
-    '',
-    '还没做的：「注册」那一页的按钮还是旧的主色，等设计稿定了再一起换。',
-    '',
-    '验收卡递了，审阅要点写在里面。',
-  ].join('\n'),
-}
-
+/** Sample native records for the two views; never production data. */
+export const SITE_RAW_RECORDS: Block[] = [
+  {
+    type: 'assistant',
+    message: { content: [{ type: 'thinking', thinking: '先核对登录校验的输入，再检查测试覆盖的边界。' }] },
+  },
+  {
+    type: 'assistant',
+    message: {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'sample-call',
+          name: 'Bash',
+          input: { command: 'python -m pytest tests/test_login.py -q', description: '运行登录校验测试' },
+        },
+      ],
+    },
+  },
+  {
+    type: 'user',
+    message: {
+      content: [{ type: 'tool_result', tool_use_id: 'sample-call', content: '............\n12 passed in 0.42s' }],
+    },
+  },
+  { type: 'assistant', message: { content: [{ type: 'text', text: '登录校验已修复，相关测试通过。' }] } },
+].map(
+  (record, i) =>
+    ({
+      ...turnFrame(4).site[0],
+      id: `sample-record-${i}`,
+      turn_id: 'sample-turn',
+      created_at: `2026-10-19T10:00:0${i}Z`,
+      content: '',
+      meta: {
+        record,
+        sequence: i + 1,
+        in_room: false,
+        tool: i === 1 ? 'Bash' : undefined,
+        parts:
+          i === 0
+            ? [{ kind: 'thinking', text: '先核对登录校验的输入，再检查测试覆盖的边界。' }]
+            : i === 1
+              ? [
+                  {
+                    kind: 'tool',
+                    name: 'Bash',
+                    call_id: 'sample-call',
+                    input: { command: 'python -m pytest tests/test_login.py -q', description: '运行登录校验测试' },
+                    preview: '运行登录校验测试',
+                  },
+                ]
+              : i === 2
+                ? [{ kind: 'output', call_id: 'sample-call', text: '............\n12 passed in 0.42s', failed: false }]
+                : [{ kind: 'text', text: '登录校验已修复，相关测试通过。' }],
+      },
+    }) as Block
+)
+/** A platform line in 现场 that names a member: an edit the room's agent was told of. Sample data. */
+export const SITE_EDIT_RECORD: Block = {
+  id: 'sample-run-record-edit',
+  conversation_id: 'demo-room',
+  turn_id: null,
+  author: 'system',
+  author_type: 'platform',
+  kind: 'event',
+  content: '<@demo-alice> 改了一条之前的消息',
+  created_at: '2026-10-19T10:01:00Z',
+  refs: [],
+  run_record: true,
+  meta: { event_type: 'message_edited', severity: 'info', who: 'platform' },
+} as Block
 /** 组头看的那一组：`turn` 剧本到「芝士怎么说话」那一步为止，五步全在同一轮（t1）里。 */
 export const SITE_ONE_TURN: SiteTurn<Block> = (() => {
   const turn = groupByTurn(turnFrame(4).site, turnFrame(4).running)[0]

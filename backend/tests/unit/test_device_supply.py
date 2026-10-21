@@ -17,6 +17,7 @@ from app.core.errors import ForbiddenError
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
+from tests.support.devices import enrollment_team
 
 
 def _service() -> DeviceService:
@@ -29,7 +30,12 @@ def _service() -> DeviceService:
 
 async def _enrol(service: DeviceService, supply: Supply, owner: int) -> str:
     code = await service.start("a-machine")
-    device = await service.approve(code, owner_user_id=owner, supply=supply)
+    device = await service.approve(
+        code,
+        owner_user_id=owner,
+        supply=supply,
+        team_id=await enrollment_team(service, owner),
+    )
     return device.device_id
 
 
@@ -81,7 +87,7 @@ async def test_the_owner_may_always_remove_their_own_machine():
     owner = uuid.uuid4()
     device_id = await _enrol(service, Supply.self_hosted, owner)
 
-    await service.delete_owned(device_id, actor_user_id=owner)
+    await service.remove(device_id, actor_user_id=owner)
 
     assert await service.get_device(device_id) is None
 
@@ -97,6 +103,7 @@ async def test_an_unclassified_device_reads_as_self_hosted():
         token="t",
         owner_user_id=1,
         created_at=datetime(2026, 8, 12, tzinfo=UTC),
+        team_id=1,
     )
 
     assert device.supply is Supply.self_hosted

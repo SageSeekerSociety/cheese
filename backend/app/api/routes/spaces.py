@@ -243,7 +243,7 @@ async def get_space(
     # admins / classificationTopics 都由这一个构建器给齐：前端拿到任何
     # 一份 Space 响应都能直接用（它的 store 会用响应覆盖本地状态）。
     space_data = await _build_full_space_payload(space, service=service, db=db)
-    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.  # noqa: E501
+    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.
 
     data: dict = {
         "space": space_data,
@@ -289,30 +289,15 @@ async def get_spaces(
             dto["myRank"] = await service.get_user_rank(s.id, viewer_id)
 
         admin_relations = await service.list_admins(s.id)
-        # 和 _hydrate_people 同一判据：管理员列表也不能回档案上的原始 avatar_id，得问
-        # 「这个人自己挑过没有」，没挑过就给 None 让前端画彩色首字母。
-        admin_faces = await profile_repo.chosen_avatar_ids(
-            [rel.user_id for rel in admin_relations]
+        # 一次取齐所有管理员的人；头像判据（挑过没有）也在 _hydrate_people 里。
+        people = await _hydrate_people(
+            [rel.user_id for rel in admin_relations],
+            user_repo=user_repo,
+            profile_repo=profile_repo,
         )
-        admins_list = []
-        for rel in admin_relations:
-            user = await user_repo.get_by_id(rel.user_id)
-            profile = (
-                await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
-            )
-            user_info = (
-                {
-                    "id": user.id,
-                    "username": user.username,
-                    "nickname": profile.nickname if profile else user.username,
-                    "avatarId": admin_faces.get(rel.user_id),
-                    "intro": profile.intro if profile else "",
-                }
-                if user
-                else {"id": rel.user_id, "username": "unknown"}
-            )
-            admins_list.append(_admin_to_api_model(rel, user_info))
-        dto["admins"] = admins_list
+        dto["admins"] = [
+            _admin_to_api_model(rel, people[rel.user_id]) for rel in admin_relations
+        ]
         dto["classificationTopics"] = [
             {"id": t.id, "name": t.name} for t in topics_by_space.get(s.id, [])
         ]
@@ -634,7 +619,7 @@ async def get_publishers_participation(
     "/{spaceId}/participants/export",
     summary="Export Space Participants",
     deprecated=True,
-    description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",  # noqa: E501
+    description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",
 )
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -652,6 +637,6 @@ async def export_space_participants(
         content=csv_payload,
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"  # noqa: E501
+            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"
         },
     )

@@ -212,57 +212,51 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     expect(visibleTitles(container)).toEqual(['a', 'b'])
   })
 
-  // 收起来的父话题替隐藏后代说话，但每行只画一盏灯。
-  it('收着的时候里面有活在跑，合并到父行唯一灯上；展开后回到后代行', async () => {
-    const running = {
-      ...topic('a1x', 'a1'),
-      activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }],
-      moving: true,
-    } as Topic
-    const { container } = mount({ topics: topics.map((t) => (t.id === 'a1x' ? running : t)) })
+  // 收起来的父话题替隐藏后代说话，但每行只画一盏灯；开关本身保持中性。
+  it('收着的时候里面有交付完了我还没看过的，合并到父行唯一灯上；展开后回到后代行', async () => {
+    const delivered = { ...topic('a1x', 'a1'), unseen_delivery: true } as Topic
+    const { container } = mount({ topics: topics.map((t) => (t.id === 'a1x' ? delivered : t)) })
     expect(visibleTitles(container)).toEqual(['a', 'b'])
     const parent = rowFor(container, 'a')
     expect(parent.querySelectorAll('.row-light')).toHaveLength(1)
-    expect(parent.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.moving'))
+    expect(parent.querySelector('.row-light--green')).not.toBeNull()
+    expect(parent.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.delivered'))
     expect(toggleFor(container, 'a').getAttribute('aria-expanded')).toBe('false')
     expect(rowFor(container, 'b').querySelector('.row-light')).toBeNull()
 
     await fireEvent.click(toggleFor(container, 'a'))
     await fireEvent.click(toggleFor(container, 'a1'))
+    expect(rowFor(container, 'a1x').querySelector('.row-light--green')).not.toBeNull()
     expect(rowFor(container, 'a1x').querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(
-      t('work.sidebar.light.moving')
+      t('work.sidebar.light.delivered')
     )
     expect(parent.querySelector('.row-light')).toBeNull()
     expect(toggleFor(container, 'a').getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('收着的时候"等你处理"也冒上来，并且压过"有队友在干活"', () => {
+  it('收着的时候"等你处理"也冒上来，并且压过"交付完了没看过"', () => {
     const patched = topics.map((t) => {
-      if (t.id === 'a1x') {
-        return { ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }], moving: true } as Topic
-      }
+      if (t.id === 'a1x') return { ...t, unseen_delivery: true } as Topic
       if (t.id === 'a2') return { ...t, awaits_me: true } as Topic
       return t
     })
     const { container } = mount({ topics: patched })
     const row = rowFor(container, 'a')
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(row.querySelector('.row-light--yellow')).not.toBeNull()
     expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
     expect(toggleFor(container, 'a').getAttribute('title')).toBe('展开：里面有待处理的事项')
   })
 
   // 选中 + 收起也不能把后代状态吞掉。
   it('选中的房间收着时，唯一灯仍显示后代的状态', () => {
-    const patched = topics.map((t) =>
-      t.id === 'a2'
-        ? ({ ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }], moving: true } as Topic)
-        : t
-    )
+    const patched = topics.map((t) => (t.id === 'a2' ? ({ ...t, unseen_delivery: true } as Topic) : t))
     const { container } = mount({ topics: patched, selectedTopicId: 'a' })
     const row = rowFor(container, 'a')
     expect(row.classList.contains('is-active')).toBe(true)
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
-    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.moving'))
+    expect(row.querySelector('.row-light--green')).not.toBeNull()
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.delivered'))
   })
 
   it('频道黄灯、隐藏后代卡住和任务蓝灯同时存在，只保留红灯；展开不吞频道自身黄灯', async () => {
@@ -282,7 +276,8 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     const row = rowFor(container, 'a')
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
     expect(row.querySelector('.row-light--red')).not.toBeNull()
-    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.hiddenStalled'))
+    // 隐藏后代的红灯带着 main 的「在等谁、为什么」，比一句通用的「成员卡住了」更具体。
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('报错')
 
     await fireEvent.click(toggleFor(container, 'a'))
 

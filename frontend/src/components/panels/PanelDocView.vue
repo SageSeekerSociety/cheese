@@ -13,6 +13,7 @@ import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, Topic } from '../../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
+import type { DocAuthor } from '../../lib/docAuthors'
 import type { CommentSpot } from '../../lib/docCommentSpots'
 import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
@@ -47,6 +48,7 @@ import DocTopBar from './doc/DocTopBar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import MentionOutsidePrompt from '@/components/chat/MentionOutsidePrompt.vue'
+import DocAuthors from '@/components/library/DocAuthors.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -78,6 +80,8 @@ const props = withDefaults(
     backlinks?: DocBacklink[]
     /** 画在一整页里（项目文档的项目目标）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
+    /** 文档的作者（`lib/docAuthors.ts`）：画在大标题下面，并列的头像和名字。没有就不画。 */
+    authors?: DocAuthor[]
     /** 任务的实况文档：界面上不给它固定标题，正文自己说。 */
     untitled?: boolean
     /** 顶栏画到页面上的这个位置（CSS 选择器），和页面自己的那一行并成一行。 */
@@ -136,6 +140,8 @@ const props = withDefaults(
     answerToComment?: (conversation: string, quote: string, question: string) => Promise<string>
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
+    /** 撤销、恢复 AI 队友一次回答对这篇的修改（`/assistant/changes`）。 */
+    undoAgentChanges?: (changes: number[], redo: boolean) => Promise<unknown>
     // ---- 修改记录 ----
     /** 最近一次编辑：谁（读成名字）、什么时候。 */
     lastEdit?: { name: string; at: string } | null
@@ -165,6 +171,7 @@ const props = withDefaults(
     documentList: () => [],
     backlinks: () => [],
     bare: false,
+    authors: () => [],
     untitled: false,
     barTo: undefined,
     flow: false,
@@ -179,6 +186,7 @@ const props = withDefaults(
     suggestionReasons: () => ({}),
     fetchSuggestionReasons: undefined,
     applyDocEdits: undefined,
+    undoAgentChanges: undefined,
     lastEdit: null,
     nameOf: (handle: string) => handle,
     avatarOf: () => '',
@@ -356,7 +364,7 @@ const agentOptions = {
   ask: () => props.askAgent,
   stop: () => props.stopAgent,
   editable: () => decides.value,
-  applyEdits: () => props.applyDocEdits,
+  undoChanges: () => props.undoAgentChanges,
   toComment: () => props.answerToComment,
   agentName: () => props.agentName,
   onError: (message: string) => props.setError(message),
@@ -611,6 +619,7 @@ defineExpose({
                 @blur="commitTitle"
               />
               <h1 v-else-if="!bare && !untitled" class="doc-page__title">{{ docTitle }}</h1>
+              <DocAuthors v-if="!bare && authors.length" class="doc-page__authors t-meta c-muted" :authors="authors" />
               <!-- 正文本身。 -->
               <DocSurface
                 ref="surfaceRef"
@@ -763,6 +772,13 @@ defineExpose({
   letter-spacing: -0.02em;
   color: var(--ink);
 }
+/* 作者一行贴在大标题下面，和标题同宽同起点；正文的间距照旧留在它下面。 */
+.doc-page__authors {
+  display: flex;
+  max-width: 720px;
+  margin: -16px auto 24px;
+}
+
 /* A library document's title is typed in place. */
 .doc-page__title--input {
   display: block;

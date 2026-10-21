@@ -137,7 +137,7 @@ async def _pump_once(room: uuid.UUID, subscription) -> None:
     async def hand(read) -> None:
         return None
 
-    await host._pump(ref, running, subscription, hand, False)
+    await host._pump(ref, running, subscription, hand)
 
 
 @pytest.mark.anyio

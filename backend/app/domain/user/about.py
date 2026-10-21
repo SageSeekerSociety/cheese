@@ -14,8 +14,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.user.models import User
-from app.domain.user.repositories import UserProfileRepository
-from app.domain.user.services import UserProfileService
 
 # The guide's choices, in its order.
 WorkRole = Literal["student", "teacher", "office", "research", "maker", "other"]
@@ -56,7 +54,6 @@ async def record_guide_answers(
     session: AsyncSession,
     user_id: int,
     *,
-    nickname: str | None,
     work_role: str | None,
     organization: str | None,
 ) -> User | None:
@@ -73,8 +70,4 @@ async def record_guide_answers(
         user.work_role = work_role
     if organization is not None:
         user.organization = organization.strip() or None
-    if nickname and nickname.strip():
-        await UserProfileService(UserProfileRepository(session)).update_profile(
-            user_id=user.id, nickname=nickname
-        )
     return user

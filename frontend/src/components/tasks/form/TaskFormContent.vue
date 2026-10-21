@@ -13,6 +13,7 @@ import TaskFormSection from './TaskFormSection.vue'
 
 import BaseField from '@/components/base/BaseField.vue'
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import { serializeDoc } from '@/lib/docSchema/markdown'
 
 /** `defineField` 那一对的另一半：`error-messages` / `error`。 */
 type FieldControl = Record<string, any>
@@ -45,6 +46,11 @@ const editor = ref<InstanceType<typeof TipTapEditor> | null>(null)
 defineExpose({
   /** 编辑器里现在的正文。 */
   readText: () => editor.value?.editor?.getText(),
+  /** 正文写成 Markdown：芝士读写详情用的就是它。 */
+  readMarkdown: (): string | undefined => {
+    const ed = editor.value?.editor as { getMarkdown?: () => string } | null | undefined
+    return ed?.getMarkdown ? serializeDoc(ed as { getMarkdown: () => string }) : undefined
+  },
 })
 </script>
 
@@ -53,6 +59,7 @@ defineExpose({
     <template v-if="$slots.actions" #actions><slot name="actions" /></template>
 
     <BaseField
+      data-agent-field="name"
       :label="t('tasks.form.name')"
       required
       :error="nameControl['error-messages']?.[0]"
@@ -76,7 +83,7 @@ defineExpose({
       </template>
     </BaseField>
 
-    <BaseField :label="t('tasks.form.description')">
+    <BaseField data-agent-field="description" :label="t('tasks.form.description')">
       <TipTapEditor
         ref="editor"
         v-model="description"
@@ -88,6 +95,8 @@ defineExpose({
       />
     </BaseField>
 
-    <slot name="attachments" />
+    <div v-if="$slots.attachments" data-agent-field="attachments">
+      <slot name="attachments" />
+    </div>
   </TaskFormSection>
 </template>

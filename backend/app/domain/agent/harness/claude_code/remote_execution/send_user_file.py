@@ -28,6 +28,10 @@ else:
     )
 
 MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
+#: One message carries at most this many pictures (`ATTACHMENTS_PER_MESSAGE` in
+#: `topics_messages`); the tool says so instead of letting the backend drop the
+#: rest without a word.
+MAX_CHAT_SEND_ATTACHMENTS = 9
 
 # What the tool result promises the caller about the file: `isImage` for the
 # suffixes that are pictures, `media_type` for what the bytes are. The room
@@ -56,22 +60,24 @@ _SEND_MEDIA_TYPE = {
 }
 
 
-def send_user_file_paths(path, config):
+def send_user_file_paths(path, config, anchor=None):
     """`(executor path, room path)` for one file a SendUserFile named.
 
-    The model spells paths the way the session was told to (the executor's
-    workspace); the room wants a workspace-relative pointer because
-    `POST /topics/{id}/shown` refuses absolute ones. A file that lives outside
-    the workspace keeps its name under `uploads/`, the address this room already
-    gives a paste with no name of its own.
+    A relative path is the session's own: it is anchored at where the session
+    started (`anchor`, `RemoteClient.working_directory`), which for a task is
+    its checkout, not the project view. The room wants a workspace-relative
+    pointer because `POST /topics/{id}/shown` refuses absolute ones. A file that
+    lives outside the workspace keeps its name under `uploads/`, the address
+    this room already gives a paste with no name of its own.
     """
     path = (path or "").replace("\\", "/")
     work = session_path(config.get("workspace") or "").rstrip("/")
     machine = path
-    if work and not machine.startswith("/"):
+    here = session_path(anchor).rstrip("/") if anchor else work
+    if here and not machine.startswith("/"):
         # The executor's shell keeps its own cwd across commands; a relative
-        # path is only unambiguous once it is anchored at the workspace.
-        machine = work + "/" + machine
+        # path is only unambiguous once it is anchored where the session is.
+        machine = here + "/" + machine
     name = machine.rsplit("/", 1)[-1] or "file"
     rel = machine
     if work and (machine == work or machine.startswith(work + "/")):
@@ -107,6 +113,56 @@ def send_user_file_body(raw):
     return {"content_b64": base64.b64encode(raw).decode("ascii")}
 
 
+def chat_send_attachments(client, config, args, invoke, payload):
+    """The `attachments` a `chat_send` named, read on the machine as bytes.
+
+    The publication route takes the files with the message (see
+    `topics_messages._publish_as_agent`), and the executor's paths mean nothing
+    to the backend: each one is read here, through the same `invoke` every
+    machine operation uses, and carried as base64 beside the text. The
+    workspace-relative spelling is resolved the same way `SendUserFile` resolves
+    it, so a path written from the checkout is the path the person meant.
+    """
+    paths = args.get("attachments") or []
+    if not isinstance(paths, list):
+        # i18n-exempt: the agent reads this tool refusal, not a person's screen
+        raise RuntimeError("attachments must be a list of file paths")
+    if len(paths) > MAX_CHAT_SEND_ATTACHMENTS:
+        # i18n-exempt: the agent reads this tool refusal, not a person's screen
+        raise RuntimeError(
+            f"one message carries at most {MAX_CHAT_SEND_ATTACHMENTS} pictures"
+        )
+    files = []
+    for index, path in enumerate(paths):
+        if not isinstance(path, str) or not path.strip():
+            # i18n-exempt: the agent reads this tool refusal, not a person's screen
+            raise RuntimeError("each attachment must be a file path")
+        machine, _ = send_user_file_paths(
+            path, config, anchor=client.working_directory()
+        )
+        name = machine.rstrip("/").rsplit("/", 1)[-1] or "image"
+        size = stat_file_on_the_machine(
+            invoke, machine, f"{payload['id']}-chat-{index}-stat"
+        )
+        if size > MAX_SEND_USER_FILE_BYTES:
+            # i18n-exempt: the agent reads this tool refusal, not a person's screen
+            raise RuntimeError(
+                f"{path} is larger than {MAX_SEND_USER_FILE_BYTES // (1024 * 1024)}MB"
+            )
+        raw = read_file_on_the_machine(invoke, machine, f"{payload['id']}-chat-{index}")
+        if not raw:
+            # i18n-exempt: the agent reads this tool refusal, not a person's screen
+            raise RuntimeError(f"{path} is empty")
+        files.append(
+            {
+                "path": machine,
+                "name": name,
+                "content_b64": base64.b64encode(raw).decode("ascii"),
+            }
+        )
+    return {**args, "attachments": files}
+
+
 def deliver_send_user_file(client, config, payload, args, invoke):
     """Hand each file to this room, and the caption beside them.
 
@@ -136,8 +192,17 @@ def deliver_send_user_file(client, config, payload, args, invoke):
         name = str(item.get("name") or "") or (
             path.replace("\\", "/").rsplit("/", 1)[-1] or "file"
         )
-        machine, rel = send_user_file_paths(path, config)
         preexisting = item.get("upload_error")
+        # Only a file read from the machine needs its directory asked for, and
+        # asking can take the machine's hands (a lease still being prepared).
+        # The other two deliver without a machine, and the launch already
+        # recorded where the session started: no call, same answer.
+        anchor = None
+        if not preexisting and not item.get("data_b64"):
+            anchor = client.working_directory()
+        else:
+            anchor = config.get("start_directory")
+        machine, rel = send_user_file_paths(path, config, anchor=anchor)
         if preexisting:
             attachments.append(
                 send_user_file_entry(machine, name, 0, upload_error=str(preexisting))

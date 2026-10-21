@@ -10,7 +10,6 @@ import uuid
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
@@ -50,8 +49,4 @@ async def create_questions(
     rows = await ask(db, place=place, seat=actor.handle, body=body)
     blocks = await dump_blocks_json(rows)
     await db.commit()
-    for block in blocks:
-        await get_broker().publish(
-            str(place.conversation_id), {"type": "assistant_block", "block": block}
-        )
     return ok({"blocks": blocks, "request_id": body.get("request_id")})

@@ -216,7 +216,7 @@ async def _ask(
                 content=raw,
                 headers={"Content-Type": "application/octet-stream"},
             )
-    except Exception as exc:  # noqa: BLE001 — see docstring
+    except Exception as exc:  # see docstring
         raise OfficeRenderUnavailable(say("previewServiceUnreachable")) from exc
 
 
@@ -234,7 +234,7 @@ def _refusal(response: httpx.Response) -> None:
     detail = ""
     try:
         detail = str(response.json().get("error") or "")
-    except Exception:  # noqa: BLE001 — a non-JSON body is just no detail
+    except Exception:  # a non-JSON body is just no detail
         detail = ""
     if response.status_code >= 500:
         raise OfficeRenderUnavailable(detail or say("previewServiceError"))
@@ -327,7 +327,7 @@ def prewarm(data: bytes, path: str) -> None:
     async def run() -> None:
         try:
             await render_to_pdf(data, path, endpoint)
-        except Exception:  # noqa: BLE001 — see docstring
+        except Exception:  # see docstring
             logger.info("preview prewarm skipped for %s", path, exc_info=True)
 
     try:

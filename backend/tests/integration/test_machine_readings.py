@@ -20,6 +20,7 @@ since this machine has neither.
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -30,15 +31,15 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core import alerting
 from app.core.config import settings
-from app.domain.machine import disk_guard, readings
+from app.domain.machine import readings
 from app.domain.machine.models import HostReading, SandboxHome, SandboxUsage
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_cloud_host_pool import pool  # noqa: F401 — fixture
 from tests.integration.test_sandbox_disk_guard import (
     ROOM,
     files,
+    full_since,
     guard,
-    on_the_same_host,
 )
 from tests.integration.test_sandbox_idle_stop import (  # noqa: F401 — fixture
     cloud,
@@ -57,9 +58,11 @@ def kernel_says(
     machines: dict[str, dict],
     sandboxes: dict[str, list],
     filesystem: dict = ROOM,
+    homes: dict[str, list] | None = None,
 ) -> None:
     """From now on each host's reading reports this of its memory and CPU,
-    these sandbox cgroups, and this of its disk."""
+    these sandbox cgroups, this of its disk, and this of each home by its
+    quota."""
     real = case.hosts.exec
 
     async def exec_(device_id, argv, *, stdin=None, **kwargs):
@@ -69,6 +72,7 @@ def kernel_says(
             answer["filesystem"] = filesystem
             answer["machine"] = machines.get(device_id, {})
             answer["sandboxes"] = sandboxes.get(device_id, [])
+            answer["homes"] = (homes or {}).get(device_id, [])
             result = {**result, "stdout": json.dumps(answer)}
         return result
 
@@ -137,18 +141,27 @@ def posted(case, box: _Alerts) -> list[str]:
 @pytest.fixture(autouse=True)
 def setup(monkeypatch):
     monkeypatch.setattr(settings, "platform_admin_handles", ["ops"])
-    disk_guard._walked.clear()
-    yield
-    disk_guard._walked.clear()
 
 
 def test_the_page_shows_what_each_host_and_its_sandboxes_use(cloud):  # noqa: F811
     seat = cloud.seats[0]
-    home = working_on(cloud, seat, "host-1")
-    files(home / "build", 40)
+    working_on(cloud, seat, "host-1")
     resource = home_of(cloud, seat).resource_id
     sandbox = [{"resource": resource, "memory": GIB, "memory_peak": 2 * GIB}]
-    kernel_says(cloud, {"host-1": memory(4, cpu_usec=0)}, {"host-1": sandbox})
+    quota = [
+        {
+            "project": str(cloud.project_id),
+            "resource": resource,
+            "bytes": 3 * GIB,
+            "inodes": 40,
+        }
+    ]
+    kernel_says(
+        cloud,
+        {"host-1": memory(4, cpu_usec=0)},
+        {"host-1": sandbox},
+        homes={"host-1": quota},
+    )
     guard(cloud)
     readings_go_back(cloud, timedelta(minutes=10))
     # One core kept fully busy for the ten minutes since.
@@ -174,8 +187,9 @@ def test_the_page_shows_what_each_host_and_its_sandboxes_use(cloud):  # noqa: F8
     (on_it,) = host["sandboxes"]
     assert on_it["usage"]["memory_bytes"] == GIB
     assert on_it["usage"]["memory_peak_bytes"] == 2 * GIB
-    # Its home was walked on the first reading: the files it left are counted.
-    assert on_it["usage"]["disk_inodes"] >= 40
+    # What its home holds, as its quota counts it.
+    assert on_it["usage"]["disk_bytes"] == 3 * GIB
+    assert on_it["usage"]["disk_inodes"] == 40
     assert data["config"]["sandbox_disk_budget_gb"] == (
         settings.cloud_sandbox_disk_budget_gb
     )
@@ -213,61 +227,74 @@ def test_a_sandbox_destroyed_while_its_host_is_read_does_not_stop_the_guard(
     assert rows[str(hosts["host-2"])]["usage"]["memory_used_bytes"] == 3 * GIB
 
 
-#: A disk with its inodes nearly gone: the guard evicts the heaviest sandbox.
+#: A disk with its inodes nearly gone: the host takes no new sandbox.
 SHORT = {"bytes": 10**12, "bytes_free": 9 * 10**11, "inodes": 2000, "inodes_free": 20}
 
 
-@pytest.fixture
-def two_a_host(monkeypatch):
-    monkeypatch.setattr(settings, "cloud_host_slots_per_core", 2)
-
-
-def test_a_full_disk_is_freed_even_when_its_reading_cannot_be_kept(
+def test_a_full_host_is_marked_even_when_its_reading_cannot_be_kept(
     cloud,  # noqa: F811
-    two_a_host,
     monkeypatch,
 ):
-    """Keeping the reading is for the page; freeing a full disk is the guard's
-    job, and the first failing must not stop the second."""
-    light, heavy, _ = cloud.seats
-    working_on(cloud, light, "host-1")
-    on_the_same_host(cloud, heavy, "host-1")
-    files(sandbox_dir(cloud, heavy, "host-1") / "brute", 300)
+    """Keeping the reading is for the page; keeping new sandboxes off a full
+    disk is the guard's job, and the first failing must not stop the second."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-1")
     kernel_says(cloud, {"host-1": memory(2)}, {}, SHORT)
 
     async def database_gone(*args, **kwargs):
         raise OperationalError("INSERT", {}, ConnectionError("database went away"))
 
     monkeypatch.setattr(readings, "record", database_gone)
+    guard(cloud)
 
-    assert guard(cloud)["evicted"] == 1
-    assert home_of(cloud, heavy) is None
+    assert full_since(cloud, host_of(cloud, seat).id) is not None
 
 
 def test_a_reading_is_dated_when_the_host_was_read_not_after_the_guard_acted(
     cloud,  # noqa: F811
-    two_a_host,
 ):
-    """Stopping a sandbox can take minutes; the page must not show a disk read
-    before that as read after it."""
-    light, heavy, _ = cloud.seats
-    working_on(cloud, light, "host-1")
-    on_the_same_host(cloud, heavy, "host-1")
-    files(sandbox_dir(cloud, heavy, "host-1") / "brute", 300)
-    kernel_says(cloud, {"host-1": memory(2)}, {}, SHORT)
+    """Deleting a home left behind can take minutes; the page must not show
+    a disk read before that as read after it."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-1")
+    left = (
+        cloud.hosts.home_dir("host-1")
+        / ".cheese"
+        / "home"
+        / str(cloud.project_id)
+        / "11111111-1111-4111-8111-111111111111"
+    )
+    files(left / "room", 3)
+    marker = (
+        cloud.hosts.home_dir("host-1")
+        / ".cheese"
+        / "sandboxes"
+        / str(cloud.project_id)
+        / left.name
+    )
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    # The release its sandbox was started from, which ends what it runs.
+    release = cloud.hosts.home_dir("host-1") / "release"
+    release.mkdir()
+    (release / "cheese-environment.py").write_text("def end_sandbox(home):\n    pass\n")
+    marker.write_text(str(release))
+    then = time.time() - 3600
+    for path in (left, marker):
+        os.utime(path, (then, then))
+    kernel_says(cloud, {"host-1": memory(2)}, {})
     read: list[float] = []
 
-    async def slow_to_stop(device_id, action):
+    async def slow_to_remove(device_id, action):
         if action == "disk":
             read.append(time.time())
         if action == "destroy":
             await asyncio.sleep(1.5)
 
-    cloud.hosts.after = slow_to_stop
-    assert guard(cloud)["evicted"] == 1
+    cloud.hosts.after = slow_to_remove
+    assert guard(cloud)["removed"] == 1
 
     host = next(
-        h for h in page(cloud)["hosts"] if h["id"] == str(host_of(cloud, light).id)
+        h for h in page(cloud)["hosts"] if h["id"] == str(host_of(cloud, seat).id)
     )
     stamped = datetime.fromisoformat(host["usage"]["read_at"]).timestamp()
     assert stamped - read[-1] < 1

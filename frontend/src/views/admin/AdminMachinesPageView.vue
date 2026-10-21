@@ -4,8 +4,8 @@
  *
  * 从上到下回答四个问题：池子此刻够不够用（四张卡，外加「此刻在拒绝新会话」那一句）；
  * 每台宿主机走到哪一步、上面有谁、磁盘内存 CPU 用了多少（一台一行，下面一条用量，
- * 点开列出它的沙箱和每个沙箱离上限多远）；过去一天沙箱起得多快、有多少没起来、拒了
- * 多少会话、丢了几台宿主机；温机池里有什么。
+ * 点开列出它的沙箱和每个沙箱离上限多远；还没被领走的温机也各占一行，在跑就在花钱，
+ * 不能看不见）；过去一天沙箱起得多快、有多少没起来、拒了多少会话、丢了几台宿主机。
  *
  * 用量是磁盘巡检上次读到的，不是这一刻：读数多旧写在旁边，超过三次巡检没读到就标黄。
  */
@@ -16,6 +16,7 @@ import type {
   MachineSandbox,
   MachinesOverview,
   SandboxState,
+  WarmMachineRow,
 } from '@/views/admin/machinesApi'
 
 import { computed, ref } from 'vue'
@@ -98,7 +99,8 @@ function stamp(iso: string | null): string {
   return iso ? dayStamp(new Date(iso).getTime(), nowMs.value) : ''
 }
 
-function spec(h: MachineHost): string {
+function spec(h: MachineHost | WarmMachineRow): string {
+  if (h.cores === null || h.memory_mb === null || h.disk_gb === null) return ''
   return t('admin.machines.spec', { cores: h.cores, memory: Math.round(h.memory_mb / 1024), disk: h.disk_gb })
 }
 
@@ -269,6 +271,7 @@ function toggle(id: string) {
 
 const pool = computed(() => props.overview?.pool ?? null)
 const hosts = computed(() => props.overview?.hosts ?? [])
+const warm = computed(() => props.overview?.warm ?? [])
 const history = computed(() => props.overview?.history ?? null)
 const first = computed(() => props.loading && !props.overview)
 /** 小折线画的是多长一段：步长乘点数，后端说了算。 */
@@ -279,7 +282,11 @@ const historySpan = computed(() => {
 
 const hostsNote = computed(() =>
   pool.value
-    ? [t('admin.machines.kpi.hostsNote'), pool.value.vms ? t('admin.machines.kpi.vms', { n: pool.value.vms }) : '']
+    ? [
+        t('admin.machines.kpi.hostsNote'),
+        pool.value.vms ? t('admin.machines.kpi.vms', { n: pool.value.vms }) : '',
+        t('admin.machines.kpi.warm', { n: warm.value.length, target: pool.value.warm_target }),
+      ]
         .filter(Boolean)
         .join(' ')
     : ''
@@ -354,7 +361,7 @@ const failureNote = computed(() =>
     <div v-else-if="overview" class="admin-page__body">
       <section class="mc-section">
         <h2 class="t-title">{{ t('admin.machines.hosts') }}</h2>
-        <BaseEmptyState v-if="!hosts.length" :title="t('admin.machines.noHosts')" />
+        <BaseEmptyState v-if="!hosts.length && !warm.length" :title="t('admin.machines.noHosts')" />
         <div v-else class="mc-table" role="table" :aria-label="t('admin.machines.hosts')">
           <div class="mc-row mc-row--head" role="row">
             <span role="columnheader" />
@@ -455,6 +462,28 @@ const failureNote = computed(() =>
               </div>
             </div>
           </template>
+          <!-- 温机还不是宿主机，但已经在跑、在花钱：同一套列，阶段落在「阶段」列下。 -->
+          <div v-for="w in warm" :key="w.id" class="mc-row mc-row--warm" role="row">
+            <span class="mc-caret" />
+            <span class="mc-host">
+              <span class="mc-mono c-ink">{{ w.hostname ?? '—' }}</span>
+              <span v-if="w.machine_id !== null" class="t-meta">#{{ w.machine_id }}</span>
+              <span class="chip-neutral">{{ t('admin.machines.warmChip') }}</span>
+            </span>
+            <span class="mc-phase">
+              <span
+                class="status-dot"
+                :class="w.error ? 'status-dot--danger' : w.state === 'ready' ? 'status-dot--ok' : 'status-dot--muted'"
+              />
+              {{ warmState(w.state) }}
+            </span>
+            <span class="mc-dim mc-spec">{{ spec(w) }}</span>
+            <span class="mc-slots" />
+            <span class="mc-dim mc-num mc-age" :title="stamp(w.created_at)">{{ since(w.created_at) }}</span>
+            <span class="mc-note" :title="w.error ?? ''">{{
+              w.error ?? (w.attempts ? t('admin.machines.attempts', { n: w.attempts }, w.attempts) : '')
+            }}</span>
+          </div>
         </div>
       </section>
 
@@ -531,28 +560,6 @@ const failureNote = computed(() =>
         </dl>
       </section>
 
-      <section class="mc-section">
-        <h2 class="t-title">{{ t('admin.machines.warm', { target: pool?.warm_target ?? 0 }) }}</h2>
-        <p v-if="!overview.warm.length" class="mc-dim">{{ t('admin.machines.noWarm') }}</p>
-        <ul v-else class="mc-warm">
-          <li v-for="w in overview.warm" :key="w.id" class="mc-warm__row">
-            <span class="mc-phase">
-              <span
-                class="status-dot"
-                :class="w.error ? 'status-dot--danger' : w.state === 'ready' ? 'status-dot--ok' : 'status-dot--muted'"
-              />
-              <span>{{ warmState(w.state) }}</span>
-            </span>
-            <span v-if="w.machine_id !== null" class="t-meta">#{{ w.machine_id }}</span>
-            <span class="mc-dim"
-              >{{ t('admin.machines.warmAge', { for: since(w.created_at) }) }} ·
-              {{ t('admin.machines.attempts', { n: w.attempts }, w.attempts) }}</span
-            >
-            <span v-if="w.error" class="mc-note" :title="w.error">{{ w.error }}</span>
-          </li>
-        </ul>
-      </section>
-
       <p class="mc-foot">
         {{
           t('admin.machines.config', {
@@ -568,7 +575,6 @@ const failureNote = computed(() =>
         {{
           t('admin.machines.usage.foot', {
             check: duration(overview.config.check_s),
-            walk: duration(overview.config.walk_s),
             disk: fmtPercent(overview.config.alert_used.disk, 0),
             inodes: fmtPercent(overview.config.alert_used.inodes, 0),
             memory: fmtPercent(overview.config.alert_used.memory, 0),
@@ -643,6 +649,9 @@ const failureNote = computed(() =>
 }
 .mc-row--gone {
   color: var(--muted);
+}
+.mc-row--warm {
+  cursor: default;
 }
 .mc-row--sandbox {
   padding-top: 6px;
@@ -783,20 +792,6 @@ const failureNote = computed(() =>
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--faint);
-}
-.mc-warm {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.mc-warm__row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 13px;
 }
 /* 窄屏放不下七列：一行折成三行（名字和阶段 / 规格和沙箱 / 说明），表头不画，不靠
    横向滚动把一半的列藏到屏幕外。沙箱行同理：房间和状态 / 什么时候 / 放上来的时刻。 */

@@ -22,13 +22,12 @@ function payload(overrides: Partial<TaskInheritanceData> = {}): TaskInheritanceD
     spaceId: 3,
     resourcePack: { compute_credits: 500 },
     teaching: {
-      systemPrompt: '第 {current_week} 周：循环。',
-      currentWeek: 5,
-      allowedTopics: ['循环', '数组'],
-      avoidInCode: ['递归'],
+      mode: 'guide',
+      systemPrompt: '本题只用循环，不用递归。',
+      spacePrompt: '先问学生试过什么。',
       materialIds: [],
       documentIds: [],
-      source: 'task',
+      source: 'both',
     },
     materials: [],
     ...overrides,
@@ -52,24 +51,22 @@ describe('建项目会继承什么', () => {
     const text = document.body.textContent ?? ''
     expect(text).toContain(i18n.global.t('tasks.inheritance.title'))
     expect(text).toContain(String(500))
-    // 那一周就是接口给的 currentWeek —— 组件不做二次解析。
-    expect(text).toContain(i18n.global.t('tasks.inheritance.week', { n: 5 }))
-    expect(text).toContain('循环')
-    expect(text).toContain('递归')
-    // 来源层单独说一句，不是一个只有结果的字符串。
-    expect(text).toContain(i18n.global.t('tasks.inheritance.from.task'))
+    expect(text).toContain(i18n.global.t('spaces.teaching.mode.guide'))
+    // 两边都写了要求：分开摆，各有标题。
+    expect(text).toContain(i18n.global.t('tasks.inheritance.spacePrompt'))
+    expect(text).toContain('先问学生试过什么。')
+    expect(text).toContain(i18n.global.t('tasks.inheritance.taskPrompt'))
+    expect(text).toContain('本题只用循环，不用递归。')
+    // 来源单独说一句，不是一个只有结果的字符串。
+    expect(text).toContain(i18n.global.t('tasks.inheritance.from.both'))
   })
 
-  it('来源层跟着数据走：项目集那一份就说项目集', () => {
+  it('来源跟着数据走：只有空间的就说空间', () => {
     setLocale('zh-CN')
-    mount(
-      payload({
-        teaching: { systemPrompt: null, currentWeek: 3, allowedTopics: [], avoidInCode: [], source: 'category' },
-      })
-    )
+    mount(payload({ teaching: { mode: 'example', systemPrompt: null, source: 'space' } }))
 
     const text = document.body.textContent ?? ''
-    expect(text).toContain(i18n.global.t('tasks.inheritance.from.category'))
+    expect(text).toContain(i18n.global.t('tasks.inheritance.from.space'))
     expect(text).not.toContain(i18n.global.t('tasks.inheritance.from.task'))
   })
 
@@ -99,12 +96,12 @@ describe('建项目会继承什么', () => {
     expect(document.body.textContent).toContain(i18n.global.t('tasks.inheritance.materialsNone'))
   })
 
-  it('四层都没说时不编一句话：没有指导、没有来源层', () => {
+  it('都没说时不编一句话：没有辅导、没有来源', () => {
     setLocale('zh-CN')
     mount(
       payload({
         resourcePack: {},
-        teaching: { systemPrompt: null, currentWeek: null, allowedTopics: [], avoidInCode: [], source: null },
+        teaching: { mode: null, systemPrompt: null, source: null },
       })
     )
 
@@ -120,13 +117,7 @@ describe('建项目会继承什么', () => {
     mount(
       payload({
         materials: [],
-        teaching: {
-          systemPrompt: 'Week {current_week}: loops.',
-          currentWeek: 5,
-          allowedTopics: ['Loops'],
-          avoidInCode: ['Recursion'],
-          source: 'task',
-        },
+        teaching: { mode: 'spec', systemPrompt: 'Loops only.', source: 'task' },
       })
     )
 

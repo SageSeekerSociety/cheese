@@ -122,7 +122,7 @@ class Jobs:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception as error:  # noqa: BLE001 — the machine may come back
+            except Exception as error:  # the machine may come back
                 print(f"[cheese] job {job} unread: {error}", file=sys.stderr)
                 await asyncio.sleep(RETRY_S)
                 continue

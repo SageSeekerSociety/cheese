@@ -1,37 +1,41 @@
 """A task whose last delivery landed closes once its AI teammate has written it up.
 
 Accepting the last step does not close the task on the spot. The task stays
-open, with `closing_since` set, while its AI teammate takes one more turn to
-bring the task document up to date and say what came of the task; to everyone
-looking it already reads 已采纳 (`presentation`). It closes when that turn ends
-(`turns_ended`), or when the instruction for it ends without a turn running
-(`delivery.agent.run_attempt`, `delivery.timer.give_up_stale`), or, whatever
+open, with `closing_since` set, while its AI teammate is told to bring the task
+document up to date, say what came of the task, and close it with the close a
+task's own session has (`cheese_close_task`); to everyone looking it already
+reads 已采纳 (`presentation`). It closes when that close is called — the one
+fact here that says the write-up was done — or, without it, when the instruction
+for it was given up on (`delivery.timer.give_up_stale`), or, whatever
 happened to it, `CLOSE_AT_THE_LATEST` after it landed.
 
-None of those closes a task while something besides the write-up is being
-done or asked for in it (`unfinished`): a turn running there, or a message
-there still waiting for its turn. A close stops the work still running and
-drops the request still waiting, and work begun after the delivery was handed
-over is work that delivery does not contain. Such a task is left as it is, and
-either goes on (`review.task_landing.go_on_while_working`) or closes at the
-first of those moments that finds nothing left: the deadline is checked on
-every tick of the landing watch, so a task still waiting past it closes on the
-first tick after its teammate stops. A turn that has said nothing for the
-orphan sweep's limit does not hold it, and nothing holds it past
-`STOP_WORK_AFTER`: then it closes, stopping that work. Each stopped turn keeps
-a run record under its own number (`_keep_stopped_turns`), and the room hears
-what was not delivered (`review.landing_watch`).
+Neither of the platform's own closes — the instruction given up on, the
+deadline — closes a task while something besides the write-up is being done or
+asked for in it (`unfinished`): a session at work there that has not read the
+write-up instruction, a message there still waiting to be read, or one read
+into work that then failed. A close stops the work still running and drops the
+request still waiting, and work begun after the delivery was handed over is
+work that delivery does not contain. Such a task is left as it is, and either
+goes on (`review.task_landing.go_on_while_working`) or closes at the first of
+those moments that finds nothing left: the deadline is checked on every tick
+of the task closing sweep (`review.pr_poll.sweep_closings`), so a task still
+waiting past it closes on the first tick after its teammate's session stops.
+Nothing holds it past `STOP_WORK_AFTER`: then it closes, stopping that work.
+Each stopped session keeps a run record under its own seat (`_keep_stopped`),
+and the room hears what was not delivered
+(`review.room_notices.tell_room_undelivered`).
 
-Closing after the turn rather than before keeps every rule about closed tasks
-as it is: a closed task takes no turns and its document is read-only, and
-nothing here needs an exception to either.
+Every fact read here is one the platform can check: what a session's runner
+declared it is doing (`session_states`), which input a session read
+(`deliveries`, the blocks it consumed), which message is still waiting. That a
+turn interval ended is not one: the platform cannot tell from it whether the
+instruction that started it was followed.
 
 Every way a task closes goes through `close_task` — its owner, its own
-session, the summary turn ending, the instruction for it given up on, the
-deadline above — and so every one of them stops the work still running in the
-task once the close commits. The summary turn ending leaves nothing running
-that `unfinished` counts; a turn it did not count, gone silent, is stopped by
-the session's holder once the task has been closed for `CLOSING_TAIL`
+session, the instruction for it given up on, the deadline above — and so every
+one of them stops the work still running in the task once the close commits.
+A session the close did not reach is stopped by the session's holder once the
+task has been closed for `CLOSING_TAIL`
 (`agent.turn_inputs.stop_work_in_closed_tasks`).
 """
 
@@ -41,16 +45,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from sqlalchemy import Uuid, column, event, func, or_, select, table
+from sqlalchemy import Uuid, column, event, select, table
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import background
-from app.core.config import settings
 from app.core.db import after_own_commit
 from app.core.sentences import say
-from app.domain.block.models import Block
-from app.domain.block.queries import queued_messages
+from app.domain.block.authorship import participant_blocks
+from app.domain.block.models import CONSUMED_TURN_META_KEY, Block, BlockKind
+from app.domain.block.queries import queued_messages, read_failed_messages
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
@@ -61,55 +65,63 @@ from app.domain.run_record.service import record as keep_record
 logger = logging.getLogger("cheesex.room_task")
 
 #: Half an hour is how long an instruction to an AI teammate is retried
-#: (`delivery.agent.GIVE_UP_AFTER`); a summary turn is a few minutes.
+#: (`delivery.agent.GIVE_UP_AFTER`); a write-up takes a few minutes.
 CLOSE_AT_THE_LATEST = timedelta(minutes=45)
 
-#: Marks the instruction whose turn ends the task, in the delivery's payload.
+#: Marks the instruction to write a finished task up, in the delivery's payload.
 CLOSES_TASK = "closesTask"
 
 #: How long past `CLOSE_AT_THE_LATEST` a task is left open for work its AI
-#: teammate is still doing in it. A turn that has gone silent for the orphan
-#: sweep's limit no longer counts (`unfinished`), but one that keeps talking
-#: and never ends would hold the task forever; past this the task closes and
-#: that work is stopped, and the room hears what was not delivered.
+#: teammate's session is still doing in it. A session that keeps working and
+#: never stops would hold the task forever; past this the task closes and that
+#: work is stopped, and the room hears what was not delivered.
 STOP_WORK_AFTER = CLOSE_AT_THE_LATEST + timedelta(hours=2)
 
 #: How far back the pending-message scan still starts a waiting message
 #: (`AgentWorkRunner.ORPHAN_STALE_S`, which this module cannot import): one
-#: older than this is not going to get its turn, so it does not hold a task.
+#: older than this is not going to be read, so it does not hold a task.
 QUEUED_FOR = timedelta(hours=2)
 
-# The facts `unfinished` reads, as bare tables: the turn intervals belong to
-# the agent domain and the instructions to the delivery domain, and both of
-# those import this module (`agent.liveness` reads `threads` the same way).
-_turns = table(
-    "agent_turns",
-    column("id", Uuid),
-    column("continuation_id", Uuid),
+# The facts `unfinished` reads, as bare tables: the sessions' declared state
+# belongs to the agent domain, the instructions and the inputs to the delivery
+# domain, and both of those import this module.
+_sessions = table(
+    "session_states",
     column("conversation_id", Uuid),
     column("agent_handle"),
-    column("author"),
-    column("content"),
-    column("started_at"),
-    column("delivered_at"),
-    column("stopped_at"),
+    column("worker_status"),
+    column("changed_at"),
 )
 _instructions = table(
     "deliveries",
-    column("attempt_id", Uuid),
     column("conversation_id", Uuid),
+    column("recipient_handle"),
     column("payload", JSONB),
+    column("state"),
+    column("recorded_at"),
 )
+_inputs = table(
+    "native_inputs",
+    column("conversation_id", Uuid),
+    column("recipient_handle"),
+    column("echoed_at"),
+    column("block_ids", JSONB),
+    column("held_block_ids", JSONB),
+)
+
+#: What a session's runner declares while its session is at work
+#: (`harness.driven.lifecycle.RUNNING`, which this module cannot import).
+_RUNNING = "running"
 
 
 @dataclass(frozen=True)
 class Unfinished:
     """Something a task still had going or waiting when it closed: what was
-    being done or asked for (``prompt``), and the turn that close stopped
-    (``turn_id``). A message no turn had taken yet has no turn to name."""
+    being done or asked for (``prompt``), and the seat whose session the close
+    stopped (``seat``). A message no session had read has no work to name."""
 
     prompt: str
-    turn_id: uuid.UUID | None
+    seat: str | None
 
     @property
     def gist(self) -> str:
@@ -124,135 +136,191 @@ async def unfinished(
     *,
     since: datetime | None = None,
     by: str | None = None,
+    seat: str | None = None,
 ) -> list[str]:
     """What is still being done or asked for in ``task_id`` besides its
-    write-up: the prompt of each turn open in it, then each message there
-    waiting for a turn. Empty when there is none.
-
-    The prompts alone: a caller that has to name the stopped work asks
-    `unfinished_turns` for the turn each one belongs to."""
+    write-up: the prompts of `unfinished_work`. Empty when there is none."""
     return [
         left.prompt
-        for left in await unfinished_turns(session, task_id, since=since, by=by)
+        for left in await unfinished_work(
+            session, task_id, since=since, by=by, seat=seat
+        )
     ]
 
 
-async def unfinished_turns(
+async def unfinished_work(
     session: AsyncSession,
     task_id: uuid.UUID,
     *,
     since: datetime | None = None,
     by: str | None = None,
+    seat: str | None = None,
 ) -> list[Unfinished]:
-    """`unfinished`, each item with the turn it was: the turn's id for work
-    the close stops, and None for a message still waiting for a turn that
-    never started.
+    """What is still being done or asked for in ``task_id`` besides its
+    write-up, each item with the seat whose session is doing it.
 
-    A turn counts from the moment its prompt reached the session
-    (`agent.liveness.running_tasks` asks the same of the intervals) until it
-    stops; one a person began counts from the moment it is taken on, so
-    their message waiting for the session behind another turn is not lost to
-    a close. It counts while it has said something within the orphan sweep's
-    own limit (`settings.turn_silence_timeout_s`), or started within it: an
-    interval left open by a turn that died without closing it is not work. The
-    write-up is the turn an instruction marked `CLOSES_TASK` started: the
-    turn's id is that instruction's attempt, and a resumed one keeps it as its
-    `continuation_id`. A waiting message is one the pending-message scan
-    would still start (`block.queries.queued_messages`) and no open turn has
-    taken.
+    Work: a seat whose session its runner declares at work in the task
+    (`session_states`), each seat on its own. Without ``since``, that is work
+    besides the write-up unless that seat is the one that read the write-up
+    instruction given since the task began closing: before it has, and for
+    every other seat, it is doing something else. With ``since``, it counts
+    only when that session, while at work this time, read a message for ``by``
+    sent after ``since`` — a request a person, or the teammate itself, made
+    after the delivery went up, which the delivery does not contain. A message
+    the platform wrote is not such a request, nor is one the session read and
+    answered before it last stopped.
 
-    ``since``: only turns started after it. ``by``: only what is for that
-    agent (`ResolvedAgent.handle`) and was not begun by the platform — turns
-    of its own that a person or the agent itself started, and messages
-    addressed to it. A turn not yet assembled has no seat on it yet, and one
-    a person began then is taken as the teammate's."""
+    Asked for: a message for ``by`` (any agent's when None) the pending-message
+    scan would still start (`block.queries.queued_messages`), and one that was
+    read into work that then failed (`block.queries.read_failed_messages`):
+    read is not answered.
+
+    ``by``: only messages for that agent (`ResolvedAgent.handle`, the handle a
+    message names its recipient by); ``seat``: only that agent's session, by
+    the handle it acts under (the one its runner registers,
+    `agent_instance_handle`). The two are the same agent in the two spellings
+    the two facts are kept in."""
     now = datetime.now(UTC)
-    query = select(
-        _turns.c.id, _turns.c.continuation_id, _turns.c.started_at, _turns.c.content
-    ).where(
-        _turns.c.conversation_id == task_id,
-        _turns.c.stopped_at.is_(None),
-        or_(_turns.c.delivered_at.is_not(None), _turns.c.author != "system"),
-    )
-    if since is not None:
-        query = query.where(_turns.c.started_at > since)
-    if by is not None:
-        query = query.where(
-            or_(_turns.c.agent_handle == by, _turns.c.agent_handle.is_(None)),
-            _turns.c.author != "system",
+    left = await _at_work(session, task_id, since=since, by=by, seat=seat)
+    left += [
+        Unfinished(message.content, None)
+        for message in await session.scalars(queued_messages(now - QUEUED_FOR, task_id))
+        if _for(message, by)
+    ]
+    left += [
+        Unfinished(message.content, None)
+        for message in await session.scalars(
+            read_failed_messages(now - QUEUED_FOR, task_id)
         )
-    running = (await session.execute(query.order_by(_turns.c.started_at))).all()
-    left: list[Unfinished] = []
-    if running:
-        chains = {turn.id for turn in running} | {
-            turn.continuation_id for turn in running
-        }
-        write_ups = set(
-            await session.scalars(
-                select(_instructions.c.attempt_id).where(
-                    _instructions.c.attempt_id.in_(chains),
-                    _instructions.c.conversation_id == task_id,
-                    _instructions.c.payload[CLOSES_TASK].as_boolean().is_(True),
-                )
-            )
-        )
-        said = {
-            turn_id: at
-            for turn_id, at in (
-                await session.execute(
-                    select(Block.turn_id, func.max(Block.created_at))
-                    .where(Block.turn_id.in_(chains))
-                    .group_by(Block.turn_id)
-                )
-            ).all()
-        }
-        # A turn a message began keeps that message, not a copy, until it is
-        # assembled: the message says what it is.
-        asked = {
-            block_id: content
-            for block_id, content in (
-                await session.execute(
-                    select(Block.id, Block.content).where(
-                        Block.id.in_([turn.id for turn in running if not turn.content])
-                    )
-                )
-            ).all()
-        }
-        quiet_since = now - timedelta(seconds=settings.turn_silence_timeout_s)
-        for turn in running:
-            if turn.id in write_ups or turn.continuation_id in write_ups:
-                continue
-            last = max(
-                [turn.started_at]
-                + [said[t] for t in (turn.id, turn.continuation_id) if t in said]
-            )
-            if last >= quiet_since:
-                left.append(
-                    Unfinished(turn.content or asked.get(turn.id) or "", turn.id)
-                )
-    waiting = list(await session.scalars(queued_messages(now - QUEUED_FOR, task_id)))
-    if waiting:
-        taken = set(
-            await session.scalars(
-                select(_turns.c.id).where(
-                    _turns.c.id.in_([m.id for m in waiting]),
-                    _turns.c.stopped_at.is_(None),
-                )
-            )
-        )
-        # No turn took these, so there is none to name: the close drops the
-        # request before it ever became work.
-        left += [
-            Unfinished(message.content, None)
-            for message in waiting
-            if message.id not in taken
-            and (
-                by is None
-                or ((message.meta or {}).get("agent_recipient") or {}).get("handle")
-                == by
-            )
-        ]
+        if _for(message, by)
+    ]
     return left
+
+
+async def _at_work(
+    session: AsyncSession,
+    task_id: uuid.UUID,
+    *,
+    since: datetime | None,
+    by: str | None,
+    seat: str | None,
+) -> list[Unfinished]:
+    """The seats whose session is at work in ``task_id`` on something besides
+    its write-up (`unfinished_work`), each judged on its own: one seat having
+    read the write-up says nothing about what another is doing."""
+    query = select(_sessions.c.agent_handle, _sessions.c.changed_at).where(
+        _sessions.c.conversation_id == task_id,
+        _sessions.c.worker_status == _RUNNING,
+    )
+    if seat is not None:
+        query = query.where(_sessions.c.agent_handle == seat)
+    running = (await session.execute(query)).all()
+    if not running:
+        return []
+    if since is None:
+        wrote_up = await _write_up_readers(session, task_id)
+        prompt = await _last_read(session, task_id)
+        return [
+            Unfinished(prompt, handle)
+            for handle, _running_since in running
+            if handle not in wrote_up
+        ]
+    left = []
+    for handle, running_since in running:
+        asked = await _asked_since(
+            session, task_id, handle, by, since=since, read_since=running_since
+        )
+        if asked is not None:
+            left.append(Unfinished(asked, handle))
+    return left
+
+
+async def _asked_since(
+    session: AsyncSession,
+    task_id: uuid.UUID,
+    seat: str,
+    by: str | None,
+    *,
+    since: datetime,
+    read_since: datetime,
+) -> str | None:
+    """The newest message for ``by`` that a person (or the teammate itself)
+    sent after ``since`` and that ``seat``'s session read while it has been at
+    work this time (since its runner last declared it running): what it is
+    working on that the delivery does not contain. None when there is none —
+    a message it read and answered before it last stopped is done with."""
+    batches = (
+        await session.execute(
+            select(_inputs.c.block_ids, _inputs.c.held_block_ids).where(
+                _inputs.c.conversation_id == task_id,
+                _inputs.c.recipient_handle == seat,
+                _inputs.c.echoed_at >= read_since,
+            )
+        )
+    ).all()
+    ids = {uuid.UUID(block) for batch in batches for part in batch for block in part}
+    if not ids:
+        return None
+    asked = [
+        message
+        for message in await session.scalars(
+            select(Block)
+            .where(
+                Block.id.in_(ids),
+                Block.kind == BlockKind.message,
+                Block.created_at > since,
+                participant_blocks(),
+            )
+            .order_by(Block.created_at)
+        )
+        if _for(message, by)
+    ]
+    return asked[-1].content if asked else None
+
+
+async def _write_up_readers(session: AsyncSession, task_id: uuid.UUID) -> set[str]:
+    """The seats that read the write-up instruction given since the task began
+    closing: each one's echo settled its delivery
+    (`delivery.receipts.record_receipt`)."""
+    task = await session.get(Task, task_id)
+    if task is None or task.closing_since is None:
+        return set()
+    return set(
+        await session.scalars(
+            select(_instructions.c.recipient_handle).where(
+                _instructions.c.conversation_id == task_id,
+                _instructions.c.payload[CLOSES_TASK].as_boolean().is_(True),
+                _instructions.c.recorded_at >= task.closing_since,
+                _instructions.c.state == "received",
+            )
+        )
+    )
+
+
+async def _last_read(session: AsyncSession, task_id: uuid.UUID) -> str:
+    """The last message a session in ``task_id`` read: what its work is about,
+    as near as the platform can say."""
+    return (
+        await session.scalar(
+            select(Block.content)
+            .where(
+                Block.conversation_id == task_id,
+                Block.kind == BlockKind.message,
+                Block.meta[CONSUMED_TURN_META_KEY].as_string().is_not(None),
+            )
+            .order_by(Block.created_at.desc())
+            .limit(1)
+        )
+        or ""
+    )
+
+
+def _for(message: Block, by: str | None) -> bool:
+    """Whether a message is for ``by``'s work (any agent's when None)."""
+    return (
+        by is None
+        or ((message.meta or {}).get("agent_recipient") or {}).get("handle") == by
+    )
 
 
 class StopsWork(Protocol):
@@ -271,11 +339,10 @@ async def close_task(
 ) -> Task:
     """Close ``task``; with a `conclusion` it is done, without one it was put
     down. Once ``session`` commits, whatever a teammate is still doing in it
-    is stopped through ``work``: a closed task is work that is over, and a turn
-    left running in it goes on paying for the model while every write it
-    makes is refused. ``work`` is None only when the turn that would be
-    stopped is the one closing the task, or when nothing is left running
-    (`turns_ended`).
+    is stopped through ``work``: a closed task is work that is over, and a
+    session left working in it goes on paying for the model while every write
+    it makes is refused. ``work`` is None only when the session that would be
+    stopped is the one closing the task.
 
     ``machines`` goes to `after_close` unchanged: the call that reaches a
     machine to remove this room's closed checkouts (`ports.SweepCheckouts`).
@@ -285,7 +352,7 @@ async def close_task(
     """
     if conclusion is not None:
         task.conclusion = conclusion
-    # A closed task is not waiting for a summary turn any more, so the window
+    # A closed task is not waiting for its write-up any more, so the window
     # goes with it. Left behind, it would stay on a task its owner reopens and
     # read there as 已采纳 while the task is open — the one state that is
     # listed in neither 「未完成」 nor 「已关闭」.
@@ -327,26 +394,6 @@ def _stop_after_commit(session: AsyncSession, task_id: uuid.UUID, work: StopsWor
     pending[task_id] = work
 
 
-async def _being_written_up(session: AsyncSession, task_id: uuid.UUID) -> bool:
-    """Whether the turn writing ``task_id`` up has started and not yet stopped:
-    the turn an instruction marked `CLOSES_TASK` started, or one resuming it
-    (`unfinished` says how it is told apart)."""
-    write_ups = select(_instructions.c.attempt_id).where(
-        _instructions.c.conversation_id == task_id,
-        _instructions.c.payload[CLOSES_TASK].as_boolean().is_(True),
-    )
-    running = await session.scalar(
-        select(_turns.c.id)
-        .where(
-            _turns.c.conversation_id == task_id,
-            _turns.c.stopped_at.is_(None),
-            or_(_turns.c.id.in_(write_ups), _turns.c.continuation_id.in_(write_ups)),
-        )
-        .limit(1)
-    )
-    return running is not None
-
-
 async def close_after_summary(
     session: AsyncSession,
     task_id: uuid.UUID,
@@ -354,63 +401,26 @@ async def close_after_summary(
     *,
     machines: SweepCheckouts | None = None,
 ) -> Task | None:
-    """Close ``task_id`` if it is waiting for its summary turn, that turn is
-    not still running, and nothing else is being done or asked for in it
-    (`unfinished`, module docstring). Returns the task it closed; the pages
-    showing it hear from `room_task.live`.
-
-    An instruction's attempt is over once the session has taken the turn,
-    which is long before the turn ends: closing then interrupted the write-up
-    it was waiting for. The turn's own end closes the task (`turns_ended`).
-    ``work`` is None only there, where what `unfinished` counts is nothing.
-    ``machines`` is `close_task`'s."""
+    """Close ``task_id`` without its write-up, once the instruction for it was
+    given up on: if it is still waiting for one and nothing else is being done
+    or asked for in it (`unfinished`, module docstring). Returns the task it
+    closed; the pages showing it hear from `room_task.live`. ``machines`` is
+    `close_task`'s."""
     task = await session.get(Task, task_id, with_for_update=True)
     if task is None or task.closing_since is None:
-        return None
-    if await _being_written_up(session, task.id):
         return None
     if await unfinished(session, task.id):
         return None
     return await close_task(session, task, work, machines=machines)
 
 
-async def turns_ended(
-    session: AsyncSession,
-    conversations: list[uuid.UUID],
-    *,
-    machines: SweepCheckouts | None = None,
-) -> None:
-    """Turns stopped in these conversations, in ``session``: each of them that
-    is a task waiting for its summary turn closes if that was the write-up, or
-    the last thing besides it (`close_after_summary`). Every way a turn ends
-    records it through `agent.repositories.AgentTurnRepository`, which calls
-    this, so a write-up that ends, fails, times out or dies with its session
-    closes its task when its interval does.
-
-    ``machines`` is `close_task`'s. This is the path most tasks close by, so a
-    caller that leaves it out leaves the room's closed checkouts on the
-    machines it works on; `AgentTurnRepository` hands in the sweep this
-    package implements."""
-    if not conversations:
-        return
-    waiting = list(
-        await session.scalars(
-            select(Task.id).where(
-                Task.id.in_(set(conversations)), Task.closing_since.is_not(None)
-            )
-        )
-    )
-    for task_id in waiting:
-        await close_after_summary(session, task_id, None, machines=machines)
-
-
 @dataclass(frozen=True)
 class Overdue:
     """A task `close_overdue` closed, and what was still being done or asked
-    for in it when it did (`unfinished_turns`): empty unless the task was
+    for in it when it did (`unfinished_work`): empty unless the task was
     closed on work at `STOP_WORK_AFTER`, which stopped that work undelivered.
-    Each item names the turn it was, so the stopped turn is not lost with the
-    task."""
+    Each item names the seat whose session it was, so the stopped work is not
+    lost with the task."""
 
     task: Task
     undelivered: list[Unfinished]
@@ -419,8 +429,8 @@ class Overdue:
 async def close_overdue(
     session: AsyncSession, work: StopsWork, *, machines: SweepCheckouts | None = None
 ) -> list[Overdue]:
-    """Close every task still waiting for a summary turn it is not getting,
-    unless something else is being done or asked for in it — and, past
+    """Close every task still waiting for a write-up it is not getting, unless
+    something else is being done or asked for in it — and, past
     `STOP_WORK_AFTER`, that one too. ``machines`` is `close_task`'s."""
     now = datetime.now(UTC)
     overdue = list(
@@ -436,39 +446,36 @@ async def close_overdue(
         task = await session.get(Task, task_id, with_for_update=True)
         if task is None or task.closing_since is None:
             continue
-        left = await unfinished_turns(session, task.id)
+        left = await unfinished_work(session, task.id)
         if left and task.closing_since >= now - STOP_WORK_AFTER:
             continue
         closed.append(
             Overdue(await close_task(session, task, work, machines=machines), left)
         )
-        await _keep_stopped_turns(session, task, left)
+        await _keep_stopped(session, task, left)
     return closed
 
 
-async def _keep_stopped_turns(
+async def _keep_stopped(
     session: AsyncSession, task: Task, stopped: list[Unfinished]
 ) -> None:
-    """Keep a run record under each stopped turn's own number.
+    """Keep a run record under each stopped session's own seat.
 
     The room hears one line about the task (`review.room_notices`), and one
-    line is right for a room. The turn itself needs a row of its own: it was
-    stopped without being finished, and once the task is closed nothing else
-    in it will say which turn that was. ``turn_id`` is what ties the record to
-    the turn — 现场 and the admin read the turn by it, and the 轮次页 has no
-    other way to see this stop.
+    line is right for a room. The stopped work needs a record of its own: it
+    was stopped without being finished, and once the task is closed nothing
+    else in it will say whose work that was.
 
-    A message still waiting for a turn has no number to keep and gets no
-    record; the room line still names it. Best effort: a record cannot undo
-    the close it is about, so a write that fails is logged and the close
-    stands.
+    A message nobody read is nobody's work and gets no record; the room line
+    still names it. Best effort: a record cannot undo the close it is about, so
+    a write that fails is logged and the close stands.
     """
-    if not any(work.turn_id is not None for work in stopped):
+    if not any(work.seat is not None for work in stopped):
         return
     try:
         async with session.begin_nested():
             for work in stopped:
-                if work.turn_id is None:
+                if work.seat is None:
                     continue
                 await keep_record(
                     session,
@@ -481,9 +488,9 @@ async def _keep_stopped_turns(
                         detail=say("taskClosedUndeliveredDetail", items=[work.gist]),
                         detail_label=say("labelDetails"),
                     ),
-                    turn_id=work.turn_id,
+                    seat=work.seat,
                 )
-    except Exception:  # noqa: BLE001 — the close stands; this is its record
+    except Exception:  # the close stands; this is its record
         logger.warning(
-            "could not keep the stopped turns of task %s", task.id, exc_info=True
+            "could not keep the stopped work of task %s", task.id, exc_info=True
         )

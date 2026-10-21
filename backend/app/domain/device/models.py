@@ -2,13 +2,11 @@
 
 Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 ``device`` (shared connector identity), ``hosted_device`` (human-owned machines),
-``device_auth_code``
-(short-lived device-flow codes), ``device_project`` (device↔project assignments),
-``device_team`` (device↔team bindings — compute belongs to the team, v4) and
+``device_auth_code`` (short-lived device-flow codes) and
 ``device_health``
 (a machine's rolling failure streak / quarantine — #186) and
-``device_claude_login`` (whether its owner's own Claude Code is logged in for
-the platform — #2991) and ``device_sandbox`` (whether it can give a session a
+``claude_logins`` (each login its owner's own Claude Code has for the platform
+there — #2991) and ``device_sandbox`` (whether it can give a session a
 sandbox). ``SqlDeviceRepository``
 converts between these rows and the dataclasses; the service never sees them.
 """
@@ -25,12 +23,12 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
-    Uuid,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.domain.common import Timestamps
+from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.supply import Supply
 
 
@@ -47,8 +45,18 @@ class DeviceRow(Base):
     token: Mapped[str] = mapped_column(
         String(128), nullable=False, unique=True, index=True
     )
-    owner_user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    # Enrollment provenance; device management is authorized by team_id.
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("team.id", name="fk_device_team_id_team"),
+        nullable=False,
+        index=True,
+    )
+    owner_user_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("user.id", ondelete="SET NULL", name="fk_device_owner_user_id_user"),
+        nullable=True,
+        index=True,
     )
     # NOTE: a device is PURE COMPUTE (execution-architecture v3: AIPool ⊥ ComputePool;
     # a self-hosted device is a ComputePool node). It carries NO agent identity — the
@@ -80,8 +88,13 @@ class HostedDeviceRow(Base):
     device_id: Mapped[str] = mapped_column(
         ForeignKey("device.device_id", ondelete="CASCADE"), primary_key=True
     )
-    owner_user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    owner_user_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey(
+            "user.id", ondelete="SET NULL", name="fk_hosted_device_owner_user_id_user"
+        ),
+        nullable=True,
+        index=True,
     )
 
 
@@ -96,38 +109,6 @@ class DeviceAuthCodeRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-
-
-class DeviceProjectRow(Timestamps, Base):
-    """A device↔project assignment: which projects a device may run agents in.
-    The device's owner manages these (many-to-many)."""
-
-    __tablename__ = "device_project"
-    __table_args__ = (
-        UniqueConstraint("device_id", "project_id", name="uq_device_project"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    device_id: Mapped[str] = mapped_column(
-        ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-
-
-class DeviceTeamRow(Timestamps, Base):
-    """A device↔team binding (execution-architecture v4: compute belongs to the team).
-    A device bound to a team is usable by every project of that team — 为团队注册设备.
-    The device's owner manages these (many-to-many). ``team_id`` is a bare BigInteger
-    (no cross-table FK, matching ``device_project.project_id``)."""
-
-    __tablename__ = "device_team"
-    __table_args__ = (UniqueConstraint("device_id", "team_id", name="uq_device_team"),)
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    device_id: Mapped[str] = mapped_column(
-        ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    team_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
 
 
 class DeviceHealthRow(Base):
@@ -160,33 +141,85 @@ class DeviceHealthRow(Base):
     )
 
 
-class DeviceClaudeLoginRow(Base):
-    """Whether the owner's own Claude Code on a machine is logged in for the
-    platform (`cheesehost claude login`), as the machine last answered.
+def _login_record_id(context) -> str:
+    """A login's record id: the machine's own for its first login, which named
+    that login before a machine could hold several (own agents and links made
+    then still say it), and one of its own for every other."""
+    given = context.get_current_parameters()
+    # ``local_id``'s own default is not applied yet when this one runs.
+    if (given.get("local_id") or FIRST_LOGIN) == FIRST_LOGIN:
+        return given.get("device_id") or uuid.uuid4().hex
+    return uuid.uuid4().hex
 
-    One row per machine, written each time the backend asks it — when it
-    connects, and before a session of the owner's Claude Code starts on it. The
-    machine is the source of truth; this is what it said, and when.
+
+class DeviceClaudeLoginRow(Base):
+    """One login the owner's own Claude Code has for the platform on a machine
+    (`cheesehost claude login`), as the machine last answered. A machine holds
+    any number of them, each in a directory of its own named by ``local_id``.
+
+    Written each time the backend asks the machine — when it connects, and when
+    its owner asks again. The machine is the source of truth; this is what it
+    said, and when. An own agent runs on one of these (`OwnAgent.login_id`).
     """
 
-    __tablename__ = "device_claude_login"
+    __tablename__ = "claude_logins"
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("team.id", ondelete="CASCADE", name="fk_claude_logins_team_id_team"),
+        nullable=True,
+        index=True,
+    )
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "user.id", ondelete="CASCADE", name="fk_claude_logins_owner_user_id_user"
+        ),
+        nullable=True,
+        index=True,
+    )
+    host_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "model_credential_hosts.id",
+            ondelete="CASCADE",
+            name="fk_claude_logins_host_id_model_credential_hosts",
+        ),
+        nullable=True,
+        index=True,
+    )
+    allowed_models: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "device_id", "local_id", name="uq_claude_logins_device_id_local_id"
+        ),
+    )
 
-    device_id: Mapped[str] = mapped_column(
-        ForeignKey("device.device_id", ondelete="CASCADE"), primary_key=True
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=_login_record_id
+    )
+    device_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "device.device_id",
+            ondelete="SET NULL",
+            name="fk_claude_logins_device_id_device",
+        ),
+        nullable=True,
+    )
+    # What the machine calls it: the name of its directory there
+    # (`login_kind.FIRST_LOGIN` for the first one).
+    local_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=FIRST_LOGIN
     )
     # The pinned build is on the machine. Without it nothing is logged in yet.
     installed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     logged_in: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    # What `claude auth status` names: `claude.ai` for a subscription login, or
-    # the API key kind, and for a subscription its plan (`max`, `pro`, …). A
-    # machine whose owner set another model service is `model_service`
-    # (`login_kind.MODEL_SERVICE`), with the model it calls there.
+    # Subscription status reported by Claude Code, and its plan (`max`, `pro`, …).
     auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subscription_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # The host of that model service (never its key), for its owner to tell
-    # one service from another; None for a Claude account.
-    service_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Which Claude account it is — the email and organization `claude auth
+    # status` names — so several logins on one machine can be told apart.
+    # None until the machine is next asked.
+    account_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    account_org: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # What its owner named this connection on 「模型连接」; None until they do.
     # The machine never reports it, so its reports leave it alone, and the own
     # agents on the connection are named after it.
@@ -201,6 +234,19 @@ class DeviceClaudeLoginRow(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    @property
+    def transport_id(self) -> str:
+        return self.host_id or self.device_id or ""
+
+
+class ModelCredentialHost(Base):
+    """A model-process connection, with no execution-device enrollment."""
+
+    __tablename__ = "model_credential_hosts"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
 
 
 class DeviceSandboxRow(Base):

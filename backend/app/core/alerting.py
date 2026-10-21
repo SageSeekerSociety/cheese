@@ -1,7 +1,7 @@
 """Tell a person, out of band, when something broke that nobody is watching.
 
-Everything the platform notices already lands somewhere queryable — a 现场 event
-block, a log line, a system event in a room. That is enough for whoever is
+Everything the platform notices already lands somewhere queryable — a session
+or run record, a log line, a system event in a room. That is enough for whoever is
 looking, and worth nothing when nobody is. A frontend error sits in the timeline
 of a room that may have no one in it; a user sees 「操作失败」 and moves on.
 
@@ -163,7 +163,7 @@ async def _repeats(key: str, now: float, carried: int = 0) -> int | None:
             ),
             REDIS_TIMEOUT_S,
         )
-    except Exception:  # noqa: BLE001 — a broken Redis must not silence alerts
+    except Exception:  # a broken Redis must not silence alerts
         logger.warning("alert repeat state unavailable; sending", exc_info=True)
         return 0
     answer = int(answer)
@@ -202,7 +202,7 @@ async def _post_to(url: str, text: str) -> None:
         body = response.json() if response.content else {}
         if response.status_code != 200 or body.get("code") not in (None, 0):
             logger.warning("alert webhook refused: %s %s", response.status_code, body)
-    except Exception:  # noqa: BLE001 — an alert that fails must not fail its caller
+    except Exception:  # an alert that fails must not fail its caller
         logger.exception("alert webhook failed")
 
 

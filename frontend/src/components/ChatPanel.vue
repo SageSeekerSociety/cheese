@@ -21,6 +21,7 @@ import { useMentionOutside } from '../composables/useMentionOutside'
 import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
+import { isAgentHandle } from '../lib/authorship'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
@@ -33,7 +34,6 @@ import MentionOutsidePrompt from './chat/MentionOutsidePrompt.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import KeepToLibraryConfirm from './room/KeepToLibraryConfirm.vue'
 import MemberActivity from './room/MemberActivity.vue'
-import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
 
@@ -306,6 +306,7 @@ const {
   retryBusy,
   retryNow,
   onComposerSend,
+  hearVoice,
   errorMsg,
   linkDown,
   send,
@@ -330,6 +331,23 @@ watch(loadingHistory, (loading, was) => {
   if (!props.inThread || props.alwaysSummon || loading || !was || draft.value) return
   const seat = agentSeat.value
   draft.value = summonPrefill(panel.timeline.messages.value, isMine, seat ? `<@${seat.handle}>` : `@${agentName.value}`)
+})
+
+// 输入框旁边那颗队友头像要的两样：正在这一栏里跑一轮的队友，和我上一次交给的那位
+// （平时画它，点一下就交给它）。后者从我自己发过的话里找：最近一条 @ 了队友的那条。
+const busyAgents = computed(() =>
+  Object.entries(agentFaces.value)
+    .filter(([, face]) => face.status !== null)
+    .map(([handle]) => handle)
+)
+const lastMate = computed(() => {
+  const messages = panel.timeline.messages.value
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.kind !== 'message' || !isMine(m)) continue
+    for (const [, handle] of (m.content ?? '').matchAll(/<@([\w-]+)>/g)) if (isAgentHandle(handle)) return handle
+  }
+  return null
 })
 
 // The timeline binds these two with `:ref`, so it has to receive the Refs
@@ -533,21 +551,6 @@ useComposerShortcut({
            格，输入框自己不动。没人在忙时这一格不存在，对话区就长回去。 -->
       <div class="composer-zone">
         <MemberActivity v-if="showComposer" class="composer-activity" :lines="activityLines" />
-        <div v-if="showComposer && !composerClosed && draftQuote" class="composer-quote">
-          <MessageQuote :quote="draftQuote" />
-          <button type="button" class="composer-quote__remove" @click="clearDraftQuote">
-            {{ t('slides.removeQuote') }}
-          </button>
-        </div>
-        <MentionOutsidePrompt
-          v-if="showComposer && outsidePrompt"
-          :names="mentionOutside.names(outsidePrompt.handles)"
-          :members-only="outsidePrompt.members_only"
-          :may-add="outsidePrompt.may_add"
-          :adding="outsideAdding"
-          @add="mentionOutside.add"
-          @dismiss="mentionOutside.dismiss"
-        />
         <div v-if="showComposer && composerClosed" class="composer-closed">
           <div class="composer-closed__box t-body">
             <span class="composer-closed__text">{{ composerClosed }}</span>
@@ -574,9 +577,14 @@ useComposerShortcut({
           :atts="pendingAtts"
           :atts-uploading="attsUploading"
           :reply-label="replyLabel"
+          :quote="draftQuote"
           :post-checklist="postChecklist"
+          :hear-voice="hearVoice"
+          :busy-agents="busyAgents"
+          :last-mate="lastMate"
           @send="onComposerSend"
           @clear-reply="clearReply"
+          @clear-quote="clearDraftQuote"
           @files="(files) => void addFiles(files)"
           @drop-files="onComposerDrop"
           @paste="onComposerPaste"
@@ -585,6 +593,17 @@ useComposerShortcut({
           @add-library-file="(path) => void addLibraryFile(path)"
         >
           <template #composer-chips><slot name="composer-chips" /></template>
+          <template v-if="outsidePrompt" #strip>
+            <MentionOutsidePrompt
+              docked
+              :names="mentionOutside.names(outsidePrompt.handles)"
+              :members-only="outsidePrompt.members_only"
+              :may-add="outsidePrompt.may_add"
+              :adding="outsideAdding"
+              @add="mentionOutside.add"
+              @dismiss="mentionOutside.dismiss"
+            />
+          </template>
         </RoomComposer>
       </div>
     </template>
@@ -627,15 +646,6 @@ useComposerShortcut({
 }
 .composer-closed__text {
   min-width: 0;
-}
-.composer-quote {
-  margin: 0 16px 8px;
-}
-.composer-quote__remove {
-  color: var(--faint);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  padding: 4px 0;
 }
 .chat {
   /* Was `d-flex flex-column fill-height` on the root. Spelled here instead so

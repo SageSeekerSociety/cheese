@@ -1,11 +1,14 @@
 {
-  "acting": "{verb}",
+  "api_retry": "Retry",
+  "compact_boundary": "Context compacted",
   "compacting": "Compacting context",
   "elapsed": "{span} so far",
   "queued": "Queued",
   "queuedBehind": "Queued, {ahead} ahead",
   "retrying": "Retrying",
   "retryingCount": "Retrying (attempt {attempt})",
+  "task_notification": "Subagent returned",
+  "task_started": "Subagent started",
   "thinking": "Thinking",
   "waiting": "Waiting for the environment"
 }

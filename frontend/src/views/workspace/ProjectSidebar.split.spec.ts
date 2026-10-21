@@ -91,7 +91,23 @@ vi.mock('@/api/tasks', async (importOriginal) => ({
   listProjectTasks: async () => ({ data: [], total: 0 }),
 }))
 
+import { activeCommands } from '@/commands'
 import { workspaceRoutes } from '@/router/workspaceRoutes'
+import ProjectSidebar from '@/views/workspace/ProjectSidebar.vue'
+
+async function openPhoneWithPage(width = 390) {
+  display.width = ref(width)
+  display.mdAndUp = ref(width >= 960)
+  const router = createRouter({ history: createMemoryHistory(), routes: [workspaceRoutes] })
+  // 真机上手机这一层同时有路由的 sidebar 视图和 WorkspaceEntry 里整页的那一份。
+  const Root = defineComponent({
+    setup: () => () =>
+      h(VApp, null, () => [h(RouterView, { name: 'sidebar' }), h(ProjectSidebar, { projectId: 'p1', page: true })]),
+  })
+  render(Root, { global: { plugins: [router, createVuetify({ components, directives })] } })
+  await router.push('/projects/p1')
+  return router
+}
 
 async function openProjectAt(width: number) {
   display.width = ref(width)
@@ -139,5 +155,15 @@ describe('平板上的两栏', () => {
     await router.push('/projects/p1/topics/topic-a')
     await screen.findByTestId('room')
     expect(screen.queryByTestId('topic-list')).toBeNull()
+  })
+})
+
+describe('面板里的侧栏命令', () => {
+  it('手机上侧栏挂了两份，但「新建频道」只登记一次', async () => {
+    await openPhoneWithPage()
+    await screen.findByTestId('topic-list')
+
+    const ids = activeCommands.value.map((command) => command.id)
+    expect(ids.filter((id) => id === 'topic.new')).toHaveLength(1)
   })
 })

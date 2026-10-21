@@ -91,7 +91,7 @@ class PasskeyService:
                 "residentKey": options.authenticator_selection.resident_key.value  # type: ignore[union-attr]
                 if options.authenticator_selection
                 else None,
-                "userVerification": options.authenticator_selection.user_verification.value  # type: ignore[union-attr]  # noqa: E501
+                "userVerification": options.authenticator_selection.user_verification.value  # type: ignore[union-attr]
                 if options.authenticator_selection
                 else None,
             },

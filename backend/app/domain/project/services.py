@@ -53,10 +53,7 @@ def _intent_brief(intent: str) -> str:
     text = intent.strip()
     if not text:
         return ""
-    return (
-        f"## 要做成什么\n\n{text}\n\n"
-        "下一步：补上什么时候做成、这阶段不做什么，然后在下方对话中说明你要做什么。"
-    )
+    return f"## 要做成什么\n\n{text}\n\n下一步：补上什么时候做成、这阶段不做什么。"
 
 
 class ProjectArchivedError(ConflictError):

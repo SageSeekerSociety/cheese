@@ -129,7 +129,7 @@ signatures, tool-call ids, thinking level), and `no_explicit_cache.py` strips
 `cache_control` from a deployment marked `cheese_no_explicit_cache: true`,
 because argon refuses explicit caching and LiteLLM would otherwise create a
 `cachedContents` object for every Claude Code request. Its key is capped at
-USD 1,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
+USD 2,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
 gateway database's daily spend, so the cap survives releases.
 
 `deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
@@ -140,6 +140,13 @@ path) and `RUC_DEEPSEEK_API_KEY_1` to `RUC_DEEPSEEK_API_KEY_9` in
 issued, all but the one kept for tests. The endpoint admits campus
 addresses only, so a box serving it needs the route in docs/infrastructure.md
 ("Campus model API").
+
+`qwen-audio-asr` uses Alibaba Bailian (Beijing) for the composer's voice input.
+Set `DASHSCOPE_API_KEY` in `$HOME/gateway/compose/.env`. A workspace that was
+given its own dedicated endpoint also sets `DASHSCOPE_API_BASE` there (for
+example `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com`, whose key is the
+workspace's own); unset, the shared DashScope domain is used. Neither the
+workspace id nor the key belongs in this repository.
 
 The gateway also joins `cheese-meter-gateway`, an internal network shared only
 with the metering proxy, where the proxy's ChatGPT accounts answer at
@@ -175,12 +182,39 @@ The replacement depends only on the image's bytes, so it is the same on every
 turn and the prompt cache keeps hitting. Images that open pass unchanged, and
 an image given by URL is not fetched.
 
+DeepSeek's Anthropic-compatible API runs thinking on by default and refuses a
+request when an assistant message no longer carries its thinking block
+(`deepseek_thinking.py`, installed from `LITELLM_WORKER_STARTUP_HOOKS`). Claude
+Code resends its whole history on every turn and some of its own paths drop
+those blocks, so one lost block fails every later request of a conversation
+with `The content[].thinking in the thinking mode must be passed back to the
+API`. The repair wraps DeepSeek's own Messages transformation, so it follows
+the provider rather than a model name: an assistant message without a thinking
+block — or with an empty one — gets `(thinking omitted)` and an empty
+signature, which DeepSeek accepts. A message that still has its thinking passes
+untouched, and a request that asked for thinking off gains nothing. The gateway
+logs one `deepseek_thinking filled a missing thinking block` line per repaired
+request.
+
 A deployment that declares `cheese_upstream_headers` or `cheese_session_header`
 under its `model_info` is sent those headers, and no other row of its model group
 is (`upstream_headers.py`, registered the same way). OpenCode Go needs both: its
 own User-Agent, and a session per conversation without which it refuses the
 request. How to put a subscription or relay row in front of a pay-per-use one:
 `docs/manual/dev/gateway.md`, "订阅与中转".
+
+Claude Code's WebSearch asks the upstream to run the search (the server tool
+`web_search_20250305`). DeepSeek's API runs it; RUC's vLLM does not, and
+answers with the model's text alone, which Claude Code shows the agent as a
+search that found nothing. So a deployment that cannot search says
+`supports_web_search: false` under `model_info`, a request whose tools include
+web search is not routed to it (`web_search.py`, registered the same way), and
+an answer to a search-only request that comes back with neither a
+`server_tool_use` block nor a search counted in its usage (how LiteLLM reports
+a search it translated, such as Gemini's grounding) reaches the client as an
+error, logged as `cheese web_search not run`
+with the model group and deployment. Mark a new deployment only after
+measuring it.
 
 The box's `backend/.env` must contain:
 

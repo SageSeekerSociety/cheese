@@ -5,10 +5,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.errors import NotFoundError
-from app.domain.avatars.services import AvatarService, _avatar_to_dto
+from app.domain.avatars.services import AvatarService
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
-NOW_MS = int(NOW.timestamp() * 1000)
 
 
 # ---------------------------------------------------------------------------
@@ -33,33 +32,6 @@ def _make_service(repo=None) -> tuple[AvatarService, AsyncMock]:
     repo = repo or AsyncMock()
     svc = AvatarService(repo=repo)
     return svc, repo
-
-
-# ---------------------------------------------------------------------------
-# _avatar_to_dto (pure helper)
-# ---------------------------------------------------------------------------
-
-
-class TestAvatarToDto:
-    def test_basic_conversion(self):
-        avatar = _avatar(id=7, url="https://img.com/a.png", name="Cool")
-        dto = _avatar_to_dto(avatar)
-        assert dto["id"] == 7
-        assert dto["url"] == "https://img.com/a.png"
-        assert dto["name"] == "Cool"
-        assert dto["avatarType"] == "predefined"
-        assert dto["usageCount"] == 5
-        assert dto["createdAt"] == NOW_MS
-
-    def test_none_created_at(self):
-        avatar = _avatar(created_at=None)
-        dto = _avatar_to_dto(avatar)
-        assert dto["createdAt"] == 0
-
-    def test_zero_usage_count(self):
-        avatar = _avatar(usage_count=0)
-        dto = _avatar_to_dto(avatar)
-        assert dto["usageCount"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -93,32 +65,6 @@ class TestListPredefinedIds:
 
 
 # ---------------------------------------------------------------------------
-# get_avatar
-# ---------------------------------------------------------------------------
-
-
-class TestGetAvatar:
-    @pytest.mark.anyio
-    async def test_success(self):
-        svc, repo = _make_service()
-        repo.get_by_id.return_value = _avatar(id=42, name="Cute Cat")
-
-        result = await svc.get_avatar(42)
-
-        repo.get_by_id.assert_awaited_once_with(42)
-        assert result["id"] == 42
-        assert result["name"] == "Cute Cat"
-
-    @pytest.mark.anyio
-    async def test_not_found(self):
-        svc, repo = _make_service()
-        repo.get_by_id.return_value = None
-
-        with pytest.raises(NotFoundError, match="Avatar not found"):
-            await svc.get_avatar(999)
-
-
-# ---------------------------------------------------------------------------
 # get_avatar_raw
 # ---------------------------------------------------------------------------
 
@@ -142,32 +88,6 @@ class TestGetAvatarRaw:
         result = await svc.get_avatar_raw(999)
 
         assert result is None
-
-
-# ---------------------------------------------------------------------------
-# get_default
-# ---------------------------------------------------------------------------
-
-
-class TestGetDefault:
-    @pytest.mark.anyio
-    async def test_success(self):
-        svc, repo = _make_service()
-        repo.get_default.return_value = _avatar(id=1, name="Default")
-
-        result = await svc.get_default()
-
-        repo.get_default.assert_awaited_once()
-        assert result["id"] == 1
-        assert result["name"] == "Default"
-
-    @pytest.mark.anyio
-    async def test_not_found(self):
-        svc, repo = _make_service()
-        repo.get_default.return_value = None
-
-        with pytest.raises(NotFoundError, match="No default avatar found"):
-            await svc.get_default()
 
 
 # ---------------------------------------------------------------------------

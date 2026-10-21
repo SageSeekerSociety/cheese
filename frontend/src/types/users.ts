@@ -22,11 +22,3 @@ export type User = {
   work_role?: string | null
   organization?: string | null
 }
-
-// 实名认证状态
-export enum RealNameStatus {
-  NONE = 'none',
-  VERIFIED = 'verified',
-  PENDING = 'pending',
-  REJECTED = 'rejected',
-}

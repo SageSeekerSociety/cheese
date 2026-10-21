@@ -25,7 +25,8 @@ from app.api.auth import ActorResolver
 from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
 from app.domain.agent.environment import default_environment, stored
-from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
+from app.domain.agent.model_catalog import model_choices
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.machine.environments import environment_words
@@ -39,6 +40,7 @@ from app.domain.project.member_settings import MEMBER_SETTINGS
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
+from app.domain.repository.identity import CREDIT_OWNER, credit_mode
 from app.domain.room_task import naming
 
 #: Each member setting → the sentence that names it in the room line.
@@ -48,7 +50,7 @@ _NAMES = {
     "execution_environment": "settingEnvironment",
     "max_concurrent_turns": "settingMaxConcurrentTurns",
     naming.SETTINGS_KEY: "settingTaskNaming",
-    "forge_requester_coauthor": "settingCoauthor",
+    "commit_credit": "settingCommitCredit",
 }
 if _NAMES.keys() != MEMBER_SETTINGS:
     # i18n-exempt: fails the app at import, for a developer; no screen shows it
@@ -191,9 +193,9 @@ async def _words(db: AsyncSession, project: Project, key: str, value: object):
     if key == naming.SETTINGS_KEY:
         mode = naming.naming_mode({naming.SETTINGS_KEY: value})
         return say("settingNamingAuto" if mode == "auto" else "settingNamingManual")
-    if value is None:
-        return say("settingFollowDefault")
-    return say("settingOn" if value else "settingOff")
+    # `commit_credit`, the one member setting left.
+    mode = credit_mode({key: value})
+    return say("settingCreditOwner" if mode == CREDIT_OWNER else "settingCreditAgent")
 
 
 def _compact_words(percent: int | None):

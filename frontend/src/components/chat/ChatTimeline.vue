@@ -9,7 +9,7 @@
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
-import type { Block, TodoItem, Topic } from '../../cx_types'
+import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
 import type { TaskLine } from '../../lib/channelTasks'
 import type { RunEdge } from '../../lib/chatGrouping'
@@ -118,9 +118,9 @@ const props = defineProps<{
       彩色首字母。原名叫 `avatarSrc`，改成 `avatarOf`：和这批修复里其它地方（ThreadLine、
       文档链）已经统一的名字一致，一个概念只有一个叫法。 */
   avatarOf: (handle: string) => string | null
-  displayName: (m: Block) => string
+  displayName: (m: Block | ReplyPreview) => string
   noticeAgent: (m: Block, notice: PlatformNotice) => NoticeAgent | null
-  parentOf: (m: Block) => Block | undefined
+  parentOf: (m: Block) => Block | ReplyPreview | undefined
   showReplyCue: (m: Block) => boolean
   fmtTime: (iso: string) => string
   pendingBlock: (item: Outgoing) => Block

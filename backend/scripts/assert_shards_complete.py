@@ -39,13 +39,17 @@ def assert_complete(artifacts: Path, plan: str) -> int:
     if expected != planned:
         raise SuiteDidNotRun("the independent collection plan must not be sharded")
     seen: set[str] = set()
+    # A shard may hold no case (a narrowed integration selection, or more
+    # shards than cases); the comparison with the plan below is what refuses a
+    # case that ran nowhere.
     for _, directory in latest.values():
-        _, _, assigned = read_selection(directory)
+        _, _, assigned = read_selection(directory, allow_empty=True)
         assert_suite_ran(
             directory / "results.xml",
-            at_least=1,
+            at_least=0,
             selection_dir=directory,
             reruns=directory / "reruns.jsonl",
+            allow_empty=True,
         )
         duplicate = seen.intersection(assigned)
         if duplicate:

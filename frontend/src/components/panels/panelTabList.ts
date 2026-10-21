@@ -44,7 +44,7 @@ export function panelTabs(withChat: boolean): TabDef[] {
   return ALL_TABS.filter((tabDef) => tabDef.key !== 'chat' || withChat)
 }
 
-// 「定时与触发」只有产品有，所以它不在上面那张共用表里：演示讲的是房间里的四件事
+// 「例行事务」只有产品有，所以它不在上面那张共用表里：演示讲的是房间里的四件事
 // （文档、芝士怎么干活、改动、结果），规则那一格要连后端才画得出来，塞进演示只会
 // 多一格假的。于是它接在共用表后面，由 `workPanelTabs` 拼出话题页真正的那几格 ——
 // 演示照旧读 `panelTabs`，两边的四格仍然只有一个出处。
@@ -56,7 +56,7 @@ export const THREADS_TAB: TabDef = tab('threads', 'mdi-forum-outline')
 // 这段对话里的附件和文档（#3828）：默认只属于这段对话，存进资料库才进项目。
 export const FILES_TAB: TabDef = tab('files', 'mdi-paperclip')
 
-/** 话题页右侧有哪几格：共用的那几格，总览后面接「支线」「文件」，最后是「定时与触发」。 */
+/** 话题页右侧有哪几格：共用的那几格，总览后面接「支线」「文件」，最后是「例行事务」。 */
 export function workPanelTabs(withChat: boolean): TabDef[] {
   const shared = panelTabs(withChat)
   const at = shared.findIndex((tabDef) => tabDef.key === 'overview') + 1

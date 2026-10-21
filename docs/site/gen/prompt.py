@@ -197,30 +197,15 @@ def load_skills_module():
 # --------------------------------------------------------------------------
 class _Week:
     """Stand-in for ``protocol.Teaching`` — only what ``teaching_section``
-    reads, with the token substitution its ``fill`` documents."""
+    reads: a way of helping and the teacher's requirements."""
 
-    system_prompt = "本周是第 {current_week} 周，重点是 {allowed_topics}。"
-    current_week = 6
-    allowed_topics = ["循环", "数组"]
-    avoid_in_code = ["递归"]
+    mode = "guide"
+    system_prompt = "课上讲到了循环和数组，不要用递归。"
+    space_prompt = None
 
     @property
     def is_empty(self) -> bool:
-        return not (
-            self.system_prompt
-            or self.current_week is not None
-            or self.allowed_topics
-            or self.avoid_in_code
-        )
-
-    def fill(self, template: str) -> str:
-        for token, value in (
-            ("{current_week}", str(self.current_week)),
-            ("{allowed_topics}", "、".join(self.allowed_topics)),
-            ("{avoid_in_code}", "、".join(self.avoid_in_code)),
-        ):
-            template = template.replace(token, value)
-        return template
+        return not (self.mode or self.system_prompt or self.space_prompt)
 
 
 #: A stand-in for ``task.teaching.TeachingContext``: a resolved week, the two

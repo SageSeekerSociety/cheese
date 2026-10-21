@@ -11,18 +11,20 @@ import {
   DEVICE_TEAMS,
   MODEL_CONNECTIONS,
   MODEL_HELD,
-  MODEL_SERVICE_DEVICES,
+  PLATFORM_MODELS,
   SECURITY_DIALOGS,
   SECURITY_PROPS,
 } from './catalogViewSettingsWorkspaceFixtures'
 
+import TeamAgentPicker from '@/components/settings/TeamAgentPicker.vue'
 import { t } from '@/i18n'
-import ModelConnectionsView from '@/views/user/settings/ModelConnectionsView.vue'
+import ModelConnectionsView from '@/views/teams/detail/ModelsView.vue'
 import SecurityView from '@/views/user/settings/SecurityView.vue'
 import ThisDeviceView from '@/views/user/settings/ThisDeviceView.vue'
 
 /** 画法要 Vuetify、文案要语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
+const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 
 export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
   {
@@ -140,25 +142,87 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         expect: '3f2a-11cd-90b8',
         expectSelector: '.setup__codes',
       },
+      {
+        get name() {
+          return t('catalog.securityView.s10.name')
+        },
+        get note() {
+          return t('catalog.securityView.s10.note')
+        },
+        props: {
+          showCloseAccount: true,
+          closeError:
+            '这个账号是团队「数据结构课题组」唯一的所有者，这些团队里还有其他成员，或者别人还能进来（有待接受的邀请，或加入不需要审批）。先把所有权转让给其他成员，或取消邀请并开启「加入需要审批」，才能注销',
+        },
+        expect: '先把所有权转让给其他成员',
+        expectSelector: '#security-close-username',
+      },
+    ],
+  },
+  {
+    id: 'team-agent-picker',
+    title: 'TeamAgentPicker',
+    file: 'src/components/settings/TeamAgentPicker.vue',
+    get about() {
+      return t('catalog.teamAgentPicker.about')
+    },
+    component: TeamAgentPicker,
+    needs: UI_T,
+    args: {
+      error: '',
+      saving: false,
+      state: {
+        can_manage: true,
+        agents: [],
+        my_connections: [
+          { id: 'platform', kind: 'platform', allowed_models: ['glm-5.2'] },
+          {
+            id: 'subscription-demo',
+            kind: 'subscription',
+            name: 'Lab Max',
+            plan: 'Max',
+            allowed_models: ['sonnet', 'opus'],
+          },
+          { id: 'api-demo', kind: 'api_key', name: 'Research API', allowed_models: ['sonnet'] },
+        ],
+        devices: [
+          { device_id: 'workstation-demo', name: 'Workstation', online: true },
+          { device_id: 'laptop-demo', name: 'Laptop', online: false },
+        ],
+      },
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.teamAgentPicker.name')
+        },
+        get note() {
+          return t('catalog.teamAgentPicker.note')
+        },
+        props: {},
+      },
     ],
   },
   {
     id: 'model-connections-view',
-    title: 'ModelConnectionsView',
+    title: 'ModelsView',
     get about() {
       return t('catalog.modelConnectionsView.about')
     },
-    file: 'src/views/user/settings/ModelConnectionsView.vue',
+    file: 'src/views/teams/detail/ModelsView.vue',
     component: ModelConnectionsView,
     needs: UI_T,
-    // 「解除」的确认框和「使用自定义模型服务」的表单都画在 body 上。
+    // 「解除」的确认框和添加、改名的表单都画在 body 上。
     teleport: true,
     args: {
       loading: false,
       error: null,
       connections: MODEL_CONNECTIONS,
+      platformModels: PLATFORM_MODELS,
       held: MODEL_HELD,
-      devices: MODEL_SERVICE_DEVICES,
+      personalChoices: [
+        { id: 'personal-key', name: '我的 Kimi', kind: 'model_service', allowed_models: ['kimi-k2'], added: false },
+      ],
       busy: '',
       saved: 0,
     },
@@ -171,7 +235,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.modelConnectionsView.s1.note')
         },
         props: { connections: [], held: [] },
-        expect: '暂无模型连接',
+        expect: '暂无电脑上的登录',
         expectSelector: '.settings-empty',
       },
       {
@@ -199,100 +263,94 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         expect: '检查未通过',
         expectSelector: '.mc-state--failed',
       },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s4.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s4.note')
+        },
+        props: { connections: MODEL_CONNECTIONS.filter((c) => c.device_id === 'dev-desk'), held: [] },
+        expect: '实验室的 Pro',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s5.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s5.note')
+        },
+        props: {},
+        expect: '保存在平台',
+        expectSelector: '[data-connection="held-glm"]',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s6.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s6.note')
+        },
+        // The button that opens it is a header command of the team page (Models.vue).
+        props: { addingPersonal: true },
+        expectSelector: '[role="dialog"]',
+      },
     ],
   },
   {
     id: 'this-device-view',
     title: 'ThisDeviceView',
-    get about() {
-      return t('catalog.thisDeviceView.about')
-    },
+    about: '这台电脑接入的团队，只读。示例数据。',
     file: 'src/views/user/settings/ThisDeviceView.vue',
     component: ThisDeviceView,
-    needs: UI_T,
-    // 「断开」那颗的确认框画在 body 上。
-    teleport: true,
+    needs: UI_T_R,
     args: {
       loading: false,
-      connected: true,
-      online: true,
-      connecting: false,
-      name: '工作站',
+      sessions: [
+        {
+          session_id: 'preview-session',
+          agent_name: '芝士',
+          agent_name_source: 'default',
+          project_id: 'preview-project',
+          project_name: '校园协作',
+          team_id: 2,
+          team_name: '数据组',
+          conversation_id: 'preview-task',
+          conversation_kind: 'task',
+          conversation_title: '整理项目文档',
+          room_id: 'preview-room',
+          roles: ['center', 'executor'],
+          since: '2026-10-19T10:00:00Z',
+        },
+      ],
+      preventSleep: true,
       teams: DEVICE_TEAMS,
-      teamIds: [2],
-      claudeLoggedIn: true,
-      claudePlan: 'max',
-      claudeService: null,
-      claudeState: 'idle',
-      canUseModelService: true,
       error: null,
+      enrollments: [
+        {
+          device_id: 'personal-device',
+          name: '工作站',
+          online: true,
+          team_id: 1,
+          screens: [],
+        },
+        { device_id: 'team-device', name: '数据组工作站', online: false, team_id: 2, screens: [] },
+      ],
     },
     states: [
+      { name: '多次接入', note: '每次接入各有在线状态。', props: {}, expect: '数据组' },
+      { name: '读取中', note: '正在读取。', props: { loading: true }, expectSelector: '[role="progressbar"]' },
+      { name: '暂无接入', note: '没有接入。', props: { enrollments: [], sessions: [] }, expect: '暂无接入' },
+      { name: '读取失败', note: '显示原因。', props: { error: '接入状态读取失败' }, expect: '接入状态读取失败' },
       {
         get name() {
-          return t('catalog.thisDeviceView.s1.name')
+          return t('catalog.thisDeviceView.sleepOff.name')
         },
         get note() {
-          return t('catalog.thisDeviceView.s1.note')
+          return t('catalog.thisDeviceView.sleepOff.note')
         },
-        props: { loading: true },
-        expectSelector: '[role="progressbar"]',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s2.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s2.note')
-        },
-        props: { connected: false },
-        expect: '未接入',
-        expectSelector: '.this-device__empty',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s3.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s3.note')
-        },
-        props: {},
-        expect: '已接入 · 在线',
-        expectSelector: '.settings-card .this-device__status--on',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s4.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s4.note')
-        },
-        props: { online: false },
-        expect: '已接入 · 离线',
-        // 这一格没有「在线」那一颗亮点的形状。
-        expectSelector: '.settings-card .this-device__status:not(.this-device__status--on)',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s5.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s5.note')
-        },
-        props: { teamIds: [] },
-        expect: '未提供给团队',
-        expectSelector: '.this-device__chips .this-device__muted',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s6.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s6.note')
-        },
-        props: { error: '这台设备的接入状态没读出来' },
-        expect: '这台设备的接入状态没读出来',
-        expectSelector: '[role="alert"]',
+        props: { sessions: [], preventSleep: false },
+        expectSelector: '.v-selection-control:not(.v-selection-control--dirty)',
       },
     ],
   },

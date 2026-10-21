@@ -1,8 +1,13 @@
-"""资料库的读写：清单在记录表里 (models.LibraryFileRecord)，字节在 `blobs` 里。
+"""资料库的读写：清单在记录表里 (models.LibraryFileRecord)，字节在
+`app.core.blob_store` 里。
 
 列出、读、判断在不在，都是查这张表，再按那一行的 `location` / `blob_key` 去取字节，
 不扫目录。写字节和记一行在同一次请求里做：先记，再写字节，请求结束时一起提交——
 字节写失败了，这一行随事务回滚，不会留下一行说着一份不存在的文件。
+
+资料库页上传的文件不经过后端：浏览器先领一个上传地址（`upload_slot`），把字节直接
+放进存储的 `.incoming/` 下，再拿领到的凭据来登记（`received`）。登记时后端自己量
+一遍到了多少字节、算一遍哈希，再把它挪到这一行自己的键下。
 
 名字里的 `/` 是文件夹。一个名字不能同时是一份文件和一个文件夹：`报告` 是文件时，
 `报告/附录.md` 放不进来，反过来也一样。
@@ -10,6 +15,7 @@
 
 import asyncio
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,22 +25,57 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core import blob_store
 from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
-from app.domain.library import blobs, service
+from app.domain.library import service
 from app.domain.library.models import LibraryFileRecord
 from app.domain.textfile import bytes_text_payload
 
 
+@dataclass(frozen=True)
+class Upload:
+    """一份已经由浏览器放进存储的字节（`received` 量过、算过哈希的那一份）。"""
+
+    location: str
+    key: str
+    size: int
+    sha256: str
+
+
+#: 落地的字节：手上的一份，或者已经在存储里等着登记的一份。
+Incoming = service.Content | Upload
+
+
+async def read_blob(location: str, key: str) -> bytes:
+    """``(存储, 键)`` 底下的字节；不在了是「资料库里没有这份文件」。
+
+    和 ``stored`` 是一对：行和字节分开给，是因为搬字节的时机在事务结束之后（见它
+    的说明）。「存储 + 键」这双地址怎么读回字节是本包自己的事，不该让搬的人去认
+    字节存放在哪儿。
+    """
+    try:
+        return await blob_store.store(location).get(key)
+    except blob_store.BlobMissingError:
+        raise NotFoundError(say("libraryFileNotFound")) from None
+
+
 async def _bytes_of(row: LibraryFileRecord) -> bytes:
-    return await asyncio.to_thread(blobs.store(row.location).get, row.blob_key)
+    return await read_blob(row.location, row.blob_key)
+
+
+async def _measure(data: Incoming) -> tuple[int, str]:
+    if isinstance(data, Upload):
+        return data.size, data.sha256
+    return await asyncio.to_thread(service.measure, data)
 
 
 def _new_row(
     project_id: uuid.UUID,
     name: str,
     measured: tuple[int, str],
+    location: str,
     *,
     added_by: str | None,
     room_id: uuid.UUID | None,
@@ -51,15 +92,61 @@ def _new_row(
         added_by=added_by,
         room_id=room_id,
         source_path=source_path,
-        location=blobs.LOCAL,
-        blob_key=blobs.new_key(project_id, record_id),
+        location=location,
+        blob_key=f".library-blobs/{project_id}/{record_id}",
     )
 
 
-async def _put(row: LibraryFileRecord, data: service.Content) -> None:
+def _location_for(data: Incoming) -> str:
+    """新的一行的字节存在哪：已经放进存储的就在那儿，手上的写进新文件该去的存储。"""
+    if isinstance(data, Upload):
+        return data.location
+    return blob_store.for_new().location
+
+
+async def _put(row: LibraryFileRecord, data: Incoming) -> None:
     # 资料库的字节都从这里落地，上限与房间文件是同一条（`service.refuse_oversize`）。
     service.refuse_oversize(row.bytes, row.name)
-    await asyncio.to_thread(blobs.store(row.location).put, row.blob_key, data)
+    store = blob_store.store(row.location)
+    if isinstance(data, Upload):
+        await store.take_in(data.key, row.blob_key)
+    else:
+        await store.put(row.blob_key, data)
+
+
+async def upload_slot(project_id: uuid.UUID, name: str, size: int) -> dict:
+    """给浏览器的一个上传地址：恰好 ``size`` 个字节，放进新文件该去的存储。
+
+    ``upload`` 是登记时交回来的凭据，只在这个项目里认。超过这一类文件上限的，这里
+    就不给地址。"""
+    service.refuse_oversize(size, name)
+    store = blob_store.for_new()
+    sealed = blob_store.SealedUpload(store.location, blob_store.incoming_key(), size)
+    return {
+        "url": await store.upload_url(sealed.key, size),
+        "upload": blob_store.seal_upload(
+            sealed,
+            bound_to=str(project_id),
+            seconds=blob_store.UPLOAD_TOKEN_SECONDS,
+        ),
+    }
+
+
+async def received(project_id: uuid.UUID, token: str) -> Upload:
+    """`upload_slot` 给出去的那一份，已经到了的样子：大小对得上，哈希是后端自己
+    算的，不是浏览器说的。"""
+    sealed = blob_store.open_upload(token, bound_to=str(project_id))
+    if sealed is None:
+        raise UnprocessableEntityError(say("uploadExpired"))
+    store = blob_store.store(sealed.location)
+    if await store.size(sealed.key) != sealed.size:
+        raise UnprocessableEntityError(say("uploadIncomplete"))
+    return Upload(
+        location=sealed.location,
+        key=sealed.key,
+        size=sealed.size,
+        sha256=await store.sha256(sealed.key),
+    )
 
 
 def _like_prefix(prefix: str) -> str:
@@ -68,11 +155,16 @@ def _like_prefix(prefix: str) -> str:
     return f"{escaped}%"
 
 
-def _current(project_id: uuid.UUID):
-    return select(LibraryFileRecord).where(
+def _current_where(project_id: uuid.UUID) -> tuple:
+    """「现在这一份」的判据，给只挑几列、不取整行的查询共用。"""
+    return (
         LibraryFileRecord.project_id == project_id,
         LibraryFileRecord.superseded_at.is_(None),
     )
+
+
+def _current(project_id: uuid.UUID):
+    return select(LibraryFileRecord).where(*_current_where(project_id))
 
 
 async def _current_row(
@@ -132,26 +224,129 @@ async def read_attachment(
     return await asyncio.to_thread(service.read_room_file, project_id, room_id, path)
 
 
+@dataclass(frozen=True)
+class Stored:
+    """资料库里一份字节在哪、多大：给按段读它的人（`blob_store.BlobStore.chunks`）。"""
+
+    location: str
+    key: str
+    size: int
+
+
+async def stored_file(
+    session: AsyncSession, project_id: uuid.UUID, name: str
+) -> Stored:
+    """资料库里这个名字现在那一份在哪、多大。"""
+    row = await _current_or_404(session, project_id, name)
+    return Stored(row.location, row.blob_key, row.bytes)
+
+
+async def stored_version(
+    session: AsyncSession, project_id: uuid.UUID, name: str, version_id: uuid.UUID
+) -> Stored:
+    """某一版在哪、多大。"""
+    row = await _version_row(session, project_id, name, version_id)
+    return Stored(row.location, row.blob_key, row.bytes)
+
+
 async def attachment_file(
     session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, path: str
-) -> Path:
-    """一个附件的字节在磁盘上的位置，给按段读它的人：播放器拖进度条只要那一段，
-    两百兆的录屏不该为了一段整份读进内存。"""
+) -> Path | Stored:
+    """一个附件的字节在哪，给按段读它的人：播放器拖进度条只要那一段，两百兆的录屏
+    不该为了一段整份读进内存。房间文件是磁盘上的一个文件，资料库的是存储里的一把键。"""
     name = service.library_name(path)
     if name is not None:
-        row = await _current_or_404(session, project_id, name)
-        return await asyncio.to_thread(blobs.store(row.location).file, row.blob_key)
+        return await stored_file(session, project_id, name)
     return await asyncio.to_thread(service.room_file_path, project_id, room_id, path)
 
 
-async def attachment_exists(
-    session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, path: str
-) -> bool:
-    """这个地址今天还读得到吗：资料库里那一份可以被人删掉，引用它的消息还在。"""
-    name = service.library_name(path)
-    if name is not None:
-        return await exists(session, project_id, name)
-    return await asyncio.to_thread(service.room_file_exists, project_id, room_id, path)
+def _split_attachment_paths(paths: list[str]) -> tuple[dict[str, str], list[str]]:
+    """把一批地址分成资料库的名字和房间自己的路径：前者 name -> 地址,后者原样。"""
+    names: dict[str, str] = {}
+    room: list[str] = []
+    for path in dict.fromkeys(paths):
+        name = service.library_name(path)
+        if name is None:
+            room.append(path)
+        else:
+            names[name] = path
+    return names, room
+
+
+def _room_files_present(
+    project_id: uuid.UUID, room_id: uuid.UUID, paths: list[str]
+) -> set[str]:
+    return {
+        path for path in paths if service.room_file_exists(project_id, room_id, path)
+    }
+
+
+async def attachments_present(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    paths: list[str],
+) -> set[str]:
+    """这批地址里今天还读得到的那些。
+
+    资料库那半边一条查询问完；房间那半边一次线程池调用问完所有路径。一条待发
+    消息可以带着好几个附件，逐个问会变成一串来回。
+    """
+    names, room = _split_attachment_paths(paths)
+    present: set[str] = set()
+    if names:
+        rows = await session.execute(
+            select(LibraryFileRecord.name).where(
+                *_current_where(project_id),
+                LibraryFileRecord.name.in_(list(names)),
+            )
+        )
+        present.update(names[name] for name in rows.scalars())
+    if room:
+        present.update(
+            await asyncio.to_thread(_room_files_present, project_id, room_id, room)
+        )
+    return present
+
+
+def _read_room_files(
+    project_id: uuid.UUID, room_id: uuid.UUID, room_paths: list[str]
+) -> dict[str, bytes]:
+    return {
+        path: service.read_room_file(project_id, room_id, path) for path in room_paths
+    }
+
+
+async def read_attachments(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    paths: list[str],
+) -> dict[str, bytes]:
+    """一批地址的字节：资料库一条查询拿所有行，各份字节一起去取，房间文件放同一个
+    线程池调用里。缺一个就照单条读那样拒——调用方应当先问 `attachments_present`。"""
+    names, room = _split_attachment_paths(paths)
+    library: list[tuple[str, str, str]] = []
+    if names:
+        rows = await session.execute(
+            _current(project_id).where(LibraryFileRecord.name.in_(list(names)))
+        )
+        for row in rows.scalars():
+            library.append((names[row.name], row.location, row.blob_key))
+        if len(library) != len(names):
+            # 和单条读一样：这个地址没错，是东西不在了。
+            raise NotFoundError(say("libraryFileNotFound"))
+    if not library and not room:
+        return {}
+    blobs = await asyncio.gather(
+        *(read_blob(location, key) for _, location, key in library)
+    )
+    found = dict(zip((path for path, _, _ in library), blobs, strict=True))
+    if room:
+        found.update(
+            await asyncio.to_thread(_read_room_files, project_id, room_id, room)
+        )
+    return found
 
 
 async def read_attachment_text(
@@ -186,7 +381,7 @@ def _pdf_text(data: bytes) -> str | None:
                 for i in range(min(pdf.page_count, PDF_TEXT_PAGES))
             ]
             more = pdf.page_count > PDF_TEXT_PAGES
-    except Exception:  # noqa: BLE001 — a file that is not a readable PDF reads as binary
+    except Exception:  # a file that is not a readable PDF reads as binary
         return None
     text = "\n\n".join(page for page in pages if page)
     if not text:
@@ -217,21 +412,11 @@ async def stored(
     return [(row.name, row.location, row.blob_key) for row in rows]
 
 
-def read_blob(location: str, key: str) -> bytes:
-    """``stored`` 交回的那一双 ``(存储, 键)`` 底下的字节。
-
-    和 ``stored`` 是一对：行和字节分开给，是因为搬字节的时机在事务结束之后（见它
-    的说明）。「存储 + 键」这双地址怎么读回字节是本包自己的事，不该让搬的人去认
-    字节存放在哪儿。
-    """
-    return blobs.store(location).get(key)
-
-
 async def add(
     session: AsyncSession,
     project_id: uuid.UUID,
     filename: str,
-    data: service.Content,
+    data: Incoming,
     added_by: str | None,
     room_id: uuid.UUID | None,
     source_path: str | None = None,
@@ -241,7 +426,7 @@ async def add(
     `filename` 可以带文件夹（`合同/报价.xlsx`），编号加在最后一层上。占名字就是插
     入那一行：同一时刻两份同名的上传，唯一索引让后到的那一份去拿下一个号。
     `source_path` 是从房间文件区里哪一份存过来的（`saved_from`）。"""
-    measured = await asyncio.to_thread(service.measure, data)
+    measured = await _measure(data)
     for attempt in range(1, 1000):
         name = service.next_name(filename, attempt)
         if await _taken(session, project_id, name):
@@ -250,6 +435,7 @@ async def add(
             project_id,
             name,
             measured,
+            _location_for(data),
             added_by=added_by,
             room_id=room_id,
             source_path=source_path,
@@ -291,7 +477,7 @@ async def replace(
     *,
     project_id: uuid.UUID,
     name: str,
-    data: service.Content,
+    data: Incoming,
     by: str,
 ) -> None:
     """把这个名字下的那一份换成新的字节。旧的那一份留着，不是删掉。
@@ -308,11 +494,13 @@ async def replace(
         {"key": f"library-file:{project_id}:{name}"},
     )
     current = await _current_or_404(session, project_id, name)
-    measured = await asyncio.to_thread(service.measure, data)
+    measured = await _measure(data)
     try:
         current.superseded_at = datetime.now(UTC)
         await session.flush()
-        row = _new_row(project_id, name, measured, added_by=by, room_id=None)
+        row = _new_row(
+            project_id, name, measured, _location_for(data), added_by=by, room_id=None
+        )
         session.add(row)
         await session.flush()
     except IntegrityError:
@@ -360,7 +548,7 @@ async def remove(session: AsyncSession, *, project_id: uuid.UUID, name: str) -> 
         )
     )
     for row in rows:
-        await asyncio.to_thread(blobs.store(row.location).delete, row.blob_key)
+        await blob_store.store(row.location).delete(row.blob_key)
 
 
 async def move(

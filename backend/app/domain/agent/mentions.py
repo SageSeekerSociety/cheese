@@ -32,6 +32,7 @@
 
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -42,24 +43,22 @@ from app.core.text import markdown_preview
 from app.domain.addressing import Event, Hand, address
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.models import Block, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.conversation.services import is_task, room_of
+from app.domain.block.models import Block
+from app.domain.conversation.services import is_task
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery.models import Delivery
 from app.domain.delivery_events import DeliveryEvent, event_id_for
-from app.domain.event_about import EventAbout, landing
-from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.models import Document, DocumentComment
-from app.domain.membership.roster import roster_rows
+from app.domain.membership.roster import Member, roster_rows, rows_of
 from app.domain.mentions import (
     canonicalize_refs,
     dangling_refs,
     expand_mention_names,
 )
 from app.domain.notification.models import NotificationType
+from app.domain.run_record.service import record
 from app.domain.thread import reads as thread_reads
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.repositories import TopicRepository
@@ -139,6 +138,7 @@ async def person_mentions(
     agent,
     *,
     dm: bool,
+    members: Sequence[Member] | None = None,
 ) -> PersonMentions:
     """The mention rewrite a person's message gets in ``topic``: friendly
     ``@名字`` / ``@话题名`` become ``<@handle>`` / ``<#id>`` tokens, except in a
@@ -152,7 +152,10 @@ async def person_mentions(
     读它，也不该让它的名字在第二个模块里出现。
 
     Sending (`post_user_message`) and editing (`text_as_sent`) both read a
-    person's words through here, so an edit stores what sending stores."""
+    person's words through here, so an edit stores what sending stores.
+
+    ``members`` is the project's `roster` when the caller already read it
+    (sending hands over the request's read); without it the roster is read."""
     agent_handles = (
         await TopicMemberService(session).agent_handles(topic.id)
         if "@" in content
@@ -184,6 +187,8 @@ async def person_mentions(
         roster = (
             []
             if "@" not in content or dm
+            else rows_of(members)
+            if members is not None
             else await roster_rows(session, topic.project_id, team=project_team)
         )
         # 这间房真正坐着的 AI 席位先答这个名字：排到名册最前，名册上没有它
@@ -424,26 +429,20 @@ async def announce_mentions(
     ]
     if not lines:
         return
-    # Beside the message it is about, not in the room the message did not
-    # go to — same landing as the message.
-    room = await room_of(session, block.conversation_id)
-    in_task = room != block.conversation_id
-    landed = landing(
-        EventAbout.task if in_task else EventAbout.room,
-        project_id=block.project_id,
-        room_id=room,
-        task_id=block.conversation_id if in_task else None,
-    )
+    # The same conversation as the message. The site reads platform records;
+    # hidden event blocks are no longer one of its sources.
     for line in lines:
-        await BlockRepository(session).add(
-            project_id=landed.project_id,
-            conversation_id=landed.conversation_id,
-            author=author,
-            author_type=AuthorType.participant,
+        await record(
+            session,
+            conversation_id=block.conversation_id,
             content=line,
-            kind=BlockKind.event,
             turn_id=block.turn_id,
-            meta={"in_room": False},
+            seat=author,
+            meta={
+                "event_type": "unresolved_reference",
+                "severity": "warning",
+                "block_id": str(block.id),
+            },
         )
 
 

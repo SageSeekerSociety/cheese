@@ -52,7 +52,7 @@ async def _wedged_turns(
         blocks_at = await last_activity(
             {open_turns[tid].topic_id for tid in candidates}
         )
-    except Exception:  # noqa: BLE001 — a failed probe must not cancel turns
+    except Exception:  # a failed probe must not cancel turns
         logger.exception("orphan sweep: last-activity probe failed")
         return set()
     mono = time.monotonic()
@@ -213,6 +213,7 @@ async def sweep_orphans(
         tid: record
         for tid, record in open_turns.items()
         if record.age_s(now) >= min_age_s
+        and chat_service.replaying(record.topic_id) is None
     }
     wedged = await self._wedged_turns(old_enough, last_activity, silence_s, now)
     # A row the process cannot judge is not a dead row (FB-56 legacy③):
@@ -232,7 +233,10 @@ async def sweep_orphans(
     # — a turn that opened while the activity probe awaited is still open,
     # and a running turn no sweep can see is how the next death goes silent
     # again, which is the whole bug.
-    await turn_inputs.close_dead_turns(chat_service.session_factory, orphans)
+    claimed = await turn_inputs.close_dead_turns(chat_service.session_factory, orphans)
+    # Startup and an overdue periodic tick can see the same open intervals.
+    # Only the sweep whose UPDATE closed a turn may arrange its recovery.
+    orphans = {tid: record for tid, record in orphans.items() if tid in claimed}
     for turn_id in orphans:
         # A turn with a coroutine gets its marks dropped by that coroutine's
         # own `finally`; one without (a self-started turn, or anything left
@@ -350,7 +354,7 @@ async def _post_orphan_event(
             await self._broker.publish(
                 str(topic_id), {"type": "event_block", "block": block}
             )
-    except Exception:  # noqa: BLE001 — a notice must never break the sweep
+    except Exception:  # a notice must never break the sweep
         logger.exception("orphan event failed for %s", topic_id)
 
 
@@ -366,7 +370,7 @@ async def _recover_silent_turn(
     """Put the room's tools back if they were gone, then re-deliver."""
     try:
         recovered = await chat_service.recover_native_tools(topic_id)
-    except Exception:  # noqa: BLE001 — recovery must never fail a finished turn
+    except Exception:  # recovery must never fail a finished turn
         logger.exception("tool recovery check failed for topic %s", topic_id)
         return
     if not recovered:
@@ -374,7 +378,7 @@ async def _recover_silent_turn(
     await self._post_orphan_event(
         chat_service,
         topic_id,
-        say("toolsRecovered"),
+        self._TOOLS_RECOVERED_TEXT,
         # Topic-wide: the tools came back for the room, not for one turn.
         meta=self._TOOLS_RECOVERED_META,
     )

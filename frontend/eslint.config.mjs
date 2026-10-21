@@ -197,6 +197,9 @@ export default [
       ],
     },
   },
+  // Layout (prettier, import order) is judged like any other rule: CI's
+  // `pnpm run lint` fails a tree that does not hold it, and the pre-commit
+  // `frontend-fix` hook applies it to the staged files with `eslint --fix`.
   prettier,
   {
     rules: {

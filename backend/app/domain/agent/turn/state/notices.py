@@ -110,8 +110,9 @@ def _turn_failure_notice(
 
 
 def _with_log(meta: dict, log: str | None) -> dict:
-    """What the failing process printed, on the fields only 现场 shows: a
-    failed row there, with the text as its error. The room reads neither."""
+    """What the failing process printed, as a failed row's error, scrubbed
+    of credentials. The turn's run record keeps both fields, for 现场; the
+    room's notice is sent without them (`intake.hooks`)."""
     if not log or not log.strip():
         return meta
     return {**meta, "failed": True, "error": scrub_secrets(log.strip())}

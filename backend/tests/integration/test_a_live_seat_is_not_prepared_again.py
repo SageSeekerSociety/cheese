@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import PI, SessionRef
-from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
+from app.domain.agent.harness.driven import lifecycle
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host import claude_code as claude_driver
@@ -42,7 +42,7 @@ def _claude(client, monkeypatch) -> tuple[CenterHub, RoomSessions]:
         "tasks": {},
         "session_id": "s",
         "capabilities": [LONG_POLL],
-        "input_protocol": INPUT_PROTOCOL,
+        "lifecycle": lifecycle.PROTOCOL,
     }
     central: Any = CentralChannel(
         DeviceChannel(hub=hub, session_factory=client.test_request_factory)

@@ -20,6 +20,7 @@ it hears (``prompt.earlier``), so it goes on from where it was.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -37,9 +38,17 @@ from app.core.sandbox_auth import mint_delegated_credential
 from app.core.sentences import error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
 from app.domain.agent.personal import billing
-from app.domain.agent.personal.prompt import earlier
+from app.domain.agent.personal.prompt import earlier, page
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
-from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
+from app.domain.agent.session_host.answer import (
+    Answer,
+    Thinking,
+    Tool,
+    ToolArgs,
+    ToolFailed,
+    Waiting,
+    Words,
+)
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import (
     Access,
@@ -91,6 +100,31 @@ def _stop_key(conversation_id: uuid.UUID | str) -> str:
     return f"assistant:stop:{conversation_id}"
 
 
+def _page_key(conversation_id: uuid.UUID | str) -> str:
+    return f"assistant:page:{conversation_id}"
+
+
+#: How long a conversation is taken to remember the page it was last told: past
+#: this the page is said again, whether or not it changed.
+PAGE_REMEMBERED_S = 6 * 3600
+
+
+async def page_to_say(redis: Redis, conversation_id: uuid.UUID, context: str) -> str:
+    """The page to say with this question: all of it when it changed since the
+    conversation was last told, nothing when it did not."""
+    if not context:
+        return ""
+    digest = hashlib.sha256(context.encode()).hexdigest()
+    said = await redis.get(_page_key(conversation_id))
+    if (
+        said is not None
+        and (said.decode() if isinstance(said, bytes) else said) == digest
+    ):
+        return ""
+    await redis.set(_page_key(conversation_id), digest, ex=PAGE_REMEMBERED_S)
+    return context
+
+
 async def stop(
     redis: Redis, people: SessionHost, user_id: int, conversation_id: uuid.UUID
 ) -> None:
@@ -107,10 +141,17 @@ async def stop(
 
 @dataclass(frozen=True)
 class Place:
-    """Where a conversation was started: ``("task", "7")`` today."""
+    """Where a conversation was started. A person's conversations are one
+    thread, each a topic in it, so a new one starts on the person
+    (``personal``); older ones started on a 题目 or a draft keep saying so,
+    which is the page a question in them defaults to."""
 
     kind: str
     id: str
+
+    @classmethod
+    def personal(cls, user_id: int) -> Place:
+        return cls("personal", str(user_id))
 
 
 def sse(event: str, data: dict, position: str | None = None) -> bytes:
@@ -130,16 +171,15 @@ class AssistantConversations:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
-    async def list(self, user_id: int, place: Place) -> list[AssistantConversation]:
-        """This person's conversations here, latest first. One that never got a
+    async def list(self, user_id: int) -> list[AssistantConversation]:
+        """This person's conversations, wherever they were started, latest
+        first: the topics of their thread with 芝士. One that never got a
         question (started, then refused for lack of credits, say) is not
         listed: it has nothing to go back to."""
         stmt = (
             select(AssistantConversation)
             .where(
                 AssistantConversation.user_id == user_id,
-                AssistantConversation.place_kind == place.kind,
-                AssistantConversation.place_id == place.id,
                 AssistantConversation.title != "",
             )
             .order_by(AssistantConversation.last_active_at.desc())
@@ -197,6 +237,7 @@ class AssistantConversations:
         text: str,
         *,
         stopped: bool = False,
+        parts: dict | None = None,
     ) -> AssistantMessage:
         seq = (
             await self._s.scalar(
@@ -211,13 +252,76 @@ class AssistantConversations:
             role=role,
             text=text,
             stopped=stopped,
+            parts=parts,
         )
         self._s.add(row)
         conversation.last_active_at = datetime.now(UTC)
         if role == "user" and not conversation.title:
-            conversation.title = text.strip().splitlines()[0][:TITLE_CHARS]
+            words = text.strip() or "、".join((parts or {}).get("files") or [])
+            if words:
+                conversation.title = words.splitlines()[0][:TITLE_CHARS]
         await self._s.flush()
         return row
+
+
+def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
+    """What 芝士 did while answering, from what its viewers were told: each
+    time it reasoned and for how long, each tool call with its arguments and
+    whether it failed, each draft write, each publish. Kept with the answer, so
+    the conversation shows them again."""
+    steps: list[dict] = []
+    by_call: dict[str, dict] = {}
+    edits: list[dict] = []
+    published: list[dict] = []
+    proposed: list[dict] = []
+    reasoning: dict | None = None
+
+    def ms(position: str) -> int:
+        return int(position.split("-", 1)[0])
+
+    for position, event, data in told:
+        if reasoning is not None and event not in ("tool_args",):
+            # Reasoning lasts until the next thing it does.
+            reasoning["ms"] = ms(position) - reasoning.pop("from")
+            reasoning = None
+        if event == "thinking":
+            reasoning = {
+                "call": f"thinking-{len(steps)}",
+                "name": "thinking",
+                "args": "",
+                "from": ms(position),
+            }
+            steps.append(reasoning)
+        elif event == "tool":
+            call = str(data.get("call") or f"step-{len(steps)}")
+            if call in by_call:
+                continue
+            step = {"call": call, "name": data.get("name") or "", "args": ""}
+            by_call[call] = step
+            steps.append(step)
+        elif event == "tool_args" and data.get("call") in by_call:
+            step = by_call[data["call"]]
+            step["args"] = step["args"][: int(data.get("at") or 0)] + str(
+                data.get("text") or ""
+            )
+        elif event == "tool_failed" and data.get("call") in by_call:
+            by_call[data["call"]]["failed"] = str(data.get("text") or "")
+        elif event == "change":
+            edits.append(data)
+        elif event == "published":
+            published.append(data)
+        elif event == "proposal":
+            proposed.append(data)
+    if reasoning is not None:
+        reasoning.pop("from")
+    if not (steps or edits or published or proposed):
+        return None
+    return {
+        "steps": steps,
+        "edits": edits,
+        "published": published,
+        **({"proposals": proposed} if proposed else {}),
+    }
 
 
 #: What a question to a person's 芝士 is, to the questions the platform reads
@@ -246,7 +350,9 @@ class Answers:
         )
 
     async def took(
-        self, consumption: Consumption, item: Waiting | Words | Tool
+        self,
+        consumption: Consumption,
+        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
     ) -> None:
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})
@@ -254,8 +360,25 @@ class Answers:
             await self._consumptions.publish(
                 consumption, "delta", {"text": item.text, "at": item.at}
             )
-        else:
-            await self._consumptions.publish(consumption, "tool", {"name": item.name})
+        elif isinstance(item, Tool):
+            await self._consumptions.publish(
+                consumption, "tool", {"name": item.name, "call": item.call}
+            )
+        elif isinstance(item, Thinking):
+            # That it reasons, never what: the page shows 思考中.
+            await self._consumptions.publish(consumption, "thinking", {})
+        elif isinstance(item, ToolArgs):
+            # A call's arguments as they are written: the page shows a form
+            # field filling with the value before the call writes it.
+            await self._consumptions.publish(
+                consumption,
+                "tool_args",
+                {"call": item.call, "text": item.text, "at": item.at},
+            )
+        elif isinstance(item, ToolFailed):
+            await self._consumptions.publish(
+                consumption, "tool_failed", {"call": item.call, "text": item.text}
+            )
 
     async def ended(
         self,
@@ -283,14 +406,25 @@ class Answers:
         if stopped:
             # What it had written when it was stopped stays, marked as such.
             text, failed = written.strip(), None
-        if (text and not failed) or stopped:
+        parts = parts_of(await self._consumptions.told(consumption.work_id))
+        if (text and not failed) or stopped or parts:
             async with self._sessions() as session:
                 store = AssistantConversations(session)
                 conversation = await store.owned(user_id, conversation_id)
-                await store.append(conversation, "assistant", text, stopped=stopped)
+                await store.append(
+                    conversation,
+                    "assistant",
+                    "" if failed and not stopped else text,
+                    stopped=stopped,
+                    parts=parts,
+                )
                 await session.commit()
         spawn(
-            billing.settle(self._sessions, user_id),
+            billing.settle(
+                self._sessions,
+                user_id,
+                str(consumption.data.get("billing") or billing.ASKING),
+            ),
             name=f"assistant-charge-{conversation_id}",
         )
         closing = [("error", error_frame(refusal))] if failed else []
@@ -307,6 +441,10 @@ async def ask(
     question: str,
     held_at: float,
     slot: Slot,
+    context: str = "",
+    kind: str = billing.ASKING,
+    files: list[tuple[int, str]] | None = None,
+    project: uuid.UUID | None = None,
 ) -> Consumption:
     """Ask ``question`` in the conversation; the answer is read to its end in
     the background (``Answers``), and what its readers see of it is the
@@ -317,32 +455,52 @@ async def ask(
     The caller has already checked that the conversation is the person's, that
     they may see its place and have credits left, and has taken the
     conversation's hold at ``held_at`` (``take_conversation``). The session is
-    ``started`` (`personal.session`)."""
+    ``started`` (`personal.session`). ``context`` is the page the person has
+    open, when the conversation has not been told it yet (``page_to_say``);
+    ``kind`` the line its spend is charged under (``billing``); ``files`` the
+    ones handed over with it, as (id, name); ``project`` the one the page is
+    in, which its tools are let into as the person (and into no other)."""
     work = uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
         conversation = await store.owned(user_id, conversation_id)
         before = await store.messages(conversation_id)
-        await store.append(conversation, "user", question)
+        # Files handed over alone are the whole question: they are kept
+        # with it, so the conversation shows them when it is read again.
+        await store.append(
+            conversation,
+            "user",
+            question,
+            parts={"files": [name for _, name in files]} if files else None,
+        )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         await session.commit()
 
     async def said() -> Prompt:
-        # What its tools read with while answering: this person's own view, for
-        # no longer than the answer may take from when the session is there,
-        # and nothing it could change.
+        # What its tools act with while answering: this person's own
+        # permissions, for no longer than the answer may take from when the
+        # session is there, and in the project of the page if it is in one.
         acting = mint_delegated_credential(
             user_id=user_id,
             handle=handle or str(user_id),
             work=str(work),
+            project_id=None if project is None else str(project),
             ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
+            read_only=False,
         )
-        return Prompt(work, question, acting=acting, preface=earlier(before))
+        # The page goes with the question itself: a preface is said only to a
+        # session that has not been spoken to yet.
+        said = "\n\n".join(part for part in (page(context), question) if part)
+        if files:
+            said += "\n\n附上的文件（用 cheese_file_read 读取）：\n" + "\n".join(
+                f"- {name}（文件 id {file_id}）" for file_id, name in files
+            )
+        return Prompt(work, said, acting=acting, preface=earlier(before))
 
     return await consumptions.begin(
         kind=KIND,
         key=str(conversation_id),
-        data={"user": user_id},
+        data={"user": user_id, "billing": kind},
         work_id=work,
         session=started,
         prompt=said,

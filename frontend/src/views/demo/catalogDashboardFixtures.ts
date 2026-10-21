@@ -15,7 +15,6 @@
  */
 import type {
   PendingRow,
-  StatsDays,
   StatsFeedback,
   StatsIntegrations,
   StatsKind,
@@ -55,9 +54,6 @@ export function dashHeaderProps(over: Record<string, unknown> = {}): Record<stri
     ...over,
   }
 }
-
-/** 页头上的窗口切换器：7 / 30 / 90。 */
-export const DASH_DAYS: StatsDays[] = [7, 30, 90]
 
 // --- 七份响应 --------------------------------------------------------------
 

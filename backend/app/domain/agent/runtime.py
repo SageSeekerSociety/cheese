@@ -26,7 +26,7 @@ from app.core.errors import AppError
 from app.core.redis import get_redis_client
 from app.core.sentences import listing, say
 from app.domain.addressing import Addressed, addressed_to_agent
-from app.domain.agent import checkout_sweep, dispatch_log, runtime_orphans
+from app.domain.agent import dispatch_log, runtime_orphans
 from app.domain.agent.admission import (
     queued,
 )
@@ -35,6 +35,7 @@ from app.domain.agent.pending_messages import nudge_messages
 from app.domain.agent.platform_failures import (
     PlatformFailure,
 )
+from app.domain.agent.platform_notices import tools_recovered_notice
 from app.domain.agent.realtime import broker as realtime
 from app.domain.agent.realtime import subscriber_queue
 
@@ -45,6 +46,7 @@ from app.domain.agent.turn.intake.messages import RunnerIntake
 from app.domain.agent.turn.intake.status import WorkStatus
 from app.domain.agent.turn.state.execution import ExecutionPolicy, ExecutionState
 from app.domain.agent.turn.steps.execute import ExecutionEffects, execute
+from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.agent.turn.store.intervals import open_turn
 from app.domain.agent.turn_ledger import (
     fire_on_done,
@@ -61,11 +63,9 @@ from app.domain.notice_meta import (
     EVENT_DELIVERY_FALLBACK,
     EVENT_DEPLOY_INTERRUPTED,
     EVENT_DISPATCH_UNKNOWN,
-    EVENT_TOOLS_RECOVERED,
     EVENT_TURN_QUEUED,
     SEVERITY_WARN,
     WHO_HUMAN,
-    WHO_PLATFORM,
     notice,
 )
 
@@ -338,9 +338,6 @@ class AgentWorkRunner:
             self._last_frame_at[str(turn_id)] = time.monotonic()
             return
 
-    def running_topic_ids(self) -> set[uuid.UUID]:
-        return self._status.running_topic_ids()
-
     def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
         return self._status.live_work_for_topic(topic_id)
 
@@ -418,14 +415,7 @@ class AgentWorkRunner:
             recipient_instance_id=recipient_instance_id,
         )
         if delivery_id is not None:
-            work = run_attempt(
-                chat_service.session_factory,
-                delivery_id,
-                turn_id,
-                work,
-                chat=chat_service,
-                machines=checkout_sweep.sweep,
-            )
+            work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
         task = asyncio.create_task(
             work,
             name=f"turn:{turn_id}",
@@ -448,6 +438,7 @@ class AgentWorkRunner:
         client_id: str | None = None,
         quoted_context: dict | None = None,
         may_summon: bool = True,
+        handoff: HumanHandoff | None = None,
     ) -> uuid.UUID:
         return await self._intake.receive_message(
             chat_service,
@@ -459,6 +450,7 @@ class AgentWorkRunner:
             client_id=client_id,
             quoted_context=quoted_context,
             may_summon=may_summon,
+            handoff=handoff,
         )
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:
@@ -636,7 +628,7 @@ class AgentWorkRunner:
             return bool(
                 chat_service.has_live_screen(record.topic_id, record.agent_handle)
             )
-        except Exception:  # noqa: BLE001 — an unanswerable probe is not a yes
+        except Exception:  # an unanswerable probe is not a yes
             logger.exception("live-screen probe failed for %s", record.topic_id)
             return False
 
@@ -754,7 +746,7 @@ class AgentWorkRunner:
                 [record.turn_id for record in entries]
             )
             probe_ok = True
-        except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
+        except Exception:  # a failed probe must not kill the sweep
             logger.exception("orphan block probe failed for %s", topic_id)
         if probe_ok:  # what reached nobody, a delivery too, leaves no live turn
             chat_service.retire_unheard({r.turn_id for r in entries} - delivered)
@@ -954,17 +946,7 @@ class AgentWorkRunner:
         )
 
     #: 工具断了是平台的事，平台自己接回来并重发；房间里的人不用动手。
-    _TOOLS_RECOVERED_META = notice(
-        EVENT_TOOLS_RECOVERED,
-        severity=SEVERITY_WARN,
-        who=WHO_PLATFORM,
-        detail=say("toolsRecoveredDetail"),
-        detail_label=say("labelNote"),
-    )
-
-    #: How long a turn waits for its room's replay before the room is told.
-
-    #: 等的是这间房自己的记录接回来，平台自己会往前推，没人需要动手。
+    _TOOLS_RECOVERED_TEXT, _TOOLS_RECOVERED_META = tools_recovered_notice()
 
     def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
         """Does the backend already KNOW this topic's model credential is expired?
@@ -976,7 +958,7 @@ class AgentWorkRunner:
             return False
         try:
             exp = self._credential_expiry_of(topic_id)
-        except Exception:  # noqa: BLE001 — a lookup must never break a turn
+        except Exception:  # a lookup must never break a turn
             logger.exception("credential-expiry lookup failed for topic %s", topic_id)
             return False
         return exp is not None and exp <= time.time()

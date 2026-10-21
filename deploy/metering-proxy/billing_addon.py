@@ -77,6 +77,7 @@ from cheese_billing_core import (  # noqa: E402
     MODEL_REWRITE_LIMIT,
     NO_CREDENTIAL,
     NO_LOGIN_PLACEHOLDER,
+    UNAVAILABLE,
     AdmissionGate,
     ChatGPTAccounts,
     ChatGPTUsageLimits,
@@ -202,7 +203,7 @@ def load(loader):
     CLAUDE_ACCOUNTS.snapshot()
 
 
-def _record_usage(project_id, topic_id, usage, model, kind="", account=""):
+def _record_usage(project_id, topic_id, usage, model, kind="", account="", work_id=""):
     """Meter a turn, then refresh the pool the board reads.
 
     The two belong together: the snapshot's `retry_after` is a countdown, so it
@@ -210,7 +211,7 @@ def _record_usage(project_id, topic_id, usage, model, kind="", account=""):
     happens on every served turn. Cooldown changes publish on their own (every
     state change writes through `ClaudeAccounts._save`).
     """
-    METER.record(project_id, topic_id, usage, model, kind, account)
+    METER.record(project_id, topic_id, usage, model, kind, account, work_id)
     CLAUDE_ACCOUNTS.snapshot()
 
 
@@ -604,8 +605,8 @@ _EGRESS_AUTH_BY_CLIENT: dict[str, str] = {}
 # the seat its whole reply and needed a person to wake the room (2026-10-12,
 # #1451). The cost of waiting is that the room stays quiet until the turn either
 # answers or runs out of retry budget; that trade is deliberate.
-# The backend recognises the phrase "subscription egress is offline" and shows
-# its own notice for it (`platform_failures`), which takes only short lines:
+# The backend recognises the phrase "subscription egress is offline" and
+# schedules a bounded resume if the CLI gives up (`resumable_failures`).
 # Claude Code prints this inside the JSON error body.
 EGRESS_OFFLINE_MESSAGE = (
     "cheese: the subscription egress is offline, so no model call was made. "
@@ -1072,16 +1073,10 @@ def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
 
 
 def _refuse_verdict(flow: http.HTTPFlow, verdict) -> None:
-    """Send the backend's refusal back as the KIND of refusal it is.
-
-    Both exits used to read "cheese project budget: …" with a 429, from the days
-    when a spent budget was the only way a turn was ever refused. It is not any
-    more: a card bound to a model this project's catalogue cannot serve is
-    refused at admission too (I27 — answer or refuse, never swap the pool), and
-    dressing that as an exhausted quota sends the user to top up an account that
-    is fine while the card stays broken. A 429 also tells the client to back
-    off and try again, which for a binding is a retry that can only fail.
-    """
+    """Preserve each refusal's meaning and retry policy."""
+    if verdict.reason_kind == UNAVAILABLE:
+        _refuse(flow, 503, "api_error", verdict.reason)
+        return
     if verdict.reason_kind == BINDING:
         _refuse(flow, 400, "invalid_request_error", verdict.reason)
         return
@@ -1217,10 +1212,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
 async def _admit(
     flow, project_id, topic_id, bearer, *, subagent, requested_model="", child_model=""
 ):
-    """One admission call, off the event loop and timed.
-
-    Cheap: verdicts are cached per (project, topic).
-    """
+    """Admit off-loop, with a fresh execution identity for task requests."""
     # Off-loop: urllib blocks, and one slow admission call must not stall
     # every other flow through the proxy.
     admission_started = time.perf_counter()
@@ -1249,6 +1241,7 @@ async def _admit(
     # Read back when the response is metered: the kind admission named for
     # this call (`Verdict.usage_kind`), the dream's while one runs.
     flow.metadata["cheese_usage_kind"] = verdict.usage_kind
+    flow.metadata["cheese_work_id"] = verdict.work_id
     flow.metadata["cheese_admission_ms"] = (
         admission_finished - admission_started
     ) * 1000
@@ -1714,6 +1707,7 @@ def _meter_subscription_stream(
             extractor.model,
             flow.metadata.get("cheese_usage_kind", ""),
             flow.metadata.get("cheese_claude_account", ""),
+            flow.metadata.get("cheese_work_id", ""),
         )
         if interrupted:
             logger.warning(
@@ -2333,4 +2327,5 @@ def response(flow: http.HTTPFlow) -> None:
     if usage:
         kind = flow.metadata.get("cheese_usage_kind", "")
         account = flow.metadata.get("cheese_claude_account", "")
-        _record_usage(project_id, topic_id, usage, model, kind, account)
+        work_id = flow.metadata.get("cheese_work_id", "")
+        _record_usage(project_id, topic_id, usage, model, kind, account, work_id)

@@ -10,10 +10,12 @@ import json
 import os
 import platform
 import runpy
+import shutil
 import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
@@ -64,7 +66,7 @@ def visible_pid(data):
     """The pid a status names, numbered as this process's namespace numbers it,
     or None when nothing alive answers to it.
 
-    A sandboxed room's runner (`bootstrap.sandbox_argv`) has a pid namespace
+    A sandboxed room's runner (`confinement.sandbox_argv`) has a pid namespace
     of its own and records the pid it has there. Outside, that number is some
     other process's, so the process is found by its namespace and the pid it
     has in it."""
@@ -412,6 +414,152 @@ def wait_status(directory: Path) -> dict:
         time.sleep(min(0.05, remaining))
 
 
+def mirror_install(work: Path, environment: dict, log) -> None:
+    """Install a checkout's locked Python dependencies through the mirror.
+
+    `uv sync --frozen` installs the URLs written into `uv.lock`, so the index
+    configuration the room carries (`package_mirrors`) never reaches it: every
+    wheel of a locked project comes from files.pythonhosted.org. Exporting that
+    same lock as requirements and installing it with `uv pip` fetches the
+    identical files through the mirror instead, and uv verifies every hash the
+    export lists, so a mirror serving anything else fails here rather than
+    landing in the venv. The project's own `uv sync --frozen` then audits what
+    is installed instead of downloading it (measured on this repository:
+    191 MiB from files.pythonhosted.org before, 0 after).
+
+    This must never make preparation worse than it was. It runs only when the
+    room was given a mirror — `UV_INDEX` is exported by `package_mirrors` only
+    for a mirror that answered — and the checkout has a `uv.lock`; every
+    failure is logged and left to the startup script, which installs exactly
+    as it did before this existed.
+    """
+    if not environment.get("UV_INDEX"):
+        return
+    uv = shutil.which("uv", path=environment.get("PATH"))
+    if uv is None:
+        log.write(f"{now()} mirror: uv is not on PATH; the startup script installs\n")
+        return
+    # Ten minutes, on top of the startup script's own 30: a mirror that has not
+    # served the checksums in that time is a mirror the startup script is
+    # better off without, and it still has its own time to install.
+    deadline = time.monotonic() + 600
+    for project in _uv_projects(work):
+        try:
+            _mirror_install_project(uv, project, environment, deadline)
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            subprocess.SubprocessError,
+        ) as error:
+            log.write(
+                f"{now()} mirror: {project.name}: {error};"
+                " the startup script installs\n"
+            )
+
+
+def _uv_projects(work: Path) -> list:
+    """The checkout's own uv projects: its root and one level below it, which
+    is where a repository keeps them (`backend/`)."""
+    found = []
+    roots = [work]
+    try:
+        roots.extend(sorted(p for p in work.iterdir() if p.is_dir()))
+    except OSError:
+        pass
+    for root in roots:
+        if (root / "uv.lock").is_file() and (root / "pyproject.toml").is_file():
+            found.append(root)
+    return found
+
+
+def _mirror_install_project(
+    uv: str, project: Path, environment: dict, deadline: float
+) -> None:
+    """One uv project: same lock, same hashes, fetched through the mirror."""
+    configured = environment.get("UV_PROJECT_ENVIRONMENT") or ""
+    venv = Path(configured) if configured else project / ".venv"
+    if configured and not venv.is_absolute():
+        venv = project / venv
+    python = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    scratch = tempfile.mkdtemp(prefix=f"cheese-mirror-{project.name}-")
+    try:
+        requirements = Path(scratch) / "requirements.txt"
+        _mirror_step(
+            uv,
+            project,
+            environment,
+            [
+                "export",
+                "--frozen",
+                "--format",
+                "requirements-txt",
+                "--quiet",
+                "-o",
+                str(requirements),
+            ],
+            deadline,
+        )
+        if not python.exists():
+            _mirror_step(
+                uv, project, environment, ["venv", "--quiet", str(venv)], deadline
+            )
+        _mirror_step(
+            uv,
+            project,
+            environment,
+            [
+                "pip",
+                "install",
+                "--quiet",
+                "--python",
+                str(python),
+                "-r",
+                str(requirements),
+            ],
+            deadline,
+        )
+    finally:
+        # The lock's contents, not the checkout's: nothing here is the
+        # project's to keep, and the environment that holds them does.
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _mirror_step(
+    uv: str, project: Path, environment: dict, arguments: list, deadline: float
+) -> None:
+    """One uv command in `project`; a non-zero exit raises what it said, and the
+    whole pre-install stops at `deadline` rather than eating the startup
+    script's own share of the preparation."""
+    budget = deadline - time.monotonic()
+    if budget <= 0:
+        # i18n-exempt: read in the runner's log, never shown to a person
+        raise RuntimeError("the mirror install ran out of time")
+    result = subprocess.run(
+        [uv, *arguments],
+        cwd=project,
+        env=environment,
+        capture_output=True,
+        text=True,
+        # uv can echo a path or a package name that is not UTF-8 (a Windows
+        # ANSI code page, a checkout with one odd filename). Replacing the
+        # undecodable bytes keeps the message — which is what the log line is
+        # for — where strict decoding would lose it to a UnicodeDecodeError.
+        # The caller catches ValueError as well, so a decoder this change
+        # cannot foresee still ends in the fallback rather than in a failed
+        # preparation.
+        errors="replace",
+        timeout=budget,
+    )
+    if result.returncode:
+        said = (result.stderr or result.stdout).strip().splitlines()
+        # i18n-exempt: uv's own words, into the runner's log on the machine
+        raise RuntimeError(
+            f"uv {arguments[0]} exited {result.returncode}"
+            + (f": {said[-1]}" if said else "")
+        )
+
+
 def run(config, directory, command, *, adopt=None, task_work=None):
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     room_lock = (directory / "lock").open("a")
@@ -556,6 +704,13 @@ def run(config, directory, command, *, adopt=None, task_work=None):
                                 " this project\n"
                             )
                             continue
+                    if stage == "startup" and config[key].strip():
+                        # What the lock's own URLs would fetch from abroad,
+                        # through the mirror instead; the startup script's
+                        # `uv sync --frozen` then audits rather than downloads.
+                        # A project with no startup script installs nothing,
+                        # and gets nothing installed for it.
+                        mirror_install(work, script_environment, log)
                     script = directory / f"{attempt}-{stage}.sh"
                     script.write_text(config[key])
                     log.write(f"{now()} {stage}: started\n")

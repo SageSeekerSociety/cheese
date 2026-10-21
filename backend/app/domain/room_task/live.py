@@ -15,7 +15,7 @@ conversation are told when it flushed
 - a change to the task's row (started, closed, accepted, renamed, handed over…);
 - a question asked in the task, or an answer recorded on one: what the task
   reads as (`presentation`, 待回答) turns on its latest question;
-- a turn in the task reaching its session or ending (运行中): the turn's
+- a turn in the task reaching its session or ending: the turn's
   interval is written with a bulk `update(AgentTurn)`, which a flush hook does
   not see, so its writer (`AgentTurnRepository`) queues the frames through
   `turns_moved` in the same session;
@@ -27,7 +27,8 @@ conversation are told when it flushed
 Both frames name the ROOM: the sidebar's row is the room's, and a task id is not
 an address (`GET /topics/{task}` answers 404). A rollback tells nobody. A bulk
 `update(Task)` is not seen here; the one that renames a task tells the pages
-itself (`naming._tell_pages`).
+itself (`naming._tell_pages`), and the one that marks a task's session gone
+(`progress.note_agent_left`) calls `rows_written`.
 """
 
 from __future__ import annotations
@@ -101,6 +102,12 @@ def moved_in_flush(session: Session, conversations: set[uuid.UUID]) -> None:
     )
     for task_id, room_id in rooms:
         _tell(session, task_id, room_id)
+
+
+def rows_written(session: AsyncSession, task_id: uuid.UUID, room_id: uuid.UUID) -> None:
+    """A bulk `update(Task)`, which the flush hook does not see, changed this
+    task: its pages are told once ``session`` commits."""
+    _tell(session.sync_session, task_id, room_id)
 
 
 async def turns_moved(

@@ -13,13 +13,15 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.device.models import DeviceRow, DeviceTeamRow
+from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import WarmMachine
 from app.domain.machine.warm import WarmPoolService
 from tests.microcloud import FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 
 def test_central_warm_creation_does_not_request_subscription(warm_case, monkeypatch):
@@ -98,6 +100,7 @@ def warm_case(client, monkeypatch):
                 handle="cheese-warm-pool"
             )
             device = DeviceRow(
+                team_id=await enrollment_team(sql_device_service(session), owner.id),
                 device_id="warm-test",
                 name="Unused",
                 token="test-warm-token",
@@ -113,6 +116,7 @@ def warm_case(client, monkeypatch):
                     device_id=device.device_id,
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.1",
+                    sandbox_disk_gb=64,
                     create_request={
                         "hostname": "warm-test",
                         "offeringId": 1,
@@ -145,7 +149,9 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
     monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
     monkeypatch.setattr(settings, "microcloud_direct_control", direct)
     monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
-    bootstrap = AsyncMock(return_value="Connected.")
+    bootstrap = AsyncMock(
+        return_value="CHEESE_SANDBOX_DISK_BYTES=64000000000\nConnected."
+    )
     monkeypatch.setattr("app.domain.machine.warm.enrollment.run_bootstrap", bootstrap)
 
     async def run():
@@ -173,7 +179,13 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
             assert row.state == "ready"
             assert row.bootstrap_key is None
             assert row.enrolled_at is not None
-            assert (await session.scalars(select(DeviceTeamRow))).all() == []
+            enrolled = await session.get(DeviceRow, row.device_id)
+            assert (
+                await sql_device_service(session).list_devices_for_team(
+                    enrolled.team_id
+                )
+                == []
+            )
 
         async with client.test_request_factory() as session:
             device = await session.get(DeviceRow, "warm-test")

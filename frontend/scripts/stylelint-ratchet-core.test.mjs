@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { plainResult } from './ratchet-report.mjs'
 import {
-  compare,
   DESIGN_RULES,
   formatReport,
   parseStylelintReport,
   syntaxErrors,
-  tightenedBaseline,
   violationDetails,
 } from './stylelint-ratchet-core.mjs'
 
@@ -16,7 +15,7 @@ const toRelativePath = (source) => source.replace(`${ROOT}/`, '')
 
 /**
  * A stylelint --formatter json report. Mixes design rules with the ungated
- * noise (property order, class naming) that dominates this tree, because
+ * noise (property order, radius, class naming) that dominates this tree, because
  * separating the two is the whole job of parseStylelintReport.
  */
 const SAMPLE = [
@@ -25,7 +24,13 @@ const SAMPLE = [
     warnings: [
       { line: 12, column: 3, rule: 'color-no-hex', text: 'Unexpected hex color "#757575"' },
       { line: 40, column: 5, rule: 'order/properties-order', text: 'Expected "color" to come before "background"' },
-      { line: 58, column: 3, rule: 'declaration-property-value-allowed-list', text: 'Unexpected value "10px"' },
+      {
+        line: 58,
+        column: 3,
+        rule: 'declaration-property-value-disallowed-list',
+        text: 'Unexpected value "rgb(0 0 0)"',
+      },
+      { line: 61, column: 3, rule: 'declaration-property-value-allowed-list', text: 'Unexpected value "10px"' },
     ],
   },
   {
@@ -34,7 +39,7 @@ const SAMPLE = [
   },
   {
     // A file whose only findings are ungated rules must not appear at all —
-    // otherwise the baseline records a 0 that looks like a tracked file.
+    // otherwise the report records a 0 that looks like a tracked file.
     source: `${ROOT}/src/views/Clean.vue`,
     warnings: [{ line: 1, column: 1, rule: 'selector-class-pattern', text: 'Expected kebab-case' }],
   },
@@ -62,65 +67,36 @@ test('entries without a source are skipped rather than crashing', () => {
   })
 })
 
-test('the gated rule set is the four design rules', () => {
-  // Guards against widening the gate by accident: adding a rule here silently
-  // turns 2842 pre-existing violations into blocking ones.
+test('the gated rule set is the three colour rules', () => {
+  // Formatting and naming remain outside the colour gate.
   assert.deepEqual([...DESIGN_RULES].sort(), [
     'color-named',
     'color-no-hex',
-    'declaration-property-value-allowed-list',
     'declaration-property-value-disallowed-list',
   ])
 })
 
-test('a new violation in a previously clean file is a regression', () => {
-  const result = compare({}, { 'src/views/New.vue': 1 })
-  assert.equal(result.ok, false)
-  assert.deepEqual(result.regressions, [{ file: 'src/views/New.vue', base: 0, now: 1 }])
-})
-
-test('staying at the frozen count passes', () => {
-  const result = compare({ 'src/a.vue': 3 }, { 'src/a.vue': 3 })
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.regressions, [])
-})
-
-test('going below the frozen count passes and is reported as an improvement', () => {
-  const result = compare({ 'src/a.vue': 3 }, { 'src/a.vue': 1 })
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.improvements, [{ file: 'src/a.vue', base: 3, now: 1 }])
-})
-
-test('the baseline can only be tightened, never loosened', () => {
-  // An --update run made while a regression is present must not launder it in.
-  const next = tightenedBaseline({ 'src/a.vue': 2 }, { 'src/a.vue': 9, 'src/b.vue': 1 })
-  assert.deepEqual(next, { 'src/a.vue': 2, 'src/b.vue': 1 })
-})
-
-test('a file fixed to zero drops out of the baseline', () => {
-  assert.deepEqual(tightenedBaseline({ 'src/a.vue': 2 }, {}), {})
-})
-
-test('violationDetails lists the offending lines for regressed files only', () => {
+test('violationDetails lists the offending lines for selected files only', () => {
   const details = violationDetails(SAMPLE, toRelativePath, new Set(['src/components/ChatPanel.vue']))
   assert.deepEqual(details, [
     '  src/components/ChatPanel.vue:12:3  Unexpected hex color "#757575"',
-    '  src/components/ChatPanel.vue:58:3  Unexpected value "10px"',
+    '  src/components/ChatPanel.vue:58:3  Unexpected value "rgb(0 0 0)"',
   ])
 })
 
-test('the failure report names the file, the counts and the fix', () => {
-  const result = compare({}, { 'src/views/New.vue': 1 })
-  const text = formatReport(result, violationDetails(SAMPLE, toRelativePath, new Set()))
-  assert.match(text, /New design-token violations/)
-  assert.match(text, /src\/views\/New\.vue: 0 -> 1/)
+test('the failure report names the file, the count and the fix', () => {
+  const result = plainResult({ 'src/views/OverviewView.vue': 1 })
+  const text = formatReport(result, violationDetails(SAMPLE, toRelativePath, new Set(['src/views/OverviewView.vue'])))
+  assert.match(text, /Design-token violations/)
+  assert.match(text, /src\/views\/OverviewView.vue:7:9/)
+  assert.match(text, /total: 1 design-token violation/)
   assert.match(text, /docs\/design-system\.md/)
 })
 
 test('a clean run reports the totals and nothing alarming', () => {
-  const text = formatReport(compare({ 'src/a.vue': 2 }, { 'src/a.vue': 2 }))
-  assert.match(text, /total: 2 design-token violation\(s\), baseline allows 2/)
-  assert.doesNotMatch(text, /New design-token violations/)
+  const text = formatReport(plainResult({}))
+  assert.match(text, /total: 0 design-token violation\(s\)/)
+  assert.doesNotMatch(text, /Design-token violations/)
 })
 
 // 一个读不出来的文件贡献 0 条违规，对棘轮来说长得像「变好了」。这是真实发生过的：

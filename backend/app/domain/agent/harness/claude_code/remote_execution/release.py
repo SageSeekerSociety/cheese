@@ -279,7 +279,7 @@ def release_abandoned_views():
 
 def sources():
     # deferred-import: this file also runs on the machine, with no `app` package
-    from app.domain.agent import executor_transport, pr_creation
+    from app.domain.agent import executor_transport, pr_creation, task_checkout
 
     # deferred-import: this file also runs on the machine, with no `app` package
     from app.domain.agent.harness.driven import mcp_gateway
@@ -326,6 +326,8 @@ def sources():
                 Path(__file__).resolve().parents[6] / "sandbox/cheese"
             ).read_text(),
             "executor_transport.py": Path(executor_transport.__file__).read_text(),
+            # The transport's own reads it from beside itself.
+            "task_checkout.py": Path(task_checkout.__file__).read_text(),
             "pr_creation.py": Path(pr_creation.__file__).read_text(),
             # The door its Claude Code reaches the project's MCP servers by.
             "mcp_gateway.py": Path(mcp_gateway.__file__).read_text(),
@@ -353,7 +355,7 @@ def platform_tool_names(cheese_source: str) -> list[str]:
     `PLATFORM_TOOLS` in this release's `cheese.py`, the one table every harness
     reads. A module of its own, so the CLI's `__main__` block does not run."""
     module = types.ModuleType("cheese_platform_tools")
-    exec(compile(cheese_source, "cheese", "exec"), module.__dict__)  # noqa: S102
+    exec(compile(cheese_source, "cheese", "exec"), module.__dict__)
     return list(module.PLATFORM_TOOLS.names())
 
 
@@ -443,6 +445,15 @@ def replace(path, content):
     temporary.replace(path)
 
 
+def expanded_path(path):
+    return os.path.expandvars(
+        path.replace(
+            "${CHEESE_PROFILE_ROOT:-.cheese}",
+            os.environ.get("CHEESE_PROFILE_ROOT", ".cheese"),
+        )
+    )
+
+
 def stage(home, sources, seat="", session_id="", background=False):
     """Install a release into the session that asked for it.
 
@@ -458,15 +469,15 @@ def stage(home, sources, seat="", session_id="", background=False):
     where the release would unmount the forwarded view the command may be
     reading.
     """
-    config = Path(os.path.expandvars(home)) / ".claude"
-    platform_dir = Path(os.path.expandvars(home)) / ".cheese"
+    config = Path(expanded_path(home)) / ".claude"
+    platform_dir = Path(expanded_path(home)) / ".cheese"
     helpers = (
-        Path(os.path.expandvars(seat)) / "remote-execution"
+        Path(expanded_path(seat)) / "remote-execution"
         if seat
         else platform_dir / "remote-execution"
     )
     directory = (
-        Path(os.path.expandvars(seat)) / "remote-session"
+        Path(expanded_path(seat)) / "remote-session"
         if seat
         else platform_dir / "remote-session"
     )
@@ -564,9 +575,9 @@ def stage(home, sources, seat="", session_id="", background=False):
 
 def acknowledge(home, version, seat=""):
     directory = (
-        Path(os.path.expandvars(seat)) / "remote-session"
+        Path(expanded_path(seat)) / "remote-session"
         if seat
-        else Path(os.path.expandvars(home)) / ".cheese/remote-session"
+        else Path(expanded_path(home)) / ".cheese/remote-session"
     )
     replace(
         directory / "release-ready",

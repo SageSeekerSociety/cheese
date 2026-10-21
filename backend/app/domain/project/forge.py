@@ -211,7 +211,7 @@ async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):
 # person delivering or merging a card. Background work stops while less than
 # this share is left, so a burst of polling cannot use up what a person's
 # request needs; it resumes on a later tick, after the hourly reset at worst.
-KEPT_FOR_PEOPLE = 0.2
+KEPT_FOR_PEOPLE = forge_quota.BACKGROUND_STOP_QUOTA
 
 
 async def background_quota(
@@ -277,13 +277,23 @@ async def installation_serves_background(tokens: GitHubAppTokens) -> bool:
 
 @dataclass(frozen=True)
 class RepoReadToken:
-    """A read token for one repository's own CI, or why there is none."""
+    """A read token for one repository's own CI, or why there is none.
+
+    ``installation_id`` is the installation the caller would be spending, when
+    the binding resolved to one — the id the token was, is, or would be minted
+    for, filled from the objects already in hand rather than a second lookup.
+    It is internal metadata for attribution, not a compatibility flag: it is
+    None when nothing bound this repo, never the id of some earlier binding.
+    """
 
     token: str | None
     reason: str
+    installation_id: int | None = None
 
 
-async def github_read_token_for_repo(repo: str, session: AsyncSession) -> RepoReadToken:
+async def github_read_token_for_repo(
+    repo: str, session: AsyncSession, *, background: bool = False
+) -> RepoReadToken:
     """A read token for ``repo``'s own CI, or the reason there is none.
 
     棘轮的采集按**仓库名**找人：它手上没有项目 id（那份快照说的是仓库的 CI），而
@@ -299,6 +309,9 @@ async def github_read_token_for_repo(repo: str, session: AsyncSession) -> RepoRe
     两种失败分开写，因为它们是两件事：`GitHubAppError` 是对方答复了、拒绝了；httpx
     的 `HTTPError`（ConnectError、TimeoutException 都是它的子类）是我们根本没问到话。
     合成一句会让人以为 GitHub 说了什么。
+
+    ``background=True`` 是后台扫描的问法：安装的配额落到留给人的那一份以下
+    （`installation_serves_background`）时不给牌子，原因写明，扫描这一轮就不花。
     """
     installation = await ProjectGitInstallationRepository(session).get_by_repo(repo)
     if installation is None:
@@ -307,14 +320,32 @@ async def github_read_token_for_repo(repo: str, session: AsyncSession) -> RepoRe
         )
     tokens = await github_app_tokens_for_project(installation.project_id, session)
     if tokens is None:
-        return RepoReadToken(None, f"{repo} 所属的项目没有可用的 GitHub App 凭据")
+        return RepoReadToken(
+            None,
+            f"{repo} 所属的项目没有可用的 GitHub App 凭据",
+            installation_id=installation.installation_id,
+        )
+    if background and not await installation_serves_background(tokens):
+        return RepoReadToken(
+            None,
+            f"{repo} 的 GitHub 配额只剩留给人用的那一份，后台这一轮不读",
+            installation_id=tokens.installation_id,
+        )
     try:
         token, _expires = await tokens.installation_token()
     except httpx.HTTPError as exc:
-        return RepoReadToken(None, f"连不上 GitHub，没能为 {repo} 取到凭据：{exc}")
+        return RepoReadToken(
+            None,
+            f"连不上 GitHub，没能为 {repo} 取到凭据：{exc}",
+            installation_id=tokens.installation_id,
+        )
     except GitHubAppError as exc:
-        return RepoReadToken(None, f"GitHub 拒绝为 {repo} 签发凭据：{exc}")
-    return RepoReadToken(token, "")
+        return RepoReadToken(
+            None,
+            f"GitHub 拒绝为 {repo} 签发凭据：{exc}",
+            installation_id=tokens.installation_id,
+        )
+    return RepoReadToken(token, "", installation_id=tokens.installation_id)
 
 
 async def ensure_author_email(

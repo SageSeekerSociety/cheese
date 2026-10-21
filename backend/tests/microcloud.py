@@ -14,6 +14,9 @@ OFFERING = {
     "memoryMbMax": 16384,
     "diskGbMin": 10,
     "diskGbMax": 100,
+    # The data disk each machine gets beside its root disk, which a pool host
+    # keeps its sandboxes' homes on.
+    "dataDiskGb": 64,
 }
 
 

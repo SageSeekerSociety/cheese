@@ -1,22 +1,4 @@
-"""Model connections a person's account holds (#2991): an Anthropic API key,
-or another model service that speaks Anthropic's API, entered on 「设置 →
-模型连接」 without any machine.
-
-Unlike a Claude subscription, whose login may not be collected or held by a
-third party and so stays on the machine it was given on, a key may be kept by
-the platform. It is sealed at rest (`app.core.crypto`) and opened in exactly
-one place: as a session of its owner's own Claude Code on it starts on the
-session host (`owner_provider.AccountChannel`), into that process's
-environment. It is never returned, logged or sent anywhere but the service it
-belongs to; its owner sees its last four characters.
-
-A connection is checked with one cheap call before it is saved, and again
-whenever its owner asks: Anthropic's model list for an API key (free), and a
-one-token message for a model service, which is the only call every such
-service answers. Its address is a person's to name, and both the backend and
-the session host call it, so it must be https and outside this platform's own
-network.
-"""
+"""Encrypted team API keys and Anthropic-compatible model services."""
 
 import asyncio
 import uuid
@@ -24,15 +6,16 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
-from app.domain.agent_instance.models import AccountConnection
+from app.domain.agent_instance.models import AccountConnection, PersonalModelResource
 from app.domain.device.login_kind import ConnectionKind
 from app.domain.integration.service import refuse_internal_host
+from app.domain.team.models import Team
 
 #: Where an Anthropic API key is called.
 ANTHROPIC_API = "https://api.anthropic.com"
@@ -42,7 +25,7 @@ _CHECK_TIMEOUT_S = 20
 #: How much of a service's refusal is kept to show its owner.
 _REASON_CHARS = 300
 
-#: The kinds an account may hold. A subscription is not one of them.
+#: Connection kinds stored encrypted on the platform, separate from device logins.
 HELD_KINDS = (ConnectionKind.api_key, ConnectionKind.model_service)
 
 
@@ -130,32 +113,51 @@ async def probe(
     return reason.replace(key, "****")[:_REASON_CHARS]
 
 
-async def of_owner(db: AsyncSession, owner_user_id: int) -> list[AccountConnection]:
-    """The connections this person's account holds, oldest first."""
+async def of_team(db: AsyncSession, team_id: int) -> list[AccountConnection]:
+    """The connections this team stores encrypted on the platform, oldest first."""
     rows = await db.scalars(
         select(AccountConnection)
-        .where(AccountConnection.owner_user_id == owner_user_id)
+        .where(
+            or_(
+                AccountConnection.team_id == team_id,
+                AccountConnection.id.in_(
+                    select(PersonalModelResource.account_connection_id).where(
+                        PersonalModelResource.team_id == team_id
+                    )
+                ),
+            )
+        )
         .order_by(AccountConnection.created_at)
     )
     return list(rows)
 
 
 async def owned(
-    db: AsyncSession, owner_user_id: int, connection_id: uuid.UUID
+    db: AsyncSession, team_id: int, connection_id: uuid.UUID
 ) -> AccountConnection | None:
     row = await db.get(AccountConnection, connection_id)
-    return row if row is not None and row.owner_user_id == owner_user_id else None
+    if row is None:
+        return None
+    if row.team_id == team_id or await db.scalar(
+        select(PersonalModelResource.id).where(
+            PersonalModelResource.team_id == team_id,
+            PersonalModelResource.account_connection_id == row.id,
+        )
+    ):
+        return row
+    return None
 
 
 async def create(
     db: AsyncSession,
-    owner_user_id: int,
+    team_id: int,
     *,
     kind: ConnectionKind,
     key: str,
     base_url: str | None,
     model: str | None,
     name: str | None,
+    allowed_models: list[str],
 ) -> AccountConnection:
     """Keep a connection its owner entered, once the service has answered it.
     Refused with the service's reason, and nothing kept, when it does not."""
@@ -170,8 +172,12 @@ async def create(
         raise UnprocessableEntityError(say("modelConnectionRefused", reason=reason))
     row = AccountConnection(
         id=uuid.uuid4(),
-        owner_user_id=owner_user_id,
+        team_id=team_id,
+        owner_user_id=await db.scalar(
+            select(Team.personal_owner_user_id).where(Team.id == team_id)
+        ),
         kind=kind.value,
+        allowed_models=allowed_models,
         name=name or None,
         base_url=base_url,
         model=model,
@@ -197,7 +203,9 @@ def view(row: AccountConnection) -> dict:
     """The connection as its owner reads it. Never the key."""
     return {
         "id": str(row.id),
+        "owner_user_id": row.owner_user_id,
         "kind": row.kind,
+        "allowed_models": row.allowed_models,
         "name": row.name,
         "key_last4": row.key_last4,
         "service_host": host_of(row),

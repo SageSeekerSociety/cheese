@@ -48,6 +48,7 @@ async def on_device_message(
         device.build = msg.build
         device.target = msg.target
         device.executor = msg.executor
+        device.profiles = msg.profiles
         device.dropped_at = None
         device.announced.set()
         if device.proto not in (None, device_link.PROTOCOL_VERSION):
@@ -147,7 +148,7 @@ async def _fan_out_screen_data(screen: HubScreen, raw: bytes) -> None:
     for viewer in list(screen.viewers):
         try:
             await viewer.send_bytes(raw)
-        except Exception:  # noqa: BLE001 — a dead viewer is dropped, not fatal
+        except Exception:  # a dead viewer is dropped, not fatal
             dead.append(viewer)
     for viewer in dead:
         screen.viewers.discard(viewer)

@@ -1,7 +1,7 @@
 """改一条消息之后，本包够不着的那几步。
 
 一条消息改完有三件事要发生，三件都在第 5 层：跑着的那一轮得知道这条消息变了
-（``agent.chat`` 的 ``notify_running_turn``），账本上等着的那几份投递要出队、发给
+（``agent.chat`` 的 ``notify_running_session``），账本上等着的那几份投递要出队、发给
 跑它们的机器（``delivery.agent`` 的 ``dispatch_pending``），任务自己的席位要留一句话
 等它下一轮读到（同包的 ``record_task_instruction``）。``block`` 在第 4 层
 （`docs/manual/dev/architecture.md` 的层表），上面那些在第 5 层，所以本包只写下自己
@@ -30,7 +30,7 @@ class Notifier(Protocol):
     返回值是不透明的：那个实现答的是「跑着的那一轮收下了没有」，收不收得下都要
     接着往下走，本包不认它。"""
 
-    async def notify_running_turn(
+    async def notify_running_session(
         self,
         topic_id: uuid.UUID,
         notice: str,

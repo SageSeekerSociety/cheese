@@ -1,116 +1,107 @@
 <script setup lang="ts">
-// The team's work computers: every self-hosted device its projects can use,
-// whether registered for the team or attached to one of its projects. Cloud
-// sandboxes are the platform's, and are not listed here.
 import type { MyDevice } from '@/types/devices'
 
 import { computed, inject, onMounted, ref, watch } from 'vue'
 
 import ComputeView from './ComputeView.vue'
 
-import { listMyDevices, listTeamDevices, registerDeviceForTeam, unregisterDeviceFromTeam } from '@/api'
+import { listTeamDevices, renameMyDevice, unbindMyDevice } from '@/api'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { desktopBridge, deviceFlow, requestConnecting } from '@/lib/desktop'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { useDialog } from '@/plugins/dialog'
 
 const { confirm } = useDialog()
-const teamData = inject(teamDataInjectionKey, ref())
-const teamId = computed(() => teamData.value?.id ?? 0)
-// 自己名下（只有自己的那个团队）不说「团队」：说到归属的几句各有一份。
-const scope = computed(() => (teamData.value?.personal ? 'own' : 'team'))
-
+const team = inject(teamDataInjectionKey, ref())
+const teamId = computed(() => team.value?.id ?? 0)
 const devices = ref<MyDevice[]>([])
-const myDevices = ref<MyDevice[]>([])
+const canManage = ref(false)
 const loading = ref(false)
-/** 写操作失败：一句话，可关，页面照旧（下面那块内容没受影响）。 */
 const error = ref<string | null>(null)
-/** 读失败：这一块内容根本没拿到，`devices` 空是假的。 */
 const loadError = ref<unknown>(null)
-const loadFailed = computed(() => loadError.value !== null)
-// 「没读到」和「没权限」分开判，再交给那一半画——它不连网络层，也拿不到这个判定。
-const loadFailureReasonText = computed(() => loadFailureReason(loadError.value))
-const loadForbidden = computed(() => isForbidden(loadError.value))
 const busy = ref<string | null>(null)
-
-const myDeviceIds = computed(() => new Set(myDevices.value.map((device) => device.device_id)))
-const addable = computed(() => myDevices.value.filter((device) => !device.team_ids.includes(teamId.value)))
-const onlineCount = computed(() => devices.value.filter((device) => device.online).length)
-
-function errorMessage(value: unknown, fallback: string): string {
-  return value instanceof Error ? value.message : fallback
-}
+const desktop = !!desktopBridge()
+const command = computed(
+  () =>
+    `curl -fsSL ${window.location.origin}/connector/install.sh | sh\ncheesehost --profile team-${teamId.value} link connect ${window.location.origin}/connector`
+)
+const windowsCommand = computed(
+  () =>
+    `irm ${window.location.origin}/connector/install.ps1 | iex\ncheesehost --profile team-${teamId.value} link connect ${window.location.origin}/connector`
+)
 
 async function load() {
   loading.value = true
   loadError.value = null
   try {
-    const [teamDevices, mine] = await Promise.all([
-      listTeamDevices(teamId.value),
-      listMyDevices().catch(() => ({ devices: [] })),
-    ])
-    devices.value = teamDevices.devices
-    myDevices.value = mine.devices
+    const result = await listTeamDevices(teamId.value)
+    devices.value = result.devices
+    canManage.value = result.can_manage
   } catch (cause) {
-    // 原来记在 `error` 里 —— 那条提示可关，关掉之后屏幕上只剩「还没有自己的机器」。
     loadError.value = cause
   } finally {
     loading.value = false
   }
 }
-
-async function addMachine(device: MyDevice) {
-  busy.value = device.device_id
+async function rename(device: MyDevice, name: string) {
+  if (!name.trim() || name.trim() === device.name) return
+  // A message left from an earlier action must not stand for this attempt: the dialog closes only on a clean finish.
   error.value = null
+  busy.value = device.device_id
   try {
-    await registerDeviceForTeam(device.device_id, teamId.value)
+    await renameMyDevice(device.device_id, name.trim())
     await load()
   } catch (cause) {
-    error.value = errorMessage(cause, t('teams.compute.addMachineFailed'))
+    error.value = cause instanceof Error ? cause.message : t('account.devices.renameFailed')
   } finally {
     busy.value = null
   }
 }
-
-async function removeMachine(device: MyDevice) {
-  const ok = await confirm(t(`teams.compute.${scope.value}.removeDeviceConfirm`, { name: device.name }), {
-    danger: true,
-    confirmLabel: t(`teams.compute.${scope.value}.remove`),
-  }).wait()
-  if (!ok) return
+async function remove(device: MyDevice) {
+  if (
+    !(await confirm(t('teams.compute.removeConfirm', { name: device.name }), {
+      danger: true,
+      confirmLabel: t('teams.compute.remove'),
+    }).wait())
+  )
+    return
   busy.value = device.device_id
-  error.value = null
   try {
-    await unregisterDeviceFromTeam(device.device_id, teamId.value)
+    await unbindMyDevice(device.device_id)
     await load()
   } catch (cause) {
-    error.value = errorMessage(cause, t('teams.compute.removeMachineFailed'))
+    error.value = cause instanceof Error ? cause.message : t('teams.compute.removeMachineFailed')
   } finally {
     busy.value = null
   }
 }
-
 onMounted(load)
 watch(teamId, load)
+watch(
+  () => deviceFlow.stage,
+  (stage) => {
+    if (stage === 'done') void load()
+  }
+)
 </script>
 
 <template>
   <ComputeView
     v-model:error="error"
-    :scope="scope"
-    :loading="loading"
-    :load-failed="loadFailed"
-    :reason="loadFailureReasonText"
-    :forbidden="loadForbidden"
-    :addable="addable"
-    :busy="busy"
-    :my-devices="myDevices"
     :devices="devices"
-    :online-count="onlineCount"
-    :team-id="teamId"
-    :my-device-ids="myDeviceIds"
+    :can-manage="canManage"
+    :loading="loading"
+    :load-failed="loadError !== null"
+    :reason="loadFailureReason(loadError)"
+    :forbidden="isForbidden(loadError)"
+    :busy="busy"
+    :desktop="desktop"
+    :command="command"
+    :windows-command="windowsCommand"
     @load="load"
-    @add-machine="addMachine"
-    @remove-machine="removeMachine"
+    @rename="rename"
+    @remove-machine="remove"
+    @connect="requestConnecting(teamId)"
   />
 </template>

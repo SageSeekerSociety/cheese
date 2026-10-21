@@ -48,8 +48,7 @@ gets one made on the way (``team_terms``, ``payer_for_person``).
 
 Every name a caller takes from this module is still answered from here: the
 re-exports below are the public path, not a convenience, because callers and
-tests all along have written ``from app.domain.usage.ledger import ...``
-(``tests/unit/test_usage_ledger_module_split.py`` pins that face).
+tests all along have written ``from app.domain.usage.ledger import ...``.
 
 Two things about that face are worth saying rather than letting someone find
 out. Most of the private helpers that used to sit at this module's top level
@@ -76,6 +75,7 @@ from app.domain.usage.balance import (  # noqa: F401
     _applies,
     _spendable,
 )
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger_queries import LedgerQueries
 from app.domain.usage.models import ComputeGrant, GrantSource, PlanWindowUse
@@ -237,31 +237,6 @@ class Ledger(LedgerQueries):
             route="gateway",
         )
 
-    async def charge_spent(
-        self,
-        payer: Payer,
-        *,
-        user_id: int,
-        model: str,
-        input_tokens: int,
-        output_tokens: int,
-        cost_usd: float,
-        kind: str,
-    ) -> float:
-        """Record what the gateway says a call ``user_id`` made outside any
-        project spent, and charge it. Returns the credits deducted."""
-        return await self.record(
-            payer,
-            credits=spend_to_credits(cost_usd),
-            user_id=user_id,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=cost_usd,
-            kind=kind,
-            route="gateway",
-        )
-
     async def record(
         self,
         payer: Payer,
@@ -281,6 +256,7 @@ class Ledger(LedgerQueries):
         user_id: int | None = None,
         metered: bool = True,
         calls: int = 1,
+        attribute_to_work: bool = True,
     ) -> float:
         """Write one usage row, naming the team that paid and the credits it
         cost, and charge those credits: the row and the deduction cannot come
@@ -301,6 +277,11 @@ class Ledger(LedgerQueries):
             route=route,
             turn_id=turn_id,
             user_id=user_id,
+            credit_owner_handle=await CreditBudgets(self._session).owner_of(
+                turn_id, payer.project_id
+            )
+            if attribute_to_work
+            else None,
             team_id=payer.team_id,
             credits=credits,
             metered=metered,

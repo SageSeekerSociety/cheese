@@ -60,8 +60,7 @@ growth and exits 1; `--freeze-new` writes it anyway and prints every line it
 froze, so the commit's diff says what was accepted.
 
 `--json` PRINTS ONE RECORD. Instead of the report, stdout carries one JSON
-line in the shape fixed in docs/topics/棘轮页方案 section 3.1 (the ratchet
-snapshot's `be-deferred-imports`): `actual` is the unannotated imports the tree
+line: `actual` is the unannotated imports the tree
 has, `frozen` what the baseline allows, `stale` every entry above the tree,
 `details` one row per file that holds any. The exit code is the same as
 without it; a run that could not judge says `cannot_judge` and why.
@@ -90,7 +89,7 @@ BASELINE_NAME = "deferred-import-baseline.json"
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
 
-#: The check id in the ratchet snapshot, and the longest a `reason` may be.
+#: The check id in JSON output, and the longest a `reason` may be.
 CHECK_ID = "be-deferred-imports"
 REASON_LIMIT = 2000
 

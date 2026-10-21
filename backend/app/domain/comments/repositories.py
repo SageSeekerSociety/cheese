@@ -1,15 +1,17 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.comments.models import Comment
 from app.domain.questions.models import Attitude
+from app.domain.repositories import Repository
 
 
-class CommentRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+class CommentRepository(Repository[Comment]):
+    model = Comment
+
+    def base_statement(self) -> Select[tuple[Comment]]:
+        return select(Comment).where(Comment.deleted_at.is_(None))
 
     async def list_comments(
         self,
@@ -41,14 +43,6 @@ class CommentRepository:
         count_result = await self._session.execute(count_stmt)
         total = int(count_result.scalar_one() or 0)
         return rows, total
-
-    async def get_by_id(self, comment_id: int) -> Comment | None:
-        stmt: Select[tuple[Comment]] = select(Comment).where(
-            Comment.id == comment_id,
-            Comment.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
 
     async def create(
         self,
@@ -179,7 +173,7 @@ class CommentRepository:
     async def list_sub_comments(
         self, parent_comment_ids: list[int]
     ) -> dict[int, list[Comment]]:
-        """Fetch direct sub-comments (commentable_type=COMMENT) for the given parent ids."""  # noqa: E501
+        """Fetch direct sub-comments (commentable_type=COMMENT) for the given parent ids."""
         if not parent_comment_ids:
             return {}
         stmt: Select[tuple[Comment]] = (

@@ -9,7 +9,7 @@
     "docs": "项目文档",
     "settings": "项目设置",
     "general": "综合",
-    "routines": "定时与触发",
+    "routines": "例行事务",
     "skills": "技能",
     "pages": "项目页面",
     "overview": "总览",
@@ -39,7 +39,7 @@
     "members": "成员",
     "integrations": "飞书应用",
     "featureStats": "功能数据",
-    "ratchet": "棘轮",
+    "ciActivity": "CI 与合并队列",
     "credits": "方案与额度",
     "runRecords": "运行记录",
     "machines": "机器",
@@ -131,7 +131,8 @@
     "searchIn": "项目内搜索",
     "leaveScope": "移除项目范围，跨项目搜索名称",
     "searchAll": "查看全部结果",
-    "weekly": "周报"
+    "weekly": "周报",
+    "spaceTasks": "题目"
   },
   "sidebar": {
     "resize": "拖动调整宽度",

@@ -3,16 +3,14 @@
   "close": "Close settings",
   "closeHint": "Close settings (Esc)",
   "connections": "Connections",
-  "devices": "Devices",
   "general": "General",
   "groups": {
     "account": "Account",
     "app": "Desktop app",
     "devices": "Devices and connections"
   },
-  "modelConnections": "Model connections",
+  "invites": "Invite friends",
   "notifications": "Notifications",
   "realName": "Real-name information",
-  "title": "Settings",
-  "usage": "Cheese credits"
+  "title": "Settings"
 }

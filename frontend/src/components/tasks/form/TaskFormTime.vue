@@ -39,12 +39,14 @@ const isAllowedDates = (date: unknown) => {
   <TaskFormSection :title="t('tasks.form.time')">
     <div class="tf-grid">
       <BaseField
+        data-agent-field="deadline"
         :label="t('tasks.form.registration')"
         :error="errorOf(registrationStartAtControl) ?? errorOf(deadlineControl)"
       >
         <div class="tf-inline tf-dates">
           <VDateInput
             v-model="registrationStartAt"
+            data-agent-field="registration_start"
             :placeholder="t('tasks.form.registrationStart')"
             :aria-label="t('tasks.form.registrationStart')"
             :allowed-dates="isAllowedDates"
@@ -71,7 +73,12 @@ const isAllowedDates = (date: unknown) => {
         </div>
       </BaseField>
 
-      <BaseField :label="t('tasks.form.completion')" required :error="errorOf(defaultDeadlineControl)">
+      <BaseField
+        data-agent-field="days_to_submit"
+        :label="t('tasks.form.completion')"
+        required
+        :error="errorOf(defaultDeadlineControl)"
+      >
         <template #default="{ id, describedby, invalid, required }">
           <div class="tf-inline">
             <span>{{ t('tasks.form.completionPrefix') }}</span>

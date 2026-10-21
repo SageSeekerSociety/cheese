@@ -23,7 +23,7 @@ from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
+from app.domain.agent.harness.driven import lifecycle
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from tests.integration import test_central_room_sessions as central_sessions
 from tests.integration.test_central_room_sessions import CenterHub, ref, sessions
@@ -38,20 +38,13 @@ IDLE = {
     "tasks": {},
     "session_id": "s",
     "capabilities": [LONG_POLL],
-    "input_protocol": INPUT_PROTOCOL,
+    "lifecycle": lifecycle.PROTOCOL,
 }
 BUSY = {**IDLE, "tasks": {"t1": "local_bash"}}
 
 
 class ReleaseHub(CenterHub):
-    """The session host, whose runners have written nothing nobody read."""
-
-    async def call_executor(self, device_id, state, method, params, **options):
-        if device_id == "center" and method == "events":
-            if params.get("wait"):
-                await asyncio.sleep(0.05)
-            return {"events": []}
-        return await super().call_executor(device_id, state, method, params, **options)
+    """The session host, whose runners have reported nothing nobody read."""
 
 
 def _backend(client, hub, tmp_path, *, owns: bool = True):

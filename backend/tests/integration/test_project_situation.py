@@ -22,8 +22,8 @@ import httpx
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.supply import GATEWAY
-from app.domain.agent_instance.configuration import catalog
 from app.domain.project.models import Project
 from app.domain.project_situation import service as situation_service
 from app.domain.project_situation import writer
@@ -34,6 +34,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support import library_uploads
 
 
 def _project(client) -> str:
@@ -343,15 +344,11 @@ def _pdf(text: str) -> bytes:
 
 def test_a_library_pdf_reads_as_text_outside_any_channel(client):
     project = _project(client)
-    r = client.post(
-        f"/projects/{project}/library",
-        files={
-            "file": (
-                "要求.pdf",
-                _pdf("Final report due December 22"),
-                "application/pdf",
-            )
-        },
+    r = library_uploads.put_in(
+        client,
+        project,
+        "要求.pdf",
+        _pdf("Final report due December 22"),
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text

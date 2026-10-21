@@ -12,17 +12,17 @@ from app.domain.oauth.services import GitHubProvider, OAuthUserInfo
 # The provider sends the browser here, so this is where the state cookie must
 # be readable. It matches the TestClient's own origin, which lets the client's
 # cookie jar behave the way a browser's would.
-_REDIRECT_URL = "http://testserver/users/auth/oauth/callback/github"
+_REDIRECT_URL = "http://testserver/users/me/github-account/callback"
 
 
 @pytest.fixture
 def github(monkeypatch) -> list[str]:
     """Enable the github provider with a fake exchange; returns the codes the
     provider was asked to exchange."""
-    monkeypatch.setattr(settings, "oauth_enabled_providers", "github")
-    monkeypatch.setattr(settings, "oauth_github_client_id", "test-client-id")
-    monkeypatch.setattr(settings, "oauth_github_client_secret", "test-secret")
-    monkeypatch.setattr(settings, "oauth_github_redirect_url", _REDIRECT_URL)
+    monkeypatch.setattr(settings, "oauth_enabled_providers", "github_app")
+    monkeypatch.setattr(settings, "oauth_github_app_client_id", "test-client-id")
+    monkeypatch.setattr(settings, "oauth_github_app_client_secret", "test-secret")
+    monkeypatch.setattr(settings, "oauth_github_app_redirect_url", _REDIRECT_URL)
     exchanged: list[str] = []
 
     async def fake_exchange_code(self, code):
@@ -41,7 +41,7 @@ def _start_login(client: TestClient) -> str:
     """Begin a login the way the sign-in page does; returns the state the
     provider was handed."""
     resp = client.get(
-        "/users/auth/oauth/login/github",
+        "/users/auth/oauth/login/github_app",
         params={"state": "chosen-by-the-client"},
         follow_redirects=False,
     )
@@ -53,7 +53,7 @@ def _start_login(client: TestClient) -> str:
 
 def _callback(client: TestClient, **params):
     return client.get(
-        "/users/auth/oauth/callback/github", params=params, follow_redirects=False
+        "/users/me/github-account/callback", params=params, follow_redirects=False
     )
 
 
@@ -70,7 +70,7 @@ def test_the_login_state_is_issued_by_the_server(api_client: TestClient, github)
 
 
 def test_the_state_cookie_is_scoped_to_the_callback(api_client: TestClient, github):
-    resp = api_client.get("/users/auth/oauth/login/github", follow_redirects=False)
+    resp = api_client.get("/users/auth/oauth/login/github_app", follow_redirects=False)
     cookie = resp.headers["set-cookie"].lower()
     assert "httponly" in cookie
     assert "samesite=lax" in cookie

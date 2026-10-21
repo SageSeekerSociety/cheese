@@ -49,7 +49,7 @@ const MATERIALS = [
   material(163, '测试用例与脚手架.zip', 'members'),
 ]
 
-const LIBRARY_PATH = '/spaces/651/manage/settings/materials'
+const LIBRARY_PATH = '/spaces/651/library'
 
 let picked: number[] = []
 
@@ -229,6 +229,6 @@ describe('TeachingMaterialPicker', () => {
     const linked = mount([], MATERIALS, 'ready', LIBRARY_PATH)
     await expand(linked)
     const upload = linked.getByTestId('teaching-materials-upload')
-    expect(upload.getAttribute('href')).toBe('/spaces/651/manage/settings/materials')
+    expect(upload.getAttribute('href')).toBe('/spaces/651/library')
   })
 })

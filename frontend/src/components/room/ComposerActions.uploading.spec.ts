@@ -19,10 +19,6 @@ function mount(uploading: boolean, canSend = true) {
       canSend,
       showImagePicker: true,
       enterSends: true,
-      alwaysSummon: false,
-      summonOn: false,
-      summonReady: true,
-      agentName: '芝士',
     },
     global: { plugins: [createVuetify({ components, directives })] },
   })

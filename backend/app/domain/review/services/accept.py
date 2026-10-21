@@ -28,6 +28,7 @@ from app.domain.review.models import (
 )
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.usage import referrals
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
@@ -54,7 +55,9 @@ from app.domain.review.services._shared import (
     WHO_CHEESE,
     WHO_HUMAN,
     WHO_PLATFORM,
+    _deliverable_revision,
     _GitHubCredentials,
+    _hold_deliverable,
     approvals_required_of,
     logger,
     notice,
@@ -67,6 +70,7 @@ async def accept(
     card_id: uuid.UUID,
     decided_by: str,
     head_sha: str | None = None,
+    deliverable_revision: str | None = None,
 ) -> AcceptCard:
     card = await self._card_or_404(card_id)
     # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
@@ -88,6 +92,20 @@ async def accept(
     seen_head = await self._seen_head_or_refresh(
         card, topic, head_sha, say("verbAccept")
     )
+    # 交出去的文件或地址同理：待处理时它可以被原地换掉，看过的那一份还在才采纳。
+    # 不带这一项不是绕过的办法，同 `_seen_head`。
+    current = _deliverable_revision(topic.project_id, card)
+    if current is not None:
+        # 和换交付物的请求排队，排到这次采纳提交为止，再看一次：那个请求
+        # （`redeliver`）要么已经提交、这里看到的就是新的一版，要么等这边采纳
+        # 完、自己看到卡已结束。骑 PR 的卡也一样 —— 合并要几秒，不排队的话交付
+        # 物会在这几秒里被换掉。交合并的卡没有可换的交付物，不排。
+        await _hold_deliverable(self._session, card)
+        if card.status not in (AcceptStatus.pending, AcceptStatus.conflict):
+            raise ValidationError(say("reviewEndedNoAccept"))
+        current = _deliverable_revision(topic.project_id, card)
+    if current is not None and (deliverable_revision or None) != current:
+        raise ValidationError(say("deliverableChanged", action=say("verbAccept")))
 
     # 归档会连带终结这个话题上还没决议的卡 (review/archive.py)，所以这里通常
     # 走不到；留着是为了兜住"归档与采纳同时发生"的竞态。重复采纳本身由上面的
@@ -173,6 +191,7 @@ async def _accept_discussion(
     notes.clear(card)
     await self._stamp_delivery(card, topic, by=decided_by, at=now)
     await self._mark_task_merged(card)
+    await referrals.on_accepted(self._session, decided_by)
     await self._session.flush()
     await self._session.refresh(card)
     return card
@@ -341,7 +360,7 @@ async def _pr_verdict(
             ancestry = await client.compare_status(
                 owner=owner, repo=repo, base=base, head=ref, token=creds.read
             )
-        except Exception:  # noqa: BLE001 — ancestry unreadable ≠ blocked
+        except Exception:  # ancestry unreadable ≠ blocked
             logger.warning("card %s: compare_status failed", card.id, exc_info=True)
     changed_paths: list[str] | None = None
     if any(rc.paths for rc in required):
@@ -349,7 +368,7 @@ async def _pr_verdict(
             files = await client.compare_files(
                 owner=owner, repo=repo, base=base, head=ref, token=creds.read
             )
-        except Exception:  # noqa: BLE001 — scope unknown handled conservatively
+        except Exception:  # scope unknown handled conservatively
             logger.warning("card %s: compare_files failed", card.id, exc_info=True)
             files = None
         changed_paths = None if files is None else [path for _, path in files]
@@ -539,6 +558,7 @@ async def _finish_pr_accept(
     notes.record(card, None, f"{headline}；{settled}" if headline else settled)
     # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
     await self._stamp_delivery(card, topic, by=by, at=now)
+    await referrals.on_accepted(self._session, by)
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (
@@ -819,7 +839,7 @@ async def _publish_pr_for_accept(
             topic_id=topic.id,
             project_id=topic.project_id,
         )
-    except Exception as exc:  # noqa: BLE001 — surface on the card; never direct-push
+    except Exception as exc:  # surface on the card; never direct-push
         # Read every attribute we still need BEFORE the rollback below:
         # rollback expires the instance, and an expired attribute reloads
         # itself with synchronous IO that an AsyncSession cannot perform

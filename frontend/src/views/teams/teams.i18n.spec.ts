@@ -18,15 +18,14 @@ vi.mock('@/api', () => ({
   listMyDevices: vi.fn(async () => ({ devices: [] })),
   listProjects: vi.fn(async () => ({ data: [{ id: 'p1', name: 'Alpha' }] })),
   listTeamDevices: vi.fn(async () => ({
+    can_manage: false,
     devices: [
       {
         device_id: 'laptop',
         name: 'laptop',
         online: true,
-        project_ids: [],
-        team_ids: [1],
+        team_id: 1,
         screens: [{ sid: 's1', agent_handle: 'helper' }],
-        in_use: [],
       },
     ],
   })),
@@ -128,8 +127,7 @@ function expectNoChinese() {
 
 it('renders the team compute page in English', async () => {
   mount(Compute)
-  await screen.findByText('Running · @helper')
-  expect(screen.getByText('Self-hosted devices')).toBeTruthy()
+  await screen.findByText('Online')
   expectNoChinese()
 })
 

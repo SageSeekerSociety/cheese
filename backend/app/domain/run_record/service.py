@@ -22,7 +22,7 @@ from app.domain.conversation.models import Conversation
 from app.domain.run_record.models import RETENTION, RunRecord
 from app.domain.run_record.repository import RunRecordRepository
 
-#: 帧的类型。新建和改写都用它：前端按 id 换掉旧的那一份。
+#: Every appended platform status transition uses this frame type.
 FRAME = "run_record"
 #: The same record, told to the main line of the channel a 支线 hangs in.
 THREAD_FRAME = "thread_status"
@@ -131,7 +131,10 @@ async def of_conversation(
     *,
     since: datetime | None,
     until: datetime | None,
+    limit: int = 500,
+    seat: str | None = None,
+    before: tuple[datetime, str, uuid.UUID] | None = None,
 ) -> list[RunRecord]:
     return await RunRecordRepository(session).of_conversation(
-        conversation_id, since=since, until=until
+        conversation_id, since=since, until=until, limit=limit, seat=seat, before=before
     )

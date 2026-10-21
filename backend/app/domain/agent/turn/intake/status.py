@@ -86,26 +86,6 @@ class WorkStatus:
             return rec
         return None
 
-    def running_topic_ids(self) -> set[uuid.UUID]:
-        """Every topic with a turn currently in flight — for the board's bulk
-        read, which can't afford one `topic_work()` lookup per row. Same "newest
-        record per topic wins" rule as `topic_work()`, across all topics."""
-        seen: set[str] = set()
-        running: set[uuid.UUID] = set()
-        for channel in self._broker.active_channels():
-            try:
-                running.add(uuid.UUID(channel))
-            except ValueError:
-                continue
-        for rec in reversed(self.state.recent):
-            key = rec["topic_id"]
-            if key in seen:
-                continue
-            seen.add(key)
-            if rec["status"] == "running":
-                running.add(uuid.UUID(key))
-        return running
-
     def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
         """The turn THIS process is actually executing for `topic_id`, with how
         long since it last showed a sign of life — or None if nobody is running
@@ -114,7 +94,7 @@ class WorkStatus:
         「有动静」有两样，取较新的那个：房间里落下了一帧（`idle_for_s`），或者
         读这一轮的那一路收到了 runner 的一声应答（`alive_for_s`，`note_alive`）。
         后者在长思考、跑长命令、等机器起来的时候一直在，而前者一帧都没有 —— 只数
-        帧才是红灯误亮的原因。两样都旧，才是真的没人应了。
+        帧会把一轮好好跑着的活判成停了。两样都旧，才是真的没人应了。
 
         This is the heartbeat half of the stall verdict (see
         `TopicService.stall_signal`), and deliberately not `topic_work()`:

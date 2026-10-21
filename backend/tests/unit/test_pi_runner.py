@@ -435,11 +435,13 @@ async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
         await step("steer")
         live = await shown(mark)
         assert live["work_id"] == work
-        assert live["blocks"] == [{"type": "text", "text": "Hel"}]
+        # That it reasoned shows; what it reasoned does not.
+        assert live["blocks"] == [{"type": "thinking"}, {"type": "text", "text": "Hel"}]
 
         await step("steer")
         live = await shown(live["mark"])
         assert live["blocks"] == [
+            {"type": "thinking"},
             {"type": "text", "text": "Hello"},
             {
                 "type": "tool",
@@ -451,7 +453,7 @@ async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
 
         await step("steer")
         live = await shown(live["mark"])
-        assert json.loads(live["blocks"][1]["arguments"]) == {"text": "Hi there"}
+        assert json.loads(live["blocks"][2]["arguments"]) == {"text": "Hi there"}
 
         await step("steer")
         while live["blocks"]:

@@ -18,7 +18,6 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import { DOC_TOPIC, docSession, NO_REPO, NOTHING_CHANGED } from './catalogFixtures'
 import { DOC_PANEL_ENTRIES } from './catalogPanelsDoc'
 import {
-  BUILD_LOG_BYTES,
   CHANGES_ALL_PROPS,
   CHANGES_BAR_PROPS,
   CHANGES_CONTENT_PROPS,
@@ -31,28 +30,19 @@ import {
   docThreadsBundle,
   FILE_DIFFS,
   fileTreeRows,
-  loadBuildTail,
-  loadLsOutput,
   LONG_DIFF_LINES,
-  LS_OUTPUT_BYTES,
   PANEL_NAMES,
   previewBundle,
   projectFileProps,
-  ROUTINE_DRAFT,
+  ROUTINE_ACCEPTED,
   ROUTINE_RUNS,
   ROUTINE_WEEKLY,
-  SITE_ACT_BASH_OUTPUT,
-  SITE_ACT_EDIT,
-  SITE_ACT_FAILED,
-  SITE_ACT_PLATFORM,
   SITE_AGENT_LABELS,
   SITE_AGENTS,
-  SITE_DONE,
+  SITE_EDIT_RECORD,
   SITE_ONE_TURN,
-  SITE_SAY_DETAIL,
-  SITE_SAY_SHORT,
+  SITE_RAW_RECORDS,
   SITE_TURN_START,
-  SITE_WORKING,
   siteBundle,
   THREAD_ROWS,
   threadTime,
@@ -76,10 +66,9 @@ import PanelRoutines from '@/components/panels/PanelRoutines.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import ProjectFileView from '@/components/panels/ProjectFileView.vue'
-import SiteActRow from '@/components/panels/SiteActRow.vue'
 import SiteAgentTabs from '@/components/panels/SiteAgentTabs.vue'
-import SiteSayRow from '@/components/panels/SiteSayRow.vue'
-import SiteStepOutput from '@/components/panels/SiteStepOutput.vue'
+import SiteRecordRow from '@/components/panels/SiteRecordRow.vue'
+import SiteRecordTree from '@/components/panels/SiteRecordTree.vue'
 import SiteTurnHead from '@/components/panels/SiteTurnHead.vue'
 import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 
@@ -330,6 +319,12 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         props: { changes: changesBundle(NO_REPO) },
         expect: '暂无代码仓库',
       },
+      {
+        name: '现场工作区没及时响应',
+        note: '取数那一层退到了已提交版本：顶上一条中性说明和「重试现场」，差异照旧能看，不是红条。',
+        props: { changes: changesBundle({ liveFallback: 'committed' }) },
+        expect: '现场工作区没有及时响应，已切到已提交版本',
+      },
     ],
   },
   {
@@ -414,35 +409,35 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'panel-routines',
     title: 'PanelRoutines',
-    about: '话题页右侧「定时与触发」那一格：这个房间的规则，新建、确认、暂停、看执行记录都从这里抛出去。',
+    about: '话题页右侧「例行事务」那一格：这个频道的规则，新建、暂停、看执行记录都从这里抛出去。',
     file: 'src/components/panels/PanelRoutines.vue',
     component: PanelRoutines,
     needs: ['vuetify', 'i18n'],
-    args: { defaultRoom: DEMO_TOPIC, userNames: PANEL_NAMES },
+    args: { defaultRoom: DEMO_TOPIC },
     states: [
       {
-        name: '一条在跑、一条等确认',
-        note: '芝士起草的那条排在最上面「等你确认」；在跑的那条写着下一次什么时候。',
-        props: { routines: [ROUTINE_DRAFT, ROUTINE_WEEKLY] },
-        expect: '等你确认',
+        name: '两条在跑',
+        note: '一条按时间跑（写着下一次什么时候），一条等频道里发生某件事。',
+        props: { routines: [ROUTINE_ACCEPTED, ROUTINE_WEEKLY] },
+        expect: '成果被采纳时',
       },
       {
         name: '展开了执行记录',
-        note: '最近两次：一次成了（写着做了什么），一次没成（写着为什么）。',
+        note: '最近三次：成了的那次写着交回的文件名，没能执行的那次把原因收在「原因 ▸」后面。',
         props: { routines: [ROUTINE_WEEKLY], runs: ROUTINE_RUNS, openId: ROUTINE_WEEKLY.id },
-        expect: '工作电脑没有连上',
+        expect: '原因',
       },
       {
-        name: '别人管的规则',
-        note: '这一条不归你管：行里不画按钮，只说清归谁管 —— 只读是说出来，不是偷偷禁用。',
-        props: { routines: [{ ...ROUTINE_WEEKLY, can_manage: false }] },
-        expect: '只有他和项目管理员能改',
+        name: '删不掉的那一条',
+        note: '这一条不归你管：别的动作都在行尾的 ⋯ 里，就是不画「删除」。',
+        props: { routines: [{ ...ROUTINE_WEEKLY, can_delete: false }] },
+        expectSelector: 'button[aria-label="更多操作"]',
       },
       {
         name: '还没有规则',
         note: '空的时候告诉人两条路：点「新建」，或者在频道里让芝士起草。',
         props: { routines: [] },
-        expect: '还没有定时或触发规则',
+        expect: '还没有例行事务',
       },
     ],
   },
@@ -456,20 +451,18 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     args: { topicId: DEMO_TOPIC, projectId: DEMO_PROJECT, memberNames: PANEL_NAMES, agentName: PANEL_NAMES.cheese },
     states: [
       {
-        name: '一轮正在跑',
-        note: '剧本第三步：开工作区、看一眼、写 README、提交推送；这一轮还在跑，组头上亮着「进行中」。',
+        name: '概览',
+        note: '示例数据：工具参数和输出可展开查看全文，思考只在原始记录中显示。',
         props: {
           site: siteBundle({ connected: true }),
-          working: true,
-          runningTurns: SITE_WORKING.running,
         },
-        expect: '进行中',
+        expect: '运行登录校验测试',
       },
       {
-        name: '一轮做完了',
-        note: '递了验收卡，这一轮收尾：组头写几步、用了多久，平台动作的圆点是实心的。',
-        props: { site: siteBundle({ transcript: SITE_DONE.site }) },
-        expect: 'docs: add a welcome note',
+        name: '原始记录',
+        note: '示例数据：每条原始记录保留身份和时刻，思考默认折叠，每条都能查看 JSON。',
+        props: { site: siteBundle({ viewMode: 'raw', connected: true }) },
+        expect: '思考',
       },
       {
         name: '读记录的时候',
@@ -484,6 +477,41 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         props: { site: siteBundle({ transcript: [] }) },
         expect: '暂无现场记录',
       },
+    ],
+  },
+  {
+    id: 'site-record-row',
+    title: 'SiteRecordRow',
+    about: '同一条原始记录的可读展示和 JSON。',
+    file: 'src/components/panels/SiteRecordRow.vue',
+    component: SiteRecordRow,
+    needs: ['i18n'],
+    args: { block: SITE_RAW_RECORDS[1], loadImage: async () => '' },
+    states: [
+      { name: '概览', props: { raw: false }, note: '示例数据', expect: '运行登录校验测试' },
+      { name: '原始记录', props: { raw: true }, note: '示例数据', expect: '查看 JSON 原文' },
+      {
+        name: '平台记的一句点到成员',
+        props: { block: SITE_EDIT_RECORD, raw: false, memberNames: { 'demo-alice': 'Alice' } },
+        note: '示例数据：有人改了房间里 AI 队友读过的消息，句子里的成员按名册显示名字。',
+        expect: 'Alice 改了一条之前的消息',
+      },
+    ],
+  },
+  {
+    id: 'site-record-tree',
+    title: 'SiteRecordTree',
+    about: '工具调用下的相关记录，按原始父调用身份连接。',
+    file: 'src/components/panels/SiteRecordTree.vue',
+    component: SiteRecordTree,
+    needs: ['i18n'],
+    args: {
+      nodes: [{ block: SITE_RAW_RECORDS[1], children: [{ block: SITE_RAW_RECORDS[2], children: [] }] }],
+      loadImage: async () => '',
+    },
+    states: [
+      { name: '概览', props: { raw: false }, note: '示例数据', expect: '查看完整输出' },
+      { name: '原始记录', props: { raw: true }, note: '示例数据', expect: '查看 JSON 原文' },
     ],
   },
   {
@@ -537,72 +565,6 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '`who` 由父组件算：只看一个队友、或者房间里只有一个时不给名字，组头上就不写。',
         props: { who: null, live: false },
         expect: '5 步',
-      },
-    ],
-  },
-  {
-    id: 'site-act-row',
-    title: 'SiteActRow',
-    about:
-      '现场里的一步：一格圆点、一个动作词、一段参数，右头是时刻。失败的那句错另起一行，平台自己做的事圆点是实心的。',
-    file: 'src/components/panels/SiteActRow.vue',
-    component: SiteActRow,
-    needs: ['i18n'],
-    args: { memberNames: PANEL_NAMES, topicId: DEMO_TOPIC, load: loadLsOutput },
-    states: [
-      {
-        name: '改一个文件',
-        note: '动词是这一步做的事，参数是它指着哪一样 —— 现场一行就这两样，扫一眼知道到哪儿了。',
-        props: { block: SITE_ACT_EDIT, expanded: false },
-        expect: 'landing.css',
-      },
-      {
-        name: '平台的动作',
-        note: '芝士调平台接口（发消息、开工作区）也是它做的事，圆点画成实心的，和自己起的工具分得开。',
-        props: { block: SITE_ACT_PLATFORM, expanded: false },
-        expect: '主按钮已改成琥珀色',
-        expectSelector: '.site-act--platform',
-      },
-      {
-        name: '这一步失败了',
-        note: '那句错另起一行、缩进到这一步底下，不藏在提示里：卡在哪一眼看得见。',
-        props: { block: SITE_ACT_FAILED, expanded: false },
-        expect: '执行器连接中断，结果未知',
-      },
-      {
-        name: '摊开一步的输出',
-        note: '收着时只说这一步打印了多少字节，第一次点开才去取那一段（输出那一行是它自己那一件）。',
-        props: { block: SITE_ACT_BASH_OUTPUT, expanded: true },
-        expect: `输出（${LS_OUTPUT_BYTES} B）`,
-      },
-    ],
-  },
-  {
-    id: 'site-say-row',
-    title: 'SiteSayRow',
-    about: '现场里「芝士说了一句话」的那一行：头像、名字、时刻，正文照对话栏渲染，里面的引用点得动。',
-    file: 'src/components/panels/SiteSayRow.vue',
-    component: SiteSayRow,
-    needs: ['i18n'],
-    args: { memberNames: PANEL_NAMES, agentName: PANEL_NAMES.cheese },
-    states: [
-      {
-        name: '短的一句话',
-        note: '一句话占一行，署名写的是开口的那个人（名册上查不到的 AI 落成项目队友的名字）。',
-        props: { block: SITE_SAY_SHORT, long: false, expanded: false },
-        expect: '收到补充：手机上也要检查。',
-      },
-      {
-        name: '长的一段收成 12 行',
-        note: '父组件量出来越过 12 行那条线（`long`）就收：正文折到 12 行、末尾淡出，底下那颗说清全部有多少行。',
-        props: { block: SITE_SAY_DETAIL, long: true, expanded: false },
-        expect: '展开全部（14 行）',
-      },
-      {
-        name: '摊开之后',
-        note: '摊开就不再收，那颗按钮改说「收起」。',
-        props: { block: SITE_SAY_DETAIL, long: true, expanded: true },
-        expect: '收起',
       },
     ],
   },
@@ -695,28 +657,6 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '取文件失败：错误原话摆在这一格里。',
         props: projectFileProps({ error: '读取文件失败：请求超时' }),
         expect: '读取文件失败：请求超时',
-      },
-    ],
-  },
-  {
-    id: 'site-step-output',
-    title: 'SiteStepOutput',
-    about: '现场里摊开一步之后那一行「输出」：默认收着、写着有多大，第一次点开才去取。',
-    file: 'src/components/panels/SiteStepOutput.vue',
-    component: SiteStepOutput,
-    needs: [],
-    states: [
-      {
-        name: '一小段输出',
-        note: '收着时只说有多长：参数是这一行的主体，输出是想追问的人才看的。点开是 ls 打印的那两行。',
-        props: { blockId: 'demo-ls', bytes: LS_OUTPUT_BYTES, load: loadLsOutput },
-        expect: `输出（${LS_OUTPUT_BYTES} B）`,
-      },
-      {
-        name: '一大段输出',
-        note: '几十 KB 的构建日志也只占一行；点开时后端只留了末尾 8 KB，会再说一句只看到了末尾。',
-        props: { blockId: 'demo-build', bytes: BUILD_LOG_BYTES, load: loadBuildTail },
-        expect: '输出（48 KB）',
       },
     ],
   },

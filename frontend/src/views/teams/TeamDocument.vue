@@ -18,6 +18,7 @@ import { deleteDocument, getDocumentAbout } from '@/api/projectDocuments'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { docAuthors } from '@/lib/docAuthors'
 import { useDialog } from '@/plugins/dialog'
 
 const props = defineProps<{ handle: string; docId: string }>()
@@ -38,6 +39,10 @@ const error = ref('')
 const wiring = usePanelDocWiring(
   reactive({ topic: null, document, activityTick: 0, agentName: '', agentHandle: null, members })
 )
+// 作者：团队名册上认人；写它的 AI 队友不在团队名册上，写它的通称。
+const authors = computed(() =>
+  document.value ? docAuthors(document.value, members.value, t('work.room.defaultAgentName')) : []
+)
 const parent = computed(() => ({
   label: parentLabel.value,
   to: { name: 'TeamsDetailDocs', params: { handle: props.handle } },
@@ -50,7 +55,13 @@ watch(
     try {
       void handle
       const about = await getDocumentAbout(docId)
-      document.value = { id: about.id, projectId: '', title: about.title ?? '' }
+      document.value = {
+        id: about.id,
+        projectId: '',
+        title: about.title ?? '',
+        created_by: about.created_by,
+        drafted_by: about.drafted_by,
+      }
       const roster = teamData.value ? await TeamsApi.getMembers(teamData.value.id) : { members: [] }
       members.value = roster.members.map((m) => ({
         user_handle: m.user.username,
@@ -97,6 +108,7 @@ async function remove() {
       error: sharer.state.error,
     }"
     :document="document"
+    :authors="authors"
     :wiring="wiring"
     :error="error"
     :parent="parent"

@@ -1,7 +1,0 @@
-{
-  "failed": "Could not load the output",
-  "hide": "Hide output",
-  "loading": "Loading output",
-  "show": "Output ({size})",
-  "tail": "Showing the last {size}"
-}

@@ -64,12 +64,16 @@ class Live:
     acting: str
     #: The harness's own id for the conversation.
     conversation: str
-    takes_inputs: bool = True
     #: Which reading of the seat its events come from (FB-56): a reading
     #: that was replaced is refused where the room's books change.
     attachment: str = field(default="", compare=False)
 
 
 def _home(state: str) -> str:
-    """A state directory as the core names it: under the host's ``~/.cheese``."""
-    return state.removeprefix("$HOME/.cheese/")
+    """A state directory as the core names it: under the enrollment's root."""
+    # A screen launched before state named the enrollment's root still says
+    # `.cheese` on its machine, and its runner keeps answering after a deploy;
+    # under the default root both spellings are the same directory.
+    return state.removeprefix("$HOME/${CHEESE_PROFILE_ROOT:-.cheese}/").removeprefix(
+        "$HOME/.cheese/"
+    )

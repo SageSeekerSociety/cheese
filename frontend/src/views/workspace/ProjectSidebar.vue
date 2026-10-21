@@ -219,27 +219,36 @@ function onPressTask(task: { roomId: string; taskId: string }) {
 }
 
 // 新建频道：和侧栏那颗 ＋ 落在同一处（就地弹对话框），不再绕「全部频道」那一页。
-useCommands(() => [
-  {
-    id: 'topic.new',
-    title: t('navigation.palette.newTopic'),
-    icon: 'mdi-plus',
-    run: () => (creatingOpen.value = true),
-  },
-  // 全部标为已读（同 Slack 的 Shift+Esc）：只在真有未读时登记，没有时 Shift+Esc 照旧归
-  // 别人（比如关掉一个浮层）。
-  ...(Object.keys(store.unreadMap).length
+//
+// 手机上这一份还会从路由的 sidebar 视图再挂一次（它不画列表，整页那一份由
+// WorkspaceEntry 挂起来）。没画出来的那一份不登记命令，否则面板的「操作」里
+// 同一件事会出现两行。
+const shown = computed(() => !store.accessDenied && (props.page === true || column.value || mdAndUp.value))
+useCommands(() =>
+  shown.value
     ? [
         {
-          id: 'topics.markAllRead',
-          title: t('work.room.menu.markAllRead'),
-          icon: 'mdi-check-all',
-          shortcut: 'shift+escape',
-          run: () => void store.markAllRead(),
+          id: 'topic.new',
+          title: t('navigation.palette.newTopic'),
+          icon: 'mdi-plus',
+          run: () => (creatingOpen.value = true),
         },
+        // 全部标为已读（同 Slack 的 Shift+Esc）：只在真有未读时登记，没有时 Shift+Esc 照旧归
+        // 别人（比如关掉一个浮层）。
+        ...(Object.keys(store.unreadMap).length
+          ? [
+              {
+                id: 'topics.markAllRead',
+                title: t('work.room.menu.markAllRead'),
+                icon: 'mdi-check-all',
+                shortcut: 'shift+escape',
+                run: () => void store.markAllRead(),
+              },
+            ]
+          : []),
       ]
-    : []),
-])
+    : []
+)
 </script>
 
 <template>

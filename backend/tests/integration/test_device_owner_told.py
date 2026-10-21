@@ -1,9 +1,7 @@
 """A device's owner is told when an agent session starts working on it (#1900
 step 5): which project, which room, which agent, and whether it can see the
 whole machine. One notice per session start, not one per tool call; an owner
-who is a person in that room is not told. The team page shows the owner who is
-on each of their machines now, including one attached to a project and not
-registered for the team.
+who is a person in that room is not told.
 """
 
 import json
@@ -28,6 +26,7 @@ from app.domain.project.models import Project
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.models import Topic
 from tests.integration.conftest import post_project, registered, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 
@@ -54,7 +53,7 @@ async def _room_on_a_device(client, owner_handle, *, attached_to="team"):
                 TeamUserRelation(
                     team_id=team_id,
                     user_id=owner_id,
-                    role=TeamMemberRole.MEMBER,
+                    role=TeamMemberRole.ADMIN,
                     created_at=now,
                     updated_at=now,
                 )
@@ -64,15 +63,9 @@ async def _room_on_a_device(client, owner_handle, *, attached_to="team"):
             await devices.start("workstation"),
             owner_user_id=owner_id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner_id),
         )
-        if attached_to == "team":
-            await devices.assign_to_team(
-                device.device_id, team_id, actor_user_id=owner_id
-            )
-        else:
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=owner_id
-            )
+        await place_in_project_team(devices, device.device_id, project_id)
         agent = await IdentityService(db).ensure_room_agent_user(topic_id)
         topic = await db.get(Topic, topic_id)
         resource = str(topic.resource_id or topic_id)
@@ -183,57 +176,6 @@ async def test_an_owner_in_the_room_is_not_told(client, monkeypatch):
     assert await _told(client, room.owner_id) == []
 
 
-async def test_the_team_page_shows_the_owner_who_is_on_their_device(
-    client, monkeypatch
-):
-    room = await _room_on_a_device(client, "bob")
-    _machines(monkeypatch)
-    path = f"/connector/teams/{room.team_id}/devices"
-    before = client.get(path, headers=_signed_in(room.owner_id, "bob"))
-    assert before.json()["devices"][0]["in_use"] == []
-
-    client.post(room.lease_path, headers=room.agent, json={"env": {}})
-
-    listed = client.get(path, headers=_signed_in(room.owner_id, "bob"))
-    assert listed.status_code == 200, listed.text
-    [device] = listed.json()["devices"]
-    [user] = device["in_use"]
-    assert (user["project_name"], user["topic_title"]) == ("Orchard", "Pricing")
-    assert user["agent_name"]
-    # Another member of the team sees the machine, not whose rooms are on it.
-    async with client.test_factory() as db:
-        alice = await registered(db, "alice")
-    other = client.get(path, headers=_signed_in(alice, "alice")).json()["devices"]
-    assert other[0]["in_use"] is None
-
-
-async def test_the_team_page_lists_a_device_attached_only_to_a_project(
-    client, monkeypatch
-):
-    room = await _room_on_a_device(client, "bob", attached_to="project")
-    _machines(monkeypatch)
-    leased = client.post(room.lease_path, headers=room.agent, json={"env": {}})
-    assert leased.status_code == 200, leased.text
-    path = f"/connector/teams/{room.team_id}/devices"
-
-    listed = client.get(path, headers=_signed_in(room.owner_id, "bob"))
-
-    assert listed.status_code == 200, listed.text
-    [device] = listed.json()["devices"]
-    assert device["device_id"] == room.device_id
-    assert device["team_ids"] == []
-    assert device["attached_projects"] == [
-        {"id": str(room.project_id), "name": "Orchard"}
-    ]
-    [user] = device["in_use"]
-    assert (user["project_name"], user["topic_title"]) == ("Orchard", "Pricing")
-    async with client.test_factory() as db:
-        alice = await registered(db, "alice")
-    [seen] = client.get(path, headers=_signed_in(alice, "alice")).json()["devices"]
-    assert seen["device_id"] == room.device_id
-    assert seen["in_use"] is None
-
-
 async def test_a_device_attached_to_another_teams_project_is_not_listed(client):
     room = await _room_on_a_device(client, "bob")
     elsewhere = post_project(client, json={"name": "Elsewhere"}, owner="bob").json()[
@@ -245,9 +187,13 @@ async def test_a_device_attached_to_another_teams_project_is_not_listed(client):
             await devices.start("laptop"),
             owner_user_id=room.owner_id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, room.owner_id),
         )
-        await devices.assign_to_project(
-            other.device_id, uuid.UUID(elsewhere["id"]), actor_user_id=room.owner_id
+        await place_in_project_team(
+            devices,
+            other.device_id,
+            uuid.UUID(elsewhere["id"]),
+            actor_user_id=room.owner_id,
         )
         await db.commit()
 

@@ -65,6 +65,19 @@ function root(over: Partial<Block> = {}): Block {
   }
 }
 
+function attachment(id: string, path: string, mime = 'application/pdf'): Block {
+  return {
+    id,
+    conversation_id: 'r1',
+    kind: 'attachment',
+    author_type: 'participant',
+    author: 'alice',
+    content: path,
+    mime_type: mime,
+    created_at: '2026-10-06T00:00:01Z',
+  } as Block
+}
+
 function task(id: string, origin: string, title = '一件任务'): RoomTask {
   return {
     id,
@@ -109,6 +122,11 @@ function mount() {
       stubs: {
         ChatPanel: CHAT_PANEL_STUB,
         MarkdownView: true,
+        // 图片本身从哪取字节是另一件事；这里只看它拿到的路径对不对。
+        AttachmentImage: {
+          props: ['topicId', 'path'],
+          template: '<div data-testid="attachment-image" :data-path="path" />',
+        },
         AgentFeedbackCard: true,
         SkillProposalCard: true,
         TopicAcceptCard: true,
@@ -128,6 +146,34 @@ describe('支线', () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     mount()
     await waitFor(() => expect(markRead).toHaveBeenCalledWith('th1'))
+  })
+
+  it('原消息一起发出去的图片和文件，也画在支线这条消息下面', async () => {
+    getThread.mockResolvedValue({
+      id: 'th1',
+      room_id: 'r1',
+      root_block_id: 'b1',
+      reply_count: 2,
+      root: root(),
+      files: [attachment('a1', 'uploads/shot.png', 'image/png'), attachment('a2', 'uploads/spec.pdf')],
+    })
+    const { findByTestId, findByText } = mount()
+    const image = await findByTestId('attachment-image')
+    expect(image.getAttribute('data-path')).toBe('uploads/shot.png')
+    expect(await findByText('spec.pdf')).toBeTruthy()
+  })
+
+  it('只发了图片、没有字的那条消息，支线里画的也是那张图', async () => {
+    getThread.mockResolvedValue({
+      id: 'th1',
+      room_id: 'r1',
+      root_block_id: 'b1',
+      reply_count: 2,
+      root: attachment('b1', 'uploads/shot.png', 'image/png'),
+    })
+    const { findByTestId } = mount()
+    const image = await findByTestId('attachment-image')
+    expect(image.getAttribute('data-path')).toBe('uploads/shot.png')
   })
 
   it('「转为任务」转的是它挂着的那条消息：这条支线原地转', async () => {

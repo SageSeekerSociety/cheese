@@ -97,7 +97,7 @@ async def ask_agent(
     """Ask, streamed as server-sent events: ``conversation`` (its id, first),
     ``queued``, ``working``, then once asked ``answering`` (the question's id,
     to read on from elsewhere), ``delta``, ``tool``, then ``done`` (``answer``,
-    ``edits``, ``stopped``) or ``error``. Each event from ``answering`` on
+    ``changes``, ``stopped``) or ``error``. Each event from ``answering`` on
     carries its place in the question's stream (``id``)."""
     reached, actor, redis = await _asker(db, resolver, document_id)
     preset = box.PRESETS.get(body.preset or "") if body.preset else None
@@ -147,7 +147,7 @@ async def ask_agent(
             if asked is not None:
                 async for chunk in _answer(questions, asked.work_id):
                     queue.put_nowait(chunk)
-        except Exception:  # noqa: BLE001 — the box is told; the log keeps why
+        except Exception:  # the box is told; the log keeps why
             logger.warning("doc agent box failed", exc_info=True)
             await emit("error", error_frame(say("docAgentCantAnswer")))
         finally:

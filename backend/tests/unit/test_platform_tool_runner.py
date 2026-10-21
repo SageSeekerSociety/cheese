@@ -408,13 +408,19 @@ def test_a_task_someone_asked_for_is_created_and_touches_nothing_else():
     )
     out = run(
         "cheese_task",
-        {"title": "查一下分页", "summary": "干这个", "owner": "lisi"},
+        {
+            "title": "查一下分页",
+            "summary": "干这个",
+            "owner": "lisi",
+            "source_message_id": _DOC,
+        },
         host,
     )
     [plan] = host.requests
     assert plan["path"] == f"/topics/{_ROOM}/teammate-tasks"
     assert plan["body"]["here"] is False
     assert plan["body"]["owner_handle"] == "lisi"
+    assert plan["body"]["source_message_id"] == _DOC
     assert host.synced == []
     assert "查一下分页" in out
 
@@ -583,6 +589,20 @@ def test_a_room_tool_refuses_without_a_room():
             host,
         )
     assert host.requests == []
+
+
+def test_a_proposal_whose_user_said_nothing_says_so_instead_of_quoting():
+    """「用户没说过话」is a flag the backend can tell apart from the user's
+    words, never a sentence sent in the quote's place."""
+    host = Host()
+    run(
+        "cheese_feedback_propose",
+        {"title": "t", "kind": "bug", "visibility": "public", "user_said_absent": True},
+        host,
+    )
+    body = host.requests[0]["body"]
+    assert body["user_said_absent"] is True
+    assert "user_said" not in body
 
 
 # ---------- the docs ----------

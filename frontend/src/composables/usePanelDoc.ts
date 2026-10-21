@@ -11,12 +11,14 @@
 // 的 stores），这一层据此重读最近一次编辑和修改建议的理由。
 import type { Block, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
+import type { AuthoredDocument } from '../lib/docAuthors'
 import type { DocEdit } from '../lib/docEdits'
 import type { CanvasData } from '../types/canvas'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getDocNodes } from '../api'
+import { AgentChangesApi } from '../api/agentChanges'
 import { changeCanvas, copyCanvas, createCanvas, getCanvas, setCanvasHeight } from '../api/canvases'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { getRoomDocument } from '../api/docCollab'
@@ -38,7 +40,7 @@ import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 
 /** 不在哪个对话里的一份文档（项目资料库里的）：直接给编号，不经对话去问。 */
-export interface PanelDocument {
+export interface PanelDocument extends AuthoredDocument {
   id: string
   projectId: string
   title: string
@@ -202,6 +204,13 @@ export function usePanelDoc(props: PanelDocProps) {
     const did = documentId.value
     if (!did) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
     return applyDocEdits(did, edits)
+  }
+
+  /** 撤销（或恢复）AI 队友这一次回答对这篇文档的修改：服务端以自己的名义把那几处换回去。
+   *  一次回答对一篇文档的几处改动是一起撤销的，给第一处就够了。 */
+  function undoAgentChanges(changes: number[], redo: boolean) {
+    if (!changes.length) return Promise.resolve()
+    return redo ? AgentChangesApi.redo(changes[0]) : AgentChangesApi.undo(changes[0])
   }
 
   // 文档里引用的一张图拿什么画：按这份文档去取（读得了文档的人才看得到），路径落在
@@ -394,5 +403,6 @@ export function usePanelDoc(props: PanelDocProps) {
     imageSrc,
     canvas,
     applyEdits,
+    undoAgentChanges,
   }
 }

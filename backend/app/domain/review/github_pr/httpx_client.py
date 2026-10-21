@@ -1,17 +1,21 @@
 """`HttpxGitHubPrClient` — the real client, and the one the process hands out.
 
-Plain REST calls against api.github.com with a token the caller passes per call,
-plus the two GraphQL calls the merge queue needs. Behind `default_client()` —
+REST and bounded GraphQL operations against api.github.com with a token the
+caller passes per call. Behind `default_client()` —
 one process-wide instance, which is why the zero-check-runs grace period is
 bookkeeping on `self` that outlives a poll.
 """
 
 import asyncio
+import hashlib
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime
 
 import httpx
+from cachetools import TTLCache
 
+from app.core import forge_quota
 from app.core.config import settings
 from app.core.forge_http import forge_client
 from app.core.sentences import say
@@ -29,6 +33,7 @@ from app.domain.review.github_pr._shared import (
     _refused,
     logger,
 )
+from app.domain.review.github_pr.branch_comparisons import read_branch_comparisons
 from app.domain.review.github_pr.failure_logs import (
     _FAILURE_DETAIL_MAX_JOBS,
     _LOG_TAIL_BYTES,
@@ -37,7 +42,11 @@ from app.domain.review.github_pr.failure_logs import (
     _error_excerpt,
     _failure_headline,
 )
-from app.domain.review.github_pr.protocol import GitHubPrClient
+from app.domain.review.github_pr.protocol import (
+    BranchComparisonResult,
+    BranchPair,
+    GitHubPrClient,
+)
 from app.domain.review.github_pr_status import (
     PullRequestStatus,
     parse_pull_request_status,
@@ -98,6 +107,8 @@ def _is_pr_already_exists(resp: httpx.Response) -> bool:
 _ZERO_CHECKS_GRACE_SECONDS = 120.0
 
 _GITHUB_ACTIONS_APP_SLUG = "github-actions"
+_FAILURE_LOG_CACHE_SECONDS = 300.0
+_FAILURE_LOG_CACHE_ENTRIES = 256
 
 
 class HttpxGitHubPrClient:
@@ -131,6 +142,13 @@ class HttpxGitHubPrClient:
         # period start over, never shortens it, so it can't cause a
         # premature "success".
         self._zero_checks_first_seen: dict[tuple[str, str, str], float] = {}
+        # The process-wide client owns these bounded excerpts. Check-runs are
+        # still read live; rerunning a job gives its new log a different key.
+        self._job_logs = TTLCache(
+            maxsize=_FAILURE_LOG_CACHE_ENTRIES,
+            ttl=_FAILURE_LOG_CACHE_SECONDS,
+            timer=clock,
+        )
 
     def _headers(self, token: str) -> dict[str, str]:
         return {
@@ -321,13 +339,24 @@ class HttpxGitHubPrClient:
     async def _job_log_excerpt(
         self, *, owner: str, repo: str, job_id: int, token: str
     ) -> str:
-        """The error slice of one Actions job's log, or "" if unreachable."""
+        """The error slice of one completed job's log, or "" if unreachable."""
+        url = f"{self._api_base}/repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
+        headers = self._headers(token)
+        installation = forge_quota.installation_of(
+            httpx.Request("GET", url, headers=headers)
+        )
+        # Unlike an ETag read, a cache hit asks no authorization question.
+        # Keep excerpts credential-scoped even within the same installation.
+        key = (
+            (installation, owner, repo, job_id, hashlib.sha256(token.encode()).digest())
+            if installation is not None
+            else None
+        )
+        if key is not None and (kept := self._job_logs.get(key)) is not None:
+            return kept
         try:
             async with forge_client(transport=self._transport, timeout=30.0) as client:
-                resp = await client.get(
-                    f"{self._api_base}/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
-                    headers=self._headers(token),
-                )
+                resp = await client.get(url, headers=headers)
                 if resp.status_code in (301, 302, 303, 307, 308):
                     # GitHub answers with a 302 to a pre-signed blob URL on a
                     # THIRD-PARTY host (`*.blob.core.windows.net`). The
@@ -346,7 +375,10 @@ class HttpxGitHubPrClient:
         except (httpx.HTTPError, ValueError, OSError) as exc:
             logger.info("could not read job %s log: %s", job_id, exc)
             return ""
-        return _error_excerpt([_clean_log_line(ln) for ln in text.splitlines()])
+        excerpt = _error_excerpt([_clean_log_line(ln) for ln in text.splitlines()])
+        if key is not None and excerpt:
+            self._job_logs[key] = excerpt
+        return excerpt
 
     async def _resolve_zero_checks(
         self, *, owner: str, repo: str, ref: str, token: str
@@ -534,6 +566,36 @@ class HttpxGitHubPrClient:
             )
         return bool(pr.get("mergeQueueEntry"))
 
+    async def merge_group_run_started(
+        self, *, owner, repo, number, token, since: datetime
+    ) -> bool:
+        """Has a `merge_group` workflow run been created for PR `number` since
+        `since` (the moment it entered the queue)? Older runs of the same PR belong
+        to an earlier entry and do not count.
+
+        GitHub names the queue's temporary branch
+        `gh-readonly-queue/<base>/pr-<n>-<sha>`, and the runs it triggers carry
+        that name as `head_branch`. Read-only: the newest 100 runs of the event
+        are enough, a stalled entry's run is either among them or not yet there."""
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/actions/runs",
+                headers=self._headers(token),
+                params={
+                    "event": "merge_group",
+                    "per_page": 100,
+                    "created": f">={since.astimezone(UTC):%Y-%m-%dT%H:%M:%SZ}",
+                },
+            )
+        if resp.status_code != 200:
+            raise _refused("githubRefusedCheckRuns", resp)
+        marker = f"/pr-{number}-"
+        return any(
+            marker in str(run.get("head_branch") or "")
+            for run in resp.json().get("workflow_runs") or []
+            if isinstance(run, dict)
+        )
+
     async def dequeue_pull_request(self, *, owner, repo, number, token) -> None:
         async with forge_client(transport=self._transport, timeout=30.0) as client:
             pr = await _queue_pr(
@@ -553,6 +615,23 @@ class HttpxGitHubPrClient:
     ) -> list[dict]:
         return await self._check_runs(owner, repo, ref, token)
 
+    async def branch_comparisons(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        pairs: Sequence[BranchPair],
+        token: str,
+    ) -> dict[BranchPair, BranchComparisonResult]:
+        return await read_branch_comparisons(
+            api_base=self._api_base,
+            transport=self._transport,
+            headers=self._headers(token),
+            owner=owner,
+            repo=repo,
+            pairs=pairs,
+        )
+
     async def compare_status(
         self, *, owner: str, repo: str, base: str, head: str, token: str
     ) -> str | None:
@@ -568,12 +647,6 @@ class HttpxGitHubPrClient:
             raise _refused("githubRefusedCommitOrder", resp)
         status = resp.json().get("status")
         return status if isinstance(status, str) else None
-
-    async def check_run_names(
-        self, *, owner: str, repo: str, ref: str, token: str
-    ) -> set[str]:
-        runs = await self._check_runs(owner, repo, ref, token)
-        return {str(run.get("name")) for run in runs if run.get("name")}
 
     async def review_signals(
         self,

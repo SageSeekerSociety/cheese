@@ -96,7 +96,7 @@ async def _refresh_in_own_session(
             if card is not None:
                 await svc._refresh_stale_pr_snapshot(card)
                 await session.commit()
-    except Exception:  # noqa: BLE001 — a read never fails over a poll
+    except Exception:  # a read never fails over a poll
         logger.warning(
             "card %s: refreshing a stale merge snapshot failed", card_id, exc_info=True
         )

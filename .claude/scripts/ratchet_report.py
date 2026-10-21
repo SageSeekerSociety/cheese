@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The `--json` record the ratchet snapshot collector reads.
+"""The `--json` record the snapshot collector (ratchet-snapshot.py) consumes.
 
     python3 .claude/scripts/check-file-sizes.py --json
 
@@ -9,17 +9,13 @@ a record is not a record. Errors keep going to stderr, where they already went.
 
 The exit code stays the authority on the verdict, and --json does not change it:
 0 pass, 1 violation, 2 could not judge. A checker that could not run at all says
-`cannot_judge` and why, rather than printing an empty record — a collector that
+`cannot_judge` and why, rather than printing an empty record — a runner that
 read a crash as "no data" is the one answer this whole arrangement exists to
 avoid. In the default mode stdout is byte-for-byte what it was: the flag is a
 read, not a change to the gate.
 
-`area` and `rule_fingerprint` are NOT in the record. The collector adds them,
-because it is the one place that knows which rule files belong to which check;
-seven copies of that list is seven places to forget one.
-
-The record's shape is fixed in docs/topics/棘轮页方案 section 3.1. The frontend
-ratchets share the same contract in `frontend/scripts/ratchet-report.mjs`;
+The frontend ratchets share the same contract in
+`frontend/scripts/ratchet-report.mjs`;
 `backend/scripts/check_boundaries.py` and `check-repo-rules.sh` write the same
 shape through a small local helper each, because they live in other directories
 and languages and a cross-directory import would be a worse trade than fifteen

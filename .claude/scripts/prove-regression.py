@@ -430,8 +430,7 @@ def merge_base(root: Path, rev: str) -> str:
 def changed_against(root: Path, base: str) -> list[str]:
     """Repo-relative paths this branch has changed since `base`, committed or not.
 
-    `--no-renames` for the reason ci-fast's change collector gives: this reads
-    the list for membership, and a rename reported as `old -> new` would put a
+    `--no-renames`: this reads the list for membership, and a rename reported as `old -> new` would put a
     path with an arrow in it into the copy set. The working tree is included
     because a regression test is usually still uncommitted when its author runs
     this — a branch-only diff would make `--auto` refuse the very moment it is

@@ -31,6 +31,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import wait_for_record
 
 
 class FirstPromptOnly(StubChannel):
@@ -98,7 +99,7 @@ def test_a_check_in_read_before_the_backend_changed_ends_with_that_work(client):
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/taken-across-backends-ws",
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=client.test_request_factory),
         )
 
     before = FirstPromptOnly()
@@ -118,10 +119,7 @@ def test_a_check_in_read_before_the_backend_changed_ends_with_that_work(client):
         # Then the session goes to work on its own, nobody having asked.
         before.starts(topic)
         before.uses(topic, "Bash", command="sleep 600")
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "sleep 600" in str(record))
         seat = next(
             turn.agent_handle
             for turn in _rows(client, AgentTurn, topic)
@@ -201,7 +199,7 @@ def test_a_check_in_read_inside_the_sessions_work_leaves_nothing_running(client)
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/taken-same-backend-ws",
-        compute=stub_compute(channel),
+        compute=stub_compute(channel, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: chat
     with room_socket(client, room, "alice") as ws:
@@ -215,10 +213,7 @@ def test_a_check_in_read_inside_the_sessions_work_leaves_nothing_running(client)
 
         channel.starts(topic)
         channel.uses(topic, "Bash", command="sleep 600")
-        _until(
-            ws,
-            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
-        )
+        wait_for_record(client, room, lambda record: "sleep 600" in str(record))
         seat = next(
             turn.agent_handle
             for turn in _rows(client, AgentTurn, topic)
@@ -278,7 +273,8 @@ def test_a_check_in_read_inside_the_sessions_work_leaves_nothing_running(client)
                 for row in _rows(
                     client, NativeInput, topic, NativeInput.work_id == check
                 )
-                if not row.completed_at
+                # Its fate unknown: neither read nor reported unread.
+                if row.echoed_at is None and row.terminated_at is None
             ),
             *(
                 ("running", str(key[1]))

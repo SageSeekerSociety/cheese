@@ -329,7 +329,8 @@ async def sandbox_forge_token(
     await require_seated_agent(db, token, project_id=project_id, topic_id=None)
     # A 支线 keeps nothing it does
     # (`Place.keeps_work`): its token reads the repository, its issues and pull
-    # requests, and the forge refuses its pushes and its writes.
+    # requests, and the forge refuses its pushes and its writes. On GitHub it
+    # may also rerun or cancel CI (`GitHubAppTokens.read_permissions`).
     kept = await session_keeps_work(db, claims.get("session"))
     binding = await binding_for_project(project_id, db)
     minter = await tokens_for_project(project_id, db)

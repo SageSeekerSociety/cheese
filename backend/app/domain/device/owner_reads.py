@@ -38,7 +38,7 @@ from sqlalchemy import Boolean, Uuid, column, select, table, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
-from app.domain.device.models import DeviceRow, HostedDeviceRow
+from app.domain.device.models import DeviceRow, HostedDeviceRow, ModelCredentialHost
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.project.models import Project, ProjectMember
 from app.domain.topic.models import TopicMembership
@@ -48,6 +48,7 @@ from app.domain.topic.models import TopicMembership
 class DeviceIdentity:
     device_id: str
     name: str
+    credential_host: bool = False
 
 
 async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity | None:
@@ -58,7 +59,16 @@ async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity 
             select(DeviceRow.device_id, DeviceRow.name).where(DeviceRow.token == token)
         )
     ).one_or_none()
-    return DeviceIdentity(row.device_id, row.name) if row is not None else None
+    if row is not None:
+        return DeviceIdentity(row.device_id, row.name)
+    host = (
+        await session.execute(
+            select(ModelCredentialHost.id, ModelCredentialHost.name).where(
+                ModelCredentialHost.token == token
+            )
+        )
+    ).one_or_none()
+    return DeviceIdentity(host.id, host.name, True) if host else None
 
 
 async def execution_device_authorized(

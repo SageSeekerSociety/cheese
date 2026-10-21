@@ -24,6 +24,7 @@ from app.domain.notice_meta import (
     SEVERITY_INFO,
 )
 from app.domain.run_record import turns
+from app.domain.session_record import history as session_history
 
 
 def test_the_terminal_codes_cover_every_code_their_homes_name():
@@ -56,6 +57,7 @@ def test_the_columns_are_the_ones_the_models_declare():
         # reads delivery's rows, so the two may not import each other: the
         # turn-interval clause reads `agent_turns` bare for the same reason.
         ("delivery.agent._TURNS", delivery_agent._TURNS, AgentTurn),
+        ("session_record.history._turns", session_history._turns, AgentTurn),
     )
     for where, literal, model in copies:
         real = model.__table__.c

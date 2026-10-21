@@ -149,6 +149,7 @@ async def send_prepared(
     roster = prepared.roster
     topic_refs = prepared.topic_refs
     consumed_ids = prepared.consumed_ids
+    read_through = prepared.read_through
     replay_notice = prepared.replay_notice
     resume_session_id = prepared.resume_session_id
     needs_place = prepared.needs_place
@@ -213,6 +214,7 @@ async def send_prepared(
                 topic_id=topic_id,
                 work_id=marked_work_id,
                 pending_ids=set(consumed_ids),
+                read_through=read_through,
                 reply_to=user_block_id,
                 roster=roster,
                 topic_refs=topic_refs,
@@ -228,6 +230,10 @@ async def send_prepared(
             )
             return
         state.pending_ids.update(consumed_ids)
+        if read_through is not None and (
+            state.read_through is None or read_through > state.read_through
+        ):
+            state.read_through = read_through
         if state.reply_to is None:
             state.reply_to = user_block_id
         if prompt_text not in state.user_text:
@@ -348,7 +354,7 @@ async def send_prepared(
         checking, checking_meta = delivery_checking_notice()
         await effects.post_system_event(topic_id, checking, turn_id, meta=checking_meta)
         return
-    except Exception as exc:  # noqa: BLE001 — a failed write must be SAID
+    except Exception as exc:  # a failed write must be SAID
         # Nothing else will close this turn. `session_lifecycle` above told
         # the runner that the session owns the ending, and the session this
         # was going to be never started — so without this the room shows

@@ -14,32 +14,26 @@ export type Space = {
   reviewStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
   /** 被驳回时审核人写的原因。 */
   reviewReason?: string | null
-  /**
-   * 这块板的默认「给 AI 队友的指导」（#944）。四级继承的最外层，与
-   * `SpaceCategory.teaching` 同形状；六格全空 = 没说。
-   */
+  /** 这块板的「AI 队友辅导」：题目上的设置和它同时生效。全空 = 没说。 */
   teaching?: SpaceTeaching
 }
 
+/** AI 队友怎么帮学生：引导为主、讲解与示例、先明确需求再实现、不加限制。 */
+export type TeachingMode = 'guide' | 'example' | 'spec' | 'free'
+
 /**
- * 「给 AI 队友的指导」（`Space.teaching` / `SpaceCategory.teaching` / 题目覆盖；
- * 服务端见 `backend/app/domain/task/teaching.py`，读写都是这六个 camelCase 键，
- * 读的那一侧在 `teaching_to_api`）。四级继承里的同一份形状：
- * 空间 → 项目集 → 题目 → 项目，整份替换、不深合 —— 某一层留空就是「没说」，
- * 下一级原样说话。
+ * 「AI 队友辅导」（`Space.teaching` / 题目的那一份；服务端见
+ * `backend/app/domain/task/protocol.py`，读写都是这几个 camelCase 键，读的那一侧在
+ * `teaching_to_api`）。空间和题目两层同时生效：题目选了方式就用题目的，两边的补充
+ * 要求、资料都算。项目自己的设置整份替换。
  *
- * 每次新建会话时现读：改周次之后**新会话**立刻带上，**跑着的会话**保持它启动
- * 时那一份，要冷启动才换。
+ * 每次新建会话时现读：改了之后**新会话**立刻带上，**跑着的会话**保持它启动时那一份。
  */
 export type SpaceTeaching = {
-  /** system prompt 模板，`{current_week}` 等占位会被当前的值替换。 */
+  /** 怎么帮；null = 这一层不说（题目沿用空间的）。 */
+  mode?: TeachingMode | null
+  /** 老师自己写的补充要求。 */
   systemPrompt?: string | null
-  /** 这是第几周。 */
-  currentWeek?: number | null
-  /** 目前的内容范围，用管理员自己的话写。 */
-  allowedTopics?: string[]
-  /** 暂时不该用到的写法 —— 解法这周不该依赖的构造。 */
-  avoidInCode?: string[]
   /** 课件 / 知识的**引用**（id），不是副本。 */
   materialIds?: number[]
   /** 课程让 AI 队友读的团队文档（#3774）。 */
@@ -179,15 +173,15 @@ export type SpaceMaterial = {
   size: number | null
   mime: string | null
   uploaderId: number | null
+  /** 上传人的昵称；账号已经不在了是 `null`。 */
+  uploaderName?: string | null
   createdAt: number
   downloadCount: number
   /**
    * 这块板里**还有几处教学配置列着它**。只有能管资料库的人拿得到这一格 ——
    * 成员那一侧连键都没有，不是 0。
    *
-   * 数的是「列着」，不是「生效」：指导是四层整份替换，里层非空就盖住外层，一份
-   * 只被空间默认列着、其实全被里层盖住的课件照样算一处。所以界面上不能写成
-   * 「会影响 N 道题」，那是个我们算不出来的数。
+   * 数的是辅导设置里「列着」它的地方（空间一处，每道题各一处）。
    */
   usedByCount?: number
 }
@@ -289,4 +283,14 @@ export type SpaceApplication = {
   reviewedBy: string | null
   reviewedAt: string | null
   createdAt: string
+}
+
+/**
+ * 首页目录里一个空间那一行：id、名字，以及还没过审时是哪一种。过审的空间点进去是
+ * 它自己的目录；还在审核或被驳回的，点进去是这份申请。
+ */
+export type SpaceLink = {
+  id: number
+  name: string
+  review?: 'PENDING' | 'REJECTED'
 }

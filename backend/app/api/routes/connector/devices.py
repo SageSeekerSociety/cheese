@@ -49,7 +49,7 @@ from app.api.routes.connector.schemas import (
 from app.api.write_access import ROUTE_DECIDES
 from app.core import background
 from app.core.config import settings
-from app.core.errors import UnauthorizedError
+from app.core.errors import ForbiddenError, UnauthorizedError
 from app.core.sentences import say
 from app.domain.agent import checkout_sweep
 from app.domain.agent.device_hub import (
@@ -66,6 +66,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import push_grants_on_connect
 from app.domain.machine.session_work import checkpoint_room
+from app.domain.team.services import team_service
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
@@ -169,7 +170,7 @@ async def _recover_business_state(device_id: str) -> None:
         logger.warning(
             "hook subscriptions not recovered: device %s said %s", device_id, exc
         )
-    except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
+    except Exception:  # recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
     # Restore screen ownership before cleanup looks for sessions to close.
     # deferred-import: tests patch this name on app.core.db
@@ -250,15 +251,16 @@ async def device_connect(
     service: DeviceServiceDep,
     db: DbSession,
 ) -> dict[str, Any]:
-    """Approve a device on behalf of the logged-in human (fusion-design §4: approve is
-    behind a login). Mints an agent-user + ``device`` binding, binds the device to the
-    owner, and optionally assigns it to ``project_id``."""
+    """Enroll a device in the selected team under its administrator’s authority."""
     actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
         raise UnauthorizedError(say("deviceApproveSignIn"))
 
-    if body.project_id is not None:
-        await resolver.authorize_project(actor, project_id=body.project_id)
+    team_id = body.team_id
+    if team_id is None:
+        team_id = (await team_service(db).ensure_personal_team(actor.user_id)).id
+    if not await team_service(db).is_team_at_least_admin(team_id, actor.user_id):
+        raise ForbiddenError(say("deviceTeamAdminOnly"))
 
     # Approve binds the device to its owner + mints the durable token. The device is
     # PURE COMPUTE (execution-architecture v3: a ComputePool node) — enrolling a machine
@@ -267,6 +269,7 @@ async def device_connect(
     device = await service.approve(
         body.device_code,
         owner_user_id=actor.user_id,
+        team_id=team_id,
         # 入口决定待遇 (#282 决定 2): a human ran the connector on a machine they
         # already keep running, so the platform may never stop or destroy it —
         # only stop using it. A CONSTANT here, the mirror of the MicroCloud
@@ -274,14 +277,10 @@ async def device_connect(
         supply=Supply.self_hosted,
         name=body.device_name,
     )
-    if body.project_id is not None:
-        await service.assign_to_project(
-            device.device_id, body.project_id, actor_user_id=actor.user_id
-        )
     return {
         "device_id": device.device_id,
         "device_name": device.name,
-        "project_id": str(body.project_id) if body.project_id else None,
+        "team_id": device.team_id,
     }
 
 
@@ -334,7 +333,7 @@ async def agent_socket(
     # A ``Depends(get_db)`` session injected into a WebSocket route is only finalized
     # when the socket CLOSES — so without this commit, the authentication transaction
     # sits `idle in transaction` for the machine's entire uptime (observed: 2.8h),
-    # holding an AccessShareLock on ``device_team`` that made an ALTER TABLE (ACCESS
+    # holding an AccessShareLock on ``device`` that makes an ALTER TABLE (ACCESS
     # EXCLUSIVE) on the device tables queue behind it until it timed out → site-wide
     # brownout (#356). Committing returns the connection to the pool (lock released)
     # for the life of the connection. The resolved identity is a plain dataclass,

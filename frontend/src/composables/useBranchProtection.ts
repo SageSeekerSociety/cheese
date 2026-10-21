@@ -1,7 +1,7 @@
 // 分支保护 (#718) 的数据与动作。拆自 `views/ProjectSettingsView.vue`（#2143）。
 //
 // 这一块自己取数、自己有四态，理由：GET 要问 GitHub 要一份保护快照，可能比这一页
-// 别的请求慢，不能让整页的 Promise.all 陪着等（页面把它和「连接 GitHub 账号」各自
+// 别的请求慢，不能让整页的 Promise.all 陪着等（页面把它和 GitHub 登录连接各自
 // 占一次 reveal gate）。
 //
 // 三条规矩跟着这段代码走了一遍：

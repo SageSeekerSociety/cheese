@@ -331,7 +331,7 @@ def participants_csv_text(memberships: list[TaskMembership], ctx: _Context) -> s
 
 def compute_entity_metrics(ctx: _Context) -> dict:
     # NT-aligned: participantCount = memberships.size (no dedup).
-    # submittedCount is based on whether a submission exists (not completion_status).  # noqa: E501
+    # submittedCount is based on whether a submission exists (not completion_status).
     # successRate denominator is total memberships (not submitted).
     task_count = len(ctx.tasks)
     publisher_count = len({t.creator_id for t in ctx.tasks})

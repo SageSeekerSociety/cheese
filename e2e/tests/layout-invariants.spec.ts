@@ -1,5 +1,6 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
+import { fieldDefects, TOKEN_FIELDS } from './field-layout';
 
 // Parallel so CI shards split this file by test rather than handing one shard
 // all of it: no test depends on another, and one CI worker still runs them one
@@ -490,88 +491,6 @@ async function textOverlaps(scope: Locator): Promise<string[]> {
     }
   });
 }
-
-type Defect = { kind: string; what: string };
-
-/** 一页表单把字段画成了哪一套 —— 量的人得先知道，因为「字段」和「标签」的盒子在两套
- *  里不是同一个选择器，而**判据**是同一个。
- *
- *  平台上只有两套：
- *
- *    * `VUETIFY_FIELDS` —— Vuetify 的 outlined 控件。真正画出来的 label 住在描边的
- *      缺口里（`.v-field__outline .v-field-label`），而字段是 `.v-field` 那个盒子。
- *    * `TOKEN_FIELDS` —— 平台自己用令牌画的表单（反馈提交页，见
- *      `components/feedback/SubmitFeedbackForm.vue` 的文件头：它**故意**不用 Vuetify
- *      的输入框）。那里一对「标签 + 控件」是 `.sb-field`，标签在控件上方一行，是普通
- *      的 `.sb-label`，没有骑在边框上的那一半。
- *
- *  两套要守的是同一件事：**标签不压到别的字段上、也不被滚动容器裁掉**。2026-09 换成
- *  令牌之后这条用例红过一次，红在「`.sb-form` 里一个 `.v-field` 都没有」——量不到字段
- *  时这个函数会当场炸（空范围永远返回「没有缺陷」），而那不是缺陷、是**画法变了**。
- *  把画法变成参数，判据一个字不用改。 */
-type FieldDrawing = { field: string; label: string };
-const VUETIFY_FIELDS: FieldDrawing = { field: '.v-field', label: '.v-field__outline .v-field-label' };
-const TOKEN_FIELDS: FieldDrawing = { field: '.sb-field', label: '.sb-label' };
-
-async function fieldDefects(scope: Locator, drawing: FieldDrawing = VUETIFY_FIELDS): Promise<Defect[]> {
-  return scope.evaluate((root: Element, { field, label: labelSelector }: FieldDrawing) => {
-    const out: { kind: string; what: string }[] = [];
-    const drawn = (el: Element) => {
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    };
-
-    const boxes = [...root.querySelectorAll(field)].filter(drawn);
-    // 量不到字段就是范围选错了。空范围永远返回「没有缺陷」，是一条只会绿的断言，
-    // 所以这里炸掉而不是放过：`.v-overlay__content` 的第一个是 tooltip 的浮层而
-    // 不是对话框，这一条就是这么发现的。
-    if (!boxes.length) throw new Error('这个范围里一个字段都没有，这条断言等于没做');
-
-    const nameOf = (el: Element) =>
-      (el.querySelector('.v-field-label, .sb-label')?.textContent || '').trim() || '(无标签字段)';
-    const scrollerOf = (el: Element) => {
-      for (let p = el.parentElement; p; p = p.parentElement) {
-        const overflow = getComputedStyle(p).overflowY;
-        if (overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden') return p;
-      }
-      return null;
-    };
-
-    // outlined 变体真正画出来的那个 label 住在描边的缺口里；字段内部还有一个同名
-    // 副本，是 visibility:hidden 的占位，量它只会得到错的坐标。（令牌画的那一套里
-    // 标签本来就是元素的文字，没有这种副本，这个过滤对它无害。）
-    const labels = [...root.querySelectorAll(labelSelector)].filter(
-      (el) => getComputedStyle(el).visibility !== 'hidden' && drawn(el)
-    );
-
-    for (const label of labels) {
-      const own = label.closest(field);
-      const text = (label.textContent || '').trim();
-      const lr = label.getBoundingClientRect();
-
-      for (const box of boxes) {
-        if (box === own) continue;
-        const br = box.getBoundingClientRect();
-        // 1px 容差：边框相接不算压上，真叠进去才算。
-        const hit = lr.left < br.right && lr.right > br.left && lr.top < br.bottom - 1 && lr.bottom > br.top + 1;
-        if (hit) out.push({ kind: 'overlap', what: `「${text}」压在「${nameOf(box)}」上` });
-      }
-
-      const scroller = scrollerOf(label);
-      const fr = own?.getBoundingClientRect();
-      if (scroller && fr) {
-        const sr = scroller.getBoundingClientRect();
-        // 只看「字段本身完整露着、label 却被切掉」。字段滚到视野外是正常的滚动，
-        // 不是缺陷。
-        const fieldFullyInView = fr.top >= sr.top - 0.5 && fr.bottom <= sr.bottom + 0.5;
-        if (fieldFullyInView && (lr.top < sr.top - 0.5 || lr.bottom > sr.bottom + 0.5))
-          out.push({ kind: 'clipped', what: `「${text}」被它所在的滚动容器裁掉` });
-      }
-    }
-    return out;
-  }, drawing);
-}
-
 test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   test('artifact comparison keeps diff lines vertical on desktop and mobile', async ({ page }) => {
     await apiLogin(page);
@@ -1178,8 +1097,8 @@ test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围�
   }
 });
 
-// 房间的输入框：输入框下面那一行按钮只会越加越多（附件、照片、清单、提问、提醒、
-// 交给芝士、发送）。触屏上按钮之间要拉开、能点的范围要撑到 44×44，同样几颗在桌面
+// 房间的输入框：输入框下面那一行（「+」、麦克风、交给谁那颗队友头像、发送）。
+// 触屏上按钮之间要拉开、能点的范围要撑到 44×44，同样几颗在桌面
 // 上放得下，到手机上就会顶出输入框的边、或者互相盖住。所以这里在真触屏（pointer:
 // coarse）的手机宽度和桌面宽度各量一次：没有一颗伸出输入框，每一颗手指都点得中。
 test.describe('房间输入框：下面那一行放得下，手指点得中', () => {
@@ -1204,7 +1123,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
         const r = el.getBoundingClientRect();
         const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim().slice(0, 16);
         if (r.left < edge.left - 0.5 || r.right > edge.right + 0.5) outside.push(`「${name}」${Math.round(r.left)}–${Math.round(r.right)}`);
-        // 挤不下时按钮先被压窄，字折成两行（「交给」竖着排），还没伸出去就已经坏了。
+        // 挤不下时按钮先被压窄，字折成两行（比如「还原原话」竖着排），还没伸出去就已经坏了。
         // 只量字（文字节点），图标和 Vuetify 的叠层不算行。
         const lines = new Set<number>();
         const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -1261,7 +1180,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
       const got = await measureComposer(page);
       expect(got, `${size.width}：没找到输入框`).not.toBeNull();
       if (size.width < 960) expect(got!.coarse, '手机这一档要在触屏下量').toBe(true);
-      // 附件 + 交给芝士 + 发送，至少这三颗；一颗都没量到就是范围选错了。
+      // 「+」、队友头像、发送，至少这三颗；一颗都没量到就是范围选错了。
       expect(got!.count, `${size.width}`).toBeGreaterThanOrEqual(3);
       expect(got!.outside, `${size.width}：伸出输入框的按钮`).toEqual([]);
       expect(got!.wrapped, `${size.width}：被压窄、字折了行的按钮`).toEqual([]);
@@ -1344,7 +1263,6 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
     const paths = [
       '/users/settings/security',
       '/users/settings/profile',
-      '/users/settings/devices',
       `${projectPath}/settings/agents`,
     ];
     const seen: { path: string; left: number; width: number }[] = [];
@@ -1411,7 +1329,7 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
 // 空状态那两行字多宽，面板就多宽，「新建」右侧的刷新键停在半路。判据因此不是「内容有多
 // 宽」而是**它住的那条 flex 行有多宽**。vitest 量不到坐标，typecheck / stylelint 也不
 // 看这个，只有屏幕上量得出来。
-test('房间面板的「定时与触发」那一格铺满整条面板', async ({ page }) => {
+test('房间面板的「例行事务」那一格铺满整条面板', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
   const rows = await openFirstProject(page);

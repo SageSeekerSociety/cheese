@@ -50,8 +50,8 @@ from app.domain.agent.place import (
     CHECKOUT_DIR,
     OWN_KEY,
     SANDBOXES_DIR,
-    footprint_root,
     launcher_path,
+    machine_root,
     seat_dir,
     seat_key,
     session_platform_dirs,
@@ -96,7 +96,7 @@ async def _false() -> bool:
 # by us). Everything below hangs off `DEVICE_ROOT` so that the launcher that
 # creates these, the retirement that removes them (room_cleanup/retire.py) and the
 # connector's `uninstall` are all naming one directory.
-DEVICE_ROOT = f"$HOME/{footprint_root()}"
+DEVICE_ROOT = machine_root()
 DEVICE_HOME_ROOT = f"{DEVICE_ROOT}/home"
 DEVICE_WORK_ROOT = f"{DEVICE_ROOT}/work"
 # Where a PROJECT's rooms share the packages they install, on the machine they
@@ -1310,7 +1310,7 @@ class DeviceChannel(Channel):
                 env={"CHEESE_TUNNEL_PROBE_DIR": seat_dir(home_dir, seat)},
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
-        except Exception:  # noqa: BLE001 — a probe failure is not proof of death
+        except Exception:  # a probe failure is not proof of death
             return False
         finally:
             logger.info(

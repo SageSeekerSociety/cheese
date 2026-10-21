@@ -18,9 +18,6 @@ import { formatSpan } from '@/lib/siteLog'
 
 const props = defineProps<{ lines: MemberActivityLine[] }>()
 
-/** 多久没有新输出就算卡住，另说一句「已 N 无新输出」。纯提示，不做任何事。 */
-const STALL_MS = 60_000
-
 const working = computed(() => props.lines.filter((l) => l.kind === 'working'))
 const typing = computed(() => props.lines.filter((l) => l.kind === 'typing'))
 
@@ -73,16 +70,6 @@ function workingTotal(line: MemberActivityLine): string | null {
   return formatSpan(Math.max(0, Math.floor((now.value - line.since * 1000) / 1000)))
 }
 
-/** 多久没有新输出；还没到、从没收过帧、或者那一帧比这一轮还早（上一轮留下的）就不说。 */
-function stallText(line: MemberActivityLine): string | null {
-  // 比这一轮还早的帧是上一轮的收尾，那一截静默不是这一轮的：这一轮才开始了几秒，
-  // 不可能已经好几分钟没有输出。
-  if (!line.lastFrameAt || fromAnEarlierTurn(line)) return null
-  const quiet = Math.floor((now.value - line.lastFrameAt) / 1000)
-  if (quiet * 1000 < STALL_MS) return null
-  return t('work.room.activity.stalled', { span: formatSpan(quiet) })
-}
-
 // 读屏听到的那一句：只有谁、在哪一相，不带当前一步、不带秒数 —— 帧和秒都不进
 // 这一句，它才只在相变时变。和 ChatTimeline 的 faceStatus 是同一个道理。
 const workingAria = computed(() =>
@@ -104,9 +91,6 @@ const workingAria = computed(() =>
       <span class="member-activity__text" aria-hidden="true">{{ workingHead(line) }}</span>
       <span v-if="workingTotal(line)" class="member-activity__meta" aria-hidden="true"
         >{{ separator }}{{ workingTotal(line) }}</span
-      >
-      <span v-if="stallText(line)" class="member-activity__stall" aria-hidden="true"
-        >{{ separator }}{{ stallText(line) }}</span
       >
     </div>
     <!-- What a screen reader hears: who and which phase only, so it changes on the phase, not per frame. -->
@@ -151,9 +135,8 @@ const workingAria = computed(() =>
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 用时和「无新输出」都不参与截断：上面那截再长，这两个数也还在。 */
-.member-activity__meta,
-.member-activity__stall {
+/* 用时不参与截断：上面那截再长，这个数也还在。 */
+.member-activity__meta {
   flex: none;
 }
 .member-activity__dots {
@@ -187,9 +170,5 @@ const workingAria = computed(() =>
   40% {
     opacity: 1;
   }
-}
-/* 比这一行的其余部分再淡一档：它是元信息（多久没有新输出），不是又一件在做的事。 */
-.member-activity__stall {
-  color: var(--faint);
 }
 </style>

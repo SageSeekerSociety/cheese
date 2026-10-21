@@ -5,16 +5,16 @@
 // 从渲染结果上断言，不去读组件内部状态。
 // （TopicSidebar.collapse.spec.ts 守的是子话题折叠，两份互不重叠。）
 import type { Component } from 'vue'
-import type { Topic } from '@/cx_types'
+import type { ProjectMemberRow, Topic } from '@/cx_types'
 
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
-import { createPinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { screenHeader } from '@/composables/useScreenHeader'
@@ -23,6 +23,8 @@ import ScreenHeaderTitle from './common/Navigation/ScreenHeaderTitle.vue'
 import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale, t } from '@/i18n'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -43,6 +45,10 @@ function topic(id: string, parentId: string | null, kind = 'channel'): Topic {
 }
 
 const topics: Topic[] = [topic('root', null, 'root'), topic('a', 'root'), topic('b', 'root')]
+
+function member(handle: string, name: string): ProjectMemberRow {
+  return { user_handle: handle, name, role: 'member' } as ProjectMemberRow
+}
 
 const router = createRouter({
   history: createWebHistory(),
@@ -325,6 +331,7 @@ describe('行左边那一个槽', () => {
     const row = topicRowFor(container, 'a')
     expect(row.querySelector('.row-slot .row-light')).toBeNull()
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(row.querySelector('.row-light--yellow')).not.toBeNull()
     expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
     expect(row.querySelector('.cheese-avatar')).toBeNull()
     expect(row.querySelector('[data-state]')).toBeNull()
@@ -341,7 +348,7 @@ describe('行左边那一个槽', () => {
       t.id === 'a' ? ({ ...t, activity: [{ member: 'zhang', kind: 'typing', since: 1, expires_in: 5 }] } as Topic) : t
     )
     const { container } = mount({ topics: typing })
-    expect(topicRowFor(container, 'a').querySelector('[data-state]')).toBeNull()
+    expect(topicRowFor(container, 'a').querySelector('.rail-members__one')).toBeNull()
   })
 
   it.each(['mention', 'failed'])('等待成员（%s）不再给频道行添加头像，原状态灯判据不变', (reason) => {
@@ -363,6 +370,95 @@ describe('行左边那一个槽', () => {
     expect(signal).not.toBeNull()
     expect(signal.getAttribute('aria-label')).toContain(reason === 'mention' ? '分钟' : '报错')
     expect(signal.title).toBe(signal.getAttribute('aria-label'))
+  })
+
+  it('有人等一位队友回话超过五分钟，这一行亮红灯；还没满五分钟不红', () => {
+    const longAgo = new Date(Date.now() - 6 * 60_000).toISOString()
+    const justNow = new Date(Date.now() - 60_000).toISOString()
+    const rows = topics.map((t) =>
+      t.id === 'a'
+        ? ({ ...t, waits: [{ member: 'cheese-a1', reason: 'mention', since: longAgo }] } as Topic)
+        : t.id === 'b'
+          ? ({ ...t, waits: [{ member: 'cheese-a1', reason: 'mention', since: justNow }] } as Topic)
+          : t
+    )
+    const { container } = mount({ topics: rows })
+    const rowA = topicRowFor(container, 'a')
+    // 等太久了是这一行的状态：行尾一颗红灯，不再画成成员头像。
+    const light = rowA.querySelector('.row-light--red')
+    expect(light).not.toBeNull()
+    // 「在等谁、为什么」还在：悬停那一句说的仍是那位成员和等的原因。
+    expect(light?.getAttribute('title')).toMatch(/有人 @ 了.*分钟/)
+    expect(rowA.querySelector('.rail-members__one')).toBeNull()
+    // 槽里没有房间级的状态：槽永远是频道记号。
+    expect(slotsOf(rowA)[0].querySelector('.row-light')).toBeNull()
+    // 还没满五分钟的那一行，什么都不亮。
+    expect(topicRowFor(container, 'b').querySelector('.row-light')).toBeNull()
+    expect(topicRowFor(container, 'b').querySelector('.rail-members__one')).toBeNull()
+  })
+
+  it('一位队友那一轮报错了，不等五分钟立刻红，悬停说是它那一轮', () => {
+    const rows = topics.map((t) =>
+      t.id === 'a'
+        ? ({ ...t, waits: [{ member: 'cheese-a1', reason: 'failed', since: new Date().toISOString() }] } as Topic)
+        : t
+    )
+    const { container } = mount({ topics: rows })
+    const light = topicRowFor(container, 'a').querySelector('.row-light--red')
+    expect(light?.getAttribute('title')).toContain('最近一轮报错了')
+  })
+
+  // 时间线说不出在等谁的那一笔（member 为 null），侧栏把它记在项目默认的队友头上。
+  // 频道行不画头像，这个名字落在行尾那盏红灯的说明里。
+  describe('说不出是谁的等待，落在项目默认的那位队友身上', () => {
+    function withDefaultAgent() {
+      const pinia = createPinia()
+      setActivePinia(pinia)
+      // 打开 p1，名册已经读回来。
+      seedProjects([])
+      seedProject('p1', {
+        topics,
+        members: [
+          member('me', '我'),
+          { user_handle: 'cheese-a1', name: '小芝', agent: true, project_default: true } as ProjectMemberRow,
+        ],
+        unread: {},
+        privateUnread: {},
+        notifyLevels: {},
+      })
+      useWorkspaceStore().openProject('p1')
+      return pinia
+    }
+    const failedNow = () => ({ member: null, reason: 'failed', since: new Date().toISOString() })
+
+    it('它一边在干活、房间一边在等一个说不出是谁的成员：不画头像，红灯说这件事', async () => {
+      const rows = topics.map((t) =>
+        t.id === 'a'
+          ? ({ ...t, waits: [failedNow()], activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
+          : t
+      )
+      const { container } = mount({ topics: rows }, withDefaultAgent())
+      await nextTick()
+      expect(topicRowFor(container, 'a').querySelector('.rail-members__one')).toBeNull()
+      expect(topicRowFor(container, 'a').querySelector('.row-light--red')?.getAttribute('title')).toContain('小芝')
+    })
+
+    it('说不出是谁的那一笔落在项目默认的队友头上：红灯写的是它的名字', async () => {
+      const rows = topics.map((t) =>
+        t.id === 'a'
+          ? ({ ...t, waits: [failedNow()] } as Topic)
+          : t.id === 'b'
+            ? ({ ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
+            : t
+      )
+      const { container } = mount({ topics: rows }, withDefaultAgent())
+      await nextTick()
+      // 在干活的那一行也不画头像：频道行统一去掉成员头像。
+      expect(topicRowFor(container, 'b').querySelector('.rail-members__one')).toBeNull()
+      // 在等的那一行，红灯的悬停说的是同一位（默认队友）。
+      expect(topicRowFor(container, 'a').querySelector('.rail-members__one')).toBeNull()
+      expect(topicRowFor(container, 'a').querySelector('.row-light--red')?.getAttribute('title')).toContain('小芝')
+    })
   })
 
   it('未读只给名称加粗，不再显示未读数字，也不把未读当作选中', () => {
@@ -579,10 +675,10 @@ describe('综合自身无灯时，收起来的任务灯仍落在唯一那盏灯�
 
   it.each([
     ['蓝：这条归我', task({ owner_handle: null }), '.row-light--blue'],
-    ['绿：有活在往前走', task({ moving: true }), '.row-light--green.row-light--breathe'],
+    ['绿：有一条交付完了我还没看过', task({ unseen_delivery: true }), '.row-light--green'],
     [
-      '红：显示在跑但没动静',
-      task({ moving: true, last_output_at: new Date(Date.now() - 10 * 60_000).toISOString() }),
+      '红：一轮停在报错上，五分钟没人接手',
+      task({ incomplete_since: new Date(Date.now() - 10 * 60_000).toISOString() }),
       '.row-light--red',
     ],
   ])('%s', (_name, foldedTask, selector) => {

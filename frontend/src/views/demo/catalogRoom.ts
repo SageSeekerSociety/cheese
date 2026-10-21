@@ -30,6 +30,7 @@ import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
+import ComposerSummon from '@/components/room/ComposerSummon.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
@@ -39,7 +40,7 @@ import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
- *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
+ *  「外部」、「取消回复」。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
 // ---- @ 候选菜单（MentionMenu）------------------------------------------------
@@ -103,16 +104,29 @@ const CHIP_ATTS = [
 
 // ---- 动作行（ComposerActions）------------------------------------------------
 
-/** 那一行除了按钮之外什么都不带（算力 chips 由话题自己从插槽交进来）。 */
+/** 那一行除了按钮之外什么都不带（交给谁那颗头像、已归档那一枚由外面从插槽交进来）。 */
 const ACTIONS_BASE = {
   uploading: false,
   canSend: false,
   showImagePicker: false,
   enterSends: true,
-  alwaysSummon: false,
-  summonOn: false,
-  summonReady: true,
-  agentName: AGENT_NAME,
+  canVoice: true,
+  canChecklist: true,
+  canRemind: true,
+}
+
+// ---- 交给谁（ComposerSummon）------------------------------------------------
+
+const MATE = { handle: 'cheese', label: AGENT_NAME }
+// i18n-data: a demo teammate's name, shown as fixture data
+const OWN_MATE = { handle: 'cheese-0a1b2c3d', label: '我的 Claude Code' }
+const SUMMON_BASE = {
+  mates: [MATE, OWN_MATE],
+  shown: [MATE],
+  on: false,
+  fixed: false,
+  ready: true,
+  busy: [] as string[],
 }
 
 /** 芝士问的一道题，`answer_log` 由各格给。 */
@@ -216,10 +230,112 @@ const TASK_ENTRIES: CatalogEntry[] = [
     needs: UI_T,
     states: [
       {
-        name: '在做',
-        note: '一件在做的任务：标题在左，状态在后面；数据都从 props 来，转交、改环境这些动作交给上面。',
+        name: '开启：队友还没报',
+        note: '一件刚开启的任务：标题在左，状态在后面；队友还没报过，写「进行中」。数据都从 props 来，转交、改环境这些动作交给上面。',
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
+      },
+      {
+        name: '队友说在做',
+        note: '没有卡的时候，队友自己报的「在做」照写，后面跟它的原话。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'running' },
+            progress_state: 'working',
+            progress_note: '在改登录表单，加「记住我」那个勾选框',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '队友说在等结果',
+        note: '状态是 AI 队友自己报的（不是从它在不在跑推出来的），后面跟着它的原话；悬停看是谁、什么时候报的。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '队友说卡住了',
+        note: '「卡住了，等人帮忙」落在待处理，进负责人的待办；后面跟它说卡在哪。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'needs_you', phrase: 'blocked' },
+            progress_state: 'blocked',
+            progress_note: '没有预发环境的测试账号，登不进去验证',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '递了卡，等人审阅',
+        note: '卡说在哪一步；队友递卡前报的状态和原话作废，页头不再写。对验收人本人这一句是「待你审阅」。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'needs_you', phrase: 'awaiting_review' },
+            waiting_on: 'bob',
+          },
+        },
+        expect: '等人审阅',
+      },
+      {
+        name: '递了卡，平台在跑检查',
+        note: '卡还在检查这一步：下一步在平台手上，没人被点到。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: { ...TASK_HEADER_PROPS.task, presentation: { column: 'delivering', phrase: 'gate_running' } },
+        },
+        expect: '平台在跑检查',
+      },
+      {
+        name: '卡被退回，回到在做',
+        note: '验收人退回（或卡被作废）后，平台把任务放回「在做」；没有原话，等队友自己再报。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'running' },
+            progress_state: 'working',
+            progress_set_by: null,
+            progress_set_at: '2026-10-05T02:00:00Z',
+          },
+        },
+        expect: '芝士在做',
+      },
+      {
+        name: '报完之后会话结束了',
+        note: '它报的那一句照旧，旁边写「已离开」：会话结束不改它报的状态。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+            agent_left_at: '2026-10-05T01:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-agent-left"]',
       },
     ],
   },
@@ -539,51 +655,88 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
   {
     id: 'room-composer-actions',
     title: 'ComposerActions',
-    about: '输入框下面那一行：左边是「这条消息本身」的动作，右边是「它会怎么发出去」。',
+    about:
+      '输入框下面那一行：左边「+」收着上传文件、照片、清单、提醒和键盘快捷键；右边依次是麦克风、交给谁那颗头像和发送。',
     file: 'src/components/room/ComposerActions.vue',
     component: ComposerActions,
     needs: UI_T,
     states: [
       {
         name: '什么都没写',
-        note: '发送键是灰的（这一行唯一的实心块）。「交给芝士」开着的时候只改一条描边和墨色，形态不变——一行里只有一个实心块，那个位置是发送的。',
+        note: '左边只有「+」，右边是麦克风和发送。发送键是灰的（这一行唯一的实心块）。交给谁那颗头像由外面从 `summon` 插槽交进来，预览站的格子只喂默认插槽，所以这一格里没有它。',
         props: ACTIONS_BASE,
-        expect: '交给芝士',
-      },
-      {
-        name: '这条会开着芝士跑',
-        note: '正文里 @ 了它：按钮是填充的，一眼认得出这条消息会真的开出一轮，和「只是说了句话」是两回事。',
-        props: { ...ACTIONS_BASE, canSend: true, summonOn: true },
-        expect: '交给芝士',
+        expectSelector: '.composer-plus',
       },
       {
         name: '有字了，能发',
         note: '灰键过渡成琥珀；按下去沉一下，不等松手。',
         props: { ...ACTIONS_BASE, canSend: true },
-        expect: '交给芝士',
-      },
-      {
-        name: '手机上多一颗「照片」',
-        note: '那儿没有截图可贴、也没有东西可拖，从文件选择器里翻相册要绕好几步。',
-        props: { ...ACTIONS_BASE, showImagePicker: true },
-        expect: '交给芝士',
-      },
-      {
-        name: '名册还没到，芝士是谁还不知道',
-        note: '这一瞬间「交给芝士」是关着的：解析不出 handle，替人写进正文的那个 @ 只是一行字，消息照发、它不动。少一个入口，好过一个点了不算数的入口。',
-        props: { ...ACTIONS_BASE, summonReady: false },
-        expect: '交给芝士',
+        expectSelector: '.composer-send:not([disabled])',
       },
       {
         name: '上传还没回来',
         note: '这一刻发不出去，所以发送键是灰的——而不是把字吞掉。',
         props: { ...ACTIONS_BASE, canSend: true, uploading: true },
-        expect: '交给芝士',
+        expectSelector: '.composer-send[disabled]',
       },
       {
-        name: '私聊：没有「交给芝士」这一颗',
-        note: '那儿每条都是说给它听的，所以这一格只剩发送——`alwaysSummon` 一开，按钮整颗不画。算力那一枚是话题从 `chips` 具名插槽交进来的，预览站的格子只喂默认插槽、喂不进去，少的那一枚在这一格看不见。',
-        props: { ...ACTIONS_BASE, alwaysSummon: true, canSend: true },
+        name: '录音中：发送键变成 ✓',
+        note: '录音条从麦克风往左展开（外面的 `voice` 插槽），发送键原地变成「说完了」。',
+        props: { ...ACTIONS_BASE, voice: 'recording' },
+        expectSelector: '.composer-actions--voice',
+      },
+      {
+        name: '刚说进来一段：可以还原原话',
+        note: '「+」旁边一颗小药丸，底下细线 8 秒走完就收起；正文一动它也走开。',
+        props: { ...ACTIONS_BASE, canSend: true, voiceSwap: 'raw' },
+        expect: '还原原话',
+      },
+    ],
+  },
+  {
+    id: 'room-composer-summon',
+    title: 'ComposerSummon',
+    about:
+      '发送键左边那颗 AI 队友头像：这条发出去，谁会接手。它是正文的镜子——正文里 @ 了队友就亮、睁眼，没 @ 就灰着、闭眼。点一下交给头像上那位；右键、长按或按 ↑ 换一位。',
+    file: 'src/components/room/ComposerSummon.vue',
+    component: ComposerSummon,
+    needs: UI_T,
+    states: [
+      {
+        name: '不交给',
+        note: '灰底、闭眼。悬停时眯眼，预告点一下它就醒了。',
+        props: SUMMON_BASE,
+        expectSelector: '.summon__btn:not(.summon__btn--on)',
+      },
+      {
+        name: '交给它',
+        note: '换成它自己的底色、睁眼；底色先到，眼睛晚 40ms。',
+        props: { ...SUMMON_BASE, on: true },
+        expectSelector: '.summon__btn--on',
+      },
+      {
+        name: '它正在忙',
+        note: '往右上看、冒泡：它正在这个频道里跑一轮，这条它会接着看。',
+        props: { ...SUMMON_BASE, busy: [MATE.handle] },
+        expectSelector: '.summon__btn--busy',
+      },
+      {
+        name: '同时 @ 了两位',
+        note: '后端的做法是 @ 到的每位各起一轮，头像就叠着画两位。',
+        props: { ...SUMMON_BASE, on: true, shown: [MATE, OWN_MATE] },
+        expectSelector: '.summon__stack',
+      },
+      {
+        name: '任务负责人：规则常亮',
+        note: '任务里负责人说的话都交给队友，这是规则不是开关，点了只说明。',
+        props: { ...SUMMON_BASE, on: true, fixed: true },
+        expectSelector: '.summon__btn--fixed',
+      },
+      {
+        name: '名册还没到',
+        note: '解析不出 handle 的那一瞬间不接受点击：少一个入口，好过一个点了不算数的入口。',
+        props: { ...SUMMON_BASE, ready: false },
+        expectSelector: '.summon__btn[disabled]',
       },
     ],
   },

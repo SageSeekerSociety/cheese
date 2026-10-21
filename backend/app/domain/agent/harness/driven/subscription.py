@@ -18,9 +18,8 @@ is one the room went on refusing (``REFUSED_TIMES``), with its id in the error
 log.
 
 What a harness supplies is what its protocol decides: how to pull from its
-runner, how to read its mirror, which records open and close a turn, what to do
-with a record produced before the first input, and — where the harness reports
-it — which record says an input was read.
+runner, how to read its mirror, which records open and close a turn, and what to do
+with a record produced before the first input.
 
 The mirror is a sqlite file that commits synchronously, and every room on a
 backend shares one event loop, so no read or write of the mirror runs on that
@@ -57,14 +56,6 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentToolUse,
 )
-from app.domain.delivery.input_identity import (
-    CompletionConsumer,
-    InputReceipt,
-    ReceiptConsumer,
-    TerminationConsumer,
-    WorkCompletion,
-    WorkTermination,
-)
 
 #: What a record says about a working session, for the liveness rules
 #: (``RoomSessions.verdict``): it said something, work moved. A tool starting
@@ -81,6 +72,10 @@ Seat = tuple[uuid.UUID, str]
 
 #: What one record of a turn's work said about how it is going (``marks``).
 Moved = Callable[[uuid.UUID, frozenset[str]], Awaitable[None]]
+
+#: Where the journal's rows are kept as the raw record of the session: handed
+#: every row, in order, a page at a time, before the room reads any of them.
+Records = Callable[[SessionRef, list[dict]], Awaitable[object]]
 
 #: 一轮开/关的回报，按座位而不是按房间：同一间房里另一个 agent 的一轮开开关关，
 #: 不碰这个座位的「在跑的活」和它的钟。
@@ -119,6 +114,12 @@ STALE_S = 2 * 3600
 REFUSED_TIMES = 3
 REFUSED_OVER_S = 10 * 60
 
+#: How many journal pages one drain hands to the raw record. The rest of a
+#: backlog waits for the next drains, in the mirror, so the room is not kept
+#: waiting behind it: measured on a local database, a page of 256 rows takes
+#: about 55 ms to keep.
+RECORD_PAGES = 4
+
 logger = logging.getLogger(__name__)
 
 
@@ -156,17 +157,13 @@ class Subscription[B: Backlog]:
         consume: EventConsumer,
         activity: SeatActivity,
         *,
-        receipts: ReceiptConsumer | None = None,
-        completions: CompletionConsumer | None = None,
-        terminations: TerminationConsumer | None = None,
         moved: Moved | None = None,
+        records: Records | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
-        self.receipts = receipts
-        self.completions = completions
-        self.terminations = terminations
         self.moved = moved
+        self.records = records
         self.lock = asyncio.Lock()
         self.forgotten_at = 0.0
         self.disk = ThreadPoolExecutor(
@@ -302,46 +299,6 @@ class Subscription[B: Backlog]:
         """A record from before the first input, which no turn owns."""
         raise NotImplementedError
 
-    def receipt(self, record: dict) -> InputReceipt | None:
-        """Native evidence for a specific input, distinct from RPC acceptance."""
-        return None
-
-    def completion(self, record: dict) -> WorkCompletion | None:
-        return None
-
-    def termination(self, record: dict) -> WorkTermination | None:
-        """The work interval this record says ended without completing.
-
-        Only a harness can answer this: whether a result is an error, or was
-        interrupted, and which inputs that work owned, are its facts. The
-        default knows nothing and frees nothing.
-        """
-        return None
-
-    async def reconcile_history(self) -> None:
-        """A harness may reconcile retained facts behind its landing cursor."""
-
-    async def settle_termination(self, record: dict) -> WorkTermination | None:
-        termination = self.termination(record)
-        if termination is not None:
-            if self.terminations is None:
-                raise RuntimeError("Termination consumer is not bound")
-            await self.terminations(termination)
-        return termination
-
-    async def settle_completion(self, record: dict) -> WorkCompletion | None:
-        # A terminated work is not a completion, and a record settles at most
-        # one of the two. Termination goes first so an error or a Stop can never
-        # fall through to the completion consumer.
-        if await self.settle_termination(record) is not None:
-            return None
-        completion = self.completion(record)
-        if completion is not None:
-            if self.completions is None:
-                raise RuntimeError("Completion consumer is not bound")
-            await self.completions(completion)
-        return completion
-
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         """What this record says about the turn. The events answer most of it;
         a harness adds what its records say and the vocabulary does not (a tool
@@ -367,6 +324,7 @@ class Subscription[B: Backlog]:
             finally:
                 self.asking = None
             reader = await self.on_disk(self.reader)
+            await self._record(reader)
             delivered = stale = 0
             # A backlog nobody read for hours is mostly records too old to
             # land. The run of them at the cursor is stepped over in one move:
@@ -380,16 +338,6 @@ class Subscription[B: Backlog]:
                 while page := await self.on_disk(reader.unread):
                     for entry in page:
                         assert isinstance(entry.record, dict)
-                        receipt = self.receipt(entry.record)
-                        if receipt is not None:
-                            # Settlement is never subject to output-age or poison
-                            # record skipping. Failure leaves this cursor replayable.
-                            if self.receipts is None:
-                                raise RuntimeError("Receipt consumer is not bound")
-                            await self.receipts(receipt)
-                        # Settlement precedes age/poison handling even when the
-                        # runner is idle and this process never saw the start.
-                        completion = await self.settle_completion(entry.record)
                         if entry.age_s >= STALE_S:
                             stale += 1
                             if self.ends_turn(entry.record, reader):
@@ -398,8 +346,6 @@ class Subscription[B: Backlog]:
                             try:
                                 delivered += await self._deliver(entry, reader)
                             except Exception:
-                                if completion is not None:
-                                    raise
                                 if not await self.on_disk(
                                     reader.refused,
                                     entry.key,
@@ -443,6 +389,41 @@ class Subscription[B: Backlog]:
                 self.forgotten_at = time.monotonic()
                 await self.on_disk(reader.forget, older_than_s=RETENTION_S)
             return delivered
+
+    async def _record(self, reader: B) -> None:
+        """Hand the rows the mirror holds past the raw record's cursor to
+        ``records``, before the room reads them.
+
+        Kept apart from landing on purpose: a record too old to land, one the
+        room refused, one before the first input — the room steps over each,
+        and each is still something the session did.
+
+        The raw record never holds the room up. A page it refuses is logged
+        and left where it is, and the room is served as before; the next drain
+        hands the same rows again (``records`` keeps a row it already kept
+        once), and the mirror keeps them until it has (``Journal.prune``). A
+        drain hands at most ``RECORD_PAGES`` pages, so a long backlog is
+        recorded over several drains rather than in front of one.
+        """
+        if self.records is None:
+            return
+        for _ in range(RECORD_PAGES):
+            page = await self.on_disk(reader.unrecorded)
+            if not page:
+                return
+            try:
+                await self.records(self.session, page)
+            except Exception:
+                logger.exception(
+                    "raw record refused journal rows %s-%s; kept in the mirror "
+                    "for the next drain topic=%s agent=%s",
+                    page[0]["sequence"],
+                    page[-1]["sequence"],
+                    self.session.topic_id,
+                    self.session.agent_handle,
+                )
+                return
+            await self.on_disk(reader.recorded, through=page[-1]["sequence"])
 
     async def _end_late(self, entry: HarnessEvent, reader: B) -> None:
         """End the turn a record too old to land closes, saying nothing.
@@ -494,10 +475,6 @@ class Subscription[B: Backlog]:
                     work_id,
                     True,
                 )
-            # The input receipt is not emitted here: the drain loop emits it
-            # before the age/poison checks, so that a settlement never rides on
-            # a record the room may step over. Emitting it here as well would
-            # deliver the same receipt twice.
             if self.moved is not None:
                 await self.moved(work_id, frozenset(self.marks(record, list(events))))
             for event in events:

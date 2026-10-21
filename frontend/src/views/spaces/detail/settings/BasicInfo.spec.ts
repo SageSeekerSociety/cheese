@@ -20,6 +20,11 @@ const listCategories = vi.fn()
 const delSpace = vi.fn()
 const updateSpace = vi.fn()
 
+// 侧栏「我的草稿」旁边的数，换空间时读一次。
+vi.mock('@/api/taskDrafts', () => ({
+  TaskDraftsApi: { list: vi.fn().mockResolvedValue([]) },
+}))
+
 vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spacesDetail(...a),
@@ -88,7 +93,7 @@ async function mountPage(currentUserId: number | null) {
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'root', component: { render: () => h('div') } },
-      { path: '/spaces', name: 'HomeSpaces', component: { render: () => h('div') } },
+      { path: '/inbox', name: 'inbox', component: { render: () => h('div') } },
       // 空间外壳（Detail）读回空间，这一栏挂在它下面，和真的路由树一样。
       {
         path: '/spaces/:spaceId',
@@ -186,7 +191,7 @@ describe('题目板删除入口', () => {
     await fireEvent.click(dialogButtonWith('spaces.detail.deleteSpace'))
     await waitFor(() => expect(delSpace).toHaveBeenCalledWith(SPACE_ID))
 
-    await waitFor(() => expect(router.currentRoute.value.name).toBe('HomeSpaces'))
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('inbox'))
     expect(router.currentRoute.value.name).not.toBe('SpacesDetail')
   })
 })

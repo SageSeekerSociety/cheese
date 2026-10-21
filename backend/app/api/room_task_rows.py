@@ -30,10 +30,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.addressing import Event, address
-from app.domain.agent.chat import ChatService
-from app.domain.agent.liveness import last_output_at, running_tasks
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.opening import opening_state
-from app.domain.agent_instance.configuration import catalog
+from app.domain.agent.session_state import running_conversations
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
@@ -46,6 +45,7 @@ from app.domain.review.queries import latest_cards_by_task
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
+from app.domain.room_task.adapters import task_row_json
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import hand_of
 from app.domain.room_task.schemas import TaskOut
@@ -63,22 +63,16 @@ async def from_threads(db: AsyncSession, task_ids: Sequence[uuid.UUID]) -> set:
     return set(await db.scalars(select(Thread.id).where(Thread.id.in_(list(task_ids)))))
 
 
-async def task_out(db, chat: ChatService, task, card=None) -> dict:
+async def task_out(db, task, card=None) -> dict:
     """The task with its board cell — what every route that hands a task back
     to its page returns, so the page never holds one without it. The same
     function the list uses, so a deep link and the board cannot disagree."""
     if card is None:
         card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
-    running = await running_tasks(chat, db, [task.id])
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
     out = TaskOut.model_validate(task).model_dump(mode="json")
     shown = presentation.task_presentation(
-        presentation.facts_for_task(
-            task,
-            card,
-            running=task.id in running,
-            awaiting_answer=task.id in asked,
-        ),
+        presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
@@ -94,7 +88,6 @@ async def task_out(db, chat: ChatService, task, card=None) -> dict:
 
 async def task_rows(
     db: AsyncSession,
-    chat: ChatService,
     actor: Actor,
     project_id: uuid.UUID,
     threads: Sequence[tuple[Task, Sequence[Block]]],
@@ -119,7 +112,6 @@ async def task_rows(
     # 构造几百遍。
     project = await ProjectRepository(db).get(project_id)
     choices = catalog(project.settings if project else None)
-    running = await running_tasks(chat, db, [t.id for t, _ in threads])
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
     in_place = await from_threads(db, thread_ids)
@@ -128,12 +120,7 @@ async def task_rows(
     for task, blocks in threads:
         card = cards.get(task.id)
         shown = presentation.task_presentation(
-            presentation.facts_for_task(
-                task,
-                card,
-                running=task.id in running,
-                awaiting_answer=task.id in asked,
-            ),
+            presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
             now=now,
         )
         waiting = presentation.waiting_on(
@@ -144,7 +131,7 @@ async def task_rows(
         accepted = landed.get(task.id, [])
         items.append(
             {
-                **TaskOut.model_validate(task).model_dump(mode="json"),
+                **task_row_json(task),
                 # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
                 "model": presentation.card_model(
                     task, spent=spent.get(task.id), choices=choices
@@ -196,7 +183,6 @@ def named_task(block: Block) -> uuid.UUID | None:
 
 async def tasks_under_blocks(
     db: AsyncSession,
-    chat: ChatService,
     actor: Actor,
     *,
     room_id: uuid.UUID,
@@ -220,7 +206,7 @@ async def tasks_under_blocks(
     rows = dict(
         zip(
             (task.id for task, _ in threads),
-            await task_rows(db, chat, actor, project_id, threads),
+            await task_rows(db, actor, project_id, threads),
             strict=True,
         )
     )
@@ -239,7 +225,7 @@ async def tasks_under_blocks(
 
 
 def _iso(at: datetime | None) -> str | None:
-    """一个时刻的 ISO 写法，`None` 照旧 `None`（和 `last_output_at` 同一个形状）。"""
+    """一个时刻的 ISO 写法，`None` 照旧 `None`。"""
     return None if at is None else at.isoformat()
 
 
@@ -260,58 +246,39 @@ async def incomplete_tasks(
 
 async def project_task_rows(
     db: AsyncSession,
-    chat: ChatService,
     me: str,
     tasks: list[Task],
     *,
-    silent_of: Callable[[uuid.UUID], float | None] | None = None,
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
     incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
 ) -> list[dict]:
     """The project rail's rows for ``tasks``: each with its board cell, its
     card, whether it waits on ``me``, whether it stalled, when it last moved,
-    and — when the caller can say it — when its running turn last produced
-    output (`silent_of`; the sidebar's red light, `TopicRailTaskRow`), whether
-    it holds a delivery ``me`` has not opened since (`delivered_of`; the
-    sidebar's 长绿, same row component), and when the earliest failure it has
-    not recovered from began (`incomplete_of`; the same red light for a row that
-    is not running — see `block/waits.MemberWaits.unresolved_failures`)."""
+    and — when the caller can say it — whether it holds a delivery ``me`` has
+    not opened since (`delivered_of`; the sidebar's 长绿, `TopicRailTaskRow`),
+    and when the earliest failure it has not recovered from began
+    (`incomplete_of`; the sidebar's red light — see
+    `block/waits.MemberWaits.unresolved_failures`)."""
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
-    # （`ix_blocks_questions`）。这是唯一会中断「运行中」的一格，所以不能留
-    # 给调用方各自去问。
+    # （`ix_blocks_questions`）。它压过队友报的「在做」，所以不能留给调用方
+    # 各自去问。
     asked = await awaiting_an_answer(db, task_ids)
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
-    # 第四次批查询：哪几条此刻有一轮在跑（`agent.liveness`：不止看内存）。
-    running = await running_tasks(chat, db, [task.id for task in tasks])
-    # 第五次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
+    # 第四次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
     last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
     items = []
     for task in tasks:
         card = cards.get(task.id)
         said_at = last_said.get(task.id)
         shown = presentation.task_presentation(
-            presentation.facts_for_task(
-                task,
-                card,
-                running=task.id in running,
-                awaiting_answer=task.id in asked,
-            ),
+            presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
             now=now,
         )
         last_activity = said_at or task.created_at
-        is_running = task.id in running
-        # 在跑的那一轮上一次有动静是什么时候（取整到分钟）：落了帧，或者读它的那
-        # 一路收到 runner 的应答。和话题清单那一头同一个来源、同一个形状
-        # （`agent.liveness.last_output_at`），侧栏两处的红灯同一条判据。None = 此刻
-        # 没有在跑的一轮，或者这个进程说不了（那种「不知道」不当成「很新」用，读的
-        # 人自己决定，这里也不编一个）。
-        quiet_at = (
-            None if silent_of is None else last_output_at(silent_of(task.id), now)
-        )
         # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
         # 点和任务列表的橙字都读它，不各自从列再推一遍。
         asking = asked.get(task.id)
@@ -328,28 +295,20 @@ async def project_task_rows(
                 # 一层。
                 asked_also=() if asking is None else asking.waiting(task.people),
                 owner=(
-                    task.owner_handle
-                    if presentation.owner_acts_on(shown, running=is_running)
-                    else None
+                    task.owner_handle if presentation.owner_acts_on(shown) else None
                 ),
             ),
             hand_of(shown.column),
         ).reason_for(me)
         items.append(
             {
-                **TaskOut.model_validate(task).model_dump(mode="json"),
+                **task_row_json(task),
                 "presentation": shown.as_dict(),
                 "awaits_me": awaits is not None,
-                # 这条活此刻在不在往前走（侧栏那盏呼吸绿）。判据在
-                # `presentation.work_moving`：有一轮在跑，或者走在交付链路上 ——
-                # 和它上面那个 `presentation` 同一个来源，不由读的人各推一份。
-                "moving": presentation.work_moving(shown),
-                # 在跑、但上一次有输出是什么时候（`quiet_at`，取整到分钟）。
-                "last_output_at": None if quiet_at is None else quiet_at.isoformat(),
                 # 这条活上还没恢复的失败从什么时候开始（`incomplete_of`；`None` = 没有
                 # 未恢复的失败，或调用方没算）。判据在
-                # `block/waits.MemberWaits.unresolved_failures`，和「在跑但没动静」
-                # 同画一盏红灯：一条活停下来报错、五分钟没人接手，也是在跑却没动静。
+                # `block/waits.MemberWaits.unresolved_failures`：一条活停下来报错、
+                # 五分钟没人接手，侧栏画红灯。
                 "incomplete_since": (
                     None if incomplete_of is None else _iso(incomplete_of(task.id))
                 ),
@@ -360,7 +319,7 @@ async def project_task_rows(
                 if delivered_of is not None
                 else False,
                 "stalled": presentation.is_stalled(
-                    shown, running=is_running, last_activity=last_activity, now=now
+                    shown, last_activity=last_activity, now=now
                 ),
                 "last_activity_at": last_activity.isoformat(),
                 "card": None
@@ -384,11 +343,9 @@ RAIL_TASKS_FLOOR = 3
 
 async def rail_tasks(
     db: AsyncSession,
-    chat: ChatService,
     actor: Actor,
     room_ids: list[uuid.UUID],
     *,
-    silent_of: Callable[[uuid.UUID], float | None] | None = None,
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
     incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
 ) -> dict[uuid.UUID, dict]:
@@ -413,15 +370,26 @@ async def rail_tasks(
     service = TaskService(db)
     counts = await service.underway_counts(room_ids)
     mine = await service.underway_with(room_ids, me) if actor.authenticated else []
-    rows = await project_task_rows(
+    candidates: list[Task] = []
+    if actor.authenticated:
+        # 一次把「我的」和每个房间最多补的 `RAIL_TASKS_FLOOR` 条候选一起送进
+        # `project_task_rows`：原先分两批调，同一张页上验收卡、在跑轮次、提问和最后
+        # 发言被各问了两遍。
+        per_room: dict[uuid.UUID, int] = {}
+        for task in await service.underway_others(room_ids, me):
+            taken = per_room.get(task.room_id, 0)
+            if taken < RAIL_TASKS_FLOOR:
+                per_room[task.room_id] = taken + 1
+                candidates.append(task)
+    all_rows = await project_task_rows(
         db,
-        chat,
         me,
-        mine,
-        silent_of=silent_of,
+        [*mine, *candidates],
         delivered_of=delivered_of,
         incomplete_of=incomplete_of,
     )
+    rows = all_rows[: len(mine)]
+    candidate_rows = all_rows[len(mine) :]
     shown: dict[str, list[dict]] = {}
     for row in sorted(rows, key=lambda row: row["last_activity_at"], reverse=True):
         if not row["stalled"]:
@@ -434,24 +402,9 @@ async def rail_tasks(
         helped = [row for row in here if row["owner_handle"] != me]
         out[room] = {"shown": owned + helped, "open": counts.get(room, 0)}
         short[room] = max(0, RAIL_TASKS_FLOOR - len(owned) - len(helped))
-    if actor.authenticated and any(short.values()):
-        # 一条一查不行：这里一次读全项目别人的、进行中的活（几百条的量级），
-        # 按最近有动静排好，每个房间顺着取够补的那几条就停手；只有取中的那几条
-        # 才做成行——行本身贵（卡、提问、在跑的一轮、最后一次说话都要读）。
-        picked: list = []
-        for task in await service.underway_others(room_ids, me):
-            if short.get(task.room_id, 0) > 0:
-                short[task.room_id] -= 1
-                picked.append(task)
-        for row in await project_task_rows(
-            db,
-            chat,
-            me,
-            picked,
-            silent_of=silent_of,
-            delivered_of=delivered_of,
-            incomplete_of=incomplete_of,
-        ):
+    for task, row in zip(candidates, candidate_rows, strict=True):
+        if short.get(task.room_id, 0) > 0:
+            short[task.room_id] -= 1
             if not row["stalled"]:
                 out[uuid.UUID(row["room_id"])]["shown"].append(
                     {**row, "filling_in": True}
@@ -461,7 +414,6 @@ async def rail_tasks(
 
 async def room_task_items(
     db: AsyncSession,
-    chat: ChatService,
     actor: Actor,
     topic,
     *,
@@ -490,15 +442,30 @@ async def room_task_items(
         with_branch=branch,
         latest=latest,
     )
-    return await task_rows(db, chat, actor, topic.project_id, threads)
+    return await task_rows(db, actor, topic.project_id, threads)
 
 
-async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dict:
+async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict]:
+    """Say on each task row whether a session of its AI teammate is running in
+    it right now (`session_running`), as the session protocol declares it.
+
+    For readers that act on whether the teammate is at work — the orchestrator's
+    patrol, which must not nudge a session in the middle of a long command. The
+    board does not read it: what a task shows is what its teammate reported
+    (`presentation`).
+    """
+    running = await running_conversations(db, [uuid.UUID(item["id"]) for item in items])
+    return [
+        {**item, "session_running": uuid.UUID(item["id"]) in running} for item in items
+    ]
+
+
+async def task_page_row(db: AsyncSession, place, task) -> dict:
     """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
     snapshot a subscription to it opens with. The caller has authorised the
     reader."""
     cards = await AcceptService(db).latest_by_task([task.id])
-    out = await task_out(db, chat, task, cards.get(task.id))
+    out = await task_out(db, task, cards.get(task.id))
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
     project = await ProjectRepository(db).get(place.project_id)

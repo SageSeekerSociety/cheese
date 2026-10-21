@@ -129,3 +129,81 @@ export function partialStringField(raw: string, key: string): PartialString | nu
   }
   return null
 }
+
+interface Frame {
+  kind: '{' | '['
+  /** An object waiting for a key (after `{` or `,`) rather than a value. */
+  wantsKey: boolean
+}
+
+const CLOSE: Record<Frame['kind'], string> = { '{': '}', '[': ']' }
+
+function closers(stack: Frame[]): string {
+  return stack
+    .map((frame) => CLOSE[frame.kind])
+    .reverse()
+    .join('')
+}
+
+/**
+ * The whole value `raw` holds so far, as far as it can be read: every value
+ * that is complete, plus the string value being written (cut where it reaches,
+ * so a field fills as the model writes it). A key, a number or a literal that
+ * has not finished is left out until it has. Null when nothing can be read.
+ */
+export function partialValue(raw: string): unknown {
+  const stack: Frame[] = []
+  // Where the text could last be cut and closed into valid JSON.
+  let safe = { at: 0, stack: [] as Frame[] }
+  let i = 0
+  const mark = (at: number) => (safe = { at, stack: stack.map((f) => ({ ...f })) })
+  while (i < raw.length) {
+    const ch = raw[i]
+    if (/\s/.test(ch)) {
+      i += 1
+      continue
+    }
+    const top = stack[stack.length - 1]
+    if (ch === '{' || ch === '[') {
+      stack.push({ kind: ch, wantsKey: ch === '{' })
+      i += 1
+      mark(i)
+    } else if (ch === '}' || ch === ']') {
+      stack.pop()
+      i += 1
+      mark(i)
+    } else if (ch === ',') {
+      if (top?.kind === '{') top.wantsKey = true
+      i += 1
+    } else if (ch === ':') {
+      if (top) top.wantsKey = false
+      i += 1
+    } else if (ch === '"') {
+      const isKey = top?.kind === '{' && top.wantsKey
+      const scanned = scanString(raw, i)
+      if (scanned.end < 0) {
+        if (isKey) break
+        // A string value still being written: close it where it has reached.
+        const closed = `${raw.slice(0, i)}${JSON.stringify(scanned.text)}${closers(stack)}`
+        try {
+          return JSON.parse(closed)
+        } catch {
+          break
+        }
+      }
+      i = scanned.end
+      if (!isKey) mark(i)
+    } else {
+      const end = skipValue(raw, i)
+      if (end < 0) break
+      i = end
+      mark(i)
+    }
+  }
+  if (safe.at === 0) return null
+  try {
+    return JSON.parse(`${raw.slice(0, safe.at).replace(/,\s*$/, '')}${closers(safe.stack)}`)
+  } catch {
+    return null
+  }
+}

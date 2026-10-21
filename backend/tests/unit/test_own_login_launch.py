@@ -21,7 +21,12 @@ from app.domain.agent.harness.claude_code.device_launch import (
     NO_LOGIN_PLACEHOLDER,
     launch_holes,
 )
-from app.domain.agent.place import MODEL_SERVICE_FILE
+from app.domain.agent.place import (
+    CLAUDE_LOGIN_DIR,
+    CLAUDE_LOGINS_DIR,
+    OWN_LOGIN_ID,
+)
+from app.domain.device.login_kind import FIRST_LOGIN
 from tests.unit.test_device_provider import (
     _no_device_identity,  # noqa: F401 — the machine's address, not the database's
     _subscription_screen,
@@ -54,19 +59,47 @@ async def test_an_own_session_is_given_nothing_of_the_metering_proxy(
 
 
 def _launch_on_machine(
-    tmp_path, *, service: dict | None = None, mac: bool = False
+    tmp_path,
+    *,
+    service: dict | None = None,
+    mac: bool = False,
+    login_id: str | None = FIRST_LOGIN,
+    other_service: dict | None = None,
+    profile: str = ".cheese",
+    migrated_keychain: bool = False,
+    chosen_model: str | None = None,
 ) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
-    Claude's ``opus``, and return the environment the started process has.
+    Claude's ``opus`` on the machine's login ``login_id``, and return the
+    environment the started process has.
+
+    The machine holds its first login and one more, ``B7QX``; ``service`` is
+    the model service set on the login the session is told to use, and
+    ``other_service`` one set on the login it is not.
 
     The started process looks its login up with `security`, as Claude Code does
     on macOS. ``mac`` makes the machine one: ``uname`` says Darwin, and its
     `security` records the HOME it ran with under ``keychain_home``."""
     home = tmp_path / "home"
-    login = home / ".cheese" / "claude-login"
-    login.mkdir(parents=True)
+    first = home / profile / CLAUDE_LOGIN_DIR
+    second = home / profile / CLAUDE_LOGINS_DIR / "B7QX"
+    for login in (first, second):
+        login.mkdir(parents=True)
+    used, unused = (second, first) if login_id == "B7QX" else (first, second)
+    keychain_home = tmp_path / "keychain-home"
+    keychain_used = tmp_path / "migrated-keychain-used"
+    if migrated_keychain:
+        command = used / "keychain/security"
+        command.parent.mkdir()
+        command.write_text(
+            f'#!/bin/sh\nprintf %s "$HOME" > "{keychain_home}"\n'
+            f'touch "{keychain_used}"\n'
+        )
+        command.chmod(0o700)
     if service is not None:
-        (login / MODEL_SERVICE_FILE).write_text(json.dumps(service))
+        (used / "model-service.json").write_text(json.dumps(service))
+    if other_service is not None:
+        (unused / "model-service.json").write_text(json.dumps(other_service))
     room = home / "room"
     work = room / "work"
     work.mkdir(parents=True)
@@ -90,6 +123,7 @@ def _launch_on_machine(
     env = {
         **os.environ,
         "HOME": str(home),
+        "CHEESE_PROFILE_ROOT": profile,
         "CHEESE_HOME": str(room),
         "CHEESE_WORK": str(work),
         "CHEESE_TOPIC": "11111111-1111-1111-1111-111111111111",
@@ -97,8 +131,9 @@ def _launch_on_machine(
         "CHEESE_TOKEN": "scoped-token",
         "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
         "ANTHROPIC_MODEL": "opus",
+        **({"OWN_MODEL": chosen_model} if chosen_model else {}),
+        **({OWN_LOGIN_ID: login_id} if login_id is not None else {}),
     }
-    keychain_home = tmp_path / "keychain-home"
     if mac:
         machine = tmp_path / "machine-bin"
         machine.mkdir()
@@ -114,11 +149,14 @@ def _launch_on_machine(
         ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=30
     )
 
+    if not seen.exists():
+        return {"_started": False, "_stderr": result.stderr}
     assert result.returncode == 0, result.stderr
     return {
         **json.loads(seen.read_text()),
         "_home": str(home),
         "_keychain_home": keychain_home.read_text() if keychain_home.exists() else None,
+        "_migrated_keychain_used": keychain_used.exists(),
     }
 
 
@@ -128,10 +166,81 @@ def test_an_own_session_reads_the_login_its_owner_gave_the_platform(tmp_path):
     seen = _launch_on_machine(tmp_path)
     assert (
         seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"]
-        == f"{seen['_home']}/.cheese/claude-login"
+        == f"{seen['_home']}/.cheese/logins/claude-login"
     )
     assert "ANTHROPIC_BASE_URL" not in seen
     assert "ANTHROPIC_AUTH_TOKEN" not in seen
+
+
+def test_a_moved_login_uses_its_keychain_command_with_the_owners_home(tmp_path):
+    seen = _launch_on_machine(tmp_path, migrated_keychain=True, mac=True)
+    assert seen["_migrated_keychain_used"]
+    assert seen["_keychain_home"] == seen["_home"]
+    assert seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == (
+        f"{seen['_home']}/.cheese/logins/claude-login"
+    )
+
+
+def test_an_own_session_on_another_login_reads_that_login_only(tmp_path):
+    """A machine holding two logins: a session added with the second reads the
+    second's directory, and the model service set on the first is not its."""
+    seen = _launch_on_machine(
+        tmp_path,
+        login_id="B7QX",
+        other_service={
+            "base_url": "https://open.bigmodel.cn/api/anthropic",
+            "token": "the-first-logins-key",
+            "model": "glm-4.6",
+        },
+    )
+    assert (
+        seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"]
+        == f"{seen['_home']}/.cheese/logins/claude-logins/B7QX"
+    )
+    assert "ANTHROPIC_BASE_URL" not in seen
+    assert "ANTHROPIC_AUTH_TOKEN" not in seen
+    assert seen["ANTHROPIC_MODEL"] == "opus"
+
+
+@pytest.mark.parametrize("login_id", [FIRST_LOGIN, "B7QX"])
+def test_session_uses_only_its_enrollments_login(tmp_path, login_id):
+    seen = _launch_on_machine(
+        tmp_path,
+        profile=".cheese/profiles/research",
+        login_id=login_id,
+        service={
+            "base_url": "https://example.test",
+            "token": "team-key",
+            "model": "team-model",
+        },
+    )
+    assert seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"].startswith(
+        f"{seen['_home']}/.cheese/profiles/research/logins/"
+    )
+    assert "ANTHROPIC_AUTH_TOKEN" not in seen
+    assert seen["ANTHROPIC_MODEL"] == "opus"
+
+
+def test_an_own_session_not_told_its_login_does_not_start(tmp_path):
+    """With two logins on the machine, the launch does not pick one itself."""
+    seen = _launch_on_machine(tmp_path, login_id=None)
+    assert seen["_started"] is False
+
+
+def test_a_legacy_machine_model_service_is_not_used_or_deleted(tmp_path):
+    seen = _launch_on_machine(
+        tmp_path,
+        service={
+            "base_url": "https://legacy.example.test",
+            "token": "legacy-key",
+            "model": "legacy-model",
+        },
+    )
+    assert "ANTHROPIC_AUTH_TOKEN" not in seen
+    assert "ANTHROPIC_BASE_URL" not in seen
+    assert seen["ANTHROPIC_MODEL"] == "opus"
+    legacy = tmp_path / "home/.cheese/logins/claude-login/model-service.json"
+    assert json.loads(legacy.read_text())["token"] == "legacy-key"
 
 
 def test_an_own_session_on_a_mac_finds_its_owners_login_keychain(tmp_path):
@@ -143,34 +252,19 @@ def test_an_own_session_on_a_mac_finds_its_owners_login_keychain(tmp_path):
     assert seen["HOME"] != seen["_home"]
 
 
-def test_an_own_session_calls_the_model_service_its_owner_set(tmp_path):
-    """The owner pointed their Claude Code at another service: the session
-    calls it with the owner's key, and every model it asks for is the one the
-    owner named, since such a service serves none of Claude's."""
+def test_team_selected_model_reaches_the_process_using_a_subscription(tmp_path):
     seen = _launch_on_machine(
         tmp_path,
         service={
-            "base_url": "https://open.bigmodel.cn/api/anthropic",
-            "token": "it's-the-owners key",
-            "model": "glm-4.6",
+            "base_url": "https://models.example.test",
+            "token": "team-key",
+            "model": "old-model",
         },
+        chosen_model="selected-model",
     )
-    assert seen["ANTHROPIC_BASE_URL"] == "https://open.bigmodel.cn/api/anthropic"
-    assert seen["ANTHROPIC_AUTH_TOKEN"] == "it's-the-owners key"
-    for name in (
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "CLAUDE_CODE_SUBAGENT_MODEL",
-    ):
-        assert seen[name] == "glm-4.6", name
-
-
-def test_an_unreadable_model_service_leaves_the_session_on_the_login(tmp_path):
-    seen = _launch_on_machine(tmp_path, service={"model": "glm-4.6"})
-    assert "ANTHROPIC_BASE_URL" not in seen
-    assert seen["ANTHROPIC_MODEL"] == "opus"
+    assert seen["ANTHROPIC_MODEL"] == "selected-model"
+    assert "ANTHROPIC_AUTH_TOKEN" not in seen
+    assert "OWN_MODEL" not in seen
 
 
 async def test_an_own_session_starts_on_a_deployment_with_no_metering_proxy(

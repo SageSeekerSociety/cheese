@@ -15,18 +15,14 @@ export function settingsGroups(): SettingsGroup[] {
         item('UserSettingsProfile', t('account.profile.title'), 'mdi-account'),
         item('UserSettingsRealName', t('account.settings.realName'), 'mdi-account-card'),
         item('UserSettingsSecurity', t('account.security.title'), 'mdi-lock'),
-        item('UserSettingsUsage', t('account.settings.usage'), 'mdi-chart-donut'),
         item('UserSettingsNotifications', t('account.settings.notifications'), 'mdi-bell-outline'),
+        item('UserSettingsInvites', t('account.settings.invites'), 'mdi-account-plus-outline'),
       ],
     },
     {
       key: 'devices',
       title: t('account.settings.groups.devices'),
-      items: [
-        item('UserSettingsDevices', t('account.settings.devices'), 'mdi-laptop'),
-        item('UserSettingsModelConnections', t('account.settings.modelConnections'), 'mdi-robot-outline'),
-        item('UserSettingsConnections', t('account.settings.connections'), 'mdi-link-variant'),
-      ],
+      items: [item('UserSettingsConnections', t('account.settings.connections'), 'mdi-link-variant')],
     },
     ...(desktopCan('autostart') || desktopCan('device')
       ? [

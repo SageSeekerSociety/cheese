@@ -166,6 +166,17 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: 「芝士提议修改技能」, 「芝士起草了」 and 「交给芝士的工作」 stay on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
+        # A sandbox the disk guard stopped for holding the most of a full disk
+        # or more than its budget: each sandbox now has a quota of its own and
+        # is refused writes past it, and old room lines still name the stop.
+        "sandboxReleasedDiskFull",
+        "sandboxReleasedOverBudget",
+        # The post-merge watch (checks on the merge commit, a deployment that
+        # included it) is gone; old task conversations still hold its lines.
+        "deployedTo",
+        "deployFailedTo",
+        "mainChecksFailed",
+        "mainChecksFailedReopened",
         # The room-wide machine choice (#2320): old room lines and proposals
         # still name it.
         "computeAnyDevice",
@@ -189,8 +200,18 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "labelUpgradedTo",
         "labelRoutineWork",
         "routineProposalConfirmed",
+        "routineProposalConfirmedBy",
         "routineProposalDeleted",
         "routineProposed",
+        # 芝士建完自己那条规则，平台另落一行说「多了这么一条」的那一版，和那行上
+        # 的标签：现在这话由芝士自己在对话里说，旧房间里的那几行还带着这两个键。
+        "routineProposedBy",
+        "labelRoutineToConfirm",
+        # 例行事务的详情行说出「资料范围」和「结果保存到」的那一版，和它用的两个
+        # 词：规则现在只写「补充说明」，旧房间里的那几行还带着这三个键。
+        "routineSummary",
+        "routineScopeUnset",
+        "routineOutputRoot",
         "skillProposalNotSaved",
         "skillProposalSaved",
         "skillProposed",

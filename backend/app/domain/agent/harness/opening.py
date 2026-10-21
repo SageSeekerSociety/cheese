@@ -33,53 +33,50 @@ def _standing(member: dict) -> str:
     return _STANDING.get(member.get("source") or "", "成员")
 
 
+#: What each way of helping asks of the AI teammate (`protocol.MODES`), in the
+#: words the teacher picked it by.
+_MODE_SAYS = {
+    "guide": "以提问引导学生思考，一次只推进一步；不直接给出答案或完整代码。",
+    "example": "可以讲解概念、举不相关的小例子说明；不替学生完成作业。",
+    "spec": "学生动手写之前，先请他说清要做到什么、怎么验证做对了；说清楚再开始。",
+    "free": "按学生的要求提供帮助。",
+}
+
+
 def teaching_section(context: TeachingContext) -> str | None:
-    """本周教学范围 —— 课程级的那一段，或者 None。
+    """这门课希望 AI 队友怎么帮学生 —— 课程那一段，或者 None。
 
     **None 是默认，而且是字面意义上的「一个字都不加」。** 一个不是课程的项目
-    没有教学安排，而「这周教到哪了」对它是一句废话：说了会让 agent 以为自己在
-    一门课里。所以这里不是渲染一个空标题，是整段不存在（`build_system_prompt`
-    对 None 直接跳过），而且配套的取数在 `task.teaching.for_project` 里同样没
-    有发生——不取，不是取了再说空话。
+    没有这份设置，说了会让 agent 以为自己在一门课里。所以这里不是渲染一个空标题，
+    是整段不存在（`build_system_prompt` 对 None 直接跳过），配套的取数在
+    `task.teaching.for_project` 里同样没有发生。
 
-    **位置在角色之后、技能之前。** 教学安排不是人设（那是角色），也不是工具箱
-    （那是技能）。它约束的是「这一周该做什么」，得在读具体怎么做之前先立住。
+    空间的要求和这道题的要求都生效，分开写：agent 读得出哪句是整门课的、哪句是这道
+    题加的。
+
+    **位置在角色之后、技能之前。** 它不是人设（那是角色），也不是工具箱（那是技能）。
     """
     teaching = context.teaching
     if teaching.is_empty:
         return None
-    # 课程名和「第几周」都可能缺：一个项目集配了教学安排却没说自己叫什么，仍然
-    # 要有一段读得通的话，而不是一个空括号。
-    where = []
-    if context.course:
-        where.append(f"课程：{context.course}")
-    if teaching.current_week is not None:
-        where.append(f"第 {teaching.current_week} 周")
-    parts = ["## 本周教学范围" + (f"（{' · '.join(where)}）" if where else "")]
-    if teaching.system_prompt:
-        parts.append(teaching.fill(teaching.system_prompt))
-    if teaching.allowed_topics:
-        parts.append(
-            "本周只做这些：\n"
-            + "\n".join(f"- {topic}" for topic in teaching.allowed_topics)
-        )
-    if teaching.avoid_in_code:
-        # 说清「避开」是什么意思。不说的版本会被读成禁令，agent 于是绕开一个它
-        # 本来可以用的写法去做同一件事——这一周的练习照样练不到点子上。
-        parts.append(
-            "**本周的课还没讲到这些**，代码里请避开（这一周的练习不是练它）：\n"
-            + "\n".join(f"- {item}" for item in teaching.avoid_in_code)
-        )
+    parts = ["## 辅导学生" + (f"（课程：{context.course}）" if context.course else "")]
+    if teaching.mode in _MODE_SAYS:
+        parts.append(_MODE_SAYS[teaching.mode])
+    if teaching.space_prompt and teaching.system_prompt:
+        parts.append("### 课程的要求\n" + teaching.space_prompt)
+        parts.append("### 这道题的要求\n" + teaching.system_prompt)
+    elif teaching.system_prompt:
+        parts.append(teaching.system_prompt)
     if context.materials:
         parts.append(
-            "### 本周课件\n"
+            "### 课件\n"
             + "\n".join(f"- 《{m['name']}》{m['url']}" for m in context.materials)
         )
     if context.documents:
         # 只给标题，正文按 id 读：一份文档可以有多长，不是这门课说了算的，prompt
         # 不跟着别人写的东西长。
         parts.append(
-            "### 本周的阅读材料（要正文用 cheese_doc_get(document=id) 去读）\n"
+            "### 阅读材料（要正文用 cheese_doc_get(document=id) 去读）\n"
             + "\n".join(
                 f"- 《{d['title']}》（id={d['id']}）" for d in context.documents
             )

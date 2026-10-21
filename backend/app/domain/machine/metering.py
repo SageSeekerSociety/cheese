@@ -84,17 +84,28 @@ async def _observe_vms(session: AsyncSession, meter: ComputeMeter) -> tuple[int,
     runs = {run.subject: run for run in await meter.open_runs(VM)}
     opened = closed = 0
     live = set()
+    unopened = []
     for host in hosts:
         subject = vm_subject(host.id)
         if host.released_at is not None or host.status in GONE:
             continue
         live.add(subject)
-        if subject in runs:
-            continue
+        if subject not in runs:
+            unopened.append(host)
+    # One read for every VM still to open, not one per VM.
+    homes: dict[uuid.UUID, SandboxHome] = {}
+    if unopened:
+        for home in await session.scalars(
+            select(SandboxHome).where(
+                SandboxHome.host_id.in_([host.id for host in unopened])
+            )
+        ):
+            assert home.host_id is not None
+            homes.setdefault(home.host_id, home)
+    for host in unopened:
+        subject = vm_subject(host.id)
         assert host.project_id is not None
-        home = await session.scalar(
-            select(SandboxHome).where(SandboxHome.host_id == host.id)
-        )
+        home = homes.get(host.id)
         await meter.open(
             kind=VM,
             spec=vm_spec(int(host.cores), int(host.memory_mb)),
@@ -174,13 +185,10 @@ async def unpaid_sandboxes(session: AsyncSession) -> list:
         return []
     _checked_at = now
     rows = (await session.execute(_running().add_columns(CloudHost.device_id))).all()
-    usage = UsageService(session)
-    refused: dict[uuid.UUID, bool] = {}
-    for row in rows:
-        if row.project_id not in refused:
-            refused[row.project_id] = (
-                await usage.admit_project(row.project_id) is not None
-            )
+    verdicts = await UsageService(session).admit_projects(
+        list({row.project_id for row in rows})
+    )
+    refused = {pid: verdict is not None for pid, verdict in verdicts.items()}
     due = [row for row in rows if refused[row.project_id]]
     rooms = {row.topic_id for row in due}
     busy = set()

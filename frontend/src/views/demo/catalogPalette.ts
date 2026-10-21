@@ -3,9 +3,7 @@
  * 「还能做什么」的清单、底栏。
  *
  * 单独一份的理由和 `catalogLibrary.ts` 那几份一样：这四件是同一个浮层的四块
- * （合起来才是 `/` 唤出来的那个面板），搁在一块儿才看得清哪块管什么；不放进
- * `catalog/navigation.ts` 是因为那一册的条目先后被 `catalog/catalogShards.spec.ts`
- * 钉着，往中间添会动到那一次拆分钉下的顺序。
+ * （合起来才是 `/` 唤出来的那个面板），搁在一块儿才看得清哪块管什么。
  *
  * 四件都只吃 props：搜什么、选中第几条、清单开没开、键怎么按，全在
  * `CommandPalette.vue` 和 `src/commands/palette/` 那两个 composable 里，所以这里
@@ -44,6 +42,30 @@ const GROUPS: ResultGroup[] = [
     key: 'commands',
     label: 'navigation.palette.commands',
     rows: [{ id: 'command:dark', title: '切换到深色外观', icon: 'mdi-theme-light-dark', range: null, verb: '执行' }],
+  },
+]
+
+/** 搜「哈希」时「题目」那一组：我加入的空间里的题目，下面一行是空间名。 */
+const TASK_GROUPS: ResultGroup[] = [
+  {
+    key: 'space-tasks',
+    label: 'navigation.palette.spaceTasks',
+    rows: [
+      {
+        id: 'space-task:41',
+        title: '实现一个开放寻址哈希表',
+        subtitle: '数据结构（2026 秋）',
+        icon: 'mdi-trophy-outline',
+        range: [8, 10],
+      },
+      {
+        id: 'space-task:42',
+        title: '一致性哈希的负载实验',
+        subtitle: '分布式系统',
+        icon: 'mdi-trophy-outline',
+        range: [3, 5],
+      },
+    ],
   },
 ]
 
@@ -147,6 +169,12 @@ export const PALETTE_ENTRIES: CatalogEntry[] = [
         note: '高亮的那一行是此刻回车会去的那一条；名字里对上输入的两个字带 <mark>。',
         props: { groups: GROUPS, selected: 0, input: '登录', searching: false, mdAndUp: true },
         expect: '登录页改成深色',
+      },
+      {
+        name: '搜到空间里的题目',
+        note: '「题目」一组只列我加入的空间里的题目；下面一行写着在哪个空间，点开进题目页。',
+        props: { groups: TASK_GROUPS, selected: 0, input: '哈希', searching: false, mdAndUp: true },
+        expect: '实现一个开放寻址哈希表',
       },
       {
         name: '什么都没搜到',

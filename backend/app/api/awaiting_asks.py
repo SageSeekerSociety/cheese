@@ -1,5 +1,5 @@
 """待我处理里不属于哪个项目的那几件：有人邀请我、有人想把项目转让给我、有人申请加入
-我管的团队。
+我管的团队，以及我出的题目上等我批准的领取和等我批改的提交。
 
 它们和 `awaiting_deps.waiting_items` 是同一份清单的另一半：那一半按项目里的事实现
 算（任务、验收卡、提问、拍板），这一半按邀请和申请现在的状态现算 —— 还在等回答的
@@ -25,6 +25,7 @@ from app.domain.membership.services import (
 )
 from app.domain.project.services import ProjectService
 from app.domain.remote_mcp import local as mcp_local
+from app.domain.space.teaching_queue import teaching_queue
 from app.domain.team import membership_services as team_applications
 from app.domain.team.models import TeamMembershipApplication
 from app.domain.team.services import team_service
@@ -75,6 +76,51 @@ class MembershipAsk:
             "message": self.message,
             "at": self.at.isoformat(),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class TaskAsk:
+    """A 题目 this person teaches with claims to approve or submissions to
+    review (`space.teaching_queue.teaching_queue`)."""
+
+    task_id: int
+    task_name: str
+    space_id: int
+    space_name: str
+    claims: int
+    reviews: int
+    at: datetime
+    kind: Literal["task_queue"] = "task_queue"
+
+    def as_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "taskId": self.task_id,
+            "taskName": self.task_name,
+            "spaceId": self.space_id,
+            "spaceName": self.space_name,
+            "claims": self.claims,
+            "reviews": self.reviews,
+            "at": self.at.isoformat(),
+        }
+
+
+async def task_asks(db: AsyncSession, *, user_id: int | None) -> list[TaskAsk]:
+    """What waits on the 题目 this person teaches, one row per 题目."""
+    if not user_id:
+        return []
+    return [
+        TaskAsk(
+            task_id=w.task_id,
+            task_name=w.task_name,
+            space_id=w.space_id,
+            space_name=w.space_name,
+            claims=w.claims,
+            reviews=w.reviews,
+            at=w.at,
+        )
+        for w in await teaching_queue(db, user_id)
+    ]
 
 
 def _avatar(avatar_id: int | None) -> str | None:

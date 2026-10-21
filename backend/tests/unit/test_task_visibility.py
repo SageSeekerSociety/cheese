@@ -131,7 +131,7 @@ class TestCanViewTaskEmailDomain:
 
     @pytest.mark.anyio
     async def test_domain_case_insensitive_match(self):
-        """Domain check should be case-insensitive: User's Cs.EdU.Cn matches CS.EDU.CN."""  # noqa: E501
+        """Domain check should be case-insensitive: User's Cs.EdU.Cn matches CS.EDU.CN."""
         t = _task(creator_id=99, access_control_enabled=True)
         admin_repo = AsyncMock()
         admin_repo.get_relation.return_value = None
@@ -250,7 +250,7 @@ class TestCanViewTaskRoleBypass:
 
     @pytest.mark.anyio
     async def test_non_creator_non_admin_non_participant_denied(self):
-        """Ordinary user with no role cannot view a restricted task unless domain matches."""  # noqa: E501
+        """Ordinary user with no role cannot view a restricted task unless domain matches."""
         t = _task(creator_id=99, access_control_enabled=True)
         admin_repo = AsyncMock()
         admin_repo.get_relation.return_value = None
@@ -404,7 +404,7 @@ class TestDetailAccessNotFound:
 
     @pytest.mark.anyio
     async def test_get_task_returns_404_when_not_visible(self):
-        """Simulate the get_task route logic: if visibility check fails → NotFoundError."""  # noqa: E501
+        """Simulate the get_task route logic: if visibility check fails → NotFoundError."""
         from app.core.errors import NotFoundError
 
         # Build a restricted task where the user is not the creator, admin,

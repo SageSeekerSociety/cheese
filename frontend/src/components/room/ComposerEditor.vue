@@ -20,6 +20,7 @@ import StarterKit from '@tiptap/starter-kit'
 
 import { createComposerCode } from '../../lib/composerCode'
 import { docText, offsetAt, posAt, replaceText, textChange, textContent } from '../../lib/composerDoc'
+import { createVoiceMarks, type VoiceMarkMeta, voiceMarksKey } from '../../lib/composerVoiceMarks'
 import { plainRefs } from '../../lib/refChip'
 import { createTokenChips, tokenChipsKey } from '../../lib/tokenChips'
 
@@ -93,6 +94,7 @@ onMounted(() => {
       NewLine,
       createTokenChips({ names: () => props.names }),
       createComposerCode(),
+      createVoiceMarks(),
     ],
     content: textContent(text.value),
     editorProps: {
@@ -201,6 +203,17 @@ defineExpose({
     const { doc, selection } = ed.state
     return offsetAt(doc, selection.to) - offsetAt(doc, selection.from)
   },
+  /** 语音输入的两个记号（识别中的占位、刚落下的字），见 lib/composerVoiceMarks。 */
+  voiceMarks(meta: VoiceMarkMeta) {
+    const ed = editor.value
+    if (ed) ed.view.dispatch(ed.state.tr.setMeta(voiceMarksKey, meta))
+  },
+  /** 识别中那个占位现在在正文的第几个字前面（人这期间接着打了字，它跟着走）。 */
+  voiceSlot(): number | null {
+    const ed = editor.value
+    const slot = ed ? voiceMarksKey.getState(ed.state)?.slot : null
+    return ed && slot != null ? offsetAt(ed.state.doc, slot) : null
+  },
   /** 输入法正在组字：这时候不去改正文，否则会打断它。 */
   composing(): boolean {
     return !!editor.value?.view.composing
@@ -263,5 +276,97 @@ defineExpose({
 }
 .composer-editor__host :deep(.composer-code-line--fence) {
   color: var(--muted);
+}
+/* 录着、整理中：字会落在这儿。录着时一颗呼吸的红点 +「正在听」；整理中红点熄掉，
+   「正在整理」上走一道扫光——机器正在做事，说得出正在发生的事（§9.6）。 */
+.composer-editor__host :deep(.composer-voice-slot) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  margin: 1px 2px 0;
+  padding: 0 8px;
+  /* 行高 24、药丸 22：贴着行顶再下移 1px，正好在这一行的正中。 */
+  vertical-align: top;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 22px;
+  user-select: none;
+  animation: composer-voice-in var(--dur-base) var(--ease-out);
+}
+.composer-editor__host :deep(.composer-voice-slot i) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: composer-voice-breathe 1.6s var(--ease-standard) infinite;
+}
+.composer-editor__host :deep(.composer-voice-slot--thinking i) {
+  background: var(--faint);
+  animation: none;
+}
+.composer-editor__host :deep(.composer-voice-slot--thinking span) {
+  background: linear-gradient(90deg, var(--muted) 35%, var(--ink) 50%, var(--muted) 65%);
+  background-size: 240% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: composer-voice-sheen 1.4s linear infinite;
+}
+/* 落字：整段先占好位置，从头逐字显出来，前沿四个字半透明；显的过程中垫着琥珀浅底，
+   显完了 1.2 秒退掉——它从哪来，一眼看得到。 */
+.composer-editor__host :deep(.composer-voice-revealing) {
+  border-radius: 3px;
+  background-color: var(--accent-wash);
+}
+.composer-editor__host :deep(.composer-voice-tail) {
+  opacity: 0.35;
+}
+.composer-editor__host :deep(.composer-voice-pending) {
+  opacity: 0;
+}
+.composer-editor__host :deep(.composer-voice-landed) {
+  border-radius: 3px;
+  animation: composer-voice-wash 1.2s var(--ease-standard) forwards;
+}
+@keyframes composer-voice-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+@keyframes composer-voice-breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes composer-voice-sheen {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -40% 0;
+  }
+}
+@keyframes composer-voice-wash {
+  from {
+    background-color: var(--accent-wash);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+/* 关掉动画之后意思还在：红点是实心的，「正在整理」照样写着，浅底直接退掉。 */
+@media (prefers-reduced-motion: reduce) {
+  .composer-editor__host :deep(.composer-voice-slot),
+  .composer-editor__host :deep(.composer-voice-slot i),
+  .composer-editor__host :deep(.composer-voice-slot--thinking span) {
+    animation: none;
+  }
+  .composer-editor__host :deep(.composer-voice-slot--thinking span) {
+    color: var(--muted);
+    background: none;
+  }
 }
 </style>

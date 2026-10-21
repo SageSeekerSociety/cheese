@@ -2,6 +2,7 @@
 
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -9,10 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
-from app.domain.agent_instance.models import AgentInstance, NameSource, OwnAgent
+from app.domain.agent_instance.configuration import AgentConfiguration
+from app.domain.agent_instance.models import (
+    AccountConnection,
+    AgentInstance,
+    NameSource,
+    OwnAgent,
+    PersonalModelResource,
+)
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.library import AgentTypeDef, preset_types
+from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     CHEESE_NAME,
@@ -121,10 +129,20 @@ def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScop
     return MemoryScope.agent_project, agent_project_scope_id(project_id, agent.handle)
 
 
+#: The models a project can be pointed at (`agent.model_choices`), as the
+#: caller hands it in. Deliberately a plain callable rather than an import of
+#: the agent package: what models exist needs the gateway, the harnesses and the
+#: supply policy, and reading any of them back from here is the cycle C3 counts.
+ModelChoices = Callable[[dict | None], list[dict]]
+
+
 class AgentInstanceService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, *, models: ModelChoices | None = None):
         self._session = session
         self._repo = AgentInstanceRepository(session)
+        #: Without one no model can be bound (`_validate_model` refuses every
+        #: id); every read path here works without it.
+        self._models = models
 
     # --- resolution ---------------------------------------------------------
 
@@ -287,22 +305,8 @@ class AgentInstanceService:
         return await self._repo.list_for_project(project_id)
 
     async def list_team(self, project_id: uuid.UUID) -> list[AgentInstance]:
-        """The project's own teammates: every agent but its members' own, which
-        belong to a person and are not the project's to configure or default
-        to (#2991)."""
-
-        own = set(
-            await self._session.scalars(
-                select(OwnAgent.instance_id)
-                .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
-                .where(AgentInstance.project_id == project_id)
-            )
-        )
-        return [
-            row
-            for row in await self._repo.list_for_project(project_id)
-            if row.id not in own
-        ]
+        """All project teammates, including those using team connections."""
+        return await self._repo.list_for_project(project_id)
 
     async def get_in_project(
         self, *, project_id: uuid.UUID, instance_id: uuid.UUID
@@ -377,22 +381,69 @@ class AgentInstanceService:
     async def configure(
         self, instance: AgentInstance, config: AgentConfiguration
     ) -> None:
-        await self._validate_model(instance.project_id, config)
+        await self._validate_model(instance.project_id, config, instance.id)
         instance.configuration = config.model_dump()
 
     async def _validate_model(
-        self, project_id: uuid.UUID, config: AgentConfiguration
+        self,
+        project_id: uuid.UUID,
+        config: AgentConfiguration,
+        instance_id: uuid.UUID | None = None,
     ) -> None:
-        if config.model is None:
-            return
-
         project = await self._session.get(Project, project_id)
         if project is None:
             raise NotFoundError(say("projectNotFound"))
-        choice = next(
-            (c for c in model_choices(project.settings) if c["id"] == config.model),
-            None,
-        )
+        if config.execution_device_id:
+            device = await self._session.get(DeviceRow, config.execution_device_id)
+            if device is None or device.team_id != project.team_id:
+                raise ValidationError(say("deviceNotInProject"))
+        own = await self._session.get(OwnAgent, instance_id) if instance_id else None
+        if own is not None:
+            if own.account_connection_id:
+                table, field, connection_id = (
+                    AccountConnection,
+                    PersonalModelResource.account_connection_id,
+                    own.account_connection_id,
+                )
+            else:
+                table, field, connection_id = (
+                    DeviceClaudeLoginRow,
+                    PersonalModelResource.login_id,
+                    own.login_id,
+                )
+            connection = (
+                await self._session.get(table, connection_id) if connection_id else None
+            )
+            reference = await self._session.scalar(
+                select(PersonalModelResource.id).where(
+                    PersonalModelResource.team_id == project.team_id,
+                    field == connection_id,
+                )
+            )
+            available = (
+                connection is not None
+                and (connection.team_id == project.team_id or reference is not None)
+                and (
+                    connection.owner_user_id is None
+                    or connection.owner_user_id == own.owner_user_id
+                )
+            )
+            if isinstance(connection, DeviceClaudeLoginRow):
+                available = (
+                    available and connection.logged_in and connection.revoked_at is None
+                )
+            models = (
+                connection.allowed_models
+                if available and connection is not None
+                else []
+            )
+            if config.model not in models:
+                raise ValidationError(say("teamConnectionModelRefused"))
+            return
+        if config.model is None:
+            return
+        choices = self._models(project.settings) if self._models else []
+        choice = next((c for c in choices if c["id"] == config.model), None)
         access = await UsageService(self._session).model_access(project.team_id)
         if choice is None or not access.shows(choice):
             raise ValidationError(say("modelUnavailable"))
@@ -435,8 +486,6 @@ class AgentInstanceService:
     ) -> ResolvedAgent:
         if not instance.is_active:
             raise ValidationError(say("teammateInactiveNoDefault"))
-        if instance not in await self.list_team(project.id):
-            raise ValidationError(say("ownAgentNotDefault"))
         project.default_agent_instance_id = instance.id
         await self._session.flush()
         return await self.for_project(project)

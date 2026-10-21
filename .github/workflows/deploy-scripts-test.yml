@@ -143,12 +143,6 @@ jobs:
             mitmproxy/mitmproxy:12.1.2@sha256:0d7b2a14b4a71a908cd6f31b8f50e29bbc5c8720fe6caa706acf782da558e5c7 \
             deploy/tests/test_claude_retry.py
 
-      # The ratchet collection step is read out of arch-metrics.yml and run
-      # under `bash -e`, the shell GitHub gives a `run:` body — the reading that
-      # `code=$?` on the line after the collector is not.
-      - name: Ratchet collection evidence
-        run: python3 deploy/tests/test_arch_metrics_workflow.py
-
       - name: Render browser reaches public addresses only
         run: python3 deploy/tests/test_browser_render_egress.py
 

@@ -1,6 +1,6 @@
 {
   "verb": "backlog",
-  "why": "The other side of the same rule. A tool that worked is not a failure: what it handed back goes onto its step, for whoever opens that line, and nothing marks the step red. It never becomes a line of its own — that would double the timeline to say what the step already says.",
+  "why": "The other side of the same rule. A tool that worked is not a failure: what it handed back stays in the raw journal, and nothing marks its call failed or adds a line of its own.",
   "readers": [
     "python",
     "extension"
@@ -74,13 +74,7 @@
       ]
     }
   },
-  "events": [
-    {
-      "kind": "step_output",
-      "call_id": "toolu_1",
-      "text": "42 passed"
-    }
-  ],
+  "events": [],
   "extension": {
     "why": "A platform tool that exited 0 is not an error — a publish that landed is what the room can see.",
     "tool": "chat_send",

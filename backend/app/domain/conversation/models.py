@@ -16,7 +16,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey
+from sqlalchemy import DateTime, Enum, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -30,6 +30,10 @@ class ConversationKind(enum.StrEnum):
 
 class Conversation(Base):
     __tablename__ = "conversations"
+
+    raw_records_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
     project_id: Mapped[uuid.UUID] = mapped_column(

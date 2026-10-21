@@ -17,6 +17,15 @@
 
     <!-- 右侧动态操作按钮 -->
     <template #append>
+      <!-- The person's own assistant, on every screen where one answers: drawn by the shell, so a
+           page never has to declare it; it sits left of the page's own actions. -->
+      <AgentEntryButton
+        v-if="agentAvailable"
+        compact
+        :name="t('work.agentAvatar.defaultName')"
+        data-testid="agent-entry"
+        @click="toggleAgent"
+      />
       <!-- 渲染动态 actions 组件 -->
       <component :is="actionsComponent" v-if="actionsComponent" />
 
@@ -110,9 +119,11 @@ import ScreenHeaderTitle from './ScreenHeaderTitle.vue'
 import UserMenuCard from './UserMenuCard.vue'
 
 import { headerCommands, menuActionOf } from '@/commands'
+import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
+import { agentAvailable, toggleAgent } from '@/stores/agent'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageTitleStore } from '@/stores/title'
 

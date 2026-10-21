@@ -15,13 +15,12 @@ Turn intake, transport steps, durable writes and live state have separate owners
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime
 from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import BaseError, ValidationError
-from app.domain.agent import own_limit, turn_inputs
+from app.domain.agent import own_limit, runner_reports, turn_inputs
 
 # 兼容门面：`ChatService` 的四块职责分在同目录的四个 mixin 里，类继承顺序即下面
 # 这一列。方法体里的 `self.` 一格没动，所以子类覆盖、类属性读取和测试的
@@ -43,12 +42,6 @@ from app.domain.agent.event_lines import (
     _Changeset,  # noqa: F401 — 测试仍从 chat.py 导它
     _diff_file_stats,  # noqa: F401 — 测试仍从 chat.py 导它
     _format_change_summary,  # noqa: F401 — 测试仍从 chat.py 导它
-    _format_tool_event,  # noqa: F401 — 测试仍从 chat.py 导它
-    _is_platform_tool,  # noqa: F401 — 测试仍从 chat.py 导它
-    _short_tool_name,  # noqa: F401 — 测试仍从 chat.py 导它
-    _subagent_event_text,  # noqa: F401 — 测试仍从 chat.py 导它
-    _subagent_result_meta,  # noqa: F401 — 测试仍从 chat.py 导它
-    _tool_event_meta,  # noqa: F401 — 测试仍从 chat.py 导它
 )
 from app.domain.agent.gateway import LlmGateway
 
@@ -77,7 +70,7 @@ from app.domain.agent.memory_ledger import (
 
 # 兼容门面：点名解析、通知与 refs 搬去了 `mentions.py`（那里有直接的单测）。
 # 这里重新导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面带
-# noqa 的那几个本文件不用，只是给外部（测试）留的导入路径。
+# 的那几个本文件不用，只是给外部（测试）留的导入路径。
 from app.domain.agent.mentions import (
     _MENTION_RE,  # noqa: F401
     _SPECIAL_MENTIONS,  # noqa: F401
@@ -89,10 +82,6 @@ from app.domain.agent.mentions import (
     _resolve_mentions,  # noqa: F401
     _topic_refs,  # noqa: F401
     project_refs_text,  # noqa: F401 — 现有发送路由仍使用此导出
-)
-from app.domain.agent.pending_messages import (
-    finish_work,
-    finish_work_termination,
 )
 from app.domain.agent.prewarm import SeatPrewarm
 from app.domain.agent.profiles import ProfileRegistry
@@ -116,6 +105,7 @@ from app.domain.agent.queries import (
     _pass_policy_gate,
     _Proposed,
 )
+from app.domain.agent.reads import Report
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
@@ -141,23 +131,11 @@ from app.domain.agent.turn.intake.rooms import room_roster
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
 from app.domain.agent.turn.state.live import LiveWork
-
-# 一轮还跑着的时候平台往它里面说的两句话（沉默、清单停在原地），连同各自的扫底。
-# 用 `TurnNotices` 收窄到 `ChatService` 对外的几样，所以这里不用反向被 import。
-from app.domain.agent.turn.steps import reminders
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn_usage import record_turn_usage
 from app.domain.agent_instance.services import ResolvedAgent
-from app.domain.delivery.input_identity import (
-    InputReceipt,
-    WorkCompletion,
-    WorkTermination,
-)
-from app.domain.delivery.receipts import (
-    complete_work_inputs,
-    terminate_work_inputs,
-)
+from app.domain.delivery.input_identity import InputReceipt
 from app.domain.policy import gate
 
 #: How many rooms replay their sessions' backlog at once. Each replay writes
@@ -220,7 +198,7 @@ class ChatService(
         # `app.domain.agent.gateway`). None = off.
         self._gateway = gateway
         # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
-        # 由 harness 在两个时刻问它：输入之前、这一轮结束之后。这一簇连同它按
+        # 由 harness 在两个时刻问它：输入之前、会话停下来之后（runner 报会话空闲）。这一簇连同它按
         # 房间记的四份状态都在 `memory_ledger.py` 里；它会用到的协作者显式
         # 传进去（`gateway` 要先建好），留在 `ChatService` 上的
         # 只有 `_lock_for` 和 `_model_kwargs` 两件同事还在用的东西。
@@ -310,7 +288,6 @@ class ChatService(
             charge_spend=self.charge_turn_spend,
             defer_drain=self._schedule_deferred_drain,
             effects=CompletionEffects(
-                complete_inputs=complete_work_inputs,
                 record_usage=record_turn_usage,
                 own_waiting=own_limit.after_turn,
             ),
@@ -340,15 +317,11 @@ class ChatService(
         """
         return self._work_runner
 
-    async def remind_silent_turns(self) -> int:
-        """Queue an internal reminder while a room response is still running."""
-        return await reminders.remind_silent_turns(self, datetime.now(UTC))
-
-    async def remind_stale_checklists(self) -> int:
-        """Ask a running turn whose own checklist stopped moving to write it
-        again. Both sweeps share one interval: each asks whether something
-        visible about this turn has stopped moving."""
-        return await reminders.remind_stale_checklists(self, datetime.now(UTC))
+    @property
+    def compute(self) -> ComputePool:
+        """The sessions this process holds, and which of them are at work
+        (`turn.steps.reminders.QuietSessionReminders`)."""
+        return self._compute
 
     async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None:
         """Commit identity-bound effects before the journal may acknowledge.
@@ -359,21 +332,28 @@ class ChatService(
 
         await confirm_receipt(self._sessions, self.live, receipt)
 
-    async def confirm_work_completion(self, completion: WorkCompletion) -> None:
-        """Settle a journaled completion without process-local work context."""
+    async def apply_report(self, report: Report) -> runner_reports.Applied | bool:
+        """Apply what a seat's runner reported, once (`runner_reports`): False
+        when it was applied and followed through before."""
+        return await runner_reports.apply(self, report)
 
-        await finish_work(self, completion, complete_work_inputs)
+    async def inputs_replaced(
+        self, conversation_id: uuid.UUID, agent_handle: str, harness: str, native: str
+    ) -> None:
+        """The process holding native session ``native`` was replaced
+        (`runner_reports.replaced`)."""
+        await runner_reports.replaced(
+            self, conversation_id, agent_handle, harness, native
+        )
 
-    async def confirm_work_termination(self, termination: WorkTermination) -> None:
-        """Record that a work interval ended without completing.
+    async def result_landed(self, report: Report) -> None:
+        """The room landed the result ``report`` carries (`runner_reports.landed`)."""
+        await runner_reports.landed(self, report)
 
-        Separate from :meth:`confirm_work_completion` on purpose: a terminated
-        work must never reach the completion path, which is what stamps
-        ``completed_at`` and consumes blocks. This one only frees the seat so a
-        new input can be taken.
-        """
-
-        await finish_work_termination(self, termination, terminate_work_inputs)
+    async def report_followed(self, report: Report) -> None:
+        """Everything that follows from ``report`` was done
+        (`runner_reports.projected`)."""
+        await runner_reports.projected(self, report)
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None:
         """End the inputs of a work whose session died inside it. See turn_inputs."""
@@ -461,7 +441,12 @@ class ChatService(
         )
 
     async def project_gateway_key(
-        self, project_id: uuid.UUID, *, dream: bool = False
+        self,
+        project_id: uuid.UUID,
+        *,
+        dream: bool = False,
+        task_id: uuid.UUID | None = None,
+        credit_owner_handle: str | None = None,
     ) -> str | None:
         """The project's virtual gateway key, minted on first use; with
         ``dream``, the key its memory consolidation runs on (gateway_usage.py)."""
@@ -471,6 +456,8 @@ class ChatService(
             self._gateway,
             project_id,
             dream=dream,
+            task_id=task_id,
+            credit_owner_handle=credit_owner_handle,
         )
 
     async def _gateway_budget_target(

@@ -416,15 +416,15 @@ function ciSource() {
   const declared = [...(jobs.get('scope') || '').matchAll(/^ {6}([a-z0-9_]+): \$\{\{ steps\.scope\.outputs\.\1 \}\}$/gm)].map((m) => m[1])
   const runs = {}
   for (const [job, body] of jobs) {
-    // A suite's job is gated on its own scope output. Since the draft tier, the
-    // gate is `needs.scope.outputs.tier == 'full' && needs.scope.outputs.<suite>
-    // == 'true'` — the tier guard makes a `true` suite still skip on a draft —
-    // so the suite key leads the second clause and the tier guard is optional
-    // here (a bare `<suite> == 'true'` gate is still read). The frontend's gate
-    // goes on — `|| needs.api.outputs.moved == 'true'`, inside `${{ !cancelled()
-    // && … }}` — because a backend change that moves the API document runs it
-    // too, so the suite key is read where it leads and the rest is left alone.
-    const gate = /^ {4}if: (?:\$\{\{ !cancelled\(\) && )?(?:needs\.scope\.outputs\.tier == 'full' && )?\(?needs\.scope\.outputs\.([a-z0-9_]+) == 'true'/m.exec(body)
+    // A suite's job is gated on its own scope output behind a tier guard:
+    // `needs.scope.outputs.tier != 'draft' && needs.scope.outputs.<suite> ==
+    // 'true'`, or `tier == 'full'` for a suite that runs only after merge. So
+    // the suite key leads the second clause and the tier guard is optional here
+    // (a bare `<suite> == 'true'` gate is still read). The frontend's gate goes
+    // on — `|| needs.api.outputs.moved == 'true'`, inside `${{ !cancelled() &&
+    // … }}` — because a backend change that moves the API document runs it too,
+    // so the suite key is read where it leads and the rest is left alone.
+    const gate = /^ {4}if: (?:\$\{\{ !cancelled\(\) && )?(?:needs\.scope\.outputs\.tier (?:== 'full'|!= 'draft') && )?\(?needs\.scope\.outputs\.([a-z0-9_]+) == 'true'/m.exec(body)
     const uses = /^ {4}uses: \.\/\.github\/workflows\/([\w.-]+)$/m.exec(body)
     if (gate && uses) runs[gate[1]] = uses[1]
   }
@@ -568,7 +568,7 @@ const ARCH_SAMPLES = {
 // which of the three scenes they are; every other component is grouped by the
 // directory it lives in. Read-only in both directions: nothing on this page can
 // fail the build, and nothing here is written back to a baseline.
-const COMPONENT_STATE = { catalogued: '已收录', pending: '待收录', new: '新增', uncatalogued: '未收录' }
+const COMPONENT_STATE = { catalogued: '已收录', standalone: '能收未收', uncatalogued: '未收录' }
 const SCENE_KIND = { page: '路由页', view: '视图', panel: '工作面板' }
 function componentsReference(data) {
   const t = data.totals
@@ -589,7 +589,7 @@ function componentsReference(data) {
 \`frontend/src\` 下除预览站自身（\`src/views/demo/\`）的每一个 \`.vue\`，一行一个。三列各由一处检查给出，这一页只读它们，不新加任何会判红的条件：
 
 - **档位** 是 \`.claude/scripts/frontend_grade.py\` 判的 A/B/C/D；**A 就是「给一组 props 就能单独出画面」**，能进预览站的那一档。判据和怎么往上升档见[场景清单](/dev/scenes)。
-- **收录** 是 \`/demo/catalog\` 有没有它，由 \`.claude/scripts/catalog-ratchet.py\` 认——从 \`src/views/demo/catalog.ts\` 走到的某个文件 import 了它、并把它写成某条条目的 \`component:\`。
+- **收录** 是 \`/demo/catalog\` 有没有它，由 \`docs/site/gen/catalog_reach.py\` 从预览站自己的代码读出——从 \`src/views/demo/catalog.ts\` 走到的某个文件 import 了它、并把它写成某条条目的 \`component:\`。
 - **场景** 是它属不属于 \`.claude/scripts/scene-ratchet.py\` 认的场景（路由页、页面的视图、工作面板），见[场景清单](/dev/scenes#scenes)。
 
 ## 一共多少 {#totals}
@@ -598,11 +598,11 @@ function componentsReference(data) {
 |---|---|
 | 组件（\`frontend/src\` 下 \`.vue\`，不含预览站自身） | ${t.components} |
 | 档位 A / B / C / D | ${t.grades.A} / ${t.grades.B} / ${t.grades.C} / ${t.grades.D} |
-| 已收录 / 待收录 / 新增 / 未收录 | ${s.catalogued} / ${s.pending} / ${s.new} / ${s.uncatalogued} |
-| 其中 A 档：已收录 / 待收录 / 新增 | ${a('catalogued')} / ${a('pending')} / ${a('new')} |
+| 已收录 / 能收未收 / 未收录 | ${s.catalogued} / ${s.standalone} / ${s.uncatalogued} |
+| 其中 A 档：已收录 / 能收未收 | ${a('catalogued')} / ${a('standalone')} |
 | 场景：路由页 / 视图 / 工作面板 | ${t.scene_kinds.page} / ${t.scene_kinds.view} / ${t.scene_kinds.panel} |
 
-收录的四态里只有前三种是 \`catalog-ratchet.py\` 的账（\`pnpm run lint:catalog\` 报的就是 A 档那一行）：**已收录**在预览站上；**待收录**冻结在 \`frontend/catalog-baseline.json\` 里，只许减少；**新增**是这条闸门唯一会拦红的状态。剩下的 **未收录** 是 B/C/D 档——单独渲染不了，收进预览站也挂不起来，所以既不进目录也不进 \`pending\`。已收录里那 ${s.catalogued - a('catalogued')} 个非 A 档是收进去了但挂不起来的，归 \`catalog.spec.ts\` 管。
+**能收未收** 是 A 档、单独渲染得了、但预览站上还没有的组件；**未收录** 是 B/C/D 档——单独渲染不了，收进预览站也挂不起来。已收录里那 ${s.catalogued - a('catalogued')} 个非 A 档是收进去了但挂不起来的，归 \`catalog.spec.ts\` 管。
 
 ## 场景（${t.scenes}）
 
@@ -701,7 +701,7 @@ ${workflows.map((w) => `| \`${w.f}\` | ${mdCell(w.name)} | ${w.triggers.map((t) 
   const components = gen('components.py')
   out['ref-components'] = {
     title: '组件总览', kind: '参考',
-    covers: ['.claude/scripts/frontend_grade.py', '.claude/scripts/catalog-ratchet.py', '.claude/scripts/scene-ratchet.py', 'frontend/catalog-baseline.json'],
+    covers: ['.claude/scripts/frontend_grade.py', 'docs/site/gen/catalog_reach.py', '.claude/scripts/scene-ratchet.py'],
     summary: `frontend/src 下全部 ${components.totals.components} 个 .vue 组件：每个的档位（A 能单独渲染）、有没有进预览站 /demo/catalog、属于哪个场景。`,
     body: componentsReference(components),
   }

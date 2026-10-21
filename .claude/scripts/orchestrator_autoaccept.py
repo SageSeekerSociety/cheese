@@ -11,9 +11,8 @@ card, writing nothing. A card is 会采 only when every check below passes; any 
 or cannot be read makes it 交总调度, with one reason per failure. Each reason carries a code
 from REASONS and the sentence to send back to the line.
   CI        the "CI required" check on the card's head concluded success
-  审查      the newest independent review has no blocker/major. Read first from the card body's
-            `独立 review：head <sha8>（增量自 <sha8>）结论 …` lines (the last one is the newest),
-            and only when the body has none, from the PR's last `<!-- pr-review sha=` comment.
+  审查      the newest independent review has no blocker/major, read from the card body's
+            `独立 review：head <sha8>（增量自 <sha8>）结论 …` lines (the last one is the newest).
             The reviewed head must be the card's head or an ancestor of it; a newest review
             with findings means the fix still needs its incremental review.
   版本      the card shows the PR's current head, and GitHub calls the PR MERGEABLE. GitHub
@@ -111,25 +110,17 @@ MERGEABLE_RETRIES, MERGEABLE_DELAY = 3, 2.0
 #: The line pr-review.sh renders first, which the delivering seat pastes into the card body.
 REVIEW_LINE = re.compile(r"独立 review：\s*head ([0-9a-f]{7,40})\s*(?:（增量自 ([0-9a-f]{7,40})）)?\s*"
                          r"结论 (无 blocker/major|有 (\d+) 条)")
-#: The first line of a review posted as a PR comment, and its blocker/major finding headings.
-REVIEW_MARK = re.compile(r"<!--\s*pr-review sha=([0-9a-f]{7,40})")
-SERIOUS_HEADING = re.compile(r"^### \d+\. \[(?:blocker|major)\]", re.M)
 NEVER_SHOWN = "还没有显示过任何版本"
 
 
-def latest_review(card_body, pr_comments):
+def latest_review(card_body):
     """The newest review as {head, since, serious, source}, or None when there is none."""
     found = list(REVIEW_LINE.finditer(card_body or ""))
-    if found:
-        m = found[-1]
-        return {"head": m.group(1), "since": m.group(2),
-                "serious": int(m.group(4) or 0), "source": "卡"}
-    for body in reversed(pr_comments or []):
-        m = REVIEW_MARK.search(body or "")
-        if m:
-            return {"head": m.group(1), "since": None,
-                    "serious": len(SERIOUS_HEADING.findall(body)), "source": "PR 评论"}
-    return None
+    if not found:
+        return None
+    m = found[-1]
+    return {"head": m.group(1), "since": m.group(2),
+            "serious": int(m.group(4) or 0), "source": "卡"}
 
 
 def changed_paths(entries):
@@ -249,9 +240,7 @@ def gh(args, paginate=False):
 
 def pr_facts(body):
     """What judge() reads about a PR, out of one GraphQL pullRequest body."""
-    f = {key: body[field] for field, key in PR_FIELDS}
-    f["comments"] = [c["body"] for c in body["comments"]["nodes"]]
-    return f
+    return {key: body[field] for field, key in PR_FIELDS}
 
 
 def settle_mergeable(read, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sleep=time.sleep):
@@ -279,8 +268,8 @@ def settle_mergeable(read, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sle
 def gh_facts(n, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sleep=time.sleep):
     """One PR's facts. The retry arguments are settle_mergeable's, so the offline self-test can
     drive this function itself without waiting."""
-    q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){%s '
-         'comments(last:100){nodes{body}}}}}' % (REPO[0], REPO[1], " ".join(f for f, _ in PR_FIELDS)))
+    q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){%s}}}'
+         % (REPO[0], REPO[1], " ".join(f for f, _ in PR_FIELDS)))
 
     def read():
         out = gh(["graphql", "-f", "query=" + q, "-F", f"n={n}"])
@@ -323,7 +312,7 @@ def gather(tok, task, me):
     f["pr"] = pr
     head = shown_head(card, pr)
     f["ci"] = ci_on(head) if head else None
-    f["review"] = latest_review(card.get("change_body"), pr["comments"])
+    f["review"] = latest_review(card.get("change_body"))
     rv = f["review"]
     if rv and head and not rv["serious"] and not head.startswith(rv["head"]):
         out = gh([f"repos/{'/'.join(REPO)}/compare/{rv['head']}...{head}"])
@@ -364,8 +353,11 @@ def accept(tok, task, me):
         # not shown one for yet may refuse this accept — the re-read and second attempt below are
         # what pick up the head it has written by then.
         head = shown_head(card, f["pr"])
+        # A card that hands over a file or an address also says which version of it is on the
+        # card; the accept carries it back, the same way it carries the head.
+        revision = (card.get("deliverable") or {}).get("revision")
         ok, detail = post(tok, f"/accept-cards/{card['id']}/accept",
-                          {"decided_by": me, "head_sha": head})
+                          {"decided_by": me, "head_sha": head, "deliverable_revision": revision})
         if ok:
             return f"已采纳 head {head[:8]}"
         if NEVER_SHOWN not in detail or attempt:
@@ -456,11 +448,10 @@ def self_test():
     def facts(**over):
         f = {"task": 1, "card": {"id": "c", "pr_number": 9, "pr_head_sha": H, "reviewer_handle": "me",
                                  "change_body": f"x\n独立 review：head {H[:8]} 结论 无 blocker/major\n"},
-             "pr": {"head": H, "mergeable": "MERGEABLE", "merged": False, "in_queue": False,
-                    "comments": []},
+             "pr": {"head": H, "mergeable": "MERGEABLE", "merged": False, "in_queue": False},
              "ci": "success", "files": ["backend/app/x.py"]}
         f.update(over)
-        f["review"] = latest_review(f["card"].get("change_body"), (f["pr"] or {}).get("comments"))
+        f["review"] = latest_review(f["card"].get("change_body"))
         return f
 
     def card(**over):
@@ -504,11 +495,6 @@ def self_test():
                                      reach={"status": "ahead", "ahead_by": 2}), "会采", has="之后 2 个提交没审")
     check("审查的版本不在历史里", dict(facts(card=card(change_body=clean_old)),
                                   reach={"status": "diverged", "ahead_by": 1}), "交总调度", "review_missing", "diverged")
-    comment = f"<!-- pr-review sha={H} -->\n**Independent review**\n\n### 1. [minor] typo\n"
-    check("卡里没有就退回 PR 评论", facts(card=card(change_body=""), pr=pr(comments=[comment])),
-          "会采", has="审查来自PR 评论")
-    check("PR 评论里有 major", facts(card=card(change_body=""), pr=pr(comments=[comment + "\n### 2. [major] x\n"])),
-          "交总调度", "review_major", "有 1 条")
     # 版本
     check("head 不一致", facts(pr=pr(head=OLD)), "交总调度", "head_mismatch", "不是 PR 的 head bbbbbbbb")
     check("卡上还没有版本就按 PR 自己的 head 判", facts(card=card(pr_head_sha=None)),
@@ -534,8 +520,7 @@ def self_test():
     # that; these go through gh_facts rather than settle_mergeable, or reverting the call inside it
     # to a single read — the very behaviour the retry exists to replace — would leave them green.
     def raw(mergeable, merged=False, queued=False):
-        return {"merged": merged, "headRefOid": H, "mergeable": mergeable, "isInMergeQueue": queued,
-                "comments": {"nodes": []}}
+        return {"merged": merged, "headRefOid": H, "mergeable": mergeable, "isInMergeQueue": queued}
 
     def github(*answers):
         """A stubbed `gh` answering `answers` in order, repeating the last, counting its calls;
@@ -552,7 +537,7 @@ def self_test():
             # here, instead of this stub quietly supplying it and leaving the query unguarded.
             q = next((a for a in args if a.startswith("query=")), "")
             return json.dumps({"data": {"repository": {"pullRequest":
-                              {k: v for k, v in body.items() if k == "comments" or k in q}}}})
+                              {k: v for k, v in body.items() if k in q}}}})
 
         return fake, asked
 
@@ -619,7 +604,8 @@ def self_test():
         globals()["gh"], globals()["post"] = fresh_gh, keep_post
         said = accept("tok", {"id": "t", "number": 1, "card": {"id": "c"}}, "me")
         want = [("/accept-cards/c/approve", {"approver_handle": "me"}),
-                ("/accept-cards/c/accept", {"decided_by": "me", "head_sha": H})]
+                ("/accept-cards/c/accept", {"decided_by": "me", "head_sha": H,
+                                             "deliverable_revision": None})]
         if calls != want or not said.startswith("已采纳 head "):
             failures.append(f"卡上还没有版本时也要走到 approve 和 accept: {said!r} {calls!r}")
     finally:

@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
+from app.domain.agent.harness import CODEX
 from app.domain.agent.harness.codex.app_server import AppServer
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.session import Session
@@ -72,7 +73,7 @@ class Runner(runner.Runner[Journal]):
             return await asyncio.wait_for(
                 asyncio.shield(self.syncing), CATCH_UP_TIMEOUT_S
             )
-        except Exception as error:  # noqa: BLE001 — the turn goes on regardless
+        except Exception as error:  # the turn goes on regardless
             print(
                 f"project skills not synchronized: {error!r}",
                 file=sys.stderr,
@@ -135,7 +136,7 @@ class Runner(runner.Runner[Journal]):
         try:
             async with self.submit_lock:
                 await self.session.send(reason)
-        except Exception as error:  # noqa: BLE001 — the turn ends as it was going to
+        except Exception as error:  # the turn ends as it was going to
             print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
             self.journal.append(ending)
             self.reply_settled()
@@ -177,7 +178,7 @@ class Runner(runner.Runner[Journal]):
             "owner",
             json.dumps(
                 {
-                    "harness": "codex",
+                    "harness": CODEX,
                     "agent_handle": opening.agent_handle,
                 }
             ),

@@ -81,6 +81,7 @@ from app.api.member_settings import say_agent_changes
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.write_access import ROUTE_DECIDES
+from app.domain.agent.model_catalog import model_choices
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
@@ -177,7 +178,7 @@ async def create_project_agent(
         actor, project_id=project_id, permission=Permission.configure_agents
     )
     await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
+    service = AgentInstanceService(db, models=model_choices)
     instance = await service.create(
         project_id=project_id,
         handle=body.handle or f"agent-{uuid.uuid4().hex[:8]}",
@@ -214,7 +215,7 @@ async def update_project_agent(
         actor, project_id=project_id, permission=Permission.configure_agents
     )
     project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
+    service = AgentInstanceService(db, models=model_choices)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     fields = body.model_fields_set
     if "display_name" in fields and body.display_name is not None:

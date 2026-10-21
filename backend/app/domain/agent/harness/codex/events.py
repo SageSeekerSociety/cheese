@@ -11,7 +11,6 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
-    AgentStepOutput,
     AgentToolUse,
     step_error,
 )
@@ -132,8 +131,6 @@ class Assembler:
                             call_id=item["id"], text=step_error(error or said)
                         )
                     )
-                if said.strip():
-                    steps.append(AgentStepOutput(call_id=item["id"], text=said))
                 return steps
             if item["type"] == "dynamicToolCall":
                 said = "\n".join(
@@ -151,8 +148,6 @@ class Assembler:
                             text=step_error(said),
                         )
                     )
-                if said.strip():
-                    steps.append(AgentStepOutput(call_id=item["id"], text=said))
                 return steps
             return []
         if method == "turn/completed":

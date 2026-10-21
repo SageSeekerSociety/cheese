@@ -184,13 +184,11 @@ export default [
         meta: { titleKey: 'navigation.admin.featureStats', isFullPage: true },
       },
       {
-        // 架构还债进度（`/admin/ratchet`）。和看板、功能数据一样是**读**的页面，
-        // 区别只在看的是什么：看板看平台、功能数据看某个功能，这一页看仓库自己的债。
-        // 数据来自 CI 在 main 上定期采的那份快照，页面上一个判定都不做。
-        path: 'ratchet',
-        name: 'AdminRatchet',
-        component: () => import('@/views/admin/AdminRatchetPage.vue'),
-        meta: { titleKey: 'navigation.admin.ratchet', isFullPage: true },
+        // Read stored CI and queue metrics without making GitHub requests.
+        path: 'ci-activity',
+        name: 'AdminCiActivity',
+        component: () => import('@/views/admin/AdminCiActivityPage.vue'),
+        meta: { titleKey: 'navigation.admin.ciActivity', isFullPage: true },
       },
       {
         // 网关模型管理那一页。和其它分区一样是后台里的一块，不是独立域名。

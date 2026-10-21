@@ -1,16 +1,18 @@
 """ChatService 的两头「话还没被读到」的那一半。
 
-一头是往**正在跑的那一轮**里送东西：人中途插一句话
-（`merge_into_running_turn`），或者平台告诉它世界变了（`notify_running_turn`）。
-两条都先问 `authority` 这一轮是谁在跑，再走算力那侧的 steer，收据认下才算送到。
+一头是往**正在干活的那个会话**里送东西：人中途插一句话
+（`merge_into_running_session`），平台告诉它世界变了（`notify_running_session`），
+或者账本上的一份投递（`join_running_session`）。会话在不在干活，问的是它自己的
+runner（`ComputePool.working_seat` 找座位，steer 之前再问一次 `status`），不是哪
+一轮开着；收据认下才算送到。
 
 另一头是问「还有什么没被读到」：`oldest_unread_at`（最久的那一条等了多久）、
 `has_unread_input`（房间里还有没有待读）、`pending_seat`（那批是点名给谁的）。
 三个问的是同一个窗口——`_pending_input_blocks`——所以放在一起，谁改了窗口语义
 另外两个跟着改。
 
-Mixin：方法仍挂在 `ChatService` 上，实例的 monkeypatch（`chat.notify_running_turn`、
-`chat.merge_into_running_turn`）和 `_compute.report_to` 收的回调都不动。
+Mixin：方法仍挂在 `ChatService` 上，实例的 monkeypatch（`chat.notify_running_session`、
+`chat.merge_into_running_session`）和 `_compute.report_to` 收的回调都不动。
 """
 
 import logging
@@ -25,9 +27,7 @@ from app.domain.agent.harness.prompt import (
     strip_platform_notice,
 )
 from app.domain.agent.input_registration import input_registrar
-from app.domain.agent.opening import OPENING, PURPOSE
 from app.domain.agent.prompt import live_inputs, model_images
-from app.domain.agent.turn.state import authority
 from app.domain.agent.turn.state.inputs import _pending_input_blocks
 from app.domain.delivery.agent import DeliveryTargetChanged
 from app.domain.delivery.input_identity import (
@@ -40,7 +40,6 @@ from app.domain.delivery.mention import BY_PERSON
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
-from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import TopicStatus
@@ -66,7 +65,7 @@ class LiveInput:
         _compute: ComputePool
         live: LiveWork
 
-    async def merge_into_running_turn(
+    async def merge_into_running_session(
         self,
         topic_id: uuid.UUID,
         user_block_ids: list[uuid.UUID],
@@ -77,8 +76,8 @@ class LiveInput:
         *,
         owes_reply: bool = True,
     ) -> bool | InputReconciliationPending | None:
-        """Inject a just-posted human message into the turn already running on
-        this topic.
+        """Inject a just-posted human message into the session already working
+        in this topic: the recipient's seat, or the room's only working one.
 
         ``owes_reply`` is whether the message was addressed to the agent: then
         the session answers it in the room before it uses any other tool. One
@@ -86,38 +85,28 @@ class LiveInput:
 
         ``True`` means transport acceptance was recorded. A reconciliation
         result holds the registered identity without authorizing a queued retry.
-        ``False`` means a pre-send failure; ``None`` means no live work remained.
+        ``False`` means a pre-send failure; ``None`` means no session of that
+        seat is working here.
 
         The text is labelled the same way `prompt_line` labels a pending block,
-        so a message that arrives mid-turn reads identically to one that came in
+        so a message that arrives mid-work reads identically to one that came in
         the prompt — 芝士 must not have to tell the two apart to know who spoke.
 
         Images use the same @path input path as an initial prompt. Interactive
         providers resolve that path into a native image block before the model
         sees the message; a remote device first stages the exact bytes and acks
         the file write."""
-        matched = await authority.consuming_turn(
-            self.live,
-            self._sessions,
-            topic_id,
-            lambda state: (
-                recipient_handle is None
-                or state.agent_instance_handle is None
-                or state.agent_instance_handle == recipient_handle
-            ),
-        )
-        if matched is None:
+        working = self._compute.working_seat(topic_id, recipient_handle)
+        if working is None:
             return None
-        # The state names whose turn this is: the local hook work when this
-        # process runs it, the durable row's seat when another one does. Either
-        # way it aims the steer and stamps seen_by at that same seat.
-        consuming_turn_id, state = matched
+        # The seat aims the steer; the handle it acts under is who reads the
+        # message (``seen_by``) and whose own earlier message a reply quotes.
+        seat_agent, acting = working
         async with self._sessions() as session:
             stored, replied = await live_inputs(session, user_block_ids)
             # 中途插进来的话也带着平台自己那几句，同样按正在说话的那个人的
             # 语言走（`user.language`）。
             language = await language_of(session, author)
-        recipient = state.acting_agent if state else None
         files = [
             (str(a["path"]), str(a.get("mime") or ""))
             for a in attachments or []
@@ -128,7 +117,7 @@ class LiveInput:
                 held_block_ids=tuple(user_block_ids),
                 block_ids=tuple(user_block_ids),
                 seen_block_ids=tuple(user_block_ids),
-                seen_by=state.acting_agent if state else None,
+                seen_by=acting,
             ),
             probe_unread=True,
         )
@@ -160,7 +149,7 @@ class LiveInput:
                         attachments,
                         stored=stored,
                         replied=replied,
-                        recipient=recipient,
+                        recipient=acting,
                         undecodable=undecodable,
                     )
                 ),
@@ -169,19 +158,13 @@ class LiveInput:
             if archived:
                 delivered = False
             else:
-                # 话说给在跑这一轮的那个座位：同房间另一个 agent 也有一轮在跑
-                # 时，不带座位就是把话猜进别人的会话里。
-                seat_agent = (
-                    (state.agent_instance_handle or state.acting_agent)
-                    if state
-                    else None
-                )
+                # 话说给在干活的那个座位：同房间另一个 agent 也在干活时，不带
+                # 座位就是把话猜进别人的会话里。
                 delivered = await self._compute.steer(
                     topic_id,
                     line,
                     images=pictures or None,
                     register_input=registrar,
-                    expected_work_id=consuming_turn_id,
                     agent_handle=seat_agent,
                     owes_reply=owes_reply,
                 )
@@ -194,14 +177,14 @@ class LiveInput:
                 exc.identity.input_id,
             )
             return InputReconciliationPending(exc.identity, exc.accepted)
-        except Exception:  # noqa: BLE001 — pre-send failure may queue a fallback
-            logger.exception("merge into running turn failed (topic=%s)", topic_id)
+        except Exception:  # pre-send failure may queue a fallback
+            logger.exception("merge into running session failed (topic=%s)", topic_id)
             delivered = False
         if not delivered:
             return False
         return True
 
-    async def notify_running_turn(
+    async def notify_running_session(
         self,
         topic_id: uuid.UUID,
         notice: str,
@@ -209,15 +192,16 @@ class LiveInput:
         blocks: Sequence[uuid.UUID] = (),
         recipient_seat: str | None = None,
     ) -> bool | InputReconciliationPending:
-        """Tell the turn already running on this topic that the world changed
-        under it. Returns whether the live session took it.
+        """Tell the session already working in this topic that the world
+        changed under it: ``recipient_seat``'s, or the room's only working one.
+        Returns whether the live session took it.
 
-        The same channel as a person's mid-turn message, carrying the other kind
-        of thing a turn needs to hear. A long turn is built on a snapshot taken
-        at its first second — the doc, the roster, the cards — and the only way
-        anything could reach it afterwards was somebody typing. So a person
-        editing the living doc mid-turn changed nothing 芝士 could see, and it
-        kept working from, and writing back, the version it started with.
+        The same channel as a person's mid-work message, carrying the other kind
+        of thing a working session needs to hear. Its session is built on a
+        snapshot taken when it started — the doc, the roster, the cards — and
+        the only way anything could reach it afterwards was somebody typing. So
+        a person editing the living doc mid-work changed nothing 芝士 could see,
+        and it kept working from, and writing back, the version it started with.
 
         Framed as a platform notice, and the body is neutralized first: the
         marker is the one thing in a prompt that claims institutional authority,
@@ -225,33 +209,21 @@ class LiveInput:
 
         ``blocks`` is where this notice is written down. Given them, delivery
         stops being all-or-nothing: the receipt stamps them consumed, and a
-        notice that never landed stays pending for the next turn to read — the
-        same 宁可重复不可丢失 a person's mid-turn message already gets. Without
-        them a notice that misses is gone, which is right only for something
-        that is worthless a minute later (the chat-silence reminder), and was
-        wrong for everything else: the old reasoning was that the next turn
-        reads the doc fresh anyway, and the next turn does not — a reused
-        session keeps the system prompt it was started with.
+        notice that never landed stays pending for the next prompt to read —
+        the same 宁可重复不可丢失 a person's mid-work message already gets.
+        Without them a notice that misses is gone, which is right only for
+        something that is worthless a minute later (the chat-silence reminder),
+        and was wrong for everything else: a reused session keeps the system
+        prompt it was started with, so nothing else would tell it.
         """
-        matched = await authority.consuming_turn(
-            self.live,
-            self._sessions,
-            topic_id,
-            lambda state: (
-                recipient_seat is None or state.acting_agent == recipient_seat
-            ),
-            strict=recipient_seat is not None,
-        )
-        if matched is None:
+        working = self._compute.working_seat(topic_id, recipient_seat)
+        if working is None:
             return False
-        consuming_turn_id, state = matched
+        seat_agent, _acting = working
         line = platform_prompt(strip_platform_notice(notice))
         registrar = self._input_registrar(
             InputEffects(held_block_ids=tuple(blocks), block_ids=tuple(blocks)),
             probe_unread=bool(blocks),
-        )
-        seat_agent = (
-            (state.agent_instance_handle or state.acting_agent) if state else None
         )
         try:
             return bool(
@@ -259,7 +231,6 @@ class LiveInput:
                     topic_id,
                     line,
                     register_input=registrar,
-                    expected_work_id=consuming_turn_id,
                     agent_handle=seat_agent,
                 )
             )
@@ -270,45 +241,44 @@ class LiveInput:
                 exc.identity.input_id,
             )
             return InputReconciliationPending(exc.identity, exc.accepted)
-        except Exception:  # noqa: BLE001 — a failed notice must not fail the write
+        except Exception:  # a failed notice must not fail the write
             logger.exception(
-                "platform notice into running turn failed (topic=%s)", topic_id
+                "platform notice into running session failed (topic=%s)", topic_id
             )
             return False
 
-    async def join_running_turn(
+    async def join_running_session(
         self, delivery_id: uuid.UUID, attempt_id: uuid.UUID
     ) -> bool | InputReconciliationPending | None:
-        """Hand a ledger delivery to the turn its seat is already running in
-        that conversation, the way a person's mid-turn message is handed.
+        """Hand a ledger delivery to its seat's session when that session is
+        already working in the conversation, the way a person's mid-work
+        message is handed.
 
-        A seat runs one turn at a time, so a delivery that waits for its own
-        turn waits for that one to end — for hours behind a long one, and on
-        dev it was given up after half an hour for 369 of 420 in the 15 days
-        to 2026-10-16. Joined, it is read at the turn's next tool boundary.
+        A seat's session does one piece of work at a time, so a delivery that
+        waits for work of its own waits for the current work to end — for
+        hours behind a long one, and on dev it was given up after half an hour
+        for 369 of 420 in the 15 days to 2026-10-16. Joined, it is read at the
+        session's next tool boundary.
 
-        ``None``: there is no such turn, or this delivery takes a turn of its
-        own. A finished task's write-up does: the close keys on its attempt's
-        turn (`room_task.closing`). So does a routine's run: its settlement
-        reads the run's progress off its attempt's turn
-        (`routine.service.settlement`), and that turn is assembled with the
-        routine owner's memory (`turn_speakers.routine_owner`). So does a
-        task's opening: the task page reads whether it started off its
-        attempt's turn (`agent.opening`). The caller starts one as before.
-        ``False``: there is one and the input did not reach it; nothing was
-        sent (`receipts.withdraw_input` puts the attempt back to ``claimed``),
-        so the attempt is refused and retried like any other. ``True``: the
-        session's transport took it. Only the session's echo of it settles
-        the delivery (`receipts.record_receipt`), as for any input; until then
-        it is not sent again. ``InputReconciliationPending``: the outcome is
-        unknown, which is never permission to send it again (`delivery.agent`).
+        ``None``: the seat's session is not working here, or this delivery is
+        work of its own. A routine's run is: its session is assembled with the
+        routine owner's memory (`turn_speakers.routine_owner`), which a session
+        already working for somebody else does not carry. The caller starts it
+        as before. ``False``: the session is working and the input did not
+        reach it; nothing was sent (`receipts.withdraw_input` puts the attempt
+        back to ``claimed``), so the attempt is refused and retried like any
+        other. ``True``: the session's transport took it. Only the session's
+        echo of it settles the delivery (`receipts.record_receipt`), as for
+        any input; until then it is not sent again.
+        ``InputReconciliationPending``: the outcome is unknown, which is never
+        permission to send it again (`delivery.agent`).
 
         The input is registered under this delivery's attempt and fenced
         (``fence_delivery``): an attempt a newer notice replaced, or that lost
         its lease, is refused before anything is sent. A platform instruction
-        is read when the turn gets to it and does not move the turn's
-        foreground work aside; a person's @ does, and is owed an answer, as
-        their own message would be.
+        is read when the session gets to it and does not move its foreground
+        work aside; a person's @ does, and is owed an answer, as their own
+        message would be.
         """
         async with self._sessions() as session:
             row = await session.get(Delivery, delivery_id)
@@ -317,24 +287,15 @@ class LiveInput:
             row is None
             or row.attempt_id != attempt_id
             or row.conversation_id is None
-            or payload.get(CLOSES_TASK)
             or payload.get("eventType") == EVENT_ROUTINE_RUN
-            or payload.get(PURPOSE) == OPENING
         ):
             return None
-        seat = row.recipient_handle
-        matched = await authority.consuming_turn(
-            self.live,
-            self._sessions,
-            row.conversation_id,
-            lambda state: seat in (state.agent_instance_handle, state.acting_agent),
-            strict=True,
-        )
-        if matched is None:
+        working = self._compute.working_seat(row.conversation_id, row.recipient_handle)
+        if working is None:
             return None
-        consuming_turn_id, state = matched
-        # Framed as the turn it would otherwise have started frames it: a
-        # ledger delivery's turn is a platform turn, which reads the content
+        seat_agent, _acting = working
+        # Framed as the work it would otherwise have started frames it: a
+        # ledger delivery's work is the platform's, which reads the content
         # under the platform marker (`turn.intake.preparation.prompt`).
         line = platform_prompt(str(payload.get("content") or ""))
         by_person = payload.get("eventType") == BY_PERSON
@@ -342,16 +303,12 @@ class LiveInput:
             InputEffects(delivery_id=delivery_id, attempt_id=attempt_id),
             fence_delivery=True,
         )
-        seat_agent = (
-            (state.agent_instance_handle or state.acting_agent) if state else seat
-        )
         try:
             return bool(
                 await self._compute.steer(
                     row.conversation_id,
                     line,
                     register_input=registrar,
-                    expected_work_id=consuming_turn_id,
                     agent_handle=seat_agent,
                     owes_reply=by_person,
                 )
@@ -360,15 +317,15 @@ class LiveInput:
             raise
         except InputOutcomeUnconfirmed as exc:
             logger.exception(
-                "delivery into running turn requires reconciliation "
+                "delivery into running session requires reconciliation "
                 "(delivery=%s, input=%s)",
                 delivery_id,
                 exc.identity.input_id,
             )
             return InputReconciliationPending(exc.identity, exc.accepted)
-        except Exception:  # noqa: BLE001 — refused and retried, never dropped
+        except Exception:  # refused and retried, never dropped
             logger.exception(
-                "delivery into running turn failed (delivery=%s)", delivery_id
+                "delivery into running session failed (delivery=%s)", delivery_id
             )
             return False
 

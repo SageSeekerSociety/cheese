@@ -370,7 +370,7 @@ def main() -> int:
                 print(f"cannot update baseline: {exc}", file=sys.stderr)
                 cannot_judge(check_id, str(exc))
     if as_json():
-        # --json (what ci:fast and the snapshot collector call) keeps stdout the
+        # --json (what the snapshot collector calls) keeps stdout the
         # one record line; on failure the fix report rides on stderr instead.
         if not ok:
             print(failure_text(new, expanded, raw), file=sys.stderr)

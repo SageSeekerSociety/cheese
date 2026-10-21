@@ -23,53 +23,77 @@ user-facing route lists hosts. The admin dashboard counts them.
 |---|---|---|
 | `CLOUD_HOST_SLOTS_PER_CORE` | 2 | Sandbox slots per host core. A slot is a sandbox, for as long as it exists. |
 | `CLOUD_SANDBOX_IDLE_STOP_S` | 600 | A sandbox whose conversation runs no turn and whose session asked for no tool this long is destroyed. |
-| `CLOUD_SANDBOX_BACKGROUND_CAP_S` | 3600 | A command the executor still runs for the session (a Bash call sent to the background) keeps an idle sandbox up, until this long after the session's last activity. |
+| `CLOUD_SANDBOX_BACKGROUND_CAP_S` | 900 | A command the executor still runs for the session (a Bash call sent to the background) keeps an idle sandbox up, until this long after the session's last activity. |
+| `CLOUD_VM_BACKGROUND_CAP_S` | 3600 | The same keep-alive for a whole cloud VM's sandbox. Longer than a sandbox's, because a VM's idle release (1800 s) is longer than a sandbox's. |
 | `CLOUD_POOL_MIN_FREE_SLOTS` | 4 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. The default is one host's worth of sandboxes — the default host runs four — so the next host is under way once fewer than four slots are free; a deployment that creates a different host size sets this to that host's capacity. An idle host is not let go if that would take the free slots below it. |
 | `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host that has no sandbox on it is kept before it is released. |
-| `CLOUD_POOL_MAX_HOSTS` | 30 | The platform's cap on hosts, protecting the cluster: it rises only as the cluster's shared thin pool grows to hold those hosts' disks written full (thirty are 1.2 TB). A session that finds the pool full and every host full is told capacity is tight and to try later. |
+| `CLOUD_POOL_MAX_HOSTS` | 12 | The platform's cap on hosts, whole cloud VMs among them, protecting the cluster: the current 400 GB shared thin pool holds ten hosts' disks written full, so each place above ten over-commits it by a disk. It rises only as the storage behind it grows. A session that finds the pool full and every host full is told capacity is tight and to try later. |
 | `CLOUD_SANDBOX_CREDITS_PER_HOUR` | none | Credits a running sandbox costs per hour. Unset, no cloud sandbox starts. |
 | `CLOUD_VM_CREDITS_PER_HOUR` | `{}` | Credits per hour of a VM sandbox, from creation to release, by its size as `<cores>c<GiB>g` (`4c8g`). A size not listed cannot be created. |
 
-Hosts are created at `MICROCLOUD_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` (4 cores, 16 GiB,
-40 GB; clamped into the offering). A host runs `cores × CLOUD_HOST_SLOTS_PER_CORE` sandboxes at
-once, but no more than fit, each at its full `CLOUD_SANDBOX_MEMORY_MB`, in the memory it gives
-its sandboxes (its memory less a quarter, at least 1 GiB), nor more than fit on its disk at
-`CLOUD_SANDBOX_DISK_GB` each after `CLOUD_HOST_DISK_RESERVE_GB` for the host and its package
-stores: four on the default host. There is no team or project quota on cloud. A running sandbox is charged in credits by
-the hour, from the same packs as model calls (`docs/manual/dev/billing.md`, 云端算力).
+Hosts are VMs (`MICROCLOUD_OFFERING_ID`; on dev the same `standard-vm` offering as whole
+VMs): a VM gives the host real root, which the per-sandbox disk limit below needs and an
+unprivileged container does not have. Hosts are created at `MICROCLOUD_DEFAULT_CORES` /
+`_MEMORY_MB` / `_DISK_GB` (4 cores, 16 GiB, 40 GB; clamped into the offering), with the data
+disk the offering gives each of its machines (`dataDiskGb`); an offering that gives none
+gives the pool no host. A host runs `cores × CLOUD_HOST_SLOTS_PER_CORE` sandboxes at once, but
+no more than fit, each at its full `CLOUD_SANDBOX_MEMORY_MB`, in the memory it gives its
+sandboxes (its memory less a quarter, at least 1 GiB), nor more than fit on its data disk at
+`CLOUD_SANDBOX_DISK_GB` each after `CLOUD_HOST_DISK_RESERVE_GB` for its projects' package
+stores: four on the default host with a 64 GB data disk. There is no team or project quota on
+cloud. A running sandbox is charged in credits by the hour, from the same packs as model calls
+(`docs/manual/dev/billing.md`, 云端算力).
 
-### A disk that is nearly full is freed
+### Each sandbox's disk has a limit of its own
 
-`backend/app/domain/machine/disk_guard.py`; the host side is `sandbox_home.py`'s `disk`.
-Nothing inside a sandbox bounds what it writes: a host is an unprivileged container, with no
-loop device for a filesystem per sandbox and no project quotas. So the disk is held the way
-Kubernetes holds a node's ephemeral storage, by reading it and evicting. Every
-`SANDBOX_DISK_CHECK_S` (60 s), every online machine holding a sandbox — the platform's hosts
-and people's computers alike — and every platform host in the pool, holding one or not, reports the free bytes and inodes of the filesystem its homes
-are on, one `statvfs`. What each home holds takes a walk of every file (13 s on a dev host
-holding 880 thousand inodes), so it is read every `SANDBOX_DISK_WALK_S` (300 s), and at once
-on any check that finds the disk below a floor.
+A host enrolls only with its data disk (`enrollment.DATA_DISK`): the VM's `scsi1`, formatted
+XFS the first time, mounted at `/data` with project quotas and `discard` (what a sandbox
+deletes goes back to the thin pool under the VM), and bound over `~/.cheese/home` and
+`~/.cheese/store`, where the homes and the package stores are. The size it found is the host's
+`sandbox_disk_gb`. When a sandbox starts, `sandbox_host.py` gives its home a project quota of
+`CLOUD_SANDBOX_DISK_BUDGET_GB` (12) and `CLOUD_SANDBOX_INODE_BUDGET` (600,000 inodes), its
+executor's state (`~/.cheese/executor` in the home) a small one of its own, so a sandbox that
+filled its home still answers and says so, and its project's store the same limits as a home.
+A write past a limit is refused (ENOSPC) to that sandbox alone. Inside its sandbox a session
+cannot change a file's project or take the inheritance off a directory: the kernel allows that
+only from the machine's own user namespace (verified on a dev VM, 2026-10-20). A hard link
+crosses neither the sandbox's mounts nor two projects; uv and pnpm clone from the store
+instead (`UV_LINK_MODE=clone`, `npm_config_package_import_method=clone-or-copy`), which on
+XFS shares the store's blocks. A sandbox whose home is not on such a disk does not start.
+
+A sandbox that filled its own disk keeps its executor (`bootstrap.py`): a prepare that changes
+nothing writes nothing, what the executor can do without (skills, the preview token, the
+environment's config) is skipped and the tool call told how much is left, an upgrade whose
+release cannot be staged waits as it waits for a busy executor, and a command that fails there
+says `disk full: N MB free, M files left`. The session stays on its host and its room is told
+the disk is full; another host would give it an empty home and none of its work.
+
+### The disk as a whole, and idle memory
+
+`backend/app/domain/machine/disk_guard.py`; the host side is `sandbox_home.py`'s `disk`. The
+limits of a host's sandboxes add up to more than its disk, so every `SANDBOX_DISK_CHECK_S`
+(60 s), every online machine holding a sandbox — the platform's hosts and people's computers
+alike — and every platform host in the pool, holding one or not, reports the free bytes and
+inodes of the filesystem its homes are on, and on a host what each home holds by its quota, a
+`statvfs` each.
 
 - Below `SANDBOX_DISK_FREE_FLOOR` (10%) of its bytes free or `SANDBOX_INODES_FREE_FLOOR` (5%)
   of its inodes, a host takes no new sandbox (`cloud_hosts.disk_full_since`) until a reading
-  finds room again, and the sandbox holding the most of either is destroyed, one a reading.
-  Its room is told what it held and under which directory. A sandbox holding under 1% of the
-  disk is never evicted for it: on a person's computer the disk may be full of their own files.
-- On a platform host, a sandbox holding more than `CLOUD_SANDBOX_DISK_BUDGET_GB` (12) or
-  `CLOUD_SANDBOX_INODE_BUDGET` (600,000 inodes) is destroyed on the next walk of its homes,
-  whatever room the disk has, so one sandbox cannot fill a host for the others; its room is
-  told the limit. The budgets add up to more than a host's disk on purpose, with the floors
-  above as the backstop. A person's computer has no budget: its disk is theirs to fill.
+  finds room again. Nothing on it is stopped: each sandbox is within its own limit.
 - A sandbox's home with no sandbox any more — its row went when its session moved away — is
   deleted, ten minutes after it was last written. A home without the sandbox marker (a room's
   own directory on a computer that runs it without a sandbox) is never touched.
+- A sandbox whose session has asked for no tool for two minutes gives back its page cache
+  (`sandbox_host.py reclaim`, cgroup `memory.reclaim`); the guest frees it, and the VM's
+  balloon reports free pages to the hypervisor, which takes them back (5.8 GiB down to
+  1.4 GiB within 25 s, measured on a dev VM).
 - An executor that cannot be installed because the disk is full says so rather than repeating
   the path the error named.
 
 ### What hosts and sandboxes use is shown and alerted
 
 `backend/app/domain/machine/readings.py`. The same reading also carries a host's memory
-(`/proc/meminfo`, the container's own under lxcfs), the CPU time of its cgroup root, its load,
+(`/proc/meminfo`), the CPU time of its cgroup root, its load,
 and each sandbox cgroup's `memory.current` and `memory.peak`. A platform host's reading is kept
 (`host_readings`, six hours) with each sandbox's latest memory and disk (`sandbox_usages`), and
 the admin page `/admin/machines` shows them beside the sandbox limits, with each reading's age.
@@ -137,6 +161,7 @@ never the machine.
 | `MICROCLOUD_VM_OFFERING_ID` | 0 | The offering VMs are created from. 0: the deployment does not offer VM sandboxes, and the spec is not offered. |
 | `CLOUD_VM_CORES` / `_MEMORY_MB` / `_DISK_GB` | 4 / 8192 / 40 | The one VM size, clamped into the offering. Recorded on the row with the project the VM was created for. |
 | `CLOUD_VM_IDLE_RELEASE_S` | 1800 | A VM is pushed and released once its session has been idle this long, by the measure a sandbox is destroyed by (no turn in its conversation, no tool call, no background command still running). |
+| `CLOUD_VM_BACKGROUND_CAP_S` | 3600 | How long a background command keeps a VM up after the session's last activity. Its own setting, not the sandbox's: the sandbox cap (900 s) is shorter than the VM's idle release, so it would hold nothing up. |
 
 The pool sweep releases it as soon as no home is
 left on it, with no idle hold: when its session switches away after pushing, when the room's

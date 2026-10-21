@@ -23,6 +23,7 @@ from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply
 from app.domain.user.models import User
+from tests.support.devices import enrollment_team
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -55,11 +56,13 @@ def test_both_supplies_round_trip_and_only_cloud_is_reclaimable(
             await service.start("microcloud-box"),
             owner_user_id=1,
             supply=Supply.cloud,
+            team_id=await enrollment_team(service, 1),
         )
         mine = await service.approve(
             await service.start("my-desktop"),
             owner_user_id=1,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(service, 1),
         )
         await db_session.flush()
         db_session.expunge_all()  # force a genuine read, not the identity map
@@ -100,6 +103,9 @@ def test_supply_defaults_to_self_hosted_when_omitted(
         )
         db_session.add(owner)
         await db_session.flush()
+        team_id = await enrollment_team(
+            DeviceService(SqlDeviceRepository(db_session)), owner.id
+        )
 
         # ORM path: the model's `default=` fills the omitted field before INSERT.
         db_session.add(
@@ -108,6 +114,7 @@ def test_supply_defaults_to_self_hosted_when_omitted(
                 name="omit-via-orm",
                 token="tok-devdefault01",
                 owner_user_id=owner.id,
+                team_id=team_id,
                 created_at=datetime.now(UTC),
             )
         )
@@ -122,14 +129,15 @@ def test_supply_defaults_to_self_hosted_when_omitted(
         # through the repository or the ORM.
         await db_session.execute(
             text(
-                "INSERT INTO device (device_id, name, token, owner_user_id, "
-                "created_at) VALUES (:id, :name, :token, :owner, :ts)"
+                "INSERT INTO device (device_id, name, token, owner_user_id, team_id, "
+                "created_at) VALUES (:id, :name, :token, :owner, :team, :ts)"
             ),
             {
                 "id": "devdefault02",
                 "name": "omit-via-raw-sql",
                 "token": "tok-devdefault02",
                 "owner": owner.id,
+                "team": team_id,
                 "ts": datetime.now(UTC),
             },
         )

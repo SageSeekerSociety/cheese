@@ -69,15 +69,13 @@ FAILED = "failed"
 #: Run records on the machine side: a turn waiting for the machine it runs on.
 MACHINE_RECORDS = ("device_waiting",)
 
-# 「这个对话里有没有新一轮开始了」：取 conversation_id、started_at 和 delivered_at
-# 三列，一张裸表。整张 `AgentTurn` 属于 agent 域，这里要的只是它的那个瞬间 —— 用
-# 裸表是为了不去 import 那个模型（`agent/liveness.py` 读 `threads` 也是这个形状），
-# block 域不必因此多一条跨域依赖。
-_TURNS = table(
-    "agent_turns",
+# 「这个对话里的会话后来又读进了什么」：取 conversation_id 和 echoed_at 两列，一张
+# 裸表。整张 `NativeInput` 属于 delivery 域，这里要的只是它被读到的那个瞬间 —— 用
+# 裸表是为了不去 import 那个模型，block 域不必因此多一条跨域依赖。
+_INPUTS = table(
+    "native_inputs",
     column("conversation_id", Uuid),
-    column("started_at", DateTime(timezone=True)),
-    column("delivered_at", DateTime(timezone=True)),
+    column("echoed_at", DateTime(timezone=True)),
 )
 
 
@@ -140,7 +138,7 @@ class MemberWaits:
         decides when the mark comes on.
 
         ``threads``: 这些房间的支线，调用方已经问过的那一份（见
-        `topics_signals.working_in_threads`）。没给就自己问。
+        `topics_signals.at_work`）。没给就自己问。
         """
         if not topic_ids:
             return {}
@@ -192,18 +190,18 @@ class MemberWaits:
         row:
 
         - the member whose turn it was speaks there again — a retry that worked,
-          or the next turn answering normally; or
-        - a newer turn, whose prompt actually reached the session
-          (`delivered_at` is set), starts there — the row is being worked on
-          again, and it is behind the failure whether or not that next turn
-          itself succeeds (a retry that goes quiet, or one that fails in turn,
-          is a *new* failure with its own clock, not the old one still counting).
+          or the next answer coming normally; or
+        - a session there reads an input (`native_inputs.echoed_at`): a message,
+          an instruction, or the platform's own resume of the failed work. The
+          row is being worked on again, and that is behind the failure whether
+          or not the work it was read into succeeds (work that goes quiet, or
+          fails in turn, is a *new* failure with its own clock, not the old one
+          still counting).
 
-        A turn whose prompt was never delivered (`delivered_at` NULL: the boot
-        opened the row, the transport never took the write, the process died
-        before any sweep closed it) is *not* working on anything — nothing has
-        heard the prompt — so it clears nothing: the old failure stays red and
-        no new one replaces it. Only a delivered turn ends the old clock.
+        An input that was written to a session and never read clears nothing:
+        nothing has heard it, so nothing is working on the row. Nor does a turn
+        interval opening — the platform opening one says only that it meant to
+        start work, not that any session took it up.
 
         Taking the earliest unresolved failure is what lets the sidebar count
         from the moment the row broke and stay red across a retry that failed
@@ -239,7 +237,7 @@ class MemberWaits:
             conversations, since, {turn for _, turn, _ in failures if turn}
         )
         spoke = await self._last_said(conversations, since, unit_of)
-        started = await self._turn_starts(conversations, unit_of, since)
+        read = await self._inputs_read(conversations, unit_of, since)
         # 按 created_at 排好，所以每一行遇到的第一条失败就是它最早的那条；那一条没
         # 恢复就是答案，恢复了就继续往后看（它之后的下一条才是现在的这一条）。
         found: dict[uuid.UUID, datetime] = {}
@@ -250,39 +248,28 @@ class MemberWaits:
             member = owners.get(turn) if turn else None
             if self._answered(spoke, unit, member, at):
                 continue
-            newest_turn = started.get(unit)
-            if newest_turn is not None and newest_turn > at:
+            newest_read = read.get(unit)
+            if newest_read is not None and newest_read > at:
                 continue
             found[unit] = at
         return found
 
-    async def _turn_starts(
+    async def _inputs_read(
         self,
         conversation_ids: list[uuid.UUID],
         unit_of: Mapping[uuid.UUID, uuid.UUID],
         since: datetime,
     ) -> dict[uuid.UUID, datetime]:
-        """{row: the newest delivered turn start in it} since the earliest failure.
-
-        只读 `agent_turns` 的 conversation_id、started_at 与 delivered_at：一轮开没
-        开始过记在这一行里，失败事件不记它。取每行最新的一次开始 —— 只要有一次晚于
-        某条失败，那条失败就已经被这行「重新开始」盖过。
-
-        `delivered_at` 为空的那一行不算：`open_turn` 在传输接受之前就把行落下了，
-        传输没接住、进程随后死掉（清扫只 close/warn，不删行）时，这一行会一直留着
-        —— 但会话从没听过那个 prompt，它没在干活，也就没盖过任何失败。别的「在跑」
-        判据（`liveness.running_tasks`、`moving_topics`）同样要求 delivered_at。"""
+        """{row: when a session there last read an input} since the earliest
+        failure. Only the read counts (`echoed_at`): an input written and never
+        read was heard by nobody."""
         stmt = (
-            select(
-                _TURNS.c.conversation_id,
-                func.max(_TURNS.c.started_at),
-            )
+            select(_INPUTS.c.conversation_id, func.max(_INPUTS.c.echoed_at))
             .where(
-                _among(_TURNS.c.conversation_id, conversation_ids, Uuid),
-                _TURNS.c.started_at >= since,
-                _TURNS.c.delivered_at.is_not(None),
+                _among(_INPUTS.c.conversation_id, conversation_ids, Uuid),
+                _INPUTS.c.echoed_at >= since,
             )
-            .group_by(_TURNS.c.conversation_id)
+            .group_by(_INPUTS.c.conversation_id)
         )
         newest: dict[uuid.UUID, datetime] = {}
         for conversation, at in (await self._session.execute(stmt)).all():

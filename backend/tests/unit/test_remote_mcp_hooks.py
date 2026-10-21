@@ -77,7 +77,7 @@ def platform():
     calls: list[dict] = []
 
     class Route(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802 — the stdlib's name
+        def do_POST(self):  # the stdlib's name
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             calls.append({"path": self.path, **body})
             if body["method"] == "tools/call":

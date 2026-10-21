@@ -352,7 +352,7 @@ class Runner(Generic[J]):  # noqa: UP046
                 )
                 if isinstance(result, dict) and result.get("error"):
                     raise RuntimeError(result["error"])
-            except Exception as error:  # noqa: BLE001 — the next turn's tries again
+            except Exception as error:  # the next turn's tries again
                 print(f"turn checkpoint failed: {error!r}", file=sys.stderr, flush=True)
             if not self.checkpoint_again:
                 return
@@ -468,7 +468,7 @@ class Runner(Generic[J]):  # noqa: UP046
             if (
                 self.closing
                 or self.ended()
-                or self.journal.last() > after
+                or self.has_news(after)
                 or self.live_mark() != seen
             ):
                 break
@@ -496,6 +496,11 @@ class Runner(Generic[J]):  # noqa: UP046
                 "blocks": [dict(block) for block in self.live_blocks],
             }
         return answer
+
+    def has_news(self, after: int) -> bool:
+        """Whether there is something past ``after`` to answer a read with: a
+        record, for a harness that reports nothing else."""
+        return self.journal.last() > after
 
     # --- letting an idle session go ------------------------------------------
 
@@ -624,7 +629,7 @@ class Runner(Generic[J]):  # noqa: UP046
         if owes_reply:
             try:
                 await self.yield_foreground()
-            except Exception as error:  # noqa: BLE001 — the message is in regardless
+            except Exception as error:  # the message is in regardless
                 print(
                     f"could not move foreground work aside for {identifier}: {error}",
                     file=sys.stderr,

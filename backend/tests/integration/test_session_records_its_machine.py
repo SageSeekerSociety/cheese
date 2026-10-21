@@ -31,6 +31,7 @@ from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_central_room_sessions import screen_for, sessions
+from tests.support.devices import enrollment_team, place_in_project_team
 
 INSTALLED = {
     "workspace": "/project",
@@ -79,9 +80,10 @@ async def room(client):
                 code,
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, owner.id),
             )
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=owner.id
+            await place_in_project_team(
+                devices, device.device_id, project_id, actor_user_id=owner.id
             )
             assigned[name] = device.device_id
         await db.commit()

@@ -1,10 +1,9 @@
-"""这一轮在房间里落下的那些行：事件块、步骤的判决、变更汇总 —— 落一块提交一次。
+"""这一轮在房间里落下的那些行：系统事件块、变更汇总 —— 落一块提交一次。
 
 ``ChatService`` 上这一族方法回答的是同一个问题：**一轮跑到一半，房间该知道什么，
-现在就要知道**。工具的调用、分身交回的结论、哪位队友开工了、一个步骤红了、这一轮
-改了哪些文件、平台自己要说的那句系统事件 —— 它们都不等整轮结束才攒成一条，而是一
-个一个地落成块、当场提交（中途崩溃或重启时，时间线上已经产生的那一段不会丢），再
-广播出去。
+现在就要知道**。这一轮改了哪些文件、平台自己要说的那句系统事件 —— 它们都不等整轮
+结束才攒成一条，而是一个一个地落成块、当场提交（中途崩溃或重启时，时间线上已经
+产生的那一段不会丢），再广播出去。
 
 搬出来时按原样搬 —— 入参出参就是它们与调用方之间全部的约定，行为一格没动。少数
 形状变化只有两处，都是「没有 `self` 可用了」：
@@ -134,7 +133,7 @@ async def _keep_run_record(
         try:
             async with sessions() as session:
                 seat = await _turn_seat(session, turn_id)
-        except Exception:  # noqa: BLE001 — the record matters more than its seat
+        except Exception:  # the record matters more than its seat
             logger.exception("could not read whose turn %s is", turn_id)
     await record_now(
         sessions,
@@ -193,7 +192,7 @@ async def _turn_changeset(
 
     try:
         return await _collect()
-    except Exception:  # noqa: BLE001 — never fail a turn over its summary
+    except Exception:  # never fail a turn over its summary
         logger.warning("change summary failed for topic %s", topic_id)
         return None
 
@@ -245,7 +244,7 @@ async def _known_commits(
         for shas in walked:
             commits.update(shas)
         return commits
-    except Exception:  # noqa: BLE001 — no baseline just means no summary
+    except Exception:  # no baseline just means no summary
         logger.warning(
             "commit baseline unreadable for topic %s", topic_id, exc_info=True
         )

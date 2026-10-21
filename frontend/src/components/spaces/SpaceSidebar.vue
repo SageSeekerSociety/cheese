@@ -15,6 +15,13 @@
         :to="{ name: 'SpacesAnnouncements', params: { spaceId } }"
         :title="t('spaces.sidebar.announcements')"
       />
+      <v-list-item
+        rounded="lg"
+        prepend-icon="mdi-bookshelf"
+        :to="{ name: 'SpacesLibrary', params: { spaceId } }"
+        :title="t('spaces.materials.title')"
+        data-testid="space-side-library"
+      />
 
       <v-list-subheader>{{ t('spaces.sidebar.tasks') }}</v-list-subheader>
       <v-list-item
@@ -23,7 +30,29 @@
         :to="{ name: 'SpacesDetailTasksList', params: { spaceId } }"
         :active="isTasksLinkActive()"
         :title="t('spaces.detail.allContests')"
-      />
+      >
+        <template v-if="newTaskCount" #append>
+          <span
+            class="side-nav__count"
+            :title="t('spaces.sidebar.newTasks', { n: newTaskCount })"
+            :aria-label="t('spaces.sidebar.newTasks', { n: newTaskCount })"
+            data-testid="space-side-new-tasks"
+            >{{ newTaskCount >= 50 ? '50+' : newTaskCount }}</span
+          >
+        </template>
+      </v-list-item>
+      <v-list-item
+        v-if="myDraftCount || isDraftsPage"
+        rounded="lg"
+        prepend-icon="mdi-file-document-edit-outline"
+        :to="{ name: 'SpacesDetailDrafts', params: { spaceId } }"
+        :title="t('spaces.detail.myDrafts.title')"
+        data-testid="space-side-drafts"
+      >
+        <template v-if="myDraftCount" #append>
+          <span class="side-nav__count">{{ myDraftCount > 99 ? '99+' : myDraftCount }}</span>
+        </template>
+      </v-list-item>
       <v-list-item
         v-for="category in activeCategories"
         :key="`category-${category.id}`"
@@ -88,7 +117,14 @@ import { useSpaceStore } from '@/stores/space'
 const { t } = useI18n()
 const nav = useNavigation()
 const spaceStore = useSpaceStore()
-const { currentSpace: space, categories, isManager, pendingAuditCount } = storeToRefs(spaceStore)
+const {
+  currentSpace: space,
+  categories,
+  isManager,
+  pendingAuditCount,
+  myDraftCount,
+  newTaskCount,
+} = storeToRefs(spaceStore)
 const { mdAndUp } = useDisplay()
 
 /** 侧栏里的分类：未归档的，按显示顺序。 */
@@ -101,6 +137,8 @@ const spaceId = computed(() => Number(nav?.route?.params?.spaceId))
 const isSettingsActive = computed(
   () => nav?.route?.path?.startsWith(`/spaces/${spaceId.value}/manage/settings`) ?? false
 )
+/** 在「我的草稿」页上：删光了那一格也留着，不让人站在一个侧栏里找不到的页面上。 */
+const isDraftsPage = computed(() => nav?.route?.name === 'SpacesDetailDrafts')
 const isUnderTasksSection = computed(
   () => nav?.route?.matched?.some((record) => record.name === 'SpacesDetailTasks') ?? false
 )

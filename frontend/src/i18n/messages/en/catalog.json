@@ -503,18 +503,22 @@
     }
   },
   "publishTaskView": {
-    "about": "Publish page: top to bottom one task (content, participants, timing, categories and tags, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
+    "about": "Publish page: the publish form on the left, saved as a draft as it is written; the header's Drafts lists my drafts in this space. Cheese is the app's one panel, docked on the right when this page opens on desktop. While it writes this draft, the app's Cheese host draws a named pointer on the form that follows what it fills in; this component does not draw it.",
     "s1": {
-      "name": "Publish one",
-      "note": "Default cell: a publish form (task content at the top, 'Import from file' and 'Use a template' at its top-right), the button says 'Publish', and the line beside it says 'Needs admin review after publishing'."
-    },
-    "s2": {
-      "name": "Publish several",
-      "note": "Three read from a file (two checked): the task list above says what the file is called and how many were read; the button changes to say how many will publish."
+      "name": "Writing a draft",
+      "note": "Default cell: the form, with 'Drafts 3' and 'Draft saved' in the header, and 'Needs admin review after publishing' beside the publish button."
     },
     "s3": {
       "name": "Space not ready",
-      "note": "Categories and domain groups still hanging off the space, not yet arrived: no form, only the header line explaining this task needs review — the publish button is disabled meanwhile."
+      "note": "Categories and domain groups are still on their way: no form, and the publish button is disabled."
+    },
+    "s4": {
+      "name": "Several tasks from one file",
+      "note": "Above the form, the tasks Cheese made from one file: the first is published, the second shows 1 missing after Publish all, the third is being filled in. Publish all (2) sits at the end."
+    },
+    "s5": {
+      "name": "Cheese closed",
+      "note": "With the panel closed, the header has a button that brings it back; while it is open the button is gone."
     }
   },
   "basicInfoView": {
@@ -540,33 +544,14 @@
     }
   },
   "spaceGuidanceView": {
-    "about": "Space settings 'Guidance for the AI teammate': a line of explanation, a six-field form and save. All six empty means this board sets no default, and whichever layer below says something is followed.",
+    "about": "Space settings 'AI teammate guidance': a line of explanation, the approach, additional requirements, materials it may read, and save. All empty means this board sets nothing; only each task's own counts.",
     "s1": {
       "name": "This board set defaults",
-      "note": "Default cell: system prompt, current week and this week's scope are filled in; the finer settings are tucked into 'More'."
+      "note": "Set: 'Guide with questions' is picked and requirements are written."
     },
     "s2": {
       "name": "No defaults yet",
       "note": "All six empty means 'nothing said': the materials list also failed to load this time, but failing to load isn't the same as gone, so it isn't treated as invalid — that field becomes an explanatory line, offering no candidates."
-    }
-  },
-  "spaceMaterialsView": {
-    "about": "Space settings 'Materials': visible to all members; those marked 'Admins only' are hidden from members and unreadable by their AI. Each row can be downloaded, have its visibility changed, or be taken down.",
-    "s1": {
-      "name": "Has materials, admin sees all",
-      "note": "Default cell: three materials in one list; each row shows type, size, upload date, download count and how many places reference it; the account can manage, so every row has entries to change visibility and take down."
-    },
-    "s2": {
-      "name": "Nothing yet",
-      "note": "Materials empty: says 'No materials', doesn't draw a blank block."
-    },
-    "s3": {
-      "name": "List still loading",
-      "note": "Not loaded yet: spins in place, doesn't say 'No materials' first — that would read 'not loaded' as 'none'."
-    },
-    "s4": {
-      "name": "Upload form open",
-      "note": "The form that appears after pressing 'Upload material': pick a file, set visibility (all members / admins only), both required."
     }
   },
   "briefView": {
@@ -578,6 +563,10 @@
     "s2": {
       "name": "Brief only, no materials",
       "note": "This task brings no materials: the whole materials section isn't drawn, no empty heading left — just the brief section."
+    },
+    "s3": {
+      "name": "Rubric kept to graders",
+      "note": "The publisher or a space admin still sees the rubric, marked as visible to graders only; students do not see this section."
     }
   },
   "insightsView": {
@@ -941,33 +930,6 @@
       "note": "The dialog the 'New plan' button pops up: name, applies to, credits and limit, available models all empty awaiting input."
     }
   },
-  "adminRatchetPageView": {
-    "about": "The ratchet screen: where each architecture check stands now, how many are frozen, better or worse than the start. Where the data comes from is on the source line, and the pull result floats on top.",
-    "s1": {
-      "name": "Two collections in the archive",
-      "note": "Default cell: the source line says which commit the data is from, when it was collected and how many collections the archive holds; below, each check's current number and its trend by area."
-    },
-    "s2": {
-      "name": "First load",
-      "note": "No board yet: three fixed-height skeletons, drawing neither an empty table nor an empty state."
-    },
-    "s3": {
-      "name": "Archive unreadable",
-      "note": "This request failed and there's no board in hand: it says 'Archive unreadable', not 'no collections yet' — two things, two lines, retry right beside."
-    },
-    "s4": {
-      "name": "Never collected",
-      "note": "The archive was empty to begin with: it's 'not a single collection yet', offering a 'Pull one now', not drawing it as 'all normal'."
-    },
-    "s5": {
-      "name": "Collected, but no measurement",
-      "note": "The archive has collections yet not one check (a failed collection in the real contract looks like this): it says there's no usable measurement this time, not hiding the failure history."
-    },
-    "s6": {
-      "name": "The failed pull",
-      "note": "Just pressed refresh and CI didn't pull: a red line floats on top; the page keeps the points already stored."
-    }
-  },
   "adminRunRecordsPageView": {
     "about": "The run-records screen: errors the platform hit across projects and the things it handled itself, one kind per row; opening a row shows that kind's most recent full text on the right and which projects and threads it appeared in.",
     "s1": {
@@ -1154,48 +1116,37 @@
     "s9": {
       "name": "Enable two-step: backup codes",
       "note": "The third step: list this set of backup codes, remind that they're shown only this once and each works once, and offer a button to copy the whole set."
+    },
+    "s10": {
+      "name": "Closing refused: still a team's only owner",
+      "note": "The server refuses the close: this person is still the only owner of a team that others are in, or that someone can still enter through a pending invitation or joining without approval. The reason stays in the dialog, names the team, and says to transfer ownership, or cancel the invitations and turn on join approval, first."
     }
   },
   "modelConnectionsView": {
-    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device; and the API keys and model services kept on your account, with the key's last four characters, service host, model and last check, and test, rename and remove.",
+    "about": "Team Models lists platform models, device logins, and encrypted API keys and model services. Administrators add, recheck, rename and remove connections, and choose their available models.",
     "s1": {
       "name": "No connections",
-      "note": "Logged in on no device and nothing kept on the account: the card says there are no model connections, and the buttons to add an API key, add a model service or use one on a device stay at its top right."
+      "note": "Each connection card shows its own empty state and keeps its add actions."
     },
     "s2": {
       "name": "Removing on an offline device",
-      "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+      "note": "Removed while its device is offline: no longer used, and its line is marked as removing; opened, it says it logs out when the device comes online, with no check or remove buttons."
     },
     "s3": {
-      "name": "A key on the account fails its check",
-      "note": "The service refused the key when it was tested again: marked as failing the check, with what the service said below; it can still be tested again, renamed or removed."
-    }
-  },
-  "thisDeviceView": {
-    "about": "Account settings 'This device': whether the computer the desktop app runs on is connected, what it's called, which teams it's offered to, the owner's own Claude Code, and disconnecting the device.",
-    "s1": {
-      "name": "Still asking the connection state",
-      "note": "Not yet asked whether this device is connected: a row with a spinning progress ring, nothing else drawn."
-    },
-    "s2": {
-      "name": "Not connected yet",
-      "note": "When not connected, an empty card: a 'Not connected' line and one line of explanation (once connected, AI teammates can run tasks on this device), plus an entry to connect."
-    },
-    "s3": {
-      "name": "Connected, online",
-      "note": "Connected and online: a lit dot precedes the status row reading 'Connected / Online'; below are the device name, teams, Claude Code and disconnect."
+      "name": "A stored key failed its check",
+      "note": "The service refused the key when it was tested again: its line is marked in red as failing the check; opened, it shows what the service said, and it can still be tested again, renamed or removed."
     },
     "s4": {
-      "name": "Connected, offline",
-      "note": "The same device dropped: only the status dot and that line change, the rest stay."
+      "name": "Two logins on one device",
+      "note": "Two Claude accounts logged in on the workstation: one line each, each opened, checked again, renamed and removed on its own; removing one leaves the other in use."
     },
     "s5": {
-      "name": "Not offered to any team",
-      "note": "When no team is checked, the teams row writes 'Not offered to any team' in place, not a blank."
+      "name": "Both kinds of connection",
+      "note": "Sample data includes device subscriptions, services and API keys, plus platform-held keys and services, one row per connection."
     },
     "s6": {
-      "name": "Carries an error",
-      "note": "A reason like a failed connection-state read is written on a full top line, the blocks below still drawn as usual."
+      "name": "Adding my connection",
+      "note": "Pick one of your existing connections to add to the team; it serves only your own assistant."
     }
   },
   "channelBrowseView": {
@@ -1319,33 +1270,6 @@
     "s5": {
       "name": "No permission",
       "note": "401/403 means \"you may not see this\", not \"this read failed\": it says so and offers no retry."
-    }
-  },
-  "computeView": {
-    "about": "The team-compute page: register devices your members have connected to the team, and see at a glance which are online, who is using them and which screens they run.",
-    "s1": {
-      "name": "Two devices",
-      "note": "Default state: one card per device with online/offline, machine id and, when another project is using it, that project and the screens running on it."
-    },
-    "s2": {
-      "name": "First load",
-      "note": "Not back yet: a spinner in the middle, not an empty \"No self-hosted devices yet\"."
-    },
-    "s3": {
-      "name": "Could not load",
-      "note": "A failed read states the reason and offers a retry, rather than an empty device list."
-    },
-    "s4": {
-      "name": "No permission",
-      "note": "On 401/403 it says there is no access and offers no retry."
-    },
-    "s5": {
-      "name": "Not a single device",
-      "note": "Read, and there really are none: it shows the empty state and keeps the \"Add a self-hosted device\" button."
-    },
-    "s6": {
-      "name": "Add failed",
-      "note": "A failed register/remove is a dismissible error bar (not a read failure): the page stays, the device list stays."
     }
   },
   "adminIntegrationsPageView": {
@@ -1595,7 +1519,7 @@
     "about": "The team members screen: members / join requests / sent invitations tabs plus an invite dialog; from here you promote an admin, remove a member, approve or reject a request. Reading the lists, writing, and which tab is open all live in the container `teams/detail/Members.vue`; this half does no fetching at all. The join-link card is a separate piece the page hands in through a named slot, and it has an entry of its own in the catalog.",
     "s1": {
       "name": "The members tab",
-      "note": "Default state: three people, one per row, owner and admin each carrying a role chip, and a plain member's row spelling out in one line what that role can do. Whoever the server says cannot be removed (an admin cannot remove another admin) has no \"Remove member\"."
+      "note": "Default state: four people, one per row, owner and admins each carrying a role chip (the last admin's long nickname truncates while the chip stays whole), and a plain member's row spelling out in one line what that role can do. Whoever the server says cannot be removed (an admin cannot remove another admin) has no \"Remove member\"."
     },
     "s2": {
       "name": "The join requests tab",
@@ -1643,6 +1567,105 @@
     "s5": {
       "name": "The address is taken",
       "note": "The new address collides with someone else: that error sits under the address field, whatever was half-typed stays, and the person just edits it."
+    }
+  },
+  "adminCiActivityPageView": {
+    "about": "The CI and merge queue screen: how long PRs wait in the merge queue, how long jobs wait for a runner, how long CI required takes, and how long each job and step takes on each runner.",
+    "s1": {
+      "name": "Two days of data",
+      "note": "The default: the first day had no merge, so its queue median is empty and the line breaks there; below are the runners and the slowest jobs."
+    },
+    "s2": {
+      "name": "A job's steps expanded",
+      "note": "One self-hosted runner picked and the e2e row expanded: p50, p90 and longest per step, and a dash for a step with no samples."
+    },
+    "s3": {
+      "name": "Backfilling, last sweep stopped by quota",
+      "note": "A new deployment's first day: the header says how far back the data reaches and how many runs' jobs are still unread, and quotes why the last sweep stopped."
+    },
+    "s4": {
+      "name": "Could not load",
+      "note": "No board was ever fetched: the page shows only that line and a retry."
+    }
+  },
+  "thisDeviceView": {
+    "sleepOff": {
+      "name": "No sessions, sleep prevention off",
+      "note": "The session list is empty and the switch is off. The computer can sleep when idle."
+    }
+  },
+  "teamAgentPicker": {
+    "name": "Choose a team connection",
+    "note": "Choose a connection, an available model, and the device that will execute tasks.",
+    "about": "AI teammates in project settings choose a team connection, one of its models, and an execution device."
+  },
+  "assistantPanel": {
+    "about": "The app's one Cheese panel, held by the app shell; its header just says Cheese. Each step of a turn is one line, folded into one when the answer is done; what it wrote into a draft is a card where every field can be undone; a message or task it drafted for the person is a card waiting for them, which they can edit and only then send; things left for the person to confirm and published results are cards too. Earlier topics sit above, set apart by New topic.",
+    "s1": {
+      "name": "Publish page, nothing asked yet",
+      "note": "An empty conversation: one line on what it can do, a few starters below, and a button to add files beside the box."
+    },
+    "s2": {
+      "name": "Writing a draft",
+      "note": "Cheese has read the file and looked through the space's tasks, and is filling in the task: the last step spins."
+    },
+    "s3": {
+      "name": "A finished turn",
+      "note": "The steps fold into one line; the deadline in the changes card was undone (struck through); a 'Needs your check' card; the published result offers 'View task'."
+    },
+    "s4": {
+      "name": "Three tasks from one file",
+      "note": "A file handed over with nothing typed. The first task fills the open draft and is listed field by field; the other two are new drafts, one line each, opened by their names."
+    },
+    "s5": {
+      "name": "Earlier topics",
+      "note": "What was said before New topic sits above, to read only; Earlier topics reads further back. On desktop the panel can be pinned to the right or unpinned."
+    },
+    "s6": {
+      "name": "Drafting in a project",
+      "note": "Asked in a channel what needs the person: Cheese read the history and drafted a reply (waiting, editable, with Send and Set aside) and a task (already opened, with View)."
+    }
+  },
+  "myDraftsView": {
+    "about": "My drafts: tasks not yet published in this space, and unsaved changes to published ones. Open one by its name; deleting asks first.",
+    "s1": {
+      "name": "A few drafts",
+      "note": "Two new tasks and one set of changes, marked as such; the source names the imported file."
+    },
+    "s2": {
+      "name": "None",
+      "note": "After the last one is deleted."
+    }
+  },
+  "spaceLibraryView": {
+    "about": "The space's Library page in the sidebar: members see files open to all members; admins see both tiers. Clicking a row previews it on the right; admins upload from the header and change visibility or remove from each row's ⋯ menu.",
+    "s1": {
+      "name": "Admin",
+      "note": "Four files, each row showing who uploaded it, when and its size; the admins-only file carries a tag."
+    },
+    "s2": {
+      "name": "Member",
+      "note": "No upload button and no admins-only files; the ⋯ menu only offers Download."
+    },
+    "s3": {
+      "name": "One file open",
+      "note": "The text file previews in the right pane. Admins also see its download count and how many guidance settings list it."
+    },
+    "s4": {
+      "name": "Nothing yet",
+      "note": "Says “No files yet” and draws no search box."
+    },
+    "s5": {
+      "name": "Still loading",
+      "note": "A spinner in place, not “No files yet” first."
+    },
+    "s6": {
+      "name": "One file open on a phone",
+      "note": "The file fills the page with Download at the bottom; the top bar's ← returns to the list."
+    },
+    "s7": {
+      "name": "Upload dialog",
+      "note": "Pick a file, then who can see it; each choice says who that is. Upload stays disabled until a file is chosen."
     }
   }
 }

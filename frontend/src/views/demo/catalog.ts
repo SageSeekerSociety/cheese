@@ -24,8 +24,8 @@
  * 面板三格），这里只留「这一册在整份目录里的哪一段」和那三个共用的函数。从这里出去
  * 的名字和原来一模一样，调用方一行都不用改。
  *
- * 一册要被 `catalog-ratchet.py` 算数，得在这里（或在一册里）**既被 import 又被
- * 展开** —— 只 import 不展开的那种，预览站根本没渲染它，棘轮也不认。
+ * 一册要上预览站，得在这里（或在一册里）**既被 import 又被展开** —— 只 import
+ * 不展开的那种，预览站根本没渲染它。
  */
 import type { CatalogEntry, CatalogNeed, CatalogState } from './catalog/types'
 
@@ -65,6 +65,7 @@ import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { REVIEW_ENTRIES } from './catalogReview'
 import { ROOM_ENTRIES } from './catalogRoom'
+import { ROUTINE_ENTRIES } from './catalogRoutine'
 import { SCENES_MISC_ENTRIES } from './catalogScenesMisc'
 import { SCENES_MISC2_ENTRIES } from './catalogScenesMisc2'
 import { SCENES_MISC3_ENTRIES } from './catalogScenesMisc3'
@@ -124,7 +125,7 @@ export const CATALOG: CatalogEntry[] = [
   ...ROOM_ENTRIES,
   ...DOC_LINE_ENTRIES,
   // 几个路由页拆出来的画面那一组（设备审批、已归档的项目、打开预览 / 网站，以及项目里的
-  // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
+  // 例行事务和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
   // `catalogScenesWorkspaceFixtures.ts`。
   ...SCENES_MISC_ENTRIES,
   // 第三批拆出来的画面（管理员看板告警、后台成员管理）在自己的文件里：
@@ -173,6 +174,9 @@ export const CATALOG: CatalogEntry[] = [
   ...CANVAS_ENTRIES,
   ...BASE_ENTRIES,
   ...PANEL_ENTRIES,
+  // 例行事务那一组（建规则的那两页）在自己的文件里：`catalogRoutine.ts`（夹具借
+  // `catalogPanelsFixtures.ts` 里那一条规则，两处画的是同一个产品里的同一条）。
+  ...ROUTINE_ENTRIES,
   // 跨目录的共用件那一组（表壳与它的表头格、富文本编辑器与附件图、页头、句子里的人）在
   // 自己的文件里：`catalogShared.ts`（数据在 `catalogSharedFixtures.ts`）。
   ...SHARED_ENTRIES,

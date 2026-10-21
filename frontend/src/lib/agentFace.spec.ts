@@ -38,10 +38,8 @@ describe('agentFaces', () => {
     expect(faceOf([])).toBe('think')
   })
 
-  it('一步正在做：在干活；这一步交回了结果、又没开始下一步：回到在想', () => {
-    const step = event('t1', { tool: 'Bash' })
-    expect(faceOf([step])).toBe('work')
-    expect(faceOf([{ ...step, meta: { tool: 'Bash', output_bytes: 12 } }])).toBe('think')
+  it('时间线上留着一行工具记录：照样是在想——它说不出那一步结束没有', () => {
+    expect(faceOf([event('t1', { tool: 'Bash' })])).toBe('think')
   })
 
   it('平台在重试：卡住了', () => {
@@ -53,13 +51,21 @@ describe('agentFaces', () => {
   })
 
   it('几位队友并行在干，各是各的表情', () => {
-    const faces = agentFaces([event('t2', { tool: 'Read' })], { t1: 1000, t2: 2000 }, { t1: A, t2: B })
+    const faces = agentFaces(
+      [event('t2', { event_type: 'api_retry', attempt: 1 })],
+      { t1: 1000, t2: 2000 },
+      { t1: A, t2: B }
+    )
     expect(faces[A]?.state).toBe('think')
-    expect(faces[B]?.state).toBe('work')
+    expect(faces[B]?.state).toBe('stuck')
   })
 
   it('同一位队友并行两轮：看最近开始的那一轮', () => {
-    const faces = agentFaces([event('old', { tool: 'Read' })], { old: 1000, new: 2000 }, { old: A, new: A })
+    const faces = agentFaces(
+      [event('old', { event_type: 'api_retry', attempt: 1 })],
+      { old: 1000, new: 2000 },
+      { old: A, new: A }
+    )
     expect(faces[A]?.state).toBe('think')
   })
 

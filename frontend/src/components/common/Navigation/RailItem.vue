@@ -360,6 +360,11 @@ button.app-rail-item {
   height: 20px;
 }
 
+// 按下那一帧就长出那条竖线：触屏没有 hover，点了之后要等一下才换页。
+.app-rail-item:not(.app-rail-item--add):active::before {
+  height: 20px;
+}
+
 .app-rail-item:not(.app-rail-item--add)[aria-current]::before {
   height: 36px;
 }

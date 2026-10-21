@@ -1,15 +1,16 @@
 """清单什么时候被写，和清单里写了什么一样是给别人看的东西。
 
-进度层（#187）存的是这份清单，但这些用例盯的是时间：一轮还跑着、它自己写的那一版
-清单停在原地时，平台要叫它一声。2026-10-11 报上来的症状是清单「全空」到「全打勾」
+进度层（#187）存的是这份清单，但这些用例盯的是时间：会话还在干活、它这一段工作写的那一
+版清单停在原地时，平台要叫它一声。2026-10-11 报上来的症状是清单「全空」到「全打勾」
 没有中间——写的人只在自己开工和收尾两头写了它，中间那 40 分钟里，看清单的人一直看
-着开工那一版。这里钉住的是平台这一侧的兜底：`remind_stale_checklists` 会叫那一轮
-再写一次，走的是和人的中途消息、和沉默提醒同一条路（`notify_running_turn`）。
+着开工那一版。这里钉住的是平台这一侧的兜底：`QuietSessionReminders.checklist` 会叫在干活的
+会话再写一次，走的是和人的中途消息、和沉默提醒同一条路（`notify_running_session`）。
 
-三个条件缺一不可，所以三个都有反例：这一轮得还在跑、这一版清单得是**这一轮自己写
-的**（上一轮留下的那版，平台叫不动它）、而且它得真的停够久。
+三个条件缺一不可，所以三个都有反例：会话得还在干活、这一版清单得是**它手上这段工作
+写的**（之前留下的那版，平台叫不动它）、而且它得真的停够久。
 """
 
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -18,6 +19,7 @@ import pytest
 from app.api.deps import get_chat_service, get_work_runner
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.turn.steps.reminders import QuietSessionReminders
 from tests.integration.conftest import (
     in_thread,
     open_task,
@@ -26,6 +28,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import wait_for_record
 
 PLAN = [
     {"content": "核实 issue 论断", "status": "completed"},
@@ -49,27 +52,21 @@ def notices(monkeypatch, chat) -> list[str]:
         said.append(text)
         return True
 
-    monkeypatch.setattr(chat, "notify_running_turn", notice)
+    monkeypatch.setattr(chat, "notify_running_session", notice)
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", THRESHOLD)
     return said
 
 
 @pytest.fixture
-def clock(monkeypatch) -> list[datetime]:
-    """The two sweeps' clock, in a one-cell list the test moves."""
-    from app.domain.agent import chat as chat_module
+def clock() -> list[datetime]:
+    """The sweep's clock, in a one-cell list the test moves and hands in."""
+    return [datetime.now(UTC)]
 
-    moved = [datetime.now(UTC)]
 
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return moved[0]
-
-    # 时间的读取在 `ChatService` 那两个入口上（`reminders` 收的是传进来的 `now`），
-    # 所以钉的是 `chat` 模块里的 `datetime`。
-    monkeypatch.setattr(chat_module, "datetime", Clock)
-    return moved
+@pytest.fixture
+def quiet(chat) -> QuietSessionReminders:
+    """The platform's reminders, over the sessions this process holds."""
+    return QuietSessionReminders(chat, chat.compute)
 
 
 @pytest.fixture
@@ -114,18 +111,23 @@ def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):
 def _start(client, ws, topic_id: str, *, handle: str = "user-1") -> uuid.UUID:
     """Start a turn on ``topic_id`` and leave it running; return its work_id."""
     post_message(client, topic_id, handle, {"content": "@芝士 做一件事"})
-    while True:
-        frame = ws.receive_json()
-        if (
-            frame["type"] == "event_block"
-            and frame["block"]["content"] == "Internal output"
-        ):
-            break
+    wait_for_record(
+        client, topic_id, lambda record: "Internal output" in str(record), owner=handle
+    )
     live = client.portal.call(
         chat_of(client).live.active_turn_ids.get, uuid.UUID(topic_id)
     )
     assert live, "这一轮应该还在跑"
     return next(iter(live))
+
+
+def _stopped_working(chat, topic) -> None:
+    """Until the session's runner has said it is idle: the room hears the
+    result (``done``) a moment before the seat is marked idle."""
+    deadline = time.monotonic() + 10
+    while chat.compute.working_seat(uuid.UUID(str(topic))) is not None:
+        assert time.monotonic() < deadline, "the session never went idle"
+        time.sleep(0.01)
 
 
 def chat_of(client):
@@ -186,7 +188,7 @@ def _its_own_checklist(
 
 
 def test_a_running_turns_stalled_checklist_is_asked_for_again(
-    client, chat, notices, clock, mid_flight
+    client, chat, notices, clock, quiet, mid_flight
 ):
     """一轮在跑、清单十分钟没动，就叫它再写一次。
 
@@ -199,22 +201,22 @@ def test_a_running_turns_stalled_checklist_is_asked_for_again(
         _start(client, ws, topic)
         _its_own_checklist(client, topic, headers, clock)
         # 刚写完，一动不动，数出来是正的几毫秒——远在阈值左边。
-        assert client.portal.call(chat.remind_stale_checklists) == 0
+        assert client.portal.call(quiet.checklist, clock[0]) == 0
         # 还没到窗口：不叫。
         clock[0] += timedelta(seconds=THRESHOLD - 60)
-        assert client.portal.call(chat.remind_stale_checklists) == 0
+        assert client.portal.call(quiet.checklist, clock[0]) == 0
         assert notices == []
         # 到点，叫一次。
         clock[0] += timedelta(seconds=60)
-        assert client.portal.call(chat.remind_stale_checklists) == 1
+        assert client.portal.call(quiet.checklist, clock[0]) == 1
         assert len(notices) == 1
         assert "todo_write" in notices[0]
         assert "10 分钟" in notices[0]
         # 叫过就等下一次窗口，别在同一次停歇里反复说。
         clock[0] += timedelta(seconds=THRESHOLD - 1)
-        assert client.portal.call(chat.remind_stale_checklists) == 0
+        assert client.portal.call(quiet.checklist, clock[0]) == 0
         clock[0] += timedelta(seconds=1)
-        assert client.portal.call(chat.remind_stale_checklists) == 1
+        assert client.portal.call(quiet.checklist, clock[0]) == 1
         assert len(notices) == 2
         # 那一轮听话写了下一步：清单又动了，时刻从写下的那一刻重新算。
         _write(
@@ -227,19 +229,19 @@ def test_a_running_turns_stalled_checklist_is_asked_for_again(
                 {**PLAN[2], "status": "in_progress"},
             ],
         )
-        # 时刻往前推一个窗口（上面那次提醒把 `last_checklist_reminder_at` 停在
-        # 这里，两样一起看才不会提前开口）。
+        # 时刻往前推一个窗口（上面那次提醒的时刻也记着，两样一起看才不会提前
+        # 开口）。
         clock[0] += timedelta(seconds=THRESHOLD - 1)
-        assert client.portal.call(chat.remind_stale_checklists) == 0
+        assert client.portal.call(quiet.checklist, clock[0]) == 0
         assert len(notices) == 2
         # 再停够一个窗口，就再叫一次——不是「叫过这一轮就再也不叫」。
         clock[0] += timedelta(seconds=1)
-        assert client.portal.call(chat.remind_stale_checklists) == 1
+        assert client.portal.call(quiet.checklist, clock[0]) == 1
         assert len(notices) == 3
 
 
 def test_a_checklist_left_by_an_earlier_turn_is_not_this_turns_problem(
-    client, chat, notices, clock, mid_flight
+    client, chat, notices, clock, quiet, mid_flight
 ):
     """上一轮留下的清单：平台叫不动它，也不该叫这一轮。
 
@@ -254,12 +256,12 @@ def test_a_checklist_left_by_an_earlier_turn_is_not_this_turns_problem(
         assert _write(client, topic, headers, PLAN).status_code == 200
         _restamp(client, topic, uuid.uuid4())
         clock[0] += timedelta(seconds=3600)
-        assert client.portal.call(chat.remind_stale_checklists) == 0
+        assert client.portal.call(quiet.checklist, clock[0]) == 0
         assert notices == []
 
 
 def test_a_finished_turn_is_not_reminded(
-    client, stub_hooks, chat, notices, clock, mid_flight
+    client, stub_hooks, chat, notices, clock, quiet, mid_flight
 ):
     """这一轮已经收工，就不用再叫了——清单留在那儿，下一轮接着写它自己的。"""
     topic, headers = _room(client)
@@ -269,13 +271,14 @@ def test_a_finished_turn_is_not_reminded(
         stub_hooks.stops(uuid.UUID(topic), "Done")
         while ws.receive_json()["type"] != "done":
             pass
+        _stopped_working(chat, topic)
         clock[0] += timedelta(seconds=3600)
-        assert client.portal.call(chat.remind_stale_checklists) == 0
+        assert client.portal.call(quiet.checklist, clock[0]) == 0
         assert notices == []
 
 
 def test_a_tasks_own_checklist_is_reminded_the_same_way(
-    client, chat, notices, clock, mid_flight
+    client, chat, notices, clock, quiet, mid_flight
 ):
     """任务里也一样：清单记在任务上、按任务的频道推，但停在原地时同样要被叫。
 
@@ -291,6 +294,6 @@ def test_a_tasks_own_checklist_is_reminded_the_same_way(
         _start(client, ws, task_id)
         _its_own_checklist(client, task_id, headers, clock)
         clock[0] += timedelta(seconds=THRESHOLD)
-        assert client.portal.call(chat.remind_stale_checklists) == 1
+        assert client.portal.call(quiet.checklist, clock[0]) == 1
         assert len(notices) == 1
         assert "todo_write" in notices[0]

@@ -19,6 +19,8 @@ from app.domain.device.supply import Supply
 
 class InMemoryDeviceRepository:
     def __init__(self) -> None:
+        self.team_admins: dict[int, set[int]] = {}
+        self.project_teams: dict[uuid.UUID, int] = {}
         self._codes: dict[str, AuthCode] = {}
         self._devices: dict[str, Device] = {}
         self._hosted_device_ids: set[str] = set()
@@ -38,6 +40,14 @@ class InMemoryDeviceRepository:
 
     async def get_device(self, device_id: str) -> Device | None:
         return self._devices.get(device_id)
+
+    async def get_devices(self, device_ids: Sequence[str]) -> dict[str, Device]:
+        found: dict[str, Device] = {}
+        for device_id in device_ids:
+            device = self._devices.get(device_id)
+            if device is not None:
+                found[device_id] = device
+        return found
 
     async def note_last_seen(self, device_id: str, at: datetime) -> None:
         device = self._devices.get(device_id)
@@ -59,7 +69,7 @@ class InMemoryDeviceRepository:
         self._devices.pop(device_id, None)
         self._hosted_device_ids.discard(device_id)
 
-    async def list_devices_by_owner(self, owner_user_id: int) -> list[Device]:
+    async def list_enrolled_by(self, owner_user_id: int) -> list[Device]:
         return [
             d
             for d in self._devices.values()
@@ -71,7 +81,8 @@ class InMemoryDeviceRepository:
         return [
             d
             for d in self._devices.values()
-            if d.device_id in self._hosted_device_ids and project_id in d.project_ids
+            if d.device_id in self._hosted_device_ids
+            and d.team_id == self.project_teams.get(project_id)
         ]
 
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
@@ -84,40 +95,11 @@ class InMemoryDeviceRepository:
         return [
             d
             for d in self._devices.values()
-            if d.device_id in self._hosted_device_ids and team_id in d.team_ids
+            if d.device_id in self._hosted_device_ids and team_id == d.team_id
         ]
 
-    async def assign_project(self, device_id: str, project_id: uuid.UUID) -> None:
-        device = self._devices.get(device_id)
-        if device is not None and project_id not in device.project_ids:
-            device.project_ids.append(project_id)
-
-    async def unassign_project(self, device_id: str, project_id: uuid.UUID) -> None:
-        device = self._devices.get(device_id)
-        if device is not None and project_id in device.project_ids:
-            device.project_ids.remove(project_id)
-
-    async def list_project_ids(self, device_id: str) -> list[uuid.UUID]:
-        device = self._devices.get(device_id)
-        return list(device.project_ids) if device is not None else []
-
-    async def is_assigned(self, device_id: str, project_id: uuid.UUID) -> bool:
-        device = self._devices.get(device_id)
-        return device is not None and project_id in device.project_ids
-
-    async def assign_team(self, device_id: str, team_id: int) -> None:
-        device = self._devices.get(device_id)
-        if device is not None and team_id not in device.team_ids:
-            device.team_ids.append(team_id)
-
-    async def unassign_team(self, device_id: str, team_id: int) -> None:
-        device = self._devices.get(device_id)
-        if device is not None and team_id in device.team_ids:
-            device.team_ids.remove(team_id)
-
-    async def list_team_ids(self, device_id: str) -> list[int]:
-        device = self._devices.get(device_id)
-        return list(device.team_ids) if device is not None else []
+    async def is_team_admin(self, team_id: int, user_id: int) -> bool:
+        return user_id in self.team_admins.get(team_id, set())
 
     # -- machine health (#186) ---------------------------------------------
 

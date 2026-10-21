@@ -27,7 +27,7 @@ from app.domain.machine import lifecycle
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.lifecycle import SandboxLifecycle
 from app.domain.machine.models import SandboxHome
-from tests.integration.test_switch_pushes_first import _machines, _owner_id, _room
+from tests.integration.test_switch_pushes_first import _machines, _room
 
 pytestmark = pytest.mark.anyio
 
@@ -36,7 +36,7 @@ async def _on_alices_computers(client, monkeypatch):
     """A room whose agent works in a sandbox on alice's computers, placed by
     one tool call."""
     room = await _room(client)
-    spec = f"devices_of:{await _owner_id(client)}"
+    spec = "team_devices"
     async with client.test_factory() as db:
         await AgentSessionService(db).set_environment(
             room.conversation_id,
@@ -111,6 +111,28 @@ async def test_a_sandbox_in_use_is_kept(client, monkeypatch):
 
     destroyed.assert_not_awaited()
     assert await _home(client, room) is not None
+
+
+async def test_a_pressed_pool_does_not_shorten_a_persons_computers_idle_time(
+    client, monkeypatch
+):
+    """Pool pressure is the platform's business: a sandbox on a person's own
+    computer keeps its own idle time, so five minutes still counts as just
+    used (#1829)."""
+    room = await _on_alices_computers(client, monkeypatch)
+    # No cloud host at all: the pool has no free slot to speak of.
+
+    await _last_used(client, room, timedelta(minutes=5))
+    destroyed = await _sweep(client, monkeypatch)
+
+    destroyed.assert_not_awaited()
+    assert await _home(client, room) is not None
+
+    await _last_used(client, room, timedelta(minutes=11))
+    destroyed = await _sweep(client, monkeypatch)
+
+    assert destroyed.await_args.args[1:3] == (room.device, "destroy")
+    assert await _home(client, room) is None
 
 
 async def test_a_sandbox_left_behind_is_destroyed_by_the_same_sweep(

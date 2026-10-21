@@ -13,26 +13,8 @@ export interface MyDevice {
   device_id: string
   name: string
   online: boolean
-  project_ids: string[]
-  // Teams this machine is registered for (为团队注册设备, v4): every project of
-  // these teams may run on it.
-  team_ids: number[]
+  team_id: number
   screens: DeviceScreen[]
-  // Who works on this machine now (each session whose work computer it is), for its owner only.
-  in_use?: DeviceUser[] | null
-  // On a team's device list: the team's projects this machine is attached to
-  // directly, rather than through the team.
-  attached_projects?: { id: string; name: string }[]
-}
-
-export interface DeviceUser {
-  project_id: string
-  project_name: string
-  topic_id: string
-  topic_title: string
-  agent_handle: string
-  agent_name: string
-  agent_name_source?: string
 }
 
 // A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what
@@ -43,13 +25,14 @@ export interface MyTeam {
   handle: string
   name: string
   personal?: boolean
+  role?: string
 }
 
 // The result of approving a pending device flow (binds the machine to its owner).
 export interface DeviceApproval {
   device_id: string
   device_name: string
-  project_id: string | null
+  team_id: number
 }
 
 // 设备列表里一台设备上次在线的时间：链路断开时记下的最后一次收到消息的时刻，还没断开过时为 null。

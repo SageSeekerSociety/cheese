@@ -11,10 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.device.models import (
     DeviceAuthCodeRow,
     DeviceHealthRow,
-    DeviceProjectRow,
     DeviceRow,
     DeviceSandboxRow,
-    DeviceTeamRow,
     HostedDeviceRow,
 )
 from app.domain.device.repository import (
@@ -25,6 +23,7 @@ from app.domain.device.repository import (
 )
 from app.domain.device.supply import Supply
 from app.domain.project.models import Project
+from app.domain.team.services import team_service
 
 
 def _aware(dt: datetime) -> datetime:
@@ -71,6 +70,7 @@ class SqlDeviceRepository:
             self._session.add(row)
         row.name = device.name
         row.token = device.token
+        row.team_id = device.team_id
         row.owner_user_id = device.owner_user_id
         row.supply = device.supply
         row.last_seen_at = device.last_seen_at
@@ -92,40 +92,30 @@ class SqlDeviceRepository:
             .values(last_seen_at=at)
         )
 
-    async def _to_device(self, row: DeviceRow) -> Device:
-        project_ids = list(
-            (
-                await self._session.scalars(
-                    select(DeviceProjectRow.project_id).where(
-                        DeviceProjectRow.device_id == row.device_id
-                    )
-                )
-            ).all()
-        )
-        team_ids = list(
-            (
-                await self._session.scalars(
-                    select(DeviceTeamRow.team_id).where(
-                        DeviceTeamRow.device_id == row.device_id
-                    )
-                )
-            ).all()
-        )
+    @staticmethod
+    def _device(row: DeviceRow) -> Device:
         return Device(
             device_id=row.device_id,
             name=row.name,
             token=row.token,
             owner_user_id=row.owner_user_id,
+            team_id=row.team_id,
             created_at=_aware(row.created_at),
-            project_ids=project_ids,
-            team_ids=team_ids,
             supply=row.supply,
             last_seen_at=_aware(row.last_seen_at) if row.last_seen_at else None,
         )
 
     async def get_device(self, device_id: str) -> Device | None:
         row = await self._session.get(DeviceRow, device_id)
-        return await self._to_device(row) if row is not None else None
+        return self._device(row) if row is not None else None
+
+    async def get_devices(self, device_ids: Sequence[str]) -> dict[str, Device]:
+        if not device_ids:
+            return {}
+        rows = await self._session.scalars(
+            select(DeviceRow).where(DeviceRow.device_id.in_(device_ids))
+        )
+        return {row.device_id: self._device(row) for row in rows}
 
     async def get_hosted_device(self, device_id: str) -> Device | None:
         row = await self._session.scalar(
@@ -133,27 +123,21 @@ class SqlDeviceRepository:
             .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
             .where(DeviceRow.device_id == device_id)
         )
-        return await self._to_device(row) if row is not None else None
+        return self._device(row) if row is not None else None
 
     async def get_device_by_token(self, token: str) -> Device | None:
         row = await self._session.scalar(
             select(DeviceRow).where(DeviceRow.token == token)
         )
-        return await self._to_device(row) if row is not None else None
+        return self._device(row) if row is not None else None
 
     async def delete_device(self, device_id: str) -> None:
-        await self._session.execute(
-            delete(DeviceProjectRow).where(DeviceProjectRow.device_id == device_id)
-        )
-        await self._session.execute(
-            delete(DeviceTeamRow).where(DeviceTeamRow.device_id == device_id)
-        )
         await self._session.execute(
             delete(DeviceRow).where(DeviceRow.device_id == device_id)
         )
         await self._session.flush()
 
-    async def list_devices_by_owner(self, owner_user_id: int) -> list[Device]:
+    async def list_enrolled_by(self, owner_user_id: int) -> list[Device]:
         rows = (
             await self._session.scalars(
                 select(DeviceRow)
@@ -161,134 +145,49 @@ class SqlDeviceRepository:
                 .where(HostedDeviceRow.owner_user_id == owner_user_id)
             )
         ).all()
-        return [await self._to_device(r) for r in rows]
+        return [self._device(r) for r in rows]
 
     async def device_ids_by_project(self, project_id: uuid.UUID) -> list[str]:
-        """Machines a project may run on = explicit per-project assignments UNION the
-        devices bound to the project's TEAM (execution-architecture v4: compute
-        belongs to the team — 为团队注册设备). Bind a machine to a team once and every
-        project of that team can run on it; a personal project's team is its
-        owner's personal team, so 为自己注册的设备 reach it with no setup."""
-        explicit = (
+        return list(
             await self._session.scalars(
-                select(DeviceProjectRow.device_id).where(
-                    DeviceProjectRow.project_id == project_id
-                )
-            )
-        ).all()
-        team_bound = (
-            await self._session.scalars(
-                select(DeviceTeamRow.device_id)
-                .join(Project, Project.team_id == DeviceTeamRow.team_id)
+                select(DeviceRow.device_id)
+                .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
+                .join(Project, Project.team_id == DeviceRow.team_id)
                 .where(Project.id == project_id)
             )
-        ).all()
-        return list(dict.fromkeys([*explicit, *team_bound]))
+        )
 
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
-        """Whether this one machine is among ``list_devices_by_project``, asked
-        without building the rest: every tool call on a self-hosted machine
-        asks it, and a project can use dozens."""
-        if device_id not in await self.device_ids_by_project(project_id):
-            return False
-        hosted = await self._session.scalar(
-            select(HostedDeviceRow.device_id).where(
-                HostedDeviceRow.device_id == device_id
+        return (
+            await self._session.scalar(
+                select(DeviceRow.device_id)
+                .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
+                .join(Project, Project.team_id == DeviceRow.team_id)
+                .where(Project.id == project_id, DeviceRow.device_id == device_id)
             )
+            is not None
         )
-        return hosted is not None
 
     async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:
-        """Human-hosted machines assigned directly or through the project's team."""
-        out: list[Device] = []
-        for did in await self.device_ids_by_project(project_id):
-            device = await self.get_hosted_device(did)
-            if device is not None:
-                out.append(device)
-        return out
+        rows = await self._session.scalars(
+            select(DeviceRow)
+            .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
+            .join(Project, Project.team_id == DeviceRow.team_id)
+            .where(Project.id == project_id)
+        )
+        return [self._device(row) for row in rows]
 
     async def list_devices_by_team(self, team_id: int) -> list[Device]:
-        device_ids = (
-            await self._session.scalars(
-                select(DeviceTeamRow.device_id).where(DeviceTeamRow.team_id == team_id)
-            )
-        ).all()
-        out: list[Device] = []
-        for did in device_ids:
-            device = await self.get_hosted_device(did)
-            if device is not None:
-                out.append(device)
-        return out
-
-    # -- assignments -------------------------------------------------------
-
-    async def assign_project(self, device_id: str, project_id: uuid.UUID) -> None:
-        if await self.is_assigned(device_id, project_id):
-            return
-        self._session.add(DeviceProjectRow(device_id=device_id, project_id=project_id))
-        await self._session.flush()
-
-    async def unassign_project(self, device_id: str, project_id: uuid.UUID) -> None:
-        await self._session.execute(
-            delete(DeviceProjectRow).where(
-                DeviceProjectRow.device_id == device_id,
-                DeviceProjectRow.project_id == project_id,
-            )
+        rows = await self._session.scalars(
+            select(DeviceRow)
+            .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
+            .where(DeviceRow.team_id == team_id)
         )
-        await self._session.flush()
+        return [self._device(row) for row in rows]
 
-    async def list_project_ids(self, device_id: str) -> list[uuid.UUID]:
-        return list(
-            (
-                await self._session.scalars(
-                    select(DeviceProjectRow.project_id).where(
-                        DeviceProjectRow.device_id == device_id
-                    )
-                )
-            ).all()
-        )
-
-    async def is_assigned(self, device_id: str, project_id: uuid.UUID) -> bool:
-        row = await self._session.scalar(
-            select(DeviceProjectRow.id).where(
-                DeviceProjectRow.device_id == device_id,
-                DeviceProjectRow.project_id == project_id,
-            )
-        )
-        return row is not None
-
-    # -- device↔team bindings (为团队注册设备, v4) --------------------------
-
-    async def assign_team(self, device_id: str, team_id: int) -> None:
-        existing = await self._session.scalar(
-            select(DeviceTeamRow.id).where(
-                DeviceTeamRow.device_id == device_id,
-                DeviceTeamRow.team_id == team_id,
-            )
-        )
-        if existing is not None:
-            return  # idempotent — keep the existing bind
-        self._session.add(DeviceTeamRow(device_id=device_id, team_id=team_id))
-        await self._session.flush()
-
-    async def unassign_team(self, device_id: str, team_id: int) -> None:
-        await self._session.execute(
-            delete(DeviceTeamRow).where(
-                DeviceTeamRow.device_id == device_id,
-                DeviceTeamRow.team_id == team_id,
-            )
-        )
-        await self._session.flush()
-
-    async def list_team_ids(self, device_id: str) -> list[int]:
-        return list(
-            (
-                await self._session.scalars(
-                    select(DeviceTeamRow.team_id).where(
-                        DeviceTeamRow.device_id == device_id
-                    )
-                )
-            ).all()
+    async def is_team_admin(self, team_id: int, user_id: int) -> bool:
+        return await team_service(self._session).is_team_at_least_admin(
+            team_id, user_id
         )
 
     # -- machine health (#186) ---------------------------------------------

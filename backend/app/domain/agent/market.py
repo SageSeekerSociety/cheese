@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent.environment import DEVICES_OF, STANDARD, VM
+from app.domain.agent.environment import STANDARD, TEAM_DEVICES, VM
 from app.domain.agent.profiles import ProfileRegistry
 
 # --- 档位 (结论 3: 模型是工作占用的资源，与机器（地点）同形) --------------------
@@ -112,9 +112,8 @@ def compute_listings(
     device_online: bool | None = None,
 ) -> list[PoolListing]:
     """The sandbox specs on offer on this deployment: the platform's machines,
-    a whole VM of the platform's, and people's own computers — each person's
-    are a spec of their own in a project (``environment.devices_of``), listed
-    here once. ``device_online`` scopes the last to a project's machines; left
+    a whole VM of the platform's, and the team's enrolled computers.
+    ``device_online`` scopes the last to a project's team; left
     as None (the global 市场) it asks whether any machine is connected."""
     if device_online is None:
         # deferred-import: tests replace this name on app.domain.agent.device_hub
@@ -144,11 +143,11 @@ def compute_listings(
         ),
         PoolListing(
             kind="compute",
-            id=DEVICES_OF.rstrip(":"),
-            label="自己的设备",
+            id=TEAM_DEVICES,
+            label="团队设备",
             tier="byo",
             price="不收费",
-            description="沙箱放在项目成员自己接入的电脑上；先到『我的设备』连接一台。",
+            description="环境放在团队接入的设备上；由团队管理员在『设备』页接入。",
             available=device_online,
         ),
     ]

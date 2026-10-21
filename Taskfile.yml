@@ -58,6 +58,8 @@ tasks:
       # default for many people through their global config.
       - git config --local merge.autoStash false
       - git config --local rebase.autoStash false
+      # `git blame` skips the whole-tree reformats listed there, as GitHub does.
+      - git config --local blame.ignoreRevsFile .git-blame-ignore-revs
 
   lark:setup:
     desc: Connect this machine to the team's Feishu (lark-cli, --profile cheese)
@@ -105,20 +107,17 @@ tasks:
       - task: be:check
       - task: fe:check
 
-  # Architecture gates: import boundaries, browser storage, standalone scenes,
-  # shrinking scene debt, catalog coverage and file sizes. Scene debt and file
-  # sizes require an up-to-date origin/main; frontend checks require installed
-  # dependencies.
+  # Architecture gates: import boundaries, browser storage, standalone scenes and
+  # shrinking scene debt. Scenes and scene debt require an up-to-date
+  # origin/main; frontend checks require installed dependencies.
   boundaries:
-    desc: Boundaries + storage + scenes + scene debt + catalog + file-size caps
+    desc: Boundaries + storage + scenes + scene debt
     cmds:
       - task: be:boundaries
       - task: fe:lint:boundary
       - task: fe:lint:storage
       - task: fe:lint:scenes
       - task: fe:lint:scene-debt
-      - task: fe:lint:catalog
-      - python3 .claude/scripts/check-file-sizes.py
 
   check:full:
     desc: Run all checks with full test suite
@@ -133,25 +132,18 @@ tasks:
   guards:
     desc: Run the pre-commit checks over the whole tree (what CI runs)
     cmds:
-      - uvx pre-commit run --all-files
+      # The commit's hooks, then the whole-tree ones CI runs (stage manual). The
+      # two fixers are skipped: they rewrite files rather than judge them.
+      - SKIP=ruff-fix,frontend-fix uvx pre-commit run --all-files
+      - uvx pre-commit run --all-files --hook-stage manual
 
-  # Fast check before opening a PR: picks pre-commit hook IDs by the
-  # merge-diff scope (same select() and path map as the Required CI gate), then
-  # adds bounded related frontend tests, changed-file types, selected pure
-  # backend tests and their i18n/tree guards. Build, integration, remote and
-  # E2E suites remain owned by full CI.
-  ci:fast:
-    desc: Three-minute scoped fast check (not full CI)
+  # Who uses this symbol or module: AST uses (not comments), grouped by file,
+  # tests last, from the same import graph a pull request's integration tests
+  # are selected with (.github/scripts/backend_imports.py).
+  where:
+    desc: List the uses of a symbol or the importers of a module (backend)
     cmds:
-      - python3 .github/scripts/ci-fast.py --tier quick {{.CLI_ARGS}}
-
-  # The inner loop, next to the editor: the same selection as ci:fast and no
-  # hooks, so the run is bounded by the tests instead of by the pre-commit
-  # budget. Meant to be run between edits, `task ci:fast` before the push.
-  test:changed:
-    desc: Only the backend/frontend tests this change reaches (no hooks)
-    cmds:
-      - python3 .claude/scripts/test-changed.py {{.CLI_ARGS}}
+      - python3 .claude/scripts/where.py {{.CLI_ARGS}}
 
   # Proves a regression test can fail: it must go red with the implementation
   # reverted and green with it back. --auto reads the new/changed tests off the

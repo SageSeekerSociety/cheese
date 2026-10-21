@@ -22,6 +22,8 @@ export type NotificationType =
   | 'CHEESE_QUESTION'
   | 'DEVICE_IN_USE'
   | 'SPACE_ANNOUNCEMENT'
+  | 'TASK_NOTICE'
+  | 'TASK_DUE_SOON'
 
 export interface EntityInfo {
   id: string
@@ -57,19 +59,6 @@ export interface ListNotificationsParams {
 export interface ListNotificationsResponse {
   notifications: Notification[]
   page: EncodedCursorPage
-}
-
-export interface NotificationUpdate {
-  id: number
-  read: boolean
-}
-
-export interface BulkUpdateRequest {
-  updates: NotificationUpdate[]
-}
-
-export interface BulkUpdateResponse {
-  updatedIds: number[]
 }
 
 export interface MarkAllAsReadResponse {

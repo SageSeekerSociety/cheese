@@ -36,6 +36,7 @@ from app.domain.agent.executor_transport import (
     RemoteClient,
     failure_text,
 )
+from app.domain.agent.harness import PI
 from app.domain.agent.harness.driven import monitor, runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.mcp_gateway import (
@@ -75,6 +76,26 @@ def _said(text: str) -> dict:
     model beside the text (`platform.ts`)."""
     images = list(getattr(text, "images", ()))
     return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
+
+
+#: How a delegated credential begins (``app.core.sandbox_auth``).
+DELEGATED_PREFIX = "cxdg_"
+
+
+def _scope_of(token: str) -> dict[str, str]:
+    """The project a delegated credential names, as the tools read it
+    (``CHEESE_PROJECT``). Read, not verified: the backend verifies the
+    credential on every request it is sent with; this only says where to send
+    them."""
+    if not token.startswith(DELEGATED_PREFIX):
+        return {}
+    body = token.removeprefix(DELEGATED_PREFIX).rpartition(".")[0]
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except (ValueError, TypeError):
+        return {}
+    project = claims.get("p") if isinstance(claims, dict) else None
+    return {"CHEESE_PROJECT": str(project)} if project else {}
 
 
 class Runner(runner.Runner[Journal]):
@@ -259,12 +280,15 @@ class Runner(runner.Runner[Journal]):
 
     def write(self, update: dict) -> None:
         """Show the assistant message pi is writing, block by block, as its
-        deltas arrive (`message_update`): text, and tool calls with their
-        arguments as raw JSON so far. Reasoning is not shown."""
+        deltas arrive (`message_update`): text, tool calls with their
+        arguments as raw JSON so far, and that the model is reasoning — a
+        `thinking` block, never what it reasons."""
         kind, index = update.get("type"), update.get("contentIndex")
         if not isinstance(index, int):
             return
-        if kind == "text_start":
+        if kind == "thinking_start":
+            self.writing[index] = {"type": "thinking"}
+        elif kind == "text_start":
             self.writing[index] = {"type": "text", "text": ""}
         elif kind == "toolcall_start":
             self.writing[index] = {
@@ -468,7 +492,7 @@ class Runner(runner.Runner[Journal]):
         if tools is None:
             try:
                 tools = catalog.tools()
-            except Exception as error:  # noqa: BLE001 — a room still opens without them
+            except Exception as error:  # a room still opens without them
                 tools, reason = [], f"{type(error).__name__}: {error}"
         (home / "platform.json").write_text(
             json.dumps(
@@ -579,7 +603,7 @@ class Runner(runner.Runner[Journal]):
                 text = await asyncio.to_thread(
                     catalog.run_platform_tool, tool, arguments, host
                 )
-            except Exception as error:  # noqa: BLE001 — the agent reads the reason
+            except Exception as error:  # the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": failure_text(error)}
             return _said(text)
         command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
@@ -609,9 +633,13 @@ class Runner(runner.Runner[Journal]):
             call_id,
             self.doc_versions,
         )
+        # A person's 芝士 asked from a project's page acts in that project: its
+        # session has no project of its own, the question's credential does.
+        for name, value in _scope_of(self.platform_token).items():
+            host.environ.setdefault(name, value)
         try:
             text = catalog.run_platform_tool(tool, arguments, host)
-        except Exception as error:  # noqa: BLE001 — the agent reads the reason
+        except Exception as error:  # the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": failure_text(error)}
         return _said(text)
 
@@ -740,7 +768,7 @@ class Runner(runner.Runner[Journal]):
                 message=f"{self.notice}\n{text}" if self.notice else text,
                 streamingBehavior=behavior,
             )
-        except Exception as error:  # noqa: BLE001 — the record is in the log
+        except Exception as error:  # the record is in the log
             print(f"could not tell the session: {error!r}", file=sys.stderr)
 
     # --- lifecycle -----------------------------------------------------------
@@ -815,7 +843,7 @@ class Runner(runner.Runner[Journal]):
                 self.context = await asyncio.to_thread(self.machine.context)
                 for path in await asyncio.to_thread(self.machine.project_skills):
                     appended += ["--skill", path]
-            except Exception as error:  # noqa: BLE001 — the room still opens
+            except Exception as error:  # the room still opens
                 print(f"[cheese] the project was not read: {error!r}", file=sys.stderr)
         # Explicit `--skill` paths are additive even under `--no-skills`, so the
         # platform's own skills are written here and named — for the same
@@ -872,7 +900,7 @@ class Runner(runner.Runner[Journal]):
         self.journal.remember("session_id", session_id)
         self.journal.remember(
             "owner",
-            json.dumps({"harness": "pi", "agent_handle": opening.agent_handle}),
+            json.dumps({"harness": PI, "agent_handle": opening.agent_handle}),
         )
         return session_id
 
@@ -1020,7 +1048,7 @@ class Runner(runner.Runner[Journal]):
             await self.client.request(
                 "prompt", message=f"{self.notice}\n{reason}" if self.notice else reason
             )
-        except Exception as error:  # noqa: BLE001 — the turn ended; so be it
+        except Exception as error:  # the turn ended; so be it
             print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
             self.reply_settled()
 

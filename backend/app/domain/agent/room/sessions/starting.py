@@ -26,8 +26,9 @@ from app.domain.agent.room import sessions as pkg
 from app.domain.agent.room.sessions.records import Live, _home
 from app.domain.agent.room.stopwatch import Stopwatch
 from app.domain.agent.session_host.contract import (
+    EFFORT_ENV,
     Access,
-    InputProtocolUnavailable,
+    ModelSettings,
     Owner,
     SessionSpec,
 )
@@ -55,11 +56,6 @@ async def ensure(
     mark = Stopwatch(phases)
     seat = svc._seat_of(session)
     previous = svc.live.get(seat)
-    if previous is not None and not previous.takes_inputs:
-        # An adopted runner from before the receipt protocol owns native
-        # pipes and may still hold the original executor's work; it is not
-        # relaunched to upgrade it.
-        raise InputProtocolUnavailable()
     if previous is not None and acting is not None and acting != previous.acting:
         # A different teammate is taking this seat over; the conversation
         # that belonged to the last one does not carry over to them. Other
@@ -101,13 +97,17 @@ async def ensure(
         scratch=keeps_nothing,
     ) as prepared:
         ref = CoreRef(svc.harness, _home(placed["state"]))
+        launched_env = dict(prepared.env)
+        # The teammate's thinking effort, said to the harness as a setting.
+        effort = launched_env.pop(EFFORT_ENV, None)
         spec = SessionSpec(
             system_prompt=system_prompt,
             model=model or settings.agent_model,
             gone_after_s=pkg.RUNNER_GONE_S,
             resume_token=resume_token,
+            model_settings=ModelSettings(effort=effort),
             env={
-                **prepared.env,
+                **launched_env,
                 "CHEESE_PROJECT": str(session.project_id),
                 # The conversation: a room, or the task this session works.
                 "CHEESE_TOPIC": str(session.conversation_id),
@@ -149,7 +149,6 @@ async def ensure(
             ref,
             prepared.agent_handle,
             status.conversation,
-            status.takes_inputs,
         )
     )
     mark("ensure_attach")

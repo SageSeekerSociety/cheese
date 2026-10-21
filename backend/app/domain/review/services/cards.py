@@ -10,7 +10,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    NotFoundError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import exception_text, listing, say
 from app.domain.deliverables import artifacts
 from app.domain.library import service as library
@@ -28,6 +33,7 @@ from app.domain.review.models import (
     GateOutcome,
 )
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.room_task import progress
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
@@ -44,10 +50,14 @@ from app.domain.review.services._shared import (
     _BLOCKED_BY_CARD_MESSAGES,
     _CARD_BLOCKS_NEW_CARD,
     _MISSING_SUBJECT,
+    EVENT_CARD_REDESCRIBED,
     EVENT_MIGRATION_COLLISION,
+    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_HUMAN,
     ReviewerAdmission,
+    _deliverable_revision,
+    _hold_deliverable,
     _no_artifact_action,
     _one_artifact_action,
     _one_deliverable,
@@ -277,10 +287,106 @@ async def create_card(
         )
     if has_branch_changes:
         card.pr_number, card.pr_url = task.pr_number, task.pr_url
+    # The card says where the task stands now (等审): what its teammate
+    # reported before it is over.
+    progress.clear(task)
     await self._announce_filed(topic, card, task)
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
     await self._warn_about_a_second_pending_migration(topic, task.id)
+    return card
+
+
+async def redeliver(
+    self: pkg.AcceptService,
+    task_id: uuid.UUID,
+    *,
+    actor: str,
+    deliver: str | None = None,
+    deliver_url: str | None = None,
+) -> AcceptCard:
+    """换掉这条任务待处理那张卡交出去的文件或地址，卡不换。
+
+    一版是一张卡（`library.artifact_snapshot_path`），卡还没采纳，它就还是同一个
+    待定的版本：所以快照在原处改写，而不是另记一版。审过旧那一份的批准票一起清
+    掉 —— 那一票没有看过新的这一份。交合并的卡没有可换的：代码的新提交走 push-fix。
+    """
+    pending = await self._repo.list_live_for_places(
+        [task_id], statuses=(AcceptStatus.pending,)
+    )
+    if not pending:
+        raise ConflictError(say("redeliverNoPendingCard"))
+    card = pending[0]
+    if card.deliverable_kind not in (DeliverableKind.file, DeliverableKind.link):
+        raise ConflictError(say("redeliverMergeCard"))
+    _one_deliverable(deliver, deliver_url)
+    handed_over = (deliver or "").strip()
+    url = (deliver_url or "").strip()
+    if not handed_over and not url:
+        raise ValidationError(say("redeliverNothing"))
+    topic = await self._topic_or_404(card.topic_id)
+    snapshot = (
+        await _read_deliverable(
+            self._session,
+            topic.project_id,
+            task_id,
+            handed_over,
+            executor=self._executor,
+        )
+        if handed_over
+        else None
+    )
+    # 读机器上那一份可能要好几秒，人可能正好在这几秒里点了采纳。先和采纳排队、
+    # 重读状态，再动字节：否则采纳了的那一版会被换掉、它的快照被删掉。排到提交
+    # 为止，晚到的采纳等这边写完再看。
+    await _hold_deliverable(self._session, card)
+    if card.status != AcceptStatus.pending:
+        raise ConflictError(say("redeliverNoPendingCard"))
+    before = card.deliverable_name or card.deliverable_url or ""
+    if snapshot is not None:
+        await asyncio.to_thread(
+            library.write_artifact_snapshot,
+            topic.project_id,
+            card.id,
+            snapshot[0],
+            snapshot[1],
+        )
+    if card.deliverable_name and card.deliverable_name != (
+        snapshot[0] if snapshot else None
+    ):
+        # 一张卡只留它现在交的那一份：旧名字的文件留着，就是版本页上一份没人
+        # 交过的字节。
+        stale = library.artifact_snapshot_path(
+            topic.project_id, card.id, card.deliverable_name
+        )
+        await asyncio.to_thread(stale.unlink, missing_ok=True)
+    card.deliverable_kind = (
+        DeliverableKind.file if snapshot is not None else DeliverableKind.link
+    )
+    card.deliverable_name = snapshot[0] if snapshot else None
+    card.deliverable_url = url or None
+    # 批准票和「绿了自动合」都是对旧那一份的表态，一起作废（同 `_dismiss_stale_accept`）。
+    await self._repo.clear_approvals(card.id)
+    card.auto_merge_armed_by = None
+    card.auto_merge_armed_at = None
+    await self._session.flush()
+    await self._tell_the_reviewer(
+        card,
+        topic,
+        say("cardRedelivered", actor=actor),
+        meta=notice(
+            EVENT_CARD_REDESCRIBED,
+            severity=SEVERITY_INFO,
+            who=WHO_HUMAN,
+            detail=say(
+                "cardRedeliveredDetail",
+                before=before or say("emptyValue"),
+                after=card.deliverable_name or card.deliverable_url or "",
+            ),
+            detail_label=say("labelWhatChanged"),
+        ),
+    )
+    await self._session.refresh(card)
     return card
 
 
@@ -318,7 +424,7 @@ async def _warn_about_a_second_pending_migration(
                 for entry in (comparison or {}).get("files", [])
                 if entry.get("status") == "added"
             ]
-        except Exception:  # noqa: BLE001 — a diagnostic must not break 递卡
+        except Exception:  # a diagnostic must not break 递卡
             return []
         return [p for p in added if _ALEMBIC_VERSIONS_DIR in p]
 
@@ -596,6 +702,9 @@ async def _render(
     if card.topic_id not in rooms:
         rooms[card.topic_id] = await self._topic_or_404(card.topic_id)
     topic = rooms[card.topic_id]
+    if data["deliverable"] is not None:
+        # 采纳时要原样带回来的那一版（`_deliverable_revision`）。
+        data["deliverable"]["revision"] = _deliverable_revision(topic.project_id, card)
     if topic.project_id not in projects:
         projects[topic.project_id] = await self._projects.get(topic.project_id)
     project = projects[topic.project_id]

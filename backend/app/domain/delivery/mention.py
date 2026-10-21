@@ -33,12 +33,11 @@ from typing import Final
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_instance.own import owned_instance
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.conversation.services import of_room
-from app.domain.delivery.agent import instance_for_seat, now, record_agent
+from app.domain.delivery.agent import instances_for_seats, now, record_agent
 from app.domain.delivery.models import Delivery
-from app.domain.delivery_events import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent, dedup_key
 from app.domain.notification.models import NotificationType
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -153,16 +152,26 @@ async def record_mentions(
     if by_agent:
         used = await _agent_mentions_since(session, room_id, now() - timedelta(hours=1))
         budget = AGENT_MENTIONS_PER_HOUR - used
+    instances = await instances_for_seats(session, project_id, named)
+    # 这条消息已经给谁记过投递：重试同一条发布时，已记录的座位不占额度，也
+    # 不再进「这次没叫醒」——它们本来就已经被叫醒过。额度判断因此只作用于
+    # 真正新增的座位，重试写不出那条错误的熔断提示。
+    already = set(
+        (
+            await session.scalars(
+                select(Delivery.dedup_key).where(
+                    Delivery.dedup_key.in_(
+                        [dedup_key(block_id, seat) for seat in named]
+                    )
+                )
+            )
+        ).all()
+    )
     for seat in named:
-        instance = await instance_for_seat(session, project_id, seat)
+        instance = instances.get(seat)
         if instance is None:
             continue
-        # A member's own agent answers only whoever its owner lets call it
-        # (#2991), never another agent: naming it from anyone else reaches
-        # nobody.
-        if await owned_instance(session, instance.id) is not None and (
-            by_agent or not await _calls_own(session, instance.id, author)
-        ):
+        if dedup_key(block_id, seat) in already:
             continue
         if budget is not None and budget <= 0:
             summoned.fused.append(seat)
@@ -193,12 +202,3 @@ async def record_mentions(
             budget -= 1
         summoned.woken.append(seat)
     return summoned
-
-
-async def _calls_own(
-    session: AsyncSession, instance_id: uuid.UUID, author: str
-) -> bool:
-    # deferred-import: tests replace this name on app.domain.agent_instance.own
-    from app.domain.agent_instance.own import callable_by
-
-    return await callable_by(session, instance_id, author)

@@ -60,12 +60,12 @@ export const RAIL_ROWS = {
       hiddenCount: 12,
       hiddenUnread: 4,
       unreadTotal: 4,
-      hiddenLight: { kind: 'yellow', breathe: false },
+      hiddenLight: { kind: 'yellow' },
     }
   ),
   /** 子话题：缩进一级，左边一条竖向引导线。 */
   sub: railRow({ id: 't-4', title: '第 3 题：为什么天空是蓝的', parent_id: 't-3' }, { depth: 1, unreadTotal: 2 }),
-  /** 房间在等的一位队友：它最近一轮报错了。不靠数据变——钟走到哪儿它都卡着。 */
+  /** 房间在等的一位队友：它最近一轮报错了。不靠数据变——钟走到哪儿它都红着。 */
   stalled: railRow({
     id: 't-5',
     title: '把成绩单导出成 CSV',
@@ -81,20 +81,9 @@ export const RAIL_MARKS = {
       name: AGENT_NAME,
       avatar: null,
       agent: true,
-      state: 'working',
       title: `${AGENT_NAME}正在这里工作`,
     },
-    { handle: 'louis', name: '娄宇', avatar: null, agent: false, state: 'working', title: '娄宇正在这里工作' },
-  ],
-  stalled: [
-    {
-      handle: 'cheese-a1',
-      name: AGENT_NAME,
-      avatar: null,
-      agent: true,
-      state: 'stalled',
-      title: `${AGENT_NAME}最近一轮报错了`,
-    },
+    { handle: 'louis', name: '娄宇', avatar: null, agent: false, title: '娄宇正在这里工作' },
   ],
 } satisfies Record<string, RailMemberMark[]>
 

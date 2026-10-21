@@ -911,7 +911,7 @@ def test_the_proxy_asks_admission_with_its_own_credential(monkeypatch, tmp_path)
     asked: list[dict] = []
 
     class Backend(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802 — the stdlib's name
+        def do_POST(self):  # the stdlib's name
             asked.append({k.lower(): v for k, v in self.headers.items()})
             body = json.dumps(
                 {
@@ -1006,6 +1006,48 @@ def test_a_gateway_session_stays_on_the_gateway_while_admission_is_down(
     assert during.request.headers["authorization"] == "Bearer sk-virtual-project-key"
     out = during.request.stream(b'{"model":"deepseek-flash","messages":[]}')
     assert json.loads(out)["model"] == "deepseek-flash"
+
+
+def test_task_handover_outage_never_spends_the_previous_owners_key(
+    monkeypatch, tmp_path
+):
+    secret = "s3cr3t"
+    url = "http://control-plane.invalid/admission"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret, admission_url=url)
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    calls = []
+
+    def post(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise core.urllib.error.URLError("backend restart")
+        owner = "alice" if len(calls) == 1 else "bob"
+        return _verdict(
+            pool="gateway", key=f"key-{owner}", model="deepseek-flash", work_id=owner
+        )
+
+    monkeypatch.setattr(mod, "ADMISSION", mod.AdmissionGate(url, post=post))
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+
+    def turn():
+        flow = _session_flow(conn="c1")
+        asyncio.run(mod.requestheaders(flow))
+        return flow
+
+    before = turn()
+    assert before.response is None
+    assert before.request.headers["authorization"] == "Bearer key-alice"
+    during = turn()
+    assert during.response is not None and during.response.status_code == 503
+    assert json.loads(during.response.content)["error"]["type"] == "api_error"
+    assert during.request.host == "api.anthropic.com"
+    assert during.request.headers["authorization"] == f"Bearer {SESSION_CREDENTIAL}"
+    after = turn()
+    assert after.response is None
+    assert after.request.headers["authorization"] == "Bearer key-bob"
+    assert after.metadata["cheese_work_id"] == "bob"
 
 
 def _no_login_turn(

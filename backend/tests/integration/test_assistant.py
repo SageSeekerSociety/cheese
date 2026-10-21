@@ -42,8 +42,8 @@ from app.api.routes import llm_proxy
 from app.core.config import settings
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.assistant.models import AssistantMessage
-from app.domain.task.models import Task, TaskMembership
+from app.domain.assistant.models import AssistantConversation, AssistantMessage
+from app.domain.task.models import Task, TaskDraft, TaskMembership
 from app.domain.team.models import Team
 from app.domain.usage import pricing
 from app.domain.usage.credits import CREDIT_USD
@@ -51,7 +51,12 @@ from app.domain.usage.models import ComputeGrant, ResourceUsage
 from app.domain.user.models import User
 from app.main import app
 from tests.conftest import seed_task_with_protocol, seed_user
-from tests.integration.conftest import free_plan_credits
+from tests.integration.conftest import (
+    free_plan_credits,
+    post_message,
+    session_auth_headers,
+)
+from tests.integration.test_message_edit import _room
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 USAGE = {
@@ -386,16 +391,25 @@ def _task(client, *, name: str = "图像分类基线复现", **fields) -> int:
     return task_id
 
 
+#: The task page each topic in these tests is asked from: a person's topics
+#: are not tied to a page, the page goes with each question.
+_ASKED_FROM: dict[str, int] = {}
+
+
 def _start(client, task_id: int, headers: dict) -> str:
-    r = client.post(f"/assistant/tasks/{task_id}/conversations", headers=headers)
+    """A new topic, asked from ``task_id``'s page."""
+    r = client.post("/assistant/conversations", headers=headers)
     assert r.status_code == 201, r.text
-    return r.json()["data"]["id"]
+    conversation = r.json()["data"]["id"]
+    _ASKED_FROM[conversation] = task_id
+    return conversation
 
 
 def _ask(client, conversation: str, question: str, headers: dict):
+    page = {"kind": "task", "id": _ASKED_FROM[conversation]}
     return client.post(
         f"/assistant/conversations/{conversation}/ask",
-        json={"question": question},
+        json={"question": question, "page": page},
         headers=headers,
     )
 
@@ -480,9 +494,9 @@ def test_a_question_is_answered_from_the_task_kept_and_paid_for(client, gateway)
     deltas = [d["text"] for e, d in events if e == "delta"]
     assert "".join(deltas) == "要先会 PyTorch。"
     assert events[-1] == ("done", {"stopped": False})
-    # The model is asked without thinking, for a bounded answer.
+    # The model reasons (nothing turns it off), within a bounded answer.
     sent = gateway.requests[0]
-    assert sent["thinking"] == {"type": "disabled"}
+    assert sent.get("thinking") != {"type": "disabled"}
     assert "max_completion_tokens" not in sent and sent["max_tokens"] > 0
     # 芝士 was told the task it was asked about.
     told = json.dumps(sent, ensure_ascii=False)
@@ -525,7 +539,7 @@ def test_a_new_conversation_starts_without_the_old_ones_turns(client, gateway):
     sent = json.dumps(gateway.requests[-1], ensure_ascii=False)
     assert "数据增强要不要做" in sent and "学习率一般设多少" not in sent
 
-    listed = client.get(f"/assistant/tasks/{task_id}/conversations", headers=me)
+    listed = client.get("/assistant/conversations", headers=me)
     titles = [c["title"] for c in listed.json()["data"]["conversations"]]
     assert titles == ["数据增强要不要做？", "学习率一般设多少？"]
 
@@ -585,7 +599,7 @@ def test_a_conversation_is_its_owners_alone(client, gateway):
         == 404
     )
     assert _ask(client, mine, "给我看看他问了什么", stranger).status_code == 404
-    listed = client.get(f"/assistant/tasks/{task_id}/conversations", headers=stranger)
+    listed = client.get("/assistant/conversations", headers=stranger)
     assert listed.json()["data"]["conversations"] == []
     assert len(gateway.requests) == asked
 
@@ -605,9 +619,21 @@ def test_a_person_who_cannot_open_the_task_cannot_ask_about_it(client, gateway):
     asyncio.run(unpublish())
 
     assert _ask(client, conversation, "这道题难在哪？", me).status_code in (403, 404)
-    assert client.post(
-        f"/assistant/tasks/{task_id}/conversations", headers=me
-    ).status_code in (403, 404)
+    assert gateway.requests == []
+
+
+def test_a_page_without_a_reader_is_refused_before_the_model(client, gateway):
+    """A question names its page by kind and id; a kind 芝士 has no reader for
+    is refused as a bad request, and the model is not asked."""
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "这是什么？", "page": {"kind": "settings", "id": 1}},
+        headers=me,
+    )
+    assert r.status_code == 400, r.text
     assert gateway.requests == []
 
 
@@ -656,7 +682,10 @@ def test_my_tasks_reports_only_what_the_asker_takes_part_in(client, gateway):
     r = _ask(client, conversation, "我领了哪些题？", me)
 
     assert r.status_code == 200
-    assert ("tool", {"name": "cheese_my_tasks"}) in _events(r.text)
+    assert any(
+        event == "tool" and data["name"] == "cheese_my_tasks"
+        for event, data in _events(r.text)
+    )
     tool_result = json.dumps(gateway.requests[-1]["messages"][-1], ensure_ascii=False)
     assert "我领的那道" in tool_result
     assert "别人的那道" not in tool_result
@@ -725,7 +754,7 @@ def test_a_refused_question_leaves_nothing_in_the_list(client, gateway):
 
     assert _ask(client, conversation, "从哪里入手？", me).status_code == 429
 
-    listed = client.get(f"/assistant/tasks/{task_id}/conversations", headers=me)
+    listed = client.get("/assistant/conversations", headers=me)
     assert listed.json()["data"]["conversations"] == []
 
 
@@ -959,3 +988,351 @@ def _answering(conversation: str) -> bool:
             f"assistant:busy:{conversation}"
         )
     )
+
+
+def _draft(client, user_id: int, task_id: int) -> int:
+    """A draft of the person's in the space of ``task_id``."""
+
+    async def make() -> int:
+        async with client.test_factory() as s:
+            space_id = (await s.get(Task, task_id)).space_id
+            row = TaskDraft(
+                user_id=user_id,
+                space_id=space_id,
+                fields={
+                    "name": "Lab 3 缓存模拟器",
+                    "descriptionMarkdown": "用 C 写一个缓存模拟器。",
+                    "submitterType": "USER",
+                    "rank": 2,
+                },
+                marks={},
+                version=0,
+            )
+            s.add(row)
+            await s.commit()
+            return row.id
+
+    return asyncio.run(make())
+
+
+def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gateway):
+    """Asked on a draft's page, 芝士 is shown the draft, writes into it with its
+    tool, and the page reads what changed on the question's own stream. The
+    page is said again only when it changed."""
+    me = _auth(client, "asker")
+    user_id, _, _ = _ledger_user(client, "asker")
+    draft = _draft(client, user_id, _task(client))
+    r = client.post("/assistant/conversations", headers=me)
+    assert r.status_code == 201, r.text
+    conversation = r.json()["data"]["id"]
+    page = {"kind": "draft", "id": draft}
+
+    gateway.script = [
+        ("tool", "cheese_task_write", {"draft": draft, "difficulty": "高级"}),
+        ("text", "难度改成了高级。"),
+    ]
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "难一点", "page": page},
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    events = _events(r.text)
+    edit = next(data for event, data in events if event == "change")
+    assert edit["kind"] == "draft" and edit["undone"] == []
+    assert edit["draft"] == draft
+    assert edit["changed"] == {"rank": {"before": 2, "after": 3}}
+    assert any(event == "tool_args" for event, _ in events)
+    told = json.dumps(gateway.requests[0], ensure_ascii=False)
+    assert "<当前页面>" in told and f"草稿 {draft}" in told
+    # The space is named by its id, which its tools take, with what it offers.
+    assert "空间id=" in told and "这个空间可选的分类" in told
+    # What it did is kept with the answer: the conversation shows it again.
+    kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    parts = kept["data"]["messages"][-1]["parts"]
+    assert [step["name"] for step in parts["steps"]] == ["cheese_task_write"]
+    assert '"difficulty"' in parts["steps"][0]["args"]
+    assert parts["edits"][0]["changed"] == {"rank": {"before": 2, "after": 3}}
+
+    for question in ("还有吗", "好的"):
+        gateway.script = [("text", "没有了。")]
+        r = client.post(
+            f"/assistant/conversations/{conversation}/ask",
+            json={"question": question, "page": page},
+            headers=me,
+        )
+        assert r.status_code == 200, r.text
+    # Said with the first question, again with the second (芝士 had changed the
+    # draft), and not with the third.
+    last = json.dumps(gateway.requests[-1]["messages"], ensure_ascii=False)
+    assert last.count("<当前页面>") == 2
+
+
+def test_what_cheese_wrote_into_a_draft_is_undone_by_the_person(client, gateway):
+    """Undoing a field 芝士 wrote puts back what it was before the answer, as
+    the person's own write; the kept answer says it is undone, and it can be
+    put back as 芝士 left it. Only the asker may."""
+    me = _auth(client, "asker")
+    user_id, _, _ = _ledger_user(client, "asker")
+    draft = _draft(client, user_id, _task(client))
+    conversation = client.post("/assistant/conversations", headers=me).json()["data"][
+        "id"
+    ]
+    gateway.script = [
+        ("tool", "cheese_task_write", {"draft": draft, "difficulty": "初级"}),
+        ("tool", "cheese_task_write", {"draft": draft, "difficulty": "高级"}),
+        ("text", "难度改成了高级。"),
+    ]
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "难一点", "page": {"kind": "draft", "id": draft}},
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    told = [data for event, data in _events(r.text) if event == "change"]
+    assert len(told) == 2
+    last = told[-1]["id"]
+
+    assert (
+        client.post(
+            f"/assistant/changes/{last}/undo",
+            json={"part": "difficulty"},
+            headers=_auth(client, "stranger"),
+        ).status_code
+        == 404
+    )
+    r = client.post(
+        f"/assistant/changes/{last}/undo", json={"part": "difficulty"}, headers=me
+    )
+    assert r.status_code == 200, r.text
+    done = r.json()["data"]
+    # Back to before the first of the two writes.
+    assert done["fields"] == {"rank": 2}
+    assert sorted(c["id"] for c in done["changes"]) == sorted(c["id"] for c in told)
+    assert all(c["undone"] == ["difficulty"] for c in done["changes"])
+
+    async def row() -> TaskDraft:
+        async with client.test_factory() as s:
+            return await s.get(TaskDraft, draft)
+
+    undone = asyncio.run(row())
+    assert undone.fields["rank"] == 2 and undone.version == done["version"]
+    assert undone.marks["rank"] == undone.version
+    kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    edits = kept["data"]["messages"][-1]["parts"]["edits"]
+    assert [e["undone"] for e in edits] == [["difficulty"], ["difficulty"]]
+    again = client.post(
+        f"/assistant/changes/{last}/undo", json={"part": "difficulty"}, headers=me
+    )
+    assert again.status_code == 400
+
+    r = client.post(f"/assistant/changes/{last}/redo", json={}, headers=me)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["fields"] == {"rank": 3}
+    assert asyncio.run(row()).fields["rank"] == 3
+
+
+def test_files_handed_over_alone_are_a_question_the_page_explains(client, gateway):
+    """A file dropped on the publish page with nothing typed is asked as it is:
+    the page tells 芝士 what a file there is for, and that the open draft has
+    nothing in it yet; the conversation keeps the file's name."""
+    me = _auth(client, "asker")
+    user_id, _, _ = _ledger_user(client, "asker")
+    draft = _draft(client, user_id, _task(client))
+
+    async def empty() -> None:
+        async with client.test_factory() as s:
+            row = await s.get(TaskDraft, draft)
+            row.fields = {"submitterType": "USER", "submissionSchema": []}
+            await s.commit()
+
+    asyncio.run(empty())
+    r = client.post("/assistant/conversations", headers=me)
+    conversation = r.json()["data"]["id"]
+    page = {"kind": "draft", "id": draft}
+
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "", "page": page},
+        headers=me,
+    )
+    assert r.status_code == 400, r.text
+
+    gateway.script = [("text", "读完了。")]
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"page": page, "files": [{"id": 41, "name": "实验室课题.pdf"}]},
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    told = json.dumps(gateway.requests[0], ensure_ascii=False)
+    assert "<这一页>" in told and "发布题目页" in told
+    assert "尚未填写" in told and "实验室课题.pdf（文件 id 41）" in told
+    kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    asked = kept["data"]["messages"][0]
+    assert asked["text"] == "" and asked["parts"] == {"files": ["实验室课题.pdf"]}
+
+
+def test_the_thread_lists_every_topic_and_a_new_one_is_the_persons(client, gateway):
+    """A person's topics are one thread wherever they were asked: ones started
+    on a 题目's page before topics were the person's are listed with the rest,
+    and a new topic belongs to the person, not to a page."""
+    me = _auth(client, "asker")
+    user_id, _, _ = _ledger_user(client, "asker")
+    task_id = _task(client)
+
+    async def older() -> None:
+        from app.domain.agent.personal import service
+
+        async with client.test_factory() as s:
+            row = await service.AssistantConversations(s).start(
+                user_id, service.Place("task", str(task_id))
+            )
+            row.title = "上学期问过的"
+            await s.commit()
+
+    asyncio.run(older())
+    fresh = _start(client, task_id, me)
+    assert _ask(client, fresh, "从哪里入手？", me).status_code == 200
+
+    listed = client.get("/assistant/conversations", headers=me).json()["data"]
+    assert [c["title"] for c in listed["conversations"]] == [
+        "从哪里入手？",
+        "上学期问过的",
+    ]
+
+    async def placed() -> None:
+        async with client.test_factory() as s:
+            row = await s.get(AssistantConversation, uuid.UUID(fresh))
+            assert (row.place_kind, row.place_id) == ("personal", str(user_id))
+
+    asyncio.run(placed())
+
+
+def test_asked_in_a_channel_it_reads_the_channel_and_drafts_what_the_person_sends(
+    client, gateway
+):
+    """Asked from a channel's page, 芝士 is told the channel and its latest
+    messages, reads more with the chat tools as the person, and drafts a reply
+    that is not sent: the panel shows it, and only the person marks it sent."""
+    room, _ = _room(client)
+    post_message(client, room, "alice", {"content": "中期演示视频谁来负责？"})
+    me = _auth(client, "alice")
+    conversation = client.post("/assistant/conversations", headers=me).json()["data"][
+        "id"
+    ]
+    gateway.script = [
+        ("tool", "cheese_chat_search", {"topic": room, "query": "演示视频"}),
+        (
+            "tool",
+            "cheese_message_draft",
+            {"topic": room, "text": "演示视频我来负责，周五前给初版。"},
+        ),
+        ("text", "起草了一条回复，等你确认。"),
+    ]
+
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "有什么要我处理的？", "page": {"kind": "topic", "id": room}},
+        headers=me,
+    )
+
+    assert r.status_code == 200, r.text
+    events = _events(r.text)
+    assert not [d for e, d in events if e == "tool_failed"], events
+    told = json.dumps(gateway.requests[0], ensure_ascii=False)
+    assert "频道「话题」" in told and "中期演示视频谁来负责" in told
+    searched = json.dumps(gateway.requests[1], ensure_ascii=False)
+    assert "中期演示视频谁来负责" in searched
+    drafted = next(d for e, d in events if e == "proposal")
+    assert drafted["kind"] == "message" and drafted["state"] == "pending"
+    assert drafted["topicName"] == "话题" and drafted["topic"] == room
+    history = client.get(
+        f"/topics/{room}/history", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    assert not any("周五前给初版" in b["content"] for b in history)
+
+    path = f"/assistant/proposals/{drafted['id']}"
+    stranger = client.post(
+        path, json={"state": "sent"}, headers=_auth(client, "stranger")
+    )
+    assert stranger.status_code == 404
+    sent = client.post(
+        path, json={"state": "sent", "result": {"message": "m1"}}, headers=me
+    )
+    assert sent.status_code == 200, sent.text
+    assert client.post(path, json={"state": "dismissed"}, headers=me).status_code == 400
+    kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    shown = kept["data"]["messages"][-1]["parts"]["proposals"]
+    assert [(d["state"], d.get("result")) for d in shown] == [
+        ("sent", {"message": "m1"})
+    ]
+
+
+def test_a_task_is_drafted_with_its_brief_for_the_channel_it_is_asked_in(
+    client, gateway
+):
+    room, _ = _room(client)
+    me = _auth(client, "alice")
+    conversation = client.post("/assistant/conversations", headers=me).json()["data"][
+        "id"
+    ]
+    gateway.script = [
+        (
+            "tool",
+            "cheese_task_draft",
+            {
+                "topic": room,
+                "title": "排查路线规划超时",
+                "text": "复现超时，修好并补测试。",
+            },
+        ),
+        ("text", "起草了一个任务。"),
+    ]
+
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={
+            "question": "超时交给芝士吧",
+            "page": {"kind": "project", "id": _project_of(client, room)},
+        },
+        headers=me,
+    )
+
+    assert r.status_code == 200, r.text
+    drafted = next(d for e, d in _events(r.text) if e == "proposal")
+    assert (
+        drafted["kind"],
+        drafted["channel"],
+        drafted["title"],
+        drafted["brief"],
+    ) == (
+        "task",
+        room,
+        "排查路线规划超时",
+        "复现超时，修好并补测试。",
+    )
+
+
+def test_a_project_page_the_person_cannot_open_is_not_asked_about(client, gateway):
+    room, _ = _room(client)
+    stranger = _auth(client, "stranger")
+    conversation = client.post("/assistant/conversations", headers=stranger).json()[
+        "data"
+    ]["id"]
+    gateway.script = [("text", "不该答。")]
+
+    r = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "这里在说什么？", "page": {"kind": "topic", "id": room}},
+        headers=stranger,
+    )
+
+    assert r.status_code in (403, 404), r.text
+    assert gateway.requests == []
+
+
+def _project_of(client, room: str) -> str:
+    return client.get(f"/topics/{room}", headers=session_auth_headers("alice")).json()[
+        "data"
+    ]["project_id"]

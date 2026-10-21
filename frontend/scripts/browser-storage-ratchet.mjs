@@ -87,7 +87,7 @@ const result = plainResult(parsed.counts)
 const scanned = (scan.length ? scan : ROOTS).join(', ')
 
 if (asJson) {
-  // Per-file counts, the shape the board groups by (docs/topics/棘轮页方案 3.1).
+  // Per-file counts accompany the verdict.
   // The report is not on stdout here — the collector parses stdout — but on
   // failure it goes to stderr, so a --json run still prints the line, the rule
   // and the fix.

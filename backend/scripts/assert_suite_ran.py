@@ -135,7 +135,9 @@ def _is_quarantined(case: ET.Element, quarantine: dict[str, str]) -> bool:
     )
 
 
-def read_selection(selection_dir: Path) -> tuple[int, list[str], list[str]]:
+def read_selection(
+    selection_dir: Path, *, allow_empty: bool = False
+) -> tuple[int, list[str], list[str]]:
     paths = sorted(selection_dir.glob("selection-*.json"))
     if not paths:
         raise SuiteDidNotRun(
@@ -193,7 +195,7 @@ def read_selection(selection_dir: Path) -> tuple[int, list[str], list[str]]:
         raise SuiteDidNotRun(
             f"{first_path} assigned cases do not match shard {index}/{count}"
         )
-    if not assigned:
+    if not assigned and not allow_empty:
         raise SuiteDidNotRun(f"{first_path} assigned no cases to shard {index}/{count}")
     return len(selected), selected, assigned
 
@@ -362,8 +364,13 @@ def assert_suite_ran(
     selection_dir: Path | None = None,
     reruns: Path | None = None,
     expected: Path | None = None,
+    allow_empty: bool = False,
 ) -> int:
     """Return how many cases ran, or raise ``SuiteDidNotRun`` saying what is wrong.
+
+    ``allow_empty`` admits a shard that was assigned no case: a narrowed
+    selection can leave one empty, and the aggregate check against the
+    independent plan is what refuses a plan nothing ran.
 
     ``at_least`` is a floor on what the job selected. ``expected`` names the
     cases a local run promised to execute, so a report that is green because it
@@ -379,14 +386,16 @@ def assert_suite_ran(
         raise ValueError("assert_suite_ran needs at_least or expected")
     planned = read_plan(expected) if expected is not None else None
     selection_result = (
-        read_selection(selection_dir) if selection_dir is not None else None
+        read_selection(selection_dir, allow_empty=allow_empty)
+        if selection_dir is not None
+        else None
     )
     run = _inspect(
         junit_xml,
         reruns,
         require_nodeid=selection_dir is not None or planned is not None,
     )
-    _require_no_silence(run)
+    _require_no_silence(run, allow_empty=allow_empty)
 
     selected_count = None
     if selection_result is not None:
@@ -510,6 +519,11 @@ def main() -> int:
             "report to contain exactly those cases"
         ),
     )
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="accept a shard assigned no case (a narrowed selection)",
+    )
     arguments = parser.parse_args()
     if arguments.at_least is None and arguments.expected is None:
         parser.error("give --at-least, --expected, or both")
@@ -537,6 +551,7 @@ def main() -> int:
             selection_dir=arguments.selection_dir,
             reruns=arguments.reruns,
             expected=arguments.expected,
+            allow_empty=arguments.allow_empty,
         )
     except SuiteDidNotRun as exc:
         print(f"::error::{exc}")

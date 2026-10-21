@@ -9,7 +9,9 @@ main line is told without opening it.
   line, saying the reply failed: the reason is in the 支线, and without the line
   nobody could find it;
 - a page of 支线 reads the messages they hang under once, however many there
-  are: who took part comes from the same rows as what the message said.
+  are: who took part comes from the same rows as what the message said;
+- a room's header asks three questions about its 支线 — the page's own list,
+  回复了我, 还在当支线用 — and none of them is asked twice.
 """
 
 import re
@@ -278,11 +280,11 @@ def test_a_listed_thread_says_whether_its_message_was_cut(client):
 _ROOTS_BY_ID = re.compile(r"FROM blocks\s+WHERE blocks\.id\b", re.IGNORECASE)
 
 
-def _roots_read_while(client, read):
-    """How many times the messages are read by id while ``read`` runs."""
+def _count_matching(client, read, pattern):
+    """How many of the statements ``read`` runs ``pattern`` matches."""
     statements: list[str] = []
 
-    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def record(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
     engine = client.test_app_engine.sync_engine
@@ -291,7 +293,12 @@ def _roots_read_while(client, read):
         read()
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    return sum(1 for s in statements if _ROOTS_BY_ID.search(s))
+    return sum(1 for s in statements if pattern.search(s))
+
+
+def _roots_read_while(client, read):
+    """How many times the messages are read by id while ``read`` runs."""
+    return _count_matching(client, read, _ROOTS_BY_ID)
 
 
 def _channel_with_threads(client, n):
@@ -331,3 +338,41 @@ def test_the_people_in_a_thread_still_read_its_message_alone(client):
             return await thread_reads.people_in(s, uuid.UUID(thread))
 
     assert client.portal.call(_people) == ["alice", "bob"]
+
+
+#: Any read of a room's 支线 read straight from the table, whichever question it
+#: answers — the page's own list, 回复了我, 还在当支线用 — and however many rows
+#: it takes. A 支线 read by its id is a different question and not counted.
+_THREADS_OF_A_ROOM = re.compile(
+    r"^\s*SELECT threads\.[^;]*?\bFROM threads\s+WHERE threads\.room_id",
+    re.IGNORECASE,
+)
+
+
+def _room_header(client, tid):
+    r = client.get(f"/topics/{tid}", headers=session_auth_headers("alice"))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+@pytest.mark.parametrize("n", [3, 12])
+def test_a_rooms_header_reads_its_threads_no_more_than_three_times(client, n):
+    """A room's header asks three separate questions about its 支线 — the page's
+    own list, 回复了我, 还在当支线用 — and asks each once, however many 支线 the
+    room has.
+
+    This is one route's whole budget: a new question of the header that reads the room's 支线 itself is meant to
+    be shared with the rest, and this ceiling is where that gets noticed. A
+    ceiling rather than the exact three, so merging two of the remaining
+    questions into one query reads as the improvement it is."""
+    tid = _channel_with_threads(client, n)
+
+    reads = _count_matching(
+        client, lambda: _room_header(client, tid), _THREADS_OF_A_ROOM
+    )
+
+    # Both ends: a spelling of the query this pattern does not know would read
+    # as zero and pass the ceiling. The floor only catches that total silence —
+    # a read rewritten in a spelling the pattern skips still hides an extra
+    # read without making the count reach zero.
+    assert 1 <= reads <= 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"

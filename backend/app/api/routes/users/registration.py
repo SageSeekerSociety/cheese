@@ -39,6 +39,7 @@ from app.db.session import get_db
 from app.domain.identity.handles import is_reserved_username
 from app.domain.invite.services import InviteCodeService
 from app.domain.legal.services import ConsentService
+from app.domain.usage import referrals
 from app.domain.user.login_security import ClientFailureBudget
 from app.domain.user.passwords import require_new_password
 from app.domain.user.repositories import (
@@ -76,7 +77,8 @@ async def send_register_email_code(
         payload.invite_code, required=settings.require_invite_code
     )
 
-    if invite_code:
+    # Open registration lets a stale code through: it is only an invitation.
+    if invite_code and settings.require_invite_code:
         try:
             await InviteCodeService(db).validate_code(invite_code)
         except ValueError as exc:
@@ -154,7 +156,7 @@ async def register_user(
         raise UnprocessableEntityError(consent_problem)
     assert payload.consent is not None
 
-    if invite_code:
+    if invite_code and settings.require_invite_code:
         invite_service = InviteCodeService(session)
         try:
             await invite_service.validate_code(invite_code)
@@ -233,9 +235,13 @@ async def register_user(
     if invite_code:
         invite_service = InviteCodeService(session)
         try:
-            await invite_service.consume_code(invite_code)
+            consumed = await invite_service.consume_code(invite_code)
         except ValueError as exc:
-            raise _invite_code_error(exc) from exc
+            if settings.require_invite_code:
+                raise _invite_code_error(exc) from exc
+            consumed = None
+        if consumed is not None:
+            await referrals.record_referral(session, consumed, user.id)
 
     access_token = await issue_session(
         response,

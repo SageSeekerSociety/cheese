@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 频道名前的任务折叠箭头；收起后的状态由频道行统一显示。
+// 频道名前的任务折叠箭头；收起后的状态由频道行统一合并成一盏灯。
 import { computed } from 'vue'
 
 import { t } from '@/i18n'

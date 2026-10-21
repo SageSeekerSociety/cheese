@@ -6,5 +6,6 @@
   "adminRootAdminCannotRemove": "{handle} is a root admin in the deployment config and can't be removed here. Changing the config needs server access",
   "featureStatsNotFound": "There is no stats page for this feature: {feature}",
   "platformAdminRequired": "Only platform admins can do this",
-  "runRecordsPlatformRoomsOnly": "Run records can be read only from the project that holds the platform's code repository; this channel's project is not that one"
+  "runRecordsPlatformRoomsOnly": "Run records can be read only from the project that holds the platform's code repository; this channel's project is not that one",
+  "userNotFound": "No such user"
 }

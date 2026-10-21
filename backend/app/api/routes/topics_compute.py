@@ -71,11 +71,10 @@ async def _may_move_task(db, resolver, actor, topic, task) -> bool:
         pass
 
     devices = sql_device_service(db)
-    for device_id in await devices_held_by(db, task.id):
-        device = await devices.get_device(device_id)
-        if device is not None and device.owner_user_id == actor.user_id:
-            return True
-    return False
+    held = await devices.get_devices(list(await devices_held_by(db, task.id)))
+    return any(
+        [await devices.may_manage(device, actor.user_id) for device in held.values()]
+    )
 
 
 async def _place_for_change(db, resolver, topic_id: uuid.UUID):
@@ -179,7 +178,8 @@ async def get_environment(
                     "online": device_hub.is_online(device.device_id),
                     # Whether the reader may run an agent on it unisolated.
                     "owned": actor.via == "token"
-                    and actor.user_id == device.owner_user_id,
+                    and actor.user_id is not None
+                    and await sql_device_service(db).may_manage(device, actor.user_id),
                 }
                 for device in devices
             ],

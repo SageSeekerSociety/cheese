@@ -95,6 +95,10 @@ export interface WarmMachineRow {
   id: string
   state: string
   machine_id: number | null
+  hostname: string | null
+  cores: number | null
+  memory_mb: number | null
+  disk_gb: number | null
   ip: string | null
   online: boolean
   created_at: string | null
@@ -137,7 +141,6 @@ export interface MachinesOverview {
     near_cap: number
     /** 宿主机多久读一次、多久走一次盘（秒）。 */
     check_s: number
-    walk_s: number
     /** 宿主机用过这一份就告警（两次读数都过）。 */
     alert_used: Record<'disk' | 'inodes' | 'memory', number>
     history_step_s: number

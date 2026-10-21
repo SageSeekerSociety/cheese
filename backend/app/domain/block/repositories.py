@@ -24,6 +24,7 @@
 拿到 `BlockRepository` 再取属性，方法从哪个基类来不影响。
 """
 
+import copy
 import uuid
 from collections.abc import Collection
 from datetime import UTC, datetime
@@ -53,6 +54,7 @@ from app.domain.block.models import (
     EDITED_AT_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
     PROMPTED_TURN_META_KEY,
+    READ_FAILED_META_KEY,
     Block,
     BlockKind,
     prompt_attempts,
@@ -92,6 +94,7 @@ class BlockRepository(
         meta: dict | None = None,
         created_at: datetime | None = None,
         own_output: bool = False,
+        block_id: uuid.UUID | None = None,
     ) -> Block:
         # Cheese-side handlers don't pass turn_id explicitly; fall back to the
         # ambient turn id set from the X-Cheese-Turn header (R4).
@@ -134,6 +137,15 @@ class BlockRepository(
         # A platform sentence carries its key; the reader's screen renders it
         # in the reader's language (`app/core/sentences.py`).
         meta = with_keys(meta, content=content)
+        # The row owns its meta. A caller keeps the dict it passed and edits it
+        # after this write — `answer_questions` rewrites a message's
+        # `agent_recipient` in place, then re-assigns `meta` — and with the
+        # nested objects shared, that new value compared equal to the one just
+        # mutated under it and SQLAlchemy emitted no UPDATE, so the stored row
+        # kept the old recipient. `with_keys` already copies the top level;
+        # this copies what is under it.
+        if meta is not None:
+            meta = copy.deepcopy(meta)
         block = Block(
             project_id=project_id,
             conversation_id=conversation_id,
@@ -146,6 +158,11 @@ class BlockRepository(
             turn_id=turn_id,
             mime_type=mime_type,
             meta=meta,
+            # A caller that already knows the row's id hands it over: the
+            # participant send writes `turn_id = <this block's own id>` in the
+            # same INSERT, and it can only know that id before the flush. Left
+            # out, the column default mints one, exactly as before.
+            **({"id": block_id} if block_id is not None else {}),
         )
         # Timeline order is `created_at`, so a caller that knows WHEN the thing
         # happened must be able to say so. The default (now) is right for
@@ -157,7 +174,10 @@ class BlockRepository(
             block.created_at = created_at
         self._session.add(block)
         await self._session.flush()
-        await self._session.refresh(block)
+        # No refresh: `eager_defaults` puts the INSERT's RETURNING values
+        # (`seq`, from `FetchedValue`) on the row at flush, and `created_at` /
+        # `updated_at` are Python-side defaults. Re-reading the row here bought
+        # nothing and cost a whole-row SELECT on every block written.
         return block
 
     async def get(self, block_id: uuid.UUID) -> Block | None:
@@ -243,25 +263,22 @@ class BlockRepository(
     async def last_said_in_turn(
         self, conversation_id: uuid.UUID, turn_id: uuid.UUID
     ) -> str | None:
-        """The words the agent last kept in 现场 during this turn, if any.
+        """The agent's latest published message during this turn, if any.
 
         Read from the rows, not from the turn's in-memory bookkeeping: a turn
         closed by a backend that took it over mid-way (a deploy's handover)
         has none, and the room is what actually knows what was said."""
         stmt = (
-            select(Block.content, Block.meta)
+            select(Block.content)
             .where(
                 Block.conversation_id == conversation_id,
                 Block.turn_id == turn_id,
-                Block.kind == BlockKind.event,
+                Block.kind == BlockKind.message,
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
-            .limit(50)
+            .limit(1)
         )
-        for content, meta in (await self._session.execute(stmt)).all():
-            if isinstance(meta, dict) and meta.get("progress"):
-                return content
-        return None
+        return await self._session.scalar(stmt)
 
     async def has_action(
         self, conversation_id: uuid.UUID, turn_id: uuid.UUID, action: str
@@ -285,8 +302,8 @@ class BlockRepository(
     async def mark_consumed(
         self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
     ) -> None:
-        """Stamp human blocks as read, by the turn `turn_id` whose clean Stop
-        showed the session got through them.
+        """Stamp human blocks as read, into the work `turn_id`, once the
+        session's runner reported it read them.
 
         This is what makes the next turn's pending window a fact instead of a
         guess (see CONSUMED_TURN_META_KEY). `meta` is a plain JSON column, so the
@@ -298,6 +315,16 @@ class BlockRepository(
         stmt = select(Block).where(Block.id.in_(block_ids))
         for block in (await self._session.scalars(stmt)).all():
             block.meta = {**(block.meta or {}), CONSUMED_TURN_META_KEY: str(turn_id)}
+        await self._session.flush()
+
+    async def mark_read_failed(self, block_ids: list[uuid.UUID], failure: str) -> None:
+        """Say on these read blocks that the work they were read into failed
+        (``READ_FAILED_META_KEY``), replacing ``meta`` as ``mark_consumed`` does."""
+        if not block_ids:
+            return
+        stmt = select(Block).where(Block.id.in_(block_ids))
+        for block in (await self._session.scalars(stmt)).all():
+            block.meta = {**(block.meta or {}), READ_FAILED_META_KEY: failure}
         await self._session.flush()
 
     async def bump_prompt_attempts(
@@ -341,75 +368,6 @@ class BlockRepository(
             if meta.pop(PROMPTED_TURN_META_KEY, None) is not None:
                 block.meta = meta
         await self._session.flush()
-
-    async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> Block | None:
-        """Record on a 现场 step that its tool came back an error.
-
-        Written onto the step that is already there rather than as a second
-        block: "it failed" is a property of that one line, and a block of its
-        own would put the verdict somewhere the eye has to pair back up with
-        the action. Same `meta` replacement rule as `mark_consumed` — an
-        in-place mutation of a JSON column never saves.
-
-        Returns the step as it now reads, for whoever tells the room; None when
-        it is gone.
-        """
-        block = await self._session.get(Block, block_id)
-        if block is None:
-            return None
-        meta = {**(block.meta or {}), "failed": True}
-        if error:
-            meta["error"] = error
-        block.meta = meta
-        await self._session.flush()
-        return block
-
-    async def record_step_output(
-        self, block_id: uuid.UUID, output: str, total_bytes: int
-    ) -> Block | None:
-        """Keep on a 现场 step the tail of what its tool printed
-        (``domain/agent/step_output``) and how long the whole was. Same `meta`
-        replacement rule as above."""
-        block = await self._session.get(Block, block_id)
-        if block is None:
-            return None
-        block.meta = {
-            **(block.meta or {}),
-            "output": output,
-            "output_bytes": total_bytes,
-            # When the step last changed: 现场 reads its latest activity off it.
-            "at": datetime.now(UTC).isoformat(),
-        }
-        await self._session.flush()
-        return block
-
-    async def record_step_calls(
-        self, block_id: uuid.UUID, calls: list[dict]
-    ) -> Block | None:
-        """Keep on a 现场 step the tools it called on its own (a script's).
-        Same `meta` replacement rule as above."""
-        block = await self._session.get(Block, block_id)
-        if block is None:
-            return None
-        block.meta = {**(block.meta or {}), "calls": calls}
-        await self._session.flush()
-        return block
-
-    async def running_notices(
-        self, turn_id: uuid.UUID, event_type: str
-    ) -> list[uuid.UUID]:
-        """The turn's notices of this kind still saying their news is under way
-        (``meta.state == "running"``), oldest first."""
-        rows = await self._session.scalars(
-            select(Block.id)
-            .where(
-                Block.turn_id == turn_id,
-                Block.meta["event_type"].as_string() == event_type,
-                Block.meta["state"].as_string() == "running",
-            )
-            .order_by(Block.created_at)
-        )
-        return list(rows)
 
     async def restate(
         self, block_id: uuid.UUID, *, content: str, meta: dict

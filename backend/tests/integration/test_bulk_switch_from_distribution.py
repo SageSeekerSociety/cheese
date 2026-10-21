@@ -25,6 +25,7 @@ from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.executor_release import running
 from tests.integration.conftest import post_project, registered, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 
@@ -72,9 +73,10 @@ async def _project_on_a_device(client):
                 await devices.start(name),
                 owner_user_id=alice.id,
                 supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, alice.id),
             )
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=alice.id
+            await place_in_project_team(
+                devices, device.device_id, project_id, actor_user_id=alice.id
             )
             ids.append(device.device_id)
         old, new = ids

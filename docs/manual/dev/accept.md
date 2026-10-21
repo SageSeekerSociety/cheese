@@ -36,7 +36,7 @@ covers:
 | `pending_gate` | 平台质量检查在跑（历史态） | 已无人写；退役前留下的行还在 |
 | `accepted` | 已采纳（合并成功） | `accept` / 轮询器看到外部合并 |
 | `rejected` | 人退回了 | `reject` |
-| `revoked` | 作废（人工，或 PR 在 GitHub 上关闭且没有合并时由平台自动），或话题归档时被收敛 | `void` / 轮询器 / `archive.py` |
+| `revoked` | 作废（人工，或 PR 在 GitHub 上关闭且没有合并时由平台自动），或频道归档时被收敛 | `void` / 轮询器 / `archive.py` |
 | `conflict` | 采纳时撞合并冲突，芝士被派去解，解完由人重试采纳 | `accept` 的冲突分支 |
 | `gate_failed` / `gate_blocked` | 检查红了 / 检查根本没跑成（历史态） | 已无人写；行还在，要照常渲染 |
 | `pr_open` | 已死的在途态，按先例保留 | 无 |
@@ -80,13 +80,15 @@ covers:
 |---|---|
 | `conflict` | agent（芝士解冲突） |
 | `required_check_failed` / `check_failed` | agent（芝士修） |
-| `required_check_missing` / `ci_running` | ci（等，超宽限期才转人） |
+| `required_check_missing` / `ci_running` | `blocked` 时 ci（等，超宽限期才转人）；`unstable` 时人先看，见下 |
 | `behind_base` | platform（平台 update-branch） |
 | `draft` | agent（活还没做完） |
 | `github_verdict` | 看是什么词；透传模式下就是平台的原话 |
 | `no_obstacle` | human（可以合了） |
 | `no_signal` | platform（下一轮自然收敛） |
 | `dependency` | 依赖的任务还没落地 |
+
+`unstable` 是「可采纳」那一档：必跑名单整份放行过，采纳按钮是亮的，所以它的下一步是人。还有非必跑检查在跑不改变这一点——写成 `ci` 会让人守着一格他本来就能点的卡，而且那些检查可能永远不汇报（2026-10-21 的 #4562：job 每一步都绿了、run 也结束了，GitHub 却一直报 `in_progress`）。有红检查时仍先交给 agent（不在必跑名单的红也算，见上表第一行）。
 
 必跑名单的路径域语义：带路径的条目只对碰了那些路径的改动生效；拿不到 diff（`changed_paths=None`）时**保守处理**——照样算必需，并把回退如实写进 reason。glob 是 GitHub Actions `paths:` 那套的子集（`**` 跨目录、`*` 不跨目录），`fnmatch` 不能用：它的 `*` 会跨 `/`，等于把阀关掉。未绑托管平台的项目走 `local_merge_state`：唯一的信号是「与基线是否冲突」。
 
@@ -97,7 +99,7 @@ covers:
 1. 卡的**状态**（`pending` 首次、`conflict` 冲突解完后重试；终态和 `gate_*` 一律「审阅已结束」）。
 2. **只有被指定审阅的那个人**能采纳（`decided_by` 来自已验证的调用者身份，绝不取请求体里的值）。
 3. **合的是人看到的那个 commit**（`_seen_head`）：请求带 `head_sha`（浏览器渲染卡面时卡上那一版），必须仍等于卡上的 `pr_head_sha`。不一致说明轮询器在「渲染」到「点击」之间把卡刷到了新提交，点下去合的会是一段**没有人看过**的代码（轮询器每 60 秒一跳，这个窗口天天都在）。卡面从没显示过任何版本时（刚递上来、轮询器还没镜像）不是「没有版本可以过时」，而是「还不知道要合什么」：先把当前 head 镜像到卡上，请人重新看一眼。读不到 head 也**绝不放行**——放行的前提是人看过某一版。
-4. 话题没归档，调用者不是 AI，机构协议满足。
+4. 频道没归档，调用者不是 AI，机构协议满足。
 5. **批准数够**（见下）。
 
 合并调用本身也带这个 sha：GitHub 的 sha 参数会在点击那一刻再拦一次漂移（409 → 刷新卡、请人重看）。放行与自动合布防走的都是同一道闸。
@@ -121,11 +123,11 @@ covers:
 
 ## 孤儿卡谁收 {#orphans}
 
-`pending_gate` 这个状态**没有任何出口**：accept / reject / revoke / reassign 四条对它全是拒绝，`create_card` 又因为它拒绝再建新卡——坏掉的不是一张卡，是**整个话题**再也递不出验收卡。三条自动收敛 + 一条人工出口：
+`pending_gate` 这个状态**没有任何出口**：accept / reject / revoke / reassign 四条对它全是拒绝，`create_card` 又因为它拒绝再建新卡——坏掉的不是一张卡，是**整个频道**再也递不出验收卡。三条自动收敛 + 一条人工出口：
 
 | 谁 | 什么时候 | 结果 |
 |---|---|---|
-| 话题归档（`archive.close_cards_for_archived_topic`） | 一进 archived | 全部非终态卡（`pending` / `pending_gate` / `conflict`）→ `revoked`，幂等 |
+| 频道归档（`archive.close_cards_for_archived_topic`） | 一进 archived | 全部非终态卡（`pending` / `pending_gate` / `conflict`）→ `revoked`，幂等 |
 | 扫底（`gate_sweep`） | 启动一次 + 周期一次 | 超龄的 `pending_gate` 判死 → `gate_failed` |
 | 人工作废（`AcceptService.void`） | 随时 | 卡 → `revoked`（**进终态，不是放行**） |
 | 轮询器（`_void_closed_pr_card`） | 看到卡的 PR 关闭且没有合并 | 卡 → `revoked`，note 和房间里写明 PR 已关闭；要继续交付就重新递卡 |

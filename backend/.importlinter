@@ -253,6 +253,16 @@ unmatched_ignore_imports_alerting = warn
 # 23 条（C2 另多 2 条，是 answers、questions 两个路由读 discussion.models）。这些都
 # 是早已存在的依赖，只是现在才看得见；冻结的是契约在补入口文件后重新提名的切口，
 # 其中十来条落在老包之间，因为新的环要从环上任意一处切开。
+#
+# 2026-10-18 拆 `agent_instance -> agent`：这两包互相读，`agent_instance.configuration`
+# 读 `agent` 的网关报价、订阅名单、供给策略和骨架，`agent.queries` / `gateway_usage` /
+# `document.question` 又反过来读它；C3 提名的 27 条里，这四条是最便宜的一刀。
+# 模型目录（「这个项目能用哪些模型」）整块搬进 `agent.model_catalog`——它答的是部署和
+# 项目的事实，不是某个队友存下来的配置——`agent_instance` 只留 `AgentConfiguration`
+# 这个形状，唯一要用目录的地方（建/改队友时校验模型）由调用方把 `model_choices` 递
+# 进来。拆完 `--measure` 从 27 条降到 14 条。注意：基线是从 merge base 量的，主干树
+# 里这四条边还在，把它们加回来检查不会红，所以由
+# `tests/unit/test_agent_instance_does_not_read_the_agent_package.py` 钉住。
 
 [importlinter:contract:turn-layers]
 # T1 — every turn module belongs to one of these four layers.
@@ -409,6 +419,19 @@ unmatched_ignore_imports_alerting = warn
 # `web_snippet` joined at layer 4 beside `living_doc` and `canvas` (2026-10-13):
 # a document's mini-apps are part of the document, it keeps its pictures in the
 # `library` blob store on the same layer, and only routes import it.
+#
+# `reads` joined at layer 1 (2026-10-18): the shared batch-read primitive
+# `get_by_ids` imports only SQLAlchemy and the standard library, and is called
+# by repositories from layer 1 (`tag`, `avatars`) upward (`comments`, `groups`).
+#
+# `repositories` joined beside it (2026-10-18): the `Repository` base gives those
+# same repositories `get_by_id` / `get_by_ids` on top of `reads`, and imports
+# nothing else from the domain.
+#
+# `project_material_rows` joined at layer 1 (2026-10-17), by the same move one step
+# further: `project_material` (layer 4) reads tasks and accept cards, and both
+# `room_task` and `review` read back into this side, so importing their models
+# from there is a C3 cycle. The columns it reads come down; the readers stay.
 #
 # `review_note_codes` joined at layer 1 (2026-10-17): the note code and the level it
 # renders as are read by `room_task.presentation` (layer 4) to place a card on the
@@ -572,13 +595,13 @@ unmatched_ignore_imports_alerting = warn
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
-    platform_stats : feature_stats : dashboard : project_progress : project_situation : onboarding
-    routine : task_quiet : admin : room_cleanup : wake_watch
+    platform_stats : feature_stats : dashboard : project_progress : project_situation : onboarding : account
+    routine : task_quiet : task_notices : admin : room_cleanup
     agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
-    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material
+    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material : voice
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
-    identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : event_about : event_author : project_permissions
+    identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ci_activity
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : session_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions : reads : repositories
 containers =
     app.domain
 exhaustive = true

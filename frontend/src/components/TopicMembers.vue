@@ -9,7 +9,7 @@ import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
 import type { SessionEnvironment } from '../types/compute'
 import type { MenuAction } from './common/menuAction'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { useRowMenu } from '../composables/useRowMenu'
 import { useTopicRoster } from '../composables/useTopicRoster'
@@ -17,6 +17,7 @@ import { t } from '../i18n'
 import { memberName, shownHandle } from '../lib/agentNames'
 import { environmentName } from '../lib/environment'
 import { externalHandles } from '../lib/externalMembers'
+import { whenIdle } from '../lib/idle'
 import { getAvatarUrl } from '../utils/materials'
 
 import AdaptiveMenu from './common/AdaptiveMenu.vue'
@@ -36,8 +37,10 @@ const props = defineProps<{
   me: string
   /** 我管不管这个频道（创建者或项目管理员）。 */
   canManage: boolean
-  /** 不管频道也能加人：频道里的人都能加人，移出仍只归管理者。 */
+  /** 不管频道也能加人：频道里角色允许的人都能加人，移出仍只归管理者。 */
   canInvite?: boolean
+  /** 我在这个频道里：加不了人时，说的是角色不允许，而不是人不在频道里。 */
+  joined?: boolean
   /** 这是「综合」：项目里的人都在，名单上只有 AI 队友能加减。 */
   general?: boolean
 }>()
@@ -80,8 +83,58 @@ watch(
   { immediate: true }
 )
 
-watch(open, (value) => {
-  if (value) loadMachines()
+// 名册一打开就把整份名单一次建出来：几十行，每行一个头像组件，平板上一等就是几秒，
+// 这中间屏幕上一个像素都不动，看着像没点到。列表本身只有 320px 高、一次看五六行，
+// 所以先挂看得见的那几行，其余趁浏览器空下来一批一批补——第一帧立刻有内容。
+const FIRST_ROWS = 8
+const ROWS_PER_BATCH = 24
+const shownRows = ref(FIRST_ROWS)
+const shownMembers = computed(() => members.value.slice(0, shownRows.value))
+let fillRows: (() => void) | null = null
+let readEnv: (() => void) | null = null
+
+function stopFilling(): void {
+  fillRows?.()
+  fillRows = null
+}
+
+function fillRest(): void {
+  fillRows = null
+  shownRows.value = Math.min(members.value.length, shownRows.value + ROWS_PER_BATCH)
+  if (shownRows.value < members.value.length) fillRows = whenIdle(fillRest)
+}
+
+// 加人、移人之后名单长度会变：面板开着、又还有没挂上的行时，补行接着走，
+// 别让新加的人一直不出现。
+watch(
+  () => members.value.length,
+  () => {
+    if (!open.value || fillRows !== null) return
+    if (shownRows.value < members.value.length) fillRows = whenIdle(fillRest)
+  }
+)
+
+// `immediate`：频道详情的「设置」里那一份一挂上就是开着的，那一次没有「变成开」的
+// 变化可等。没这一项，从那里进来的名单会永远只挂着前几行。
+watch(
+  open,
+  (value) => {
+    stopFilling()
+    readEnv?.()
+    readEnv = null
+    if (!value) return
+    shownRows.value = FIRST_ROWS
+    if (members.value.length > FIRST_ROWS) fillRows = whenIdle(fillRest)
+    // 每位队友跑在哪个环境，是面板开着之后才要看的：排在建行后面，别和第一帧抢。
+    readEnv = whenIdle(loadMachines)
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  stopFilling()
+  readEnv?.()
+  readEnv = null
 })
 // 一位 AI 队友在这里的会话：按它坐的那个名册位认（成员自己的 Claude Code 坐在主人
 // 名下的位上，会话的 agent_handle 和名册上的 handle 不一定相同）。
@@ -216,7 +269,7 @@ async function onRemove(handle: string) {
       <ul v-else class="roster__list">
         <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- right-click opens a menu whose one action is the row's × button -->
         <li
-          v-for="m in members"
+          v-for="m in shownMembers"
           :key="m.member_handle"
           class="roster__item"
           @contextmenu="removable(m) && rowMenu.open(m.member_handle, $event)"
@@ -358,7 +411,9 @@ async function onRemove(handle: string) {
           {{ t('work.room.roster.add') }}
         </BaseButton>
       </div>
-      <div v-else class="roster__hint">{{ t('work.room.roster.readOnly') }}</div>
+      <div v-else class="roster__hint">
+        {{ joined ? t('work.room.roster.readOnlyRole') : t('work.room.roster.readOnly') }}
+      </div>
     </div>
   </v-menu>
 </template>
@@ -384,6 +439,11 @@ async function onRemove(handle: string) {
 }
 .members-mini:hover,
 .members-mini--open {
+  background: var(--fill);
+  border-color: var(--line-2);
+}
+/* 按下那一刻就变色：触屏上没有悬停，面板又要等一下才出来，不变一下就像没点到。 */
+.members-mini:active {
   background: var(--fill);
   border-color: var(--line-2);
 }

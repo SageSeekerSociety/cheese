@@ -40,7 +40,7 @@ def _module() -> Any:
     # file only to fingerprint itself (`--version`), which this never asks.
     module = types.ModuleType("cheese_platform_tools")
     module.__file__ = str(checkout)
-    exec(compile(source, "cheese", "exec"), module.__dict__)  # noqa: S102
+    exec(compile(source, "cheese", "exec"), module.__dict__)
     return module
 
 

@@ -16,6 +16,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support import library_uploads
 from tests.support.living_doc import document_of
 
 PNG = bytes.fromhex(
@@ -118,10 +119,8 @@ def test_a_private_channels_task_document_shows_its_images_to_its_people_only(
 
 def test_a_project_document_shows_library_images_to_the_projects_members(client):
     pid = _project(client)
-    uploaded = client.post(
-        f"/projects/{pid}/library",
-        files={"file": ("架构.png", PNG, "image/png")},
-        headers=session_auth_headers("dave"),
+    uploaded = library_uploads.put_in(
+        client, pid, "架构.png", PNG, headers=session_auth_headers("dave")
     )
     assert uploaded.status_code == 200, uploaded.text
     made = client.post(

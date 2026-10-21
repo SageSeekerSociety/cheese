@@ -116,7 +116,7 @@ describe('侧栏那只慢钟', () => {
     vi.useFakeTimers()
     const { container } = mount({ topics: waitingTopic(4.5) })
     await nextTick()
-    expect(rowFor(container, 'a').querySelector('.row-light--red')).toBeNull()
+    expect(rowFor(container, 'a').querySelector('.row-light')).toBeNull()
 
     // 没有换过任何一份数据，只是钟往前走了 —— 灯要自己亮。
     await vi.advanceTimersByTimeAsync(60_000)
@@ -131,7 +131,7 @@ describe('侧栏那只慢钟', () => {
     // 三次滴答 = 三十秒，离五分钟还远。
     await vi.advanceTimersByTimeAsync(30_000)
     await nextTick()
-    expect(rowFor(container, 'a').querySelector('.row-light--red')).toBeNull()
+    expect(rowFor(container, 'a').querySelector('.row-light')).toBeNull()
   })
 
   it('没在等的话题不受影响：拨多久都不会亮', async () => {
@@ -139,7 +139,7 @@ describe('侧栏那只慢钟', () => {
     const { container } = mount({ topics: waitingTopic(4.5) })
     await vi.advanceTimersByTimeAsync(10 * 60_000)
     await nextTick()
-    expect(rowFor(container, 'b').querySelector('.row-light--red')).toBeNull()
+    expect(rowFor(container, 'b').querySelector('.row-light')).toBeNull()
   })
 
   it('唯一红灯仍保留成员等待时长的说明', async () => {
