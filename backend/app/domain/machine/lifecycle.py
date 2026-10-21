@@ -449,6 +449,13 @@ class SandboxLifecycle:
             if running:
                 if now - since < cap:
                     return None
+                # A turn may have started while the machine was asked (the
+                # ping is a round trip): a session at work keeps even a command
+                # it just started.
+                open_turns, _ = await self._turns_of(home.session_id, datetime.now(UTC))
+                await self._session.commit()
+                if open_turns:
+                    return None
                 commands = [str(name) for name in info.get("running_command_ids") or ()]
                 if commands and await self._stop_commands(lease, commands):
                     # Past the cap the command is stopped, not the sandbox:
