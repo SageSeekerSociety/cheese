@@ -180,6 +180,7 @@ def host_on_bridge():
     """The address the host's own connections to the bridge come from."""
     found = _docker("network", "inspect", OUTSIDE)
     if found.returncode:
+        # i18n-exempt: a startup-log diagnostic, never shown to a person
         raise _failed(f"network inspect {OUTSIDE}", found)
     configs = (json.loads(found.stdout)[0].get("IPAM") or {}).get("Config") or []
     return [f"{entry['Gateway']}/32" for entry in configs if "Gateway" in entry]
@@ -196,6 +197,7 @@ def webfetch_egress():
         EGRESS,
     )
     if found.returncode or not found.stdout.strip():
+        # i18n-exempt: a startup-log diagnostic, never shown to a person
         raise _failed(f"container inspect {EGRESS}", found)
     return f"http://{found.stdout.strip()}:{EGRESS_PORT}"
 
