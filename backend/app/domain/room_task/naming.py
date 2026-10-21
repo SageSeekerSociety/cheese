@@ -53,12 +53,14 @@ import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import model_roles
 from app.core.config import settings
 from app.core.live_frames import show_once_committed
 from app.core.redis import get_redis_client
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.project.models import Project
+from app.domain.room_task import heard
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -136,7 +138,7 @@ def _key_spec() -> KeySpec:
     return KeySpec(
         name="topic-naming-gateway-key",
         alias="topic-naming",
-        model=settings.topic_naming_model,
+        model=model_roles.model("topic_naming_model"),
         budget_usd=settings.topic_naming_budget_usd,
         rpm=300,
     )
@@ -309,6 +311,13 @@ async def _write(
             reason=stage,
             by=None,
         )
+    )
+    await heard.inform(
+        session,
+        task,
+        heard.task_renamed(
+            by=None, title=verdict.title, previous="" if stage == "name" else previous
+        ),
     )
     _tell_pages(session, task.id, task.room_id)
     await session.commit()

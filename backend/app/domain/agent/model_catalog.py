@@ -19,6 +19,7 @@ a callable handed in by the caller, the way `project.ports.ComputeCredits` is.
 from dataclasses import asdict
 from typing import get_args
 
+from app.core import model_roles
 from app.core.config import settings
 from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import HARNESSES, Harness, harness_for
@@ -30,6 +31,7 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 from app.domain.agent_instance.configuration import Effort
+from app.domain.policy import gate
 
 #: What each subscription model honours: Claude Code reads Claude's own
 #: capabilities, so every effort the platform offers reaches the model.
@@ -74,7 +76,8 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             "id": item.id,
             "label": item.label,
             "description": "平台模型池",
-            "default": not subscription_default and item.id == settings.agent_model,
+            "default": not subscription_default
+            and item.id == model_roles.model("agent_model"),
             "supply": GATEWAY,
             # The tier an administrator set on the gateway (`cheese_tier`):
             # which plans may use it.
@@ -180,3 +183,49 @@ def _drives(harness: Harness, model: dict) -> bool:
     if harness.speaks_gateway:
         return True
     return model["id"] in settings.agent_harness_models.get(harness.name, [])
+
+
+def entitled(model_id: str, choices: dict[str, dict], policy: gate.Policy) -> bool:
+    """May this project run ``model_id`` without anyone being asked: in its
+    catalogue, and through the gate admission puts every turn and subagent
+    request through (``policy.gate.check``: the team's plan tiers, the
+    administrator's overseas approval, the project's own tier policy). The
+    catalogue applies none of those, so being in it is not enough."""
+    choice = choices.get(model_id)
+    if choice is None:
+        return False
+    try:
+        verdict = gate.check(
+            gate.Call(
+                resource=gate.Resource.model,
+                subject=model_id,
+                label=choice.get("label", model_id),
+                tier=choice.get("tier", TIER_INCLUDED),
+                approver="",
+                overseas=bool(choice.get("overseas")),
+            ),
+            policy,
+            actor="",
+        )
+    except gate.OverTier:  # OverPlan and OverseasNotApproved are this too
+        return False
+    return isinstance(verdict, gate.Allowed)
+
+
+def subagent_default(
+    project_settings: dict | None, choices: dict[str, dict], policy: gate.Policy
+) -> str | None:
+    """The model a project's subagents default to: the project's own subagent
+    default, then the platform's (``subagent_model`` role) when the project is
+    entitled to it (``entitled``: the same gate its turns pass), then the
+    project's main default. None leaves it to the catalogue's.
+    """
+    configured = project_settings or {}
+    own = configured.get("default_subagent_model")
+    if isinstance(own, str) and own:
+        return own
+    platform = model_roles.get("subagent_model")
+    if platform and entitled(platform, choices, policy):
+        return platform
+    main = configured.get("default_model")
+    return main if isinstance(main, str) and main else None

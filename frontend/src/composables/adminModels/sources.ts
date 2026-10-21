@@ -5,7 +5,7 @@
 // 连点出来的第二次写只会让人看不懂最后是谁生效。
 import type { Ref } from 'vue'
 import type { SourceRow } from '@/lib/adminModels'
-import type { SourceDraft } from '@/lib/adminSources'
+import type { PriceChange, SourceDraft } from '@/lib/adminSources'
 
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -19,7 +19,7 @@ import {
   setGatewaySourceBlocked,
   updateGatewaySource,
 } from '@/api'
-import { draftToFields } from '@/lib/adminSources'
+import { draftToFields, priceChanges } from '@/lib/adminSources'
 
 export interface AdminModelsSourcesHost extends AdminModelsBanner, AdminModelsReload {
   /** 抽屉开着时写完一条线路就加一，让抽屉重拉。 */
@@ -40,6 +40,8 @@ export function useAdminModelsSources(host: AdminModelsSourcesHost) {
   const sourceBusy = ref(false)
   const sourceDeleteTarget = ref<{ name: string; source: SourceRow } | null>(null)
   const sourceBlockTarget = ref<{ name: string; source: SourceRow } | null>(null)
+  /** 改价之前那一问：改了哪几档、改前改后。确认了才真的提交那张表单。 */
+  const priceChange = ref<{ name: string; changes: PriceChange[]; draft: SourceDraft } | null>(null)
 
   /** 一次线路写成功之后：横条说一句，列表与抽屉都重拉（抽屉里画的是写前的线路）。 */
   async function afterSourceWrite(text: string) {
@@ -65,7 +67,29 @@ export function useAdminModelsSources(host: AdminModelsSourcesHost) {
     sourceFormOpen.value = true
   }
 
-  async function onSourceSubmit(draft: SourceDraft) {
+  /** 编辑一条线路时改了价：先停在确认框上（改前 → 改后），确认才提交。加线路是定价，不是改价。 */
+  function onSourceSubmit(draft: SourceDraft) {
+    if (sourceFormMode.value === 'edit' && sourceSeed.value) {
+      const changes = priceChanges(sourceSeed.value.prices, draftToFields(draft, 'edit').prices)
+      if (changes.length) {
+        priceChange.value = { name: sourceModel.value, changes, draft }
+        return
+      }
+    }
+    return submitSource(draft)
+  }
+
+  function confirmPriceChange() {
+    const pending = priceChange.value
+    priceChange.value = null
+    if (pending) return submitSource(pending.draft)
+  }
+
+  function closePriceChange() {
+    priceChange.value = null
+  }
+
+  async function submitSource(draft: SourceDraft) {
     const name = sourceModel.value
     sourceSaving.value = true
     sourceBusy.value = true
@@ -176,6 +200,9 @@ export function useAdminModelsSources(host: AdminModelsSourcesHost) {
     openAddSource,
     openEditSource,
     onSourceSubmit,
+    priceChange,
+    confirmPriceChange,
+    closePriceChange,
     moveSource,
     sourceDeleteTarget,
     askSourceDelete,

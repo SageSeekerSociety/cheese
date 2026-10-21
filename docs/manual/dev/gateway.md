@@ -128,6 +128,9 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 - **请求头**：静态头写在这一行的 `litellm_params.extra_headers`，LiteLLM 原样发给上游（`hosted_vllm/` 与 `anthropic/` 两种都实测过）；接收 Claude Code 会话 id 的头名写在 `model_info.cheese_session_header`，由网关侧的钩子填值。`/model/info` 对每一把虚拟 key 都开放：`model_info` 原样回，`litellm_params` 过 LiteLLM 的掩码，而掩码只看头名——名字里有 key、token、secret、auth、password、credential、cookie 这一段的，值被打码，别的原样可读（1.103.3 上实测）。所以头的值按公开对待，上游凭据填 `api_key`；认证与传输相关的头不许按线路写。页面只列头名，审计里也只留头名。
 - **协议**：`anthropic` → `anthropic/<上游名>`（原生 Messages）；`openai-chat` → `hosted_vllm/<上游名>`（只有 chat/completions 的中转站与 OpenCode Go；不能用 `openai/`，那会被翻成 Responses API）；`openai-responses` → `openai/<上游名>`。不选协议时 `upstream_model` 就是完整的 LiteLLM 模型串。原生 Messages 的地址不带 `/v1`（LiteLLM 自己拼 `/v1/messages`，服务层把多填的 `/v1` 去掉）；Chat 线路的地址要带到 `/v1`。
 - **Chat 线路让整组折叠 system 消息**：Messages 翻成 chat/completions 会丢掉对话中间的 system 消息（实测 glm-5.2、MiMo），所以一个模型一旦有 `openai-chat` 线路，组里每一行都标 `supports_mid_conversation_system: false`，服务层加线路时顺手改齐运行时的行；config.yaml 的行没标就拒，先去改 config。
+- **消费上限跟着上游走**：`cheese_spend_cap_usd`（`spend_cap.py`）按上游模型（`litellm_params.model`）的总账计，不分是哪一行、哪个模型名打的。所以在页面上改一条运行时线路的上限（请求体 `spend_cap_usd`，`null` 是清掉），服务层把同一上游的每一条运行时线路都改成同一个数；同一上游有 config.yaml 的行且上限不同就拒，先把那一行移出 config 或改 config。改上限不用发布网关。
+- **每条线路都要有价，价只能改不能清空**：平台按模型名的单价给它的全部用量计费（`usage.pricing`；订阅里那几个 Claude 模型停用、不上架，留下的就是单价），所以不管上不上架，每条线路输入、输出都要有价；唯一的零是声明出来的免费（`cheese_free: true`，两向写 0）。一条线路已有的价（五档里的任何一档，包括一小时缓存写入 `cache_creation_1h`，即 `cache_creation_input_token_cost_above_1hr`）编辑时可以改，不能清空，服务层拒绝。页面上改价先弹框列出每一档的改前 → 改后，并说明这个模型此后的全部用量都按新价计。
+- **至少留一个上架的模型**：停用、删除、下架最后一个上架的模型，或停用、删除它最后一条在用的线路，服务层都拒绝，否则智能体设置里没有模型可选。
 - **免费**：唯一合法的零价是声明出来的——`cheese_free: true` 且输入、输出都写成 0（`price_is_set` 认它，`check_config.py` 同一条）；没标免费的零价一律拒。免费线路和付费线路在同一个模型里时，用量估价按付费线路里最高的那一档算，免费线路上的流量也一样（`usage.pricing`）。页面在混用时会提示这一点。
 - 目录对一个模型的判断看整组：有一行没停用就还能选，在用的每一行都有价（或声明免费）才算有价。
 
@@ -138,6 +141,27 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 ```sh
 docker exec -i cheese-gateway-litellm-blue-1 python - /app/config.yaml < deploy/gateway/check_config.py   # 或正在服务的 green
 ```
+
+### 平台模型角色 {#roles}
+
+平台自己挑模型的那几件事叫「平台模型角色」，在模型管理页的「平台模型角色」一段里各选一个网关模型，改了立即生效，不用重新部署后端：
+
+| 角色 | 用在哪 | 没人指过时读的设置项 |
+|---|---|---|
+| `agent_model` | 没设默认模型的项目跑在它上面；网关从没答过话时目录只剩它 | `AGENT_MODEL` |
+| `subagent_model` | 没设分身默认、且有权用这个模型的项目，分身默认跑它。有没有权和它自己的轮次过同一道闸门（`policy.gate.check`：团队方案的档位、管理员的境外开通、项目自己的档位策略）；没权的项目照旧跟着项目的默认模型 | 无：不设就跟着项目的默认模型 |
+| `assistant_model` | 个人芝士、助手的动作闸门 | `ASSISTANT_MODEL` |
+| `docs_assistant_model` | 问芝士 | `DOCS_ASSISTANT_MODEL` |
+| `topic_naming_model` | 话题命名 | `TOPIC_NAMING_MODEL` |
+| `environment_diagnosis_model` | 让芝士看看（环境搭建失败的诊断） | `ENVIRONMENT_DIAGNOSIS_MODEL` |
+| `voice_asr_model` / `voice_polish_model` | 语音输入的转写与整理 | `VOICE_ASR_MODEL` / `VOICE_POLISH_MODEL` |
+| `memory_migration_model` | 旧记忆表的迁移 | `MEMORY_MIGRATION_MODEL` |
+
+- 选择存在平台库的 `platform_model_roles` 里，审计记在 `gateway_admin_audit`（动作 `role.set`）。读的一方在 `app.core.model_roles`，后台每 30 秒从库里刷新一次，写的那个进程写完当场刷新。项目自己设了默认模型、分身默认的，在那个项目里仍以项目的为准。
+- 默认模型与分身默认只能指到上架的模型（它们要提供给项目选），指着它们的模型也不能下架；其余角色只能指到在用、计价的模型：两向都写了价、至少一向 > 0，或者是免费线路（语音转写跑在一个不上架、输出价为 0 的模型上）。
+- 这些工作各用一把平台自己铸的虚拟 key，key 只放行一个模型（`service_keys.KeySpec`）。改角色时服务层先把 key 放宽到新旧两个模型，存好选择；等每个进程都读到新选择（30 秒刷新之后再过 15 秒）再收窄到新模型，所以没有一刻哪个进程用的模型被 key 拒掉。收窄没做成（进程退出、网关拒绝）时 key 多放行一个模型，只记日志。
+- 模型列表里每个模型带着跑在它上面的角色（`roles`）。有角色时停用、删除它，或停用、删除它最后一条在用的线路，服务层都拒绝，要先把角色指走；页面在编辑、停用、删除这个模型之前弹框列出这些角色。没人指过的角色读设置项，那个值也算「跑在它上面」：部署之后 `deepseek-flash`、`qwen-audio-asr`、`glm-5.2` 这几个设置项默认值指着的模型，同样不能直接停用或删除。
+- `agent_haiku_model`、`agent_sonnet_model`、`agent_opus_model` 不是角色：现在的执行通道都自己写模型环境变量，并把这三个别名清掉（`screen_model_env.py`），它们只在没有通道的那条老路上还会被读到。
 
 价格用人民币rate 除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率（`kimi-k3`、`mimo-v2.6-pro` 的注释里都写了各自的原始人民币价）。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，发布带它的配置前要在网关 `.env` 里备好 `MOONSHOT_API_KEY`。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
 
@@ -182,6 +206,14 @@ GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
 上游只有 OpenAI 兼容的 `chat/completions`、没有 Anthropic Messages 时，前缀用 `hosted_vllm/`，`api_base` 写到 `/v1` 为止：`openai/` 会被翻成 Responses API（`/responses`），`custom_openai/` 会丢掉 reasoning effort、还把 OpenAI SDK 的名字拼进 User-Agent。`test_chat_route.py` 用假上游守着 thinking、工具调用、工具历史和图片两个方向都完整，以及下一轮请求里 assistant 消息带回上一轮的推理。有原生 Messages 的上游用 `anthropic/`，`api_base` 写到 `/v1` 之前（LiteLLM 自己拼 `/v1/messages`）。
 
 这类行通常在管理页（数据库）加，不进 `config.yaml`，因为改 `config.yaml` 要发布网关、会打断正在流的会话。数据库行与 `config.yaml` 行可以同名同组，`model_info` 里的自定义键原样到达钩子。生效时间（2026-10-14 在固定版本上实测）：`POST /model/new` 和 `/model/delete` 一两秒内；改一行用 `PATCH /model/{id}/update`（约 1 秒）——`POST /model/update` 会丢掉 `order` 且不改 `model_info`；直接改库要等网关每 30 秒一次的轮询。
+
+## 备份与恢复 {#backup}
+
+网关数据库是管理页加的模型和价格、每个项目的虚拟 key 与预算、花销日志的唯一一份；`config.yaml` 只能找回随镜像发的那几个基线模型。
+
+- **Gateway DB backup** 工作流（`.github/workflows/gateway-db-backup.yml`）在 dev runner 上每 6 小时跑一次（UTC 00:23、06:23、12:23、18:23），也可以手动触发。它调 `deploy/gateway-db-backup.sh`：用容器自己的 `pg_dump -Fc` 转储 `litellm`，`pg_restore --list` 读回来、必须列出 `LiteLLM_ProxyModelTable` 和 `LiteLLM_VerificationToken` 的数据，过了才改名成 `~/backups/gateway/gateway-litellm-<UTC 时间>.dump`。本机留最新 8 份（2 天；2026-10-21 一份约 0.85 GB）。
+- 每份随后用 `deploy/r2-upload.py` 传到 R2 的 dev 前缀下（`db/gateway-litellm-<UTC 时间>.dump`），桶的生命周期规则 30 天后删。数据库和本机那几份在同一台机器上，所以上传失败整次运行就算失败。
+- 恢复命令（看内容、只捞回几行、整库替换）见 `deploy/gateway/README.md` 的 Backups 一节。整库恢复会丢掉转储之后写进去的一切：花销、新项目的 key、模型改动。
 
 ## 边界与坑 {#traps}
 

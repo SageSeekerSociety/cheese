@@ -2,36 +2,62 @@
 
 import asyncio
 import os
+import platform
 
 import pytest
 
 from app.domain.machine import enrollment
 
+# The connector target of the machine these tests run on, which the fake ssh
+# below makes the guest.
+GUEST_TARGET = {
+    "x86_64": "linux-amd64",
+    "amd64": "linux-amd64",
+    "aarch64": "linux-arm64",
+    "arm64": "linux-arm64",
+}[platform.machine().lower()]
 
-async def test_cloud_bootstrap_receives_cached_pin_and_reuses_it(tmp_path, monkeypatch):
-    tools = tmp_path / "bin"
-    tools.mkdir()
-    home = tmp_path / "guest"
-    home.mkdir()
+
+@pytest.fixture(autouse=True)
+def served_connectors(tmp_path, monkeypatch):
+    """The connectors the platform serves, each saying which target it is."""
+    dist = tmp_path / "connector-dist"
+    for target in ("linux-amd64", "linux-arm64"):
+        binary = dist / target / "cheesehost"
+        binary.parent.mkdir(parents=True)
+        binary.write_text(f"#!/bin/sh\necho served {target}\n")
+    monkeypatch.setattr(enrollment.connector_build, "dist_dir", lambda: dist)
+    return dist
+
+
+def fake_transports(tools, home):
+    """ssh runs its command here with HOME at ``home``; scp copies into it."""
     scripts = {
-        "ssh": """#!/bin/bash
+        "ssh": f"""#!/bin/bash
 for last; do :; done
-export HOME="$TEST_GUEST_HOME"
+export HOME="{home}"
 if [ "$last" = 'bash -l -s' ]; then exec /bin/bash -s; fi
 exec /bin/bash -c "$last"
 """,
-        "scp": """#!/bin/bash
-src="${@: -2:1}"
-dst="${@: -1}"
-cp "$src" "$TEST_GUEST_HOME/${dst#*:}"
+        "scp": f"""#!/bin/bash
+src="${{@: -2:1}}"
+dst="${{@: -1}}"
+cp "$src" "{home}/${{dst#*:}}"
 """,
     }
+    tools.mkdir(exist_ok=True)
     for name, content in scripts.items():
         path = tools / name
         path.write_text(content)
         path.chmod(0o755)
+
+
+async def test_cloud_bootstrap_receives_cached_pin_and_reuses_it(tmp_path, monkeypatch):
+    tools = tmp_path / "bin"
+    home = tmp_path / "guest"
+    home.mkdir()
+    fake_transports(tools, home)
     monkeypatch.setenv("PATH", f"{tools}:{os.environ['PATH']}")
-    monkeypatch.setenv("TEST_GUEST_HOME", str(home))
     pin = enrollment.CLAUDE_PINNED_VERSION
     cached = tmp_path / "claude"
     cached.write_text(f"#!/bin/sh\necho '{pin} (Claude Code)'\n")
@@ -89,7 +115,9 @@ async def test_failed_ssh_stops_before_running_bootstrap(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
     monkeypatch.setattr(enrollment, "SSH_READY_WAIT_S", 0.3)
     monkeypatch.setattr(enrollment, "SSH_READY_POLL_S", 0.05)
-    with pytest.raises(enrollment.EnrollmentError, match="Claude transfer failed"):
+    with pytest.raises(
+        enrollment.EnrollmentError, match="transfer to the machine failed"
+    ):
         await enrollment.run_bootstrap(
             ip="guest", login_user="cheese", private_key="test", script="exit 0"
         )
@@ -157,7 +185,8 @@ exec /bin/bash -c "$last"
 """
     )
     ssh.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    fake_transports(tmp_path / "bin", home)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{tmp_path / 'bin'}:{os.environ['PATH']}")
     monkeypatch.setattr(enrollment, "SSH_READY_POLL_S", 0.1)
 
     async def sshd_starts():
@@ -170,3 +199,83 @@ exec /bin/bash -c "$last"
     )
     await starting
     assert output == "Connected."
+
+
+def _guest_with_claude(tmp_path):
+    home = tmp_path / "guest"
+    pin = home / ".cheese/claude/versions" / enrollment.CLAUDE_PINNED_VERSION
+    pin.parent.mkdir(parents=True)
+    pin.write_text("#!/bin/sh\n")
+    pin.chmod(0o755)
+    return home
+
+
+@pytest.mark.parametrize(
+    ("machine", "target"),
+    [("x86_64", "linux-amd64"), ("aarch64", "linux-arm64")],
+)
+async def test_the_machine_runs_the_connector_the_platform_serves_for_it(
+    tmp_path, monkeypatch, machine, target
+):
+    """A cloud machine gets the connector over the enrollment connection, the
+    build the origin serves for its architecture, before the script runs."""
+    home = _guest_with_claude(tmp_path)
+    fake_transports(tmp_path / "bin", home)
+    # The guest's architecture, whatever this machine's is.
+    uname = tmp_path / "bin" / "uname"
+    uname.write_text(
+        f'#!/bin/sh\n[ "$1" = -m ] && echo {machine} || exec /usr/bin/uname "$@"\n'
+    )
+    uname.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    seen = []
+
+    async def progress(text):
+        seen.append(text)
+
+    output = await enrollment.run_bootstrap(
+        ip="guest",
+        login_user="cheese",
+        private_key="test",
+        script='"$HOME/.local/bin/cheesehost"',
+        progress=progress,
+    )
+    assert output == f"served {target}"
+    assert "正在下载连接器" in seen
+
+
+async def test_a_retry_replaces_a_connector_an_earlier_attempt_left(
+    tmp_path, monkeypatch
+):
+    home = _guest_with_claude(tmp_path)
+    stale = home / ".local/bin/cheesehost"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("#!/bin/sh\necho stale\n")
+    stale.chmod(0o755)
+    fake_transports(tmp_path / "bin", home)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    output = await enrollment.run_bootstrap(
+        ip="guest",
+        login_user="cheese",
+        private_key="test",
+        script='"$HOME/.local/bin/cheesehost"',
+    )
+    assert output == f"served {GUEST_TARGET}"
+
+
+async def test_no_served_connector_stops_before_the_script(
+    tmp_path, monkeypatch, served_connectors
+):
+    home = _guest_with_claude(tmp_path)
+    (served_connectors / GUEST_TARGET / "cheesehost").unlink()
+    fake_transports(tmp_path / "bin", home)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    ran = home / "script-ran"
+    with pytest.raises(enrollment.EnrollmentError, match=GUEST_TARGET):
+        await enrollment.run_bootstrap(
+            ip="guest",
+            login_user="cheese",
+            private_key="test",
+            script=f'touch "{ran}"',
+        )
+    assert not ran.exists()

@@ -55,6 +55,11 @@
   "gatewayAdminNotConfigured": "未配置网关管理凭据",
   "gatewayMissingList": "网关 {path} 的响应里没有 {field} 列表",
   "gatewayModelExists": "模型 {name} 已经存在：要给它加一条上游，请用「添加线路」",
+  "gatewayLastOfferedModel": "模型 {name} 是最后一个上架的模型：停用、删除或下架它，智能体设置里就没有模型可选了。请先上架另一个模型",
+  "gatewayModelHasRoles": "平台模型角色 {roles} 还跑在模型 {name} 上：先在「平台模型角色」里把它们指到别的模型，再停用或删除它",
+  "roleNotFound": "没有叫 {role} 的平台模型角色",
+  "roleNeedsOfferedModel": "这个角色只能指到上架的模型：{name} 现在没有上架（停用、未上架或缺价）",
+  "roleNeedsServedModel": "这个角色只能指到在用、有价的模型：{name} 停用了或缺价",
   "gatewayModelNotFound": "模型 {name} 不存在",
   "gatewayModelTimeout": "模型 {seconds} 秒内没有答完",
   "gatewayNoModelId": "网关没有返回新模型的 model_id",
@@ -116,6 +121,7 @@
   "sessionFilesNotSent": "无法刷新设备上的会话文件：{detail}",
   "sourceChatFoldsSystem": "模型 {name} 有走 OpenAI 兼容 Chat 的线路：翻成 chat/completions 会丢掉对话中间的 system 消息，「能收对话中间的 system 消息」只能是关",
   "sourceChatNeedsConfigFlag": "模型 {name} 在 deploy/gateway/config.yaml 里的线路没有标 supports_mid_conversation_system: false。走 OpenAI 兼容 Chat 的线路会丢掉对话中间的 system 消息，整组都得标；请先改 config.yaml 并发布网关",
+  "sourceSpendCapInConfig": "模型 {name} 在 deploy/gateway/config.yaml 里有一条 {upstream} 的线路，它的消费上限与这次填的不同。同一个上游的上限按它的总账计，每条线路都得一样；请先把那一行移出 config.yaml，或在那里改上限并发布网关",
   "sourceConfigReadOnly": "模型 {name} 的这条线路由 deploy/gateway/config.yaml 声明，网关不接受在运行时改它；要改请编辑 deploy/gateway/config.yaml 并发布网关。",
   "sourceFreeNeedsZeroPrices": "免费线路的输入与输出单价都必须写成 0",
   "sourceHeaderDuplicate": "请求头 {name} 写了不止一次",
@@ -138,5 +144,7 @@
   "teammateNotSeatedHere": "这位 AI 队友不在这个频道里，不能在这里工作。把它加进频道，或者换一位队友",
   "topicNotFound": "频道不存在",
   "turnForceStopped": "本轮已被强制停止",
-  "upstreamModelRequired": "上游模型标识不能为空"
+  "upstreamModelRequired": "上游模型标识不能为空",
+  "sourceNeedsPrices": "每条线路都要写输入与输出单价，其中一向可以是 0（比如语音转写的输出），两向都是 0 就要标为免费线路：平台按模型名的单价给它的全部用量计费",
+  "sourcePriceCleared": "单价可以改，不能清空：这次编辑清空了 {prices}"
 }

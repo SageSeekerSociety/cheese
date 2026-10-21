@@ -30,6 +30,7 @@ from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.project.services import ProjectService
+from app.domain.room_task import heard
 from app.domain.room_task.models import (
     PLACEHOLDER_TITLE,
     Task,
@@ -327,6 +328,9 @@ async def give_task_teammate(
             seat_project=seat_project,
             team=team,
         )
+    if (seat or None) != task.agent_handle:
+        # Read by whichever teammate works it next: the one it was given to.
+        await heard.inform(session, task, heard.teammate_changed(by=by, seat=seat))
     await TaskService(session).give_agent(task, agent_handle=seat)
 
 

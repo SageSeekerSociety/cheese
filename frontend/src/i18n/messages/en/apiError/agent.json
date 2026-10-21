@@ -55,6 +55,11 @@
   "gatewayAdminNotConfigured": "The gateway admin credential isn't configured",
   "gatewayMissingList": "The gateway's {path} response has no {field} list",
   "gatewayModelExists": "The model {name} already exists: to give it another upstream, add a source to it",
+  "gatewayLastOfferedModel": "{name} is the last offered model: pausing, deleting or unlisting it would leave agent settings with no model to pick. Offer another model first",
+  "gatewayModelHasRoles": "The platform model roles {roles} still run on {name}: point them at another model under Platform model roles before pausing or deleting it",
+  "roleNotFound": "There is no platform model role called {role}",
+  "roleNeedsOfferedModel": "This role can only point at an offered model: {name} is not offered (paused, unlisted or unpriced)",
+  "roleNeedsServedModel": "This role can only point at a served, priced model: {name} is paused or unpriced",
   "gatewayModelNotFound": "The model {name} doesn't exist",
   "gatewayModelTimeout": "The model didn't finish answering within {seconds} seconds",
   "gatewayNoModelId": "The gateway didn't return the new model's model_id",
@@ -116,6 +121,7 @@
   "sessionFilesNotSent": "Couldn't refresh the session files on the device: {detail}",
   "sourceChatFoldsSystem": "{name} has a source on the OpenAI-compatible Chat protocol, which loses system messages in the middle of a conversation, so mid-conversation system messages have to stay off",
   "sourceChatNeedsConfigFlag": "The config.yaml sources of {name} aren't marked supports_mid_conversation_system: false. A source on the OpenAI-compatible Chat protocol loses system messages in the middle of a conversation, so every source of the model needs the mark; edit deploy/gateway/config.yaml and release the gateway first",
+  "sourceSpendCapInConfig": "{name} has a source on {upstream} in deploy/gateway/config.yaml whose spend cap differs from this one. A cap counts everything that upstream has been charged, so every source on it needs the same cap; move that row out of config.yaml, or change the cap there and release the gateway",
   "sourceConfigReadOnly": "This source of {name} is declared in deploy/gateway/config.yaml, and the gateway won't change it at runtime. To change it, edit deploy/gateway/config.yaml and release the gateway.",
   "sourceFreeNeedsZeroPrices": "A free source needs both its input and output price written as 0",
   "sourceHeaderDuplicate": "The header {name} is given more than once",
@@ -138,5 +144,7 @@
   "teammateNotSeatedHere": "This AI teammate isn't in this channel, so it can't work here. Add it to the channel, or ask another teammate",
   "topicNotFound": "Channel not found",
   "turnForceStopped": "This turn was force-stopped",
-  "upstreamModelRequired": "The upstream model ID can't be empty"
+  "upstreamModelRequired": "The upstream model ID can't be empty",
+  "sourceNeedsPrices": "Every source needs both an input and an output price; one may be 0 (such as a transcription model's output), and both at 0 is a free source, which must say so: the platform bills all of a model's usage by its prices",
+  "sourcePriceCleared": "A price can be changed, not cleared: this edit clears {prices}"
 }

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core import model_roles
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.service import AgentUsage
 from app.domain.usage.credits import spend_to_credits
@@ -36,7 +36,7 @@ async def record_turn_usage(
             payer,
             credits=0.0,
             topic_id=state.topic_id,
-            model=state.model or settings.agent_model,
+            model=state.model or model_roles.model("agent_model"),
             input_tokens=0,
             output_tokens=0,
             cost_usd=0.0,
@@ -55,7 +55,9 @@ async def record_turn_usage(
             payer,
             credits=0.0 if own else spend_to_credits(u.cost_usd),
             topic_id=state.topic_id,
-            model=u.model or state.model or ("" if own else settings.agent_model),
+            model=u.model
+            or state.model
+            or ("" if own else model_roles.model("agent_model")),
             input_tokens=u.input_tokens,
             output_tokens=u.output_tokens,
             cost_usd=u.cost_usd,

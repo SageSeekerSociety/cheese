@@ -33,6 +33,7 @@ function source(over: Partial<SourceRow> = {}): SourceRow {
     priced: true,
     header_names: ['user-agent'],
     session_header: 'x-opencode-session',
+    spend_cap_usd: null,
     ...over,
   }
 }

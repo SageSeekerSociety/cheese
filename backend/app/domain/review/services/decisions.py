@@ -9,9 +9,6 @@ from typing import TYPE_CHECKING
 
 from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, say
-from app.domain.block.models import BlockKind
-from app.domain.event_about import EventAbout, landing
-from app.domain.event_author import AuthorType
 from app.domain.membership.services import MemberService
 from app.domain.project_permissions import Permission
 from app.domain.review import (
@@ -26,7 +23,7 @@ from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
 )
-from app.domain.room_task import progress
+from app.domain.room_task import heard, progress
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
@@ -51,7 +48,6 @@ from app.domain.review.services._shared import (
     VOIDED_PREFIX,
     WHO_CHEESE,
     WHO_HUMAN,
-    BlockRepository,
     _force_merge_verdict,
     logger,
     notice,
@@ -462,6 +458,13 @@ async def revoke(
     # active，是因为采纳会顺手归档；采纳不再归档之后，一张卡的撤销没有理由
     # 覆盖某个人「把这个话题收起来」的动作。
     await self._stamp_delivery(card, topic, by=None, at=None)
+    task = await self._session.get(Task, card.task_id) if card.task_id else None
+    if task is not None:
+        await heard.inform(
+            self._session,
+            task,
+            heard.accept_revoked(by=decided_by, pr=card.pr_number),
+        )
 
     await self._session.flush()
     await self._session.refresh(card)
@@ -731,20 +734,20 @@ async def void(
     await self._session.refresh(card)
 
     # 作废的是这张卡，落点就是这张卡（结论 14）：房间主线那一档只留给为房间
-    # 本身递的卡（`task_id` 空）。
-    landed = landing(
-        EventAbout.task if card.task_id is not None else EventAbout.room,
-        project_id=topic.project_id,
-        room_id=topic.id,
-        task_id=card.task_id,
-    )
-    await BlockRepository(self._session).add(
-        project_id=landed.project_id,
-        conversation_id=landed.conversation_id,
-        author="cheese",
-        author_type=AuthorType.platform,
-        content=say("cardVoided", actor=f"<@{decided_by}>"),
-        kind=BlockKind.event,
+    # 本身递的卡（`task_id` 空）。说给人的那一行之外，任务的 AI 队友被叫起来：
+    # 它还以为这一版在等审阅，人却已经在等它重做（`room_task.heard`）。
+    task = await self._session.get(Task, card.task_id) if card.task_id else None
+    await self._record_task_nudge(
+        topic=topic,
+        task=task,
+        content=heard.card_voided(
+            by=decided_by,
+            reason=note.strip(),
+            task_id=card.task_id,
+            pr=card.pr_number if archive.pr_left_open(card) else None,
+            open_task=task is not None and task.status == TaskStatus.open,
+        ),
+        headline=say("cardVoided", actor=f"<@{decided_by}>"),
         meta={
             "platform": True,
             **notice(

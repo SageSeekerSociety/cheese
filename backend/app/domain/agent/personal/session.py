@@ -15,7 +15,7 @@ its conversation stays on disk, and the next question starts it again on it.
 
 import uuid
 
-from app.core.config import settings
+from app.core import model_roles
 from app.core.sandbox_auth import mint_personal_credential
 from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import PI
@@ -111,7 +111,7 @@ def session(
     else (`sandbox_auth.mint_personal_credential`)."""
     spec = SessionSpec(
         system_prompt=system_prompt(),
-        model=settings.assistant_model,
+        model=model_roles.model("assistant_model"),
         tools=TOOLS,
         footprint=Footprint(memory_mb=MEMORY_MB, group_limit=SESSIONS_PER_PERSON),
         idle_exit_s=IDLE_EXIT_S,
@@ -120,7 +120,7 @@ def session(
         model_settings=ModelSettings(
             # It reasons: reading a handout and writing a 题目 from it needs it.
             thinking=True,
-            effort=effort(settings.assistant_model),
+            effort=effort(model_roles.model("assistant_model")),
             max_tokens=MAX_TOKENS,
             context_tokens=CONTEXT_TOKENS,
             reserve_tokens=RESERVE_TOKENS,
