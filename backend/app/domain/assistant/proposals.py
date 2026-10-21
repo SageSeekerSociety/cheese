@@ -28,7 +28,7 @@ from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.assistant.models import AssistantProposal
 
-KINDS = ("message", "task")
+KINDS = ("message", "task", "act")
 #: What a pending draft can become.
 SETTLED = ("sent", "dismissed")
 

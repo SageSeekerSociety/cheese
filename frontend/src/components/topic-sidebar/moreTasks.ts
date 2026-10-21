@@ -23,6 +23,12 @@ export type RailTask = Pick<
   | 'incomplete_since'
   // 这条活归谁：我负责的（含没主的）那几条，行尾补一盏蓝灯（`useTopicRail.taskLight`）。
   | 'owner_handle'
+  // 谁在这件活里（负责人之外还有协作者）：行菜单里的「重命名」只画给这些人。
+  | 'contributor_handles'
+  // 复制链接要从任务自己的地址拼出来；行菜单不给非进行中的活用状态，但列表接口两边
+  // 都带着它，留着不多拉一次。
+  | 'project_id'
+  | 'status'
   // 不是和我有关的、被借来把这一块凑够三条的那几条（后端 `rail_tasks`）：行上画淡
   // 一档，悬浮说明写清它为什么在这儿。缺省 = 和我有关的。
   | 'filling_in'

@@ -20,7 +20,12 @@ import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale, t } from '@/i18n'
 
-beforeEach(() => setLocale('zh-CN'))
+beforeEach(() => {
+  setLocale('zh-CN')
+  localStorage.clear()
+  // 「我是谁」读的是登录后落下的那一份账号（`myHandle()`）。任务行菜单按它判能不能改名。
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
+})
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -43,14 +48,17 @@ function topic(id: string, parentId: string | null, kind = 'topic'): Topic {
 function railTask(id: string, room: string, title: string, over: Record<string, unknown> = {}) {
   return {
     id,
+    project_id: 'p1',
     room_id: room,
     title,
     title_source: 'person',
+    status: 'open',
     presentation: { column: 'building', phrase: 'started' },
     awaits_me: false,
     unseen_delivery: false,
     incomplete_since: null,
     owner_handle: 'me',
+    contributor_handles: [],
     ...over,
   }
 }
@@ -217,13 +225,21 @@ describe('任务行改名', () => {
     })
   })
 
-  it('借来凑数的任务行没有这颗 ⋯', async () => {
-    const { container } = mount({
+  it('别人的任务：菜单里只有复制链接，没有重命名', async () => {
+    const { container, baseElement } = mount({
       roomTasks: { a: [railTask('t9', 'a', '别人的活', { filling_in: true, owner_handle: 'someone' })] },
       roomTaskTotals: { a: 1 },
     })
     const row = taskRowFor(container, '别人的活')
-    expect(row.querySelector('[title="更多操作"]')).toBeNull()
-    expect(row.getAttribute('data-task-actions')).toBeNull()
+    await fireEvent.click(row.querySelector('[title="更多操作"]') as HTMLElement)
+    const items = await waitFor(() => {
+      const found = Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).map((el) =>
+        el.textContent?.trim()
+      )
+      if (!found.length) throw new Error('菜单没出来')
+      return found
+    })
+    expect(items).toContain(t('work.room.menu.copyLink'))
+    expect(items).not.toContain(t('work.task.rename'))
   })
 })

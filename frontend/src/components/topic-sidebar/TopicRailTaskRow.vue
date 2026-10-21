@@ -13,15 +13,15 @@
 // 行的操作和频道行一样收进一颗 ⋯（悬停浮出，右键弹在同一处，手机上长按由父级那个
 // `useLongPress` 升起面板）。眼下只有「重命名」一项，只画在和我有关的那些行上：借来
 // 凑数的行不画，后端也只让参加这件活的人改。
-import type { MenuAction } from '@/components/common/menuAction'
+import type { MenuCommand } from '@/commands'
 import type { RowLight } from '@/lib/roomLight'
 import type { RailTask } from './moreTasks'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailLight from './TopicRailLight.vue'
 
+import { menuActionOf } from '@/commands'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
@@ -40,13 +40,15 @@ const props = withDefaults(
     page?: boolean
     /** 这一行正在就地改名。 */
     renaming?: boolean
+    /** 这一行的 ⋯ 里有哪些项：和任务页右上角同一份清单（`commands/taskActions.ts`），
+     *  父级已经按「行里敢点的」筛过。要 router 才算得出链接，所以由父级给。 */
+    actions: (task: RailTask) => MenuCommand[]
   }>(),
   { depth: 0, unread: 0, light: null, page: false, renaming: false }
 )
 
 const fillingIn = computed(() => props.task.filling_in === true)
-// 借来凑数的那些不是我的活；其余几行都和我有关（负责人或协作者），后端只让这些人改。
-const canRename = computed(() => !fillingIn.value)
+const actionsOf = computed(() => props.actions(props.task))
 
 const emit = defineEmits<{
   (e: 'select', task: { roomId: string; taskId: string }): void
@@ -54,8 +56,6 @@ const emit = defineEmits<{
   // `TopicRailRow` 的 `press` 同一条理由）。任务页的代码是懒加载的，早下这一百多
   // 毫秒，打开它就少等这一段。
   (e: 'press', task: { roomId: string; taskId: string }): void
-  /** 从菜单里选了「重命名」：父级记下正在改的是哪一行。 */
-  (e: 'request-rename'): void
   /** 回车或失焦：父级比对原名字，值没变就不落盘。 */
   (e: 'commit-rename', draft: string): void
   (e: 'cancel-rename'): void
@@ -110,7 +110,7 @@ function cancelRename() {
 const menuOpen = ref(false)
 const menuPoint = ref<[number, number] | null>(null)
 function openMenuAt(e: MouseEvent) {
-  if (props.page || props.renaming || !canRename.value) return
+  if (props.page || props.renaming || !actionsOf.value.length) return
   e.preventDefault()
   menuPoint.value = [e.clientX, e.clientY]
   menuOpen.value = true
@@ -119,21 +119,6 @@ function onMenuToggle(open: boolean) {
   if (!open) menuPoint.value = null
   menuOpen.value = open
 }
-const menuActions = computed<MenuAction[]>(() =>
-  canRename.value
-    ? [
-        {
-          key: 'task.rename',
-          label: t('work.task.rename'),
-          icon: 'mdi-pencil-outline',
-          onSelect: () => {
-            menuOpen.value = false
-            emit('request-rename')
-          },
-        },
-      ]
-    : []
-)
 </script>
 
 <template>
@@ -146,14 +131,14 @@ const menuActions = computed<MenuAction[]>(() =>
       'is-menu-open': menuOpen,
       'is-renaming': renaming,
     }"
-    :data-task-actions="canRename && !renaming ? task.id : undefined"
+    :data-task-actions="!renaming && actionsOf.length ? task.id : undefined"
     @contextmenu="openMenuAt"
   >
     <!-- 改名时这一行换成一个输入框：回车或失焦提交，Esc 不改。 -->
     <div
       v-if="renaming"
       class="rail-task rail-task--renaming"
-      :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
+      :style="{ '--task-indent': 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     >
       <!-- eslint-disable vuejs-accessibility/no-autofocus -- the field replaces the title because the person chose Rename; focus moves into it -->
       <v-text-field
@@ -177,7 +162,7 @@ const menuActions = computed<MenuAction[]>(() =>
       type="button"
       class="rail-task"
       :class="{ 'rail-task--selected': selected, 'rail-task--filled': fillingIn, 'rail-task--pending': pending }"
-      :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
+      :style="{ '--task-indent': 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
       :aria-current="selected ? 'page' : undefined"
       :title="fillingIn ? t('work.sidebar.fillInTip') : undefined"
       @click="choose"
@@ -188,18 +173,20 @@ const menuActions = computed<MenuAction[]>(() =>
       "
     >
       <!-- 任务名是人起的（占位名除外，那是界面上的字）。 -->
-      <span class="rail-task__title" :data-user-content="task.title_source === 'placeholder' ? undefined : ''">{{
-        taskTitle(task)
-      }}</span>
-      <TopicRailBadge v-if="unread > 0" :count="unread" />
+      <span
+        class="rail-task__title"
+        :class="{ 'rail-task__title--unread': unread > 0 }"
+        :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
+        >{{ taskTitle(task) }}</span
+      >
       <TopicRailLight v-if="light" :light="light" />
     </button>
     <!-- hover 浮出的操作入口：一颗 ⋯，覆盖在行尾，不占布局宽度。整页形态（手机）
          没有它：那里长按一行，父级升起同一份操作。 -->
-    <div v-if="!page && canRename && !renaming" class="rail-task__actions" @click.stop>
+    <div v-if="!page && actionsOf.length && !renaming" class="rail-task__actions" @click.stop>
       <AdaptiveMenu
         :model-value="menuOpen"
-        :actions="menuActions"
+        :actions="actionsOf.map(menuActionOf)"
         :title="taskTitle(task)"
         :point="menuPoint"
         @update:model-value="onMenuToggle"
@@ -236,6 +223,7 @@ const menuActions = computed<MenuAction[]>(() =>
   width: 100%;
   min-height: 32px;
   padding-block: 0;
+  padding-inline-start: calc(var(--task-indent) + 20px);
   padding-inline-end: 12px;
   border: 0;
   border-radius: var(--radius-md);
@@ -288,6 +276,10 @@ const menuActions = computed<MenuAction[]>(() =>
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 未读只给名称加粗，不再另挂数字。 */
+.rail-task__title--unread {
+  font-weight: 650;
 }
 /* 借来凑数的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
    自己再抬一次——上面那两条改的是行盒的颜色，标题自己有颜色时继承不到。 */
@@ -351,9 +343,21 @@ const menuActions = computed<MenuAction[]>(() =>
   background: var(--fill);
   color: var(--text);
 }
-/* 触摸屏没有 hover，键盘焦点又要先 Tab 到它：没有 hover 的设备上它常驻。
-   整页形态（手机）不画这颗 ⋯，那里长按一行打开同一组操作。 */
+/* 整页形态（手机）把频道记号那一列也让出来，任务行跟着再缩进一截。 */
+.topic-rail--page .rail-task {
+  padding-inline-start: calc(var(--task-indent) + 76px);
+}
+.topic-rail--page .rail-task::before {
+  left: calc(var(--guide-x) + 14px);
+}
+/* 触摸屏没有 hover：⋯ 常驻，缩进也跟着让出来。键盘焦点照样够得着它。 */
 @media (hover: none) {
+  .rail-task {
+    padding-inline-start: calc(var(--task-indent) + 76px);
+  }
+  .rail-task::before {
+    left: calc(var(--guide-x) + 14px);
+  }
   .rail-task__actions {
     opacity: 1;
     pointer-events: auto;
