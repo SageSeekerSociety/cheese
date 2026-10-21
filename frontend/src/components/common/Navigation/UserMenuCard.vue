@@ -16,14 +16,13 @@
                失败记忆也归它一处管。以前这里自画一份，和 nav 左栏、顶栏各画一份，同一个
                人的头像会三处三种样子。 -->
           <UserAvatar
-            class="user-menu-head__avatar"
             :avatar="menu.avatar.value ?? ''"
             :name="menu.nickname.value"
             :seed="menu.currentUser.value?.username"
             :size="40"
           />
         </template>
-        <v-list-item-title class="t-title">{{ menu.nickname.value }}</v-list-item-title>
+        <v-list-item-title>{{ menu.nickname.value }}</v-list-item-title>
         <v-list-item-subtitle class="user-menu-head__handle"
           >@{{ menu.currentUser.value?.username }}</v-list-item-subtitle
         >
@@ -96,8 +95,13 @@ const { phoneOpen } = useDesktopApp()
 </script>
 
 <style scoped>
-.user-menu-head__avatar {
-  margin-inline-end: 12px;
+/* 名字是这张菜单的标题：15 / 600 / --ink（.t-title 那一档）。写在列表项标题上要压过
+   菜单列表项自己的 14px / 400。头像和名字之间的 12px 由列表项的 prepend 间隔给。 */
+.user-menu-head .v-list-item-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  color: var(--ink);
 }
 
 .user-menu-head__handle {
