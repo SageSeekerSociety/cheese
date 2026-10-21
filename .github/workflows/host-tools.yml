@@ -107,7 +107,7 @@ jobs:
       # given them first.
       - name: On other distributions
         run: |
-          for image in fedora:42 almalinux:9 alpine:3.22 ubuntu:20.04 archlinux:latest; do
+          for image in fedora:42 almalinux:9 alpine:3.22 ubuntu:20.04 opensuse/leap:15.6; do
             echo "== $image"
             prepare=true
             case "$image" in
