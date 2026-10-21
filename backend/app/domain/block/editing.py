@@ -63,7 +63,7 @@ class EditedText(Protocol):
     def text(self) -> str: ...
 
     @property
-    def roster(self) -> list[dict] | None: ...
+    def roster(self) -> list[dict]: ...
 
     @property
     def by_agent(self) -> bool: ...
@@ -130,15 +130,13 @@ async def edit_message[Sent: EditedText](
     # asks it again.
     already_read = consumed_turn(block) is not None and read_failed(block) is None
     await blocks.replace_content(block, sent.text, checklist=checklist)
-    summoned = False
-    if sent.roster is not None:
-        summoned = await notify_mentions(
-            session,
-            sent,
-            block,
-            editor,
-            before=before,
-        )
+    summoned = await notify_mentions(
+        session,
+        sent,
+        block,
+        editor,
+        before=before,
+    )
     # A room's agent hears of an edit to a message it read; a task's message
     # was never the room's, and its own session is told through the ledger.
     in_room = not await is_task(session, block.conversation_id)
