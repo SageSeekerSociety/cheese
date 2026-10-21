@@ -49,6 +49,22 @@ Conventions no contract sees:
   cycle named is not a reason — check whether the cycle still exists first.
   No check asks for the reason; a reader does.
 
+## Backend: what the platform pays for is metered, never called straight
+
+A model call or a web search the platform pays for goes out on the payer's key
+through the platform's metering. From backend code that is the gateway
+(LiteLLM) on the payer's virtual key — the project's, the task's, a person's
+own — which admits it against that key's budget, prices it, and leaves its
+spend to be drained into credits (`docs/manual/dev/gateway.md`); from an
+agent's session it is the metering proxy, which alone holds the platform's
+Claude subscription credential (`docs/manual/dev/metering-proxy.md`). Backend
+code never calls a model or search provider directly, and never hands a
+session a provider credential the platform pays for: such a call is priced by
+nobody, charged to nobody and outside every budget. The only direct calls are
+on someone's own account — a member's or team's own API key or model service
+(`backend/app/domain/agent_instance/account_connections.py`) — which they pay
+for.
+
 ## Frontend: a component does not fetch
 
 Enforced by ESLint under `src/components/**` (no `@/api`, `@/services/*`,

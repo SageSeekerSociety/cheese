@@ -17,7 +17,6 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal
-from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -277,7 +276,6 @@ _DOORS = {
     "channel_remove": "app.api.routes.topic_members.remove_topic_member",
     "channel": "app.api.routes.topics.create_topic",
     "fetch": "app.api.routes.fetch.read_url",
-    "web_search": "app.api.routes.fetch.web_search",
 }
 #: How a role is named to the person.
 _ROLE = {"owner": "所有者", "admin": "管理员", "member": "成员", "mentor": "导师"}
@@ -308,7 +306,6 @@ class ActIn(BaseModel):
         "member",
         "channel",
         "fetch",
-        "web_search",
     ]
     #: A message: where (a channel or a task) and what. A task: in which
     #: channel, its title and what it is for (``text``).
@@ -328,9 +325,6 @@ class ActIn(BaseModel):
     #: A web page, and what to learn from it.
     url: str = ""
     prompt: str = ""
-    #: A web search: what to search for, and how many results.
-    query: str = ""
-    limit: int | None = None
 
 
 def _need(value: str, what: str) -> str:
@@ -717,17 +711,6 @@ def _fetch(body: ActIn) -> _Plan:
     )
 
 
-def _web_search(body: ActIn) -> _Plan:
-    query = _need(body.query, "query")
-    params = {"q": query, **({"limit": body.limit} if body.limit else {})}
-    return _Plan(
-        gate.Action("web_search", f"搜索网页：{query}"),
-        [{"method": "GET", "path": f"/web-search?{urlencode(params)}"}],
-        [(_DOORS["web_search"], None)],
-        card=None,
-    )
-
-
 @router.post("/act", include_in_schema=False)
 async def agent_act(
     body: ActIn,
@@ -756,8 +739,6 @@ async def agent_act(
         plan = await _member(db, access, body, me)
     elif body.kind == "channel":
         plan = await _channel(db, access, body, me)
-    elif body.kind == "web_search":
-        plan = _web_search(body)
     else:
         plan = _fetch(body)
     conversation = uuid.UUID(claims.conversation) if claims.conversation else None

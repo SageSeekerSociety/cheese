@@ -1,4 +1,6 @@
 {
-  "webSearchNotConfigured": "This deployment has no web search service configured. Read a page whose address you know with cheese_fetch.",
-  "webSearchUnavailable": "The web search service did not answer ({reason}). Try again shortly."
+  "webSearchNotConfigured": "This deployment has no model gateway, so web search is unavailable. A page whose address you know can still be read.",
+  "webSearchUnavailable": "The web search service did not answer ({reason}). Try again shortly.",
+  "webSearchNoKey": "Web search is charged to the work's gateway credits, and this caller has none: it is for agents and a person's own assistant.",
+  "webSearchBudgetSpent": "This work's gateway credits are spent, so web search is refused."
 }
