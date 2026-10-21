@@ -8,7 +8,8 @@ charged here: one usage row per search (route ``search``) and its deduction,
 written together by ``Ledger.record``, to the payer of the work that asked —
 the same payer that work's model calls are charged to: a room agent's search
 to its project (``payer_for_project``), a person's 芝士's to that person
-(``payer_for_person``).
+(``payer_for_person``). A search is admitted the way that work's model calls
+are (``search_refusal``): a payer out of credits gets no search either.
 """
 
 import uuid
@@ -16,7 +17,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.usage.credits import spend_to_credits
-from app.domain.usage.ledger import Ledger, Payer
+from app.domain.usage.ledger import Ledger, Payer, Refusal
 from app.domain.usage.models import SEARCH_ROUTE
 
 SEARCH_KIND = "web_search"
@@ -30,6 +31,12 @@ DEEPSEEK_SEARCH = "deepseek-search"
 #: bills nothing for a failed, empty or timed-out search, and neither does the
 #: platform: only a search that returned results is charged.
 DEEPSEEK_SEARCH_USD = 0.00075
+
+
+async def search_refusal(session: AsyncSession, payer: Payer) -> Refusal | None:
+    """Why a search ``payer`` would pay for may not run now, or None when it
+    may: the answer a model call of theirs gets (``Ledger.admit``)."""
+    return await Ledger(session).admit(payer)
 
 
 async def charge_search(

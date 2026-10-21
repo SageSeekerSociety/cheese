@@ -15,7 +15,7 @@ from app.domain.team.models import Team
 from app.domain.usage.ledger import Ledger, payer_for_person, payer_for_project
 from app.domain.usage.models import Plan
 from app.domain.usage.repositories import UsageRepository
-from app.domain.usage.search import charge_search
+from app.domain.usage.search import charge_search, search_refusal
 from tests.integration.conftest import registered
 
 ONE_SEARCH = 0.75 / 1000 / 0.01
@@ -92,3 +92,16 @@ async def test_a_search_is_no_model_call(db_factory):
         assert spend["turns"] == 0
         assert spend["cost_usd"] == 0
         assert spend["total_tokens"] == 0
+
+
+@pytest.mark.anyio
+async def test_a_payer_out_of_credits_is_refused_a_search(db_factory):
+    async with db_factory() as session:
+        _, pid = await _team_with_project(session, "search-lab-4")
+        payer = await payer_for_project(session, pid)
+        assert await search_refusal(session, payer) is None
+
+        await Ledger(session).charge(payer, 10)
+        await session.commit()
+
+        assert await search_refusal(session, payer) is not None
