@@ -118,3 +118,40 @@ describe('输入框里的回复标签', () => {
     expect(frame?.reply_to ?? null).toBeNull()
   })
 })
+
+describe('时间线上的引用条', () => {
+  it('队友的回复也画；父消息不在页里时用随页带来的一行预览', async () => {
+    history.push({
+      id: 'a1',
+      project_id: 'p1',
+      conversation_id: 't1',
+      kind: 'message',
+      author_type: 'participant',
+      author: 'cheese-test',
+      content: '这个价格我同意',
+      reply_to: 'old',
+      reply_preview: {
+        id: 'old',
+        kind: 'message',
+        author_type: 'participant',
+        author: 'other',
+        content: '报价按 3 万走',
+      },
+      refs: [],
+      created_at: new Date().toISOString(),
+    } as unknown as Block)
+    try {
+      const view = render(Panel, {
+        props: { topic: { id: 't1', project_id: 'p1', title: 't1', kind: 'topic' } as Topic, showComposer: true },
+        global: { plugins: [vuetify, i18n] },
+      })
+      await settle()
+      const text = view.container.textContent || ''
+      expect(text).toContain('报价按 3 万走')
+      expect(text).toContain('回复')
+      view.unmount()
+    } finally {
+      history.pop()
+    }
+  })
+})

@@ -121,6 +121,10 @@ def test_reply_preserves_reference_and_rejects_another_room(client):
     reply = publish(client, topic, headers, "已经查到了。", reply_to=first["id"])
     assert reply.status_code == 200, reply.text
     assert reply.json()["data"]["reply_to"] == first["id"]
+    preview = reply.json()["data"]["reply_preview"]
+    assert preview["id"] == first["id"]
+    assert preview["author"] == first["author"]
+    assert preview["content"] == first["content"]
     other, other_headers = room(client)
     assert (
         publish(client, other, other_headers, reply_to=first["id"]).status_code == 422

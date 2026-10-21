@@ -15,9 +15,68 @@ stream.pipeline = function (...args) {
   return output;
 };
 
+// A private chat's page reads leave through its egress proxy, which refuses
+// every internal address (`remote_execution/private_egress.py`). Its address is
+// CHEESE_WEBFETCH_EGRESS; when it is set, every WebFetch request is tunnelled
+// there with CONNECT, whatever proxy agent the CLI built for HTTPS_PROXY (the
+// metering proxy, whose own exit reaches the host's network). The agent is our
+// own rather than a copy of the CLI's: measured on 2.1.299 a request that the
+// session gives no HTTPS_PROXY carries no proxy agent at all.
+const net = require('node:net');
+const tls = require('node:tls');
+const egress = process.env.CHEESE_WEBFETCH_EGRESS;
+
+function egressAgent(secure) {
+  const proxy = new URL(egress);
+  const agent = new (secure ? https.Agent : http.Agent)({ keepAlive: false });
+  agent.createConnection = function (options, callback) {
+    const host = options.host || options.hostname;
+    const port = options.port || (secure ? 443 : 80);
+    const authority = `${host.includes(':') ? `[${host}]` : host}:${port}`;
+    const raw = net.connect(Number(proxy.port), proxy.hostname);
+    raw.once('error', callback);
+    raw.once('connect', () => {
+      raw.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`);
+    });
+    let head = Buffer.alloc(0);
+    const onData = chunk => {
+      head = Buffer.concat([head, chunk]);
+      const end = head.indexOf('\r\n\r\n');
+      if (end < 0) return;
+      raw.removeListener('data', onData);
+      const [status] = head.subarray(0, end).toString().split('\r\n');
+      if (status.split(' ')[1] !== '200') {
+        raw.destroy();
+        const reason = head.subarray(end + 4).toString().trim();
+        return callback(new Error(`The private chat's egress refused ${authority}: ${reason || status}`));
+      }
+      if (!secure) return callback(null, raw);
+      const secured = tls.connect({ socket: raw, servername: host, ALPNProtocols: ['http/1.1'] });
+      secured.once('secureConnect', () => callback(null, secured));
+      secured.once('error', callback);
+    };
+    raw.on('data', onData);
+  };
+  return agent;
+}
+
+const egressAgents = egress ? { http: egressAgent(false), https: egressAgent(true) } : null;
+
+function isPageRequest(args) {
+  const options = args.find(arg => arg && typeof arg === 'object' && !(arg instanceof URL));
+  const headers = (options && options.headers) || {};
+  return Object.keys(headers).some(
+    name => name.toLowerCase() === 'user-agent' && String(headers[name]).startsWith('Claude-User (')
+  );
+}
+
 for (const protocol of [http, https]) {
   const originalRequest = protocol.request;
   protocol.request = function (...args) {
+    if (egressAgents && isPageRequest(args)) {
+      const at = args.findIndex(arg => arg && typeof arg === 'object' && !(arg instanceof URL));
+      args[at] = { ...args[at], agent: egressAgents[protocol === https ? 'https' : 'http'] };
+    }
     const request = originalRequest.apply(this, args);
     if (!String(request.getHeader('user-agent')).startsWith('Claude-User (')) {
       return request;

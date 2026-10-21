@@ -217,6 +217,10 @@ model_list:
     # so a 429 on one key cools them all down.
     model_info: &ruc_deepseek_flash_info
       cheese_selectable: true
+      # vLLM does not run Anthropic's server tools: asked to search, it answers
+      # without searching. Requests carrying web search go to the rows that
+      # do (web_search.py). Measured on 2026-10-13: DeepSeek's API searched.
+      supports_web_search: false
       cheese_label: DeepSeek V4.1 Flash
       # Accepted here without error; low and high gave the same reasoning
       # length when measured on 2026-10-08, so on this backend they are moot.
@@ -493,6 +497,9 @@ litellm_settings:
   # cheese_no_explicit_cache loses its cache_control marks
   # (`no_explicit_cache.py`), and one that declares cheese_spend_cap_usd is
   # refused past that total (`spend_cap.py`).
+  # A request carrying web search goes to a deployment that runs it, and an
+  # answer that did not search reaches the client as an error, not as a
+  # search that found nothing (`web_search.py`).
   callbacks:
     - cheese_chatgpt_session.handler
     - cheese_billing_line.handler
@@ -500,6 +507,7 @@ litellm_settings:
     - cheese_upstream_headers.handler
     - cheese_no_explicit_cache.handler
     - cheese_spend_cap.handler
+    - cheese_web_search.handler
   # Providers LiteLLM has no route for, served by a handler of ours behind the
   # chat API (`qwen_asr.py`).
   custom_provider_map:
