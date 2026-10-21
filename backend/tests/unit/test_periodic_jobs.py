@@ -582,6 +582,7 @@ def test_only_the_github_jobs_use_the_quota_interval_policy(
     github_jobs = {
         "pr poll",
         "task pr poll",
+        "merge actor backfill",
         "task closing",
         "draft pr sweep",
         "ci activity sweep",
