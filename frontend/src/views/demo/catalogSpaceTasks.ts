@@ -209,6 +209,60 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         expect: '待你确认',
       },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s7.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s7.note')
+        },
+        // 例行事务的一次运行：平台开的，芝士起草了一条回复留给人确认；上一次留下的已过期。
+        props: {
+          earlier: [
+            {
+              id: 'run-1',
+              title: '有人找我',
+              at: '2026-10-21T09:00:00Z',
+              messages: [
+                {
+                  role: 'platform',
+                  text: '',
+                  at: '2026-10-21T09:00:00Z',
+                  shown: { routine: '有人找我' },
+                },
+                {
+                  role: 'assistant',
+                  text: '赵一鸣在「综合」问周报什么时候交，我起草了一条回复。',
+                  at: '2026-10-21T09:00:20Z',
+                  proposals: [{ id: 9, kind: 'message', state: 'expired', where: '综合', text: '周五前交。' }],
+                },
+              ],
+            },
+          ],
+          messages: [
+            { role: 'platform', text: '', at: '2026-10-22T09:00:00Z', shown: { routine: '有人找我' } },
+            {
+              role: 'assistant',
+              text: '李老师在「综合」@ 你，问演示视频能否由你负责。你建这条例行事务时没有说可以替你答应，我起草了一条回复，等你确认。',
+              at: '2026-10-22T09:00:18Z',
+              steps: [
+                { key: 'r1', verb: '读取', arg: 'ml-course/channels/1', state: 'done' },
+                { key: 'r2', verb: '发消息', arg: 'ml-course/channels/1', state: 'done' },
+              ],
+              proposals: [
+                {
+                  id: 10,
+                  kind: 'message',
+                  state: 'pending',
+                  where: '综合',
+                  text: '@李老师 演示视频我来负责，11月7日前给出初版。',
+                },
+              ],
+            },
+          ],
+        },
+        expect: '已过期',
+      },
     ],
   },
   {

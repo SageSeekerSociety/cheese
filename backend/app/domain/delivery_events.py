@@ -95,6 +95,13 @@ class NotificationType(str, Enum):
     #: 提交期限只剩一天、还没交：和 `TASK_NOTICE` 分开，因为只有它推送。
     TASK_DUE_SOON = "TASK_DUE_SOON"
 
+    #: 个人芝士自己做事时告诉这个人的（`routine.personal`）：一条例行事务运行完了、
+    #: 有操作待他确认、例行事务因额度或久未登录暂停了，或者芝士用
+    #: `cheese_notify_me` 发给他的一句话。说的话是 `payload.content`（平台的句子
+    #: 带键），哪一种看 `payload.event`；`payload.assistantConversation` 是点开要打开
+    #: 的那段对话。
+    ASSISTANT_NOTICE = "ASSISTANT_NOTICE"
+
     #: 平台报告自己的那三种（原 `AlertKind`）。值保持小写原样：`cheese_notify
     #: --kind` 和前端的 `NOTIF_KIND` 标签表按它写，存量行里也是这几个字。
     CHANGE_ALERT = "change_alert"  # 变更提醒

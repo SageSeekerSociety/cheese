@@ -1,5 +1,5 @@
 /**
- * 预览站里「账号设置与项目工作台那一组整页」的一册分卷——账号设置那一组的前一半（通用、通知、个人资料、实名信息）。
+ * 预览站里「账号设置与项目工作台那一组整页」的一册分卷——账号设置那一组的前一半（通用、通知、个人资料、实名信息、芝士）。
  *
  * 它和同级的另外两份分卷一起，由 `catalogViewSettingsWorkspace.ts` 合并成
  * `VIEW_SETTINGS_WORKSPACE_ENTRIES` 交给 `catalogViews.ts`；各屏公用数据见
@@ -7,9 +7,18 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { NOTIF_PREFS, REAL_NAME_LOGS, REAL_NAME_RECORD, SETTINGS_USER } from './catalogViewSettingsWorkspaceFixtures'
+import {
+  ASSISTANT_RECENT,
+  ASSISTANT_ROUTINES,
+  ASSISTANT_RULES,
+  NOTIF_PREFS,
+  REAL_NAME_LOGS,
+  REAL_NAME_RECORD,
+  SETTINGS_USER,
+} from './catalogViewSettingsWorkspaceFixtures'
 
 import { t } from '@/i18n'
+import AssistantView from '@/views/user/settings/AssistantView.vue'
 import General from '@/views/user/settings/General.vue'
 import NotificationsView from '@/views/user/settings/NotificationsView.vue'
 import ProfileView from '@/views/user/settings/ProfileView.vue'
@@ -21,6 +30,49 @@ const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 
 export const VIEW_SETTINGS_WORKSPACE_ENTRIES_A: CatalogEntry[] = [
+  {
+    id: 'settings-assistant-view',
+    title: 'AssistantView',
+    get about() {
+      return t('catalog.settingsAssistantView.about')
+    },
+    file: 'src/views/user/settings/AssistantView.vue',
+    component: AssistantView,
+    needs: UI_T,
+    args: {
+      rules: ASSISTANT_RULES,
+      routines: ASSISTANT_ROUTINES,
+      routineLimit: 20,
+      recent: ASSISTANT_RECENT,
+      loading: false,
+      failed: false,
+      saving: false,
+      saved: false,
+      error: '',
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.settingsAssistantView.s1.name')
+        },
+        get note() {
+          return t('catalog.settingsAssistantView.s1.note')
+        },
+        props: {},
+        expect: '例行事务',
+      },
+      {
+        get name() {
+          return t('catalog.settingsAssistantView.s2.name')
+        },
+        get note() {
+          return t('catalog.settingsAssistantView.s2.note')
+        },
+        props: { routines: [], rules: { ...ASSISTANT_RULES, askItems: [], allowItems: [] } },
+        expect: '暂无例行事务',
+      },
+    ],
+  },
   {
     id: 'settings-general-view',
     title: 'General',
