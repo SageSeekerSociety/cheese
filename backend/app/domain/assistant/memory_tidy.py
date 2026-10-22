@@ -78,7 +78,8 @@ class Plan:
 
 
 class Refused(ValueError):
-    """The model's answer is not a tidy the platform will apply."""
+    """The model's answer is not a tidy the platform will apply: why, as a
+    code, and what it names. Only logged; nobody reads it on a screen."""
 
 
 def _memories_text(entries: list[assistant_memory.Entry], today: str) -> str:
@@ -106,9 +107,9 @@ def plan(entries: list[assistant_memory.Entry], answer: str) -> Plan:
     try:
         ops = json.loads(text).get("ops")
     except (ValueError, AttributeError) as exc:
-        raise Refused("not JSON") from exc
+        raise Refused("not_json") from exc
     if not isinstance(ops, list):
-        raise Refused("no ops")
+        raise Refused("no_ops")
     have = {e.memory.name: e.memory for e in entries}
     written: dict[str, MemoryFile] = {}
     deleted: dict[str, None] = {}
@@ -117,7 +118,7 @@ def plan(entries: list[assistant_memory.Entry], answer: str) -> Plan:
 
     def claim(name: object) -> str:
         if not isinstance(name, str) or name not in have:
-            raise Refused(f"unknown memory {name!r}")
+            raise Refused("unknown_memory", name)
         return name
 
     def rewritten(name: str, op: dict) -> MemoryFile:
@@ -129,17 +130,17 @@ def plan(entries: list[assistant_memory.Entry], answer: str) -> Plan:
                 str(op.get("text") or ""),
             )
         except MemoryFileError as exc:
-            raise Refused(str(exc)) from exc
+            raise Refused("invalid_memory", name) from exc
 
     for op in ops:
         if not isinstance(op, dict):
-            raise Refused("an op is not an object")
+            raise Refused("op_not_object")
         kind = op.get("op")
         if kind == "delete":
             name = claim(op.get("name"))
             by = claim(op.get("by"))
             if by == name:
-                raise Refused(f"{name} replaced by itself")
+                raise Refused("replaced_by_itself", name)
             deleted[name] = None
             replaced_by[name] = by
         elif kind == "rewrite":
@@ -149,24 +150,24 @@ def plan(entries: list[assistant_memory.Entry], answer: str) -> Plan:
             into = claim(op.get("into"))
             merged = op.get("from")
             if not isinstance(merged, list) or not merged:
-                raise Refused("a merge with nothing to merge")
+                raise Refused("empty_merge", into)
             for name in merged:
                 deleted[claim(name)] = None
             written[into] = rewritten(into, op)
         else:
-            raise Refused(f"unknown op {kind!r}")
+            raise Refused("unknown_op", kind)
     both = set(written) & set(deleted)
     if both:
-        raise Refused(f"{sorted(both)} both kept and removed")
+        raise Refused("kept_and_removed", sorted(both))
     # What replaces a deleted memory has to be there after the tidy: else a
     # fact is gone with nothing standing for it.
     lost = sorted(n for n, by in replaced_by.items() if by in deleted)
     if lost:
-        raise Refused(f"{lost} replaced by a memory that is removed too")
+        raise Refused("replacement_removed", lost)
     out = Plan(write=list(written.values()), delete=list(deleted))
     gone = len(out.delete)
     if gone > len(entries) * BULK_DELETE_RATIO and gone > BULK_DELETE_MIN:
-        raise Refused(f"would remove {gone} of {len(entries)}")
+        raise Refused("removes_too_much", gone, len(entries))
     return out
 
 
