@@ -43,9 +43,9 @@ _CONTAINER_CLOSE_RE = re.compile(r"(:{3,})\s*$")
 _DETAILS_RE = re.compile(r"<(/?)details\b[^>]*>", re.IGNORECASE)
 
 
-def _is_fence(line: str) -> bool:
-    s = line.lstrip()
-    return s.startswith("```") or s.startswith("~~~")
+def _fence_marker(line: str) -> str | None:
+    match = re.match(r"(`{3,}|~{3,})", line.lstrip())
+    return match.group(1) if match else None
 
 
 def _classify(block: str) -> str:
@@ -66,7 +66,7 @@ def markdown_to_nodes(md: str) -> list[DocNode]:
     lines = md.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     blocks: list[str] = []
     cur: list[str] = []
-    in_fence = False
+    fence: str | None = None
 
     def flush() -> None:
         nonlocal cur
@@ -109,12 +109,12 @@ def markdown_to_nodes(md: str) -> list[DocNode]:
                 in_math = False
                 flush()
             continue
-        if not in_fence and (opener := _CONTAINER_OPEN_RE.match(stripped)):
+        if not fence and (opener := _CONTAINER_OPEN_RE.match(stripped)):
             flush()
             cur = [line]
             enclosure = [len(opener.group(1))]
             continue
-        if not in_fence and stripped.lower().startswith("<details"):
+        if not fence and stripped.lower().startswith("<details"):
             flush()
             cur = [line]
             for tag in _DETAILS_RE.finditer(line):
@@ -124,21 +124,21 @@ def markdown_to_nodes(md: str) -> list[DocNode]:
                 flush()
             continue
         one_line_math = len(stripped) > 2 and stripped.endswith("$$")
-        if not in_fence and stripped.startswith("$$") and not one_line_math:
+        if not fence and stripped.startswith("$$") and not one_line_math:
             flush()
             cur = [line]
             in_math = True
             continue
-        if in_fence:
+        if fence:
             cur.append(line)
-            if _is_fence(line):
-                in_fence = False
+            if stripped.startswith(fence) and not stripped.rstrip(fence[0]):
+                fence = None
             continue
-        if _is_fence(line):
+        if marker := _fence_marker(line):
             # A fence starts its own block.
             flush()
             cur = [line]
-            in_fence = True
+            fence = marker
             continue
         if line.strip() == "":
             flush()
