@@ -82,6 +82,19 @@ async def test_nothing_in_the_checkout_means_nothing_to_refuse():
     assert hit is None
 
 
+@pytest.mark.parametrize("documented", ["pnpm", "npm"])
+async def test_a_different_package_name_does_not_refuse_a_memory(tmp_path, documented):
+    """A repo recommending pnpm does not already say to use npm."""
+    checkout = _a_checkout(tmp_path / "web", {"README.md": f"Use {documented}\n"})
+
+    async def search(terms: list[str]) -> list[dict]:
+        return _executor(checkout).repo_search({"terms": terms})["hits"]
+
+    hit = await already_in_repo("Use npm", search)
+
+    assert (hit is not None) == (documented == "npm")
+
+
 async def test_a_fact_with_no_usable_keyword_is_never_refused():
     """全是标点或停用词的时候没得可查——这时候拒绝就是凭空拒绝一次写入。"""
     calls = []
