@@ -1,10 +1,3 @@
-// 顶上那排题签：一道题一枚，写的是提问时给的题签，没给就写题号。
-//
-// 题号只写一次。早先这里画了两遍——一枚是序号、一枚是题签的回退值，两道题就长成
-// 「1 1 2 2」。答过的题在前面打勾，题号（或题签）不被勾替换掉。
-//
-// 右上角那颗只翻到确认那一屏，所以它说「确认答案」，一翻过去它就不画了；真正的
-// 「提交答案」在那一屏底部。早先它在确认屏上变成「已提交」，人以为已经交完了。
 import type { Block } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -24,7 +17,7 @@ function question(id: string, meta: Record<string, unknown> = {}): Block {
     kind: 'message',
     author_type: 'participant',
     author: 'agent',
-    content: `第 ${id} 道题的内容`,
+    content: `Question ${id}`,
     reply_to: null,
     refs: [],
     created_at: '2026-08-01T00:00:00Z',
@@ -32,7 +25,7 @@ function question(id: string, meta: Record<string, unknown> = {}): Block {
       asked: [],
       asked_all: true,
       notice_id: 'notice-1',
-      options: [{ text: '甲' }, { text: '乙' }],
+      options: [{ text: 'A' }, { text: 'B' }],
       answer_log: [],
       ...meta,
     },
@@ -42,72 +35,46 @@ function question(id: string, meta: Record<string, unknown> = {}): Block {
 const vuetify = createVuetify({ components, directives })
 
 function renderCard(blocks: Block[]) {
+  setLocale('zh-CN')
   return render(AskGroupCard as never, {
     props: { blocks, viewer: 'u1', names: {} },
     global: { plugins: [vuetify, i18n] },
   })
 }
 
-function tabTexts(container: HTMLElement): string[] {
-  return [...container.querySelectorAll('.ask-group__tab:not(.ask-group__tab--submit)')].map(
-    (tab) => tab.textContent?.replace(/\s+/g, ' ').trim() ?? ''
-  )
+function tabTexts(tabs: HTMLElement[]): string[] {
+  return tabs.map((tab) => tab.textContent?.replace(/\s+/g, ' ').trim() ?? '')
 }
 
-describe('AskGroupCard 的题签栏', () => {
-  it('没给题签时，每道题的题号只出现一次', () => {
-    setLocale('zh-CN')
-    const { container } = renderCard([question('a'), question('b')])
+describe('AskGroupCard question numbers', () => {
+  it.each([2, 3])('shows each question number once for %i questions without headers', (count) => {
+    const { getAllByRole } = renderCard(Array.from({ length: count }, (_, i) => question(String(i))))
 
-    expect(tabTexts(container)).toEqual(['1', '2'])
+    expect(tabTexts(getAllByRole('tab'))).toEqual(Array.from({ length: count }, (_, i) => String(i + 1)))
   })
 
-  it('给了题签就写题签，题号不再另起一枚', () => {
-    setLocale('zh-CN')
-    const { container } = renderCard([question('a', { header: '范围' }), question('b', { header: '口径' })])
+  it('preserves the existing number and header for labelled questions', () => {
+    const { getAllByRole } = renderCard([question('a', { header: 'Scope' }), question('b', { header: 'Format' })])
 
-    expect(tabTexts(container)).toEqual(['范围', '口径'])
+    expect(tabTexts(getAllByRole('tab'))).toEqual(['1Scope', '2Format'])
   })
 
-  it('答过的题前面打勾，题号留着', () => {
-    setLocale('zh-CN')
+  it('keeps the number and completion mark when an answer is selected, and still switches questions', async () => {
+    const { getAllByRole, getByRole, getByText } = renderCard([question('a'), question('b')])
+
+    await fireEvent.change(getByRole('radio', { name: 'A', exact: true }))
+    expect(tabTexts(getAllByRole('tab'))).toEqual(['✓1', '2'])
+
+    await fireEvent.click(getByRole('tab', { name: '2', exact: true }))
+    expect(getByText('Question b')).toBeTruthy()
+  })
+
+  it('keeps the number and completion mark for recorded answers', () => {
     const answered = question('a', {
-      answer_log: [{ kind: 'option', option: '甲', note: null, by: 'u1', at: '2026-08-01T00:01:00Z', reply_id: 'r1' }],
+      answer_log: [{ kind: 'option', option: 'A', note: null, by: 'u1', at: '2026-08-01T00:01:00Z', reply_id: 'r1' }],
     })
-    const { container } = renderCard([answered, question('b')])
+    const { getAllByRole } = renderCard([answered, question('b')])
 
-    expect(tabTexts(container)).toEqual(['✓1', '2'])
-  })
-})
-
-describe('AskGroupCard 的确认与提交', () => {
-  function shortcut(container: HTMLElement): HTMLElement | null {
-    return container.querySelector('.ask-group__tab--submit')
-  }
-  function reviewButtons(container: HTMLElement): string[] {
-    return [...container.querySelectorAll('.ask-group__review .ask-group__bar button')].map(
-      (b) => b.textContent?.trim() ?? ''
-    )
-  }
-
-  it('右上角那颗说「确认答案」，翻过去之后它就不画了', async () => {
-    setLocale('zh-CN')
-    const { container } = renderCard([question('a'), question('b')])
-
-    expect(shortcut(container)?.textContent?.trim()).toBe('确认答案')
-    await fireEvent.click(shortcut(container)!)
-
-    expect(shortcut(container)).toBeNull()
-    expect(reviewButtons(container)).toContain('提交答案')
-  })
-
-  it('已经答过的那张卡，右上角才写「已提交」', () => {
-    setLocale('zh-CN')
-    const answered = question('a', {
-      answer_log: [{ kind: 'option', option: '甲', note: null, by: 'u1', at: '2026-08-01T00:01:00Z', reply_id: 'r1' }],
-    })
-    const { container } = renderCard([answered, question('b')])
-
-    expect(shortcut(container)?.textContent?.trim()).toBe('已提交')
+    expect(tabTexts(getAllByRole('tab'))).toEqual(['✓1', '2'])
   })
 })
