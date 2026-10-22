@@ -509,11 +509,15 @@ class RemoteTools:
                 preparing=notice,
             )
 
-        host = PlatformHost(self.client, invoke, call_id, self.doc_versions)
         # A subagent's thread is not the room's session: compacting it would
         # compact the wrong context, and it is not the one the room reads.
-        if session_call:
-            host.compact = self.compact
+        host = PlatformHost(
+            self.client,
+            invoke,
+            call_id,
+            self.doc_versions,
+            self.compact if session_call else None,
+        )
         try:
             text = self.platform.run_platform_tool(tool, arguments, host)
         except MachineOutOfReach:

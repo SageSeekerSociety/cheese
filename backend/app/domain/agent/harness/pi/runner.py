@@ -609,9 +609,12 @@ class Runner(runner.Runner[Journal]):
             )
         if catalog.is_platform_tool(tool):
             host = PlatformHost(
-                self.machine.client, self._invoke, call_id, self.doc_versions
+                self.machine.client,
+                self._invoke,
+                call_id,
+                self.doc_versions,
+                self.request_compact,
             )
-            host.compact = self.request_compact
             try:
                 text = await asyncio.to_thread(
                     catalog.run_platform_tool, tool, arguments, host
@@ -645,8 +648,8 @@ class Runner(runner.Runner[Journal]):
             None,
             call_id,
             self.doc_versions,
+            self.request_compact,
         )
-        host.compact = self.request_compact
         # A person's 芝士 asked from a project's page acts in that project: its
         # session has no project of its own, the question's credential does.
         for name, value in _scope_of(self.platform_token).items():

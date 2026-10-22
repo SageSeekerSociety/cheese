@@ -801,11 +801,7 @@ def transport(config, target_path):
         return "already" if (answer.get("result") or {}).get("already") else "requested"
 
     def platform_tool(tool, args, call_id, invoke):
-        host = PlatformHost(client, invoke, call_id, doc_versions)
-        # The one tool that acts on this session rather than on the room
-        # (`cheese_compact`): the session's own harness answers whether it can
-        # (`sandbox/cheese`'s `_compact`).
-        host.compact = compact_session
+        host = PlatformHost(client, invoke, call_id, doc_versions, compact_session)
         try:
             text = cheese.run_platform_tool(tool, args, host)
         except Exception as exc:  # the agent reads the reason
