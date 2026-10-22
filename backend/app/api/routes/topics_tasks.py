@@ -338,8 +338,10 @@ async def report_progress(
     resolver: ActorResolverDep,
 ) -> dict:
     """The task's AI teammate says where its work stands (`cheese_task_state`):
-    what the board shows for it until it says again. Only the task's own
-    session reports; a person reads it, and says what they need in the task.
+    what the board shows for it until it says again, or until a session of
+    its starts running after the report (`presentation.task_presentation`).
+    Only the task's own session reports; a person reads it, and says what they
+    need in the task.
 
     Refused while a card waits on the task's review: the card says where the
     task stands then (等审), and a report would either change nothing on the
