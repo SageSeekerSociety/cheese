@@ -155,18 +155,21 @@ const {
   topicById,
 } = useTopicRail(props, { scrollToIndex: (key, index) => railLists.get(key)?.scrollToIndex(index) })
 
-// 频道下面的任务：先挂和我有关的几条，最后一行就地展开这个频道其余进行中的任务。
-// 「其余几个」= 频道里进行中的总数减去已经挂着的，展开后接上的就是这几个。
+function ownTasks(channelId: string): RailTask[] {
+  return props.roomTasks?.[channelId] ?? []
+}
+
+function taskCountOf(channelId: string): number {
+  return props.roomTasks ? ownTasks(channelId).length : props.roomTaskTotals?.[channelId] ?? 0
+}
+
 function hiddenTasks(channelId: string): number {
-  return Math.max(0, (props.roomTaskTotals?.[channelId] ?? 0) - (props.roomTasks?.[channelId]?.length ?? 0))
+  return Math.max(0, (props.roomTaskTotals?.[channelId] ?? 0) - ownTasks(channelId).length)
 }
 
 function moreTaskRows(channelId: string) {
   const more = props.moreTasks?.[channelId]
   return !tasksFoldOf(channelId) && more?.state === 'ready' ? more.rows : []
-}
-function hasMoreRow(channelId: string): boolean {
-  return !!props.moreTasks?.[channelId] || hiddenTasks(channelId) > 0
 }
 function moreLabel(channelId: string): string {
   const more = props.moreTasks?.[channelId]
@@ -186,17 +189,17 @@ function tasksFoldOf(channelId: string): boolean {
 }
 /** 展开着才挂任务行：收起来时一条都不画。 */
 function taskRows(channelId: string): RailTask[] {
-  return tasksFoldOf(channelId) ? [] : props.roomTasks?.[channelId] ?? []
+  return tasksFoldOf(channelId) ? [] : ownTasks(channelId)
 }
-/** 「展开其余 N 个」那一行也一样：收起来就跟着那一块一起走。 */
-function showMoreRow(channelId: string): boolean {
-  return !tasksFoldOf(channelId) && hasMoreRow(channelId)
+/** 侧栏只挂与当前用户有关的任务，不再在底部挂「展开其余 N 个」。 */
+function showMoreRow(): boolean {
+  return false
 }
 /** 收起任务时保留已有状态信号，交给频道行与频道自身信号合成一盏灯。 */
 function tasksLight(channelId: string): RowLight | null {
   if (!tasksFoldOf(channelId)) return null
   return brightest([
-    ...(props.roomTasks?.[channelId] ?? []).map((task) => taskLight(task)),
+    ...ownTasks(channelId).map((task) => taskLight(task)),
     ...(props.moreTasks?.[channelId]?.state === 'ready' ? props.moreTasks[channelId].rows : []).map((task) =>
       taskLight(task)
     ),
@@ -596,7 +599,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :light-of="lightOf"
             :root-actions="rootTopic ? actionsFor(rootTopic).map(menuActionOf) : []"
             :tasks-collapsed="!!rootTopic && tasksFoldOf(rootTopic.id)"
-            :task-count="rootTopic ? roomTaskTotals?.[rootTopic.id] : undefined"
+            :task-count="rootTopic ? taskCountOf(rootTopic.id) : undefined"
             :task-light="rootTopic ? tasksLight(rootTopic.id) : null"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
@@ -637,7 +640,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 @cancel-rename="cancelTaskRename()"
               />
               <TopicRailMoreTasksRow
-                v-if="rootTopic && showMoreRow(rootTopic.id)"
+                v-if="rootTopic && showMoreRow()"
                 :channel-id="rootTopic.id"
                 :label="moreLabel(rootTopic.id)"
                 :expanded="!!moreTasks?.[rootTopic.id]"
@@ -708,7 +711,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :toggle-title="toggleTitle(item)"
                         :actions="actionsFor"
                         :tasks-collapsed="tasksFoldOf(item.topic.id)"
-                        :task-count="roomTaskTotals?.[item.topic.id]"
+                        :task-count="taskCountOf(item.topic.id)"
                         :task-light="tasksLight(item.topic.id)"
                         @select="emit('select-topic', $event)"
                         @hover="emit('hover-topic', $event)"
@@ -753,7 +756,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         @cancel-rename="cancelTaskRename()"
                       />
                       <TopicRailMoreTasksRow
-                        v-if="showMoreRow(item.topic.id)"
+                        v-if="showMoreRow()"
                         :channel-id="item.topic.id"
                         :depth="item.depth"
                         :label="moreLabel(item.topic.id)"

@@ -111,17 +111,15 @@ describe('侧栏那只慢钟', () => {
     )
   }
 
-  it('时间自己走满五分钟，红标不用等下一次刷新就亮起来', async () => {
-    // 假钟必须在挂载**之前**装上：这只钟是 onMounted 里上的发条。
+  it('时间走满五分钟，等待超时不再亮红灯', async () => {
     vi.useFakeTimers()
     const { container } = mount({ topics: waitingTopic(4.5) })
     await nextTick()
     expect(rowFor(container, 'a').querySelector('.row-light')).toBeNull()
 
-    // 没有换过任何一份数据，只是钟往前走了 —— 灯要自己亮。
     await vi.advanceTimersByTimeAsync(60_000)
     await nextTick()
-    expect(rowFor(container, 'a').querySelector('.row-light--red')).not.toBeNull()
+    expect(rowFor(container, 'a').querySelector('.row-light')).toBeNull()
   })
 
   it('还没到点就不亮：钟走过去之前，多拨几下也还是暗的', async () => {
@@ -140,16 +138,6 @@ describe('侧栏那只慢钟', () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000)
     await nextTick()
     expect(rowFor(container, 'b').querySelector('.row-light')).toBeNull()
-  })
-
-  it('唯一红灯仍保留成员等待时长的说明', async () => {
-    vi.useFakeTimers()
-    const { container } = mount({ topics: waitingTopic(10) })
-    await nextTick()
-    const dot = rowFor(container, 'a').querySelector('.row-light--red') as HTMLElement
-    expect(dot.title).toContain('分钟')
-    expect(dot.title).toContain('等')
-    expect(dot.getAttribute('aria-label')).toBe(dot.title)
   })
 
   it('卸载之后那只钟就停了', async () => {

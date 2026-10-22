@@ -1,8 +1,12 @@
 /* Namespace shared rules so both channel components can render independently. */
-.rail-channel {
+.rail-channel,
+.rail-channel.v-list-item.v-list-item,
+.v-list.v-list .rail-channel.v-list-item--nav {
   position: relative;
-  min-height: 36px;
-  margin-block: 2px;
+  min-height: 32px;
+  padding-block: 0;
+  padding-inline-end: 12px;
+  margin-block: 1px;
 }
 
 /* Attribute selectors address Vuetify's internal BEM classes. */
@@ -20,41 +24,56 @@
   gap: 0;
 }
 
-/* Two independent 16px controls and a 4px gap, regardless of which are present. */
 .rail-channel .row-leading {
   display: flex;
   flex: none;
   align-items: center;
   gap: 4px;
-  width: 36px;
+  min-width: 16px;
 }
 
 .rail-channel .row-actions {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
-  position: relative;
-  flex: none;
   align-items: center;
-  width: 32px;
-  min-height: 30px;
   color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--dur-quick) var(--ease-standard);
 }
 
 .rail-channel .row-actions .v-btn {
-  width: 32px;
-  height: 30px;
+  width: 31px;
+  height: 29px;
   cursor: pointer;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-lg);
 }
 
 .rail-channel .row-actions .v-btn .v-icon {
   font-size: 16px;
 }
 
-.rail-channel-page {
+.rail-channel-page,
+.rail-channel.rail-channel-page.v-list-item.v-list-item,
+.v-list.v-list .rail-channel.rail-channel-page.v-list-item--nav {
   min-height: 44px;
+}
+
+.rail-channel-page .row-actions {
+  position: relative;
+  right: auto;
+  top: auto;
+  transform: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 .rail-channel-page .row-actions,
@@ -64,21 +83,21 @@
   min-height: 44px;
 }
 
-/* Touch controls reserve two independent 44px targets and their gap. */
-.rail-channel-page .row-leading {
-  width: 92px;
-}
-
 @media (hover: none) {
-  .rail-channel .row-leading {
-    width: 92px;
-  }
-
-  .rail-channel {
+  .rail-channel,
+  .rail-channel.v-list-item.v-list-item,
+  .v-list.v-list .rail-channel.v-list-item--nav {
     min-height: 44px;
   }
 
   .rail-channel .row-actions {
+    position: relative;
+    right: auto;
+    top: auto;
+    transform: none;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
     pointer-events: auto;
     opacity: 1;
   }
@@ -102,5 +121,5 @@
 
 .rail-channel .row-actions .v-btn:hover {
   color: var(--text);
-  background: var(--fill-2);
+  background: var(--fill);
 }
