@@ -1138,10 +1138,15 @@ class Runner(runner.Runner[Journal]):
         if kind == "system":
             self._track(record)
         work = self.work if self.working else self.last_work
+        if kind == "command_lifecycle" and record.get("state") != "started":
+            # Queued or settled inputs name their own delivery, not whichever
+            # work the session is running now (or finished last).
+            sent = self._sent_input(str(record.get("command_uuid")))
+            work = sent[1] if sent else None
         owner = json.loads(self.journal.recall("owner") or "{}")
         if work is not None:
             owner["work_id"] = work
-            if self.working and self.unsolicited:
+            if self.working and self.unsolicited and work == self.work:
                 owner["unsolicited"] = True
         self.journal.append({**record, "cheese": {**owner, **stamp}})
         if main and kind in ("assistant", "result"):

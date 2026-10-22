@@ -691,6 +691,47 @@ async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("previous", ["idle", "running", "restarted"])
+async def test_a_queued_input_is_not_filed_under_the_previous_work(
+    tmp_path, monkeypatch, previous
+):
+    """The next input can queue long after the last result, or while another
+    work is running. Its queue notice belongs to its own delivery, not that
+    other work; queueing alone does not start executing it."""
+    state = tmp_path / "state"
+    runner = Runner(state)
+    runner.session_id = "session-queue"
+    runner.outbox.register(1)
+
+    async def written(message):
+        pass
+
+    monkeypatch.setattr(runner, "_write", written)
+    old_input, old_work = str(uuid.uuid4()), str(uuid.uuid4())
+    await runner.send(old_input, "first", work_id=old_work)
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": old_input, "state": "started"}
+    )
+    if previous != "running":
+        runner.observe({"type": "result", "result": "done"})
+    if previous == "restarted":
+        runner = Runner(state)
+        runner.session_id = "session-queue"
+        runner.outbox.register(1)
+        monkeypatch.setattr(runner, "_write", written)
+
+    next_input, next_work = str(uuid.uuid4()), str(uuid.uuid4())
+    await runner.send(next_input, "next", work_id=next_work)
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": next_input, "state": "queued"}
+    )
+    queued = runner.journal.read(0)[-1]["record"]
+    assert queued["cheese"]["work_id"] == next_work
+    assert runner.working is (previous == "running")
+    assert runner.work == (old_work if previous == "running" else None)
+
+
+@pytest.mark.anyio
 async def test_a_turn_aborted_before_its_prompt_was_checked_still_lets_the_session_go(
     tmp_path, monkeypatch
 ):
