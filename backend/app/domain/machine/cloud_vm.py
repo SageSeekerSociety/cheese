@@ -30,13 +30,13 @@ from sqlalchemy import select
 
 from app.domain.agent.environment import VM, spec_of
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim, session_work
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_vm_released
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.services import HostPool
 from app.domain.topic.models import Topic
-from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheese.machine.cloud_vm")
 
@@ -119,11 +119,11 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
         await db.commit()
         await session_work.checkpoint(lease, start)
 
-    # Decide again under the room's lock, which every tool call takes first:
-    # a tool call or a turn since the look above keeps the VM. The room's own
-    # lock, not the one for executions: an archived room takes no tool call,
-    # and its VM still goes.
-    await TopicService(db).lock(home.topic_id)
+    # Decide again under the holder's lock, which every tool call takes first:
+    # a tool call or a turn since the look above keeps the VM. The holder's
+    # own lock, not the one for executions: an archived room takes no tool
+    # call, and its VM still goes.
+    await holders.lock(db, home.topic_id)
     row = (
         None
         if home.session_id is None

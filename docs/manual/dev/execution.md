@@ -5,6 +5,7 @@ summary: 会话进程和干活的机器分开时，工具调用怎么落到机�
 covers:
   - backend/app/domain/agent/executor_transport.py
   - backend/app/domain/machine/session_work.py
+  - backend/app/domain/machine/holder.py
   - backend/app/domain/agent/place.py
   - backend/app/domain/agent/environment_runner.py
   - backend/app/domain/agent/toolchain.py
@@ -63,6 +64,22 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 - 项目 MCP 不走房间的机器：平台持有它的凭据、由平台发 `POST /topics/{id}/mcp/{name}`，所以不为它占一台机器。
 - 机器一侧的规矩在 `machine/session_work.py`：**这位队友自己的执行环境是唯一的来源**（`agent_environments`，见[每位队友一个执行环境](/dev/turn#seats-machine)）。规格是平台机器的沙箱，第一次要手时 `HostPool.place`（`machine/services.py`）把它放到任意一台还有空位的宿主机上，没有空位时领预热机器或现开一台，宿主机不属于房间、频道或会话；某个人的电脑这一规格，放在那个人接入项目、给得出沙箱的一台上（`environments.device_for_spec`）；不进沙箱的，就是选定的那台电脑。沙箱空闲后就销毁，什么都不留（`machine/lifecycle.py`），之后回合结束的 checkpoint 不再去问任何机器，执行路由直接答「没有要推的」（`routes/execution.py`，`sandbox_destroyed`），从没拿到过沙箱的会话也一样；下次要手时放进一个新沙箱，像任何新沙箱一样从任务分支和上一轮的快照开始，那次工具调用的结果告诉 agent 沙箱换了新的。规格是 `vm` 时，`place` 为这条会话现开一台虚拟机，那台虚拟机本身就是它的沙箱，执行器装上去时不再套 bubblewrap（`_sandboxed` 返回 False）；这台虚拟机会话闲置后推送、释放（`machine/cloud_vm.py`）。换执行环境只换这一位队友（`switch_environment`）：它先在离开的那台上做一次尽力而为的 checkpoint（`checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S = 150` 秒），推没推上去、那台够不够得着都照常换；它的机器还在分配中时不换，答「分配仍在进行」。
 - 会话主机不能干项目的活：租约所在的机器就是会话进程所在的那台时，`_attempt` 抛 `ForbiddenError("Project tools cannot execute on the session host")`——两处（`_attempt` 里 lease 那一处、以及 777 行附近那一处）。房间正在跑任务且 `if_idle` 时整个不换（`SessionWorking`，「正在运行任务，稍后再换」）。
+
+## 沙箱归谁 {#holder}
+
+开沙箱、计费、闲置回收和会话自己要手时，都要先知道这台沙箱是谁的。这些答案只在 `machine/holder.py` 里给，别处不自己去查项目或频道：
+
+| 问题 | 方法 | 频道（`Room`）的答案 |
+| --- | --- | --- |
+| 谁能让它开一台 | `require_use` | 项目名单上的人和 AI 队友 |
+| 谁付钱 | `payer` / `payers` | 项目所在团队 |
+| 要手时锁哪一行 | `lock_for_work` / `lock` / `look` | 频道那一行；归档的频道不接新的工具调用，但它的沙箱照样能销毁 |
+| 会话在哪种环境里干活 | `environment` | 会话自己选的，否则任务、频道、项目的默认 |
+| 是否正在干活 | `at_work` | 频道里任何一个对话有没跑完的一轮 |
+| 机器上的目录名 | `namespace` / `namespace_of` | 项目编号，同项目的沙箱共用包缓存 |
+| 会话凭据签给的是不是它 | `signed_for` | 凭据里的项目和频道代数与现在一致 |
+
+一台沙箱的行（`sandbox_homes.topic_id`）指向它的归属方。现在只有频道一种：频道里每条会话、每个任务和支线的沙箱都算频道的。别人的电脑和不进沙箱直接用只有频道的环境会选到，项目以外的归属方只走平台机器上的标准沙箱。
 
 ## 地点：我们的东西放在哪、能给什么 {#place}
 
