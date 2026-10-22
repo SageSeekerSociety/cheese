@@ -696,8 +696,8 @@ async def test_a_queued_input_is_not_filed_under_the_previous_work(
     tmp_path, monkeypatch, previous
 ):
     """The next input can queue long after the last result, or while another
-    work is running. Its queue notice belongs to its own delivery, not that
-    other work; queueing alone does not start executing it."""
+    work is running. Its queue notice names its delivery, but queueing alone
+    does not make it part of any execution work."""
     state = tmp_path / "state"
     runner = Runner(state)
     runner.session_id = "session-queue"
@@ -714,21 +714,31 @@ async def test_a_queued_input_is_not_filed_under_the_previous_work(
     )
     if previous != "running":
         runner.observe({"type": "result", "result": "done"})
+    next_input, next_work = str(uuid.uuid4()), str(uuid.uuid4())
+    await runner.send(next_input, "next", work_id=next_work)
     if previous == "restarted":
         runner = Runner(state)
         runner.session_id = "session-queue"
         runner.outbox.register(1)
         monkeypatch.setattr(runner, "_write", written)
 
-    next_input, next_work = str(uuid.uuid4()), str(uuid.uuid4())
-    await runner.send(next_input, "next", work_id=next_work)
     runner.observe(
         {"type": "command_lifecycle", "command_uuid": next_input, "state": "queued"}
     )
     queued = runner.journal.read(0)[-1]["record"]
-    assert queued["cheese"]["work_id"] == next_work
+    assert queued["cheese"].get("work_id") is None
+    assert queued["cheese"]["input_work_id"] == next_work
     assert runner.working is (previous == "running")
     assert runner.work == (old_work if previous == "running" else None)
+
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": next_input, "state": "started"}
+    )
+    started = runner.journal.read(0)[-1]["record"]
+    execution = old_work if previous == "running" else next_work
+    assert started["cheese"]["work_id"] == execution
+    assert started["cheese"]["input_work_id"] == next_work
+    assert runner.working and runner.work == execution
 
 
 @pytest.mark.anyio
