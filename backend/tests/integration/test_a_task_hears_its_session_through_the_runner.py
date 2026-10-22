@@ -241,21 +241,38 @@ def test_a_report_in_a_run_under_another_harness_still_stands(client):
     assert _phrases(client, project_id, task_id) == {"blocked"}
 
 
-def test_a_process_replaced_mid_run_starts_a_new_run(client):
-    """The teammate said 「在等」, and its process was replaced while the seat
-    still read running (the old process's exit never landed). The new process
-    working is a run the report was not made in: 在做."""
+def test_a_backend_reattaching_a_running_session_keeps_its_run(client):
+    """A backend came up and re-registered the teammate's runner, which was
+    still in the run it said 「卡住」 in. The run goes on, and so does 卡住."""
     project_id, task_id, seat = _a_task(client)
     chat = _Chat(client)
     runner = _Runner(client, task_id, seat)
     runner.reports(chat, SessionRunning(uuid.uuid4()))
-    _say(client, project_id, task_id, seat, "waiting")
-    assert _phrases(client, project_id, task_id) == {"waiting"}
+    _say(client, project_id, task_id, seat, "blocked")
+    assert _phrases(client, project_id, task_id) == {"blocked"}
 
     runner.register()
+
+    assert _phrases(client, project_id, task_id) == {"blocked"}
+
+
+def test_another_agents_runs_do_not_number_the_teammates_report(client):
+    """Another agent in the task is in its second run when the teammate says
+    「卡住」 just before its own first run is applied. The report belongs to
+    the teammate's run, not to the other agent's: 卡住."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    beside = _Runner(client, task_id, "cheese-beside")
+    beside.reports(chat, SessionRunning(uuid.uuid4()))
+    beside.reports(chat, SessionExited("beside-1"))
+    beside.register()
+    beside.reports(chat, SessionRunning(uuid.uuid4()))
+
+    runner = _Runner(client, task_id, seat)
+    _say(client, project_id, task_id, seat, "blocked")
     runner.reports(chat, SessionRunning(uuid.uuid4()))
 
-    assert _phrases(client, project_id, task_id) == {"running"}
+    assert _phrases(client, project_id, task_id) == {"blocked"}
 
 
 def test_a_report_by_the_teammate_before_does_not_speak_for_the_one_now(client):

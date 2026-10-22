@@ -14,7 +14,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -67,10 +67,9 @@ async def register(sessions: async_sessionmaker[AsyncSession], key: SeatKey) -> 
     """Issue the seat's runner a new worker epoch, and return it. Every epoch
     issued before it is stale from this commit on.
 
-    A registration is a new runner launch, so a new process: when the seat
-    still reads running, the process it read running was replaced mid-run,
-    and its run is over. The new process's ``running`` will not flip the
-    status, so the new run is counted here."""
+    It does not start a run: a backend that comes up re-registers the runners
+    still alive (`session_host.starting.attach`), mid-run ones included, and
+    their run goes on."""
     now = datetime.now(UTC)
     async with sessions() as session:
         epoch = await session.scalar(
@@ -85,13 +84,7 @@ async def register(sessions: async_sessionmaker[AsyncSession], key: SeatKey) -> 
             )
             .on_conflict_do_update(
                 index_elements=["conversation_id", "agent_handle", "harness"],
-                set_={
-                    "worker_epoch": SessionState.worker_epoch + 1,
-                    "run": case(
-                        (SessionState.worker_status == RUNNING, _next_run(key)),
-                        else_=SessionState.run,
-                    ),
-                },
+                set_={"worker_epoch": SessionState.worker_epoch + 1},
             )
             .returning(SessionState.worker_epoch)
         )

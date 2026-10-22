@@ -4,8 +4,9 @@ A task reads 在做 while its teammate's session runs, unless the teammate
 reported in that same run (`room_task.presentation.task_presentation`). Two
 facts go into that, and both are about the task's own teammate: a reviewer or
 any other agent working in the task's conversation is not the task being done.
-The teammate is the seat the task names (`Task.agent_handle`), or its room's
-when it names none — the same answer `AgentInstanceService.for_tasks` gives
+The teammate is the seat the task names (`Task.agent_handle`), or — when it
+names none, or that seat has left the project — its room's, then the
+project's default: the same answer `AgentInstanceService.for_tasks` gives
 every other reader. Its session's current run comes from `session_states`
 (`session_state.running_runs`).
 """
