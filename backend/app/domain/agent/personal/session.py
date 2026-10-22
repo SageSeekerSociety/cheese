@@ -45,14 +45,14 @@ GONE_AFTER_S = 15.0
 #: reasoning counts, and so do a tool call's arguments: a 题目's whole
 #: description written into a draft is one answer.
 MAX_TOKENS = 16000
-#: The context the session may grow to, and how much of it compaction keeps
-#: free: pi summarises the older part of the conversation once a question's
-#: context passes ``CONTEXT_TOKENS - RESERVE_TOKENS``, keeping the latest
-#: ``KEEP_TOKENS`` verbatim. What a question costs stays bounded however long
-#: the conversation runs.
-CONTEXT_TOKENS = 64_000
+#: How much of the context compaction keeps free, and how much of the latest
+#: conversation it keeps verbatim: pi's own defaults.
 RESERVE_TOKENS = 16_000
-KEEP_TOKENS = 8_000
+KEEP_TOKENS = 20_000
+#: The window assumed for a model the gateway declares none for: the one
+#: Claude Code assumes for a model it does not know.
+ASSUMED_WINDOW = 200_000
+
 #: How long pi waits before retrying a failed model call, doubling for each of
 #: its three retries: pi's own default, written here so that a test can make a
 #: failing gateway fail at once.
@@ -61,6 +61,19 @@ RETRY_BASE_DELAY_MS = 2000
 #: How hard it reasons, when the model honours it (the gateway's
 #: ``cheese_efforts``): writing a 题目 from a handout is worth the deeper one.
 EFFORT = "high"
+
+
+def context_tokens(model: str) -> int:
+    """The window pi is told ``model`` has. pi summarises the older part of the
+    conversation once a question's context passes it less ``RESERVE_TOKENS``:
+    where the model's provider recommends compacting
+    (``GatewayModel.compact_window``), else short of the window the gateway
+    declares, else of ``ASSUMED_WINDOW``. Sessions on Claude Code compact by
+    the same rule (``session_launch.compact_windows``)."""
+    known = next((m for m in gateway_catalog.snapshot() if m.id == model), None)
+    window = (known and known.context_window) or ASSUMED_WINDOW
+    recommended = known and known.compact_window
+    return min(window, recommended + RESERVE_TOKENS) if recommended else window
 
 
 def effort(model: str) -> str | None:
@@ -90,6 +103,9 @@ TOOLS = (
     "cheese_member_set",
     "cheese_channel_create",
     "cheese_settings_set",
+    "cheese_routine",
+    "cheese_notify_me",
+    "cheese_memory",
     "cheese_web_fetch",
     "cheese_web_search",
     "cheese_problem_write",
@@ -122,7 +138,7 @@ def session(
             thinking=True,
             effort=effort(model_roles.model("assistant_model")),
             max_tokens=MAX_TOKENS,
-            context_tokens=CONTEXT_TOKENS,
+            context_tokens=context_tokens(model_roles.model("assistant_model")),
             reserve_tokens=RESERVE_TOKENS,
             keep_tokens=KEEP_TOKENS,
             retry_base_delay_ms=RETRY_BASE_DELAY_MS,

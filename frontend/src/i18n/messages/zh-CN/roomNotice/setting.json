@@ -4,7 +4,7 @@
   "settingDefaultModel": "项目主模型",
   "settingSubagentModel": "默认分身模型",
   "settingEnvironment": "新 AI 队友默认使用的环境",
-  "settingMaxConcurrentTurns": "项目并发轮次上限",
+  "settingMaxConcurrentTurns": "项目同时运行的 AI 任务上限",
   "settingTaskNaming": "任务命名",
   "settingCommitCredit": "提交署名",
   "settingEffort": "思考强度",

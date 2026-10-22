@@ -24,6 +24,7 @@
     "failed": "调用失败"
   },
   "changes": {
+    "memory": {"title": "记忆", "saved": "已记住", "changed": "已更新", "forgotten": "已忘记"},
     "title": "表单改动",
     "created": "新建草稿",
     "untitled": "未命名题目",
@@ -116,6 +117,10 @@
     "confirm": "确认",
     "dismiss": "不用了",
     "view": "查看",
-    "failed": "发送失败"
+    "failed": "发送失败",
+    "expired": "已过期"
+  },
+  "run": {
+    "routine": "例行事务「{title}」开始运行"
   }
 }

@@ -57,10 +57,15 @@ def _file_out(row: MemoryFileRecord) -> dict:
 
 
 def _scope_of(raw: str) -> MemoryFileScope:
+    """A project's scope. A person's own memory is in no project: it is read
+    and written on their settings page and by their own 芝士, never here."""
     try:
-        return MemoryFileScope(raw)
+        scope = MemoryFileScope(raw)
     except ValueError as exc:
         raise ValidationError(say("memoryScopeInvalid")) from exc
+    if scope is MemoryFileScope.personal:
+        raise ValidationError(say("memoryScopeInvalid"))
+    return scope
 
 
 async def _readable(

@@ -15,7 +15,7 @@ import { computed, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { t } from '../../../i18n'
-import { agentNames, memberName } from '../../../lib/agentNames'
+import { agentNames, memberHoverTitle, memberName, memberOriginalName } from '../../../lib/agentNames'
 import { isAgentBlock, isAgentHandle } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
 import { isAvatarKnownFailed, rememberAvatarFailure } from '../../../utils/avatarFailures'
@@ -70,6 +70,7 @@ export function useRoomRoster(options: {
   type RosterRow = {
     name?: string
     name_source?: string
+    remark?: string | null
     handle?: string
     member_handle?: string
     user_handle?: string
@@ -129,6 +130,7 @@ export function useRoomRoster(options: {
     const room = (rosterLoaded.value ? roomMembers.value : []).map((m) => ({
       handle: m.member_handle,
       label: memberName(m) || m.member_handle,
+      originalName: m.remark ? memberOriginalName(m) || null : null,
       // 房间名册这一行就带着「他自己挑过的头像」；@ 菜单原来只配色块，所以同一个人
       // 在菜单里只有首字母、在消息行里却有真图。没挑过就是 null，交给首字母。
       avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
@@ -155,7 +157,8 @@ export function useRoomRoster(options: {
       .filter((m) => !privateChannel || !m.agent || inRoom.has(m.owner_handle ?? ''))
       .map((m) => ({
         handle: m.user_handle,
-        label: m.name || m.user_handle,
+        label: memberName(m) || m.user_handle,
+        originalName: m.remark ? memberOriginalName(m) || null : null,
         avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
         agent: !!m.agent,
         external: isExternalMember(m),
@@ -204,9 +207,14 @@ export function useRoomRoster(options: {
   }
   function displayName(m: Pick<Block, 'author_type' | 'author'>): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)
-    const name = memberByHandle.value.get(m.author)?.name
+    const row = memberByHandle.value.get(m.author)
+    const name = row ? memberName(row) : ''
     if (name) return name
     return options.closed?.().has(m.author) ? t('account.closedUser') : m.author
+  }
+  function authorTitle(m: Block): string | null {
+    if (isAgentBlock(m)) return null
+    return memberHoverTitle(memberByHandle.value.get(m.author), m.author)
   }
   /**
    * 一个 handle 在界面上的名字：队友按名册查（房间名册先说，项目名册补），人按项目
@@ -218,7 +226,8 @@ export function useRoomRoster(options: {
    */
   function nameOfHandle(handle: string): string {
     if (isAgentHandle(handle)) return agentDisplayName(handle)
-    const name = memberByHandle.value.get(handle)?.name
+    const row = memberByHandle.value.get(handle)
+    const name = row ? memberName(row) : ''
     if (name) return name
     return options.closed?.().has(handle) ? t('account.closedUser') : handle
   }
@@ -261,6 +270,7 @@ export function useRoomRoster(options: {
     agentNameOf,
     agentDisplayName,
     displayName,
+    authorTitle,
     nameOfHandle,
     isExternal,
     avatarSrc,

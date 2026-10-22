@@ -1,4 +1,24 @@
 {
+  "group": {
+    "title": "{asker} asks you {n} questions",
+    "titleBare": "Asks you {n} questions",
+    "questionOf": "Question {n} of {total}",
+    "multiHint": "Pick any number; click again to clear",
+    "otherLabel": "Other answer",
+    "previous": "Previous",
+    "next": "Next",
+    "review": "Review your answers",
+    "reviewAllAnswered": "All {total} answered",
+    "reviewMissing": "{n} unanswered — you can still submit",
+    "back": "Back to edit",
+    "submit": "Submit answers",
+    "submitted": "Submitted",
+    "unanswered": "Not answered",
+    "edit": "Edit answers",
+    "editNote": "Reopens the whole group; submit again when done",
+    "failed": "Could not submit — try again",
+    "listSeparator": ", "
+  },
   "replies": {
     "label": "Quick replies",
     "recommended": "Recommended",
@@ -11,7 +31,7 @@
     "withdrawAria": "Withdraw your answer “{text}”",
     "withdrawTitle": "Withdraw this answer?",
     "withdrawBody": "The question goes back to waiting for a reply, and anyone can pick again. The message you sent stays in the room.",
-    "withdrawFailed": "Could not withdraw it — try again",
+    "withdrawFailed": "Could not withdraw it. Try again later",
     "skip": "Skip this question",
     "skipped": "{name}: skipped",
     "undoSkip": "Undo",

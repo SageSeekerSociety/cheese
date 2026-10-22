@@ -496,8 +496,7 @@ the CLI boot e2e and remote-execution acceptance; only the serial aggregation
 jobs listed in the bullet below take the pool. The organisation is on the
 Free plan, whose documented limit is 20 concurrent hosted jobs; this repository
 is not held to it. Historical measurements from 2026-09-30/10-01 observed up to
-61 hosted jobs running concurrently and a 0.1-minute p90 runner wait for
-merge-queue jobs. This is a historical baseline, not representative of the
+61 hosted jobs running concurrently. This is a historical baseline, not representative of the
 2026-10-14 busy window, when hosted-runner waits were substantially longer.
 The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at

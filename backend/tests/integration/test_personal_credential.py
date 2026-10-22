@@ -77,6 +77,25 @@ def test_the_model_is_reached_on_the_persons_own_key(client, wired):
     assert token not in str(sent)
 
 
+def test_each_call_names_its_conversation_so_the_gateway_keeps_its_cache(client, wired):
+    """The gateway keeps a conversation on one upstream node, whose prompt
+    cache holds it, by the session the request names; pi names none, so the
+    route names the conversation the credential is for."""
+    me, _, conversation = _person(client, "asker")
+    _remember_key(client, me, "sk-person")
+    token = mint_personal_credential(user_id=me, conversation_id=conversation)
+
+    _FakeClient.seen = {}
+    r = client.post(
+        "/llm/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        content=b'{"model":"m","messages":[]}',
+    )
+
+    assert r.status_code == 200, r.text
+    assert _FakeClient.seen["headers"]["x-litellm-session-id"] == conversation
+
+
 def test_a_room_and_a_person_do_not_open_each_others_doors(client, wired):
     me, _, conversation = _person(client, "asker")
     token = mint_personal_credential(user_id=me, conversation_id=conversation)

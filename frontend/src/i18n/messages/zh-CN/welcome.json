@@ -175,7 +175,7 @@
   "skipAll": "跳过引导",
   "finish": "建好项目",
   "finishing": "正在建…",
-  "failed": "没建成：{reason}",
+  "failed": "项目创建失败：{reason}",
   "tour": {
     "aria": "界面导览",
     "next": "下一步",

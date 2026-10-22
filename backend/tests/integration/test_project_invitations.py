@@ -15,6 +15,7 @@ import asyncio
 import uuid
 
 from tests.integration.conftest import (
+    _register,
     join_project_team,
     post_project,
     room_agent_seat,
@@ -31,6 +32,8 @@ def _project(client, name: str = "Demo") -> str:
 
 
 def _invite(client, bearer, project_id: str, handle: str):
+    """Invite ``handle``, who has an account: an invitation names one."""
+    _register(client, handle)
     return client.post(
         f"/projects/{project_id}/invitations",
         json={"user_handle": handle},

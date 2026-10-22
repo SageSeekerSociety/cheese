@@ -16,8 +16,12 @@ import { decideAllSuggestions, decideSuggestion, suggestionRanges } from '../lib
 export function useDocSuggestions(editorOf: () => Editor | null | undefined) {
   const tick = ref(0)
   const current = ref<string | null>(null)
-  /** 这一次打开文档以来自己做的决定：都处理完时说一声各几处。 */
-  const decided = ref({ accepted: 0, rejected: 0 })
+  /** 这一次打开文档以来自己做的决定：都处理完时说一声各几处，并记下决定的是谁的建议。 */
+  const decided = ref<{ accepted: number; rejected: number; authors: string[] }>({
+    accepted: 0,
+    rejected: 0,
+    authors: [],
+  })
 
   const list = computed<SuggestionRange[]>(() => {
     void tick.value
@@ -60,15 +64,26 @@ export function useDocSuggestions(editorOf: () => Editor | null | undefined) {
     if (list.value.some((s) => s.id === id)) show(id)
   }
 
+  /** 这一批决定里是哪些人的建议：条子上只在全是同一个人的时候写名字。 */
+  function noteDecided(authors: string[]): void {
+    decided.value = {
+      ...decided.value,
+      authors: [...new Set([...decided.value.authors, ...authors])],
+    }
+  }
+
   function decide(id: string, accept: boolean) {
     const editor = editorOf()
     if (!editor || editor.isDestroyed) return
     const at = list.value.findIndex((s) => s.id === id)
+    const author = list.value[at]?.author ?? ''
     if (!decideSuggestion(editor.state, editor.view.dispatch, id, accept)) return
     decided.value = {
       accepted: decided.value.accepted + (accept ? 1 : 0),
       rejected: decided.value.rejected + (accept ? 0 : 1),
+      authors: decided.value.authors,
     }
+    noteDecided([author])
     // 接着看它后面那一处。
     const rest = list.value
     show(rest.length ? rest[Math.min(Math.max(at, 0), rest.length - 1)].id : null)
@@ -77,17 +92,20 @@ export function useDocSuggestions(editorOf: () => Editor | null | undefined) {
   function decideAll(accept: boolean) {
     const editor = editorOf()
     if (!editor || editor.isDestroyed) return
-    const count = list.value.length
+    const all = list.value
+    const count = all.length
     if (!count || !decideAllSuggestions(editor.state, editor.view.dispatch, accept)) return
     decided.value = {
       accepted: decided.value.accepted + (accept ? count : 0),
       rejected: decided.value.rejected + (accept ? 0 : count),
+      authors: decided.value.authors,
     }
+    noteDecided(all.map((s) => s.author))
     show(null)
   }
 
   function dismissDone() {
-    decided.value = { accepted: 0, rejected: 0 }
+    decided.value = { accepted: 0, rejected: 0, authors: [] }
   }
 
   // 正文里点到一处建议：看这一处。

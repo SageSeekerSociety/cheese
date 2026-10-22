@@ -1,0 +1,8 @@
+{
+  "channelJoinToChapter": "加入频道后才能加书签",
+  "chapterMessageNotHere": "这条消息不在这段对话里",
+  "chapterMessagesOnly": "只有消息能加书签",
+  "chapterNotInPrivateChat": "私聊里没有书签",
+  "chapterTitleRequired": "书签的名字不能为空",
+  "chapterTitleTooLong": "书签的名字最多 80 个字"
+}

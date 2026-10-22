@@ -128,6 +128,15 @@ class Runner(runner.Runner[Journal]):
         self.asked_again: set[object] = set()
         # The work a compaction under way started under (``owner``).
         self.compacting_for: dict | None = None
+        # Where the session's own request to compact has got to, if it made
+        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # in is still running, "sent" once pi has it and the compaction has not
+        # finished. Set from the thread the tool call runs on (`run_cli`).
+        self.compact_request = ""
+        #: The loop `request_compact` hops onto from the tool call's thread.
+        #: `start` sets it for sure; a runner built outside a loop (a sync
+        #: test, `test_tool_pictures_reach_the_model`) has none yet.
+        self.loop: asyncio.AbstractEventLoop | None = runner.current_loop()
         # The platform asked pi to stop: a retry cut short by it is not a
         # failure of anything.
         self.aborting = False
@@ -217,6 +226,11 @@ class Runner(runner.Runner[Journal]):
             if reason is None:
                 self.reply_settled()
                 self.turn_ended()
+                if self.compact_request == "asked":
+                    # The turn the session asked to be compacted in has
+                    # settled: pi's `compact` aborts the operation it finds
+                    # running, so it could not be asked while one was.
+                    self._ask()
             else:
                 self.continuing = asyncio.ensure_future(self._hold_to_reply(reason))
         elif kind == "auto_retry_start":
@@ -597,7 +611,11 @@ class Runner(runner.Runner[Journal]):
             )
         if catalog.is_platform_tool(tool):
             host = PlatformHost(
-                self.machine.client, self._invoke, call_id, self.doc_versions
+                self.machine.client,
+                self._invoke,
+                call_id,
+                self.doc_versions,
+                self.request_compact,
             )
             try:
                 text = await asyncio.to_thread(
@@ -632,6 +650,7 @@ class Runner(runner.Runner[Journal]):
             None,
             call_id,
             self.doc_versions,
+            self.request_compact,
         )
         # A person's 芝士 asked from a project's page acts in that project: its
         # session has no project of its own, the question's credential does.
@@ -804,6 +823,9 @@ class Runner(runner.Runner[Journal]):
         env = {**env, "TMPDIR": str(scratch)}
         self.cwd, self.env = cwd, env
         self.binary, self.args = binary, list(args)
+        # This runs on the loop the runner will keep working on, which is the
+        # one `request_compact` hops onto from a tool call's own thread.
+        self.loop = asyncio.get_running_loop()
         self.model = opening.model or ""
         self.extension_files = dict(extension or {})
         if target is None or tools is not None:
@@ -1064,7 +1086,68 @@ class Runner(runner.Runner[Journal]):
             or any(not agent.ended.done() for agent in self.children.started.values())
             or (self.jobs is not None and self.jobs.running() > 0)
             or (self.monitors is not None and self.monitors.count() > 0)
+            # A compaction asked for and not finished: pi reports it as its
+            # own events, and none of them says a turn is running.
+            or bool(self.compact_request)
         )
+
+    # --- the session compacting itself ---------------------------------------
+
+    def request_compact(self) -> str:
+        """The session asked to compact its own context (`cheese_compact`):
+        whether this is the request that will be acted on.
+
+        Asked for once — a request still waiting and one already running are
+        the same thing to the agent that asked — and asked for at the end of
+        the turn it was made in: pi's `compact` aborts whatever operation it
+        finds running, so asking mid-turn would cut the turn off.
+        """
+        if self.compact_request:
+            return "already"
+        if self.client is None:
+            # i18n-exempt: programmer invariant, never shown
+            raise RuntimeError("This session has no pi to compact")
+        self.compact_request = "asked"
+        # From the loop: a platform tool call runs in a worker thread
+        # (`run_cli`).
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self._compact_when_settled)
+        else:  # no loop of our own: nobody to hop onto, none to ask
+            self.compact_request = ""
+            # i18n-exempt: programmer invariant, never shown
+            raise RuntimeError("This session has no loop to compact on")
+        return "requested"
+
+    def _compact_when_settled(self) -> None:
+        """On the loop: ask now if pi is not working, or let the turn that is
+        ask when it settles (`_event`'s `agent_settled`)."""
+        if self.compact_request != "asked":
+            return
+        if not self.working:
+            self._ask()
+
+    def _ask(self) -> None:
+        """Go from `asked` to `sent` and start the ask, on the loop.
+
+        The transition is here, not inside `_compact_now`: this call's own hop
+        onto the loop and a settling turn can both find pi idle, and only the
+        one that finds `asked` may start it."""
+        if self.compact_request != "asked":
+            return
+        self.compact_request = "sent"
+        asyncio.ensure_future(self._compact_now())
+
+    async def _compact_now(self) -> None:
+        assert self.client is not None
+        try:
+            # Answered when the compaction is over (`compact` is not a
+            # trigger): what the room shows meanwhile comes from pi's own
+            # `compaction_start`/`compaction_end` (`events.py`).
+            await self.client.request("compact")
+        except Exception as error:  # the session goes on without it
+            print(f"compaction not asked: {error!r}", file=sys.stderr, flush=True)
+        finally:
+            self.compact_request = ""
 
     # --- the socket ----------------------------------------------------------
 

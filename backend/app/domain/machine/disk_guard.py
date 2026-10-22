@@ -50,6 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.agent.device_hub import device_hub
+from app.domain.machine import holder as holders
 from app.domain.machine import lifecycle, readings
 from app.domain.machine.lifecycle import STOP_HOLD
 from app.domain.machine.models import CloudHost, SandboxHome
@@ -215,7 +216,7 @@ class DiskGuard:
             device_id,
             "disk",
             timeout=READ_TIMEOUT_S,
-            live=[[str(row.project_id), row.resource_id] for row in live],
+            live=[[str(holders.namespace_of(row)), row.resource_id] for row in live],
             grace_s=LEFT_BEHIND_AFTER.total_seconds(),
             idle=idle,
         )

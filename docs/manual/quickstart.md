@@ -77,7 +77,7 @@ parts:
 :::walk
 1. 在底部输入框中粘贴这条消息，按 `Ctrl/Cmd+Enter` 发送。芝士在消息下方的支线里回复，并把这条支线转为任务。
 2. 点消息下方的任务卡，右侧打开这段对话；点右上角的「整页打开」进入任务页。芝士已经在做。
-3. 芝士写好 README.md 后提交审阅，页头状态变为「待你审阅」。
+3. 芝士写好 README.md 后提交审阅，页头状态变为「待审阅」。
 
 ```demo-panel
 title: 交给芝士，支线转为任务
@@ -99,7 +99,7 @@ parts:
   - kind: task
     title: 写 README.md 介绍项目
     owner: 你 负责
-    status: 进行中
+    status: 在做
     at: 1
     until: 2
   - kind: composer
@@ -109,7 +109,7 @@ parts:
   - kind: head
     room: 综合
     title: 写 README.md 介绍项目
-    status: 进行中
+    status: 在做
     owner: 你 负责
     at: 2
   - kind: head

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { pendingAppChallenge } from './appSignIn'
 import AppSignInStart from './AppSignInStart.vue'
+import { inviteCodeFor } from './inviteCode'
 
 const CHALLENGE = 'c'.repeat(43)
 const page = { template: '<div />' }
@@ -38,6 +39,12 @@ describe('starting an app sign-in in the browser', () => {
     const router = await start(`entry=signup&challenge=${CHALLENGE}`)
     await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('SignUpStart'))
     expect(pendingAppChallenge()).toBe(CHALLENGE)
+  })
+
+  it("keeps the friend's invite code in this tab for the sign-up page", async () => {
+    const router = await start(`entry=signup&challenge=${CHALLENGE}&invite=K7Q2M9`)
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('SignUpStart'))
+    expect(inviteCodeFor(undefined)).toBe('K7Q2M9')
   })
 
   it('goes straight to handing over for someone already signed in here', async () => {

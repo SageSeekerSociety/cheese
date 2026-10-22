@@ -37,7 +37,7 @@ covers:
 
 `deployment_harnesses()` 只放注册了的骨架过去，没注册的在能力矩阵里也不占一列。
 
-骨架自己的原生 subagent（Claude Code 的 `Agent`，pi 由平台扩展给的 `Task`，见 `harness/pi/subagents.py`）是会话内部的事，和任务无关：一条任务是它自己的一条会话（见[会话](/dev/session)），不是谁起的子 agent。
+骨架自己的原生 subagent（Claude Code 的 `Agent`，pi 由平台扩展给的 `Task`，见 `harness/pi/subagents.py`）是会话内部的事，和任务无关：一条任务是它自己的一条会话（见[会话](/dev/session)），不是谁起的子 agent。pi 的分身各是一个 pi 进程：一条会话同时最多跑 `RUNNING_AT_ONCE`（4）个，再起会被拒并告诉模型先等一个或停掉一个；分身的进程自己退出（崩溃、因内存被杀）时当场记为失败，等它的父会话拿到原因，会话也不再算它在忙；向平台申请模型的那段时间里这一轮被打断，分身就不起。
 
 ## 平台只认这几个动词 {#contract}
 

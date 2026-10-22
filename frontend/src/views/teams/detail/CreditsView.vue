@@ -135,6 +135,26 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
             <span>{{ t(REWARD_LABEL[item.kind]) }}</span
             ><time>{{ new Date(item.created_at).toLocaleDateString(locale) }}</time
             ><strong>{{ t('usage.rewards.gain', { n: item.credits }) }}</strong>
+            <!-- 本月邀请额度已满之后首次采纳的好友：这一行照记，但是 0 点，旁边说一句为什么。
+                 open-on-click 让触屏点得开，按钮本身让键盘够得着。 -->
+            <v-tooltip
+              v-if="item.kind === 'invite' && !item.credits"
+              :text="t('usage.rewards.inviteCapped')"
+              location="top"
+              open-on-click
+              :open-delay="0"
+            >
+              <template #activator="{ props: tip }">
+                <button
+                  type="button"
+                  class="usv__why tap-target"
+                  v-bind="tip"
+                  :aria-label="t('usage.rewards.inviteCapped')"
+                >
+                  <span class="mdi mdi-information-outline" aria-hidden="true" />
+                </button>
+              </template>
+            </v-tooltip>
           </li>
         </ul>
         <BaseEmptyState v-else-if="rewards" size="inline" :title="t('usage.rewards.empty')" />
@@ -188,11 +208,13 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
   list-style: none;
 }
 .usv__history li {
+  /* 右边留出说明图标那一格：只有「+0 点」那一行有图标，但每行都留，日期和点数才对得齐。 */
+  position: relative;
   display: flex;
   gap: 16px;
   align-items: center;
   border-top: 1px solid var(--line);
-  padding: 12px 0;
+  padding: 12px 28px 12px 0;
   font-size: 13px;
   line-height: var(--lh-13);
 }
@@ -203,6 +225,32 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
 .usv__history strong {
   color: var(--ok-ink);
   font-weight: 500;
+}
+/* 「+0 点」旁边那颗说明：20px 的图标，手指要点得中（tap-target，§3.6）；字色同 --muted。 */
+.usv__why {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  transform: translateY(-50%);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  transition: color var(--dur-quick) var(--ease-standard);
+}
+.usv__why:hover,
+.usv__why:focus-visible {
+  color: var(--text);
+}
+.usv__why:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .tcv__actions {

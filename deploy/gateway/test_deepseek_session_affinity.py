@@ -1,6 +1,6 @@
 """A conversation on deepseek-flash stays on one RUC key, so on one RUC node and its prompt cache.
 
-Builds the router from config.yaml's deepseek-flash rows and router_settings, pointed at
+Builds the router from the deepseek-flash rows (test_rows.yaml) and config.yaml's router_settings, pointed at
 a local upstream whose RUC keys can be made busy (429) or failing (500), and calls it the
 way the proxy does, with the Claude Code session in the request metadata.
 """
@@ -46,11 +46,11 @@ class Upstream(BaseHTTPRequestHandler):
 
 
 def router(base):
-    """deepseek-flash as config.yaml declares it, each RUC key and DeepSeek's API
+    """deepseek-flash as test_rows.yaml holds it, each RUC key and DeepSeek's API
     answering at its own path of the local upstream."""
     config = yaml.safe_load(Path(__file__).with_name("config.yaml").read_text())
     rows = []
-    for entry in copy.deepcopy(config["model_list"]):
+    for entry in copy.deepcopy(yaml.safe_load(Path(__file__).with_name("test_rows.yaml").read_text())["model_list"]):
         if entry["model_name"] != "deepseek-flash":
             continue
         params = entry["litellm_params"]

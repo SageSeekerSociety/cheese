@@ -15,6 +15,7 @@ import { paletteAsk } from '@/commands/palette/state'
 import { topicActions } from '@/commands/topicActions'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
+import { agentNames } from '@/lib/agentNames'
 import { phraseLabel } from '@/lib/board'
 import { channelGlyph, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
@@ -32,17 +33,24 @@ function awaitsYou(topic: Topic): boolean {
 }
 
 // 行尾写这个话题此刻走到哪：和看板同一个词，后端算好的，这里不推。只有要人动手的
-// 那一列着暖色，已完成的着绿色。
+// 那一列着暖色，已完成的着绿色。那个词说到队友时叫这间房自己那位（`agent_handle`
+// 在项目名册上的名字），房间里一位都没坐才写项目默认那位。
 function badgeOf(topic: Topic): PaletteItem['badge'] {
   const shown = topic.presentation
   if (shown)
     return {
-      text: phraseLabel(shown.phrase),
+      text: phraseLabel(shown.phrase, roomAgentName(topic)),
       tone: shown.column === 'needs_you' ? 'warn' : shown.column === 'done' ? 'ok' : undefined,
     }
   if (awaitsYou(topic)) return { text: t('navigation.palette.awaiting'), tone: 'warn' }
   if (topic.status === 'archived') return { text: t('navigation.palette.archived') }
   return undefined
+}
+
+function roomAgentName(topic: Topic): string {
+  const store = useWorkspaceStore()
+  const seat = topic.agent_handle
+  return (seat && agentNames([], store.members).get(seat)) || store.agentName
 }
 
 // 在面板里重命名：输入框换成话题名，回车就改，不离开当前这一页。

@@ -3,7 +3,7 @@
   "get_context_usage": "Context usage",
   "get_usage": "Account usage",
   "get_workspace_diff": "Workspace changes",
-  "initialize": "Session state",
+  "initialize": "Run status",
   "mcp_status": "External tool connections",
   "read_file": "Read a file"
 }

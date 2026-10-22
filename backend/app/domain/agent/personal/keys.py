@@ -31,6 +31,17 @@ async def stored_key(session: AsyncSession, user_id: int) -> str | None:
     return row.key if row is not None else None
 
 
+async def stored_key_and_model(
+    session: AsyncSession, user_id: int
+) -> tuple[str, str] | None:
+    """The person's stored key and the one model it may call. A call made on
+    the key outside its own model calls (a fetch's answer) asks for this model,
+    not the role's current one: the role can change while an answer runs, and
+    the key is only re-minted at the next question (``person_key``)."""
+    row = await session.get(AssistantGatewayKey, user_id)
+    return (row.key, row.model) if row is not None else None
+
+
 async def person_key(
     session: AsyncSession,
     user_id: int,

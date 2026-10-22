@@ -15,9 +15,8 @@ FAILURES = {"busy": "litellm.RateLimitError", "failing": "litellm.InternalServer
 
 def deployments(answer_for_key):
     """deepseek-flash's rows, each answering by mock: RUC rows by their key."""
-    config = yaml.safe_load(Path(__file__).with_name("config.yaml").read_text())
     out = []
-    for entry in copy.deepcopy(config["model_list"]):
+    for entry in copy.deepcopy(yaml.safe_load(Path(__file__).with_name("test_rows.yaml").read_text())["model_list"]):
         if entry["model_name"] != "deepseek-flash":
             continue
         params = entry["litellm_params"]

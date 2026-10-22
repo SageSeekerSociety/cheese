@@ -170,6 +170,7 @@ CALLS = {
             "title": "每周整理一次进展",
             "instructions": "把这一周的进展整理成一页",
             "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+            "owner_handle": "alice",
         },
         "POST",
         f"/topics/{TOPIC}/routines",
@@ -287,7 +288,7 @@ def _serve(executor):
     return server, platform_calls, executor_calls
 
 
-def _session(tmp_path, server, target):
+def _session(tmp_path, server, target, extra_env=None):
     config = tmp_path / "central.json"
     config.write_text(
         json.dumps({"workspace": str(tmp_path), "central_hooks": {}, **target})
@@ -303,6 +304,7 @@ def _session(tmp_path, server, target):
             "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
             "CHEESE_TOPIC": TOPIC,
             "CHEESE_PROJECT": "fixture-project",
+            **(extra_env or {}),
         },
         log,
     )
@@ -472,7 +474,9 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
     """
     process, platform_calls, executor_calls = machine_is_gone
 
-    outcome = _call(process, "cheese_routine_draft", arguments)
+    outcome = _call(
+        process, "cheese_routine_draft", {**arguments, "owner_handle": "alice"}
+    )
 
     assert said in outcome["deny"], outcome
     assert platform_calls == [], platform_calls
@@ -608,3 +612,31 @@ def test_the_task_state_tool_offers_exactly_the_states_the_platform_takes():
     offered = schema["inputSchema"]["properties"]["state"]["enum"]
     assert set(offered) == {state.value for state in TaskProgress}
     assert tools.TASK_PROGRESS_NOTE_CHARS == NOTE_MAX_CHARS
+
+
+def test_the_switch_decides_whether_the_tool_is_on_the_listing(tmp_path):
+    """`cheese_compact` 默认关着，这一条钉的是**清单**：会话侧那份 `tools/list`
+    里没有它，agent 连它的名字都看不到；部署在会话的环境里写下那一句，它才在清单
+    上。表本身两种情况下都完整（上面那条用例读的就是它）。"""
+    server, _, _ = _serve(lambda _: (503, b""))
+    try:
+        target = {"kind": "unavailable"}
+        (tmp_path / "off").mkdir()
+        (tmp_path / "on").mkdir()
+        off, log = _session(tmp_path / "off", server, target)
+        on, log_on = _session(
+            tmp_path / "on", server, target, {"CHEESE_COMPACT_TOOL": "1"}
+        )
+        try:
+            assert "cheese_compact" not in _listing(off)
+            assert "cheese_compact" in _listing(on)
+            # 别的行不受影响：开关动的只有这一样。
+            assert set(_listing(off)) == set(_listing(on)) - {"cheese_compact"}
+        finally:
+            off.close()
+            on.close()
+            log.close()
+            log_on.close()
+    finally:
+        server.shutdown()
+        server.server_close()

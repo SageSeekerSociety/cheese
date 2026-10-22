@@ -8,6 +8,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from tests.ask_fixtures import active_ask
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
+    _register,
     add_external_member,
     in_thread,
     join_project_team,
@@ -185,6 +186,7 @@ def test_team_standing_lets_a_person_manage_but_never_an_agent(client, is_agent)
     auth = _agent(client, project, origin) if is_agent else session_auth_headers(handle)
     invitations = f"/projects/{project['id']}/invitations"
     join_project_team(client, project["id"], handle)
+    _register(client, "dave")
     assert (
         client.post(invitations, json={"user_handle": "dave"}, headers=auth).status_code
         == 403

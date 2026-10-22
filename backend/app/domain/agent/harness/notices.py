@@ -36,9 +36,9 @@ _PUBLICATION_EN = (
 
 _SILENCE_ZH = (
     "这个房间已经 {minutes} 分钟没听到你说话了，提问的人还在等。"
-    "如果这一轮还在跑，现在就用 chat_send 发一条消息：说清你知道什么、"
+    "如果你还在做，现在就用 chat_send 发一条消息：说清你知道什么、"
     "在等什么——房间不出声，和卡住了分不出来。计划变了就顺手用 todo_write "
-    "改步骤清单。这一轮已经结束的话才不用理会。"
+    "改步骤清单。你已经停下的话才不用理会。"
 )
 _SILENCE_EN = (
     "You have published nothing to this room for {minutes} minutes and the "
@@ -52,7 +52,7 @@ _SILENCE_EN = (
 _CHECKLIST_ZH = (
     "你的步骤清单已经 {minutes} 分钟没动过了，而看的人只能从它知道你做到哪了。"
     "现在就用 todo_write 再写一次：做完的标成 completed，正在做的那一项标成 "
-    "in_progress。这一轮已经结束的话才不用理会。"
+    "in_progress。你已经停下的话才不用理会。"
 )
 _CHECKLIST_EN = (
     "Your step checklist has not moved for {minutes} minutes, and it is the "
@@ -83,6 +83,18 @@ _PROGRESS_EN = (
     "the new state if it changed, or the same one with a note saying what you "
     "are doing or waiting on now."
 )
+_BLOCKED_ZH = (
+    "你上一次给这件任务报的状态是「卡住了，等人帮忙」。现在有人说话、这一轮开了："
+    "如果已经能往下走，就用 cheese_task_state 报回 working 或 waiting——不然"
+    "侧栏一直亮着等你；还卡着就再报一次 blocked，note 写清在等什么。"
+)
+_BLOCKED_EN = (
+    "You last reported this task as blocked, waiting for help. Someone has "
+    "spoken and this turn is open: if you can carry on now, call "
+    "cheese_task_state again with working or waiting — until you do, the "
+    "sidebar keeps waiting on you. If you are still stuck, report blocked "
+    "again with a note saying what you are waiting for."
+)
 
 #: 展示层要拿掉的那几句。任务未命名、会话恢复这类平台通知不在这里：它们说的是
 #: 这一轮的事实，读的人需要看见。
@@ -97,6 +109,8 @@ _HIDDEN_FROM_THE_SITE = (
     _PROGRESS_NONE_EN,
     _PROGRESS_ZH,
     _PROGRESS_EN,
+    _BLOCKED_ZH,
+    _BLOCKED_EN,
 )
 
 #: 平台投进会话的那一句，连同它后面可能跟着的输入标记（`nonce.py`）。
@@ -201,6 +215,20 @@ def stale_progress_reminder(minutes: int | None, language: str | None = None) ->
         _PROGRESS_ZH.format(minutes=minutes),
         _PROGRESS_EN.format(minutes=minutes),
     )
+
+
+def blocked_report_reminder(language: str | None = None) -> str:
+    """This task's last report was 「卡住了」, and a person's message just opened
+    a turn in it.
+
+    The stale-report reminder above (`StaleProgressReminder`) only reaches a
+    session that is running, but 「卡住了」 is usually the last thing a turn
+    says: by the time someone answers, that turn is over and the reminder can
+    no longer go out. So the one moment the teammate is back at work is where
+    it is asked, and asked — not decided: whether it can carry on now is its
+    own to say, and a person answering has not necessarily unblocked it.
+    """
+    return _in_the_readers_language(language, _BLOCKED_ZH, _BLOCKED_EN)
 
 
 def strip_platform_notice(text: str) -> str:

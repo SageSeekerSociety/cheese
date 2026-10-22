@@ -127,7 +127,9 @@ async def apply(chat, report: Report) -> Applied | bool:
             if report.of_this_registration:
                 # The seat's current session is at work: the task's teammate is
                 # back, whatever an earlier session's exit said.
-                await note_agent_back(db, report.conversation_id)
+                await note_agent_back(
+                    db, report.conversation_id, by=report.agent_handle
+                )
         elif isinstance(fact, SessionIdle):
             await session_state.declare(db, key, IDLE)
             if fact.failure is not None and fact.result.session_id:
@@ -144,9 +146,11 @@ async def apply(chat, report: Report) -> Applied | bool:
             # the epoch it was registered under, leaves the session that
             # replaced it as it is.
             if await session_state.exited(db, key, report.at, epoch=report.epoch):
-                # A task's session ending is noted beside its teammate's last
-                # report.
-                await note_agent_left(db, report.conversation_id, at=report.at)
+                # A task's session ending is noted beside that teammate's last
+                # report — only when the report is the one that ended.
+                await note_agent_left(
+                    db, report.conversation_id, by=report.agent_handle, at=report.at
+                )
         await db.commit()
     if started is not None:
         payload, room = started

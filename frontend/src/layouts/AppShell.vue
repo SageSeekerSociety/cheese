@@ -109,17 +109,17 @@
     <AgentHost />
     <DeviceConnect />
     <!-- 新手引导的后半程：一个浮窗一步步带着把第一件事做完（composables/useProjectTour.ts）。
-         挂在最外层：任务页、支线里也要接着带。 -->
+         挂在最外层：任务页、支线里也要接着带。队友写项目给它起的名字：「界面导览」在改过名的项目里也能重走。 -->
     <GuideBubble
       v-if="guideStep"
       :target="guideStep.target"
       :ring="!guideStep.area"
-      :title="t(`welcome.guide.${guideStep.key}.title`, { agent: t('work.room.defaultAgentName') })"
+      :title="t(`welcome.guide.${guideStep.key}.title`, { agent: workspace.agentName })"
       :text="
         t(
           `welcome.guide.${guideStep.key}.${guideStep.failed ? 'textFailed' : guideStep.waiting ? 'textWaiting' : 'text'}`,
           {
-            agent: t('work.room.defaultAgentName'),
+            agent: workspace.agentName,
           }
         )
       "
@@ -129,6 +129,24 @@
       @next="guide.next()"
       @back="guide.back()"
       @skip="guide.skip()"
+    />
+    <!-- 「知是正在内测」：每个账号说一次有哪些额度可拿（composables/useBetaNotice.ts）。 -->
+    <BetaNoticeDialog
+      v-if="betaNotice.offer.value"
+      :open="betaNotice.open.value"
+      :offer="betaNotice.offer.value"
+      :claiming="betaNotice.claiming.value"
+      :claim-failed="betaNotice.claimFailed.value"
+      @claim="betaNotice.claim()"
+      @dismiss="betaNotice.dismiss()"
+    />
+    <!-- 第一次采纳之后提醒一次：可以邀请好友了（composables/useInvitePrompt.ts）。 -->
+    <InvitePromptCard
+      v-if="invitePrompt.open.value"
+      open
+      :invites-to="{ name: 'UserSettingsInvites' }"
+      @copy-link="invitePrompt.copySignupLink()"
+      @dismiss="invitePrompt.dismiss()"
     />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
@@ -156,7 +174,9 @@ import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
 
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
+import { useBetaNotice } from '@/composables/useBetaNotice'
 import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
+import { useInvitePrompt } from '@/composables/useInvitePrompt'
 import { teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
@@ -266,6 +286,8 @@ const CommandPalette = defineAsyncComponent(() => import('@/commands/palette/Com
 const DeviceConnect = defineAsyncComponent(() => import('@/views/desktop/DeviceConnect.vue'))
 const GuideBubble = defineAsyncComponent(() => import('@/components/common/GuideBubble.vue'))
 const LeaveProjectDialog = defineAsyncComponent(() => import('@/components/LeaveProjectDialog.vue'))
+const InvitePromptCard = defineAsyncComponent(() => import('@/components/invites/InvitePromptCard.vue'))
+const BetaNoticeDialog = defineAsyncComponent(() => import('@/components/usage/BetaNoticeDialog.vue'))
 const sudoWanted = ref(false)
 watch(pendingSudo, (request) => {
   if (request) sudoWanted.value = true
@@ -417,6 +439,7 @@ watch(awaitingCount, desktopBadge)
 // 协议实质变更后的重新同意（#1486）：取数在 composable 里，这里只把它接到弹窗上。
 const {
   pending: pendingConsents,
+  checked: consentsChecked,
   accepting: acceptingConsents,
   error: consentError,
   accept: acceptConsents,
@@ -471,6 +494,19 @@ onBeforeUnmount(
 // 新手引导此刻在哪一步、指着什么。动作步做到了自己往下走（`settle`），所以页面上一
 // 出现新东西（登记表一变）、服务端的事实一变，就重新判一次。
 const guide = useProjectTour()
+// 新手引导还在带、或者协议弹窗还开着，邀请提醒就等一等，不和它们抢。
+const invitePrompt = useInvitePrompt(() => guide.active.value || pendingConsents.value.length > 0)
+// 内测说明等协议问完、新手引导确定不带（走完了，或者问回来这个人已经会了）、邀请小卡
+// 不在了才出来，免得刚出来又被别的盖住。反过来不用等：说明是个模态框，开着的时候采纳
+// 不了，邀请小卡也就到不了期。
+const betaNotice = useBetaNotice(
+  () =>
+    !consentsChecked.value ||
+    pendingConsents.value.length > 0 ||
+    guide.active.value ||
+    (!guide.done.value && guide.facts.value === null) ||
+    invitePrompt.open.value
+)
 const guideRevision = useGuideAnchorRevision()
 const guideHas = (name: string) => !!guideAnchor(name)
 watch(

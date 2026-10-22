@@ -102,7 +102,7 @@ export const DASHBOARD_ENTRIES: CatalogEntry[] = [
   {
     id: 'admin-dashboard-integrations',
     title: 'AdminDashboardIntegrations',
-    about: '集成健康那一屏：OAuth 凭据、passkey 覆盖、投递账本，和四条「今天查不到」。',
+    about: '集成健康那一屏：OAuth 授权、passkey 覆盖、投递账本，和四条「今天查不到」。',
     file: 'src/components/admin/dashboard/AdminDashboardIntegrations.vue',
     component: AdminDashboardIntegrations,
     needs: UI,
@@ -111,7 +111,7 @@ export const DASHBOARD_ENTRIES: CatalogEntry[] = [
         name: '一屏集成',
         note: '「还会补发」和「死信」分开画：前者补发扫描还会再试，后者试满次数已放弃 —— 合成一个「未送达」会让有救的和没救的看起来一样。',
         props: { data: DASH_INTEGRATIONS, loading: false },
-        expect: 'OAuth 凭据',
+        expect: 'OAuth 授权',
       },
       { name: '首次加载', note: LOADING, props: { data: null, loading: true } },
     ],

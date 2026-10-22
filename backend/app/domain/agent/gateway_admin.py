@@ -251,7 +251,9 @@ class GatewayAdmin:
         """窗口内的用量。按模型归因取 ``breakdown.model_groups``——它的键正好是
         ``/model/info`` 的 ``model_name``;``breakdown.models`` 用的是另一个名字,用错
         整张表就对不上号。按项目取 ``breakdown.api_keys``(键是 key 的 sha256,与
-        ``/key/list`` 的 ``token`` 一致)。窗口是闭区间,``end_date`` 当天含在内。
+        ``/key/list`` 的 ``token`` 一致)。``breakdown.models`` 另记一份进
+        ``by_upstream``,只给消费上限用:上限按上游模型名计账。窗口是闭区间,
+        ``end_date`` 当天含在内。
         """
         response = await self._request(
             "GET",
@@ -266,6 +268,7 @@ class GatewayAdmin:
         daily: list[dict] = []
         by_model: dict[str, ModelUsage] = {}
         by_key: dict[str, ModelUsage] = {}
+        by_upstream: dict[str, ModelUsage] = {}
         for row in results:
             if not isinstance(row, dict):
                 continue
@@ -277,6 +280,8 @@ class GatewayAdmin:
                 _accumulate(by_model, model_name, usage)
             for key_hash, entry in _entries(breakdown, "api_keys").items():
                 _accumulate(by_key, key_hash, _usage(_metrics_of(entry)))
+            for upstream, entry in _entries(breakdown, "models").items():
+                _accumulate(by_upstream, upstream, _usage(_metrics_of(entry)))
             daily.append(
                 {
                     "date": str(row.get("date") or ""),
@@ -291,6 +296,7 @@ class GatewayAdmin:
             by_model=by_model,
             by_key=by_key,
             daily=daily,
+            by_upstream=by_upstream,
         )
 
     async def add_model(

@@ -41,7 +41,7 @@ from app.domain.agent.harness.driven.subscription import Seat
 from app.domain.agent.place import seat_key
 from app.domain.agent.platform_failures import (
     RUNNER_REPLACED_CODE,
-    RUNNER_REPLACED_MESSAGE,
+    runner_replaced_message,
 )
 from app.domain.agent.reads import Read, Replaced
 from app.domain.agent.room import sessions as pkg
@@ -424,7 +424,7 @@ async def _replaced(svc: pkg.RoomSessions, outdated: Outdated, *, failed: bool) 
             seat[0],
             work,
             AgentResult(
-                text=RUNNER_REPLACED_MESSAGE if failed else "",
+                text=runner_replaced_message(live.acting) if failed else "",
                 session_id=live.conversation,
                 is_error=failed,
                 failure_code=RUNNER_REPLACED_CODE if failed else None,

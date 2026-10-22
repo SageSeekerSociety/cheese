@@ -4,7 +4,7 @@
   "cc": "Cc",
   "confirmSend": "Confirm and send",
   "discard": "Discard",
-  "discardFailed": "Couldn't discard",
+  "discardFailed": "Couldn't discard the draft",
   "discarded": "Discarded",
   "from": "From {account}",
   "hint": "The email above is exactly what gets sent. {name} can't send it for you.",

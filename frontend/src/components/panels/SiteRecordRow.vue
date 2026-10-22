@@ -84,17 +84,21 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
           <pre>{{ part.text }}</pre>
         </details>
       </details>
-      <details v-else-if="part.kind === 'output'" :class="{ 'record-row--failed': part.failed }">
-        <summary>
-          {{ part.failed ? t('work.room.site.failed') : t('work.room.site.fullOutput') }}
-          <span class="record-row__call">{{ part.call_id }}</span>
-          <span v-if="long(part.text)">{{
-            t('work.room.site.expandAll', { count: part.text?.split('\n').length })
-          }}</span>
-          <pre v-if="long(part.text)" class="record-row__preview">{{ head(part.text) }}</pre>
-        </summary>
-        <pre>{{ part.text }}</pre>
-      </details>
+      <template v-else-if="part.kind === 'output'">
+        <details :class="{ 'record-row--failed': part.failed }">
+          <summary>
+            {{ part.failed ? t('work.room.site.failed') : t('work.room.site.fullOutput') }}
+            <span class="record-row__call">{{ part.call_id }}</span>
+            <span v-if="long(part.text)">{{
+              t('work.room.site.expandAll', { count: part.text?.split('\n').length })
+            }}</span>
+          </summary>
+          <pre>{{ part.text }}</pre>
+        </details>
+        <pre v-if="long(part.text)" class="record-row__preview" :class="{ 'record-row--failed': part.failed }">{{
+          head(part.text)
+        }}</pre>
+      </template>
       <template v-else-if="part.kind === 'image'">
         <button
           v-if="part.source?.sha256 && !images[part.source.sha256]"
@@ -115,15 +119,19 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
         </p>
         <p v-if="imageError">{{ t('work.room.site.loadFailed') }}</p>
       </template>
-      <details v-else-if="part.kind === 'text' && long(part.text)">
-        <summary>
-          {{ t('work.room.site.expandAll', { count: part.text?.split('\n').length }) }}
-          <pre class="record-row__preview">{{ head(part.text) }}</pre>
-        </summary>
-        <div class="record-row__prose"><MarkdownView :source="part.text || ''" as="chat" /></div>
-      </details>
+      <template v-else-if="part.kind === 'text' && long(part.text)">
+        <details>
+          <summary>
+            {{ t('work.room.site.expandAll', { count: part.text?.split('\n').length }) }}
+          </summary>
+          <div class="record-row__prose"><MarkdownView :source="part.text || ''" as="chat" /></div>
+        </details>
+        <pre class="record-row__preview">{{ head(part.text) }}</pre>
+      </template>
       <MarkdownView v-else-if="part.kind === 'text'" :source="part.text || ''" as="chat" />
-      <p v-else-if="part.kind === 'status'">{{ t(`work.room.site.status.${part.label}`) }} {{ part.text }}</p>
+      <p v-else-if="part.kind === 'status'" class="record-row__status">
+        {{ t(`work.room.site.status.${part.label}`) }} {{ part.text }}
+      </p>
     </template>
     <details v-if="raw && json" class="record-row__json">
       <summary>{{ t('work.room.site.recordJson') }}</summary>
@@ -197,7 +205,7 @@ img {
 .record-row__call {
   overflow-wrap: anywhere;
 }
-details[open] > summary .record-row__preview {
+details[open] + .record-row__preview {
   display: none;
 }
 </style>

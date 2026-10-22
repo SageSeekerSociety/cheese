@@ -198,6 +198,8 @@ def test_the_room_line_names_the_teammate_that_drafted(client, mailbox):
     [card] = _room_events(client, room, person, "mail_drafted")
     assert card["content"].startswith(f"<@{seat}> "), card["content"]
     assert "芝士" not in card["content"]
+    # 卡上说「由 X 起草」时叫的是写它的那位，不是项目默认的队友。
+    assert card["meta"]["mail"]["drafted_by"] == seat
 
 
 def _room_events(client, room, person, event_type):
@@ -251,6 +253,34 @@ def test_an_attachment_changed_after_drafting_is_not_sent(client, mailbox):
 
     assert r.status_code >= 400 and "被改过" in r.text
     assert mailbox.sent == []
+    # Who to ask for a new draft is the teammate that wrote it. The refusal is
+    # also read in a toast outside any room, so it carries the name itself —
+    # no `<@seat>` token a toast would show as written.
+    said = r.json()["error"]["message"]
+    assert "<@" not in said
+    assert "芝士" in said  # this project's teammate still has its default name
+
+
+def test_an_attachment_refusal_names_a_renamed_teammate(client, mailbox):
+    person, project, room = _setup(client)
+    for agent in client.get(
+        f"/projects/{project}/agents", headers=session_auth_headers(OWNER)
+    ).json()["data"]["data"]:
+        r = client.put(
+            f"/projects/{project}/agents/{agent['id']}",
+            json={"display_name": "Nova"},
+            headers=session_auth_headers(OWNER),
+        )
+        assert r.status_code == 200, r.text
+    row = _connect(client, person, [project])
+    library.write_room_file(uuid.UUID(project), uuid.UUID(room), "报告.docx", b"v1")
+    draft = _draft(client, row, room, ["报告.docx"]).json()["data"]
+    library.write_room_file(uuid.UUID(project), uuid.UUID(room), "报告.docx", b"v2")
+
+    r = client.post(f"/me/mail-drafts/{draft['id']}/send", headers=person)
+
+    said = r.json()["error"]["message"]
+    assert "让Nova重新起草" in said and "芝士" not in said
 
 
 def test_a_failed_send_is_reported_as_failed(client, mailbox):

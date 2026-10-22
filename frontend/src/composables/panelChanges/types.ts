@@ -21,4 +21,9 @@ export interface PanelChangesProps {
   /** Bumped by WorkPanel when a turn ends — the moment 芝士's commits and its
    *  working tree actually changed. Silent re-fetch, never a spinner. */
   refreshTick?: number
+  /** 这间房的队友叫什么；任务单独指定了别的队友时按 `memberNames` 认它。状态那一句
+   *  （「小 C 在做」）说到它。 */
+  agentName?: string
+  /** handle → 名册上的名字。 */
+  memberNames?: Record<string, string>
 }

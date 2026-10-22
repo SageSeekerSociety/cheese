@@ -81,18 +81,26 @@ DELEGATED_ROUTES: dict[str, bool] = {
     # What it does that others see goes through its gate first, which hands
     # back a pass for the routes in `GATED_ROUTES`.
     "app.api.routes.assistant_agent.agent_act": True,
+    "app.api.routes.assistant_agent.agent_wait": False,
     # What is the person's own — their notification settings, how much of a
     # channel reaches them — it changes directly, as a change they can undo.
     "app.api.routes.assistant_agent.agent_notify": True,
     "app.api.routes.notification_preferences.agent_read_preferences": False,
     "app.api.routes.notification_preferences.agent_set_preference": True,
+    # What it does for the person on its own later — routines —, telling them
+    # something, and what it remembers of them: theirs alone, done directly.
+    "app.api.routes.assistant_agent.agent_routine": True,
+    "app.api.routes.assistant_agent.agent_notify_me": True,
+    "app.api.routes.assistant_agent.agent_memory": True,
 }
 
 
 #: The routes a person's own 芝士 reaches only with a pass its gate issued for
 #: that call (`assistant.gate`, `assistant.passes`): what others see — a
 #: message, a task, a decision, a member, a channel — and reading a web page,
-#: whose address can carry what it read out to the host it names. The pass is
+#: whose address can carry what it read out to the host it names (a page on a
+#: documentation site Claude Code reads freely gets its pass with no look,
+#: ``fetch.preapproved``). The pass is
 #: the gate's verdict; without one the route refuses the credential.
 GATED_ROUTES: frozenset[str] = frozenset(
     {

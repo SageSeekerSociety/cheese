@@ -2,21 +2,34 @@
 /**
  * 「芝士」设置页的渲染面：只吃 props、只发事件。取数与保存在同目录的 `Assistant.vue`。
  *
- * 三块，自上而下：一定先问我（几类事，勾上就每次都先问），用自己的话补充（可以直接做、
- * 要先问我两段，芝士的把关会读），最近替你做的事（做了的、先问了的，问的写原因）。
+ * 五块，自上而下：需要确认（几类勾选，和自己添加的条目），无需确认（自己添加的条目），
+ * 记忆（芝士记得的关于你的事：开关、逐条改和删、全部清除），
+ * 例行事务（芝士自己定时或在某件事发生时做的事：何时运行、最近一次怎样、暂停恢复删除），
+ * 最近的操作（做了的、请人确认过的，请人确认的写原因）。
  */
-import type { AssistantActivityItem, AssistantRules } from '@/api'
+import type {
+  AssistantActivityItem,
+  AssistantMemory,
+  AssistantMemoryItem,
+  AssistantRoutine,
+  AssistantRules,
+} from '@/api'
 
-import { ref, watch } from 'vue'
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import SaveStatus from '@/components/base/SaveStatus.vue'
-import { t } from '@/i18n'
+import { fmtPoints } from '@/lib/creditUsage'
 import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{
   rules: AssistantRules | null
+  memory: AssistantMemory | null
+  routines: AssistantRoutine[]
+  routineLimit: number
   recent: AssistantActivityItem[]
   loading: boolean
   failed: boolean
@@ -28,22 +41,78 @@ const props = defineProps<{
 const emit = defineEmits<{
   retry: []
   toggle: [code: string]
-  saveWords: [words: { allowText: string; askText: string }]
+  addItem: [list: 'ask' | 'allow', text: string]
+  removeItem: [list: 'ask' | 'allow', index: number]
+  routine: [id: string, action: 'pause' | 'resume' | 'delete']
+  memoryEnabled: [on: boolean]
+  memoryEdit: [name: string, description: string, text: string]
+  memoryDelete: [name: string]
+  memoryClear: []
+  openConversation: [id: string]
 }>()
 
-const allowText = ref('')
-const askText = ref('')
-watch(
-  () => props.rules,
-  (now) => {
-    allowText.value = now?.allowText ?? ''
-    askText.value = now?.askText ?? ''
-  },
-  { immediate: true }
-)
+const { t, locale } = useI18n()
 
-const changed = () =>
-  props.rules !== null && (allowText.value !== props.rules.allowText || askText.value !== props.rules.askText)
+const drafts = ref({ ask: '', allow: '' })
+
+function add(list: 'ask' | 'allow') {
+  const text = drafts.value[list].trim()
+  if (!text) return
+  emit('addItem', list, text)
+  drafts.value[list] = ''
+}
+
+/** 正在改的那条记忆，和改到一半的两格。 */
+const editing = ref<{ name: string; description: string; text: string } | null>(null)
+const clearing = ref(false)
+
+function edit(item: AssistantMemoryItem) {
+  editing.value = { name: item.name, description: item.description, text: item.text }
+}
+
+function saveEdit() {
+  const now = editing.value
+  if (!now || !now.description.trim() || !now.text.trim()) return
+  emit('memoryEdit', now.name, now.description.trim(), now.text.trim())
+  editing.value = null
+}
+
+function confirmClear() {
+  emit('memoryClear')
+  clearing.value = false
+}
+
+/** 要删除的那条例行事务：先确认。 */
+const deleting = ref<AssistantRoutine | null>(null)
+// A one-off that has run no longer counts toward the limit.
+const counted = computed(() => props.routines.filter((r) => r.state !== 'done').length)
+
+function confirmDelete() {
+  if (deleting.value) emit('routine', deleting.value.id, 'delete')
+  deleting.value = null
+}
+
+function when(at: string): string {
+  return new Intl.DateTimeFormat(locale.value, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(at))
+}
+
+function state(r: AssistantRoutine): string {
+  if (r.state === 'done') return t('account.assistant.routines.ran')
+  if (r.state === 'paused') return t(`account.assistant.routines.paused.${r.paused || 'person'}`)
+  return r.nextRunAt ? t('account.assistant.routines.next', { time: when(r.nextRunAt) }) : ''
+}
+
+function last(r: AssistantRoutine): string {
+  const run = r.lastRun
+  if (!run) return ''
+  if (run.status === 'done' && run.asked) return t('account.assistant.routines.last.asked', { n: run.asked })
+  return t(`account.assistant.routines.last.${run.status}`)
+}
 </script>
 
 <template>
@@ -67,10 +136,10 @@ const changed = () =>
     </div>
     <BaseLoadError v-else-if="failed" :title="t('account.assistant.loadFailed')" @retry="emit('retry')" />
     <template v-else-if="rules">
-      <section class="settings-card">
-        <h2 class="settings-card__title">{{ t('account.assistant.always.title') }}</h2>
-        <p class="settings-card__desc">{{ t('account.assistant.always.desc') }}</p>
-        <ul class="ast__checks">
+      <section v-for="list in ['ask', 'allow'] as const" :key="list" class="settings-card">
+        <h2 class="settings-card__title">{{ t(`account.assistant.${list}.title`) }}</h2>
+        <p class="settings-card__desc">{{ t(`account.assistant.${list}.desc`) }}</p>
+        <ul v-if="list === 'ask'" class="ast__checks">
           <li v-for="c in rules.categories" :key="c.code">
             <label class="ast__check">
               <input
@@ -83,44 +152,166 @@ const changed = () =>
             </label>
           </li>
         </ul>
+        <ul class="ast__items">
+          <li
+            v-for="(item, i) in list === 'ask' ? rules.askItems : rules.allowItems"
+            :key="`${i}-${item}`"
+            class="ast__entry"
+          >
+            <span class="ast__entry-text">{{ item }}</span>
+            <BaseButton kind="ghost" size="sm" :disabled="saving" @click="emit('removeItem', list, i)">
+              {{ t('account.assistant.items.remove') }}
+            </BaseButton>
+          </li>
+          <li v-if="list === 'allow' && !rules.allowItems.length" class="ast__entry ast__entry--empty">
+            {{ t('account.assistant.items.empty') }}
+          </li>
+        </ul>
+        <form class="ast__add" @submit.prevent="add(list)">
+          <input
+            :id="`ast-${list}`"
+            v-model="drafts[list]"
+            class="ast__text"
+            maxlength="200"
+            autocomplete="off"
+            :aria-label="t(`account.assistant.${list}.title`)"
+            :placeholder="t(`account.assistant.${list}.hint`)"
+          />
+          <BaseButton kind="secondary" size="sm" type="submit" :disabled="!drafts[list].trim() || saving">
+            {{ t('account.assistant.items.add') }}
+          </BaseButton>
+        </form>
+      </section>
+
+      <section v-if="memory" class="settings-card">
+        <div class="ast__memory-head">
+          <h2 class="settings-card__title ast__title-row">
+            <span>{{ t('account.assistant.memory.title') }}</span>
+            <span v-if="memory.items.length" class="ast__count t-num">{{
+              t('account.assistant.memory.count', { n: memory.items.length })
+            }}</span>
+          </h2>
+          <v-switch
+            id="ast-memory"
+            :model-value="memory.enabled"
+            :disabled="saving"
+            :aria-label="t('account.assistant.memory.use')"
+            color="primary"
+            density="compact"
+            inset
+            hide-details
+            @update:model-value="(v) => emit('memoryEnabled', v === true)"
+          />
+        </div>
+        <p class="settings-card__desc">
+          {{ memory.enabled ? t('account.assistant.memory.desc') : t('account.assistant.memory.off') }}
+        </p>
+        <p v-if="!memory.items.length" class="ast__none">{{ t('account.assistant.memory.empty') }}</p>
+        <ul v-else class="ast__recent">
+          <li v-for="item in memory.items" :key="item.name" class="ast__routine">
+            <form v-if="editing?.name === item.name" class="ast__memory-edit" @submit.prevent="saveEdit">
+              <input
+                :id="`ast-memory-${item.name}-description`"
+                v-model="editing.description"
+                class="ast__text"
+                maxlength="150"
+                autocomplete="off"
+                :aria-label="t('account.assistant.memory.description')"
+              />
+              <textarea
+                :id="`ast-memory-${item.name}-text`"
+                v-model="editing.text"
+                class="ast__text ast__textarea"
+                rows="3"
+                maxlength="1000"
+                autocomplete="off"
+                :aria-label="t('account.assistant.memory.text')"
+              />
+              <div class="ast__actions">
+                <BaseButton kind="ghost" size="sm" @click="editing = null">
+                  {{ t('account.assistant.routines.cancel') }}
+                </BaseButton>
+                <BaseButton
+                  kind="secondary"
+                  size="sm"
+                  type="submit"
+                  :disabled="saving || !editing.description.trim() || !editing.text.trim()"
+                >
+                  {{ t('account.assistant.memory.save') }}
+                </BaseButton>
+              </div>
+            </form>
+            <template v-else>
+              <div class="ast__body">
+                <p class="ast__summary">{{ item.description }}</p>
+                <p class="ast__reason ast__memory-text">{{ item.text }}</p>
+              </div>
+              <div class="ast__actions">
+                <BaseButton kind="ghost" size="sm" :disabled="saving" @click="edit(item)">
+                  {{ t('account.assistant.memory.edit') }}
+                </BaseButton>
+                <BaseButton kind="ghost" size="sm" :disabled="saving" @click="emit('memoryDelete', item.name)">
+                  {{ t('account.assistant.items.remove') }}
+                </BaseButton>
+              </div>
+            </template>
+          </li>
+        </ul>
+        <div v-if="memory.items.length" class="ast__memory-foot">
+          <BaseButton kind="ghost" size="sm" :disabled="saving" @click="clearing = true">
+            {{ t('account.assistant.memory.clear') }}
+          </BaseButton>
+        </div>
       </section>
 
       <section class="settings-card">
-        <h2 class="settings-card__title">{{ t('account.assistant.words.title') }}</h2>
-        <p class="settings-card__desc">{{ t('account.assistant.words.desc') }}</p>
-        <div class="ast__words">
-          <label for="ast-allow" class="ast__label">{{ t('account.assistant.words.allow') }}</label>
-          <textarea
-            id="ast-allow"
-            v-model="allowText"
-            class="ast__text"
-            rows="3"
-            maxlength="2000"
-            autocomplete="off"
-            :placeholder="t('account.assistant.words.allowHint')"
-          />
-          <label for="ast-ask" class="ast__label">{{ t('account.assistant.words.ask') }}</label>
-          <textarea
-            id="ast-ask"
-            v-model="askText"
-            class="ast__text"
-            rows="3"
-            maxlength="2000"
-            autocomplete="off"
-            :placeholder="t('account.assistant.words.askHint')"
-          />
-          <div>
-            <BaseButton
-              kind="primary"
-              size="sm"
-              :disabled="!changed()"
-              :loading="saving"
-              @click="emit('saveWords', { allowText: allowText.trim(), askText: askText.trim() })"
-            >
-              {{ t('account.assistant.words.save') }}
-            </BaseButton>
-          </div>
-        </div>
+        <h2 class="settings-card__title ast__title-row">
+          <span>{{ t('account.assistant.routines.title') }}</span>
+          <span v-if="routines.length" class="ast__count t-num">{{
+            t('account.assistant.routines.count', { n: counted, max: routineLimit })
+          }}</span>
+        </h2>
+        <p class="settings-card__desc">{{ t('account.assistant.routines.desc') }}</p>
+        <p v-if="!routines.length" class="ast__none">{{ t('account.assistant.routines.empty') }}</p>
+        <ul v-else class="ast__recent">
+          <li v-for="r in routines" :key="r.id" class="ast__routine">
+            <div class="ast__body">
+              <p class="ast__summary">{{ r.title }}</p>
+              <p class="ast__reason">{{ r.when }}</p>
+              <p class="ast__meta">
+                <span v-if="state(r)" :class="{ ast__paused: r.state === 'paused' }">{{ state(r) }}</span>
+                <span v-if="last(r)">{{ last(r) }}</span>
+                <span v-if="r.weekCredits > 0" class="t-num">{{
+                  t('account.assistant.routines.cost', { n: fmtPoints(r.weekCredits, locale) })
+                }}</span>
+              </p>
+            </div>
+            <div class="ast__actions">
+              <BaseButton
+                v-if="r.lastRun?.conversationId"
+                kind="ghost"
+                size="sm"
+                @click="emit('openConversation', r.lastRun?.conversationId ?? '')"
+              >
+                {{ t('account.assistant.routines.view') }}
+              </BaseButton>
+              <BaseButton
+                v-if="r.state !== 'done'"
+                kind="ghost"
+                size="sm"
+                :disabled="saving"
+                @click="emit('routine', r.id, r.state === 'paused' ? 'resume' : 'pause')"
+              >
+                {{
+                  r.state === 'paused' ? t('account.assistant.routines.resume') : t('account.assistant.routines.pause')
+                }}
+              </BaseButton>
+              <BaseButton kind="ghost" size="sm" :disabled="saving" @click="deleting = r">
+                {{ t('account.assistant.routines.delete') }}
+              </BaseButton>
+            </div>
+          </li>
+        </ul>
       </section>
 
       <section class="settings-card">
@@ -142,6 +333,31 @@ const changed = () =>
         </ul>
       </section>
     </template>
+
+    <ConfirmDialog
+      :model-value="deleting !== null"
+      :title="t('account.assistant.routines.deleteTitle', { title: deleting?.title ?? '' })"
+      :confirm-label="t('account.assistant.routines.delete')"
+      :cancel-label="t('account.assistant.routines.cancel')"
+      danger
+      @update:model-value="(open: boolean) => !open && (deleting = null)"
+      @confirm="confirmDelete"
+      @cancel="deleting = null"
+    >
+      {{ t('account.assistant.routines.deleteBody') }}
+    </ConfirmDialog>
+    <ConfirmDialog
+      :model-value="clearing"
+      :title="t('account.assistant.memory.clearTitle')"
+      :confirm-label="t('account.assistant.memory.clear')"
+      :cancel-label="t('account.assistant.routines.cancel')"
+      danger
+      @update:model-value="(open: boolean) => !open && (clearing = false)"
+      @confirm="confirmClear"
+      @cancel="clearing = false"
+    >
+      {{ t('account.assistant.memory.clearBody', { n: memory?.items.length ?? 0 }) }}
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -164,7 +380,7 @@ const changed = () =>
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 0 16px;
-  padding: 0 24px 12px;
+  padding: 0 24px 8px;
   margin: 0;
   list-style: none;
 }
@@ -187,28 +403,50 @@ const changed = () =>
   accent-color: var(--accent);
 }
 
-.ast__words {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 0 24px 20px;
+.ast__items {
+  padding: 0;
+  margin: 0;
+  list-style: none;
 }
 
-.ast__label {
-  font-size: 13px;
-  font-weight: 500;
-  line-height: var(--lh-13);
+.ast__entry {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 24px;
+  font-size: 14px;
+  line-height: var(--lh-14);
   color: var(--ink);
+  border-top: 1px solid var(--line);
+}
+
+.ast__entry-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ast__entry--empty {
+  padding-block: 10px;
+  color: var(--muted);
+}
+
+.ast__add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 24px 20px;
+  border-top: 1px solid var(--line);
 }
 
 .ast__text {
   box-sizing: border-box;
-  width: 100%;
-  padding: 8px 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
   font: inherit;
   font-size: 14px;
   color: var(--ink);
-  resize: vertical;
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-sm);
@@ -217,6 +455,27 @@ const changed = () =>
 .ast__text:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.ast__title-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.ast__count {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.ast__none {
+  padding: 0 24px 20px;
+  margin: 0;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
 }
 
 .ast__recent {
@@ -233,6 +492,71 @@ const changed = () =>
   align-items: start;
   padding: 12px 24px;
   border-top: 1px solid var(--line);
+}
+
+.ast__routine {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line);
+}
+
+.ast__memory-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 24px;
+}
+
+.ast__memory-head .settings-card__title {
+  margin-bottom: 0;
+}
+
+.ast__memory-text {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.ast__memory-edit {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ast__textarea {
+  resize: vertical;
+}
+
+.ast__memory-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 24px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.ast__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.ast__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.ast__paused {
+  color: var(--text);
 }
 
 .ast__chip {
@@ -252,6 +576,10 @@ const changed = () =>
 .ast__chip--asked {
   color: var(--accent-ink);
   background: var(--accent-wash, var(--fill));
+}
+
+.ast__body {
+  min-width: 0;
 }
 
 .ast__summary {
@@ -280,12 +608,25 @@ const changed = () =>
 /* The card's own padding narrows on a phone (`settings-card.css`): these blocks follow it. */
 @media (max-width: 767.98px) {
   .ast__checks,
-  .ast__words {
+  .ast__entry,
+  .ast__add,
+  .ast__none,
+  .ast__item,
+  .ast__routine,
+  .ast__memory-foot {
     padding-inline: 16px;
   }
 
-  .ast__item {
-    padding-inline: 16px;
+  .ast__memory-head {
+    padding-right: 16px;
+  }
+
+  .ast__routine {
+    flex-direction: column;
+  }
+
+  .ast__actions {
+    justify-content: flex-start;
   }
 }
 </style>

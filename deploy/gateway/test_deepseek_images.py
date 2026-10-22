@@ -25,7 +25,7 @@ async def main():
         for item in config["litellm_settings"].get("custom_provider_map") or []
     ]
     custom_llm_setup()
-    litellm.Router(model_list=config["model_list"])
+    litellm.Router(model_list=yaml.safe_load(Path(__file__).with_name("test_rows.yaml").read_text())["model_list"])
     image = {
         "type": "image",
         "source": {"type": "base64", "media_type": "image/png", "data": IMAGE},

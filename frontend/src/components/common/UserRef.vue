@@ -22,6 +22,8 @@ const props = defineProps<{
   handle?: string | null
   /** 显示名。不传就画 handle。 */
   name?: string | null
+  /** 设了个人备注时悬停看到的原名与 @handle。 */
+  title?: string | null
   /** 去处。为空表示没有去处：照样画名字，但不可点。 */
   to?: UserRefTarget | null
 }>()
@@ -43,6 +45,7 @@ function go(e: Event) {
     v-if="to"
     class="name-ref"
     :data-handle="handle"
+    :title="title || undefined"
     data-user-content
     role="link"
     tabindex="0"
@@ -50,5 +53,7 @@ function go(e: Event) {
     @keydown.enter.prevent="go"
     >{{ label }}</span
   >
-  <span v-else-if="label" class="name-ref name-ref--static" data-user-content>{{ label }}</span>
+  <span v-else-if="label" class="name-ref name-ref--static" :title="title || undefined" data-user-content>{{
+    label
+  }}</span>
 </template>

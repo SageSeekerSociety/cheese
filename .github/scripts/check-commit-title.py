@@ -1,7 +1,7 @@
 """This repository's commit-title convention, checked on the titles that land on main.
 
-Every change reaches main as one squash commit through the merge queue, so that
-commit's title is all `git log` says about it. This repo writes it as an English
+Every change reaches main as one squash commit, so that commit's title is all
+`git log` says about it. This repo writes it as an English
 Conventional Commit (docs/workflows.md §5). The platform leaves a hosted
 repository's titles to that repository, this one included, so the check lives
 here. It reads titles from its arguments, or one per line on stdin when there
@@ -144,10 +144,7 @@ PLACEHOLDER_HINT = (
     " asks for the retired Projects-classic field):\n"
     "  gh api -X PATCH repos/<owner>/<repo>/pulls/<number> -f title='<subject>'\n"
     "Editing the title runs this check again on its own (pr-title.yml), so no"
-    " new commit and no manual re-run are needed. When what carries it is a"
-    " commit on the branch rather than the PR title — the merge queue hands"
-    " this check the branch's commit subjects — amend that commit's message"
-    " instead."
+    " new commit and no manual re-run are needed."
 )
 
 

@@ -1983,7 +1983,8 @@ def test_accept_is_refused_when_the_pr_title_is_not_the_line_the_card_would_land
     assert card["status"] == "pending"
     assert card["pr_number"] == number  # PR 还挂在卡上：改完卡就能重试
     # 执行者是唯一该醒的人 —— 改卡会把 PR 标题一起改掉，检查按新标题重跑。
-    settled = _task_settled(client, tid, "标题和卡片不一致")
+    settled = _task_settled(client, tid, "提交审阅时的标题不一致")
+    assert "提交审阅时的标题不一致" in settled
     assert "fix(review): land the title the checks judged" in settled
     assert "chore(test): file an accept card" in settled
 
@@ -2032,7 +2033,8 @@ def test_poll_holds_the_notice_and_the_armed_merge_while_the_titles_disagree(
     wait_work_idle()
 
     assert fake.merge_calls == []  # 检查绿也不合
-    settled = _task_settled(client, tid, "标题和卡片不一致")
+    settled = _task_settled(client, tid, "提交审阅时的标题不一致")
+    assert "提交审阅时的标题不一致" in settled
     assert "fix(review): land the title the checks judged" in settled
     assert "chore(test): file an accept card" in settled
     card = _cards(client, tid)[0]
@@ -2632,6 +2634,79 @@ def test_a_task_can_be_submitted_again_after_its_pr_was_closed(client, app_world
     assert fresh["status"] == "pending"
     statuses = {card["id"]: card["status"] for card in _cards(client, tid)}
     assert statuses == {cid: "revoked", fresh["id"]: "pending"}
+
+
+def _set_task_pr(client, topic_id: str, number: int) -> None:
+    """任务行上已经记着某个 PR —— 生产上由开 PR 的那次发布写上去。"""
+    from app.domain.room_task.models import Task
+
+    task_id = delivery_task_id(client, topic_id)
+
+    async def _do() -> None:
+        async with client.test_factory() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            task.pr_number = number
+            task.pr_url = f"https://github.com/{REPO}/pull/{number}"
+            await session.commit()
+
+    asyncio.run(_do())
+
+
+def _publish_the_card(client, card_id: str, topic_id: str, project_id: str) -> int:
+    """递卡时那段 fire-and-forget 的发布，在这里同步跑一遍（`pr_publish._run`
+    的两步：开/认领这条分支的 PR，再把号写回卡和任务）。"""
+    from app.domain.review import pr_publish
+
+    async def _do() -> int:
+        async with client.test_request_factory() as session:
+            pr = await pr_publish.open_pr_for_card(
+                session,
+                card_id=_uuid.UUID(card_id),
+                topic_id=_uuid.UUID(topic_id),
+                project_id=_uuid.UUID(project_id),
+            )
+        assert pr is not None
+        await pr_publish.record_pr(
+            client.test_request_factory, card_id=_uuid.UUID(card_id), pr=pr
+        )
+        return int(pr["number"])
+
+    return client.portal.call(_do)
+
+
+def test_a_card_does_not_ride_a_closed_pr_the_task_still_names(client, app_world):
+    """任务还指着一条已关闭的 PR 时递卡：卡不抄那个号，更不会几秒后被作废。
+
+    复现 2026-10-22 00:55（任务 9bd0b806）：旧草稿 PR 被人关掉、分支又推了新
+    提交，平台为新的 head 另开一条 PR —— 但那个新号要等递卡之后的那次发布才写
+    回来。递卡正落在这一刻：卡把任务上那个旧号抄了过去，轮询器一跳就按「PR 已
+    关闭」把刚递上来的卡作废，新号晚一步才写回一张已经作废的卡。
+    """
+    fake = app_world["fake"]
+    pid, tid = _room_with_work(client)
+    branch = _disk_branch(client, tid)
+    # 旧草稿 PR 曾经开着，被人在 GitHub 上关掉；任务行还挂着它的号。
+    fake.seed_pr(7, head=branch, title="chore(test): file an accept card")
+    _set_task_pr(client, tid, 7)
+    fake.close_unmerged(7)
+
+    cid = _make_card(client, tid)
+
+    # 这个号不是这次交付的 PR：卡不继承它，等发布把新 PR 写回来。
+    assert _cards(client, tid)[0]["pr_number"] is None
+
+    # 轮询一跳：不能因为任务上那条旧的已关闭 PR 就把新卡作废。
+    _poll(client)
+    assert _cards(client, tid)[0]["status"] == "pending"
+
+    # 递卡之后那次发布开出新 PR 并写回卡和任务：卡骑的是它，不是旧的 #7。
+    number = _publish_the_card(client, cid, tid, pid)
+    assert number != 7
+    _poll(client)
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert card["pr_number"] == number
 
 
 def test_poll_settles_an_externally_merged_pr(client, app_world):
@@ -4007,7 +4082,10 @@ def test_ready_rebases_a_behind_branch_then_the_ci_reads_the_new_check_set(
     assert sweeping["readied"] == [pr["node_id"]]
 
     # 转可评审之后 CI 读的是换过基的 head —— 也就是 main 上那套工作流的检查集。
-    _make_card(client, tid)
+    cid = _make_card(client, tid)
+    # 卡骑哪条 PR 由递卡之后那次发布写回：它认领的就是这条已经开着的 draft。
+    # fixture 把 fire-and-forget 关掉了，所以这里同步跑一遍。
+    _publish_the_card(client, cid, tid, pid)
     _poll(client)
     assert read_refs == [new_head]
     assert [run["name"] for run in fake.check_runs_by_sha[read_refs[-1]]] == [

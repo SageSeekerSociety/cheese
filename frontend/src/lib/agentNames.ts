@@ -16,9 +16,31 @@ export function screenAgentName(screen: DeviceScreen): string {
   return teammateName(screen.agent_name, screen.agent_name_source) || screen.agent_handle
 }
 
-/** 名册上一行的名字：人照原样，队友见 `teammateName`。 */
-export function memberName(row: { name?: string | null; name_source?: string | null } | null | undefined): string {
+/** 名册上一行的原名（不含个人备注）：人照原样，队友见 `teammateName`。 */
+export function memberOriginalName(
+  row: { name?: string | null; name_source?: string | null } | null | undefined
+): string {
   return row ? teammateName(row.name, row.name_source) : ''
+}
+
+/** 名册上一行的名字：有个人备注优先用备注，否则用原名。 */
+export function memberName(
+  row: { name?: string | null; name_source?: string | null; remark?: string | null } | null | undefined
+): string {
+  if (!row) return ''
+  return row.remark || memberOriginalName(row)
+}
+
+/** 设了备注时悬停看到的原名与 @handle；没设备注返回 null。 */
+export function memberHoverTitle(
+  row: { name?: string | null; name_source?: string | null; remark?: string | null } | null | undefined,
+  handle?: string | null
+): string | null {
+  if (!row?.remark) return null
+  const orig = memberOriginalName(row)
+  const h = handle ? `@${handle}` : ''
+  if (orig && orig !== row.remark) return h ? `${orig} (${h})` : orig
+  return h || null
 }
 
 /**

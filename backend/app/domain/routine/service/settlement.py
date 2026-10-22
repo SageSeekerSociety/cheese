@@ -144,7 +144,7 @@ async def _settle_open_runs(session: AsyncSession) -> None:
                 # Read, and the work it was read into failed — the session
                 # exiting included — without a report.
                 run.status = RunStatus.failed.value
-                run.error = "这一轮出错了：" + (
+                run.error = "这次没做完：" + (
                     await _failure_said(session, work) or read.failure or "未知错误"
                 )
                 run.finished_at = read.failed_at
@@ -162,12 +162,12 @@ async def _settle_open_runs(session: AsyncSession) -> None:
         )
         if refused:
             run.status = RunStatus.failed.value
-            run.error = "这一轮没能开始：" + refused
+            run.error = "这次没能开始：" + refused
             run.finished_at = stamp
             continue
         if stamp - run.created_at > START_TIMEOUT:
             run.status = RunStatus.failed.value
-            reason = delivery.last_error or "执行环境没有接单（设备离线或排队过久）"
+            reason = delivery.last_error or "环境没有开始运行：设备离线，或者排队太久"
             run.error = (
                 f"{int(START_TIMEOUT.total_seconds() // 3600)} 小时内没有开始：{reason}"
             )

@@ -30,8 +30,8 @@ import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import PanelChangesHost from '@/components/work/PanelChangesHost.vue'
 import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
-import { t } from '@/i18n'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
+import { taskState } from '@/lib/taskState'
 
 const props = defineProps<{ scene: Scene; frame: Frame }>()
 
@@ -206,8 +206,16 @@ function splitTask(split: SplitLine): TaskLine {
     title: split.title,
     owner: null,
     creator: null,
-    status: split.done ? t('work.board.phrase.accepted') : t('work.board.phrase.running'),
-    tone: split.done ? 'done' : 'running',
+    // 演示里在做的那一件就是在跑的：记号照真的那样转。
+    state: taskState(
+      {
+        id: split.taskId,
+        presentation: split.done ? { column: 'done', phrase: 'accepted' } : { column: 'building', phrase: 'running' },
+        session_running: !split.done,
+      },
+      { viewer: '', agentName: names.value[defaultAgent.value] ?? '' }
+    ),
+    mine: false,
     accepted: null,
     at: '',
   }

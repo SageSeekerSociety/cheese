@@ -3,6 +3,7 @@
 import type { Component } from 'vue'
 import type { Block, ReplyPreview } from '../../cx_types'
 import type { TaskLine } from '../../lib/channelTasks'
+import type { ChapterRow } from '../../types/chapters'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -13,6 +14,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { isAgentBlock } from '../../lib/authorship'
 import { collapseNotices } from '../../lib/platformNotice'
+import { taskState } from '../../lib/taskState'
 
 import ChatTimeline from './ChatTimeline.vue'
 
@@ -33,6 +35,11 @@ function said(id: string, content: string): Block {
 }
 
 const BLOCKS = [said('a', 'first'), said('b', 'second'), said('c', 'third')]
+/** 一件等看的人审阅的任务，卡上那一格的状态。 */
+const REVIEW = taskState(
+  { id: 'task', presentation: { column: 'needs_you', phrase: 'awaiting_review' }, waiting_on: 'lin' },
+  { viewer: 'lin', agentName: '芝士' }
+)
 
 function mount(overrides: Record<string, unknown> = {}) {
   const rows = collapseNotices(BLOCKS)
@@ -152,7 +159,7 @@ describe('each task made on its own in the channel keeps its own card', () => {
     } as Block
   }
   function card(id: string, title: string): TaskLine {
-    return { id, title, owner: 'lin', creator: 'lin', status: '待你审阅', tone: 'mine', accepted: null, at: '' }
+    return { id, title, owner: 'lin', creator: 'lin', state: REVIEW, mine: true, accepted: null, at: '' }
   }
 
   it('two tasks created one after the other by the same person show two cards', () => {
@@ -200,8 +207,8 @@ describe('every row in the timeline has a name, on screen or not', () => {
       title: 'Fix the login redirect',
       owner: 'lin',
       creator: 'lin',
-      status: '待你审阅',
-      tone: 'mine',
+      state: REVIEW,
+      mine: true,
       accepted: null,
       at: '',
     }
@@ -221,5 +228,44 @@ describe('every row in the timeline has a name, on screen or not', () => {
     expect(screen.getByRole('article', { name: '芝士，10:00：林 更新了文档「周报」' })).toBeTruthy()
     expect(screen.getByRole('article', { name: '林，10:00：新建了任务 Fix the login redirect' })).toBeTruthy()
     expect(screen.getByRole('article', { name: 'me，10:00：second' })).toBeTruthy()
+  })
+})
+
+describe('a chapter starts where someone marked it', () => {
+  function chapter(block: Block): ChapterRow {
+    return { pinned_by: 'alice', pinned_at: '2026-10-21T00:00:00Z', title: null, block }
+  }
+
+  it('writes the chapter number and the message it starts, right above that message', () => {
+    const { container, getAllByRole } = mount({ chapters: [chapter(BLOCKS[1])] })
+    const marks = getAllByRole('heading', { level: 3 })
+    expect(marks).toHaveLength(1)
+    expect(marks[0]!.textContent).toContain('书签 1')
+    expect(marks[0]!.textContent).toContain('second')
+    expect(container.querySelector('[data-mid="b"]')!.previousElementSibling).toBe(marks[0])
+  })
+
+  it('numbers chapters in reading order, not the order they were marked', () => {
+    const { getAllByRole } = mount({ chapters: [chapter(BLOCKS[2]), chapter(BLOCKS[0])] })
+    const texts = getAllByRole('heading', { level: 3 }).map((mark) => mark.textContent)
+    expect(texts[0]).toContain('书签 1')
+    expect(texts[0]).toContain('first')
+    expect(texts[1]).toContain('书签 2')
+    expect(texts[1]).toContain('third')
+  })
+
+  it('prefers the bookmark’s own title when one is set', () => {
+    const { getAllByRole } = mount({
+      chapters: [{ ...chapter(BLOCKS[1]), title: '空白会话问候' }],
+    })
+    const marks = getAllByRole('heading', { level: 3 })
+    expect(marks).toHaveLength(1)
+    expect(marks[0]!.textContent).toContain('书签 1')
+    expect(marks[0]!.textContent).toContain('空白会话问候')
+  })
+
+  it('says nothing above a message nobody marked', () => {
+    const { queryAllByRole } = mount({ chapters: [] })
+    expect(queryAllByRole('heading', { level: 3 })).toHaveLength(0)
   })
 })

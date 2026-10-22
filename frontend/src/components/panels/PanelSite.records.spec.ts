@@ -251,4 +251,54 @@ describe('raw records and overview share one timeline', () => {
     await waitFor(() => expect(view.container.textContent).toContain('B 改了一条之前的消息'))
     expect(view.container.textContent).not.toContain('cheese-b')
   })
+
+  it('keeps prose, status lines, and 3-line previews selectable without toggling the fold', async () => {
+    vi.stubEnv('DEV', false)
+    ;(window as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: async () => undefined } }
+    const { behaveAsDesktopApp } = await import('../../lib/desktopNative')
+    behaveAsDesktopApp()
+    try {
+      const longOutput = 'OUT-LINE-1\nOUT-LINE-2\nOUT-LINE-3\n' + 'more output\n'.repeat(20)
+      const longProse = 'PROSE-LINE-1\nPROSE-LINE-2\nPROSE-LINE-3\n' + 'more prose\n'.repeat(20)
+      const platformNotice = {
+        ...record('1', []),
+        run_record: true,
+        turn_id: null,
+        content: '平台状态提示可复制',
+        meta: { event_type: 'message_edited' },
+      }
+      api.getTranscript.mockResolvedValue({
+        data: [
+          platformNotice,
+          record('2', [
+            { kind: 'text', text: '短正文可复制' },
+            { kind: 'status', label: 'retry', text: '重试状态可复制' },
+          ]),
+          record('3', [{ kind: 'output', text: longOutput, failed: false }]),
+          record('4', [{ kind: 'text', text: longProse }]),
+        ],
+        has_more: false,
+      })
+      const view = open()
+      const statusEl = await view.findByText('平台状态提示可复制')
+      const partStatusEl = await view.findByText(/重试状态可复制/)
+      const proseEl = await view.findByText('短正文可复制')
+      const outPreview = await view.findByText('OUT-LINE-1 OUT-LINE-2 OUT-LINE-3')
+      const prosePreview = await view.findByText('PROSE-LINE-1 PROSE-LINE-2 PROSE-LINE-3')
+
+      for (const el of [statusEl, partStatusEl, proseEl, outPreview, prosePreview]) {
+        const menu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+        el.dispatchEvent(menu)
+        expect(menu.defaultPrevented).toBe(false)
+      }
+      for (const preview of [outPreview, prosePreview]) {
+        expect(preview.closest('summary')).toBeNull()
+      }
+    } finally {
+      vi.unstubAllEnvs()
+      delete (window as { __TAURI__?: unknown }).__TAURI__
+      delete document.documentElement.dataset.desktopApp
+      document.head.querySelectorAll('style').forEach((s) => s.remove())
+    }
+  })
 })

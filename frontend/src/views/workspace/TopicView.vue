@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { provideAcceptCard } from '@/composables/useAcceptCard'
+import { useChapters } from '@/composables/useChapters'
 import { useScreenHeader } from '@/composables/useScreenHeader'
 
 import { useTopicActions } from './topicView/actions'
@@ -216,6 +217,19 @@ const canPin = computed(() => {
   return !!topic && topic.status !== 'archived' && (topic.kind === 'root' || !!topic.joined)
 })
 
+// ---- 章节：这段对话（频道主线或任务）的目录 ----
+// 跟对话走：频道是频道本身，任务页是任务的 id。任务的对话里项目的人都能说话，所以
+// 都能整理章节；频道主线仍然要加入了这个频道。
+const chapters = useChapters({
+  conversationId: () => conversationId.value,
+  report: (message) => store.reportError(new Error(message), t('work.channel.chapters.unpinFailed')),
+})
+const canChapter = computed(() => {
+  const topic = selectedTopic.value
+  if (!topic || topic.status === 'archived') return false
+  return !!props.taskId || topic.kind === 'root' || !!topic.joined
+})
+
 // 任务概览那一列要的：相关、这一轮的清单、第一轮失败后的重试。
 const taskOverview = useTaskOverview({
   taskId: () => props.taskId,
@@ -351,7 +365,13 @@ void openPlace()
             :composer-closed="composerClosed"
             :ask-closed="askClosed"
             :accept-elsewhere="focusMode"
+            :chapters="chapters.rows.value"
+            :chapterable="canChapter"
+            :chapter-ids="chapters.chapterIds.value"
             v-on="chatEvents"
+            @chapter="chapters.add"
+            @unchapter="chapters.remove"
+            @rename="chapters.rename"
             @open-room="backToRoom"
           />
         </Transition>
@@ -524,8 +544,14 @@ void openPlace()
                 :member-names="memberNames"
                 :composer-closed="composerClosed"
                 :ask-closed="askClosed"
+                :chapters="chapters.rows.value"
+                :chapterable="canChapter"
+                :chapter-ids="chapters.chapterIds.value"
                 accept-review-button
                 v-on="chatEvents"
+                @chapter="chapters.add"
+                @unchapter="chapters.remove"
+                @rename="chapters.rename"
                 @open-room="backToRoom"
               />
             </template>

@@ -3,7 +3,9 @@
 The rules are the team's 《内测激励与裂变机制设计方案》:
 
 * Everyone has one code of their own. It admits one person to begin with, and
-  three more once its owner has accepted a delivery themselves.
+  three more once its owner has accepted a delivery themselves. Every friend
+  who gets started (below) gives the seat they took back, so a code runs out
+  only on friends who never accept anything.
 * A friend who registers with it is that person's invitee for good.
 * The invitee is paid 50 credits when they finish the new-user guide, and 100
   more when they accept their first delivery within seven days of registering.
@@ -33,6 +35,7 @@ from app.domain.user.services import faces_by_handle, user_by_handle
 
 FIRST_USES = 1
 UNLOCKED_USES = 3
+SEATS_BACK_PER_START = 1
 JOIN_CREDITS = 50
 ACTIVATED_CREDITS = 100
 INVITER_CREDITS = 150
@@ -152,6 +155,14 @@ async def on_accepted(session: AsyncSession, handle: str | None) -> None:
         .where(InviteCode.owner_user_id == inviter_id)
         .with_for_update()
     )
+    # The friend got started, so their seat comes back. Past the monthly cap
+    # too: the cap limits credits, not how many friends can be brought in.
+    # Once per friend, like the payouts: only the first activation gets here.
+    await session.execute(
+        update(InviteCode)
+        .where(InviteCode.owner_user_id == inviter_id)
+        .values(max_uses=InviteCode.max_uses + SEATS_BACK_PER_START)
+    )
     paid = await _paid_this_month(session, inviter_id, now)
     await incentives.issue(
         key=f"invite:referrer:{user.id}",
@@ -220,6 +231,7 @@ async def overview(
     }
     rewards = await CreditIncentives(session).rewards(user.id)
     now = datetime.now(UTC)
+    paid_this_month = await _paid_this_month(session, user.id, now)
     people = []
     for row in rows:
         invitee = invitees.get(row.invitee_user_id)
@@ -243,6 +255,8 @@ async def overview(
         "unlocked": code.unlocked_at is not None,
         "unlock_uses": UNLOCKED_USES,
         "invite_credits": rewards["invite_credits"],
+        "month_credits": paid_this_month,
+        "month_cap": INVITER_MONTHLY_CAP,
         "invitees": people,
     }
 

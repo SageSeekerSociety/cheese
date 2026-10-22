@@ -324,6 +324,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
     # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
     claude_code_max_subagent_spawn_depth: int = 1
+    # 每个会话多一样工具 `cheese_compact`：agent 可以请平台压缩自己这个会话的
+    # 上下文。默认关着——打开它只是给 agent 一个开口，怎么用要看它怎么用；v1 只在
+    # dev 上开着观察。开了就是写进会话环境的那一句（CHEESE_COMPACT_TOOL），所以
+    # 「没开开关的座位看不到它」由 `sandbox/cheese` 一处决定。
+    agent_compact_tool: bool = False
     # Model aliases the CLI may resolve internally; map them to the provider.
     # Subagents (the Task/Agent tool) resolve via sonnet/opus → keep them on the
     # main model so 分身 don't silently run an older/weaker model.
@@ -788,6 +793,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # a role change within this; the key behind a role is narrowed after it
     # (`gateway_models.roles.NARROW_AFTER_SECONDS`). 0 turns it off (tests).
     platform_model_roles_refresh_interval_s: float = 30.0
+    # Seconds between reads of every model's spend cap against the gateway's
+    # ledger, saying on the alert webhook when one crosses 80% or reaches it
+    # (`app.domain.agent.spend_cap_alerts`). 0 turns it off.
+    model_spend_cap_alert_interval_s: float = 300.0
     # Seconds between looks, on the process holding the sessions, for work
     # still running in a task that has closed (`stop_work_in_closed_tasks`).
     # One indexed read of the tasks its working seats are in, and none when no

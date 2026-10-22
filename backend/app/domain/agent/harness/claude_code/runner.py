@@ -82,6 +82,10 @@ SETTLE_S = 0.5
 RELEASE_GRACE_S = 5.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
+#: How long the runner waits for a compaction it asked the build for to report
+#: its `result`. Summarising a full window takes minutes; this is the outer
+#: bound on believing it will come at all, not an expected duration.
+COMPACT_TIMEOUT_S = 1800.0
 # How long a new turn waits to see the project's context as it is now before it
 # starts on what the session already has.
 CATCH_UP_TIMEOUT_S = 30.0
@@ -526,6 +530,10 @@ class Runner(runner.Runner[Journal]):
         # The platform's inputs read since the session last went idle: what a
         # failure of that work names.
         self.run_inputs: list[str] = []
+        # The session asked to compact its own context (`dispatch`'s `compact`)
+        # and the turn it asked in has not ended yet: `/compact` is written
+        # when it has.
+        self.compact_when_idle = False
         # What the build said of the work under way that its ``result`` does
         # not: the API's refusal, and the account's rate-limit window.
         self.api_error = ""
@@ -1073,6 +1081,11 @@ class Runner(runner.Runner[Journal]):
         """Report what one record changes, stamp it with the work it belongs
         to, and journal it."""
         kind = record.get("type")
+        command = (
+            self._sent_input(str(record.get("command_uuid")))
+            if kind == "command_lifecycle"
+            else None
+        )
         main = not from_file and record.get("parent_tool_use_id") is None
         if kind == "system" and record.get("subtype") == "init":
             self.proven = True
@@ -1086,7 +1099,7 @@ class Runner(runner.Runner[Journal]):
             # boundary inside the work it was said to; one the session reads
             # only after that work ended starts work of its own.
             if not self.working:
-                self._open(self._sent_input(str(record.get("command_uuid"))))
+                self._open(command)
         elif kind == "command_lifecycle" and record.get("state") in SETTLED:
             # An input is on its way in until its echo, but work aborted
             # before its prompt was checked never echoes it: it will never be
@@ -1140,10 +1153,21 @@ class Runner(runner.Runner[Journal]):
         if kind == "system":
             self._track(record)
         work = self.work if self.working else self.last_work
+        if kind == "command_lifecycle":
+            if command and command[1] is not None:
+                stamp["input_work_id"] = command[1]
+            # Queueing or settling an input does not prove it executed in any
+            # work. Only started names the execution it actually joined.
+            if record.get("state") != "started" or (
+                command is not None and command[0] == "internal"
+            ):
+                work = None
         owner = json.loads(self.journal.recall("owner") or "{}")
+        owner.pop("work_id", None)
+        owner.pop("unsolicited", None)
         if work is not None:
             owner["work_id"] = work
-            if self.working and self.unsolicited:
+            if self.working and self.unsolicited and work == self.work:
                 owner["unsolicited"] = True
         self.journal.append({**record, "cheese": {**owner, **stamp}})
         if main and kind in ("assistant", "result"):
@@ -1278,6 +1302,9 @@ class Runner(runner.Runner[Journal]):
         # work, and it is that work which owes the answer.
         if self.owed not in self.sent:
             self.reply_settled()
+        if self.compact_when_idle and not self.closing:
+            self.compact_when_idle = False
+            self.helpers.append(asyncio.ensure_future(self._compact_now()))
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -1697,6 +1724,44 @@ class Runner(runner.Runner[Journal]):
             "is_error": bool(record.get("is_error")),
         }
 
+    def request_compact(self) -> dict:
+        """The session asked to compact its own context: `/compact`, written
+        once the turn it asked in has ended.
+
+        Written then, and not mid-turn: a tool call in flight is answered at a
+        tool boundary, and the build takes what comes in on stdin at those
+        boundaries, so a slash command written from inside a tool call arrives
+        as part of that turn — where the pinned build's contract says nothing
+        about what a slash command does. A tool call is always inside a turn,
+        so the request always defers.
+
+        Once a turn is the whole rate limit: a request still waiting and one
+        that has already run look the same to the agent that asked, and a
+        second `/compact` would only summarise the first one's output.
+        """
+        if self.compact_when_idle:
+            return {"already": True}
+        self.compact_when_idle = True
+        # A tool call is answered inside a turn, so `_end` is where this
+        # normally goes. A session already idle has no turn coming.
+        if not self.working and not self.closing:
+            self.compact_when_idle = False
+            self.helpers.append(asyncio.ensure_future(self._compact_now()))
+        return {"requested": True, "already": False}
+
+    async def _compact_now(self) -> None:
+        """Write `/compact` the way `/reload-skills` is written, and wait for
+        the command's `result` in the background.
+
+        Not through `dispatch`: the tool call that asked has been answered
+        already, and a compaction of a full window takes minutes to report.
+        What the room shows meanwhile comes from the build's own
+        `system/status` records (`events._compacting`)."""
+        try:
+            await self.command("/compact", COMPACT_TIMEOUT_S)
+        except Exception as error:  # the session goes on without it
+            print(f"compaction not asked: {error!r}", file=sys.stderr, flush=True)
+
     # --- the socket ----------------------------------------------------------
 
     async def dispatch(self, method: str, params: dict) -> dict:
@@ -1758,6 +1823,12 @@ class Runner(runner.Runner[Journal]):
                 return {}
             reason = self.insist()
             return {"reason": reason} if reason else {}
+        if method == "checkpoint_turn":
+            # The session's Stop checkpoint (`client.py checkpoint`), asking
+            # which turn it is about to sync. `work` while the turn is ending,
+            # `last_work` once it has ended.
+            work = self.work or self.last_work
+            return {"work_id": work} if work else {}
         # Everything else is the platform's, and only the registration it
         # holds now may ask it.
         self.outbox.check(params.get("epoch"))
@@ -1780,6 +1851,8 @@ class Runner(runner.Runner[Journal]):
             return await self.control(params["request"])
         if method == "command":
             return await self.command(params["text"])
+        if method == "compact":
+            return self.request_compact()
         if method == "memory":
             # 不是 accept 那种一次性输入：对账是幂等的（同样的三方合出同样的结
             # 果），重来一次不会多出一条记忆，所以不需要按 id 去重。

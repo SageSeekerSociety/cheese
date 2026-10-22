@@ -4,6 +4,11 @@
     "support": "支持这个反馈",
     "supported": "已支持"
   },
+  "attachments": {
+    "download": "下载",
+    "open": "放大看 {name}",
+    "title": "附件"
+  },
   "aside": {
     "comments": "评论数",
     "progress": "进展",

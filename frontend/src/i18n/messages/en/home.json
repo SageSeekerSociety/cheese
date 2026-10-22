@@ -5,9 +5,9 @@
     "loadFailed": "Couldn't load what's waiting on you",
     "feed": "Activity",
     "reason": {
-      "reviewer": "Waiting for your review",
+      "reviewer": "In review",
       "reporter": "Your request has been delivered",
-      "asked": "Waiting for your answer",
+      "asked": "Needs answer",
       "checksFailed": "Checks failed",
       "blocked": "Stuck",
       "bounced": "Returned",

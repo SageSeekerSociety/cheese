@@ -47,6 +47,10 @@ const props = defineProps<{
   pinnable?: boolean
   /** 已经置顶的那几条（block id）：它们的 ⋯ 里是「取消置顶」。 */
   pinnedIds?: ReadonlySet<string>
+  /** 这段对话能钉章节（频道主线、任务）：⋯ 里多一项「钉成章节」。 */
+  chapterable?: boolean
+  /** 已经是章节的那几条（block id）：它们的 ⋯ 里是「取消章节」。 */
+  chapteredIds?: ReadonlySet<string>
 }>()
 
 const emit = defineEmits<{
@@ -59,6 +63,8 @@ const emit = defineEmits<{
   (e: 'edit', block: Block): void
   (e: 'pin', block: Block): void
   (e: 'unpin', block: Block): void
+  (e: 'chapter', block: Block): void
+  (e: 'unchapter', block: Block): void
 }>()
 
 // 复制之后原地说一声「已复制」，一会儿再换回来；换了一条消息就不再说。
@@ -211,6 +217,22 @@ const menuActions = computed<MenuAction[]>(() => {
           }
         : { key: 'pin', label: t('work.room.pin.pin'), icon: 'mdi-pin-outline', onSelect: () => emit('pin', block) }
     )
+  if (props.chapterable && block.kind === 'message')
+    actions.push(
+      props.chapteredIds?.has(block.id)
+        ? {
+            key: 'unchapter',
+            label: t('work.room.chapter.unpin'),
+            icon: 'mdi-bookmark-minus-outline',
+            onSelect: () => emit('unchapter', block),
+          }
+        : {
+            key: 'chapter',
+            label: t('work.room.chapter.pin'),
+            icon: 'mdi-bookmark-plus-outline',
+            onSelect: () => emit('chapter', block),
+          }
+    )
   if (target.editable)
     actions.push({
       key: 'edit',
@@ -336,6 +358,19 @@ function onFocusOut(event: FocusEvent) {
           @click="copy"
         >
           <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
+        </button>
+        <!-- 钉成书签放在这一排，不埋在 ⋯ 里：钉一下是读对话时随手做的事，多一步
+             就没人用。钉上是实心，再点取消。 -->
+        <button
+          v-if="chapterable && block.kind === 'message'"
+          type="button"
+          class="hover-bar__act"
+          :class="{ 'hover-bar__act--on': chapteredIds?.has(block.id) }"
+          :title="chapteredIds?.has(block.id) ? t('work.room.chapter.unpin') : t('work.room.chapter.pin')"
+          :aria-label="chapteredIds?.has(block.id) ? t('work.room.chapter.unpin') : t('work.room.chapter.pin')"
+          @click="chapteredIds?.has(block.id) ? emit('unchapter', block) : emit('chapter', block)"
+        >
+          <v-icon size="15">{{ chapteredIds?.has(block.id) ? 'mdi-pin' : 'mdi-pin-outline' }}</v-icon>
         </button>
         <!-- A deep link to this one message. Absent when the host has no router
              (there is no address to build) rather than a button that does nothing. -->

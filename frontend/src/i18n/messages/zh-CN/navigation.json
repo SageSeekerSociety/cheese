@@ -65,14 +65,13 @@
     "appearance": "外观",
     "language": "语言",
     "logout": "退出登录",
-    "noIntro": "暂无个人简介",
     "theme": {
       "system": "跟随系统",
       "light": "浅色",
       "dark": "深色"
     },
     "invites": "邀请好友",
-    "invitesWithSeats": "邀请好友 · 剩 {n} 个名额",
+    "seatsLeft": "剩 {n} 个",
     "archivedProjects": "已归档的项目",
     "download": "下载客户端",
     "usePhone": "在手机上使用"
@@ -154,7 +153,7 @@
     "checking": "正在检查更新…",
     "downloading": "正在下载新版本 {version}…",
     "latest": "已是最新版本",
-    "failed": "没能检查更新，稍后再试",
+    "failed": "检查更新失败，稍后重试",
     "ready": "新版本 {version} 已下载",
     "readyHint": "也可以关上窗口，它会在后台装好",
     "restart": "重启以完成更新",

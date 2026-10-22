@@ -29,7 +29,6 @@ export function useUserMenu() {
     return isChosenAvatar(id) ? getAvatarUrl(id) : null
   })
   const nickname = computed(() => AccountService._user.value?.nickname ?? '')
-  const intro = computed(() => AccountService._user.value?.intro ?? '')
 
   // 这里**不再**导出 avatarInitial / avatarColor 那套兜底：彩色首字母只由 UserAvatar
   // 一处画（契约 §3.14），它自己按 `seed` 取色、按 `name` 取首字母。给用户的颜色种子
@@ -82,7 +81,6 @@ export function useUserMenu() {
     currentUser,
     avatar,
     nickname,
-    intro,
     inviteSeatsLeft,
 
     // 方法

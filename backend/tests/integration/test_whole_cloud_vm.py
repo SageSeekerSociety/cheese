@@ -409,7 +409,7 @@ def test_each_session_on_a_whole_vm_gets_a_machine_of_its_own(cloud):
     assert len(placed) == 3
     assert _host(case, first).whole_machine and not _host(case, sandboxed).whole_machine
     assert _host(case, first).project_id == case.project_id
-    assert _room_lines(case, first) == ["正在准备虚拟机沙箱"]
+    assert _room_lines(case, first) == ["正在准备云端虚拟机"]
     assert _room_lines(case, sandboxed) == ["正在准备环境"]
 
 
@@ -446,7 +446,7 @@ def test_a_whole_vms_executor_runs_without_a_sandbox(cloud):
     configure = ast.parse(installed).body[-1].value
     payload = json.loads(ast.literal_eval(configure.args[0].args[0]))
     assert payload["sandbox"] is None
-    assert _room_lines(case, seat) == ["正在准备虚拟机沙箱", "虚拟机沙箱已就绪"]
+    assert _room_lines(case, seat) == ["正在准备云端虚拟机", "云端虚拟机已就绪"]
 
 
 def test_users_see_the_environment_and_never_the_vm(cloud):
@@ -561,7 +561,7 @@ def test_an_idle_vm_is_pushed_and_released(cloud):
     assert _session_lease(case, seat) is None
     assert _host(case, seat) is None
     minutes = settings.cloud_vm_idle_release_s // 60
-    assert _room_lines(case, seat)[-1].startswith(f"虚拟机沙箱 {minutes} 分钟没有活动")
+    assert _room_lines(case, seat)[-1].startswith(f"云端虚拟机 {minutes} 分钟没有活动")
     _sweep(case)
     assert case.provider.deleted == [machine]
 

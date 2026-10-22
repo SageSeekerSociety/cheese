@@ -10,12 +10,13 @@ import json
 
 from app.core import storage as storage_module
 from app.core.config import settings
-from tests.integration.conftest import new_project, session_auth_headers
+from tests.integration.conftest import _register, new_project, session_auth_headers
 
 OWNER = "owner-1"
 
 
 def _invite(client, bearer, project_id: str, handle: str, *, by: str = OWNER):
+    _register(client, handle)
     return client.post(
         f"/projects/{project_id}/invitations",
         json={"user_handle": handle},

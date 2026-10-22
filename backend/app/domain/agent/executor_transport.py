@@ -109,7 +109,7 @@ LINK_INTERRUPTED = (
 # 每两秒重试一次，连拒几个小时。说「可以重试」是假话，所以这句话叫它停。
 SESSION_ENDED = (
     "平台已经收回了这个会话用机器的凭证（它所在的房间或任务换了归属）："
-    "这个会话里要用机器的工具都不会再成功，重试结果一样。停下来，结束这一轮。"
+    "这个会话里要用机器的工具都不会再成功，重试结果一样。停下来，这次就到这里。"
 )
 _DEAD_CREDENTIAL = (
     "Execution credential does not own this session",
@@ -484,12 +484,15 @@ class PlatformHost:
     breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
     """
 
-    def __init__(self, client, invoke, call_id, doc_versions):
+    def __init__(self, client, invoke, call_id, doc_versions, compact=None):
         self.client = client
         self.invoke = invoke
         self.call_id = call_id
         self.doc_versions = doc_versions
         self.environ = dict(os.environ)
+        #: Ask this session's harness to compact its context, for the one
+        #: tool that does (`cheese_compact`); a session with none refuses.
+        self.compact = compact
 
     def request(self, plan):
         stdout = self.client.platform_request(plan)["value"]["stdout"]
@@ -1508,14 +1511,21 @@ class RemoteClient:
     def control(self, request, preparing=None):
         return self.call("control", dict(request), preparing=preparing)
 
-    def checkpoint(self, request_id):
+    def checkpoint(self, request_id, turn=None):
         """A turn's Stop checkpoint: its work synced into the project. A
         session whose work is not kept (a 支线) has none
         to sync, and the executor route would refuse it. Nor does a session
         that never held a sandbox: its turn did nothing on a machine. (One
-        whose sandbox was destroyed while idle is the route's to answer.)"""
+        whose sandbox was destroyed while idle is the route's to answer.)
+
+        `turn` is the work id of the turn that ended. The machine runs its
+        sync with it (``CHEESE_TURN``), so a push failure is filed under that
+        turn instead of being guessed from whatever is newest later."""
         if self.config.get("kind") == "deferred" or keeps_nothing(
             self.execution_token()
         ):
             return {}
-        return self.control({"subtype": "checkpoint", "request_id": request_id})
+        request = {"subtype": "checkpoint", "request_id": request_id}
+        if turn:
+            request["turn"] = str(turn)
+        return self.control(request)

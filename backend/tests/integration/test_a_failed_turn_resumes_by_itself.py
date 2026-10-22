@@ -25,7 +25,7 @@ from app.domain.agent.input_registration import confirm_receipt
 from app.domain.agent.models import AgentTurn, TurnResume
 from app.domain.agent.platform_failures import (
     RUNNER_REPLACED_CODE,
-    RUNNER_REPLACED_MESSAGE,
+    runner_replaced_message,
 )
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.resumable_failures import (
@@ -818,7 +818,7 @@ async def test_an_upgrade_after_a_wake_up_resumes_at_once(business_db_factory):
         seat=seat,
         failed_turn_id=woken,
         result=AgentResult(
-            text=RUNNER_REPLACED_MESSAGE,
+            text=runner_replaced_message(seat),
             session_id="s",
             is_error=True,
             failure_code=RUNNER_REPLACED_CODE,

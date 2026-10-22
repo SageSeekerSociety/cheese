@@ -24,6 +24,7 @@ export type NotificationType =
   | 'SPACE_ANNOUNCEMENT'
   | 'TASK_NOTICE'
   | 'TASK_DUE_SOON'
+  | 'ASSISTANT_NOTICE'
 
 export interface EntityInfo {
   id: string

@@ -17,6 +17,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { ENTRY_PAGE, keepAppChallenge } from './appSignIn'
 import AppSignInStartView from './AppSignInStartView.vue'
+import { inviteCodeFor } from './inviteCode'
 
 import { myId } from '@/me'
 
@@ -33,6 +34,8 @@ onMounted(() => {
     router.replace({ name: 'AppSignInHandOff' })
     return
   }
+  // Kept in this tab, where the sign-up page or a provider's sign-up fills it in (inviteCode.ts).
+  inviteCodeFor(route.query.invite)
   const entry = route.query.entry
   const page =
     typeof entry === 'string' && Object.hasOwn(ENTRY_PAGE, entry) ? ENTRY_PAGE[entry as BrowserSignInEntry] : 'SignIn'

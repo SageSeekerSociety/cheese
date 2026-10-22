@@ -51,3 +51,34 @@ describe('团队额度', () => {
     expect(within(month).queryByText(/写作/)).toBeNull()
   })
 })
+
+// 个人额度页的「奖励记录」：本月邀请额度已满之后首次采纳的好友，那一行是「+0 点」，
+// 旁边要说清楚为什么是 0——不然读起来像发错了。
+describe('奖励记录里的 0 点邀请', () => {
+  function personal(items: { kind: 'invite' | 'feedback' | 'beta'; credits: number; created_at: string }[]) {
+    return render(CreditsView as unknown as Component, {
+      props: {
+        personal: true,
+        teamHandle: 'alice',
+        usage: USAGE,
+        loading: false,
+        error: null,
+        rewards: { feedback_count: 0, feedback_credits: 0, invite_credits: 1500, items },
+      },
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
+    })
+  }
+  const WHY = '这个月通过邀请得到的额度已满 1,500 点，这位好友首次采纳不再给你额度。'
+
+  it('a 0-credit invitation says why it paid nothing', () => {
+    const view = personal([{ kind: 'invite', credits: 0, created_at: '2026-10-20T08:00:00Z' }])
+    expect(view.getByText('+0 点')).toBeTruthy()
+    expect(view.getByRole('button', { name: WHY })).toBeTruthy()
+  })
+
+  it('an invitation that paid carries no such explanation', () => {
+    const view = personal([{ kind: 'invite', credits: 150, created_at: '2026-10-19T08:00:00Z' }])
+    expect(view.getByText('+150 点')).toBeTruthy()
+    expect(view.queryByRole('button', { name: WHY })).toBeNull()
+  })
+})

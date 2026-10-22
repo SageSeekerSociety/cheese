@@ -11,9 +11,10 @@ LABEL org.opencontainers.image.title="Cheese LLM gateway"
 ENV KEEPALIVE_TIMEOUT=600
 
 # Resolve the pinned telemetry wrapper before request-time auth uses it, and
-# wrap DeepSeek's Messages transformation before the proxy serves a request
-# (`deepseek_thinking.py`).
-ENV LITELLM_WORKER_STARTUP_HOOKS=litellm.llms:load_guardrail_translation_mappings,litellm.anthropic_beta_headers_manager:reload_beta_headers_config,litellm.integrations.otel.runtime:_otel_runtime,cheese_deepseek_thinking:install
+# wrap DeepSeek's Messages transformation (`deepseek_thinking.py`) and the
+# router's outermost call (`provider_credit.py`) before the proxy serves a
+# request.
+ENV LITELLM_WORKER_STARTUP_HOOKS=litellm.llms:load_guardrail_translation_mappings,litellm.anthropic_beta_headers_manager:reload_beta_headers_config,litellm.integrations.otel.runtime:_otel_runtime,cheese_deepseek_thinking:install,cheese_provider_credit:install
 
 COPY patch_stream_timing.py test_keepalive.py test_stream_timing.py test_provider_http_timing.py test_router_logging.py test_startup_registry.py test_startup_beta_headers.py test_startup_telemetry.py /opt/cheese-gateway/
 COPY provider_http_timing.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/provider_http_timing.py
@@ -39,6 +40,8 @@ COPY no_explicit_cache.py /app/.venv/lib/python3.13/site-packages/cheese_no_expl
 COPY test_no_explicit_cache.py /opt/cheese-gateway/
 COPY spend_cap.py /app/.venv/lib/python3.13/site-packages/cheese_spend_cap.py
 COPY test_spend_cap.py /opt/cheese-gateway/
+COPY provider_credit.py /app/.venv/lib/python3.13/site-packages/cheese_provider_credit.py
+COPY test_provider_credit.py /opt/cheese-gateway/
 COPY qwen_asr.py /app/.venv/lib/python3.13/site-packages/cheese_qwen_asr.py
 COPY test_qwen_asr.py /opt/cheese-gateway/
 COPY web_search.py /app/.venv/lib/python3.13/site-packages/cheese_web_search.py
@@ -46,7 +49,7 @@ COPY deepseek_search.py /app/.venv/lib/python3.13/site-packages/cheese_deepseek_
 COPY test_web_search.py /opt/cheese-gateway/
 COPY retry_stream.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/retry_stream.py
 COPY test_retry_stream.py /opt/cheese-gateway/
-COPY patch_deepseek_images.py test_deepseek_images.py test_deepseek_route_order.py test_deepseek_session_affinity.py patch_empty_anthropic_text.py test_empty_anthropic_text.py patch_responses_stream_errors.py test_responses_stream_errors.py patch_responses_done_args.py test_responses_done_args.py patch_anthropic_stream_errors.py test_anthropic_stream_errors.py patch_gemini_generation.py test_gemini_generation.py patch_hosted_vllm_reasoning.py patch_deepseek_search_cost.py test_deepseek_search_cost.py patch_deepseek_search_provider.py test_deepseek_search.py check_config.py config.yaml /opt/cheese-gateway/
+COPY patch_deepseek_images.py test_deepseek_images.py test_deepseek_route_order.py test_deepseek_session_affinity.py patch_empty_anthropic_text.py test_empty_anthropic_text.py patch_responses_stream_errors.py test_responses_stream_errors.py patch_responses_done_args.py test_responses_done_args.py patch_anthropic_stream_errors.py test_anthropic_stream_errors.py patch_gemini_generation.py test_gemini_generation.py patch_hosted_vllm_reasoning.py patch_deepseek_search_cost.py test_deepseek_search_cost.py patch_deepseek_search_provider.py test_deepseek_search.py check_config.py config.yaml test_rows.yaml /opt/cheese-gateway/
 RUN /app/.venv/bin/python /opt/cheese-gateway/patch_stream_timing.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_deepseek_images.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_empty_anthropic_text.py \
@@ -81,6 +84,7 @@ RUN /app/.venv/bin/python /opt/cheese-gateway/patch_stream_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_gemini_generation.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_no_explicit_cache.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_spend_cap.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_provider_credit.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_qwen_asr.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_web_search.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_router_logging.py \

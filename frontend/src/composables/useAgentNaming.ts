@@ -14,11 +14,13 @@ export function useAgentNaming(opts: {
   /** 房间的座位：名册上那位，名册上没有就用项目默认那位。名册还没到时为空。 */
   roomSeat: ComputedRef<Seat | null>
   /** 名册上能 @ 到的人：任务指定那位要看它在不在册。 */
-  pool: ComputedRef<{ handle: string; label: string }[]>
+  pool: ComputedRef<{ handle: string; label: string; originalName?: string | null }[]>
   /** handle 翻成界面上的名字；不在册上时给 null。 */
   nameOf: (handle: string) => string | null
   /** `<@handle>` 渲染用的表；本模块负责把它和名册对齐。 */
   names: Record<string, string>
+  /** `<@handle>` 设了个人备注时悬停看到的原名与 @handle。 */
+  titles?: Record<string, string>
   /** 这段对话说给谁听，当它不是房间那位时的 handle：任务单独指定的队友，或支线正在
    *  和它说话的那位；空＝跟着房间那位。 */
   agentHandle?: () => string | null
@@ -59,6 +61,16 @@ export function useAgentNaming(opts: {
       next.set('here', t('work.room.mention.here'))
       for (const k of Object.keys(opts.names)) if (!next.has(k)) delete opts.names[k]
       for (const [k, label] of next) if (opts.names[k] !== label) opts.names[k] = label
+      if (opts.titles) {
+        const nextTitles = new Map<string, string>()
+        for (const row of pool) {
+          if (row.originalName && row.originalName !== row.label) {
+            nextTitles.set(row.handle, `${row.originalName} (@${row.handle})`)
+          }
+        }
+        for (const k of Object.keys(opts.titles)) if (!nextTitles.has(k)) delete opts.titles[k]
+        for (const [k, title] of nextTitles) if (opts.titles[k] !== title) opts.titles[k] = title
+      }
     },
     { immediate: true, deep: true }
   )

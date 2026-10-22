@@ -20,9 +20,9 @@ permissions:
   contents: read
 
 concurrency:
-  # Cancel superseded runs on a PR, never in the merge queue: keying queue runs
-  # by sha gives each queued commit its own group, so one entry cannot cancel
-  # another's result and leave the commit that lands on main with no signal.
+  # Cancel superseded runs on a PR, never on main: keying main's runs by sha
+  # gives each commit its own group, so one push cannot cancel another's result
+  # and leave a commit on main with no signal.
   group: cli-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
