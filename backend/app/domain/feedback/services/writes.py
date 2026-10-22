@@ -22,6 +22,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.feedback import announce, claims
+from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import Feedback, FeedbackStatus
 from app.domain.feedback.proposals import AcceptedProposal
 from app.domain.feedback.schemas import FeedbackCreate, FeedbackPatch
@@ -311,8 +312,9 @@ async def claim(
     之前先锁住这一行（`claims.lock`）：两个同时到的领取，后到的那个读到的是先到的
     已经提交的持有人。
 
-    自己再领一次是空操作，不是第二条时间线。状态走 `advance`：只往前走，已经
-    修好、上线或不修复的，领了也不动它的状态。
+    自己再领一次是空操作，不是第二条时间线。已经办完的（`CLOSED_STATUSES`：
+    已修复、已上线、不修复）不接领取：领取记的是「谁在修」，这些没有可修的了，
+    回 409 让 agent 不要动它，而不是在详情上挂一个处理人。
     """
     row = await svc.visible_ref(ref, handle=handle, is_admin=is_admin)
     if not await svc.may_claim(
@@ -322,6 +324,8 @@ async def claim(
     locked = await claims.lock(svc._session, row.id)
     if locked is None:
         raise NotFoundError(say("feedbackNotFound"))
+    if locked.status in repo.CLOSED_STATUSES:
+        raise ConflictError(say("feedbackClaimClosed"))
     holder = locked.assignee_handle
     if holder == handle:
         return locked

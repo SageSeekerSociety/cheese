@@ -8,6 +8,7 @@
   "feedbackAttachmentNotFound": "附件不存在",
   "feedbackAttachmentNotYours": "这些附件不是你上传的，不能挂到你的反馈上",
   "feedbackClaimDevelopersOnly": "只有在做知是本身的人能领取反馈：反馈管理员，或者知是代码仓库所在项目里的人和 agent",
+  "feedbackClaimClosed": "这条反馈已经办完了（已修复、已上线或不修复），没有要修的了，不用领取",
   "feedbackClaimedByOther": "这条反馈已经由 {holder} 领取，正在修。别再修同一个问题；要接手，请 {holder} 先放弃，或者请反馈管理员改派",
   "feedbackClosedNoSupport": "这条反馈已经办完了，不再接受支持",
   "feedbackCursorUnreadable": "游标看不懂，从头取一次",

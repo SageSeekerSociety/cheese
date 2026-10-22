@@ -4,7 +4,7 @@
 
 * 领到的那一刻，提它的人看到「处理中」，时间线上写着谁、什么时候；
 * 第二个人的领取**失败**，并且说出是谁在修 —— 同时到的也一样，只有一个赢；
-* 放掉之后别人能领；已经修好、上线、不修复的，领了不动它的状态；
+* 放掉之后别人能领；已经修好、上线、不修复的，不能再领；
 * 能领的是在做这个平台本身的人和 agent，agent 用的就是它手上那样工具。
 """
 
@@ -250,17 +250,31 @@ def test_only_the_holder_or_a_feedback_admin_can_release(client, platform):
 
 
 @pytest.mark.parametrize("closed", ["declined", "resolved", "deployed"])
-def test_claiming_a_finished_report_leaves_its_status_alone(client, platform, closed):
+def test_a_finished_report_cannot_be_claimed(client, platform, closed):
     row = _report(client)
     _set_status(client, row["id"], closed)
 
     r = _claim(client, DEV, row["id"])
 
-    assert r.status_code == 200, r.text
+    assert r.status_code == 409, r.text
+    assert "办完" in r.json()["error"]["message"]
     seen = _view(client, REPORTER, row["id"])
     assert seen["status"] == closed
-    assert seen["assignee_handle"] == DEV
+    assert seen["assignee_handle"] is None
     assert [t["status"] for t in seen["timeline"]] == ["received", closed]
+    # The button follows the same answer: no holder, but nothing to claim.
+    assert _view(client, DEV, row["id"])["can_claim"] is False
+
+
+def test_the_holder_of_a_report_that_finished_keeps_it(client, platform):
+    row = _report(client)
+    assert _claim(client, DEV, row["id"]).status_code == 200
+    _set_status(client, row["id"], "deployed")
+
+    assert _claim(client, DEV2, row["id"]).status_code == 409
+    seen = _view(client, REPORTER, row["id"])
+    assert seen["assignee_handle"] == DEV
+    assert seen["status"] == "deployed"
 
 
 def test_only_people_working_on_the_platform_can_claim(client, platform):

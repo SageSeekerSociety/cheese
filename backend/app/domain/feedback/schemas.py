@@ -472,8 +472,8 @@ class FeedbackDetail(FeedbackCard):
     #: 与平台管理员各一档。客户端自己拼一遍 `handle == mine || isAdmin` 就是「按钮
     #: 画得出来、点下去 403」的来源，评论那一层已经为此付过学费。
     can_delete: bool = False
-    #: 调用者此刻能不能**领取**这条（没人领着，且他是反馈管理员或在做知是本身的
-    #: 人）、能不能**放弃**它（他就是持有人，或是反馈管理员）。服务端算，和
+    #: 调用者此刻能不能**领取**这条（还没办完、没人领着，且他是反馈管理员或在做
+    #: 知是本身的人）、能不能**放弃**它（他就是持有人，或是反馈管理员）。服务端算，和
     #: `POST` / `DELETE /feedback/{ref}/claim` 共用 `may_claim` 一处判据。持有人
     #: 本身是卡片上的 `assignee_handle`。
     can_claim: bool = False
