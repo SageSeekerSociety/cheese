@@ -448,11 +448,16 @@ def test_the_line_budget_counts_the_turn_heading_too(cli, capsys):
     assert index[:2] == ["轮 t1 · 1 条", "  #1 说 一"], index
 
 
-def test_digest_and_a_destination_path_are_not_both_asked_for(cli):
-    """`--digest` 说不落文件；两个一起给时定不了听谁的，宁可当场拒绝。"""
+def test_digest_and_a_destination_path_are_not_both_asked_for(cli, capsys):
+    """`--digest` 说不落文件；两个一起给时定不了听谁的，宁可当场拒绝。
+
+    断言的不只是退出码：argparse 在「这条子命令根本不存在」时也退 2，只看码的话
+    命令被整个删掉这条测试照样绿（找茬分身量到的）。要的是那一句互斥的话。
+    """
     with pytest.raises(SystemExit) as exited:
         cli.build_parser().parse_args(["transcript", "--digest", "--out", "x.jsonl"])
     assert exited.value.code == 2
+    assert "not allowed with" in capsys.readouterr().err
 
 
 def test_the_zero_line_budget_is_refused(cli, capsys):
