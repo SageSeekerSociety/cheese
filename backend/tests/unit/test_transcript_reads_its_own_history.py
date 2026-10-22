@@ -164,6 +164,19 @@ def test_the_digest_says_whose_words_they_were_and_whether_it_failed():
     assert "有失败" in line
 
 
+def test_a_record_that_belongs_to_no_turn_takes_no_line():
+    """A session's own startup and command-lifecycle records belong to no turn.
+    They carry no words and no steps, so a line for each would be a column of
+    timestamps a reader takes for missing content."""
+    module = cheese()
+    rows = [
+        row(None, "2026-10-22T08:00:00+00:00", []),
+        {"turn": None, "at": "2026-10-22T08:00:01+00:00", "parts": [], "role": None},
+        row("a", "2026-10-22T08:01:00+00:00", [text("做完了")]),
+    ]
+    assert module._digest_lines(rows) == ["[08:01] a · 0 步 · 做完了"]
+
+
 def test_every_row_is_paged_until_the_cursor_stops(monkeypatch):
     module = cheese()
     pages = {

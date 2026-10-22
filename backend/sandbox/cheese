@@ -3809,9 +3809,16 @@ def _decided(card: dict, host) -> str:
     have not decided for long, that it still waits (the next question tells
     how it ended)."""
     while True:
-        got = host.request(
-            {"method": "POST", "path": "/assistant/agent/wait", "body": {"card": card["id"]}}
-        ).get("data") or {}
+        got = (
+            host.request(
+                {
+                    "method": "POST",
+                    "path": "/assistant/agent/wait",
+                    "body": {"card": card["id"]},
+                }
+            ).get("data")
+            or {}
+        )
         if got.get("said"):
             return got["said"]
 
@@ -6563,6 +6570,8 @@ def _digest_lines(rows: list[dict]) -> list[str]:
     """每轮一行:什么时候、多少步、动了什么、最后说了什么、成没成。
 
     分身的记录算另一条线程,不进这一轮的步数——它做的不是这一轮的事。
+    什么都不剩的一组不占一行:会话自己的那几条记录(启动、命令生命周期、限流通知)
+    不属于任何一轮,列出来只有时间戳,读的人会以为漏了什么。
     """
     children = _subagent_threads(rows)
     groups = []
@@ -6590,6 +6599,8 @@ def _digest_lines(rows: list[dict]) -> list[str]:
                     tools.append(f"{name}({preview})" if preview else name)
                 elif kind == "text" and part.get("text"):
                     (asked if row.get("role") == "user" else said).append(part["text"])
+        if not (tools or said or asked or failed):
+            continue
         when = str(entries[0].get("at") or "")[11:16]
         pieces = [f"[{when}] {str(turn)[:8] if turn else '--------'}"]
         if asked:
@@ -7133,9 +7144,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ptr.add_argument(
-        "--digest", action="store_true", help="不落文件,每轮一行打印摘要"
-    )
+    ptr.add_argument("--digest", action="store_true", help="不落文件,每轮一行打印摘要")
     ptr.add_argument(
         "--turns", type=int, default=10, metavar="N", help="拉最近多少轮(默认 10)"
     )
@@ -7146,7 +7155,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--author", default=None, metavar="HANDLE", help="只看某个座位(默认含全部分身)"
     )
     ptr.add_argument(
-        "--out", default=None, metavar="FILE", help="写到别处(默认覆盖 attachments/transcript 里那份)"
+        "--out",
+        default=None,
+        metavar="FILE",
+        help="写到别处(默认覆盖 attachments/transcript 里那份)",
     )
 
     ptpl = sub.add_parser(
