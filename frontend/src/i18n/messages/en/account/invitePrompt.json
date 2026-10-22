@@ -1,0 +1,12 @@
+{
+  "title": "You accepted your first delivery",
+  "seats": "You have {n} more seats. Send a friend your sign-up link: if they accept a first delivery from Cheese within 7 days of signing up, you both get credits:",
+  "friend": "Your friend",
+  "friendGain": "+50 credits for a first project, +100 for a first acceptance",
+  "you": "You",
+  "youGain": "+150 credits",
+  "copyLink": "Copy sign-up link",
+  "later": "Not now",
+  "more": "See invites",
+  "close": "Close"
+}

@@ -17,6 +17,7 @@ import { useAcceptCardBar } from '@/composables/acceptCard/bar'
 import { useAcceptCards } from '@/composables/acceptCard/cards'
 import { useAcceptCardDerive } from '@/composables/acceptCard/derive'
 import { signInWithGithub } from '@/composables/useGithubSignIn'
+import { primeInvitePrompt } from '@/composables/useInvitePrompt'
 import { useReviewComments } from '@/composables/useReviewComments'
 
 import { myHandle } from '@/me'
@@ -44,6 +45,16 @@ export function useAcceptCard(props: AcceptCardHost) {
 
   const cards = useAcceptCards({ topicId, taskId })
   const { loaded, animate, pendingCard, acceptedCard, deliveringCard, gateCard, prChecks, load, reset } = cards
+
+  // 等他采纳的卡一出现，先看一眼他的邀请码解锁了没有：采纳之后才知道那是不是第一次
+  // （composables/useInvitePrompt.ts）。演示页里读者扮的是别人，不问。
+  watch(
+    pendingCard,
+    (card) => {
+      if (card && !props.viewer && card.reviewer_handle === me.value) void primeInvitePrompt()
+    },
+    { immediate: true }
+  )
 
   // 待审阅时写的批注，退回时随卡送出（composables/useReviewComments.ts）。
   const comments = useReviewComments({ taskId: () => props.taskId, pendingCard: () => pendingCard.value })
