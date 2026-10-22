@@ -189,10 +189,13 @@ class Report:
 @dataclass(frozen=True)
 class Replaced:
     """The process holding native session ``conversation`` was replaced by one
-    of this release's (a runner the previous release started): what it was
-    written and never read, it never will read."""
+    of this release's (a runner another release started). The platform's
+    inputs its runner reported its works read (``read``: each work's id and the
+    input ids it read) were read, into that work; whatever else it was written
+    and has no record of reading, it never will read."""
 
     conversation: str
+    read: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)

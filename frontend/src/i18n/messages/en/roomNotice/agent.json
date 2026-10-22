@@ -99,6 +99,7 @@
   "resendInterruptedDetail": "A message is resent only once, never in an automatic loop. Finished changes are all in the workspace; to continue, retry and it will pick up where it stopped.",
   "runnerUnresponsive": "{harness}'s runner has not answered for {seconds} s",
   "sessionReplacedForUpgrade": "A platform update interrupted what {agent} was doing; the files it changed are all still there, and a retry picks the work up again",
+  "upgradeMessageWaits": "The platform is updating. {agent} will handle your message after finishing its current work",
   "runtimeImageMissing": "Nothing started yet; the platform is preparing the environment again.",
   "runtimeImageMissingDetail": "Nothing had started, and project files are untouched. Retry in a moment; if it keeps happening, contact an admin.",
   "runtimeImageMissingTitle": "The environment's image is temporarily unavailable",
