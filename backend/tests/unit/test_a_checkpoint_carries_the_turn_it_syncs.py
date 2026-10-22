@@ -69,6 +69,15 @@ def test_a_driven_runner_reads_the_turn_when_the_turn_ends():
     assert runner.turn_work() is None
 
 
+def _driven(checkpointer):
+    runner = Runner.__new__(Runner)
+    runner.checkpointer = checkpointer
+    runner.checkpointing = None
+    runner.checkpoint_again = False
+    runner.journal = _Journal({"owner": json.dumps({"work_id": "turn-1"})})
+    return runner
+
+
 def test_a_driven_runner_hands_the_turn_to_the_checkpoint():
     seen = []
 
@@ -77,15 +86,77 @@ def test_a_driven_runner_hands_the_turn_to_the_checkpoint():
             seen.append(turn)
             return {}
 
-    runner = Runner.__new__(Runner)
-    runner.checkpointer = Checkpointer()
-    runner.checkpointing = None
-    runner.checkpoint_again = False
-
+    runner = _driven(Checkpointer())
     asyncio.run(runner._checkpoint("turn-1"))
     asyncio.run(runner._checkpoint("turn-2"))
 
     assert seen == ["turn-1", "turn-2"]
+
+
+def test_a_turn_that_ends_during_a_sync_retries_with_its_own_turn():
+    """The retry exists to cover the newer turn; the note it files must be
+    that turn's, not the first one's."""
+    seen = []
+
+    class Checkpointer:
+        def __call__(self, request_id, turn):
+            seen.append(turn)
+            if len(seen) == 1:
+                runner.checkpoint_again = True
+                runner.journal = _Journal({"owner": json.dumps({"work_id": "turn-2"})})
+            return {}
+
+    runner = _driven(Checkpointer())
+    asyncio.run(runner._checkpoint("turn-1"))
+
+    assert seen == ["turn-1", "turn-2"]
+
+
+def test_turn_ended_checkpoints_with_the_turn_it_reads():
+    seen = []
+
+    class Checkpointer:
+        def __call__(self, request_id, turn):
+            seen.append(turn)
+            return {}
+
+    runner = _driven(Checkpointer())
+
+    async def ended():
+        runner.turn_ended()
+        await runner.checkpointing
+
+    asyncio.run(ended())
+    assert seen == ["turn-1"]
+
+
+def test_codex_reads_the_turn_from_its_thread():
+    """Codex names the work per thread, not in the owner record."""
+    from types import SimpleNamespace
+
+    from app.domain.agent.harness.codex.runner import Runner as CodexRunner
+
+    runner = CodexRunner.__new__(CodexRunner)
+    runner.journal = _Journal({"work:thread": "turn-1"})
+    runner.session = SimpleNamespace(thread_id="thread")
+
+    assert runner.turn_work() == "turn-1"
+
+
+def test_the_checkpoint_request_carries_the_turn(monkeypatch):
+    """`RemoteClient.checkpoint(turn)` names it in the control request."""
+    from app.domain.agent import executor_transport
+
+    client = executor_transport.RemoteClient({"kind": "device", "execution_token": "t"})
+    captured = {}
+    monkeypatch.setattr(
+        client, "control", lambda request: captured.update(request) or {}
+    )
+
+    client.checkpoint("r1", turn="turn-1")
+    client.checkpoint("r2")
+
+    assert captured["turn"] == "turn-1"
 
 
 def test_claude_codes_checkpoint_asks_the_runner_for_the_turn(monkeypatch):

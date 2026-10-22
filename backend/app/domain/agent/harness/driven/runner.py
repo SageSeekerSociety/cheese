@@ -369,6 +369,9 @@ class Runner(Generic[J]):  # noqa: UP046
                 print(f"turn checkpoint failed: {error!r}", file=sys.stderr, flush=True)
             if not self.checkpoint_again:
                 return
+            # A newer turn ended while this one synced; the retry is that
+            # turn's checkpoint, so it carries that turn instead of the first.
+            turn = self.turn_work()
 
     async def yield_foreground(self) -> None:
         """Give the model its turn back: what it is waiting on moves to the
