@@ -19,7 +19,7 @@
   "tier": {
     "default": "默认 · 包含",
     "included": "包含",
-    "byo": "自带 API 密钥",
+    "byo": "自带",
     "premium": "增值"
   }
 }
