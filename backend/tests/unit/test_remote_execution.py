@@ -1707,21 +1707,27 @@ class RemoteExecutionTests(unittest.TestCase):
 
     def test_a_platform_command_can_name_its_own_variables(self):
         """`checkpoint` tells the sync which turn it ends this way, and nothing
-        else can: a plain Bash argument does not set the environment."""
-        named = self.invoke(
-            "Bash",
+        else can: a command from the model's own tools does not set one."""
+        named = runtime.request(
+            self.state,
+            "invoke",
             {
-                "command": 'printf "%s" "$CHEESE_TURN"',
-                "platform_env": {"CHEESE_TURN": "turn-1"},
+                "id": str(uuid.uuid4()),
+                "tool": "Bash",
+                "args": {
+                    "command": 'printf "%s" "$CHEESE_TURN"',
+                    "platform_env": {"CHEESE_TURN": "turn-1"},
+                },
+                "platform": True,
             },
-        )
+        )["value"]
         self.assertEqual(named["stdout"], "turn-1")
 
         plain = self.invoke(
             "Bash",
             {
                 "command": 'printf "%s" "${CHEESE_TURN:-none}"',
-                "env": {"CHEESE_TURN": "not-from-a-command-argument"},
+                "platform_env": {"CHEESE_TURN": "forged"},
             },
         )
         self.assertEqual(plain["stdout"], "none")

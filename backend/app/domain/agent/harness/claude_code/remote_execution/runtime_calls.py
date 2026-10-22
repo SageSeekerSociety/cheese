@@ -209,11 +209,17 @@ def invoke(self, params):
         self.db.execute("INSERT INTO requests VALUES (?,?,NULL)", (key, serialized))
         self.db.commit()
     self.log(key, "started", input=params)
+    args = params.get("args", {})
+    if not params.get("platform"):
+        # `platform_env` names variables for one command, and only the
+        # platform's own calls may (`checkpoint`'s turn). A call from the
+        # model's own tools is not one, whatever it puts in its arguments.
+        args = {k: v for k, v in args.items() if k != "platform_env"}
     try:
         result = {
             "value": self.execute(
                 params["tool"],
-                params.get("args", {}),
+                args,
                 key,
                 params.get("server", "native"),
                 params.get("cwd"),
@@ -320,8 +326,8 @@ def control(self, params):
         if turn:
             # A sync's failure is reported with this turn, so the note lands
             # in that turn's process view rather than being guessed later.
-            # Named apart from the Bash tool's own arguments: only a platform
-            # call sets it, and no model can.
+            # `platform_env` is what names it to the command; `invoke` drops
+            # that key from any call the platform did not make.
             args["platform_env"] = {"CHEESE_TURN": str(turn)}
         return self.invoke(
             {

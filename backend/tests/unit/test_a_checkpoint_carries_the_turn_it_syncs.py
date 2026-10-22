@@ -143,6 +143,57 @@ def test_codex_reads_the_turn_from_its_thread():
     assert runner.turn_work() == "turn-1"
 
 
+def _invoking(seen):
+    """The executor's `invoke` over a throwaway request table."""
+    import sqlite3
+    import threading
+
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE requests (id TEXT PRIMARY KEY, input TEXT, result TEXT)")
+
+    class Inputs:
+        """A stand-in for the executor: only what `invoke` reads of it."""
+
+        invoke = runtime_calls.invoke
+        log = staticmethod(lambda *args, **kwargs: None)
+        db_lock = threading.Lock()
+
+        def __init__(self):
+            self.db = db
+
+        def execute(self, tool, args, *rest, **kwargs):
+            seen["args"] = args
+            return {}
+
+    return Inputs()
+
+
+def test_only_a_platform_call_may_name_environment_variables():
+    """`platform_env` is dropped from any call the platform did not make, so a
+    model-authored Bash cannot file a note under a turn it chose."""
+    seen = {}
+    runner = _invoking(seen)
+
+    runner.invoke(
+        {
+            "id": "r1",
+            "tool": "Bash",
+            "args": {"command": "true", "platform_env": {"CHEESE_TURN": "forged"}},
+        }
+    )
+    assert "platform_env" not in seen["args"]
+
+    runner.invoke(
+        {
+            "id": "r2",
+            "tool": "Bash",
+            "args": {"command": "true", "platform_env": {"CHEESE_TURN": "turn-1"}},
+            "platform": True,
+        }
+    )
+    assert seen["args"]["platform_env"] == {"CHEESE_TURN": "turn-1"}
+
+
 def test_the_checkpoint_request_carries_the_turn(monkeypatch):
     """`RemoteClient.checkpoint(turn)` names it in the control request."""
     from app.domain.agent import executor_transport
