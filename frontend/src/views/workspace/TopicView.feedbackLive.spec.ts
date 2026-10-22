@@ -65,7 +65,7 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
 // 频道概览的置顶：这几条测试不看它。
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
-vi.mock('@/api/chapters', () => ({ listChapters: async () => [], addChapter: vi.fn(), removeChapter: vi.fn() }))
+vi.mock('@/api/chapters', () => ({ listChapters: async () => [], addChapter: vi.fn(), removeChapter: vi.fn(), renameChapter: vi.fn() }))
 
 // The real panel turns a `{type: 'state', resource}` socket message into this
 // event; the button stands in for that message arriving.
