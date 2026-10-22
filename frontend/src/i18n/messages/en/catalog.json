@@ -1624,6 +1624,10 @@
     "s6": {
       "name": "Drafting in a project",
       "note": "Asked in a channel what needs the person: Cheese read the history and drafted a reply (waiting, editable, with Send and Set aside) and a task (already opened, with View)."
+    },
+    "s7": {
+      "name": "A routine's run",
+      "note": "A conversation the platform started: the line on top says the routine started. Cheese drafted a reply; you were away, so the card waits for you. The card the last run left has expired."
     }
   },
   "myDraftsView": {
@@ -1666,6 +1670,17 @@
     "s7": {
       "name": "Upload dialog",
       "note": "Pick a file, then who can see it; each choice says who that is. Upload stays disabled until a file is chosen."
+    }
+  },
+  "settingsAssistantView": {
+    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), routines (when they run, the next run, how the last one went, credits over 7 days; view the conversation, pause, resume, delete), and recent actions (done or asked, with the reason when asked).",
+    "s1": {
+      "name": "With routines",
+      "note": "Three routines: one on a schedule, one that runs when someone {'@'}-mentions you and left 1 action to confirm, one paused because credits ran out."
+    },
+    "s2": {
+      "name": "Nothing set yet",
+      "note": "No entries of your own, so “No confirmation needed” says None; no routines."
     }
   }
 }

@@ -151,5 +151,7 @@
   "turnForceStopped": "This turn was force-stopped",
   "upstreamModelRequired": "The upstream model ID can't be empty",
   "sourceNeedsPrices": "Every source needs both an input and an output price; one may be 0 (such as a transcription model's output), and both at 0 is a free source, which must say so: the platform bills all of a model's usage by its prices",
-  "sourcePriceCleared": "A price can be changed, not cleared: this edit clears {prices}"
+  "sourcePriceCleared": "A price can be changed, not cleared: this edit clears {prices}",
+  "assistantCardLeftForLater": "Nobody is there to confirm right now. The action was left for the person to confirm and was not done. Go on with the rest, or finish.",
+  "assistantNotifyMeLimit": "You can send the person at most {max} notifications an hour. Put what you have to say into one."
 }
