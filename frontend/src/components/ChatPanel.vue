@@ -169,9 +169,14 @@ const mentionOutside = useMentionOutside({
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
 
+// 这一栏的根：时间线和输入区都在它里面。滚动位置的「重写」判定要观察它——#4662
+// 把时间线包进了 `.timeline-zone`，滚动框的直接父元素已经不是包含输入区的那一层了。
+const chatRoot = ref<HTMLElement | null>(null)
+
 const panel = useChatPanel({
   topic: () => props.topic,
   conversationId: () => props.conversationId,
+  column: () => chatRoot.value,
   agentHandle: () => props.agentHandle,
   alwaysSummon: () => props.alwaysSummon,
   answersInThread: () => threadable.value,
@@ -399,7 +404,6 @@ const submitQuestion = createQuestionSubmit({
 defineExpose({ send, linkDown, submitQuestion })
 
 // 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
-const chatRoot = ref<HTMLElement | null>(null)
 useComposerShortcut({
   root: chatRoot,
   open: () => !!props.topic && props.showComposer && !props.composerClosed && !!composerRef.value,
