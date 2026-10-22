@@ -371,6 +371,7 @@ void openPlace()
             v-on="chatEvents"
             @chapter="chapters.add"
             @unchapter="chapters.remove"
+            @rename="chapters.rename"
             @open-room="backToRoom"
           />
         </Transition>
@@ -481,16 +482,12 @@ void openPlace()
                 :members="store.members"
                 :checklist="taskOverview.checklist.value"
                 :related="taskOverview.related.value"
-                :chapters="chapters.rows.value"
-                :can-chapter="canChapter"
                 :can-retry="taskPage.takesPart.value"
                 :retrying="taskOverview.retrying.value"
                 :retry-error="taskOverview.retryError.value"
                 @open-topic="openTopic"
                 @mention-click="handleMentionClick"
                 @retry-opening="taskOverview.retryOpening"
-                @jump="jumpTo"
-                @unchapter="chapters.remove"
                 @open-output="(path: string) => panelRef?.openFile?.(path)"
                 @open-file="(path: string) => panelRef?.openFile?.(path)"
                 @open-document="(id: string, title: string) => panelRef?.openDocument?.({ id, title })"
@@ -503,15 +500,12 @@ void openPlace()
                 :overview="channelOverview.overview.value"
                 :overview-text="channelOverview.overviewText.value"
                 :pins="channelOverview.pins.value"
-                :chapters="chapters.rows.value"
                 :tasks="channelOverview.tasks.value"
                 :can-pin="canPin"
-                :can-chapter="canChapter"
                 :member-names="memberNames"
                 :agent-name="store.agentName"
                 :save-description="(text: string) => store.describe(topicId, text)"
                 @unpin="channelOverview.unpin"
-                @unchapter="chapters.remove"
                 @edit-overview="
                   (id: string) => panelRef?.openDocument?.({ id, title: t('work.channel.overview.project') })
                 "
@@ -557,6 +551,7 @@ void openPlace()
                 v-on="chatEvents"
                 @chapter="chapters.add"
                 @unchapter="chapters.remove"
+                @rename="chapters.rename"
                 @open-room="backToRoom"
               />
             </template>
