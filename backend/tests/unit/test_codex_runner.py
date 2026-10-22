@@ -425,6 +425,7 @@ async def test_the_compaction_s_own_turn_is_not_a_room_turn(tmp_path):
                 "method": "item/started",
                 "params": {
                     "threadId": "thread",
+                    "turnId": "ct",
                     "item": {"id": "c1", "type": "contextCompaction"},
                 },
             },
@@ -432,6 +433,7 @@ async def test_the_compaction_s_own_turn_is_not_a_room_turn(tmp_path):
                 "method": "item/completed",
                 "params": {
                     "threadId": "thread",
+                    "turnId": "ct",
                     "item": {"id": "c1", "type": "contextCompaction"},
                 },
             },
@@ -481,21 +483,107 @@ async def test_a_turn_replacing_the_compaction_clears_the_request(tmp_path):
         await asyncio.sleep(0.05)
         await runner.record(
             {
-                "method": "turn/started",
-                "params": {"threadId": "thread", "turn": {"id": "compact-turn"}},
+                "method": "item/started",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "compact-turn",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
             }
         )
         assert runner.compacting_turn == "compact-turn"
 
-        # The person's turn takes over.
+        # A person's turn ends; the compaction's own never comes.
+        await runner.record(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {"id": "person-turn", "status": "completed"},
+                },
+            }
+        )
+        assert runner.compacting_turn is None
+        assert runner.compact_request == ""
+        assert runner.busy() is False
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_person_s_turn_beside_the_ask_is_not_mistaken_for_it(tmp_path):
+    """A person's message can arrive beside the ask, putting their
+    `turn/started` first. Identifying the compaction's turn by order would
+    swallow their turn — its ending, its `turn_ended`, and the answer it owes —
+    so the compaction is recognised by its own `contextCompaction` item and
+    their turn goes through untouched."""
+    runner = Runner(tmp_path, AsyncMock())
+    compacted = AsyncMock()
+    session = SimpleNamespace(
+        thread_id="thread", turn_id=None, compact=compacted, observe=lambda _: None
+    )
+    runner.session = session
+    try:
+        runner.journal.remember("work:thread", "platform-work")
+        runner.request_compact()
+        await asyncio.sleep(0.05)
+
+        # The person's turn comes first, and ends.
         await runner.record(
             {
                 "method": "turn/started",
                 "params": {"threadId": "thread", "turn": {"id": "person-turn"}},
             }
         )
-        assert runner.compacting_turn is None
+        await runner.record(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {"id": "person-turn", "status": "completed"},
+                },
+            }
+        )
+
+        # Their turn is the room's: it is journaled, with its ending.
+        records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
+        assert [
+            r["params"]["turn"]["id"]
+            for r in records
+            if r.get("method") == "turn/started"
+        ] == ["person-turn"]
+        assert [
+            r["params"]["turn"]["id"]
+            for r in records
+            if r.get("method") == "turn/completed"
+        ] == ["person-turn"]
+
+        # The compaction's own turn, when it arrives, is still the platform's.
+        await runner.record(
+            {
+                "method": "item/started",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "compact-turn",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            }
+        )
+        await runner.record(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {"id": "compact-turn", "status": "completed"},
+                },
+            }
+        )
+        records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
+        assert "compact-turn" not in [
+            r["params"]["turn"]["id"]
+            for r in records
+            if r.get("method") in ("turn/started", "turn/completed")
+        ]
         assert runner.compact_request == ""
-        assert runner.busy() is False
     finally:
         await runner.close()

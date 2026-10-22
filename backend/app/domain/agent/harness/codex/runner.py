@@ -34,6 +34,12 @@ class Skills(Protocol):
     def sync_skills(self) -> bool: ...
 
 
+def _turn_of(event: dict) -> str | None:
+    """The turn a Codex event names, however it names it."""
+    params = event.get("params") or {}
+    return (params.get("turn") or {}).get("id") or params.get("turnId")
+
+
 class Runner(runner.Runner[Journal]):
     def __init__(
         self,
@@ -66,6 +72,10 @@ class Runner(runner.Runner[Journal]):
         #: a compaction runs as a turn on the thread, and it is the platform's,
         #: not the room's — its ending must not close a room turn.
         self.compacting_turn: str | None = None
+        #: A `turn/started` held until its turn's own items say what it is, so
+        #: the compaction's turn is told from a person's by its item and not by
+        #: arrival order (``record``).
+        self.pending_turn: dict | None = None
         #: The loop `request_compact` hops onto from the tool call's thread.
         #: `start` sets it for sure; a runner built outside a loop (a sync
         #: test) has none yet and gets it there.
@@ -114,36 +124,71 @@ class Runner(runner.Runner[Journal]):
         if owner:
             event = {**event, "cheese": owner}
         turn_id = (params.get("turn") or {}).get("id") or params.get("turnId")
+        method = event.get("method")
+        item = params.get("item") or {}
+        same_thread = self.session is not None and thread_id == self.session.thread_id
+        # --- the compaction's own turn -------------------------------------
+        #
+        # `thread/compact/start` runs the compaction as a turn of its own on
+        # the thread. The room hears the compaction (`AgentCompacting`, from
+        # its `contextCompaction` item) and not a turn: its ending read as a
+        # turn would answer, with nothing, work that had already ended.
+        #
+        # Which turn is the compaction's is decided from its own item, never
+        # from arrival order — a person's message can start their turn beside
+        # the ask, so the first `turn/started` is not necessarily the
+        # compaction's — and the decision is held to the turn's own ending so
+        # a start never reaches the room without the ending that closes it.
+        item = params.get("item") or {}
+        same_thread = self.session is not None and thread_id == self.session.thread_id
         if (
-            self.compact_request == "sent"
-            and self.compacting_turn is None
-            and event.get("method") == "turn/started"
-            and self.session is not None
-            and thread_id == self.session.thread_id
+            same_thread
+            and method in ("item/started", "item/completed")
+            and item.get("type") == "contextCompaction"
         ):
-            # The turn app-server opened for the compaction we asked for. It
-            # belongs to the platform: the room hears the compaction itself
-            # (`AgentCompacting`, off the `contextCompaction` items) and no
-            # turn of its own, so its start and end are not journaled as turns
-            # — an empty `AgentResult` would answer work that already ended.
-            self.compacting_turn = turn_id
-        compaction_turn = turn_id is not None and turn_id == self.compacting_turn
-        if compaction_turn and event.get("method") == "turn/completed":
-            self.compacting_turn = None
-            return
-        if compaction_turn and event.get("method") == "turn/started":
-            return
-        if (
-            self.compacting_turn is not None
-            and event.get("method") == "turn/started"
-            and turn_id != self.compacting_turn
-        ):
-            # A different turn replacing the compaction's — a person wrote
-            # while it ran, and app-server swapped the task. The compaction is
-            # gone, so it will never report: without this the request would sit
-            # at `sent` for ever and the session would never go idle.
-            self.compacting_turn = None
-            self.compact_request = ""
+            # The compaction announcing itself: this turn is the platform's.
+            # The item still goes to the room — it is what the room's
+            # 「正在整理上下文」 line comes from — but the turn is not a turn.
+            self.compacting_turn = str(params.get("turnId") or "") or turn_id
+        if method == "turn/started":
+            if (
+                same_thread
+                and self.compact_request == "sent"
+                and self.compacting_turn is None
+                and self.pending_turn is None
+            ):
+                # Held until this turn ends: only then is it known whether it
+                # was the compaction's. `session.observe` still sees it, so
+                # app-server's own view of which turn is running is current.
+                self.pending_turn = event
+                if self.session is not None:
+                    self.session.observe(event)
+                return
+        if method == "turn/completed":
+            pending, self.pending_turn = self.pending_turn, None
+            if same_thread and self.compacting_turn == turn_id:
+                # The compaction's turn: its held start and this ending are
+                # both dropped. The room already has the compaction itself.
+                self.compacting_turn = None
+                self.compact_request = ""
+                if self.session is not None:
+                    self.session.observe(event)
+                return
+            if pending is not None:
+                # A real turn, one event late by its own start: journal it, and
+                # let this ending go through the usual way below. A real turn
+                # starting while the ask was outstanding means the compaction
+                # was replaced by it and will never report.
+                self.journal.append(pending)
+                if self.compact_request == "sent":
+                    self.compact_request = ""
+            if self.compacting_turn is not None:
+                # A turn ended that was not the compaction's: the compaction
+                # was replaced and will never report. Left alone, the request
+                # would sit at `sent` for ever and the session would never go
+                # idle.
+                self.compacting_turn = None
+                self.compact_request = ""
         ends = (
             self.session is not None
             and event.get("method") == "turn/completed"
