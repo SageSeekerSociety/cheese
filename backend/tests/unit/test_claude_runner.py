@@ -1310,3 +1310,17 @@ def test_a_request_made_mid_turn_is_written_when_that_turn_ends(screen, contract
     ), "the command went out inside the turn that asked"
     screen.wait_event(_status("idle", work))
     screen.wait(lambda r: r.get("status") == "compacting")
+
+    # Once per turn, not once for ever: the session's next turn can ask again,
+    # and this time nothing is running, so the command goes at once.
+    second_work = str(uuid.uuid4())
+    screen.send("again", work_id=second_work)
+    screen.wait_event(_status("idle", second_work))
+    assert screen.call("compact", {}) == {"requested": True, "already": False}
+    started = screen.wait(
+        lambda r: r.get("status") == "compacting", after=held[-1]["sequence"]
+    )
+    ended = screen.wait(
+        lambda r: r.get("compact_result") is not None, after=started["sequence"]
+    )
+    assert ended["record"]["compact_result"] == "success"
