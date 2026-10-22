@@ -60,7 +60,7 @@ def rows(offer: BetaOffer) -> list[tuple[str, str, str]]:
 
 def intro(offer: BetaOffer) -> str:
     plan = (
-        "方案里每月的额度"
+        "方案里的额度"
         if offer.plan_credits is None
         else f"方案里每月 {offer.plan_credits:,} 点的额度（每月 1 日重置）"
     )

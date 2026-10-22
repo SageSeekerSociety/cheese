@@ -120,7 +120,7 @@ export const ACCOUNT_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '还没领体验额度',
-        note: '主按钮是「领取 500 点」，旁边「稍后」。每月方案那一行是这个人自己方案的数。',
+        note: '主按钮是「领取 500 点」，旁边「稍后」。开头那句的每月点数是这个人自己方案的数。',
         props: {
           open: true,
           offer: {
