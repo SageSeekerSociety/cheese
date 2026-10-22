@@ -60,6 +60,7 @@ def _task(room_id: uuid.UUID, *, created_at: datetime, title: str = "task") -> A
         owner_handle="alice",
         status=TaskStatus.open,
         progress_state=None,
+        progress_set_at=None,
         accepted_at=None,
         conclusion=None,
         closing_since=None,
@@ -93,12 +94,18 @@ def _wire_fakes(
     async def fake_asked(_session: Any, _ids: list[uuid.UUID]) -> set[uuid.UUID]:
         return set()
 
+    async def fake_running(
+        _session: Any, _ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        return {}
+
     async def fake_deliver(_session: Any, event: Any, to: Any) -> None:
         delivered.append((event, to))
 
     monkeypatch.setattr(sweep, "TaskService", FakeTaskService)
     monkeypatch.setattr(sweep, "latest_cards_by_task", fake_cards)
     monkeypatch.setattr(sweep, "awaiting_an_answer", fake_asked)
+    monkeypatch.setattr(sweep, "running_since", fake_running)
     monkeypatch.setattr(sweep, "deliver", fake_deliver)
     return delivered
 

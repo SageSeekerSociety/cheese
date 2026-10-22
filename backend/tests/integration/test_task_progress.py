@@ -1,9 +1,10 @@
 """A task shows what its AI teammate last said about its work.
 
 The teammate says it through its own session (`cheese_task_state`); the board,
-the task's page and the project's lists all show that, and nothing the
-platform sees of the session rewrites it: a turn ending does not, and neither
-does the session going away, which only puts 「已离开」 beside it. While its
+the task's page and the project's lists all show that, and the session
+stopping does not rewrite it: a turn ending does not, and neither does the
+session going away, which only puts 「已离开」 beside it. (A session running
+after the report is newer than it: `test_a_task_hears_its_session_through_the_runner`.) While its
 session runs and the report has stopped moving, the platform asks for a new
 one.
 """

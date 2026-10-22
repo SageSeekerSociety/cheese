@@ -44,10 +44,11 @@ class AtWork:
     rooms: dict[uuid.UUID, list[dict]]
     #: {room: the seats at work in one of its 支线}.
     threads: dict[uuid.UUID, set[str]]
-    #: The conversations among the ``tasks`` the caller named whose session is
-    #: running. A task is its own conversation, so it is not in ``rooms`` unless
-    #: the room's own line is running.
-    tasks: set[uuid.UUID]
+    #: {task: when the latest of its running sessions began} among the ``tasks``
+    #: the caller named whose session is running. A task is its own
+    #: conversation, so it is not in ``rooms`` unless the room's own line is
+    #: running.
+    tasks: dict[uuid.UUID, datetime]
 
 
 async def at_work(
@@ -72,7 +73,7 @@ async def at_work(
     the same statement, so a page does not pay one more query for it: running
     sessions are few, and the rows outside this page are filtered in memory."""
     if not room_ids:
-        return AtWork({}, {}, set())
+        return AtWork({}, {}, {})
     if threads is None:
         threads = await threads_of_rooms(db, room_ids)
     mine = set(room_ids)
@@ -88,7 +89,7 @@ async def at_work(
     )
     rooms: dict[uuid.UUID, list[dict]] = {}
     in_threads: dict[uuid.UUID, set[str]] = {}
-    running_tasks: set[uuid.UUID] = set()
+    running_tasks: dict[uuid.UUID, datetime] = {}
     for conversation, seat, since in rows:
         room = threads.get(conversation)
         if room is not None:
@@ -98,7 +99,9 @@ async def at_work(
                 {"member": seat, "kind": WORKING, "since": since.timestamp()}
             )
         if conversation in task_rooms:
-            running_tasks.add(conversation)
+            running_tasks[conversation] = max(
+                since, running_tasks.get(conversation, since)
+            )
     return AtWork(rooms, in_threads, running_tasks)
 
 

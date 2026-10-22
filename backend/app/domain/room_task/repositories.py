@@ -60,6 +60,8 @@ class ListedTask:
     title_source: TaskTitleSource
     status: TaskStatus
     progress_state: TaskProgress | None
+    #: 队友是什么时候报的那个状态：会话在那之后才开始跑，那句话就让位（`presentation`）。
+    progress_set_at: datetime | None
     owner_handle: str | None
     reporter_handle: str | None
     contributor_handles: tuple[str, ...]
@@ -166,6 +168,7 @@ class TaskRepository:
                 Task.title_source,
                 Task.status,
                 Task.progress_state,
+                Task.progress_set_at,
                 Task.owner_handle,
                 Task.reporter_handle,
                 Task.contributor_handles,
@@ -187,6 +190,7 @@ class TaskRepository:
                 title_source=row.title_source,
                 status=row.status,
                 progress_state=row.progress_state,
+                progress_set_at=row.progress_set_at,
                 owner_handle=row.owner_handle,
                 reporter_handle=row.reporter_handle,
                 contributor_handles=tuple(row.contributor_handles or ()),

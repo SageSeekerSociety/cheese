@@ -22,7 +22,7 @@ reach one (C4 `routes-independent`).
 """
 
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.addressing import Event, address
 from app.domain.agent.model_catalog import catalog
 from app.domain.agent.opening import opening_state
-from app.domain.agent.session_state import running_conversations
+from app.domain.agent.session_state import running_since
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
@@ -70,9 +70,15 @@ async def task_out(db, task, card=None) -> dict:
     if card is None:
         card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
+    running = await running_since(db, [task.id])
     out = TaskOut.model_validate(task).model_dump(mode="json")
     shown = presentation.task_presentation(
-        presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
+        presentation.facts_for_task(
+            task,
+            card,
+            awaiting_answer=task.id in asked,
+            running_since=running.get(task.id),
+        ),
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
@@ -100,6 +106,8 @@ async def task_rows(
     thread_ids = [t.id for t, _ in threads]
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
+    # 哪几条活的会话此刻在跑、从什么时候开始：在跑的活是「在做」（`presentation`）。
+    running = await running_since(db, thread_ids)
     # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
     landed: dict[uuid.UUID, list] = {}
     for accepted_card in await AcceptCardRepository(db).accepted_for_tasks(thread_ids):
@@ -120,7 +128,12 @@ async def task_rows(
     for task, blocks in threads:
         card = cards.get(task.id)
         shown = presentation.task_presentation(
-            presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
+            presentation.facts_for_task(
+                task,
+                card,
+                awaiting_answer=task.id in asked,
+                running_since=running.get(task.id),
+            ),
             now=now,
         )
         waiting = presentation.waiting_on(
@@ -251,7 +264,7 @@ async def project_task_rows(
     *,
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
     incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
-    running_of: Callable[[uuid.UUID], bool] | None = None,
+    running: Mapping[uuid.UUID, datetime] | None = None,
 ) -> list[dict]:
     """The project rail's rows for ``tasks``: each with its board cell, its
     card, whether it waits on ``me``, whether it stalled, when it last moved,
@@ -264,9 +277,10 @@ async def project_task_rows(
     ``moving`` is the sidebar's breathing green: a session of this task's
     conversation is running (as the runner declares it), or its card is on the
     delivery chain. A teammate's reported 「在做」 does not count — it can say so
-    and be gone. ``running_of`` lets a caller that has already read which
-    sessions are running answer it without a query; when it is not given, this
-    reads the task conversations once."""
+    and be gone. ``running`` ({task: since when its session runs}) lets a caller
+    that has already read which sessions are running answer it without a query;
+    when it is not given, this reads the task conversations once. The board
+    cell reads it too: a running session is 在做 (`presentation`)."""
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
@@ -278,19 +292,23 @@ async def project_task_rows(
     now = datetime.now(UTC)
     # 第四次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
     last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
-    # 第五次：哪几条活的会话此刻真在跑 —— 侧栏呼吸绿的「有一轮在跑」那一半。
-    # 用 runner 报的会话状态，不用队友自己报的「在做」：那是纸面状态，会话可能已经停了。
-    # 调用方已经读过（频道清单的 `at_work`）就直接用，不在这里多查一次。
-    running = (
-        set() if running_of is not None else await running_conversations(db, task_ids)
-    )
-    is_running = running_of or running.__contains__
+    # 第五次：哪几条活的会话此刻真在跑、从什么时候开始 —— 侧栏呼吸绿的「有一轮在跑」
+    # 那一半，也是那一格的「在做」。用 runner 报的会话状态，不用队友自己报的「在做」：
+    # 那是纸面状态，会话可能已经停了。调用方已经读过（频道清单的 `at_work`）就直接用，
+    # 不在这里多查一次。
+    if running is None:
+        running = await running_since(db, task_ids)
     items = []
     for task in tasks:
         card = cards.get(task.id)
         said_at = last_said.get(task.id)
         shown = presentation.task_presentation(
-            presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
+            presentation.facts_for_task(
+                task,
+                card,
+                awaiting_answer=task.id in asked,
+                running_since=running.get(task.id),
+            ),
             now=now,
         )
         last_activity = said_at or task.created_at
@@ -335,7 +353,7 @@ async def project_task_rows(
                 else False,
                 # 这条活此刻在不在往前走（侧栏的呼吸绿）：有一轮在跑，或者卡已经递出去、
                 # 走在交付链路上（看板那一列是 `delivering`）。
-                "moving": is_running(task.id)
+                "moving": task.id in running
                 or shown.column is presentation.Column.delivering,
                 "stalled": presentation.is_stalled(
                     shown, last_activity=last_activity, now=now
@@ -367,7 +385,7 @@ async def rail_tasks(
     *,
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
     incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
-    running_of: Callable[[uuid.UUID], bool] | None = None,
+    running: Mapping[uuid.UUID, datetime] | None = None,
 ) -> dict[uuid.UUID, dict]:
     """What the sidebar hangs under each channel, keyed by channel: how many
     tasks are underway there (`open`, the count after 「全部任务」), and the ones
@@ -407,7 +425,7 @@ async def rail_tasks(
         [*mine, *candidates],
         delivered_of=delivered_of,
         incomplete_of=incomplete_of,
-        running_of=running_of,
+        running=running,
     )
     rows = all_rows[: len(mine)]
     candidate_rows = all_rows[len(mine) :]
@@ -472,10 +490,10 @@ async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict
 
     For readers that act on whether the teammate is at work — the orchestrator's
     patrol, which must not nudge a session in the middle of a long command. The
-    board does not read it: what a task shows is what its teammate reported
-    (`presentation`).
+    board cell already weighed it against what the teammate reported
+    (`presentation`); this says the fact itself.
     """
-    running = await running_conversations(db, [uuid.UUID(item["id"]) for item in items])
+    running = await running_since(db, [uuid.UUID(item["id"]) for item in items])
     return [
         {**item, "session_running": uuid.UUID(item["id"]) in running} for item in items
     ]

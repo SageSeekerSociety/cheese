@@ -55,8 +55,9 @@ class TaskProgress(enum.StrEnum):
     where it stands (等审), whatever was reported before. So the teammate never
     says 「待审阅」 or 「关闭」 — those are facts, not reports — and while a card
     is open it cannot report at all (`room_task.progress`). The board reads this
-    in place of a running turn (`presentation.task_presentation`): a teammate
-    waiting on a build is still on it after its turn returns.
+    where no running session speaks (`presentation.task_presentation`): a
+    teammate waiting on a build is still on it after its session stops, and a
+    session that starts running after the report is newer than it.
     """
 
     #: Doing the work.

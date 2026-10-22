@@ -18,7 +18,11 @@ conversation are told when it flushed
 - a turn in the task reaching its session or ending: the turn's
   interval is written with a bulk `update(AgentTurn)`, which a flush hook does
   not see, so its writer (`AgentTurnRepository`) queues the frames through
-  `turns_moved` in the same session;
+  `sessions_moved` in the same session;
+- a session in the task starting or stopping running, as its runner declares
+  it: whether one runs is part of what the task reads as (`presentation`, 在做),
+  and the runner's report is applied (`agent.runner_reports`) without touching
+  the task's row, so it calls `sessions_moved` too;
 - the task's first instruction moving on its ledger (`agent/opening.py`): it
   waiting to try again, or giving up, is what the overview says while the
   document is empty, and no turn moves when it happens. That module's own
@@ -110,10 +114,11 @@ def rows_written(session: AsyncSession, task_id: uuid.UUID, room_id: uuid.UUID) 
     _tell(session.sync_session, task_id, room_id)
 
 
-async def turns_moved(
+async def sessions_moved(
     session: AsyncSession, conversations: Iterable[uuid.UUID]
 ) -> None:
-    """A turn reached its session, or ended, in these conversations: the ones
+    """A turn reached its session or ended, or a session started or stopped
+    running, in these conversations: the ones
     that are tasks are told once ``session`` commits. Read in ``session``
     itself, so nothing is left running once its caller is done with it."""
     ids = set(conversations)

@@ -2,6 +2,11 @@
 
 Rules a person can state without the code:
 
+- while the runner says a task's session is running, the task is 在做 unless
+  its teammate said otherwise during that run: a teammate that never said
+  anything, or said 「在等」 before its session woke again, is at work; what
+  it says while the session runs stands;
+- a page showing the task hears when its session starts or stops running;
 - when the runner reports a task's session gone, the task says its teammate
   left, and what the teammate last said about its work stays as it said it;
 - while the runner says a task's session is running and the teammate's report
@@ -24,6 +29,7 @@ from app.core.config import settings
 from app.domain.agent import runner_reports, session_state
 from app.domain.agent.harness.driven import lifecycle
 from app.domain.agent.reads import Report, SessionExited, SessionRunning
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.room_task.models import Task
 from app.periodic_jobs import periodic_jobs
 from tests.integration.conftest import (
@@ -98,6 +104,120 @@ def _task(client, task_id: str) -> dict:
     r = client.get(f"/topics/{task_id}/task", headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
     return r.json()["data"]
+
+
+def _phrases(client, project_id: str, task_id: str) -> set[str]:
+    """What the task reads as on its own page, in the project's task list and
+    in its channel's task list: one answer, or the set shows the disagreement."""
+    headers = session_auth_headers("alice")
+    page = _task(client, task_id)
+    listed = client.get(f"/projects/{project_id}/tasks", headers=headers)
+    assert listed.status_code == 200, listed.text
+    in_room = client.get(
+        f"/topics/{page['room_id']}/tasks", params={"limit": 0}, headers=headers
+    )
+    assert in_room.status_code == 200, in_room.text
+    rows = [
+        *(r for r in listed.json()["data"]["data"] if r["id"] == task_id),
+        *(r for r in in_room.json()["data"]["data"] if r["id"] == task_id),
+    ]
+    assert len(rows) == 2
+    return {
+        page["presentation"]["phrase"],
+        *(r["presentation"]["phrase"] for r in rows),
+    }
+
+
+def _say(client, project_id: str, task_id: str, seat: str, state: str) -> None:
+    said = client.put(
+        f"/topics/{task_id}/task/progress",
+        json={"state": state},
+        headers=task_agent_headers(project_id, task_id, seat),
+    )
+    assert said.status_code == 200, said.text
+
+
+def test_a_running_session_is_at_work_before_its_teammate_says_anything(client):
+    """The teammate has not reported yet, but its session is running: the task
+    is 在做 everywhere it is shown, not 开启. When the session ends it is back
+    to 开启 — nothing was said, and nothing runs."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    assert _phrases(client, project_id, task_id) == {"started"}
+
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+    assert _phrases(client, project_id, task_id) == {"running"}
+
+    runner.reports(chat, SessionExited("launch-1"))
+    assert _phrases(client, project_id, task_id) == {"started"}
+
+
+def test_a_session_woken_after_its_teammate_said_waiting_is_at_work(client):
+    """The teammate said 「在等」 and its session went quiet; then the session
+    ran again (the build it waited on finished and woke it). It is doing
+    something now, so the task is 在做; once that session ends, what the
+    teammate last said is the last word again."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    _say(client, project_id, task_id, seat, "waiting")
+    assert _phrases(client, project_id, task_id) == {"waiting"}
+
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+    assert _phrases(client, project_id, task_id) == {"running"}
+
+    runner.reports(chat, SessionExited("launch-1"))
+    assert _phrases(client, project_id, task_id) == {"waiting"}
+
+
+def test_what_the_teammate_says_while_its_session_runs_stands(client):
+    """The teammate reports from inside the run, knowing the run is going on:
+    「卡住」 and 「在等」 said during it are what the task reads as."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+
+    _say(client, project_id, task_id, seat, "blocked")
+    assert _phrases(client, project_id, task_id) == {"blocked"}
+
+    _say(client, project_id, task_id, seat, "waiting")
+    assert _phrases(client, project_id, task_id) == {"waiting"}
+
+
+@pytest.fixture
+def frames(monkeypatch) -> list[tuple[str, dict]]:
+    """Every frame published to any channel, in order."""
+    seen: list[tuple[str, dict]] = []
+    broker = get_broker()
+    original = broker.publish
+
+    async def publish(channel, frame):
+        seen.append((channel, frame))
+        await original(channel, frame)
+
+    monkeypatch.setattr(broker, "publish", publish)
+    return seen
+
+
+def test_a_tasks_pages_hear_its_session_start_and_stop(client, frames):
+    """Whether the session runs is part of what the task reads as, so its
+    channel and its own page are told to read it again when the runner says
+    the session started, and when it says the session ended."""
+    _project_id, task_id, seat = _a_task(client)
+    room = _task(client, task_id)["room_id"]
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    told = {"type": "state", "resource": "topics", "id": room}
+
+    frames.clear()
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+    assert {channel for channel, frame in frames if frame == told} == {room, task_id}
+
+    frames.clear()
+    runner.reports(chat, SessionExited("launch-1"))
+    assert {channel for channel, frame in frames if frame == told} == {room, task_id}
 
 
 def test_the_runner_reporting_the_session_gone_marks_the_teammate_left(client):

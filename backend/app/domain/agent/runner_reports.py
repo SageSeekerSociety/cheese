@@ -47,6 +47,7 @@ from app.domain.delivery.receipts import (
     fail_read_inputs,
     record_receipt,
 )
+from app.domain.room_task.live import sessions_moved
 from app.domain.room_task.progress import note_agent_back, note_agent_left
 
 
@@ -122,7 +123,10 @@ async def apply(chat, report: Report) -> Applied | bool:
         elif not new:
             pass
         elif isinstance(fact, SessionRunning):
-            await session_state.declare(db, key, RUNNING)
+            if await session_state.declare(db, key, RUNNING):
+                # A task's state reads whether its session runs
+                # (`presentation.task_presentation`), so its pages read it again.
+                await sessions_moved(db, [report.conversation_id])
             if report.of_this_registration:
                 # The seat's current session is at work: the task's teammate is
                 # back, whatever an earlier session's exit said.
@@ -130,7 +134,8 @@ async def apply(chat, report: Report) -> Applied | bool:
                     db, report.conversation_id, by=report.agent_handle
                 )
         elif isinstance(fact, SessionIdle):
-            await session_state.declare(db, key, IDLE)
+            if await session_state.declare(db, key, IDLE):
+                await sessions_moved(db, [report.conversation_id])
             if fact.failure is not None and fact.result.session_id:
                 await fail_read_inputs(
                     db,
@@ -145,6 +150,7 @@ async def apply(chat, report: Report) -> Applied | bool:
             # the epoch it was registered under, leaves the session that
             # replaced it as it is.
             if await session_state.exited(db, key, report.at, epoch=report.epoch):
+                await sessions_moved(db, [report.conversation_id])
                 # A task's session ending is noted beside that teammate's last
                 # report — only when the report is the one that ended.
                 await note_agent_left(

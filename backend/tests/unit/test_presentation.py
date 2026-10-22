@@ -31,6 +31,8 @@ from app.domain.topic.models import TopicStatus
 
 NOW = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 JUST_NOW = NOW - timedelta(minutes=1)
+#: 比 `JUST_NOW` 早：会话开始跑、或者队友报状态，在另一件事之前的那一刻。
+EARLIER = NOW - timedelta(minutes=30)
 
 
 def task(**kw) -> TaskFacts:
@@ -74,7 +76,7 @@ TASK_CASES = [
         Column.needs_you,
         NeedsYou.awaiting_answer,
     ),
-    # 队友自己报的状态：它说在做、在等、卡住了，看板就照说。
+    # 队友自己报的状态：没有会话在跑时，它说在做、在等、卡住了，看板就照说。
     (
         "队友说在做",
         task(progress=TaskProgress.working),
@@ -267,6 +269,77 @@ TASK_CASES = [
     ),
     # 什么都没留下就关了：不做了。
     ("没留结论就关了", task(status=TaskStatus.closed), Column.done, Done.closed),
+    # —— 会话在跑（runner 报的事实）和队友报的话，谁新听谁 ——
+    # 会话在跑，队友还没报过：它在做，不是「开启」。
+    (
+        "会话在跑，队友没报过",
+        task(running_since=JUST_NOW),
+        Column.building,
+        Building.running,
+    ),
+    # 它说在等构建，构建跑完把它叫醒了：那句「在等」说的是这一轮之前的事。
+    (
+        "说了在等之后会话又跑起来",
+        task(
+            progress=TaskProgress.waiting, progress_at=EARLIER, running_since=JUST_NOW
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 它说卡住了，有人回了它、它又跑起来：在做，不再点负责人。
+    (
+        "说了卡住之后会话又跑起来",
+        task(
+            progress=TaskProgress.blocked, progress_at=EARLIER, running_since=JUST_NOW
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 改动被退回，会话在跑：它在改，球不在负责人手上。
+    (
+        "改动被退回，会话在改",
+        task(card=card(AcceptStatus.rejected), running_since=JUST_NOW),
+        Column.building,
+        Building.running,
+    ),
+    # 它就在这一轮里说的在等、卡住：说的时候它知道这一轮在跑，照它说的。
+    (
+        "这一轮里说了在等",
+        task(
+            progress=TaskProgress.waiting, progress_at=JUST_NOW, running_since=EARLIER
+        ),
+        Column.building,
+        Building.waiting,
+    ),
+    (
+        "这一轮里说了卡住",
+        task(
+            progress=TaskProgress.blocked, progress_at=JUST_NOW, running_since=EARLIER
+        ),
+        Column.needs_you,
+        NeedsYou.blocked,
+    ),
+    # 卡说下一步在谁手上，会话在跑盖不过它：它在答审阅人的话，任务还是在等审阅。
+    (
+        "等人采纳时会话在跑",
+        task(card=card(AcceptStatus.pending), running_since=JUST_NOW),
+        Column.needs_you,
+        NeedsYou.awaiting_review,
+    ),
+    # 题还没人回答：这一轮问完就停，下一步在人手上。
+    (
+        "提问未回答时会话在跑",
+        task(awaiting_answer=True, running_since=JUST_NOW),
+        Column.needs_you,
+        NeedsYou.awaiting_answer,
+    ),
+    # 关了就是结束：会话在跑也不把它说回在做。
+    (
+        "关闭后会话还在跑",
+        task(status=TaskStatus.closed, running_since=JUST_NOW),
+        Column.done,
+        Done.closed,
+    ),
 ]
 
 
@@ -290,8 +363,11 @@ def test_a_conclusion_is_read_off_the_row():
     from app.domain.room_task.models import Task
     from app.domain.room_task.presentation import facts_for_task
 
-    assert facts_for_task(Task()).has_conclusion is False
-    assert facts_for_task(Task(conclusion="查清了")).has_conclusion is True
+    assert facts_for_task(Task(), running_since=None).has_conclusion is False
+    assert (
+        facts_for_task(Task(conclusion="查清了"), running_since=None).has_conclusion
+        is True
+    )
 
 
 def test_what_the_teammate_said_is_read_off_the_row():
@@ -300,9 +376,11 @@ def test_what_the_teammate_said_is_read_off_the_row():
     from app.domain.room_task.models import Task
     from app.domain.room_task.presentation import facts_for_task
 
-    assert facts_for_task(Task()).progress is None
-    said = Task(progress_state=TaskProgress.waiting)
-    assert facts_for_task(said).progress is TaskProgress.waiting
+    assert facts_for_task(Task(), running_since=None).progress is None
+    said = Task(progress_state=TaskProgress.waiting, progress_set_at=EARLIER)
+    facts = facts_for_task(said, running_since=None)
+    assert facts.progress is TaskProgress.waiting
+    assert facts.progress_at == EARLIER
 
 
 def test_a_blocked_task_is_its_owners_to_act_on():

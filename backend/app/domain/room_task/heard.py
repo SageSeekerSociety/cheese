@@ -200,7 +200,7 @@ def task_reopened(*, by: str, task_id, new_branch: bool) -> str:
         else ""
     )
     return (
-        f"@{by} 重新打开了这件任务。看板上它回到「开启」，你之前报的状态已经清掉；"
+        f"@{by} 重新打开了这件任务，你之前报的状态已经清掉；"
         f"开工时再用 cheese_task_state 报。{moved}"
     )
 

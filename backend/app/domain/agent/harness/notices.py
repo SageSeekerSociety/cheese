@@ -73,26 +73,27 @@ _PROGRESS_NONE_EN = (
     "shows it awaiting review."
 )
 _PROGRESS_ZH = (
-    "你报的任务状态已经 {minutes} 分钟没动过了，看板上一直显示的是那一句。"
+    "你报的任务状态已经 {minutes} 分钟没动过了，你停下以后看板显示的就是那一句。"
     "情况变了就用 cheese_task_state 再设一次；还是那样，也再设一次，note "
     "写清现在在做什么、在等什么。"
 )
 _PROGRESS_EN = (
     "The task state you reported has not changed for {minutes} minutes, and "
-    "the board has shown it all that time. Call cheese_task_state again: with "
+    "once you stop, that is what the board shows. Call cheese_task_state again: with "
     "the new state if it changed, or the same one with a note saying what you "
     "are doing or waiting on now."
 )
 _BLOCKED_ZH = (
     "你上一次给这件任务报的状态是「卡住了，等人帮忙」。现在有人说话、这一轮开了："
     "如果已经能往下走，就用 cheese_task_state 报回 working 或 waiting——不然"
-    "侧栏一直亮着等你；还卡着就再报一次 blocked，note 写清在等什么。"
+    "你一停下，任务又显示卡住、等负责人来；还卡着就再报一次 blocked，note 写清在等什么。"
 )
 _BLOCKED_EN = (
     "You last reported this task as blocked, waiting for help. Someone has "
     "spoken and this turn is open: if you can carry on now, call "
-    "cheese_task_state again with working or waiting — until you do, the "
-    "sidebar keeps waiting on you. If you are still stuck, report blocked "
+    "cheese_task_state again with working or waiting — otherwise, once you "
+    "stop, the task reads as blocked again and waits on its owner. If you are "
+    "still stuck, report blocked "
     "again with a note saying what you are waiting for."
 )
 
@@ -203,10 +204,10 @@ def stale_progress_reminder(minutes: int | None, language: str | None = None) ->
     """做任务的会话还在跑，而它报的任务状态已经 `minutes` 分钟没动过（None =
     从没报过）。
 
-    没有卡在等审阅的时候，看板上这件任务显示的是它自己报的那一句
-    （`cheese_task_state`），平台不替它推断：它在等构建、跑长命令时一轮结束了也照旧
-    是「在做」，而它做完了不说，看板就一直说它在做。所以平台能做的是问；卡在的时候
-    由卡说，也就不问（`StaleProgressReminder`）。
+    没有卡在等审阅的时候，会话停下以后看板上这件任务显示的是它自己报的那一句
+    （`cheese_task_state`）：它在等构建、跑长命令时停下了也照旧是「在做」，而它做完了
+    不说，看板就一直说它在做。所以平台能做的是问；卡在的时候由卡说，也就不问
+    （`StaleProgressReminder`）。
     """
     if minutes is None:
         return _in_the_readers_language(language, _PROGRESS_NONE_ZH, _PROGRESS_NONE_EN)

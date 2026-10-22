@@ -22,6 +22,7 @@ from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
+from app.domain.agent.session_state import running_since
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.canvas.block import blocks
 from app.domain.canvas.schemas import (
@@ -103,11 +104,15 @@ async def _columns(
         return {}
     cards = await latest_cards_by_task(db, task_ids)
     asked = await awaiting_an_answer(db, task_ids)
+    running = await running_since(db, task_ids)
     now = datetime.now(UTC)
     return {
         task.id: presentation.task_presentation(
             presentation.facts_for_task(
-                task, cards.get(task.id), awaiting_answer=task.id in asked
+                task,
+                cards.get(task.id),
+                awaiting_answer=task.id in asked,
+                running_since=running.get(task.id),
             ),
             now=now,
         ).as_dict()

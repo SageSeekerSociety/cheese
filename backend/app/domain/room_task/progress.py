@@ -3,9 +3,11 @@ thing the platform adds beside it.
 
 The board used to infer 「运行中」 from open turn intervals, which put a
 teammate waiting on a build or a background command back in 「进行中」 the
-moment its turn returned. Only the teammate knows whether it is still on the
-work, so it says so (`cheese_task_state`), and the board shows exactly what it
-said (`presentation.task_presentation`).
+moment its turn returned. Once its session stops, only the teammate knows
+whether it is still on the work, so it says so (`cheese_task_state`), and the
+board shows what it said (`presentation.task_presentation`) — except where a
+checkable fact speaks: a card in review, or its session running after the
+report was made.
 
 Two writers, two columns each, and neither touches the other's:
 

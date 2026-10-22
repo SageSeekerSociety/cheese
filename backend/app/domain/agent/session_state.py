@@ -182,20 +182,21 @@ def _offset(key: SeatKey, epoch: int):
     )
 
 
-async def declare(session: AsyncSession, key: SeatKey, status: str) -> None:
+async def declare(session: AsyncSession, key: SeatKey, status: str) -> bool:
     """What the runner declared the session to be doing. ``changed_at`` is
     when the platform applied it, on the clock that stamps an input's read
     (`delivery.receipts`): reports apply in the order the runner made them, so
     a read stamped after this was read in what the session did from here on,
-    however far the runner's own clock is from the platform's."""
+    however far the runner's own clock is from the platform's. Says whether
+    the status changed."""
     state = await session.scalar(
         select(SessionState).where(*_key(key)).with_for_update()
     )
-    if state is None:
-        return
-    if state.worker_status != status:
-        state.worker_status = status
-        state.changed_at = datetime.now(UTC)
+    if state is None or state.worker_status == status:
+        return False
+    state.worker_status = status
+    state.changed_at = datetime.now(UTC)
+    return True
 
 
 async def exited(
@@ -226,14 +227,28 @@ async def running_conversations(
 ) -> set[uuid.UUID]:
     """The conversations at least one seat of which has a session its runner
     declared ``running``; of ``conversation_ids`` only, when given."""
-    query = select(SessionState.conversation_id).where(
-        SessionState.worker_status == RUNNING
+    return set(await running_since(session, conversation_ids))
+
+
+async def running_since(
+    session: AsyncSession, conversation_ids: Collection[uuid.UUID] | None = None
+) -> dict[uuid.UUID, datetime]:
+    """{conversation: when the latest of its running sessions began running}
+    for the conversations at least one seat of which has a session its runner
+    declared ``running``; of ``conversation_ids`` only, when given. The latest
+    start, because what it is weighed against is a report made before it
+    (`presentation.task_presentation`): any session that began after the
+    report is news the report did not know."""
+    query = (
+        select(SessionState.conversation_id, func.max(SessionState.changed_at))
+        .where(SessionState.worker_status == RUNNING)
+        .group_by(SessionState.conversation_id)
     )
     if conversation_ids is not None:
         if not conversation_ids:
-            return set()
+            return {}
         query = query.where(SessionState.conversation_id.in_(set(conversation_ids)))
-    return set(await session.scalars(query.distinct()))
+    return {conversation: since for conversation, since in await session.execute(query)}
 
 
 def reports_lifecycle(harness: str) -> bool:
