@@ -76,6 +76,13 @@ class Runner(runner.Runner[Journal]):
         #: is: the compaction's item drops it, anything else journals it — one
         #: event late (``record``).
         self.pending_turn: dict | None = None
+        #: Turns this runner started on the thread for the room: from a
+        #: person's message, `tell`, or a held-back turn's reminder. Only a
+        #: turn app-server opens on its own — the platform's compaction — is
+        #: absent, which is how `record` tells the two compactions apart.
+        #: Turn ids are added when the send answers and dropped when the turn
+        #: ends (``record``).
+        self.room_turns: set[str] = set()
         #: The loop `request_compact` hops onto from the tool call's thread.
         #: `start` sets it for sure; a runner built outside a loop (a sync
         #: test) has none yet and gets it there.
@@ -143,49 +150,52 @@ class Runner(runner.Runner[Journal]):
         # after it decides: the compaction's item drops it, anything else is a
         # real turn and journals it — one event late.
         #
-        # Only a compaction the platform asked for is that turn, and only while
-        # an ask is outstanding. Codex also compacts by itself whenever the
-        # context nears its limit, before or partway through a turn: that one
-        # keeps the turn it happened in (`run_inline_auto_compact_task` reuses
-        # the running turn's context), so its item names the turn a person is
-        # waiting on, and reading it as the compaction's would drop that turn's
-        # answer — with the tool off as much as on.
+        # Only a compaction the platform asked for is that turn: one that
+        # names a turn the room did not start. Codex also compacts by itself
+        # whenever the context nears its limit, before or partway through a
+        # turn, and that one keeps the turn it happened in
+        # (`run_inline_auto_compact_task` reuses the running turn's context),
+        # so its item names a turn the room is waiting on. Reading it as the
+        # compaction's would drop that turn's answer — with the tool off as
+        # much as on, and in any turn that ran pre-, mid- or post-ask.
         item = params.get("item") or {}
         same_thread = self.session is not None and thread_id == self.session.thread_id
         held, self.pending_turn = self.pending_turn, None
+        candidate = str(params.get("turnId") or "") or turn_id
         announced = (
-            self.compact_request == "sent"
-            and same_thread
+            same_thread
             and method in ("item/started", "item/completed")
             and item.get("type") == "contextCompaction"
+            and candidate not in self.room_turns
         )
         if announced:
-            self.compacting_turn = str(params.get("turnId") or "") or turn_id
-            if held is not None and _turn_of(held) != self.compacting_turn:
-                # A start held for a real turn, arriving beside the compaction
+            self.compacting_turn = candidate
+            if held is not None and _turn_of(held) != candidate:
+                # A start held for a room turn, arriving beside the compaction
                 # instead of before its item. Its own ending still comes — it
                 # is not the compaction's — so journal it, one event late.
                 self.journal.append(held)
             held = None
             if method == "item/completed":
-                # The compaction is over, however it went; there may be no
-                # `turn/completed` to say so (the shape the pinned build sends).
+                # The compaction is over, however it went; its turn's ending
+                # may still come and is dropped there.
                 self.compact_request = ""
         elif held is not None:
-            # A real turn, one event late by its own start. A turn that ended
-            # because something replaced it — the platform's own compaction is
-            # what does — leaves the ask standing: the compaction's turn is
-            # still to come. One that ended on its own means the ask never got
-            # a turn of its own, and never will report.
-            replaced = (
-                method == "turn/completed"
-                and (params.get("turn") or {}).get("status") != "completed"
-            )
-            self.journal.append(held)
+            # The next event after a held start. The thread runs one turn at a
+            # time, so a start that began while an ask was outstanding is
+            # either the room's own turn — journal it, one event late, and the
+            # ask the compaction never got is over — or the compaction's turn
+            # arriving with no item, whose start and end the room must not see.
+            start = _turn_of(held)
+            if start in self.room_turns:
+                self.journal.append(held)
+            else:
+                self.compacting_turn = start
             held = None
-            if not replaced:
-                self.compacting_turn = None
-                self.compact_request = ""
+            self.compact_request = ""
+        if method == "turn/completed":
+            # Recorded only while the turn runs (`room_turns`).
+            self.room_turns.discard(turn_id or "")
         if (
             held is None
             and same_thread
@@ -257,7 +267,7 @@ class Runner(runner.Runner[Journal]):
         assert self.session is not None
         try:
             async with self.submit_lock:
-                await self.session.send(reason)
+                self.room_turns.add(await self.session.send(reason))
         except Exception as error:  # the turn ends as it was going to
             print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
             self.journal.append(ending)
@@ -275,7 +285,7 @@ class Runner(runner.Runner[Journal]):
                 work = str(uuid.uuid4())
                 self.journal.remember(f"unsolicited:{work}", "1")
                 self.journal.remember(f"work:{session.thread_id}", work)
-            await session.send(text)
+            self.room_turns.add(await session.send(text))
 
     # --- the session compacting itself ---------------------------------------
 
@@ -402,6 +412,10 @@ class Runner(runner.Runner[Journal]):
         thread = await self.session.open(
             opening, cwd=cwd, tools=tools, base_instructions=base_instructions
         )
+        if self.session.turn_id is not None:
+            # A resumed thread's running turn started before this runner, and
+            # is the room's all the same.
+            self.room_turns.add(self.session.turn_id)
         self.journal.remember("thread_id", thread)
         await self.listen(4 * 1024 * 1024)
         return thread
@@ -470,6 +484,7 @@ class Runner(runner.Runner[Journal]):
                 if images
                 else await self.session.send(text)
             )
+            self.room_turns.add(turn)
         return {"turn_id": turn, "input_id": identifier}
 
     async def _end_woken_turn(self) -> bool:

@@ -541,7 +541,9 @@ async def test_a_person_s_turn_beside_the_ask_is_not_mistaken_for_it(tmp_path):
         runner.request_compact()
         await asyncio.sleep(0.05)
 
-        # The person's turn comes first, and ends.
+        # The person's turn comes first, and ends. This is the id `send`
+        # answered when the room started it.
+        runner.room_turns.add("person-turn")
         await runner.record(
             {
                 "method": "turn/started",
@@ -600,6 +602,8 @@ async def test_a_compaction_the_session_did_not_ask_for_keeps_its_turn(tmp_path)
     runner.session = session
     try:
         runner.journal.remember("work:thread", "platform-work")
+        # What the runner does when it starts a turn for the room.
+        runner.room_turns.add("turn")
         for event in (
             {
                 "method": "turn/started",
@@ -662,6 +666,8 @@ async def test_a_compaction_the_session_did_not_ask_for_leaves_the_ask_alone(tmp
     )
     runner.session = session
     try:
+        # What the runner does when it starts a turn for the room.
+        runner.room_turns.add("turn")
         assert runner.request_compact() == "requested"
         await asyncio.sleep(0.05)
         assert not compacted.await_count
@@ -690,6 +696,118 @@ async def test_a_compaction_the_session_did_not_ask_for_leaves_the_ask_alone(tmp
         session.turn_id = None
         await asyncio.sleep(0.05)
         compacted.assert_awaited_once()
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_turn_beside_the_ask_that_compacts_itself_keeps_its_answer(tmp_path):
+    """A person's message can replace the compaction the ask just started, and
+    the turn that replaces it is likely to compact by itself — the history it
+    inherits is the one nobody summarised. That automatic item names their
+    turn, which the room started: reading it as the compaction's would drop
+    their answer."""
+    from app.domain.agent.harness.codex.events import Assembler
+
+    runner = Runner(tmp_path, AsyncMock())
+    compacted = AsyncMock()
+    session = SimpleNamespace(
+        thread_id="thread", turn_id=None, compact=compacted, observe=lambda _: None
+    )
+    runner.session = session
+    try:
+        runner.journal.remember("work:thread", "platform-work")
+        assert runner.request_compact() == "requested"
+        await asyncio.sleep(0.05)
+        compacted.assert_awaited_once()
+
+        # Their turn replaces the compaction; this is the id `send` answered.
+        runner.room_turns.add("person-turn")
+        for event in (
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "person-turn"}},
+            },
+            {
+                "method": "item/started",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "person-turn",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            },
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "person-turn",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            },
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {
+                        "id": "person-turn",
+                        "status": "completed",
+                        "items": [{"type": "agentMessage", "text": "their answer"}],
+                    },
+                },
+            },
+        ):
+            await runner.record(event)
+
+        assert runner.compacting_turn is None
+        assert runner.compact_request == ""
+        records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
+        assert [
+            r["params"]["turn"]["id"]
+            for r in records
+            if r.get("method") == "turn/completed"
+        ] == ["person-turn"]
+        assembler = Assembler()
+        assembled = [event for r in records for event in assembler.accept(r)]
+        results = [e for e in assembled if type(e).__name__ == "AgentResult"]
+        assert [e.text for e in results] == ["their answer"], results
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_turn_interrupted_beside_the_ask_does_not_leave_it_hanging(tmp_path):
+    """A room turn that started while the ask was outstanding and was then
+    interrupted — by a person, not by the compaction — is not a compaction
+    replaced: nothing will report for it, so the ask must go with it. Held
+    back, it would keep `busy()` true and the seat would never go idle."""
+    runner = Runner(tmp_path, AsyncMock())
+    session = SimpleNamespace(
+        thread_id="thread", turn_id=None, compact=AsyncMock(), observe=lambda _: None
+    )
+    runner.session = session
+    try:
+        assert runner.request_compact() == "requested"
+        await asyncio.sleep(0.05)
+        assert runner.compact_request == "sent"
+
+        runner.room_turns.add("person-turn")
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "person-turn"}},
+            }
+        )
+        await runner.record(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {"id": "person-turn", "status": "interrupted"},
+                },
+            }
+        )
+        assert runner.compact_request == ""
+        assert runner.busy() is False
     finally:
         await runner.close()
 
