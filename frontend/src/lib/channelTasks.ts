@@ -69,7 +69,7 @@ function status(task: ChannelTask, mine: boolean, nameOf: (handle: string) => st
 
 /** 一件任务在频道里的那张卡。 */
 export function taskLine(task: ChannelTask, nameOf: (handle: string) => string): TaskLine {
-  const mine = task.awaits_me === true
+  const mine = task.needs_my_action === true
   const open = task.status !== 'closed'
   const n = task.accepted_count ?? 0
   return {

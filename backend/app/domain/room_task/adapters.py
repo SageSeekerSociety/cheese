@@ -97,4 +97,5 @@ def task_row_json(task: Task) -> dict:
         "updated_at": _iso(task.updated_at),
         "presentation": None,
         "awaits_me": False,
+        "needs_my_action": False,
     }

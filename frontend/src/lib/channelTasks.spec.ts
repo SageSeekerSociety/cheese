@@ -28,12 +28,28 @@ function task(over: Partial<ChannelTask> = {}): ChannelTask {
 }
 
 describe('任务卡', () => {
+  it('提需求人有关注提醒，但未被问到时不写成待你回答', () => {
+    const line = taskLine(
+      task({
+        presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+        waiting_on: 'linxiao',
+        awaits_me: true,
+        needs_my_action: false,
+      }),
+      nameOf
+    )
+    expect(line.status).not.toContain('你')
+    expect(line.status).toContain('林晓')
+    expect(line.tone).toBe('waiting')
+  })
+
   it('多人或未点名的题，没有单个等待人名也能对被问者显示个人提示', () => {
     const line = taskLine(
       task({
         presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
         waiting_on: null,
         awaits_me: true,
+        needs_my_action: true,
       }),
       nameOf
     )
@@ -42,8 +58,8 @@ describe('任务卡', () => {
   })
 
   it('等的是看的人自己，就对他说；别人看到的是在等谁', () => {
-    const mine = taskLine(task({ awaits_me: true }), nameOf)
-    const theirs = taskLine(task({ awaits_me: false }), nameOf)
+    const mine = taskLine(task({ awaits_me: true, needs_my_action: true }), nameOf)
+    const theirs = taskLine(task({ awaits_me: false, needs_my_action: false }), nameOf)
     expect(mine.tone).toBe('mine')
     expect(mine.status).not.toContain('林晓')
     expect(theirs.tone).toBe('waiting')

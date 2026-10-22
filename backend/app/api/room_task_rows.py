@@ -76,7 +76,7 @@ async def task_out(db, task, card=None, *, me: str) -> dict:
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
-    out["awaits_me"] = _awaits_me(task, card, shown, asked.get(task.id), me)
+    out.update(_task_markers(task, card, shown, asked.get(task.id), me))
     # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你审阅」。
     out["waiting_on"] = presentation.waiting_on(
         shown,
@@ -87,22 +87,27 @@ async def task_out(db, task, card=None, *, me: str) -> dict:
     return out
 
 
-def _awaits_me(task, card, shown, asking, me: str) -> bool:
-    """Personal action markers use addressing, not a single display name."""
-    return (
-        address(
-            Event(
-                reviewers=()
-                if card is None or not card.reviewer_handle
-                else (card.reviewer_handle,),
-                reporter=task.reporter_handle,
-                asked_also=() if asking is None else asking.waiting(task.people),
-                owner=task.owner_handle if presentation.owner_acts_on(shown) else None,
-            ),
-            hand_of(shown.column),
-        ).reason_for(me)
-        is not None
+def _task_markers(task, card, shown, asking, me: str) -> dict[str, bool]:
+    """Attention includes the reporter; personal wording names the next actor."""
+    asked = () if asking is None else asking.waiting(task.people)
+    reviewer = None if card is None else card.reviewer_handle
+    owner = task.owner_handle if presentation.owner_acts_on(shown) else None
+    attention = address(
+        Event(
+            reviewers=() if not reviewer else (reviewer,),
+            reporter=task.reporter_handle,
+            asked_also=asked,
+            owner=owner,
+        ),
+        hand_of(shown.column),
+    ).reason_for(me)
+    waiting = presentation.waiting_on(
+        shown, reviewer=reviewer, asked=me if me in asked else None
     )
+    return {
+        "awaits_me": attention is not None,
+        "needs_my_action": bool(me) and (waiting == me or owner == me),
+    }
 
 
 async def task_rows(
@@ -159,9 +164,7 @@ async def task_rows(
                 "presentation": shown.as_dict(),
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
                 "waiting_on": waiting,
-                "awaits_me": _awaits_me(
-                    task, card, shown, asked.get(task.id), actor.handle
-                ),
+                **_task_markers(task, card, shown, asked.get(task.id), actor.handle),
                 "from_thread": task.id in in_place,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
@@ -321,7 +324,7 @@ async def project_task_rows(
             {
                 **task_row_json(task),
                 "presentation": shown.as_dict(),
-                "awaits_me": _awaits_me(task, card, shown, asked.get(task.id), me),
+                **_task_markers(task, card, shown, asked.get(task.id), me),
                 # 这条活上还没恢复的失败从什么时候开始（`incomplete_of`；`None` = 没有
                 # 未恢复的失败，或调用方没算）。判据在
                 # `block/waits.MemberWaits.unresolved_failures`：一条活停下来报错、

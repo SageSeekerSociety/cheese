@@ -151,11 +151,11 @@ describe('任务页头', () => {
   // 页头那一句和频道里的卡、全部任务、总览说同一件事：在等的是看的人，就写「待你审阅」。
   it('等的是看的人：写「待你审阅」，等的是别人：写「等人审阅」', () => {
     me = 'alice'
-    const mine = mount({ waiting_on: 'alice', awaits_me: true })
+    const mine = mount({ waiting_on: 'alice', awaits_me: true, needs_my_action: true })
     expect(mine.getByTestId('task-phrase').textContent).toBe('待你审阅')
     mine.unmount()
 
-    const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob', awaits_me: false })
+    const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob', awaits_me: false, needs_my_action: false })
     expect(theirs.getByTestId('task-phrase').textContent).toBe('等人审阅')
   })
 
@@ -164,8 +164,19 @@ describe('任务页头', () => {
       presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
       waiting_on: null,
       awaits_me: true,
+      needs_my_action: true,
     })
     expect(view.getByTestId('task-phrase').textContent).toContain('你')
+  })
+
+  it('只需要关注结果的人，不被页头写成待你回答', () => {
+    const view = mount({
+      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      waiting_on: 'bob',
+      awaits_me: true,
+      needs_my_action: false,
+    })
+    expect(view.getByTestId('task-phrase').textContent).not.toContain('你')
   })
 
   // 队友报的那一句是看板这一格的出处：页头照说，会话走了也不改它，只在旁边说一声。

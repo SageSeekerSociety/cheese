@@ -22,7 +22,7 @@ import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
-import { columnLabel, myPhraseLabel, phraseLabel } from '@/lib/board'
+import { columnLabel, phraseLabel, taskPhraseLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { taskTitle } from '@/lib/topicState'
 
@@ -171,7 +171,7 @@ const nameOf = (handle: string) => props.names[handle] || handle
 function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'plain' } {
   if (task.status === 'closed') return { text: t('work.channelTasks.closed'), tone: 'plain' }
   if (task.presentation.phrase === 'accepted') return { text: t('taskList.open'), tone: 'plain' }
-  if (task.awaits_me) return { text: myPhraseLabel(task.presentation.phrase), tone: 'mine' }
+  if (task.awaits_me) return { text: taskPhraseLabel(task), tone: 'mine' }
   if (task.presentation.phrase === 'running') return { text: phraseLabel('running'), tone: 'running' }
   return { text: phraseLabel(task.presentation.phrase), tone: 'plain' }
 }

@@ -54,11 +54,21 @@ describe('columnDotStyle', () => {
 })
 
 describe('taskPhraseLabel', () => {
+  it.each(['awaiting_answer', 'awaiting_review'] as const)('关注人不被写成当前动作的执行人：%s', (phrase) => {
+    const task = {
+      presentation: { column: 'needs_you', phrase },
+      awaits_me: true,
+      needs_my_action: false,
+    } as const
+    expect(taskPhraseLabel(task)).not.toContain('你')
+  })
+
   it('被问者看到个人提示，不要求问题只等一个人', () => {
     const task = {
       presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
       waiting_on: null,
       awaits_me: true,
+      needs_my_action: true,
     } as const
     expect(taskPhraseLabel(task)).toContain('你')
   })

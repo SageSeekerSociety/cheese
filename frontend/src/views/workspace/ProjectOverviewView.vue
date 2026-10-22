@@ -26,7 +26,7 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import OverviewDraftForm from '@/components/overview/OverviewDraftForm.vue'
 import SituationCard from '@/components/overview/SituationCard.vue'
 import { t } from '@/i18n'
-import { myPhraseLabel, phraseLabel } from '@/lib/board'
+import { phraseLabel, taskPhraseLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { taskTitle } from '@/lib/topicState'
 
@@ -157,7 +157,7 @@ const people = computed(() => {
     .sort((a, b) => (a.owner === props.me ? -1 : b.owner === props.me ? 1 : b.tasks.length - a.tasks.length))
 })
 function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'plain' } {
-  if (task.awaits_me) return { text: myPhraseLabel(task.presentation.phrase), tone: 'mine' }
+  if (task.awaits_me) return { text: taskPhraseLabel(task), tone: 'mine' }
   if (task.presentation.phrase === 'running') return { text: phraseLabel('running'), tone: 'running' }
   return { text: phraseLabel(task.presentation.phrase), tone: 'plain' }
 }

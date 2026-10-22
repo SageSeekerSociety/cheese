@@ -100,6 +100,7 @@ EXPECTED_RAIL_TASK_KEYS = {
     "incomplete_since",
     "last_activity_at",
     "moving",
+    "needs_my_action",
     "number",
     "owner_handle",
     "pr_number",

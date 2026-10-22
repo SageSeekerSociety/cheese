@@ -84,6 +84,7 @@ def _still_waits(client, project, room, task, question):
     assert _question(client, task, question)["meta"]["answer_log"] == []
     for row in _task_rows(client, project, room, task):
         assert row["awaits_me"] is True
+        assert row["needs_my_action"] is True
         assert row["presentation"]["phrase"] == "awaiting_answer"
 
 
@@ -103,6 +104,7 @@ def test_talking_to_someone_else_does_not_clear_a_task_question(
     wait_turn_idle(client, task)
     for row in _task_rows(client, project, room, task):
         assert row["awaits_me"] is False
+        assert row["needs_my_action"] is False
 
 
 @pytest.mark.parametrize("question_count", [1, 3])
@@ -134,6 +136,7 @@ def test_each_task_view_identifies_every_person_waiting_on_a_question(
     for handle, expected in (("alice", True), ("bob", True), ("carol", False)):
         for row in _task_rows(client, project, room, task, handle):
             assert row["presentation"]["phrase"] == "awaiting_answer"
+            assert row["needs_my_action"] is expected
             assert row["awaits_me"] is expected, (handle, row)
 
 
@@ -149,7 +152,36 @@ def test_skipping_a_group_question_removes_only_that_persons_wait(
 
     for handle, expected in (("alice", False), ("bob", True)):
         for row in _task_rows(client, project, room, task, handle):
+            assert row["needs_my_action"] is expected
             assert row["awaits_me"] is expected
+
+
+def test_a_reporter_keeps_attention_without_being_named_as_the_answerer(
+    client, stub_hooks, monkeypatch
+):
+    project, room, task = _setup(client)
+    headers = session_auth_headers("alice")
+    response = client.post(
+        f"/topics/{task}/close",
+        json={"reporter_handle": "carol"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    response = client.post(f"/topics/{task}/reopen", headers=headers)
+    assert response.status_code == 200, response.text
+    wait_turn_idle(client, task)
+    question = _ask(client, stub_hooks, monkeypatch, task, to=("bob",))
+    response = client.post(
+        f"/blocks/{question['id']}/skip", headers=session_auth_headers("carol")
+    )
+    assert response.status_code == 403, response.text
+
+    for row in _task_rows(client, project, room, task, "carol"):
+        assert row["awaits_me"] is True
+        assert row["needs_my_action"] is False
+    for row in _task_rows(client, project, room, task, "bob"):
+        assert row["awaits_me"] is True
+        assert row["needs_my_action"] is True
 
 
 @pytest.mark.parametrize("mutation", ["rename", "collaborators"])
@@ -169,6 +201,7 @@ def test_updating_a_task_keeps_the_callers_personal_question_marker(
         )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["awaits_me"] is True
+    assert response.json()["data"]["needs_my_action"] is True
     _still_waits(client, project, room, task, question)
 
 

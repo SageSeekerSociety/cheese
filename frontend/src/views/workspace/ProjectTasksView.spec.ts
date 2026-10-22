@@ -92,12 +92,27 @@ it('等你的那一件写成「待你…」，等别人的照通用的说法', (
     title: '我的',
     owner_handle: 'alice',
     awaits_me: true,
+    needs_my_action: true,
     presentation: { column: 'needs_you', phrase: 'awaiting_review' },
   })
   const theirs = task({ title: '别人的', presentation: { column: 'needs_you', phrase: 'awaiting_review' } })
   const view = mount([mine, theirs])
   expect(view.getByText(t('work.board.mine.awaiting_review'))).toBeTruthy()
   expect(view.getByText(t('work.board.phrase.awaiting_review'))).toBeTruthy()
+})
+
+it('关注结果的人保留提醒，但不写成等待本人回答', () => {
+  const view = mount([
+    task({
+      title: '需要关注的任务',
+      reporter_handle: 'alice',
+      awaits_me: true,
+      needs_my_action: false,
+      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+    }),
+  ])
+  expect(view.queryByText(t('work.board.mine.awaiting_answer'))).toBeNull()
+  expect(view.getByText(t('work.board.phrase.awaiting_answer'))).toBeTruthy()
 })
 
 it('十四天没动静的收进「已停滞」，点开才列出来', async () => {
