@@ -211,9 +211,14 @@ async def _stage(session: AsyncSession, task: Task, reason: Reason) -> Asked:
         if has_attachment:
             # Naming cannot read the attachment. Wait for an explanation rather
             # than making the opener's length stand in for knowing its subject.
-            explained = len(people) > 1 or any(
-                not line.person and len(_said(line.text)) >= _SUBSTANTIVE_CHARS
-                for line in lines
+            last_attachment = max(
+                index
+                for index, line in enumerate(lines)
+                if line.person and line.attachment is not None
+            )
+            explained = any(
+                line.attachment is None and len(_said(line.text)) >= _SUBSTANTIVE_CHARS
+                for line in lines[last_attachment + 1 :]
             )
             if not explained and task.document_id is not None:
                 doc = await Documents(session).get(task.document_id)

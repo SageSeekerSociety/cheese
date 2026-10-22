@@ -521,9 +521,14 @@ def test_the_naming_call_still_carries_a_ceiling(client, alice, gateway):
 
 
 @pytest.mark.parametrize("reason", ["message", "idle", "signal"])
-def test_an_unread_attachment_waits_for_its_subject(client, alice, gateway, reason):
-    """A screenshot and a vague opener must not be named before any explanation."""
+@pytest.mark.parametrize("earlier_reply", [False, True])
+def test_an_unread_attachment_waits_for_its_subject(
+    client, alice, gateway, reason, earlier_reply
+):
+    """Only context after the unread attachment may explain its subject."""
     rid = _unnamed(client, alice)
+    if earlier_reply:
+        _say(client, rid, "你好，我在，请发一下截图。", author="cheese-c82aeb40555a")
     _say(client, rid, "这什么鬼<@cheese-c82aeb40555a>还活着吗")
     _say(
         client,
