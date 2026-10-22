@@ -264,8 +264,73 @@ def test_a_subagents_record_is_marked_as_the_subagents(cli, capsys):
     cli._call = Platform([[from_file]])
     _run(cli, "--digest")
     out = capsys.readouterr().out
-    assert "分身a1b2c3" in out
+    assert "分身a1b2c3d4" in out
     assert "Read /work/backend/app/main.py" in out
+
+
+def test_a_subagent_of_another_harness_is_marked_too(cli, capsys):
+    """三种骨架各有各的说法，认不出来是一种静默的错：记录里明明有分身做过的事，
+    digest 却把它算成主会话做的。这里按每种骨架真写下来的形状各来一条。"""
+    pi = {
+        "sequence": 1,
+        "at": "2026-10-22T08:40:00+00:00",
+        "turn_id": "t1",
+        "agent_handle": "cheese",
+        "harness": "pi",
+        "record": {
+            "subagent": {"id": "pi-agent-7"},
+            "type": "message",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "toolCall", "id": "p1", "name": "bash", "arguments": {}},
+                ],
+            },
+        },
+    }
+    # Codex 只在一个线程宣布「我的父线程是谁」时说过这件事，它自己的记录只有
+    # threadId，要顺着那个宣告查回来。
+    codex_announce = {
+        "sequence": 2,
+        "at": "2026-10-22T08:41:00+00:00",
+        "turn_id": "t1",
+        "agent_handle": "cheese",
+        "harness": "codex",
+        "record": {
+            "method": "thread/started",
+            "params": {"thread": {"id": "child-1", "parentThreadId": "main-1"}},
+        },
+    }
+    codex_child = {
+        "sequence": 3,
+        "at": "2026-10-22T08:42:00+00:00",
+        "turn_id": "t1",
+        "agent_handle": "cheese",
+        "harness": "codex",
+        "record": {
+            "method": "item/completed",
+            "params": {
+                "threadId": "child-1",
+                "item": {
+                    "type": "agentMessage",
+                    "id": "m1",
+                    "text": "分身 codex 查到的东西",
+                },
+            },
+        },
+    }
+    cli._call = Platform([[pi, codex_announce, codex_child]])
+    _run(cli, "--digest")
+    out = capsys.readouterr().out
+    assert "分身pi-agent-7" in out, out
+    assert "分身child-1" in out, out
+
+
+def test_the_main_sessions_own_records_are_not_marked_as_a_subagent(cli, capsys):
+    """反过来的错更坏：主会话做的事被标成分身做的，读的人就找不到是谁做的了。"""
+    cli._call = Platform([[_record(1)]])
+    _run(cli, "--digest")
+    assert "分身" not in capsys.readouterr().out
 
 
 def test_digest_and_a_destination_path_are_not_both_asked_for(cli):

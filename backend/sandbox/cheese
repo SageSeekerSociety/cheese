@@ -6901,6 +6901,35 @@ def _transcript_parts(record: dict) -> list[tuple[str, str, str, str]]:
     return parts
 
 
+def _transcript_subagent(record: dict, children: dict) -> str:
+    """这一条是哪个分身写的,或者空串表示是主会话自己的。
+
+    三种骨架各有各的说法:Claude Code 把分身的记录多包一层 `cheese_file`,分身在
+    `agent_id` 上;pi 给每条盖一个 `subagent` 键;Codex 的 `thread/started` 用
+    `parentThreadId` 认领子线程,子线程自己的记录只在 `threadId` 上,要顺着
+    `children` 表查。认不出来就是主会话,这是安全的那一边:digest 少标一个分身,
+    读的人只是没看见那里有分身;多标一个,读的人会以为主会话做了它没做过的事。
+    """
+    if record.get("type") == "cheese_file":
+        return str(record.get("agent_id") or "")
+    thread = record.get("subagent")
+    if isinstance(thread, dict) and thread.get("id"):
+        return str(thread["id"])
+    params = record.get("params")
+    if isinstance(params, dict) and params.get("threadId"):
+        return children.get(str(params["threadId"]), "")
+    return ""
+
+
+def _transcript_children(record: dict, children: dict) -> None:
+    """记下 Codex 宣布的子线程:后面那些记录只看得到 threadId。"""
+    if record.get("method") != "thread/started":
+        return
+    thread = (record.get("params") or {}).get("thread") or {}
+    if isinstance(thread, dict) and thread.get("parentThreadId"):
+        children[str(thread.get("id"))] = str(thread.get("agentRole") or thread.get("id"))
+
+
 def _transcript_digest(topic: str, *, turn, author, grep, limit: int) -> None:
     """先把形状看清:每一轮做了哪几步、用的什么工具、一步的结果是什么。"""
     if limit < 1:
@@ -6909,11 +6938,13 @@ def _transcript_digest(topic: str, *, turn, author, grep, limit: int) -> None:
     steps: list[dict] = []
     counts: dict = {}
     open_calls: dict = {}
+    children: dict = {}
     for item in _transcript_pages(topic, turn=turn, author=author, grep=grep):
         turn_id = item.get("turn_id")
         counts[turn_id] = counts.get(turn_id, 0) + 1
         record = item.get("record") or {}
-        sub = record.get("agent_id") if record.get("type") == "cheese_file" else ""
+        _transcript_children(record, children)
+        sub = _transcript_subagent(record, children)
         for kind, name, text, call in _transcript_parts(record):
             step = {
                 "turn": turn_id,
@@ -6949,7 +6980,7 @@ def _transcript_digest(topic: str, *, turn, author, grep, limit: int) -> None:
             print(heading)
             shown += 1
             heading = ""
-        who = f"分身{step['sub'][:6]} " if step["sub"] else ""
+        who = f"分身{step['sub'][:10]} " if step["sub"] else ""
         if step["kind"] == "text":
             line = f"  #{step['seq']} {who}说 {step['text']}"
         else:
