@@ -49,3 +49,11 @@ def test_the_room_rule_and_the_tool_agree_that_every_step_is_written() -> None:
 
     assert re.search(r"别只在开工和收尾两头写", TODO_WRITE)
     assert "每做完一步" in TODO_WRITE.replace("\n", "")
+
+
+def test_cheese_task_says_not_to_redo_work_that_is_already_a_task() -> None:
+    """已经在任务里时，不要再开一条做同一件事——这条写在工具自己的说明里，
+    因为 2026-10-21 的重复正是从这个工具被调用的那一刻发生的。"""
+    said = _description("cheese_task")
+    assert "已经在任务里" in said
+    assert "不要再开一条做同一件事" in said

@@ -625,7 +625,9 @@ PLATFORM_TOOLS = ToolTable(
             "改项目；讨论拆出了几件各自要做的事，here 不填，每件另开一个任务，挂在支线"
             "所在的那条消息下面，由那边的 AI 队友去做，summary 必填。只在有人说要做时"
             "调：是你自己看出来该做的，先用 cheese_ask 问一句要不要转为任务（选项"
-            "「转为任务」「不转」），有人选了「转为任务」再调，owner 就是他。",
+            "「转为任务」「不转」），有人选了「转为任务」再调，owner 就是他。"
+            "已经在任务里时：这条任务里的活由你自己接着做，不要再开一条做同一件事；"
+            "要拆的是**另一件**活时 here 不填。",
             {
                 "title": _text(
                     f"任务标题，{TITLE_WIDTH_NOTE}；超了会被拒绝，改短了再调一次"
@@ -3857,6 +3859,12 @@ def _say_task(args, data, env) -> str:
     data = data or {}
     owner = data.get("owner_handle") or "负责人"
     title = data.get("title") or args["title"]
+    if data.get("already"):
+        return (
+            f"你要开的就是这条：你已经在这件任务「{title}」里，负责人 {owner}。"
+            "不用再开一条——就在这里做，用 cheese worktree 准备它的工作目录，"
+            "做完提交审阅。"
+        )
     if data.get("here"):
         return (
             f"这条支线已转为任务「{title}」，负责人 {owner}。从现在起你可以改项目："
