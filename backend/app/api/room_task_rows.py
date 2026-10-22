@@ -86,6 +86,24 @@ async def task_out(db, task, card=None) -> dict:
     return out
 
 
+def _awaits_me(task, card, shown, asking, me: str) -> bool:
+    """Personal action markers use addressing, not a single display name."""
+    return (
+        address(
+            Event(
+                reviewers=()
+                if card is None or not card.reviewer_handle
+                else (card.reviewer_handle,),
+                reporter=task.reporter_handle,
+                asked_also=() if asking is None else asking.waiting(task.people),
+                owner=task.owner_handle if presentation.owner_acts_on(shown) else None,
+            ),
+            hand_of(shown.column),
+        ).reason_for(me)
+        is not None
+    )
+
+
 async def task_rows(
     db: AsyncSession,
     actor: Actor,
@@ -140,7 +158,9 @@ async def task_rows(
                 "presentation": shown.as_dict(),
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
                 "waiting_on": waiting,
-                "awaits_me": waiting is not None and waiting == actor.handle,
+                "awaits_me": _awaits_me(
+                    task, card, shown, asked.get(task.id), actor.handle
+                ),
                 "from_thread": task.id in in_place,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
@@ -296,30 +316,11 @@ async def project_task_rows(
         last_activity = said_at or task.created_at
         # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
         # 点和任务列表的橙字都读它，不各自从列再推一遍。
-        asking = asked.get(task.id)
-        awaits = address(
-            Event(
-                reviewers=(
-                    ()
-                    if card is None or not card.reviewer_handle
-                    else (card.reviewer_handle,)
-                ),
-                reporter=task.reporter_handle,
-                # 题上没点名（平台发起的轮次）：等它的是这条活的人 —— 和通知、待办
-                # 同一个名单（`announce.notify_question`）。题根本不在等，就没有这
-                # 一层。
-                asked_also=() if asking is None else asking.waiting(task.people),
-                owner=(
-                    task.owner_handle if presentation.owner_acts_on(shown) else None
-                ),
-            ),
-            hand_of(shown.column),
-        ).reason_for(me)
         items.append(
             {
                 **task_row_json(task),
                 "presentation": shown.as_dict(),
-                "awaits_me": awaits is not None,
+                "awaits_me": _awaits_me(task, card, shown, asked.get(task.id), me),
                 # 这条活上还没恢复的失败从什么时候开始（`incomplete_of`；`None` = 没有
                 # 未恢复的失败，或调用方没算）。判据在
                 # `block/waits.MemberWaits.unresolved_failures`：一条活停下来报错、
