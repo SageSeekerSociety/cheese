@@ -107,6 +107,15 @@ describe('等审', () => {
     expect(state.line).not.toContain('等你')
   })
 
+  it('卡在检查那几步时，标签是待审阅，后面那一行说到了哪一步', () => {
+    const running = taskState(task('gate_running', { card }), ctx)
+    expect(running.label).toBe('待审阅')
+    expect(running.line).toContain('平台在跑检查')
+    const failed = taskState(task('checks_failed', { card }), ctx)
+    expect(failed.label).toBe('待审阅')
+    expect(failed.line).toContain('检查没过')
+  })
+
   it('检查没过时下一步在负责人手上，不说在等谁审阅', () => {
     const state = taskState(task('checks_failed', { reviewer_handle: 'linxiao', card }), ctx)
     expect(state.line).not.toContain('等 林晓')

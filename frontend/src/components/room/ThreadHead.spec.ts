@@ -1,5 +1,5 @@
-// 支线页头的状态那一句说到做这件任务的队友时，写项目给它起的名字：项目可以给队友改名，
-// 改了之后页头还写「芝士在做」，读的人会以为换人没生效。
+// 支线页头的状态那一格只写状态本身（「在做」），不把做这件任务的队友拼进标签：
+// 拼进去时写的是默认的「芝士」，项目改过名的读者会以为换人没生效。
 import type { ProjectMemberRow, RoomTask } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -54,7 +54,6 @@ describe('ThreadHead 的状态那一格', () => {
   // 一直是默认的「芝士」）。
   it('写的是状态本身，不带默认的队友名字', () => {
     const text = headText(running(null))
-    expect(text).toContain('在做')
-    expect(text).not.toContain('芝士')
+    expect(text.trim()).toBe('在做')
   })
 })

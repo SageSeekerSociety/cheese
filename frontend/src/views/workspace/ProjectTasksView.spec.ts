@@ -5,7 +5,7 @@ import type { RoomTask } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render, within } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import ProjectTasksView from './ProjectTasksView.vue'
@@ -175,7 +175,8 @@ it('全部状态同时列进行中与已关闭，并把两边的总数相加', (
   expect(view.getByRole('button', { name: `${t('work.channelTasks.all')} 121` })).toBeTruthy()
   expect(view.getByRole('button', { name: `${t('work.channelTasks.mine')} 41` })).toBeTruthy()
   const row = view.getByRole('button', { name: /结束了/ })
-  expect(row.textContent).toContain(t('work.taskState.label.accepted'))
+  // 状态那一格自己说「已采纳」（不是「已关闭」），交付那一列另说交付被采纳。
+  expect(within(row).getByTestId('task-state').textContent?.trim()).toBe(t('work.taskState.label.accepted'))
   expect(row.textContent).toContain(t('taskList.deliveryAccepted'))
 })
 
