@@ -23,7 +23,7 @@ _TOOL_ACTION = {
 
 
 def _turn_failure_notice(
-    text: str, code: str | None, *, log: str | None = None
+    text: str, code: str | None, *, log: str | None = None, own: bool = False
 ) -> tuple[str, dict]:
     """A failed turn's room line and the structured card behind it.
 
@@ -56,7 +56,14 @@ def _turn_failure_notice(
         # it gets when it is printed as a reply, whose line names the cause.
         return said
     who = WHO_HUMAN
-    if out_of_credit:
+    if out_of_credit and own:
+        # The turn ran on the team's or member's own model connection
+        # (`gateway_usage.OWN_ROUTE`): the account that ran dry is theirs, and
+        # nobody on the platform side was told.
+        line = say("turnFailedOwnOutOfCredit")
+        hint = say("turnFailedOwnOutOfCreditHint")
+        retryable = False
+    elif out_of_credit:
         # The platform's own account with a model provider has no money: only
         # its administrators can top it up, and the gateway has already told
         # them (deploy/gateway/provider_credit.py). Nothing here is the

@@ -119,7 +119,11 @@ async def main():
         rows(port, "flash", [("ruc", 1), ("official", 3)])
         + rows(port, "doubao", [("ruc2", 1), ("ark2", 3)])
         + rows(port, "kimi", [("moonshot2", 1)])
+        + rows(port, "glm", [("zhipu2", 1), ("glm-api", 3)])
+        + rows(port, "doubao2", [("switched-off", 1), ("ark3", 3)])
     )
+    # A line switched off on the admin page takes no requests.
+    model_list[-2]["model_info"]["blocked"] = True
     for name in [*OUT_OF_CREDIT, *ORDINARY]:
         model_list += rows(port, f"solo-{name}", [(name, 1)])
     # The router's own cooldown is 5 s; shorter here so the test can outwait it.
@@ -160,6 +164,19 @@ async def main():
             assert "ark2" not in CALLS, CALLS
             print("PASS: a 429 out-of-credit refusal from a fallback row keeps the row out as long as a 400 one")
 
+            # An empty row walked past on the way to one that answers: the
+            # caller gets the answer, the empty row is named for the admins and
+            # left alone on the next request.
+            ANSWERS.update(zhipu2=OUT_OF_CREDIT["zhipu"], **{"glm-api": OK})
+            response = await ask(client, "glm")
+            assert response.status_code == 200 and "zhipu2" in response.headers.get(NAMED, ""), (
+                response.status_code, response.headers)
+            await asyncio.sleep(1.0)
+            response = await ask(client, "glm")
+            assert response.status_code == 200 and CALLS == {"glm-api": 1}, CALLS
+            assert NAMED not in response.headers, response.headers
+            print("PASS: a request answered past an empty row names it, and the next one skips it")
+
             # Every provider's refusal, as the only row of a model: one 402 that
             # Claude Code does not retry, naming the row; and the next request,
             # streamed as Claude Code streams, is answered without asking it.
@@ -184,6 +201,14 @@ async def main():
                 assert CALLS == {name: 1}, (name, CALLS)
             print("PASS: a rate limit, a bad request or a per-minute quota does not take the row out")
 
+            # A model whose only line that takes requests is out of credit is
+            # out of credit, however many switched-off lines it also has.
+            ANSWERS["ark3"] = OUT_OF_CREDIT["ark"]
+            for stream in (False, True):
+                response = await ask(client, "doubao2", stream=stream)
+                assert response.status_code == 402 and CODE in response.text, (response.status_code, response.text)
+            print("PASS: a switched-off line does not count as one with credit")
+
             # After the long cooldown the account is asked again, so a top-up
             # is picked up without anyone touching the gateway.
             with patch.object(importlib.import_module("cheese_provider_credit"), "COOLDOWN_S", 0.5):
@@ -196,4 +221,29 @@ async def main():
             print("PASS: once the cooldown ends the account is asked again")
 
 
+async def with_redis_down():
+    """The gateway's router keeps its cooldowns in Redis too. Redis being away
+    costs the long cooldown its shared copy, never the request: an answer a
+    later row gave still reaches the caller."""
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    # Nothing listens on port 1.
+    router = Router(
+        model_list=rows(port, "flash", [("dry", 1), ("backup", 3)]),
+        num_retries=0, cooldown_time=0.5, redis_host="127.0.0.1", redis_port=1,
+    )
+    transport = httpx.ASGITransport(app=proxy_server.app)
+    async with server, httpx.AsyncClient(transport=transport, base_url="http://gateway", timeout=60) as client:
+        with patch.object(proxy_server, "llm_router", router), patch.object(proxy_server, "master_key", None):
+            ANSWERS.update(dry=OUT_OF_CREDIT["deepseek"], backup=OK)
+            response = await ask(client, "flash")
+            assert response.status_code == 200 and "dry" in response.headers.get(NAMED, ""), (
+                response.status_code, response.text)
+            await asyncio.sleep(1.0)
+            response = await ask(client, "flash")
+            assert response.status_code == 200 and CALLS == {"backup": 1}, (response.status_code, CALLS)
+    print("PASS: with Redis down the answer still arrives and the empty row is still left alone")
+
+
 asyncio.run(main())
+asyncio.run(with_redis_down())

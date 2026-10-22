@@ -141,12 +141,14 @@ def label(router, deployment: str) -> str:
 
 
 async def _rows_left(router, group: str) -> tuple[bool, float | None]:
-    """Whether every row of the group is cooling down for credit, and if not,
-    how soon the first of the others can take a request (0 when one can now)."""
+    """Whether every row of the group that takes requests is cooling down for
+    credit, and if not, how soon the first of the others can take one (0 when
+    one can now). A line switched off on the admin page (`model_info.blocked`)
+    takes none, so it is not counted."""
     ids = [
         d["model_info"]["id"]
         for d in router.get_model_list(model_name=group) or []
-        if isinstance((d.get("model_info") or {}).get("id"), str)
+        if isinstance((d.get("model_info") or {}).get("id"), str) and d["model_info"].get("blocked") is not True
     ]
     cooling = dict(await router.cooldown_cache.async_get_active_cooldowns(model_ids=ids, parent_otel_span=None))
     now = time.time()
@@ -194,6 +196,16 @@ async def answer(router, group: object, error: BaseException, rows: list[str]) -
             code=429,
             headers={"retry-after": str(wait), **named},
         )
+    if named and isinstance(error, RouterRateLimitError):
+        # The router's own "every row is cooling" answer, unchanged but for
+        # naming the rows this request found empty on its way there.
+        return ProxyException(
+            message=said,
+            type="rate_limit_error",
+            param=None,
+            code=429,
+            headers={"retry-after": str(max(1, math.ceil(error.cooldown_time))), **named},
+        )
     return None
 
 
@@ -204,8 +216,10 @@ def _cool(router, kwargs: dict, error: BaseException | None) -> list[str]:
     for deployment in rows:
         # The router has already cooled a 429 for its 5 s, and the in-memory
         # cache keeps a live entry's expiry when it is written again: the
-        # 5 s entry has to go before the long one can take its place.
-        router.cooldown_cache.cooldown_store.delete_cache(CooldownCache.get_cooldown_cache_key(deployment))
+        # 5 s entry has to go before the long one can take its place. Only the
+        # in-memory copy: Redis takes the new expiry on the write below, and a
+        # Redis that is down must not fail a request the write would not.
+        router.cooldown_cache.in_memory_cache.delete_cache(CooldownCache.get_cooldown_cache_key(deployment))
         router.cooldown_cache.add_deployment_to_cooldown(
             model_id=deployment,
             original_exception=error or RuntimeError("out of credit"),
