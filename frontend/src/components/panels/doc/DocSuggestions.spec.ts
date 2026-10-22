@@ -84,7 +84,10 @@ describe('deciding the AI teammate’s suggestions', () => {
     suggest(other, '一周', '两周')
 
     await openSuggestions(2)
-    await screen.findByText(t('work.room.docSuggest.pending', { agent: '芝士', n: 2 }))
+    await screen.findByText(t('work.room.docSuggest.pending', { author: '芝士', n: 2 }))
+    // 芝士提的：卡片上是芝士头像。
+    await screen.findByText(t('work.room.docSuggest.title', { author: '芝士' }))
+    expect(document.querySelector('.doc-suggestion-card .cheese-avatar')).not.toBeNull()
     await fireEvent.click(await screen.findByRole('button', { name: t('work.room.docSuggest.accept') }))
 
     await waitFor(() => expect(exportMarkdown(theirs)).toContain('数据量到五百万行'))
@@ -112,5 +115,28 @@ describe('deciding the AI teammate’s suggestions', () => {
     await openSuggestions(1)
 
     expect(await screen.findByText('测试里五百万行时已经到 120 ms')).toBeTruthy()
+  })
+
+  it('shows a person’s suggestion under that person’s name', async () => {
+    const { other } = twoReaders()
+    suggest(other, '一千万', '五百万', suggestionId('mentor'))
+
+    await openSuggestions(1)
+
+    expect(await screen.findByText(t('work.room.docSuggest.pending', { author: 'mentor', n: 1 }))).toBeTruthy()
+    expect(await screen.findByText(t('work.room.docSuggest.title', { author: 'mentor' }))).toBeTruthy()
+    // 人提的：卡片上画人的头像，不是芝士头像。
+    expect(document.querySelector('.doc-suggestion-card .cheese-avatar')).toBeNull()
+    expect(document.querySelector('.doc-suggestion-card .v-avatar')).not.toBeNull()
+  })
+
+  it('does not name one author when the strip mixes several', async () => {
+    const { other } = twoReaders()
+    suggest(other, '一千万', '五百万', suggestionId('mentor'))
+    suggest(other, '一周', '两周')
+
+    await openSuggestions(2)
+
+    expect(await screen.findByText(t('work.room.docSuggest.pendingMixed', { n: 2 }))).toBeTruthy()
   })
 })
