@@ -93,7 +93,8 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `patch_deepseek_images.py` | 上游只保留 user 消息里的图片；工具结果（Claude Code 读本地图片）在适配后是 tool 消息，补丁让它也保留图片 |
 | `patch_empty_anthropic_text.py` | 丢掉空的 system 文本块、剥掉嵌套 tool_result 里的空文本 |
 | `patch_hosted_vllm_reasoning.py` | 上游 `hosted_vllm/` 适配器删掉历史 assistant 消息的 `reasoning_content`；补丁让它留着。思考模式的模型要在工具调用的下一轮拿回这段推理，DeepSeek 缺了直接 400「`content[].thinking` … must be passed back」 |
-| `provider_http_timing.py` | 打 `provider_http_timing` 记录：DNS/TLS/超时/401·403/429/1113 配额/其它 HTTP 错误分类，未知的 500 不会被说成网络原因 |
+| `provider_http_timing.py` | 打 `provider_http_timing` 记录：DNS/TLS/超时/401·403/429/供应商账户没钱（`provider_quota`，用 `provider_credit.py` 的判断）/其它 HTTP 错误分类，未知的 500 不会被说成网络原因 |
+| `provider_credit.py` | 不是补丁：启动钩子包住路由器最外层的调用，外加一个回调。供应商账户没钱的行冷却 10 分钟，请求的应答按情况改成 429（还有别的行能接）或 402（整组都没钱），并在响应头里点名没钱的行，见下面「免费、订阅与中转」 |
 | `qwen_asr.py` | 不是补丁：经 LiteLLM 公开的 `custom_provider_map` 注册的 `qwen-asr/` 提供方。阿里百炼的 Qwen-Audio 语音识别只有原生接口，它把「最后一条 user 消息里带 `input_audio`」的对话请求转成百炼请求，system 消息作上下文、`vocabulary` 作热词；按百炼每秒 25 token 的口径把音频时长报成 prompt tokens，由这一行的单价计费 |
 | `check_config.py` | 用自己构造的部署建一个 Router，断言 thinking 与 effort 的转换、缓存计价、停用的行不路由 |
 
@@ -103,6 +104,8 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | --- | --- | --- | --- |
 | `gateway_request_timing` | 计量代理（`_log_gateway_timing`） | 请求与响应时间戳、选路结束时刻、准入耗时、`x-litellm-call-id`、状态 | 正文、凭据、任意请求头 |
 | `provider_http_timing` | 网关（补丁） | 进入请求、响应头、流完成/中断/提前关闭的时刻与时长、状态、结果分类 | URL、头、凭据、正文 |
+| `provider_credit out of credit` | 网关（`provider_credit.py`） | 因供应商账户没钱冷却的行：模型名、上游模型、部署 id | 地址、凭据、上游原话 |
+| `gateway rows out of credit` | 计量代理（`_report_out_of_credit_rows`） | 网关点名的行、flow id | 正文、凭据 |
 
 两个区间都含代理与网关自身的工作，也都含连接建立、重试与传输，所以它们**不是**「上游推理耗时」。失败的请求保留已有的时间戳。`x-litellm-call-id` 是把两边日志与网关花销日志对起来的那根线。
 
@@ -210,6 +213,8 @@ GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
 ### 免费、订阅与中转：同一个模型挂多条供给 {#supply-rows}
 
 一个模型组可以有多行（多个 deployment），路由器按 `litellm_params.order` 从小往大用：先用最小 `order` 里健康的，任何错误（配额用完的 429 在内，上下文超长与内容审查除外）都在同一个请求里落到下一档；只有所有带 `order` 的行都不健康时，才会使用没写 `order` 的行。被 429 的行冷却约 5 秒后重试。
+
+供应商账户没钱的行（DeepSeek 的 400 `Insufficient Balance`、智谱的 `[1113]`、火山方舟的 `SetLimitExceeded`、Moonshot 停用的账户、OpenAI 的 `insufficient_quota` 等，`provider_credit.py` 里一份判断）冷却 10 分钟，到点后由一个请求再试一次账户，充值后不用动网关；路由器自己对 400 不冷却、对 429 只冷却约 5 秒。冷却期间请求直接走同组的其他行。撞上没钱的行、而同组还有只是暂时忙的行时，调用方收到 429 和那一行的 Retry-After，Claude Code 重试时就落到它上面；整组都没钱时，调用方收到 402，消息以 `cheese_upstream_credit_exhausted` 开头，Claude Code 不重试，后端据此在房间里说「平台的 AI 服务额度暂时不足」。网关在响应头 `x-cheese-upstream-out-of-credit` 里点名每一条没钱的行，计量代理逐条报给后端的错误收集，后端按行告警管理员。
 
 新发现可用的免费供给就接入；同一个模型的供给按免费、已购买的订阅额度、按量付费 API 的顺序设置 `order`。`deepseek-flash` 的自建供给（人大）排在最前面，免费供给接在它之后、官方按量付费 API 之前。人大那份只列不带日期的别名，版本核实不了，所以菜单名不写日期版本。
 

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.sentences import say
 from app.domain.agent import turn_resume
 from app.domain.agent.credits_notice import spent_reason
+from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
@@ -325,7 +326,10 @@ class HookEvents:
                     meta = CREDITS_EXHAUSTED_META
                 else:
                     line, meta = _turn_failure_notice(
-                        event.text, event.failure_code, log=event.log
+                        event.text,
+                        event.failure_code,
+                        log=event.log,
+                        own=state is not None and state.route == OWN_ROUTE,
                     )
                     resumable = True
                 error_line, error_code = line, meta.get("code")
