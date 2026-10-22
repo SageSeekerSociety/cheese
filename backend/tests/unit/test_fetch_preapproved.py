@@ -42,7 +42,12 @@ def test_a_documentation_site_is_preapproved(url):
         "https://github.com/someone/repo",
         "https://github.com/anthropicsx/repo",
         "https://github.com/anthropics/../someone/repo",
-        "https://github.com/anthropics%2f..%2fsomeone/repo",
+        "https://github.com/anthropics/..%2fsomeone/repo",
+        # A browser reads a backslash as a slash: the first goes to evil.example.
+        "https://evil.example\\@docs.python.org/?d=secret",
+        "https://github.com/anthropics/a\\..\\..\\someone/repo",
+        "https://user@docs.python.org/",
+        "ftp://docs.python.org/",
         # Off the main branch, only Anthropic's own GitHub organization counts.
         "https://github.com/anthropic-experimental/repo/blob/dev/x",
         "https://raw.githubusercontent.com/anthropics/repo/refs/heads/dev/a.md",

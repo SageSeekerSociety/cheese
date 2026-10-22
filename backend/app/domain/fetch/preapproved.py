@@ -10,6 +10,11 @@ An entry with a path covers that path and what lies under it on that host
 alone. On GitHub only Anthropic's own repositories count, and under
 ``anthropic-experimental`` and on raw.githubusercontent.com only a
 repository's main branch.
+
+One difference stays: Claude Code does not follow a redirect off the address
+it was given, while our fetch follows redirects to any public host
+(``fetch.layers``). A listed site that redirected to an address its visitor
+names would carry the query past the gate; none of them was found to.
 """
 
 from __future__ import annotations
@@ -140,10 +145,18 @@ def _main_branch(host: str, path: str) -> bool:
 
 def preapproved(url: str) -> bool:
     """Whether ``url`` is on one of :data:`SITES`."""
+    # The browser rung reads the address as a browser does, not as urlsplit:
+    # a backslash is a slash to it, so ``https://evil.example\@docs.python.org/``
+    # goes to evil.example. Credentials, a backslash, whitespace or any scheme
+    # but http(s) leave the address to the gate.
+    if "\\" in url or any(c.isspace() or ord(c) < 0x20 for c in url):
+        return False
     try:
         parts = urlsplit(url)
-        host = (parts.hostname or "").lower()
+        host = parts.hostname or ""
     except ValueError:
+        return False
+    if parts.scheme not in ("http", "https") or "@" in parts.netloc:
         return False
     path = parts.path or "/"
     if host in _WHOLE_HOSTS:
