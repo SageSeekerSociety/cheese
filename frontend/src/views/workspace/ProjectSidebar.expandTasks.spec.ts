@@ -13,7 +13,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VApp } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen } from '@testing-library/vue'
+import { render, screen } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -115,55 +115,14 @@ beforeEach(() => {
   })
 })
 
-describe('频道下面「展开其余」那一行', () => {
-  it('说清还有几个，展开就在原地列出频道里其余进行中的任务，不换页', async () => {
-    const router = await openProject([channel('topic-a', ['k1', 'k2'], 5), channel('topic-b', [], 1)])
-    const before = router.currentRoute.value.fullPath
-    const more = screen.getByRole('button', { name: /Show 3 more/ })
-    expect(screen.queryByText('任务k3')).toBeNull()
-
-    await fireEvent.click(more)
-    await settle()
-
-    for (const id of ['k1', 'k2', 'k3', 'k4', 'k5']) expect(screen.getByText(`任务${id}`)).toBeTruthy()
-    // 收尾中的不算进行中；别的频道的挂在那个频道自己下面，不在这里。
-    expect(screen.queryByText('任务k8')).toBeNull()
-    expect(screen.queryByText('任务k7')).toBeNull()
-    expect(router.currentRoute.value.fullPath).toBe(before)
-    expect(screen.getByRole('button', { name: /Show fewer/ }).getAttribute('aria-expanded')).toBe('true')
-  })
-
-  it('收起后回到只挂我那几件', async () => {
-    await openProject([channel('topic-a', ['k1', 'k2'], 5)])
-    await fireEvent.click(screen.getByRole('button', { name: /Show 3 more/ }))
-    await settle()
-
-    await fireEvent.click(screen.getByRole('button', { name: /Show fewer/ }))
-    await settle()
+describe('频道下面的任务列表只显示与我有关的任务', () => {
+  it('即使频道还有别人的进行中任务，也不再挂「展开其余 N 个」或请求整项目任务列表', async () => {
+    await openProject([channel('topic-a', ['k1', 'k2'], 5), channel('topic-b', [], 1)])
 
     expect(screen.getByText('任务k1')).toBeTruthy()
-    expect(screen.queryByText('任务k3')).toBeNull()
-    expect(screen.getByRole('button', { name: /Show 3 more/ })).toBeTruthy()
-  })
-
-  it('频道里进行中的都已经挂着，就没有这一行', async () => {
-    await openProject([channel('topic-a', ['k1', 'k2'], 2)])
-
-    // 没有藏着的，最后不再多一行（展开的、换页的都没有）。
+    expect(screen.getByText('任务k2')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Show \d+ more|All tasks/ })).toBeNull()
     expect(api.listProjectTasks).not.toHaveBeenCalled()
-  })
-
-  it('读失败了说一声，再点一下重读', async () => {
-    api.listProjectTasks.mockRejectedValueOnce(new Error('boom'))
-    await openProject([channel('topic-a', ['k1', 'k2'], 5)])
-    await fireEvent.click(screen.getByRole('button', { name: /Show 3 more/ }))
-    await settle()
-
-    await fireEvent.click(await screen.findByRole('button', { name: /Couldn't load/ }))
-    await settle()
-
-    expect(screen.getByText('任务k3')).toBeTruthy()
   })
 })
 

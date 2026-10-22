@@ -38,7 +38,7 @@ from app.api.deps import (
     get_session_host,
 )
 from app.api.routes import assistant as route
-from app.api.routes import llm_proxy
+from app.api.routes import assistant_agent, llm_proxy
 from app.core.config import settings
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.host import SessionHost
@@ -1271,6 +1271,8 @@ def _gate_stops(monkeypatch) -> None:
         return _Stops()
 
     monkeypatch.setattr(gate, "gatekeeper", looks)
+    # Nobody here decides on the cards it puts up: they are left waiting.
+    monkeypatch.setattr(assistant_agent, "CARD_WAIT_S", 0.0)
 
 
 def _address(client, room: str) -> tuple[str, int]:
@@ -1290,8 +1292,8 @@ def test_asked_in_a_channel_it_reads_the_channel_and_drafts_what_the_person_send
 ):
     """Asked from a channel's page, 芝士 is told the channel and its latest
     messages, searches as the person, and a reply the gate does not let
-    through is not sent: the panel shows it as a card, and only the person
-    marks it sent."""
+    through is not sent: asked for as a card, the panel shows it, and only
+    the person marks it sent."""
     room, _ = _room(client)
     slug, number = _address(client, room)
     post_message(client, room, "alice", {"content": "中期演示视频谁来负责？"})
@@ -1308,6 +1310,7 @@ def test_asked_in_a_channel_it_reads_the_channel_and_drafts_what_the_person_send
             {
                 "where": f"{slug}/channels/{number}",
                 "text": "演示视频我来负责，周五前给初版。",
+                "confirm": True,
             },
         ),
         ("text", "起草了一条回复，等你确认。"),
@@ -1370,6 +1373,7 @@ def test_a_task_is_drafted_with_its_brief_for_the_channel_it_is_asked_in(
                 "where": f"{slug}/channels/{number}",
                 "title": "排查路线规划超时",
                 "text": "复现超时，修好并补测试。",
+                "confirm": True,
             },
         ),
         ("text", "起草了一个任务。"),

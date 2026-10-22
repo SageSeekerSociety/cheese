@@ -62,9 +62,12 @@ preservation, and starts the idle color with the configuration bundled in the
 image. The new color takes traffic only after four checks: its Docker health
 check, `/health/readiness`, and the proxy's own check, plus a `GET /v1/models`
 sent to it with the master key. That listing must include every model the
-serving color lists, apart from any this release removes from `config.yaml`,
-so a model added on the admin page has loaded from the database. `/health` is
-not used: it calls every model. Then one runtime-API
+serving color lists, so a model added on the admin page has loaded from the
+database, and the new color must offer at least one selectable model. The only
+model allowed to go missing is one this release removes from `config.yaml`, no
+database row of the serving color serves (`/model/info`, `db_model`), and the
+operator names in the workflow's `allow_drop` input (`GATEWAY_ALLOW_DROP`).
+`/health` is not used: it calls every model. Then one runtime-API
 command makes the new color serve and sets the old one to drain. The proxy is
 not restarted, so no caller connection closes, and the next request on any of
 them goes to the new color. The old color finishes the streams it has; the
@@ -115,16 +118,14 @@ die with it, so the next request on each fails once.
 
 Kimi K3 uses the native Messages endpoint at
 `https://api.moonshot.cn/anthropic`. Set `MOONSHOT_API_KEY` in the gateway's
-`$HOME/gateway/compose/.env` before releasing a configuration that includes it.
+`$HOME/gateway/compose/.env`; its row names it as `os.environ/MOONSHOT_API_KEY`.
 Its budget prices convert the published CNY rates at the existing RMB 7.1/USD
 convention; they are estimates, not a live exchange rate. The pinned adapter
 keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
 unsupported adaptive-thinking field.
 
-Gemini 4 Argon runs on Google AI Studio, as a runtime row added on the admin
-models page, not in `config.yaml`, so its spend cap changes without a release.
-The row's `api_key` is `os.environ/GEMINI_API_KEY`, which the pinned LiteLLM
-resolves for database rows too, so `GEMINI_API_KEY` stays in the same `.env`.
+Gemini 4 Argon runs on Google AI Studio. Its row's `api_key` is
+`os.environ/GEMINI_API_KEY`, so `GEMINI_API_KEY` stays in the same `.env`.
 Its prices are Google's rates from 2026-12-01 ($4 in, $20 out, $0.20 cache
 read per million tokens; https://ai.google.dev/gemini-api/docs/pricing read
 2026-10-15), half that until then, so the brake does not go soft on 12-01.
@@ -145,7 +146,7 @@ change it on the admin models page (see "Putting a model in front of people").
 RUC key, and by DeepSeek's API when every RUC key fails or is past its 3
 parallel requests. Set `RUC_DEEPSEEK_API_BASE` (the endpoint's address, no
 path) and `RUC_DEEPSEEK_API_KEY_1` to `RUC_DEEPSEEK_API_KEY_9` in
-`$HOME/gateway/compose/.env` before releasing: nine of the ten keys RUC
+`$HOME/gateway/compose/.env`, which its rows name: nine of the ten keys RUC
 issued, all but the one kept for tests. The endpoint admits campus
 addresses only, so a box serving it needs the route in docs/infrastructure.md
 ("Campus model API").
@@ -239,31 +240,29 @@ them, the pinned gateway removes the thinking settings sent by Claude Code.
 
 ## Putting a model in front of people
 
-There are two ways to add one, and both end in the same place: cheese reads the
-gateway back through `/model/info` and keeps no list of its own, so a model
-appears in agent settings as soon as the gateway reports it, without a backend
-release.
+Add it on the admin models page. `config.yaml` declares no models: every model
+the gateway routes, and every price-only entry, is a row in the gateway
+database (`STORE_MODEL_IN_DB` is on), so adding a model or changing its price
+needs no release. Cheese reads the gateway back through `/model/info` and keeps
+no list of its own, so a model appears in agent settings as soon as the gateway
+reports it. Administrators add, edit, disable, and delete models there; every
+write is audited with the acting handle, and a successful write refreshes the
+catalogue so the model is pickable immediately. Mark a model
+`cheese_selectable: true` to offer it; the marker is opt-in because the gateway
+also routes models the platform calls on someone's behalf. The cheese keys under
+`model_info` are listed in `docs/manual/dev/gateway.md`.
 
-**In `config.yaml`** — add the route and the price and mark it
-`cheese_selectable: true` under `model_info`. This is the baseline that ships
-with the image, so a deployment's always-on models belong here; changing it
-means releasing the gateway. The marker is opt-in because the
-gateway also routes models that are not menu items — `glm-4.5` is where the
-subagent alias points. A setting that has to change while the model is in use,
-such as a spend cap, does not belong in this file: put the model on a runtime
-row instead, where the admin page changes it without a release.
+A row names its credential as `os.environ/<VAR>`, which the pinned LiteLLM
+resolves from the gateway's environment for database rows
+(`ProxyConfig._resolve_db_litellm_param`), so provider keys stay in
+`$HOME/gateway/compose/.env` and never enter the database. The database is the
+only record of which models exist and what they cost: keep it backed up.
 
 A model whose route loses the system-role messages Claude Code puts in the
 middle of a conversation is marked `supports_mid_conversation_system: false`
-under `model_info` (or with the switch on the admin page). Mark it only after
-measuring it; cheese then launches Claude Code to put that content in the first
-user message. See `docs/manual/dev/gateway.md`.
-
-**On the admin models page** — administrators add, edit, disable, and delete
-runtime models (`STORE_MODEL_IN_DB` is on) without a release. Every write is
-audited with the acting handle, and a successful write refreshes the catalogue
-so the model is pickable immediately. Models declared in `config.yaml` appear
-there read-only, because the gateway refuses to write them.
+with the switch on the admin page. Mark it only after measuring it; cheese then
+launches Claude Code to put that content in the first user message. See
+`docs/manual/dev/gateway.md`.
 
 A spend cap (`cheese_spend_cap_usd`, enforced by `spend_cap.py`) is changed the
 same way: edit any runtime source on that upstream model and set its spend cap,
@@ -277,14 +276,26 @@ the same upstream copies that row's cap.
 A `config.yaml` row on the same upstream cannot be rewritten from the page; while
 one declares a different cap, the edit is refused.
 
-Both routes owe one invariant, and the service behind the admin page enforces it
-as surely as `check_config.py` enforces it for the file: a selectable model with
+The service behind the admin page holds runtime rows to one invariant above all: a selectable model with
 no price is not offered at all, unless its upstream is free and it says so with
 `cheese_free: true` and both prices written as 0. Its tokens would meter at zero, the project's
 `max_budget` would never trip, and the first sign of trouble would be the
 invoice; a model missing from the picker gets noticed, a brake that quietly
-stopped working does not. `check_config.py` asserts this for every selectable
-entry, so run it after editing the list.
+stopped working does not.
+
+The other rules `check_config.py` used to hold the file to are held at the
+write as well. Every row, offered or not, needs both an input and an output
+price (the only zeros are a declared free row's), because usage under a
+model's name is billed by them, the subscription's Claude rows included; a
+price a row has can be changed, never cleared, and the page edits the
+one-hour cache-write price too. A price change on the page is confirmed
+first, showing each price old to new. The last offered model cannot be
+paused, deleted or unlisted, and a model a platform model role runs on (voice
+input, the default model, ...) cannot be paused or deleted until the role
+points elsewhere. One rule is held by nothing:
+deepseek-flash's `max_input_tokens` must leave 128,000 output tokens inside
+DeepSeek's 1,048,576 window. The page does not write that key, so only a row
+written straight to the gateway can break it; check it there.
 
 Saving a different model refreshes the native session at the next task
 boundary; the scoped session credential carries the selected model's route.
@@ -352,11 +363,10 @@ retries, network transfer, and stream-consumer delays. It is an upstream HTTP
 interval, not a measurement of provider compute alone. Offline build tests verify
 body delivery, close propagation, cancellation, failures, and log redaction.
 
-Check the loaded configuration's request transformation and nonzero token prices:
-
-```sh
-docker exec -i cheese-gateway-litellm-blue-1 python - /app/config.yaml < deploy/gateway/check_config.py  # or -green-1, whichever serves
-```
+The image build runs `check_config.py`, which checks the pinned LiteLLM's
+behaviour on deployments it builds itself: DeepSeek thinking, Kimi effort, MiMo
+thinking, the cache-write bill, the listed DeepSeek window, and a blocked
+price-only deployment refused by the router. It reads no real row.
 
 ## Prices for web searches
 
@@ -388,14 +398,15 @@ both.
 
 The Claude models served through the platform's subscription never pass
 through this gateway, but their usage is charged at the same prices as gateway
-traffic. `config.yaml` therefore carries a price-only entry for each of them:
-`model_info.blocked: true`, so the router refuses to route it, and no
-credential. The backend reads these prices back through `/model/info` when it
-ingests the metering proxy's usage log. A new subscription model needs an entry
-here; until it has one, its usage is recorded and nothing is charged.
-`check_config.py` asserts that every blocked entry is refused by the router and
-carries every price: input, output, cache read, and the 5-minute and 1-hour
-cache writes.
+traffic. The gateway therefore carries a price-only row for each of them,
+disabled on the admin page so the router refuses to route it, with no
+credential and every price: input, output, cache read, and the 5-minute and
+1-hour cache writes. The backend reads these prices back through `/model/info`
+when it ingests the metering proxy's usage log. A new subscription model needs
+such a row; until it has one, its usage is recorded and nothing is charged. A
+database row is disabled through `POST /model/block` (the admin page's
+switch): the pinned LiteLLM takes a database row's `blocked` from that column,
+not from `model_info.blocked`.
 
 ## Health checks
 

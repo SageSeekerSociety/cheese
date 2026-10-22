@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
+from app.domain.team.models import DEFAULT_PLAN_KEY, Team
 from app.domain.team.services import team_service
 from app.domain.usage.ledger import Ledger
 from app.domain.usage.models import (
@@ -16,6 +17,7 @@ from app.domain.usage.models import (
     CreditRequest,
     CreditReward,
     GrantSource,
+    Plan,
 )
 from app.domain.usage.plans import PlanService
 
@@ -94,10 +96,11 @@ class CreditIncentives:
             "credits": BETA_CREDITS,
             "claimed": await self.reward(f"beta:{user_id}") is not None,
             "feedback_credits": FEEDBACK_CREDITS,
+            "plan_credits": await self._monthly_plan_credits(user_id),
         }
 
-    async def rewards(self, user_id: int) -> dict:
-        team = next(
+    async def _personal_team(self, user_id: int) -> Team | None:
+        return next(
             (
                 team
                 for team in await team_service(self._session).get_teams_of_user(user_id)
@@ -105,6 +108,21 @@ class CreditIncentives:
             ),
             None,
         )
+
+    async def _monthly_plan_credits(self, user_id: int) -> int | None:
+        """What the person's own plan issues each month; None for a plan that is
+        unlimited or billed by time windows, which has no monthly figure. A
+        person whose personal team is not made yet will start on the default."""
+        team = await self._personal_team(user_id)
+        plan = await self._session.get(
+            Plan, team.plan_key if team else DEFAULT_PLAN_KEY
+        )
+        if plan is None or plan.unlimited or plan.credits_per_period is None:
+            return None
+        return int(plan.credits_per_period)
+
+    async def rewards(self, user_id: int) -> dict:
+        team = await self._personal_team(user_id)
         if team is None:
             return {
                 "feedback_count": 0,

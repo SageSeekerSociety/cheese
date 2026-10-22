@@ -81,6 +81,9 @@ steps:
 |---|---|---|---|
 | team | `team/` | 这个项目所有人和所有芝士共看共写 | 项目成员 |
 | private | `private/<handle>/` | **人 × 项目**：某一个人在这个项目里的那一份 | 本人 |
+| personal | `personal/<handle>/` | **人**：这个人自己的芝士（个人芝士）记得的事，不在任何项目里（`project_id` 为空） | 本人 |
+
+`personal` 只有个人芝士在本人的面板里读写（见[个人芝士的记忆](/dev/assistant#memory)）。它的整理不走下面那套（个人芝士的会话没有文件树），是一次模型调用，见同一节。项目里的芝士读不到它：每一次项目里的读都带着项目，注入只铺 team 和 private，`/memory/files` 不认这个作用域（答 422），对账只认自己点过名的作用域。同类产品在多人场合也都不用个人记忆（ChatGPT 群聊、Copilot Studio 在群聊和频道里）。
 
 注入的规矩：**`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`**，不是所有人的（`files_store.memory_index`，`speaker_handles` 里只进 `names_a_person()` 认的人）。这一轮替谁做事，他那一份也读，哪怕他这一轮没说话：周期任务那一轮是规则的主人，任务自己的会话里是任务的负责人，实况文档写给他看（`turn_speakers`）。项目里的人可以很多，索引是每一轮都要付的预算，付在一个和这一轮无关的人的偏好上是白付。
 

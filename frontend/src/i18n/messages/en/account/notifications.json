@@ -15,6 +15,7 @@
   "loadFailed": "Couldn't load your notification settings",
   "loading": "Loading your notification settings",
   "matrix": {
+    "assistant": "Notices from Cheese",
     "announcement": "Space announcement",
     "billing": "Credit and billing reminders",
     "desc": "Each kind picks its own channels",

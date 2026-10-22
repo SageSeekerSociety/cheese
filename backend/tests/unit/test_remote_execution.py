@@ -1705,6 +1705,33 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertIn("executor-only-needle", result["stdout"])
         self.assertNotIn("session-host-decoy", result["stdout"])
 
+    def test_a_platform_command_can_name_its_own_variables(self):
+        """`checkpoint` tells the sync which turn it ends this way, and nothing
+        else can: a command from the model's own tools does not set one."""
+        named = runtime.request(
+            self.state,
+            "invoke",
+            {
+                "id": str(uuid.uuid4()),
+                "tool": "Bash",
+                "args": {
+                    "command": 'printf "%s" "$CHEESE_TURN"',
+                    "platform_env": {"CHEESE_TURN": "turn-1"},
+                },
+                "platform": True,
+            },
+        )["value"]
+        self.assertEqual(named["stdout"], "turn-1")
+
+        plain = self.invoke(
+            "Bash",
+            {
+                "command": 'printf "%s" "${CHEESE_TURN:-none}"',
+                "platform_env": {"CHEESE_TURN": "forged"},
+            },
+        )
+        self.assertEqual(plain["stdout"], "none")
+
     def test_native_files_and_rc_agree(self):
         target = self.workspace / "sample.txt"
         target.write_text("before\n")

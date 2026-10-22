@@ -13,9 +13,10 @@
   "routineNoNextRun": "This schedule doesn't give a next run time",
   "routineNotFound": "This routine doesn't exist",
   "routineOnlyRunnerReports": "Only the AI teammate running this routine can hand back its result",
-  "routineOwnerNotInProject": "{handle} isn't a project member, so the results can't be sent to them",
+  "routineOwnerNotInChannel": "{handle} isn't in this channel. A routine's results go only to someone in the channel",
   "routineOwnerOrAdmin": "“{title}” is a routine set up by {owner}; only they or a project admin can {what}",
   "routinePauseActiveOnly": "Only a running routine can be paused",
+  "routineResume": "resume this routine",
   "routineResumePausedOnly": "Only a paused routine can be resumed",
   "routineRunEnded": "This run has already ended",
   "routineRunNotFound": "This run doesn't exist",
@@ -29,5 +30,10 @@
   "scheduleTimeFormat": "Write the time as HH:MM, e.g. 09:00",
   "scheduleWeeklyDays": "A weekly routine needs the days of the week (0 = Monday … 6 = Sunday)",
   "timezoneUnknown": "Unknown time zone: {name}",
-  "routineResumeNeedsTrigger": "Give it a trigger first — only then does it know when to run"
+  "routineResumeNeedsTrigger": "Give it a trigger first — only then does it know when to run",
+  "assistantRoutineOnceAt": "The run time must be within the next year, written like 2026-10-23T08:00",
+  "assistantRoutineTrigger": "The trigger must be schedule, mention, review, due or invite",
+  "assistantRoutineAlreadyRan": "This one-off routine has already run. Give it a new time to run it again.",
+  "assistantRoutineLimit": "You can keep at most {max} routines. Delete one you no longer use first.",
+  "assistantRoutineInRun": "A routine cannot create or change routines while it runs"
 }

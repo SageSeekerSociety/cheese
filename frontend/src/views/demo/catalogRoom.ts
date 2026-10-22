@@ -63,7 +63,7 @@ const PEOPLE: MentionItem[] = [
   { label: '波比', kind: 'member', insert: '波比', sub: '@bobby', agent: false, external: true, handle: 'bobby' },
 ]
 
-/** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面。 */
+/** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面，挂一条分组标题。 */
 const OUTSIDER: MentionItem = {
   label: '陈卡',
   kind: 'member',
@@ -71,6 +71,7 @@ const OUTSIDER: MentionItem = {
   sub: '@carol',
   agent: false,
   outsideTopic: true,
+  group: '不在频道',
   handle: 'carol',
 }
 

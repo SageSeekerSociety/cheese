@@ -59,7 +59,7 @@ from app.domain.memory.files_store import memory_index
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
-from app.domain.room_task.models import TaskStatus, TaskTitleSource
+from app.domain.room_task.models import TaskProgress, TaskStatus, TaskTitleSource
 from app.domain.room_task.place import PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.thread.services import thread_opening
@@ -410,6 +410,13 @@ async def prepare(
             owner=task.owner_handle,
             contributors=task.contributor_handles or (),
             closed=task.status == TaskStatus.closed,
+        ),
+        # 只看还开着的活：关闭不清这条上报（`closing.close_task` 不碰它），而关掉的
+        # 活还能被人叫起来说话；那时看板显示的是关闭，再叫它报状态只会被 422 拒掉。
+        blocked_report=(
+            task is not None
+            and task.status is TaskStatus.open
+            and task.progress_state is TaskProgress.blocked
         ),
         acting_agent=acting_agent,
         agent=agent,

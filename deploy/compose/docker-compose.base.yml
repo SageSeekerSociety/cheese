@@ -242,6 +242,13 @@ services:
       # The pi builds, cached for exactly the same reason and thrown away by
       # exactly the same deploy — and this archive is ~40MB per platform too.
       - ${PI_CACHE_HOST_PATH:-/home/nictheboy/cheese-pi-cache}:/app/connector-dist/pi-cache
+      # What a connector places on a machine it enrols — Python and Git for
+      # Windows, a newer Python elsewhere, tmux, git and bubblewrap on Linux.
+      # Cached for the third time for the third time's same reason, and the
+      # largest of the three: Python and Git for Windows alone are ~70MB, and
+      # the machine on the other end waits for the backend's fetch of them from
+      # GitHub in the foreground, where a slow fetch and a hung one look alike.
+      - ${TOOLCHAIN_CACHE_HOST_PATH:-/home/nictheboy/cheese-toolchain-cache}:/app/connector-dist/toolchain-cache
     # Loopback only. A box using this file fronts :8081 with api-front
     # (deploy/llm-tunnel/up.sh), and nothing reaches the backend except through
     # it, on the host's loopback. A request that skipped the proxies would

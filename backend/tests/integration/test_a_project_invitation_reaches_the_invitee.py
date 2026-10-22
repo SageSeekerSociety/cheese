@@ -64,6 +64,7 @@ def _waiting(client) -> list[dict]:
 
 
 def _invite(client, project_id: str) -> str:
+    seed_user(client, INVITEE)
     r = client.post(
         f"/projects/{project_id}/invitations",
         json={"user_handle": INVITEE},

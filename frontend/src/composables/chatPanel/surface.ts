@@ -82,6 +82,7 @@ export function usePanelSurface(parts: {
     composerHint: parts.people.naming.composerHint,
     // timeline
     rows: parts.rows.rows,
+    askGroups: parts.rows.askGroups,
     hiddenRows: parts.rowBatch.hidden,
     refMaps: parts.people.refMaps,
     awaitingReply: parts.turns.awaitingReply,
@@ -115,6 +116,7 @@ export function usePanelSurface(parts: {
     fmtTime: parts.authorship.fmtTime,
     isMine: parts.authorship.isMine,
     displayName: parts.people.roster.displayName,
+    authorTitle: parts.people.roster.authorTitle,
     nameOfHandle: parts.people.roster.nameOfHandle,
     isExternal: parts.people.roster.isExternal,
     avatarSrc: parts.people.roster.avatarSrc,

@@ -9,6 +9,18 @@
     "title": "来自{agent}的排查",
     "whatHappened": "发生了什么"
   },
+  "attachments": {
+    "add": "添加图片或文件",
+    "failed": "上传失败",
+    "helper": "也可以直接粘贴截图（Ctrl+V / ⌘V）",
+    "limit": "单个文件不超过 {size}，最多 {max} 个",
+    "remove": "移除 {name}",
+    "retry": "重试",
+    "tooLarge": "{name} 太大了：单个文件不超过 {size}",
+    "tooMany": "最多带 {max} 个附件",
+    "unnamed": "未命名文件",
+    "uploading": "正在上传 {name}（{percent}%）"
+  },
   "back": "返回",
   "cancel": "取消",
   "draft": {

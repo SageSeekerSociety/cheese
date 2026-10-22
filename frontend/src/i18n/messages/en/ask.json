@@ -1,4 +1,24 @@
 {
+  "group": {
+    "title": "{asker} asks you {n} questions",
+    "titleBare": "Asks you {n} questions",
+    "questionOf": "Question {n} of {total}",
+    "multiHint": "Pick any number; click again to clear",
+    "otherLabel": "Other answer",
+    "previous": "Previous",
+    "next": "Next",
+    "review": "Review your answers",
+    "reviewAllAnswered": "All {total} answered",
+    "reviewMissing": "{n} unanswered — you can still submit",
+    "back": "Back to edit",
+    "submit": "Submit answers",
+    "submitted": "Submitted",
+    "unanswered": "Not answered",
+    "edit": "Edit answers",
+    "editNote": "Reopens the whole group; submit again when done",
+    "failed": "Could not submit — try again",
+    "listSeparator": ", "
+  },
   "replies": {
     "label": "Quick replies",
     "recommended": "Recommended",

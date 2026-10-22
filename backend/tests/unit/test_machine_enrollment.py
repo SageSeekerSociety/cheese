@@ -148,7 +148,9 @@ def build_service(
         "app.domain.machine.services.settings.connector_public_base", origin
     )
 
-    async def _run_bootstrap(*, ip, login_user, private_key, script, progress=None):
+    async def _run_bootstrap(
+        *, ip, login_user, private_key, script, sandboxes, progress=None
+    ):
         service._session.timeline.append("bootstrap")
         calls.append(
             {"ip": ip, "user": login_user, "key": private_key, "script": script}

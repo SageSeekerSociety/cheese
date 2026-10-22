@@ -81,9 +81,12 @@ PERIODIC_JOB_NAMES = (
     "timed deliveries",
     "overdue deliveries",
     "routines",
+    "assistant routines",
+    "assistant memory tidy",
     "task deadline sweep",
     "memory dream",
     "platform model roles refresh",
+    "model spend cap alert",
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
 )
 
@@ -134,6 +137,7 @@ def periodic_jobs(
     compute: machine_periodic.Sweeper,
     sessions: SessionFactory,
     get_runner: Callable[[], AgentWorkRunner],
+    assistants: Callable[[], tuple[object, object]] | None = None,
 ) -> list[PeriodicRunner]:
     """Build one checked, ordered set without importing domains from core."""
     jobs = PeriodicJobs()
@@ -197,7 +201,11 @@ def periodic_jobs(
     )
     docs_periodic.register_periodic_jobs(jobs, sessions=sessions)
     routine_periodic.register_periodic_jobs(
-        jobs, sessions=sessions, chat=chat, get_runner=get_runner
+        jobs,
+        sessions=sessions,
+        chat=chat,
+        get_runner=get_runner,
+        assistants=assistants,
     )
     task_periodic.register_periodic_jobs(jobs, sessions=sessions)
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)

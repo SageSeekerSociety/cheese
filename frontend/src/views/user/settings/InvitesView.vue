@@ -1,8 +1,8 @@
 <!--
   What the invite-friends page shows (Invites.vue): the person's own invite code
-  with the seats it has left, what inviting has earned them, and the friends who
-  signed up with it. Reading the code and copying it happen in the page; this
-  half only draws.
+  with the seats it has left and the link to share, what a friend and they each
+  get, and the friends who signed up with it. Reading the code and copying it
+  happen in the page; this half only draws.
 -->
 <template>
   <div class="settings-page invites">
@@ -23,53 +23,88 @@
     <section v-else-if="!invites" class="settings-card invites__pending" aria-busy="true" />
 
     <template v-else>
-      <section class="settings-card">
-        <h2 class="settings-card__title">{{ t('account.invites.code.title') }}</h2>
-        <div class="invites__code">
-          <div class="invites__code-main">
-            <span class="invites__code-value t-num" :aria-label="t('account.invites.code.label')">{{
-              invites.code
-            }}</span>
-            <span class="invites__seats t-num" data-testid="invite-seats">{{
+      <!-- The code and the link to share it: what this page is for, so it comes first and has the one amber action. -->
+      <section class="settings-card invites__share">
+        <div class="invites__code-row">
+          <div class="invites__code">
+            <span class="t-eyebrow-read">{{ t('account.invites.code.label') }}</span>
+            <span class="invites__code-value">{{ invites.code }}</span>
+          </div>
+          <div class="invites__seats">
+            <span v-if="invites.max_uses <= 10" class="invites__pips" aria-hidden="true">
+              <span
+                v-for="seat in invites.max_uses"
+                :key="seat"
+                class="invites__pip"
+                :class="{ 'invites__pip--used': seat <= invites.use_count }"
+              />
+            </span>
+            <span class="invites__seats-text t-num" data-testid="invite-seats">{{
               t('account.invites.code.remaining', { left: seatsLeft, total: invites.max_uses })
             }}</span>
           </div>
-          <p v-if="!invites.unlocked" class="invites__hint" data-testid="invite-unlock-hint">
-            {{ t('account.invites.code.unlockHint', { n: invites.unlock_uses }) }}
-          </p>
-          <div class="invites__actions">
-            <BaseButton kind="secondary" prepend-icon="mdi-content-copy" @click="emit('copyCode')">
-              {{ t('account.invites.code.copyCode') }}
-            </BaseButton>
-            <!-- Sharing the link is what this page is for: its one amber action. -->
-            <BaseButton kind="primary" prepend-icon="mdi-link-variant" @click="emit('copyLink')">
-              {{ t('account.invites.code.copyLink') }}
-            </BaseButton>
-          </div>
+        </div>
+        <p v-if="!invites.unlocked" class="invites__hint" data-testid="invite-unlock-hint">
+          {{ t('account.invites.code.unlockHint', { n: invites.unlock_uses }) }}
+        </p>
+        <p class="invites__hint">{{ t('account.invites.code.refillHint') }}</p>
+        <div class="invites__actions">
+          <BaseButton kind="primary" prepend-icon="mdi-link-variant" @click="emit('copyLink')">
+            {{ t('account.invites.code.copyLink') }}
+          </BaseButton>
+          <BaseButton kind="secondary" prepend-icon="mdi-content-copy" @click="emit('copyCode')">
+            {{ t('account.invites.code.copyCode') }}
+          </BaseButton>
         </div>
       </section>
 
       <section class="settings-card">
-        <h2 class="settings-card__title">{{ t('account.invites.earned.title') }}</h2>
-        <p class="settings-card__desc">{{ t('account.invites.earned.note') }}</p>
-        <div class="srow">
-          <span class="srow__k">{{ t('account.invites.earned.credits') }}</span>
-          <span class="srow__v"
-            ><span class="srow__strong t-num">{{
-              t('account.invites.earned.creditsValue', { n: invites.invite_credits })
-            }}</span></span
-          >
+        <h2 class="settings-card__title">{{ t('account.invites.steps.title') }}</h2>
+        <ol class="invites__steps">
+          <li v-for="(step, i) in steps" :key="step.what" class="invites__step">
+            <span class="invites__step-n t-num" aria-hidden="true">{{ i + 1 }}</span>
+            <span class="invites__step-what">{{ step.what }}</span>
+            <span class="invites__step-gain">{{ step.gain }}</span>
+          </li>
+        </ol>
+        <p class="invites__note">{{ t('account.invites.steps.meaning') }}</p>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card__head">
+          <h2 class="settings-card__title">{{ t('account.invites.people.title') }}</h2>
           <NavLink v-if="creditsTo" class="invites__link" :to="creditsTo">
-            {{ t('account.invites.earned.viewCredits') }}<v-icon icon="mdi-chevron-right" size="16" />
+            {{ t('account.invites.people.viewCredits') }}<v-icon icon="mdi-chevron-right" size="16" />
           </NavLink>
         </div>
-      </section>
-
-      <section class="settings-card">
-        <h2 class="settings-card__title">{{ t('account.invites.people.title') }}</h2>
+        <dl class="invites__stats">
+          <div class="invites__stat">
+            <dt>{{ t('account.invites.people.invited') }}</dt>
+            <dd class="t-num" data-testid="invite-count">{{ people.length }}</dd>
+          </div>
+          <div class="invites__stat">
+            <dt>{{ t('account.invites.people.accepted') }}</dt>
+            <dd class="t-num" data-testid="invite-accepted">{{ acceptedCount }}</dd>
+          </div>
+          <div class="invites__stat">
+            <dt>{{ t('account.invites.people.credits') }}</dt>
+            <dd class="t-num" data-testid="invite-credits">
+              {{ t('account.invites.people.creditsValue', { n: earnedCredits }) }}
+            </dd>
+          </div>
+        </dl>
+        <!-- This month against the cap: the one limit that still applies once seats come back. -->
+        <div class="invites__month" data-testid="invite-month">
+          <span class="invites__month-text t-num">{{
+            t('account.invites.people.month', { n: fmtNum(invites.month_credits), cap: fmtNum(invites.month_cap) })
+          }}</span>
+          <span class="invites__month-track" aria-hidden="true">
+            <span class="invites__month-fill" :style="{ width: `${monthShare}%` }" />
+          </span>
+        </div>
         <BaseEmptyState
           v-if="!people.length"
-          class="settings-empty"
+          class="settings-empty invites__empty"
           size="inline"
           :title="t('account.invites.people.empty')"
         />
@@ -91,6 +126,7 @@
             </span>
           </li>
         </ul>
+        <p class="invites__note invites__note--foot">{{ t('account.invites.people.capNote') }}</p>
       </section>
     </template>
   </div>
@@ -107,7 +143,8 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
+import { fmtPoints } from '@/lib/creditUsage'
 import { absDate } from '@/lib/dateText'
 
 /** One friend as drawn: the page has already turned their avatar id into a URL. */
@@ -136,9 +173,27 @@ const emit = defineEmits<{ copyCode: []; copyLink: []; retry: [] }>()
 
 const seatsLeft = computed(() => (props.invites ? Math.max(0, props.invites.max_uses - props.invites.use_count) : 0))
 
+const acceptedCount = computed(() => props.people.filter((p) => p.stage === 'activated').length)
+
+/** How far this month's invitation credits are towards the monthly cap, in percent. */
+const monthShare = computed(() =>
+  props.invites && props.invites.month_cap > 0 ? (props.invites.month_credits / props.invites.month_cap) * 100 : 0
+)
+
+const fmtNum = (n: number) => fmtPoints(n, i18n.global.locale.value)
+
+/** Only what inviting these friends earned: invite_credits also counts the person's own rewards as an invitee. */
+const earnedCredits = computed(() => props.people.reduce((sum, p) => sum + p.credits, 0))
+
+const steps = computed(() => [
+  { what: t('account.invites.steps.signUp'), gain: t('account.invites.steps.signUpGain') },
+  { what: t('account.invites.steps.project'), gain: t('account.invites.steps.projectGain') },
+  { what: t('account.invites.steps.accept'), gain: t('account.invites.steps.acceptGain') },
+])
+
 const dateOf = (at: string) => absDate(Date.parse(at))
 
-/** Activated says what it actually earned: past the monthly cap it earned no credits. */
+/** Accepted says what it actually earned: past the monthly cap it earned no credits. */
 function stageText(person: InviteeRow): string {
   if (person.stage !== 'activated') return t(`account.invites.people.stage.${person.stage}`)
   return person.credits > 0
@@ -147,22 +202,30 @@ function stageText(person: InviteeRow): string {
 }
 </script>
 
+<style scoped src="@/styles/settings-card.css"></style>
+
 <style scoped>
 .invites__pending {
   min-height: 160px;
 }
 
-.invites__code {
+.invites__share {
   display: grid;
-  gap: 12px;
-  padding: 4px 24px 20px;
+  gap: 16px;
+  padding: 20px 24px;
 }
 
-.invites__code-main {
+.invites__code-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
-  align-items: baseline;
+  gap: 12px 24px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.invites__code {
+  display: grid;
+  gap: 4px;
 }
 
 .invites__code-value {
@@ -175,16 +238,66 @@ function stageText(person: InviteeRow): string {
 }
 
 .invites__seats {
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--text);
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
-.invites__hint {
-  margin: 0;
+.invites__pips {
+  display: inline-flex;
+  gap: 4px;
+}
+
+/* A seat still free is an outline; a used one is filled. Neutral, not amber: seats are a count, not an action. */
+.invites__pip {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--muted);
+  border-radius: var(--radius-pill);
+}
+
+.invites__pip--used {
+  background: var(--muted);
+}
+
+.invites__seats-text {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
+}
+
+.invites__hint {
+  margin: -4px 0 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.invites__month {
+  display: grid;
+  gap: 6px;
+  padding: 0 24px 16px;
+}
+
+.invites__month-text {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.invites__month-track {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  background: var(--fill);
+  border-radius: var(--radius-pill);
+}
+
+.invites__month-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
 }
 
 .invites__actions {
@@ -193,13 +306,99 @@ function stageText(person: InviteeRow): string {
   gap: 8px;
 }
 
+.invites__steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 4px 24px 0;
+  margin: 0;
+  list-style: none;
+}
+
+.invites__step {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 4px;
+  padding: 12px;
+  background: var(--fill);
+  border-radius: var(--radius-md);
+}
+
+.invites__step-n {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.invites__step-what {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: var(--lh-14);
+  color: var(--ink);
+}
+
+.invites__step-gain {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+}
+
+.invites__note {
+  padding: 12px 24px 20px;
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.invites__note--foot {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
 .invites__link {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
+  margin-top: 20px;
+  /* The head pads 16px on the right; the card's content sits 24px in. */
+  margin-right: 8px;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
   white-space: nowrap;
+}
+
+.invites__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 4px 24px 16px;
+  margin: 0;
+}
+
+.invites__stat {
+  display: grid;
+  gap: 2px;
+}
+
+.invites__stat dt {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.invites__stat dd {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: var(--lh-18);
+  color: var(--ink);
+}
+
+.invites__empty {
+  border-top: 1px solid var(--line);
 }
 
 .invites__people {
@@ -244,7 +443,7 @@ function stageText(person: InviteeRow): string {
 
 .invitee__stage {
   display: inline-flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
   font-size: 13px;
   line-height: var(--lh-13);
@@ -253,16 +452,49 @@ function stageText(person: InviteeRow): string {
 }
 
 @media (max-width: 767.98px) {
-  .invites__code {
-    padding: 4px 16px 16px;
+  .invites__share {
+    padding: 16px;
   }
 
-  /* The stage drops under the name instead of squeezing it to a few characters. */
+  .invites__code-row {
+    align-items: flex-start;
+  }
+
+  /* Three steps side by side leave a few characters a line on a phone: they stack. */
+  .invites__steps {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 4px 16px 0;
+  }
+
+  .invites__step {
+    grid-template-rows: none;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 12px;
+  }
+
+  .invites__step-gain {
+    grid-column: 2;
+  }
+
+  .invites__note {
+    padding: 12px 16px 16px;
+  }
+
+  .invites__link {
+    margin-top: 16px;
+    margin-right: 0;
+  }
+
+  .invites__stats {
+    padding: 4px 16px 12px;
+  }
+
   .invitee {
     grid-template-columns: auto minmax(0, 1fr);
     padding: 12px 16px;
   }
 
+  /* The stage drops under the name instead of squeezing it to a few characters. */
   .invitee__stage {
     grid-column: 2;
   }

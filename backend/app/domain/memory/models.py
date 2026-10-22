@@ -23,6 +23,7 @@ from sqlalchemy import (
     String,
     Text,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -214,10 +215,20 @@ class MemoryFileRecord(UuidPk, Timestamps, Base):
             "path",
             unique=True,
         ),
+        # A personal memory has no project, and NULL never equals NULL: its
+        # (owner, path) needs a uniqueness of its own.
+        Index(
+            "uq_memory_files_personal_path",
+            "owner_handle",
+            "path",
+            unique=True,
+            postgresql_where=text("scope = 'personal'"),
+        ),
     )
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    #: None for a ``personal`` memory, which is the person's and in no project.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
     )
     scope: Mapped[MemoryFileScope] = mapped_column(
         Enum(MemoryFileScope, native_enum=False, length=8), index=True

@@ -1224,6 +1224,61 @@ function registerMonitorTools(pi: any, spec: Manifest, tool: ToolSpec) {
 // pi still names the directory it runs in, which on the session host is nothing
 // of the person's; that section goes.
 
+// --- a question that goes round in circles -----------------------------------
+//
+// A session without hands answers on whatever model the person's gateway
+// serves, and the weaker ones go round: the same call again and again, or call
+// after call without an end. Neither is caught by the model itself, so the
+// session catches them, per question (an agent run): the same tool with the
+// same input a third time is not run, and past ROUND_CALLS calls no tool is.
+// Either way the model is told why, so it can change course or stop and say
+// where it got to; the person says 继续 to go on.
+
+const SAME_CALL_RUNS = 2;
+const ROUND_CALLS = 200;
+
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function guardTheRound(pi: any) {
+  let calls = 0;
+  let seen = new Map<string, number>();
+  pi.on("before_agent_start", async () => {
+    calls = 0;
+    seen = new Map();
+  });
+  pi.on("tool_call", async (event: any) => {
+    calls += 1;
+    if (calls > ROUND_CALLS) {
+      return {
+        block: true,
+        reason:
+          `这次回答已经调用了 ${ROUND_CALLS} 次工具，不再调用。` +
+          "把做到哪里、还剩什么告诉用户，请用户说「继续」再接着做。",
+      };
+    }
+    const key = `${event.toolName} ${stable(event.input ?? {})}`;
+    const runs = (seen.get(key) ?? 0) + 1;
+    seen.set(key, runs);
+    if (runs > SAME_CALL_RUNS) {
+      return {
+        block: true,
+        reason:
+          `没有执行：这次回答里已经用同样的参数调用过 ${event.toolName} ${SAME_CALL_RUNS} 次，` +
+          "结果不会变。换个做法，或者把现在的情况告诉用户。",
+      };
+    }
+  });
+}
+
 function withoutHands(pi: any, spec: Manifest) {
   pi.on("before_agent_start", async (event: any) => {
     const options = promptOptions(event);
@@ -1234,6 +1289,7 @@ function withoutHands(pi: any, spec: Manifest) {
     // One that reads the room's machine is in the room's checkout.
     options.cwd = spec.reading ? spec.workspace : "";
   });
+  guardTheRound(pi);
   registerPlatformTools(pi, spec);
   if (spec.reading) registerReadingTools(pi, spec);
 }

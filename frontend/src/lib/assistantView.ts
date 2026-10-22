@@ -68,7 +68,14 @@ export interface PanelProposal {
 
 export function proposalView(p: AssistantProposal): PanelProposal {
   if (p.kind === 'act')
-    return { id: p.id, kind: p.kind, state: p.state, where: '', text: p.summary ?? '', reason: p.reason ?? '' }
+    return {
+      id: p.id,
+      kind: p.kind,
+      state: p.state,
+      where: '',
+      text: p.summary ?? '',
+      reason: p.reason ?? '',
+    }
   return {
     id: p.id,
     kind: p.kind,
@@ -108,6 +115,9 @@ const STEP_ARG: Record<string, string> = {
   cheese_web_fetch: 'url',
   cheese_web_search: 'query',
   cheese_settings_set: 'key',
+  cheese_routine: 'title',
+  cheese_notify_me: 'text',
+  cheese_memory: 'description',
 }
 
 export function stepView(step: AssistantStep): PanelStep {

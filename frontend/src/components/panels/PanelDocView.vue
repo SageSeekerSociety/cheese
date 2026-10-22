@@ -31,6 +31,7 @@ import { useDocFind } from '../../composables/useDocFind'
 import { useDocOutline } from '../../composables/useDocOutline'
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
+import { isAgentHandle } from '../../lib/authorship'
 import { anchorComment } from '../../lib/docCommentSpots'
 import { exportMarkdown } from '../../lib/docSchema'
 import { draftWaiting, takeDraft } from '../../lib/overviewDraft'
@@ -385,6 +386,21 @@ watch(
   { immediate: true }
 )
 const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
+/** 人的 handle 读成名字：自己是「你」、在线的人是他们的名字，都读不出来时用名册。 */
+function personName(handle: string): string {
+  const resolved = props.nameOf(handle)
+  return resolved === handle ? mentionNames.value[handle] ?? handle : resolved
+}
+/** 建议条上的名字：全出自一个人时写那个人的名字，混着几个人时不写名字。 */
+function suggestionAuthorName(authors: string[]): string | null {
+  const unique = [...new Set(authors.filter(Boolean))]
+  if (unique.length !== 1) return null
+  const handle = unique[0]
+  if (handle === props.agentHandle || isAgentHandle(handle)) return props.agentName
+  return personName(handle)
+}
+const pendingSuggestionAuthor = computed(() => suggestionAuthorName(suggestions.list.value.map((s) => s.author)))
+const decidedSuggestionAuthor = computed(() => suggestionAuthorName(suggestions.decided.value.authors))
 // 建议那一条：点顶栏上的「N 处建议」打开，从第一处看起。
 const suggestionsOpen = ref(false)
 function toggleSuggestions() {
@@ -555,7 +571,8 @@ defineExpose({
         <Transition name="doc-menu">
           <DocSuggestionStrip
             v-if="suggestionsOpen"
-            :agent-name="agentName"
+            :author="pendingSuggestionAuthor"
+            :decided-author="decidedSuggestionAuthor"
             :count="suggestions.list.value.length"
             :decided="suggestions.decided.value"
             :editable="decides"
@@ -659,6 +676,9 @@ defineExpose({
               <DocEditLayer
                 :editor="surfaceRef?.editor ?? null"
                 :agent-name="agentName"
+                :agent-handle="agentHandle"
+                :name-of="nameOf"
+                :avatar-of="avatarOf"
                 :editable="decides"
                 :rewrite="rewrite"
                 :review="review"

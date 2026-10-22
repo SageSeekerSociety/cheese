@@ -100,3 +100,29 @@ describe('线路', () => {
     }
   })
 })
+
+describe('消费上限', () => {
+  it('没设上限的线路不出这一行', () => {
+    const page = mount([source()])
+    expect(page.queryByTestId('source-cap')).toBeNull()
+  })
+
+  it('已用不到八成照常显示', () => {
+    const page = mount([source({ spend_cap_usd: 2000, spend_cap_used_usd: 1000 })])
+    const cap = page.getByTestId('source-cap')
+    expect(cap.textContent?.trim()).toBe('models.source.capUsed')
+    expect(cap.classList.contains('ams__cap--ok')).toBe(true)
+  })
+
+  it('八成起标警告色', () => {
+    const page = mount([source({ spend_cap_usd: 2000, spend_cap_used_usd: 1700 })])
+    expect(page.getByTestId('source-cap').classList.contains('ams__cap--warn')).toBe(true)
+  })
+
+  it('到顶标危险色，并说网关已经在拒绝调用', () => {
+    const page = mount([source({ spend_cap_usd: 2000, spend_cap_used_usd: 2010 })])
+    const cap = page.getByTestId('source-cap')
+    expect(cap.classList.contains('ams__cap--over')).toBe(true)
+    expect(cap.textContent).toContain('models.source.capOver')
+  })
+})

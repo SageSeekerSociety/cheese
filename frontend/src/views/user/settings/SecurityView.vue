@@ -142,7 +142,7 @@
       <div v-for="session in sessions" :key="session.id" class="srow">
         <span class="srow__k">
           <v-icon :icon="sessionIcon(session.userAgent)" size="18" />
-          {{ deviceLabel(session.userAgent) }}
+          {{ deviceLabel(session) }}
         </span>
         <span class="srow__v srow__v--parts">
           <!-- The separator belongs to the part after it, so a wrapped row
@@ -344,7 +344,7 @@ import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import i18n, { t } from '@/i18n'
 import { GITHUB_APP_PROVIDER_ID, ownGithub } from '@/lib/githubAccount'
 import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
-import { deviceOf } from '@/views/user/settings/deviceName'
+import { DESKTOP_APP_SIGN_IN, deviceOf, osOf } from '@/views/user/settings/deviceName'
 
 /** Nothing renews this GitHub authorization: PRs fall back to the AI teammate. */
 const githubExpired = (conn: OAuthConnectionInfo) => ownGithub(conn, true).state === 'expired'
@@ -449,8 +449,12 @@ const formatDate = (value: string | Date) =>
 const formatDateTime = (value: string | Date) =>
   new Intl.DateTimeFormat(i18n.global.locale.value, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 
-const deviceLabel = (userAgent: string) => {
-  const device = deviceOf(userAgent)
+const deviceLabel = (session: SessionInfo) => {
+  if (session.loginMethod === DESKTOP_APP_SIGN_IN) {
+    const os = osOf(session.userAgent)
+    return os ? t('account.security.desktopAppName', { os }) : t('account.security.desktopApp')
+  }
+  const device = deviceOf(session.userAgent)
   return device ? t('account.security.deviceName', device) : t('account.security.unknownDevice')
 }
 
@@ -461,6 +465,7 @@ const METHOD_LABELS: Record<string, () => string> = {
   backup_code: () => t('account.security.methodBackupCode'),
   email_code: () => t('account.security.methodEmailCode'),
   signup: () => t('account.security.methodSignup'),
+  [DESKTOP_APP_SIGN_IN]: () => t('account.security.methodDesktopApp'),
 }
 
 const methodLabel = (method: string) =>

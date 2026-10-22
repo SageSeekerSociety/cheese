@@ -13,6 +13,7 @@ import type { Block, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
 import type { AuthoredDocument } from '../lib/docAuthors'
 import type { DocEdit } from '../lib/docEdits'
+import type { MentionMember } from '../lib/expandMentions'
 import type { CanvasData } from '../types/canvas'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -65,8 +66,12 @@ export interface PanelDocProps {
 /** 「文档」这一格的取数原样递给面板（props）：面板自己不认识接口。 */
 export type PanelDocBundle = ReturnType<typeof usePanelDoc>
 
-/** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
-export function usePanelDoc(props: PanelDocProps) {
+/** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。
+ *
+ *  `mentionPool` 是评论发送前把「@名字」认成人用的那份候选（备注名、原名、handle）；
+ *  由接线外壳给，因为那份名册只有它读得到（`usePanelDocWiring`）。不给时只认 AI 队友，
+ *  和加这一条之前一样。 */
+export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMember[]) {
   const AUTHOR = myHandle()
   // 房间的文档是哪一份：切到一个房间时问一次。之后的读写都对着这份文档的 id。
   const documentId = ref<string | null>(null)
@@ -142,10 +147,17 @@ export function usePanelDoc(props: PanelDocProps) {
     if (did) void loadSuggestionReasons(did).catch(() => {})
   }
 
-  /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到。 */
+  /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到；
+      人也一样 —— 备注名不是名册上的名字，后端认不出来，写成字没人收到通知。
+
+      `broadcast: false`：评论文档没有「所有人」可通知，候选菜单也不给这两个词
+      （`useCommentMentions`）。开着的话手打一个 `@all` 会变成谁都不通知的 `<@all>`，
+      正文里那个 @ 还不见了。 */
   function withMentions(content: string): string {
     const handle = props.agentHandle
-    return handle ? expandMentions(content, [{ handle, label: props.agentName }]) : content
+    const pool: MentionMember[] = [...(mentionPool?.() ?? [])]
+    if (handle) pool.unshift({ handle, label: props.agentName })
+    return pool.length ? expandMentions(content, pool, [], { broadcast: false }) : content
   }
 
   /** 当场要说的失败（目前只有复制代码失败）；null = 把它关掉。 */

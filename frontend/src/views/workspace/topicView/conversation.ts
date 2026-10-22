@@ -86,6 +86,7 @@ export function useTopicConversation(opts: {
         member_handle: m.user_handle,
         role: 'member' as const,
         name: m.name,
+        remark: m.remark ?? null,
         avatar_id: m.avatar_id ?? null,
       }))
   )

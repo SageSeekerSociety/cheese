@@ -1401,29 +1401,22 @@ button:not(.v-btn) {
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 /* 实心琥珀底配奶白字：浅色 #f57f17 上 2.5:1（按下 #d96e0a 上 3.2:1）。深色那套的琥珀更亮
-   （#ffa733），奶白只剩 1.8:1，所以 `--accent-on` 在深色段是深色字，9.0:1。 */
-.mention {
+   （#ffa733），奶白只剩 1.8:1，所以 `--accent-on` 在深色段是深色字，9.0:1。
+   类名写两遍是为了压过 Vuetify 的 `[role=button] { color: inherit }`：可聚焦的 chip 带着
+   `role="button"`，而 Vuetify 的样式表在这份文件之后注入（main.ts），单写一个类同为 (0,1,0)
+   会被它把字色盖回正文色。 */
+.mention.mention {
   color: var(--accent-on);
   background: var(--accent);
 }
 .mention:hover {
   background: var(--accent-press);
 }
-/* 消息正文里的那一颗 @ 再钉一次。正文这一层有自己的着色规则（`.md-content a` 用
-   `--accent-ink`），优先级比光秃秃的 `.mention` 高；那一颗于是橙底配深色字，和输入框、
-   编辑框里的同一颗对不上。这一条比正文里任何一条具体，正文里的 @ 就是通知到的那一套。 */
-.md-content .mention:not(.file-ref):not(.topic-ref):not(.agent-ref) {
-  color: var(--accent-on);
-  background: var(--accent);
-}
-.md-content .mention:not(.file-ref):not(.topic-ref):not(.agent-ref):hover {
-  background: var(--accent-press);
-}
 /* 只是提到他的那颗不给底：主色橙直接落在消息底上（浅色 #f57f17 上 2.7:1，深色 #ffa733 上 8.0:1）。
    悬停改成加一道下划线，不换底色——这颗字是亮橙，任何比消息底更暖的浅底都会把它压淡：
    原来那层 18% 的琥珀混色是 #fcdcbd，压在上面只剩 2.0:1（纯 --accent-wash 上 2.4:1）。
-   下划线是不动对比度的那个「点得动」的信号。 */
-.name-ref {
+   下划线是不动对比度的那个「点得动」的信号。同样写两遍压过 `[role=button] { color: inherit }`。 */
+.name-ref.name-ref {
   color: var(--accent);
   background: transparent;
 }

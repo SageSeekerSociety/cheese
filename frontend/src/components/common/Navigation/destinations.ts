@@ -126,15 +126,13 @@ function onProject(path: string, project: Project): boolean {
 }
 
 /**
- * 上次待的那个地方，落在什么地址上。
+ * 上次待的那一页，落在什么地址上。
  *
- * 记着的是**频道**时落回那个频道；记着的是**任务**时落回那件任务——只落回它所在的
- * 频道，「回到我昨天做的那件事」就还差最后一步。任务的地址里不带频道：它自己的编号
- * 就够了（频道由 `addressProps` 补上），这也是这个应用里任务页的规范地址。
+ * 记的是项目里那一段地址（`tasks/318`、`overview`……），项目那一段在这里补上：短名
+ * 会变，存的那一份里不写它。项目首页那一段是空的，就落项目本身。
  */
 export function placeHref(projectRef: string, place: RememberedPlace): string {
-  if (place.kind === 'task') return `/projects/${projectRef}/tasks/${place.id}`
-  return `/projects/${projectRef}/channels/${place.id}`
+  return place.path ? `/projects/${projectRef}/${place.path}` : `/projects/${projectRef}`
 }
 
 /**

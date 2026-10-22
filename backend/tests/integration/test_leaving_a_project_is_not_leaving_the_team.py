@@ -172,6 +172,7 @@ def my_projects(client, handle: str) -> set[str]:
 
 
 def invite(client, pid: str, *, by: str, who: str):
+    seed_user(client, who)
     return client.post(
         f"/projects/{pid}/invitations",
         json={"user_handle": who},

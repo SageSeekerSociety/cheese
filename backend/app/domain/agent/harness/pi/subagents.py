@@ -44,6 +44,9 @@ from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 GATEWAY = "gateway"
 #: How long a stopped subagent gets to wind down before it is killed.
 STOP_GRACE_S = 5.0
+#: How many of one session's subagents may run at once. Each is a pi of its own
+#: on the session's machine, and nothing else bounds how many a model starts.
+RUNNING_AT_ONCE = 4
 #: What a parent that wants more from an ended subagent is told to do.
 AGAIN = "要接着做，就重新起一个"
 #: A live event after which pi has written an entry (``runner.SETTLES``).
@@ -131,6 +134,7 @@ class Subagent:
         self.process: asyncio.subprocess.Process | None = None
         self.client: Connection | None = None
         self.listener: asyncio.Task | None = None
+        self.watcher: asyncio.Task | None = None
         self.errors = None
         self.status = "running"
         self.working = False
@@ -217,7 +221,23 @@ class Subagent:
             self.process.stdout, self.process.stdin, on_event=self.observe
         )
         self.listener = asyncio.create_task(self.client.listen())
+        self.watcher = asyncio.create_task(self._watch(self.process))
         await self.client.request("prompt", message=prompt)
+
+    async def _watch(self, process: asyncio.subprocess.Process) -> None:
+        """A pi that exits on its own — crashed, killed for memory — ends its
+        subagent there and then: nothing else would, and a parent waiting on
+        it, or a session counting it as busy, would wait for ever."""
+        code = await process.wait()
+        with contextlib.suppress(Exception):
+            await self.pull()
+        async with self.lock:
+            if self.status != "running":
+                return  # it was ended, and its process with it
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+            await self._end("failed", f"分身的进程意外退出了（退出码 {code}）")
+        if self.background:
+            await self.runner.tell_parent(self.report())
 
     @property
     def thread(self) -> dict:
@@ -345,6 +365,17 @@ class Subagents:
     def __init__(self, runner):
         self.runner = runner
         self.started: dict[str, Subagent] = {}
+        #: Spawns still being admitted: not started yet, but already counted
+        #: against ``RUNNING_AT_ONCE``, and stopped by ``stop_all`` all the same.
+        self.starting = 0
+        #: Counted up by every ``stop_all``: a spawn admitted across one of
+        #: them belongs to work that was taken away.
+        self.stops = 0
+
+    def running(self) -> int:
+        return self.starting + sum(
+            1 for agent in self.started.values() if not agent.ended.done()
+        )
 
     def _get(self, agent_id: str) -> Subagent:
         found = self.started.get(agent_id)
@@ -362,13 +393,28 @@ class Subagents:
         model: str | None,
         background: bool,
     ) -> dict:
+        if self.running() >= RUNNING_AT_ONCE:
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+            raise ValueError(
+                f"同时最多 {RUNNING_AT_ONCE} 个分身在跑；"
+                "等一个交回结论，或用 TaskStop 停掉一个，再起新的"
+            )
         env = self.runner.env
-        wire = await asyncio.to_thread(
-            admitted_model,
-            env.get("CHEESE_API", ""),
-            env.get("CHEESE_TOKEN", ""),
-            (model or "").strip() or None,
-        )
+        self.starting += 1
+        stops = self.stops
+        try:
+            wire = await asyncio.to_thread(
+                admitted_model,
+                env.get("CHEESE_API", ""),
+                env.get("CHEESE_TOKEN", ""),
+                (model or "").strip() or None,
+            )
+        finally:
+            self.starting -= 1
+        if self.stops != stops:
+            # The work was taken away while the platform was being asked.
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+            raise ValueError("这一轮已经停下，分身没有起")
         agent = Subagent(
             self.runner,
             f"sub-{uuid.uuid4().hex[:12]}",
@@ -405,6 +451,8 @@ class Subagents:
         return await self._get(agent_id).stop()
 
     async def stop_all(self) -> None:
+        # A spawn still being admitted sees this and starts nothing.
+        self.stops += 1
         await asyncio.gather(
             *(agent.stop() for agent in self.started.values()),
             return_exceptions=True,

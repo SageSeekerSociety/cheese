@@ -177,7 +177,7 @@ async def _hold_deliverable(session: AsyncSession, card: AcceptCard) -> None:
     )
 
 
-def _deliverable_revision(project_id: uuid.UUID, card: AcceptCard) -> str | None:
+def deliverable_revision(project_id: uuid.UUID, card: AcceptCard) -> str | None:
     """卡上交出去的那一份是哪一版：卡面带着它，采纳的请求要原样带回来。
 
     待处理的卡交出去的文件或地址可以原地换（`redeliver`），而采纳的那一刻合的

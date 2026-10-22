@@ -56,7 +56,6 @@ from app.domain.review.services._shared import (
     SEVERITY_WARN,
     WHO_HUMAN,
     ReviewerAdmission,
-    _deliverable_revision,
     _hold_deliverable,
     _no_artifact_action,
     _one_artifact_action,
@@ -64,6 +63,9 @@ from app.domain.review.services._shared import (
     _read_deliverable,
     approvals_required_of,
     notice,
+)
+from app.domain.review.services._shared import (
+    deliverable_revision as _deliverable_revision,
 )
 from app.domain.task.teaching import protocol_for_task
 
@@ -285,8 +287,13 @@ async def create_card(
             snapshot[0],
             snapshot[1],
         )
-    if has_branch_changes:
-        card.pr_number, card.pr_url = task.pr_number, task.pr_url
+    # 卡骑哪条 PR 由递卡之后的那次发布写回来（`pr_publish.record_pr`）：它先为
+    # 这条分支开/认领 PR，再把号写到卡和任务上。这里不抄 `task.pr_number` ——
+    # 任务上的号可能已经过期：旧草稿 PR 被人关掉、分支又推了新提交时，平台会为
+    # 新的 head 另开一条 PR，任务要等那次发布写回才改号。把旧号抄过来，这张刚
+    # 递上来的卡就骑着一条已关闭的 PR，轮询器一跳便按「PR 已关闭」把它作废
+    # （2026-10-22 00:55，任务 9bd0b806）。卡上没有号时轮询器不碰它，发布写回
+    # 之后骑的就是新 PR。
     # The card says where the task stands now (等审): what its teammate
     # reported before it is over.
     progress.clear(task)

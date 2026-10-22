@@ -4,6 +4,7 @@ import type { DocReviewRequest } from '@/lib/docReview'
 import type { OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
+import type { ChapterRow } from '@/types/chapters'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, onMounted, ref, toRef, watch } from 'vue'
@@ -55,6 +56,12 @@ const props = defineProps<{
   taskId?: string | null
   /** 这一栏是一条还没转成任务的支线。 */
   threadId?: string | null
+  /** 这段对话的章节，按对话里的顺序（频道页、任务页给；支线不给）。 */
+  chapters?: ChapterRow[]
+  /** 现在能不能改章节：说得上话、没归档。 */
+  chapterable?: boolean
+  /** 已经钉成章节的那几条（block id）。 */
+  chapterIds?: ReadonlySet<string>
   /** 开在频道页右半边（手机上是一整页）：对话最上面是它挂着的那条消息、从那条消息
    *  另开的任务和回复条数；不在任务页上时才有。 */
   beside?: boolean
@@ -93,6 +100,9 @@ const emit = defineEmits<{
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
+  // 消息的 ⋯ 里钉成章节/取消章节：这一页拿着这段对话的地址，由它去改。
+  (e: 'chapter', block: Block): void
+  (e: 'unchapter', block: Block): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
@@ -265,6 +275,11 @@ defineExpose({
       :topic-list="topicList"
       :unread-on-open="unreadOnOpen"
       :focus-block="focusBlock"
+      :chapters="chapters"
+      :chapterable="chapterable"
+      :chapter-ids="chapterIds"
+      @chapter="emit('chapter', $event)"
+      @unchapter="emit('unchapter', $event)"
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
       @agent-control="emit('agent-control', $event)"

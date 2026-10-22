@@ -24,7 +24,7 @@ from app.domain.routine.models import (
     RunStatus,
 )
 from app.domain.routine.service import scheduling
-from app.domain.routine.service._shared import EVENT_RUNS_PER_HOUR
+from app.domain.routine.service._shared import EVENT_LOOKBACK, EVENT_RUNS_PER_HOUR
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 
 EXPECTED_SKIP_REASON = (
@@ -233,13 +233,15 @@ async def test_five_rules_three_capped_two_under_cap_query_budget_once(
         [run] = fired_runs[routine.id]
         assert run.status == RunStatus.skipped.value
         assert run.error == EXPECTED_SKIP_REASON
-        assert routine.event_cursor == event_time
+        # Held back from the clock, so a late commit is still found.
+        assert routine.event_cursor == stamp - EVENT_LOOKBACK
 
     for routine in under:
         [run] = fired_runs[routine.id]
         assert run.status == RunStatus.queued.value
         assert run.error == ""
-        assert routine.event_cursor == event_time
+        # Held back from the clock, so a late commit is still found.
+        assert routine.event_cursor == stamp - EVENT_LOOKBACK
 
     assert fired == 2
 
@@ -353,4 +355,4 @@ async def test_multiple_events_on_one_rule_decrement_budget_within_sweep(
     assert first.error == ""
     assert second.status == RunStatus.skipped.value
     assert second.error == EXPECTED_SKIP_REASON
-    assert rule.event_cursor == second_when
+    assert rule.event_cursor == stamp - EVENT_LOOKBACK

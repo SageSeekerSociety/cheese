@@ -10,11 +10,17 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime
+from typing import BinaryIO
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.feedback import repositories as repo
-from app.domain.feedback.models import Feedback, FeedbackComment, FeedbackStatus
+from app.domain.feedback.models import (
+    Feedback,
+    FeedbackAttachment,
+    FeedbackComment,
+    FeedbackStatus,
+)
 from app.domain.feedback.proposals import AcceptedProposal
 from app.domain.feedback.schemas import (
     CommentOut,
@@ -23,7 +29,7 @@ from app.domain.feedback.schemas import (
     FeedbackPatch,
 )
 
-from . import engagement, reads, visibility, writes
+from . import attachments, engagement, reads, visibility, writes
 
 
 class FeedbackService:
@@ -481,3 +487,49 @@ class FeedbackService:
         return await engagement.note(
             self, feedback_id=feedback_id, body=body, author_handle=author_handle
         )
+
+    # --- 附件 -----------------------------------------------------------------
+
+    async def store_attachment(
+        self,
+        *,
+        file: BinaryIO,
+        filename: str | None,
+        content_type: str | None,
+        uploader_handle: str,
+    ) -> FeedbackAttachment:
+        return await attachments.store(
+            self,
+            file=file,
+            filename=filename,
+            content_type=content_type,
+            uploader_handle=uploader_handle,
+        )
+
+    async def attach_attachments(
+        self,
+        *,
+        feedback_id: uuid.UUID,
+        attachment_ids: list[uuid.UUID],
+        uploader_handle: str,
+    ) -> None:
+        return await attachments.attach(
+            self,
+            feedback_id=feedback_id,
+            attachment_ids=attachment_ids,
+            uploader_handle=uploader_handle,
+        )
+
+    async def attachment_for_read(
+        self,
+        attachment_id: uuid.UUID,
+        *,
+        handle: str | None,
+        is_admin: bool,
+    ) -> FeedbackAttachment:
+        return await attachments.for_read(
+            self, attachment_id, handle=handle, is_admin=is_admin
+        )
+
+    async def attachment_bytes(self, row: FeedbackAttachment) -> bytes:
+        return await attachments.read_bytes(row)

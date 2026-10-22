@@ -22,6 +22,7 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.domain.agent.personal import people
 from app.domain.assistant import refs
 from app.domain.assistant.refs import Ref
 from app.domain.block.queries import messages_page
@@ -130,12 +131,15 @@ async def _messages(reader: Reader, conversation_id: uuid.UUID, page: int) -> st
     )
     if not rows:
         return "（还没有消息）" if page == 1 else f"没有第 {page} 页的消息了。"
+    named = await people.names(reader.session, ((b.author, b.content) for b in rows))
     lines = []
     for block in rows:
-        text = " ".join(block.content.split())
+        text = named.said(" ".join(block.content.split()))
         if len(text) > MESSAGE_CHARS:
             text = text[:MESSAGE_CHARS] + "……"
-        lines.append(f"[{_when(reader, block.created_at)}] {block.author}：{text}")
+        lines.append(
+            f"[{_when(reader, block.created_at)}] {named.of(block.author)}：{text}"
+        )
     shown_from = total - (page - 1) * MESSAGES - len(rows) + 1
     head = (
         f"消息 {shown_from}–{shown_from + len(rows) - 1}（共 {total} 条，旧的在前）："
@@ -205,6 +209,18 @@ _STATUS: dict[str, str] = {
 }
 
 
+def checks_of(card: AcceptCard) -> str:
+    """The card's checks, as a clause for an action naming the card: a person
+    who asked for "the ones whose checks passed" is matched against it."""
+    if card.status is AcceptStatus.gate_failed:
+        return "，检查未通过"
+    if card.status is AcceptStatus.pending_gate:
+        return "，检查运行中"
+    if card.gate_passed_at is not None:
+        return "，检查已通过"
+    return ""
+
+
 async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     project, found = await _numbered(reader, ref, address.Numbered.task)
     place = await access.topic(found.id)
@@ -233,6 +249,8 @@ async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
         lines.append(f"合并请求：{card.pr_url}")
     if card.note:
         lines.append(f"卡上的说明：{card.note}")
+    if card.gate_passed_at is not None:
+        lines.append(f"检查：{_when(reader, card.gate_passed_at)} 通过")
     if card.gate_output:
         lines.append("检查输出：\n" + card.gate_output)
     lines.append(

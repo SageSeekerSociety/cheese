@@ -61,7 +61,8 @@ class RoutineIn(BaseModel):
     note: str = ""
     trigger: str = "schedule"
     spec: dict = Field(default_factory=dict)
-    timezone: str = "Asia/Shanghai"
+    #: Unsaid: the owner's own zone, as their browser last reported it.
+    timezone: str | None = None
     owner_handle: str | None = None
     agent_handle: str | None = None
 
@@ -458,6 +459,9 @@ async def resume_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
+    # A teammate may pause a rule, never start one again: what it paused, a
+    # person decides to resume.
+    _person(actor, say("routineResume"))
     row = await RoutineService(db).resume(row)
     presented = await _present_one(db, actor, row)
     await db.commit()

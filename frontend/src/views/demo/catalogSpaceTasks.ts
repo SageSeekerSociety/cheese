@@ -33,6 +33,12 @@ import {
   TASK_REVIEWS,
   TASK_ROSTER,
 } from './catalogSpaceTasksFixtures'
+import {
+  ASSISTANT_MEMORY,
+  ASSISTANT_RECENT,
+  ASSISTANT_ROUTINES,
+  ASSISTANT_RULES,
+} from './catalogViewSettingsWorkspaceFixtures'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
@@ -48,6 +54,7 @@ import SpaceGuidanceView from '@/views/spaces/detail/settings/SpaceGuidanceView.
 import BriefView from '@/views/tasks/detail/BriefView.vue'
 import InsightsView from '@/views/tasks/detail/InsightsView.vue'
 import RosterView from '@/views/tasks/detail/RosterView.vue'
+import AssistantView from '@/views/user/settings/AssistantView.vue'
 
 /** 画法要 Vuetify、文案要语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -208,6 +215,141 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           ],
         },
         expect: '待你确认',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s7.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s7.note')
+        },
+        // 例行事务的一次运行：平台开的，芝士起草了一条回复留给人确认；上一次留下的已过期。
+        props: {
+          earlier: [
+            {
+              id: 'run-1',
+              title: '有人找我',
+              at: '2026-10-21T09:00:00Z',
+              messages: [
+                {
+                  role: 'platform',
+                  text: '',
+                  at: '2026-10-21T09:00:00Z',
+                  shown: { routine: '有人找我' },
+                },
+                {
+                  role: 'assistant',
+                  text: '赵一鸣在「综合」问周报什么时候交，我起草了一条回复。',
+                  at: '2026-10-21T09:00:20Z',
+                  proposals: [{ id: 9, kind: 'message', state: 'expired', where: '综合', text: '周五前交。' }],
+                },
+              ],
+            },
+          ],
+          messages: [
+            { role: 'platform', text: '', at: '2026-10-22T09:00:00Z', shown: { routine: '有人找我' } },
+            {
+              role: 'assistant',
+              text: '李老师在「综合」@ 你，问演示视频能否由你负责。你建这条例行事务时没有说可以替你答应，我起草了一条回复，等你确认。',
+              at: '2026-10-22T09:00:18Z',
+              steps: [
+                { key: 'r1', verb: '读取', arg: 'ml-course/channels/1', state: 'done' },
+                { key: 'r2', verb: '发消息', arg: 'ml-course/channels/1', state: 'done' },
+              ],
+              proposals: [
+                {
+                  id: 10,
+                  kind: 'message',
+                  state: 'pending',
+                  where: '综合',
+                  text: '@李老师 演示视频我来负责，11月7日前给出初版。',
+                },
+              ],
+            },
+          ],
+        },
+        expect: '已过期',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s8.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s8.note')
+        },
+        // 芝士记下一条关于你的事：面板里一张「记忆」卡片，能撤销。
+        props: {
+          messages: [
+            { role: 'user', text: '记住，我给老师写东西都要用书面语，别太口语。', at: '2026-10-22T10:00:00Z' },
+            {
+              role: 'assistant',
+              text: '记住了。以后替你写给老师的消息和邮件都用书面语。',
+              at: '2026-10-22T10:00:06Z',
+              steps: [{ key: 'm1', verb: '读写记忆', arg: '给老师写东西用书面语', state: 'done' }],
+              changes: [
+                {
+                  id: 21,
+                  draft: -21,
+                  created: false,
+                  name: '',
+                  title: '记忆',
+                  canUndo: true,
+                  rows: [{ change: 21, key: 'memory', label: '已记住', value: '给老师写东西用书面语', undone: false }],
+                  notes: [],
+                },
+              ],
+            },
+          ],
+        },
+        expect: '已记住',
+      },
+    ],
+  },
+  {
+    id: 'settings-assistant-view',
+    title: 'AssistantView',
+    get about() {
+      return t('catalog.settingsAssistantView.about')
+    },
+    file: 'src/views/user/settings/AssistantView.vue',
+    component: AssistantView,
+    needs: UI_T,
+    args: {
+      rules: ASSISTANT_RULES,
+      memory: ASSISTANT_MEMORY,
+      routines: ASSISTANT_ROUTINES,
+      routineLimit: 20,
+      recent: ASSISTANT_RECENT,
+      loading: false,
+      failed: false,
+      saving: false,
+      saved: false,
+      error: '',
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.settingsAssistantView.s1.name')
+        },
+        get note() {
+          return t('catalog.settingsAssistantView.s1.note')
+        },
+        props: {},
+        expect: '例行事务',
+      },
+      {
+        get name() {
+          return t('catalog.settingsAssistantView.s2.name')
+        },
+        get note() {
+          return t('catalog.settingsAssistantView.s2.note')
+        },
+        props: {
+          routines: [],
+          memory: { enabled: false, items: [] },
+          rules: { ...ASSISTANT_RULES, askItems: [], allowItems: [] },
+        },
+        expect: '暂无例行事务',
       },
     ],
   },

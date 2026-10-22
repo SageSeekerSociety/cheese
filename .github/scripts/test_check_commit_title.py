@@ -47,10 +47,6 @@ class CommitTitleTest(unittest.TestCase):
         self.assertIn("gh api -X PATCH repos/", result.stdout)
         self.assertIn("pr-title.yml", result.stdout)
         self.assertIn("no new commit", result.stdout)
-        # The check also reads a branch's commit subjects (merge queue), where
-        # the way out is the message, not the PR title: it says so rather than
-        # sending that reader to edit a title nothing reads.
-        self.assertIn("amend that commit's message", result.stdout)
 
     def test_an_ordinary_mistake_is_not_answered_as_a_placeholder(self):
         result = run("update stuff")

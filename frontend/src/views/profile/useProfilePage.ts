@@ -13,7 +13,7 @@ import { usePageActive } from '@/composables/usePageActive'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
-import { getMemberSummary, getUserProfile, getUserTopics } from '@/api'
+import { getMemberSummary, getUserProfile, getUserTopics, setUserRemark } from '@/api'
 import i18n, { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 
@@ -68,7 +68,23 @@ export function useProfilePage(handle: () => string, projectId: () => string | u
   const member = computed(() => data.value?.member ?? null)
   // 平台上没有这个 handle 的账号：后端照样回一份空的主页，加入时间是空的。
   const missing = computed(() => profile.value !== null && profile.value.joined_at === null)
-  const displayName = computed(() => profile.value?.name || handle())
+  const remark = computed(() => profile.value?.remark?.trim() || '')
+  const originalName = computed(() => profile.value?.name || '')
+  const displayName = computed(() => remark.value || originalName.value || handle())
+
+  async function saveRemark(nextRemark: string): Promise<string | null> {
+    const res = await setUserRemark(handle(), nextRemark)
+    const current = data.value
+    if (current) {
+      queryClient.setQueryData<ProfilePage>(pageKey.value, {
+        ...current,
+        profile: { ...current.profile, remark: res.remark },
+      })
+    }
+    void queryClient.invalidateQueries({ queryKey: ['project'] })
+    void queryClient.invalidateQueries({ queryKey: ['room'] })
+    return res.remark
+  }
 
   const avatarUrl = computed(() => {
     const id = profile.value?.avatar_id
@@ -102,7 +118,10 @@ export function useProfilePage(handle: () => string, projectId: () => string | u
     profile,
     member,
     missing,
+    remark,
+    originalName,
     displayName,
+    saveRemark,
     avatarUrl,
     locale,
     joined,

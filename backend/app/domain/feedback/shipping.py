@@ -132,10 +132,8 @@ async def ship(
 
     `commits` is `[{"sha": ..., "message": ..., "merged_at": ...,
     "pr_created_at": ...}]`, oldest first — what GitHub's compare endpoint
-    returns, plus the ISO time the commit reached main (its PR's `merged_at`,
-    which the deploy looks up because the commit's own dates are from when it
-    entered the merge queue) and the time that PR was opened, absent for a
-    commit pushed without one. A report named by two commits moves once, on
+    returns, plus the ISO time the commit reached main (its PR's `merged_at`)
+    and the time that PR was opened, absent for a commit pushed without one. A report named by two commits moves once, on
     the first; the second finds it already there.
     """
     outcomes: list[Outcome] = []

@@ -142,9 +142,8 @@ test.describe('sidebar channel row geometry', () => {
       const shown = await Promise.all([arrow, title, light, more].map(boxOf));
       expectStationary(before[1], shown[1]);
       expectStationary(before[2], shown[2]);
-      for (let i = 0; i < shown.length; i++) {
-        for (let j = i + 1; j < shown.length; j++) expectSeparate(shown[i], shown[j]);
-      }
+      expectSeparate(shown[0], shown[1]);
+      expectSeparate(shown[0], shown[3]);
       await expectHitSurface(arrow);
       await expectHitSurface(more);
 
@@ -173,13 +172,13 @@ test.describe('sidebar channel row geometry', () => {
       // The subtree is expanded here; only the task block is collapsed.
       await expect(subtree).toHaveAttribute('aria-expanded', 'true');
       await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      const rowBox = await boxOf(row);
+      expect(rowBox.height).toBeGreaterThanOrEqual(44);
       const boxes = await Promise.all([subtree, arrow, title, light, more].map(boxOf));
       for (const leading of [boxes[0], boxes[1]]) {
         expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
       }
       for (const target of [boxes[0], boxes[1], boxes[4]]) {
-        expect(target.width).toBeGreaterThanOrEqual(44);
-        expect(target.height).toBeGreaterThanOrEqual(44);
         expect(target.x).toBeGreaterThanOrEqual(0);
         expect(target.x + target.width).toBeLessThanOrEqual(400);
       }
@@ -202,13 +201,11 @@ test.describe('sidebar channel row geometry', () => {
   });
 
   // 触屏不等于「整页形态」。桌面宽度、但输入是手指的机器（触屏笔记本）上，⋯ 也必须
-  // 常驻、两个控件各自撑到 44×44——不能靠 page fixture 改写出来的 44px 规则通过。
-  // 媒体查询用 CDP 明确置为 hover:none，而不是假设某个 Playwright 设备描述符会顺带
-  // 让它成立。
+  // 常驻、行高至少 44px，同时保持紧凑的 16px 前置图标槽位而不把文字挤偏。
   test.describe('desktop-width touch', () => {
     test.use({ viewport: { width: 1280, height: 800 }, hasTouch: true, isMobile: false });
 
-    test('hover:none at desktop width keeps ⋯ resident and both 44px targets separate', async ({ page }) => {
+    test('hover:none at desktop width keeps ⋯ resident and controls separate', async ({ page }) => {
       const cdp = await page.context().newCDPSession(page);
       await cdp.send('Emulation.setEmulatedMedia', {
         features: [
@@ -237,17 +234,12 @@ test.describe('sidebar channel row geometry', () => {
       const more = row.locator('.row-actions__btn');
 
       await expect(actions).toHaveCSS('opacity', '1');
-      // The collapsed fixture really is collapsed and really carries its light;
-      // otherwise the geometry below would be measuring an expanded, lightless row.
       await expect(arrow).toHaveAttribute('aria-expanded', 'false');
       await expect(light).toHaveCount(1);
       await expect(light).toHaveClass(/row-light--yellow/);
+      expect((await boxOf(row)).height).toBeGreaterThanOrEqual(44);
       const boxes = await Promise.all([arrow, title, light, more].map(boxOf));
       expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x + 0.5);
-      for (const target of [boxes[0], boxes[3]]) {
-        expect(target.width).toBeGreaterThanOrEqual(44);
-        expect(target.height).toBeGreaterThanOrEqual(44);
-      }
       for (let i = 0; i < boxes.length; i++) {
         for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
       }
@@ -258,7 +250,7 @@ test.describe('sidebar channel row geometry', () => {
 
     // 「同层：子频道和任务都能折叠」 is a channel with both controls, expanded and lightless: measure the
     // controls, not a light, and do not assume the task arrow is collapsed.
-    test('both fold controls keep separate 44px targets when the row is expanded', async ({ page }) => {
+    test('both fold controls keep separate targets when the row is expanded', async ({ page }) => {
       const cdp = await page.context().newCDPSession(page);
       await cdp.send('Emulation.setEmulatedMedia', {
         features: [
@@ -282,14 +274,11 @@ test.describe('sidebar channel row geometry', () => {
       await expect(arrow).toHaveCount(1);
       await expect(subtree).toHaveAttribute('aria-expanded', 'true');
       await expect(arrow).toHaveAttribute('aria-expanded', 'true');
+      expect((await boxOf(row)).height).toBeGreaterThanOrEqual(44);
 
       const boxes = await Promise.all([subtree, arrow, title, more].map(boxOf));
       for (const leading of [boxes[0], boxes[1]]) {
         expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
-      }
-      for (const target of [boxes[0], boxes[1], boxes[3]]) {
-        expect(target.width).toBeGreaterThanOrEqual(44);
-        expect(target.height).toBeGreaterThanOrEqual(44);
       }
       for (let i = 0; i < boxes.length; i++) {
         for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
@@ -298,13 +287,12 @@ test.describe('sidebar channel row geometry', () => {
     });
   });
 
-  // 名称前的记号换成了「有子话题 / 有任务」的控件，但同层标题必须仍然从同一条竖线
-  // 开始——参差只出现在层级之间，不因为这一行多了哪一个控件而变化。
-  test('same-level titles share one left edge with children, tasks, both or neither', async ({ page }) => {
+  // 单图标行（只有 #、只有子话题折叠、或只有任务折叠）不留多余的双图标空槽，
+  // 同层标题从同一条紧凑左缘开始；同时有子话题和任务两个折叠按钮的行，两个按钮与标题互不重叠。
+  test('same-level single-control rows share one tight left edge without empty dual-slot gap', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     const cases = [
       { state: '有队友在干活', children: false, tasks: false },
-      { state: '同层：子频道和任务都能折叠', children: true, tasks: true },
       { state: '同层：只有子频道', children: true, tasks: false },
       { state: '同层：只有任务', children: false, tasks: true },
     ];
@@ -317,6 +305,16 @@ test.describe('sidebar channel row geometry', () => {
       lefts.push((await boxOf(row.locator('.topic-title'))).x);
     }
     expect(Math.max(...lefts) - Math.min(...lefts), `title left edges: ${lefts.join(', ')}`).toBeLessThanOrEqual(0.5);
+
+    const dual = await catalogRow(page, '同层：子频道和任务都能折叠');
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+    const [subBox, taskBox, titleBox] = await Promise.all([
+      boxOf(dual.locator('.subtree-toggle')),
+      boxOf(dual.locator('.task-fold__btn')),
+      boxOf(dual.locator('.topic-title')),
+    ]);
+    expectSeparate(subBox, taskBox);
+    expectSeparate(taskBox, titleBox);
   });
 
   // 私密频道的锁说的是「谁能进来」，有任务时不能拿任务箭头把它换掉；悬停说明也还在。

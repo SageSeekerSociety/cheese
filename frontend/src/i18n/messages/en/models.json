@@ -38,6 +38,8 @@
     "empty": "No models yet",
     "calls": "calls",
     "blocked": "Blocked",
+    "capWarn": "{pct} of spend cap used",
+    "capOver": "Spend cap reached",
     "blockedReason": {
       "blocked": "Disabled at the gateway, so the picker does not offer it",
       "unlisted": "Not listed: the gateway does not mark it cheese_selectable",
@@ -265,6 +267,9 @@
     "free": "Free",
     "headers": "Headers",
     "session": "Conversation header",
+    "cap": "Spend cap",
+    "capUsed": "{used} of {cap} used ({pct})",
+    "capOver": "Cap reached; the gateway refuses calls",
     "readonly": "Declared in config, read-only",
     "testSoon": "Testing a source needs the conformance suite, which hasn't shipped yet",
     "failed": "The source change failed",

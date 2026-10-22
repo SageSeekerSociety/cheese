@@ -30,6 +30,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.chapter_rows import chapter_rows
 from app.api.project_skill_rows import proposals_in_room
 from app.api.review_comment_rows import review_comment_rows
 from app.api.room_task_rows import (
@@ -66,7 +67,7 @@ async def room_snapshot(
     room = place.room
     viewer = actor.handle if actor.authenticated else None
     snapshot: dict = {
-        "members": await roster_rows(db, room),
+        "members": await roster_rows(db, room, viewer=viewer),
         "feedback_proposals": await ProposalService(db).live_cards(conversation_id),
         "skill_proposals": await proposals_in_room(db, place.project_id, place.room_id),
     }
@@ -93,4 +94,7 @@ async def room_snapshot(
         snapshot["review_comments"] = await review_comment_rows(
             db, task, actor.handle or ""
         )
+    # Chapters belong to the conversation being read — the room's own line or
+    # the task's — so both branches carry them.
+    snapshot["chapters"] = await chapter_rows(db, place.conversation_id)
     return snapshot

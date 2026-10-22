@@ -1,6 +1,6 @@
 """A web search reaches an upstream that runs it, or the client hears that it did not run.
 
-Builds the router from config.yaml's deepseek-flash rows, pointed at a local
+Builds the router from the deepseek-flash rows (test_rows.yaml), pointed at a local
 upstream: each RUC key answers the way RUC's vLLM does (the model's text, no
 search), DeepSeek's API answers with a server_tool_use block and its results.
 Requests go through the router the way the proxy sends Claude Code's, and the
@@ -92,7 +92,7 @@ class Upstream(BaseHTTPRequestHandler):
 def router(base, keep=lambda params: True):
     config = yaml.safe_load(Path(__file__).with_name("config.yaml").read_text())
     rows = []
-    for entry in copy.deepcopy(config["model_list"]):
+    for entry in copy.deepcopy(yaml.safe_load(Path(__file__).with_name("test_rows.yaml").read_text())["model_list"]):
         if entry["model_name"] != "deepseek-flash" or not keep(entry["litellm_params"]):
             continue
         params = entry["litellm_params"]

@@ -55,7 +55,7 @@ async def test_current_model_takes_what_a_replaced_require_models_gives():
 async def test_read_back_hands_the_item_to_a_replaced_item():
     """跨子模块的那条边：`_shared` 里的读回，摆盘交给 `models` 里的 `_item`。"""
     service = _service()
-    model = SimpleNamespace(name="gpt-5")
+    model = SimpleNamespace(name="gpt-5", sources=[])
 
     async def models_raw() -> list:
         return [model]
@@ -65,7 +65,7 @@ async def test_read_back_hands_the_item_to_a_replaced_item():
 
     service._models_raw = models_raw
     service._usage_window = usage_window
-    service._item = lambda model, usage: {"replaced": True}
+    service._item = lambda model, usage, ledger=None: {"replaced": True}
 
     assert await service._read_back("gpt-5", {}, "model-id") == {"replaced": True}
 

@@ -9,9 +9,11 @@
 // those pieces: header, timeline, new-message pill, error toast.
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
+import type { ChapterRow } from '../types/chapters'
 
 import { computed, ref, watch } from 'vue'
 
+import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
@@ -21,6 +23,7 @@ import { useMentionOutside } from '../composables/useMentionOutside'
 import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
+import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
@@ -95,6 +98,12 @@ const props = withDefaults(
     inThread?: boolean
     // 输入框里那句提示，当它不是这一栏默认的那句时：支线转成任务后写「在任务中回复」。
     hint?: string | null
+    /** 这段对话的章节，按对话里的顺序（频道页、任务页给；支线、私聊不给）。 */
+    chapters?: ChapterRow[]
+    /** 现在能不能改章节：说得上话、没归档。 */
+    chapterable?: boolean
+    /** 已经钉成章节的那几条（block id）。 */
+    chapterIds?: ReadonlySet<string>
   }>(),
   {
     alwaysSummon: false,
@@ -108,6 +117,9 @@ const props = withDefaults(
     backLabel: null,
     unreadOnOpen: 0,
     conversationId: null,
+    chapters: () => [],
+    chapterable: false,
+    chapterIds: () => new Set<string>(),
     agentHandle: null,
     composerClosed: null,
     askClosed: false,
@@ -152,7 +164,7 @@ const panelEmit = ((event: string, ...args: unknown[]) => {
 // 我 @ 了不在这个频道里的人：问要不要加进来（Slack 那样），见 useMentionOutside。
 const mentionOutside = useMentionOutside({
   place: () => props.conversationId ?? props.topic?.id ?? null,
-  nameOf: (handle) => props.members.find((m) => m.user_handle === handle)?.name || handle,
+  nameOf: (handle) => memberName(props.members.find((m) => m.user_handle === handle)) || handle,
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
 
@@ -187,6 +199,8 @@ const pins = useChannelPins({
   report: (message) => (panel.errorMsg.value = message),
   seen: () => panel.timeline.messages.value.some((m) => typeof m.meta?.pinned_block_id === 'string'),
 })
+// 章节：这段对话的目录由拿着这一段地址的页面取（频道页、任务页），这里只画。支线和
+// 私聊不传，就没有章节刻度，也没有 ⋯ 里那一项。
 // 私密频道和私聊里的东西只有这里的人看得到：保存到资料库之前先说清保存后谁会看到。
 const keeping = ref<Block | null>(null)
 const keepAudience = useKeepAudience(
@@ -239,6 +253,7 @@ const {
   prState,
   composerHint,
   rows,
+  askGroups,
   hiddenRows,
   refMaps,
   hasMore,
@@ -266,6 +281,7 @@ const {
   fmtTime,
   isMine,
   displayName,
+  authorTitle,
   isExternal,
   avatarSrc,
   myName,
@@ -333,6 +349,8 @@ const {
 // 撤回一道题上的回答。它要的两样（时间线、错误横幅）都在 `panel` 上，但它自己不在
 // `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
 const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
+// 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
+const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
 
 // 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上 @ 它的那枚标签。只在
 // 打开的那一刻做一次，删掉了不会再长回来。
@@ -443,10 +461,16 @@ useComposerShortcut({
           :thread-status-for="threadLines.statusFor"
           :pinnable="pinnable"
           :pinned-ids="pins.pinnedIds.value"
+          :chapterable="chapterable"
+          :chapter-ids="chapterIds"
+          :chapters="chapters"
           :task-of="taskOf"
           :tasks-under="tasksUnder"
           :name-of="nameOf"
           :rows="rows"
+          :ask-groups="askGroups"
+          :ask-group-busy="askGroupBusy"
+          :ask-group-failure="errorMsg"
           :hidden-rows="hiddenRows"
           :day-labels="dayLabels"
           :unread-anchor-id="unreadAnchorId"
@@ -483,6 +507,7 @@ useComposerShortcut({
           :is-external="isExternal"
           :avatar-of="avatarSrc"
           :display-name="displayName"
+          :author-title="authorTitle"
           :notice-agent="noticeAgent"
           :agent-faces="agentFaces"
           :parent-of="parentOf"
@@ -513,6 +538,7 @@ useComposerShortcut({
           @ask-reply="replyToQuestion"
           @ask-withdraw="withdrawQuestionAnswer"
           @ask-skip="skipQuestion"
+          @ask-group-submit="submitAskGroup"
           @checklist="changeChecklist"
           @download="downloadAttachment"
           @jump="openAt"
@@ -526,6 +552,8 @@ useComposerShortcut({
           @outbox-leave="outboxLeave"
           @pin="pins.pin"
           @unpin="pins.unpin"
+          @chapter="emit('chapter', $event)"
+          @unchapter="emit('unchapter', $event)"
           @keep="keepFile"
         >
           <template #timeline-start><slot name="timeline-start" /></template>

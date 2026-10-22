@@ -29,10 +29,9 @@ on:
 permissions:
   contents: read
 
-# Cancel superseded runs on a PR, never in the merge queue. Keying queue runs
-# by sha gives each queued commit its own group, so one entry cannot cancel
-# another's run and leave the commit that lands on main with no result — a
-# cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
+# Cancel superseded runs on a PR, never on main. Keying main's runs by sha
+# gives each commit its own group, so one push cannot cancel another's run and
+# leave a commit on main with no result — a cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
 # to one PR still supersede each other.
 concurrency:
   group: deploy-scripts-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}

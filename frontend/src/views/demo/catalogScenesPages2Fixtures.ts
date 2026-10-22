@@ -194,6 +194,8 @@ export function feedback(over: Partial<FeedbackDetail> = {}): FeedbackDetail {
     environment: 'Chrome 140 · macOS 15',
     topic_id: null,
     project_id: 'p-ml',
+    // 默认这一条不带文件；展示附件那一栏的用例自己把它传进来。
+    attachments: [],
     timeline: FEEDBACK_TIMELINE,
     thread: FEEDBACK_THREAD,
     thread_next_cursor: null,

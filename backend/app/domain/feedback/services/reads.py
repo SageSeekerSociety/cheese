@@ -413,12 +413,21 @@ async def detail_of(
     activity = await svc._repo.latest_activity_of([row.id])
     # 和 `delete_feedback` 共用同一个判据，所以按钮和权限不会分家。
     can_delete = svc.may_delete_feedback(row, handle=handle, is_admin=is_admin)
-    # 领取和放弃也一样：和 `claim` / `release` 同一处判据。
+    # 领取和放弃也一样：和 `claim` / `release` 同一处判据。办完的不能再领，
+    # 否则详情上会挂出一个「处理人」，而这条已经没有要修的了。
     holder = row.assignee_handle
-    can_claim = holder is None and await svc.may_claim(
-        handle, is_admin=is_admin, room_project_id=room_project_id
+    can_claim = (
+        holder is None
+        and row.status not in repo.CLOSED_STATUSES
+        and await svc.may_claim(
+            handle, is_admin=is_admin, room_project_id=room_project_id
+        )
     )
-    can_release = holder is not None and (is_admin or holder == handle)
+    can_release = (
+        holder is not None
+        and row.status not in repo.CLOSED_STATUSES
+        and (is_admin or holder == handle)
+    )
     # Notes are admin-only, so resolving faces for them is not extra work a
     # non-admin pays for: the list is empty and contributes no handles.
     notes = await svc._repo.list_notes(row.id) if is_admin else []
@@ -442,6 +451,11 @@ async def detail_of(
         comments=(await svc._repo.comment_counts([row.id])).get(row.id, 0),
         avatars=avatars,
         last_activity_at=activity.get(row.id),
+        # 附件和这条反馈同一道门：能走到这里就说明 `may_see` 已经过了，所以这一份
+        # 清单不必再判一次。**字节**不是这样发的：每一份都由
+        # `GET /feedback/attachments/{id}` 重新问一遍（见 `attachments.for_read`）——
+        # 这条响应里的清单只是「有哪些」，不是「谁都能打开」。
+        attachments=await svc._repo.list_attachments(row.id),
         # The page-wide map goes straight back in: the comment authors are a
         # subset of the handles resolved above, so this costs nothing.
         thread=await svc.comments_out(

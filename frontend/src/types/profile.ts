@@ -69,6 +69,7 @@ export interface ProfileUnderstanding {
 export interface UserProfile {
   handle: string
   name: string
+  remark?: string | null
   bio: string
   /** The raw profile avatar, which may be the platform default (see useChosenAvatar). */
   avatar_id: number | null

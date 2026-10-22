@@ -135,10 +135,8 @@ const entries = computed(() =>
 .nav-row :deep(.v-list-item__spacer) {
   width: 8px !important;
 }
-/* Match the channel leading region plus Vuetify's 8px spacer. */
 .nav-row :deep(.v-list-item__prepend) {
   align-items: center;
-  width: 44px;
 }
 .row-slot {
   flex: none;
@@ -151,18 +149,18 @@ const entries = computed(() =>
 .row-glyph {
   color: var(--faint);
 }
-.nav-row.pinned-row {
-  min-height: 36px;
+.nav-row.pinned-row,
+.nav-row.pinned-row.v-list-item.v-list-item,
+.v-list.v-list .nav-row.pinned-row.v-list-item--nav {
+  min-height: 32px;
+  padding-block: 0;
+  padding-inline-end: 12px;
+  margin-block: 1px;
 }
 @media (hover: none) {
-  .nav-row :deep(.v-list-item__prepend) {
-    width: 100px;
-  }
-  .row-slot {
-    width: 44px;
-    height: 44px;
-  }
-  .nav-row.pinned-row {
+  .nav-row.pinned-row,
+  .nav-row.pinned-row.v-list-item.v-list-item,
+  .v-list.v-list .nav-row.pinned-row.v-list-item--nav {
     min-height: 44px;
   }
 }
