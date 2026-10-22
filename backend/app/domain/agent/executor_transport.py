@@ -115,6 +115,12 @@ _DEAD_CREDENTIAL = (
     "Execution credential does not own this session",
     "This credential works another conversation",
 )
+#: The same refusal said as a catalog sentence. Its words are the reader's
+#: language, and this bundle runs on a machine that may speak none of ours; the
+#: key beside them does not change with it (`app/core/errors.py` writes
+#: `error.i18n`). A task's credential reaching another conversation is said
+#: this way (`api/auth/resolver.py`), and is just as dead on the lease path.
+_DEAD_CREDENTIAL_KEYS = frozenset({"taskCredentialOtherConversation"})
 
 # 平台的一个接口接连答 5xx：再发也是一样，只是让 agent 每一两秒重试一次（10-04 一个
 # 会话对拿机器那一步连着 376 次）。同一个接口（方法加路径）连续 `BREAKER_AFTER` 次之
@@ -153,7 +159,10 @@ def _dead_credential(error) -> bool:
     if detail.get("retryable") is True or body.get("retryable") is True:
         return False
     message = f"{body.get('message', '')} {detail.get('message', '')}"
-    return any(text in message for text in _DEAD_CREDENTIAL)
+    if any(text in message for text in _DEAD_CREDENTIAL):
+        return True
+    i18n = detail.get("i18n")
+    return isinstance(i18n, dict) and i18n.get("key") in _DEAD_CREDENTIAL_KEYS
 
 
 class PlatformHealth:
