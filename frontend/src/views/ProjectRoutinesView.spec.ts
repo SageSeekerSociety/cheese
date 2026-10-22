@@ -87,6 +87,7 @@ const base = {
   spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
   timezone: 'Asia/Shanghai',
   last_run_status: 'succeeded' as const,
+  credits_this_month: 42.5,
   agent_handle: 'cheese-x',
   owner_handle: 'u1',
   created_by: 'cheese-x',

@@ -60,6 +60,13 @@
   "neverRun": "还没有执行过",
   "noReason": "没有给出原因",
   "listSeparator": "、",
+  "spend": {
+    "points": "{n} 点",
+    "pending": "结算中",
+    "thisMonth": "本月 {points}",
+    "recordsTotal": "本月 {points}",
+    "hint": "本月这条规则从团队额度里扣掉的点数。只算模型调用，不含云端算力。"
+  },
   "zone": {
     "beijing": "北京时间"
   },

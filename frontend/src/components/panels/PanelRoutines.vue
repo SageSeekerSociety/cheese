@@ -129,6 +129,7 @@ const emit = defineEmits<{
         :title="records.title"
         :runs="records.runs"
         :total="records.total"
+        :credits-this-month="records.creditsThisMonth"
         :page="records.page"
         :pages="records.pages"
         :failed-only="records.failedOnly"
