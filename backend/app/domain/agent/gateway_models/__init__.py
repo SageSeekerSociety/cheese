@@ -219,6 +219,9 @@ class GatewayModelsService:
     async def _usage_window(self, start: date, end: date) -> UsageWindow:
         return await answers._usage_window(self, start, end)
 
+    async def _ledger_window(self, end: date) -> UsageWindow:
+        return await answers._ledger_window(self, end)
+
     async def _require_models(self) -> list[AdminModel]:
         return await answers._require_models(self)
 
@@ -422,5 +425,7 @@ class GatewayModelsService:
     # ------------------------------------------------------------------
     # 拼装
     # ------------------------------------------------------------------
-    def _item(self, model: AdminModel, usage: UsageWindow) -> dict:
-        return _shared._item(model, usage)
+    def _item(
+        self, model: AdminModel, usage: UsageWindow, ledger: UsageWindow | None = None
+    ) -> dict:
+        return _shared._item(model, usage, ledger)

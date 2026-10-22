@@ -782,6 +782,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # a role change within this; the key behind a role is narrowed after it
     # (`gateway_models.roles.NARROW_AFTER_SECONDS`). 0 turns it off (tests).
     platform_model_roles_refresh_interval_s: float = 30.0
+    # Seconds between reads of every model's spend cap against the gateway's
+    # ledger, saying on the alert webhook when one crosses 80% or reaches it
+    # (`app.domain.agent.spend_cap_alerts`). 0 turns it off.
+    model_spend_cap_alert_interval_s: float = 300.0
     # Seconds between looks, on the process holding the sessions, for work
     # still running in a task that has closed (`stop_work_in_closed_tasks`).
     # One indexed read of the tasks its working seats are in, and none when no

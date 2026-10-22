@@ -12,6 +12,7 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import { MODEL_TIERS, TIER_KEY } from '@/lib/adminCredits'
 import { blockedReasonText, displayName, failRate, originKey, statusQuiet } from '@/lib/adminModels'
+import { fullestCap } from '@/lib/adminSources'
 import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
 
 // 模型那一段：网关上有哪些模型、上没上架、什么价、跑了多少。页面的主语。
@@ -49,6 +50,14 @@ const tierOptions = computed(() => MODEL_TIERS.map((value) => ({ value, title: t
 
 /** 失败率那一格的 title。0 请求时是空串（那一格画的是 `—`，没有比率可解释）——
  *  这一句要 `t`，所以拼不成纯函数，留在画的那一边。 */
+function capOf(row: ModelRow) {
+  return fullestCap(row.sources)
+}
+
+function capPct(row: ModelRow): string {
+  return `${Math.floor((capOf(row)?.ratio ?? 0) * 100)}%`
+}
+
 function rateTitle(row: ModelRow): string {
   if (!row.usage.requests) return ''
   return t('models.table.failRate', { rate: failRate(row).text })
@@ -170,6 +179,13 @@ function rateTitle(row: ModelRow): string {
             <span v-if="row.blocked" class="amd__tag amd__tag--off">{{ t('models.table.blocked') }}</span>
             <span v-else-if="row.offered" class="amd__tag amd__tag--on">{{ t('models.table.offered.on') }}</span>
             <span v-else class="amd__tag">{{ t('models.table.offered.off') }}</span>
+            <!-- 消费上限用到八成起在这里标一下：上限是终身累计的，窗口里的花费看不出离顶多远。 -->
+            <span v-if="capOf(row)?.level === 'over'" class="amd__tag amd__tag--off" data-test="model-cap">{{
+              t('models.table.capOver')
+            }}</span>
+            <span v-else-if="capOf(row)?.level === 'warn'" class="amd__tag amd__tag--warn" data-test="model-cap">{{
+              t('models.table.capWarn', { pct: capPct(row) })
+            }}</span>
             <span
               v-if="!row.offered && blockedReasonText(row)"
               class="t-meta-read amd__dim amd__reason"
@@ -312,6 +328,11 @@ function rateTitle(row: ModelRow): string {
 .amd__tag--on {
   background: var(--ok-wash);
   color: var(--ok-ink);
+}
+
+.amd__tag--warn {
+  background: var(--warn-wash);
+  color: var(--warn-ink);
 }
 
 .amd__tag--off {

@@ -10,6 +10,7 @@ import type { SourceRow } from './adminModels'
 import { describe, expect, it } from 'vitest'
 
 import {
+  capProgress,
   defaultOrder,
   draftFromSource,
   draftPriced,
@@ -17,6 +18,7 @@ import {
   draftToFields,
   draftValid,
   emptySourceDraft,
+  fullestCap,
   mixesFreeAndPaid,
   priceChanges,
   wouldLead,
@@ -234,5 +236,34 @@ describe('线路草稿 · 编辑时价没动就不发', () => {
   it('清空一档已有的价：不放行', () => {
     const draft = draftFromSource(source())
     expect(draftProblems({ ...draft, prices: { ...draft.prices, output: '' } }).cleared).toBe(true)
+  })
+})
+
+describe('消费上限用到了哪里', () => {
+  it('没设上限、或服务端没读到已用多少，就不给进度', () => {
+    expect(capProgress(source({ spend_cap_usd: null, spend_cap_used_usd: null }))).toBeNull()
+    expect(capProgress(source({ spend_cap_usd: 2000, spend_cap_used_usd: null }))).toBeNull()
+  })
+
+  it('八成起是警告，到顶是超出', () => {
+    expect(capProgress(source({ spend_cap_usd: 2000, spend_cap_used_usd: 1000 }))).toEqual({
+      used: 1000,
+      cap: 2000,
+      ratio: 0.5,
+      level: 'ok',
+    })
+    expect(capProgress(source({ spend_cap_usd: 2000, spend_cap_used_usd: 1600 }))?.level).toBe('warn')
+    expect(capProgress(source({ spend_cap_usd: 2000, spend_cap_used_usd: 2000 }))?.level).toBe('over')
+  })
+
+  it('列表上取用得最满的那条线路', () => {
+    const fullest = fullestCap([
+      source({ spend_cap_usd: 2000, spend_cap_used_usd: 500 }),
+      source({ spend_cap_usd: 100, spend_cap_used_usd: 90 }),
+      source({ spend_cap_usd: null }),
+    ])
+    expect(fullest?.ratio).toBeCloseTo(0.9)
+    expect(fullestCap([source({ spend_cap_usd: null })])).toBeNull()
+    expect(fullestCap(undefined)).toBeNull()
   })
 })

@@ -102,6 +102,10 @@ class _Gateway:
         self.requests: list[httpx.Request] = []
         # Virtual keys by alias -> the models each may call (`/key/update`).
         self.keys: dict[str, list[str]] = {}
+        # The ledger by upstream model (`breakdown.models`), and the start date
+        # of every usage window asked for.
+        self.ledger: dict[str, float] = {}
+        self.usage_starts: list[str] = []
 
     def _find(self, model_id: str) -> dict | None:
         return next((r for r in self.rows if r["model_info"]["id"] == model_id), None)
@@ -115,7 +119,17 @@ class _Gateway:
         if path == "/model/info":
             return httpx.Response(200, json={"data": self.rows})
         if path == "/user/daily/activity/aggregated":
-            return httpx.Response(200, json={"results": [], "metadata": {}})
+            self.usage_starts.append(request.url.params["start_date"])
+            models = {
+                upstream: {"metrics": {"spend": spend}}
+                for upstream, spend in self.ledger.items()
+            }
+            results = (
+                [{"date": "2026-10-20", "breakdown": {"models": models}}]
+                if models
+                else []
+            )
+            return httpx.Response(200, json={"results": results, "metadata": {}})
         if path == "/model/new":
             model_id = str(uuid.uuid4())
             params = dict(body["litellm_params"])
@@ -1028,6 +1042,49 @@ async def test_a_cap_set_on_one_source_holds_on_every_source_of_its_upstream():
     assert (audit.action, audit.result) == ("source.update", "ok")
     assert audit.after["spend_cap_usd"] == 2500
     assert len(audit.after["spend_cap_also_on"]) == 2
+
+
+@pytest.mark.anyio
+async def test_a_capped_source_shows_what_its_upstream_has_cost_all_time():
+    """Used is the ledger's all-time total for the upstream, the number
+    spend_cap.py refuses on; a source without a cap shows none."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+    gw.ledger = {_ARGON: 2100.0, "gemini/other": 5.0}
+
+    item = await _listed(service, "argon")
+
+    assert sorted(
+        (s["upstream_raw"], s["spend_cap_used_usd"]) for s in item["sources"]
+    ) == [(_ARGON, 2100.0), (_ARGON, 2100.0), ("gemini/other", None)]
+    assert "2000-01-01" in gw.usage_starts
+
+
+@pytest.mark.anyio
+async def test_a_cap_on_an_upstream_with_no_calls_has_used_nothing():
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+
+    item = await _listed(service, "argon-b")
+
+    assert [s["spend_cap_used_usd"] for s in item["sources"]] == [0.0]
+
+
+@pytest.mark.anyio
+async def test_without_a_cap_the_all_time_ledger_is_not_read():
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    gw.usage_starts.clear()
+
+    item = await _listed(service, "argon")
+
+    assert {s["spend_cap_used_usd"] for s in item["sources"]} == {None}
+    assert "2000-01-01" not in gw.usage_starts
 
 
 @pytest.mark.anyio

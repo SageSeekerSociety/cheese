@@ -26,6 +26,7 @@ from app.domain.agent.gateway_models.guards import (
 )
 from app.domain.agent.gateway_models_helpers import (
     _api_base_for,
+    _capped,
     _daily_model_row,
     _offered,
     _prices_for_gateway,
@@ -84,6 +85,7 @@ async def listing(service: pkg.GatewayModelsService, *, days: int) -> dict:
     # 就没有「部分正确」可给：一张空表会被读成「这里一个模型都没有」。
     models = await service._require_models()
     usage = await service._usage_window(start, end)
+    ledger = await service._ledger_window(end) if _capped(models) else None
     await roles.refresh(service._db)
     return {
         "gateway": {
@@ -95,7 +97,7 @@ async def listing(service: pkg.GatewayModelsService, *, days: int) -> dict:
         },
         "window": window,
         "totals": _usage_to_dict(usage.totals),
-        "models": [service._item(m, usage) for m in models],
+        "models": [service._item(m, usage, ledger) for m in models],
     }
 
 
@@ -103,9 +105,10 @@ async def detail(service: pkg.GatewayModelsService, *, name: str, days: int) -> 
     start, end, since, until = service._window(days)
     model = await service._current_model(name)
     usage = await service._usage_window(start, end)
+    ledger = await service._ledger_window(end) if _capped([model]) else None
     await roles.refresh(service._db)
     return {
-        "model": service._item(model, usage),
+        "model": service._item(model, usage, ledger),
         "series": service._series(name, usage),
         "platform_usage": await service._platform_usage(name, since, until),
     }

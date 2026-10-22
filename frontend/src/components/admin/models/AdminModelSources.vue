@@ -5,7 +5,8 @@ import { useI18n } from 'vue-i18n'
 
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
-import { ORDER_MAX, ORDER_MIN, PROTOCOL_KEY } from '@/lib/adminSources'
+import { capProgress, ORDER_MAX, ORDER_MIN, PROTOCOL_KEY } from '@/lib/adminSources'
+import { fmtCost } from '@/lib/usageFormat'
 
 // 一个模型的线路：网关按什么先后试哪几条上游。详情抽屉里的一段。
 //
@@ -36,6 +37,16 @@ const { t } = useI18n()
 
 function protocolText(s: SourceRow): string {
   return t(PROTOCOL_KEY[s.protocol ?? 'other'])
+}
+
+// 消费上限那一行：已用 / 上限 / 百分比。已用是网关拦截时算的同一个数（终身累计），
+// 到八成标警告色，到顶标危险色并说明网关已经在拒绝调用。
+function capText(s: SourceRow): string {
+  const p = capProgress(s)
+  if (!p) return s.spend_cap_usd == null ? '' : fmtCost(s.spend_cap_usd)
+  const pct = `${Math.floor(p.ratio * 100)}%`
+  const line = t('models.source.capUsed', { used: fmtCost(p.used), cap: fmtCost(p.cap), pct })
+  return p.level === 'over' ? `${line} · ${t('models.source.capOver')}` : line
 }
 
 function orderText(s: SourceRow): string {
@@ -69,6 +80,12 @@ function orderText(s: SourceRow): string {
           <dd class="t-num">{{ s.header_names.length ? s.header_names.join(', ') : '—' }}</dd>
           <dt>{{ t('models.source.session') }}</dt>
           <dd class="t-num">{{ s.session_header || '—' }}</dd>
+          <template v-if="s.spend_cap_usd != null">
+            <dt>{{ t('models.source.cap') }}</dt>
+            <dd class="t-num" :class="`ams__cap--${capProgress(s)?.level ?? 'ok'}`" data-test="source-cap">
+              {{ capText(s) }}
+            </dd>
+          </template>
         </dl>
         <AdminModelPriceCell v-if="!s.free" :priced="s.priced" :prices="s.prices" :reason="null" />
 
@@ -203,6 +220,14 @@ function orderText(s: SourceRow): string {
 
 .ams__tag--off {
   background: var(--danger-wash);
+  color: var(--danger-ink);
+}
+
+.ams__cap--warn {
+  color: var(--warn-ink);
+}
+
+.ams__cap--over {
   color: var(--danger-ink);
 }
 

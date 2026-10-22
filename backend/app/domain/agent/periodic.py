@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.agent import turn_resume
+from app.domain.agent import spend_cap_alerts, turn_resume
 from app.domain.agent.chat import ChatService
 from app.domain.agent.gateway_models import roles as model_roles_store
 from app.domain.agent.runtime import AgentWorkRunner
@@ -48,6 +48,11 @@ def register_periodic_jobs(
         settings.platform_model_roles_refresh_interval_s,
         lambda: model_roles_store.refresh_from(sessions),
         owner_only=False,
+    )
+    jobs.register(
+        "model spend cap alert",
+        settings.model_spend_cap_alert_interval_s,
+        lambda: spend_cap_alerts.sweep(),
     )
     jobs.register(
         "forge credential cache cleanup",
