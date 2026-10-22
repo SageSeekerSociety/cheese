@@ -197,8 +197,8 @@ async def get_task(
     """The task this conversation is — the same shape a room's `/tasks` lists.
     404 for a room's own conversation. What is said in it is read like any
     conversation's (`/topics/{task}/blocks`)."""
-    place, _actor, task = await task_conversation(db, resolver, topic_id)
-    return ok(await task_page_row(db, place, task))
+    place, actor, task = await task_conversation(db, resolver, topic_id)
+    return ok(await task_page_row(db, place, task, me=actor.handle or ""))
 
 
 @router.get("/{topic_id}/related")
@@ -321,7 +321,7 @@ async def conclude_task(
     # The 支线 line under the message the task was made from is said by its AI
     # teammate, so whose teammate it is comes in here too.
     await tell_origin(db, task, ended, task_teammate=task_teammate)
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -360,7 +360,7 @@ async def report_progress(
         at=datetime.now(UTC),
     )
     await db.flush()
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -391,7 +391,7 @@ async def reopen_task(
             ),
         ),
     )
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -474,7 +474,7 @@ async def update_task(
                 by=actor.handle, added=[], removed=[actor.handle]
             ),
         )
-        out = await task_out(db, task)
+        out = await task_out(db, task, me=actor.handle or "")
         await db.commit()
         return ok(out)
     members = TopicMemberService(db)
@@ -529,7 +529,7 @@ async def update_task(
                     by=actor.handle, added=added, removed=removed
                 ),
             )
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 

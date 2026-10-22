@@ -60,7 +60,7 @@ function avatarOf(handle: string): string {
     <div class="thread-head__text">
       <h2 class="thread-head__title t-title" :title="heading">{{ heading }}</h2>
       <div v-if="task" class="thread-head__meta">
-        <span class="thread-head__state" data-testid="thread-task-phrase">{{ taskPhraseLabel(task, viewer) }}</span>
+        <span class="thread-head__state" data-testid="thread-task-phrase">{{ taskPhraseLabel(task) }}</span>
         <span v-if="bar && task.owner_handle" class="thread-head__owner">
           <UserAvatar :size="14" :name="nameOf(task.owner_handle)" :avatar="avatarOf(task.owner_handle)" />
           <span class="thread-head__owner-name">{{

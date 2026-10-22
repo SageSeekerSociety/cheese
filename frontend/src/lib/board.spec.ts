@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { columnDotStyle, columnLabel, liveTasks, taskDotStyle } from './board'
+import { columnDotStyle, columnLabel, liveTasks, taskDotStyle, taskPhraseLabel } from './board'
 
 import { setLocale } from '@/i18n'
 
@@ -50,6 +50,17 @@ describe('columnDotStyle', () => {
       return `${s.borderStyle ?? 'solid'}/${s.background ?? 'none'}`
     }
     expect(new Set([shape('building'), shape('delivering'), shape('needs_you')]).size).toBe(3)
+  })
+})
+
+describe('taskPhraseLabel', () => {
+  it('被问者看到个人提示，不要求问题只等一个人', () => {
+    const task = {
+      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      waiting_on: null,
+      awaits_me: true,
+    } as const
+    expect(taskPhraseLabel(task)).toContain('你')
   })
 })
 

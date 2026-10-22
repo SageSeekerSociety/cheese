@@ -307,7 +307,7 @@ export interface RoomTask {
   created_at: string
   updated_at: string
   last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
-  awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
+  awaits_me?: boolean // 在不在等看的这个人：任务列表、详情和订阅快照带；所有个人提示读它
   waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 这条活上**还没恢复**的轮次失败从什么时候开始（侧栏这份行才带；`block/waits.py`

@@ -230,7 +230,7 @@ function actionTestId(id: string): string | undefined {
       }}</span>
       <span class="task-header__meta">
         <span v-if="task" class="task-header__state" data-testid="task-phrase" :title="progressTitle">{{
-          taskPhraseLabel(task, ME)
+          taskPhraseLabel(task)
         }}</span>
         <span
           v-if="progressNote"

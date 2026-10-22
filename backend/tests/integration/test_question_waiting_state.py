@@ -11,6 +11,7 @@ from tests.integration.conftest import (
     new_project,
     open_task,
     post_message,
+    room_socket,
     session_auth_headers,
     task_agent_headers,
 )
@@ -55,6 +56,11 @@ def _task_rows(client, project, room, task, handle="alice"):
         rows.append(
             next(row for row in response.json()["data"]["data"] if row["id"] == task)
         )
+    response = client.get(f"/topics/{task}/task", headers=headers)
+    assert response.status_code == 200, response.text
+    rows.append(response.json()["data"])
+    with room_socket(client, task, handle) as ws:
+        rows.append(ws.subscribed["room"]["task"])
     response = client.get(f"/topics/{room}", headers=headers)
     assert response.status_code == 200, response.text
     sidebar = response.json()["data"]["my_tasks"]["shown"]

@@ -32,9 +32,9 @@ export function myPhraseLabel(phrase: BoardPhrase): string {
 
 /** 一件任务的那一句，按看的人说：在等的就是他，用 `myPhraseLabel`。页头、频道概览
  *  和频道里的卡说的是同一件事，对同一个人不能一处「待审阅」一处「待你审阅」。 */
-export function taskPhraseLabel(task: Pick<RoomTask, 'presentation' | 'waiting_on'>, viewer: string): string {
+export function taskPhraseLabel(task: Pick<RoomTask, 'presentation' | 'awaits_me'>): string {
   const { phrase } = task.presentation
-  return task.waiting_on && task.waiting_on === viewer ? myPhraseLabel(phrase) : phraseLabel(phrase)
+  return task.awaits_me ? myPhraseLabel(phrase) : phraseLabel(phrase)
 }
 
 /** 色点长什么样。

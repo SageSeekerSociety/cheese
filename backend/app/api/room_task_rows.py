@@ -63,7 +63,7 @@ async def from_threads(db: AsyncSession, task_ids: Sequence[uuid.UUID]) -> set:
     return set(await db.scalars(select(Thread.id).where(Thread.id.in_(list(task_ids)))))
 
 
-async def task_out(db, task, card=None) -> dict:
+async def task_out(db, task, card=None, *, me: str) -> dict:
     """The task with its board cell — what every route that hands a task back
     to its page returns, so the page never holds one without it. The same
     function the list uses, so a deep link and the board cannot disagree."""
@@ -76,6 +76,7 @@ async def task_out(db, task, card=None) -> dict:
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
+    out["awaits_me"] = _awaits_me(task, card, shown, asked.get(task.id), me)
     # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你审阅」。
     out["waiting_on"] = presentation.waiting_on(
         shown,
@@ -482,12 +483,12 @@ async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict
     ]
 
 
-async def task_page_row(db: AsyncSession, place, task) -> dict:
+async def task_page_row(db: AsyncSession, place, task, *, me: str) -> dict:
     """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
     snapshot a subscription to it opens with. The caller has authorised the
     reader."""
     cards = await AcceptService(db).latest_by_task([task.id])
-    out = await task_out(db, task, cards.get(task.id))
+    out = await task_out(db, task, cards.get(task.id), me=me)
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
     project = await ProjectRepository(db).get(place.project_id)

@@ -202,7 +202,7 @@ const madeHere = computed(() => {
         made.id !== conversationId.value &&
         (!made.source_block_id || made.source_block_id === id)
     )
-    .map((made) => taskLine(made, viewer.value, nameOf))
+    .map((made) => taskLine(made, nameOf))
 })
 // The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
 const refs = computed(() => ({

@@ -19,10 +19,6 @@ import { taskDotStyle, taskPhraseLabel } from '@/lib/board'
 import { RECENT_DONE } from '@/lib/channelTasks'
 import { relTime } from '@/lib/relTime'
 import { taskTitle } from '@/lib/topicState'
-import { myHandle } from '@/me'
-
-const ME = myHandle()
-
 const props = defineProps<{
   topic: Topic
   /** 综合：最上面是项目总览，不是频道说明。 */
@@ -254,7 +250,7 @@ async function save() {
           <span class="co-task__title t-body">{{ taskTitle(task) }}</span>
           <span class="co-task__state t-meta">
             <span class="co-dot" :style="taskDotStyle(task)" aria-hidden="true" />
-            {{ taskPhraseLabel(task, ME) }}
+            {{ taskPhraseLabel(task) }}
           </span>
         </span>
         <span v-if="latest(task)" class="co-task__latest t-meta">{{ latest(task) }}</span>
