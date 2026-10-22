@@ -100,6 +100,26 @@ describe('邀请提醒在验收卡上的接头', () => {
     expect(noteAccepted).toHaveBeenCalledTimes(1)
   })
 
+  it('点了「检查过了自动合并」，卡后来自己合上：也算他的一次采纳', async () => {
+    getAcceptCards.mockResolvedValue({ data: [card({ pr_number: 7 })] })
+    const api = host()
+    await flush()
+    getAcceptCards.mockResolvedValue({ data: [card({ pr_number: 7, status: 'accepted', decided_by: 'alice' })] })
+    await api.reload()
+    await flush()
+    expect(noteAccepted).toHaveBeenCalledTimes(1)
+  })
+
+  it('卡是别人采纳的，不算他的', async () => {
+    getAcceptCards.mockResolvedValue({ data: [card()] })
+    const api = host()
+    await flush()
+    getAcceptCards.mockResolvedValue({ data: [card({ status: 'accepted', decided_by: 'bob' })] })
+    await api.reload()
+    await flush()
+    expect(noteAccepted).not.toHaveBeenCalled()
+  })
+
   it('合并冲突没采纳成，不算', async () => {
     getAcceptCards.mockResolvedValue({ data: [card()] })
     acceptCard.mockResolvedValue({ status: 'conflict' })
