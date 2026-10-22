@@ -160,7 +160,7 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
           // 上次待的地方还在，就直接落回它——每天的主路径是「回到昨天那个房间」，
           // 先落到项目首页等于多加一跳。不在了（或没记过）才落到项目首页。
           to: lastPlace ? placeHref(ref, lastPlace) : `/projects/${ref}`,
-          // 项目里的每一页（频道、看板、设置）都算站在这一格上。左边的竖条靠这个画：
+          // 项目里的每一页（频道、看板、设置）都算站在这一格上。选中竖条靠这个画：
           // RailItem 自己绑着 aria-current，没有 match 的格子绑上去的是 undefined，
           // 会盖掉链接本来算出的激活态。地址里的项目可能是短名、旧短名或 UUID
           // （旧链接、还没换成短名的那一瞬），三种都要认。
