@@ -46,21 +46,38 @@ class FakeSender:
 @pytest.fixture
 def people(client):
     """A person who has claimed the 内测 credits, one who has not, an agent
-    identity and an account with a placeholder address."""
+    identity, an account with a placeholder address and a seeded test account
+    under a reserved name."""
     claimed = _bearer(client, "bn-claimed")
     _bearer(client, "bn-fresh")
     _bearer(client, "bn-agent")
     _bearer(client, "bn-placeholder")
+    _bearer(client, "bn-seeded")
     assert client.post("/users/me/credits/beta", headers=claimed).is_success
-    ids = _ids(client, "bn-claimed", "bn-fresh", "bn-agent", "bn-placeholder")
+    ids = _ids(
+        client, "bn-claimed", "bn-fresh", "bn-agent", "bn-placeholder", "bn-seeded"
+    )
 
     async def mark() -> None:
         async with client.test_factory() as session:
             session.add(AgentBinding(user_id=ids["bn-agent"]))
+            # seed_user gives example.com, a name reserved for examples that the
+            # letter skips; the two real people get an ordinary address.
+            for handle in ("bn-claimed", "bn-fresh"):
+                await session.execute(
+                    update(User)
+                    .where(User.id == ids[handle])
+                    .values(email=f"{handle}@school.edu.cn")
+                )
             await session.execute(
                 update(User)
                 .where(User.id == ids["bn-placeholder"])
                 .values(email="bn-placeholder@placeholder.internal")
+            )
+            await session.execute(
+                update(User)
+                .where(User.id == ids["bn-seeded"])
+                .values(email="bn-seeded@agents.cheese.local")
             )
             await session.commit()
 
@@ -99,6 +116,7 @@ def test_a_dry_run_lists_the_people_and_mails_nobody(people, run):
     assert {people["bn-claimed"], people["bn-fresh"]} <= listed
     assert people["bn-agent"] not in listed
     assert people["bn-placeholder"] not in listed
+    assert people["bn-seeded"] not in listed
     sample = (run.state / f"sample-{people['bn-fresh']}.txt").read_text()
     assert "Subject: 知是正在内测" in sample
     assert not list((run.state / "sent").iterdir())

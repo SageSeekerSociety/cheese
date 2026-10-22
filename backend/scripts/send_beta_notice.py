@@ -5,9 +5,15 @@
     python -m scripts.send_beta_notice --state-dir /data/beta-notice --send     # mails
 
 Who gets it: every live account (``deleted_at IS NULL``) whose address can receive
-mail (not a placeholder, ``app.core.email.is_placeholder_email``) and that is a
-person, not an agent identity (no row in ``agent_bindings``). Registration verifies
-the address, so a live account with a real address is a verified one.
+mail and that is a person, not an agent identity (no row in ``agent_bindings``).
+An address cannot receive mail when it is a placeholder
+(``app.core.email.is_placeholder_email``) or sits under a name reserved for tests
+and examples (RFC 2606/6761: ``.test``, ``.example``, ``.invalid``, ``.localhost``,
+``.local``, and ``example.com/net/org``), which the seed and test accounts on a
+deployment use. Registration verifies the address, so what is left is verified.
+
+The state directory must outlive the container: on the dev box that is under
+``/data/apphome`` (a host mount), never ``/tmp``.
 
 What each letter says is worked out for that person when it is written: their name
 (profile nickname, else handle), what their own plan issues a month, and whether
@@ -51,6 +57,17 @@ from app.domain.usage import referrals
 from app.domain.usage.incentives import CreditIncentives
 from app.domain.user.models import User, UserProfile
 
+_RESERVED_SUFFIXES = (".test", ".example", ".invalid", ".localhost", ".local")
+_RESERVED_DOMAINS = frozenset({"example.com", "example.net", "example.org"})
+
+
+def deliverable(email: str | None) -> bool:
+    """An address a letter can reach: not a placeholder, not under a test name."""
+    if is_placeholder_email(email):
+        return False
+    domain = (email or "").rsplit("@", 1)[1].strip().lower()
+    return domain not in _RESERVED_DOMAINS and not domain.endswith(_RESERVED_SUFFIXES)
+
 
 class Log:
     def __init__(self, path: Path) -> None:
@@ -73,7 +90,7 @@ async def recipients(session) -> list[tuple[User, str]]:
             .order_by(User.id)
         )
     )
-    users = [u for u in users if not is_placeholder_email(u.email)]
+    users = [u for u in users if deliverable(u.email)]
     nicknames = dict(
         (
             await session.execute(
