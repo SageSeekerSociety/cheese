@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 项目总览（画面）：进项目落在这一页。它答的是「这个项目怎么样了」——
 //
-// - 现状：AI 队友读项目写下的几句，最上面一整行（后端定什么时候重写）；
+// - 现状：项目分成的几块，每块的状态和点得开的出处，最上面一整行（后端定什么时候重写）；
 // - 项目目标：人写的那一份文档，只读地显示开头，改它去文档页；还空着时可以让 AI 队友
 //   起草第一版；
 // - 最近进展：最近两周发生了什么，按天排（后端从已有的事实算，`project_progress`）；
@@ -92,7 +92,9 @@ const deadlineText = computed(() => {
 })
 
 // ---- 现状：写成过、或者正在写，才有这一块 ----
-const situationShown = computed(() => !!props.situation && (!!props.situation.content || props.situation.writing))
+const situationShown = computed(
+  () => !!props.situation && (props.situation.parts.length > 0 || props.situation.writing)
+)
 
 // ---- 起草项目目标：还空着时，点了才展开补充说明那一小块 ----
 const draftOpen = ref(false)
@@ -168,11 +170,13 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
     <SituationCard
       v-if="situationShown && situation"
       class="ov-situation"
-      :content="situation.content"
+      :parts="situation.parts"
       :written-at="situation.written_at"
       :writing="situation.writing"
       :agent-name="agentName ?? ''"
       :agent-handle="agentHandle ?? null"
+      @open-task="emit('open-task', $event)"
+      @open-goals="emit('edit-overview')"
     />
     <div class="overview">
       <div class="overview__main">

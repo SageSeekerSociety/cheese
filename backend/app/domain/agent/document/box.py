@@ -231,12 +231,12 @@ async def stop(
 
 
 async def _draft_material(db: AsyncSession, project_id: uuid.UUID) -> list[str]:
-    """起草项目总览时多给的：和「现状」同一份项目材料，加资料库里有哪些文件。"""
+    """起草项目总览时多给的：项目材料，加资料库里有哪些文件。"""
     found = await project_material.gather(db, project_id)
     names = await project_material.library_names(db, project_id)
     listed = "\n".join(f"- library/{name}" for name in names) or "（空）"
     return [
-        f"<项目材料>\n{found.text}\n</项目材料>",
+        f"<项目材料>\n{found}\n</项目材料>",
         f"<资料库里的文件>\n{listed}\n</资料库里的文件>",
     ]
 
