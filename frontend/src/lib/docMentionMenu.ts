@@ -27,11 +27,14 @@ export interface RefItem extends MentionItem {
 const LIMIT = 7
 
 /** 打 @ 时的候选，按名字或账号搜。人在前、AI 队友在后：对话里 @ 芝士是叫它干活，
- *  所以它排第一；文档里的 @ 只是写下这是谁（负责人、找谁确认），写的多半是人。 */
+ *  所以它排第一；文档里的 @ 只是写下这是谁（负责人、找谁确认），写的多半是人。
+ *
+ *  人**不截断**：菜单自己有高度上限、自己滚，截在这一层等于名单第 8 个人以后永远
+ *  选不到。话题和文档还是各取几条——它们和人是两类东西，搜索时挤在一起更难看。 */
 export function peopleItems(pool: MentionPoolEntry[], query: string): RefItem[] {
   const q = query.toLowerCase()
   const found = pool.filter((p) => p.label.toLowerCase().includes(q) || p.handle.toLowerCase().includes(q))
-  return [...found.filter((p) => !p.agent), ...found.filter((p) => p.agent)].slice(0, LIMIT).map((p) => ({
+  return [...found.filter((p) => !p.agent), ...found.filter((p) => p.agent)].map((p) => ({
     label: p.label,
     kind: 'member',
     insert: p.handle,

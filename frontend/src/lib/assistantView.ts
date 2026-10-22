@@ -117,6 +117,7 @@ const STEP_ARG: Record<string, string> = {
   cheese_settings_set: 'key',
   cheese_routine: 'title',
   cheese_notify_me: 'text',
+  cheese_memory: 'description',
 }
 
 export function stepView(step: AssistantStep): PanelStep {

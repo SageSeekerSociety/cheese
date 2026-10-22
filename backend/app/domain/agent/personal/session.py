@@ -105,6 +105,7 @@ TOOLS = (
     "cheese_settings_set",
     "cheese_routine",
     "cheese_notify_me",
+    "cheese_memory",
     "cheese_web_fetch",
     "cheese_web_search",
     "cheese_problem_write",

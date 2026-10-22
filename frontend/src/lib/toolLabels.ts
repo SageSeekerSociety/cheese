@@ -100,6 +100,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_settings_set: 'toolLabels.cheeseSettingsSet',
   cheese_routine: 'toolLabels.cheeseRoutine',
   cheese_notify_me: 'toolLabels.cheeseNotifyMe',
+  cheese_memory: 'toolLabels.cheeseMemory',
   cheese_web_fetch: 'toolLabels.cheeseWebFetch',
   cheese_web_search: 'toolLabels.cheeseWebSearch',
   cheese_my_tasks: 'toolLabels.cheeseMyTasks',

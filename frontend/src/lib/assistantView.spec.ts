@@ -131,4 +131,37 @@ describe('writesView', () => {
     expect(card.canUndo).toBe(true)
     expect(card.collapsed).toBeFalsy()
   })
+
+  it('记下、改写、忘掉一条记忆：各一张卡，写做了哪一种和它的描述，能撤销', () => {
+    const memory = (id: number, before: string | null, after: string | null) =>
+      ({
+        ...edit(id, 0, {}),
+        kind: 'memory',
+        title: '记忆',
+        undoable: true,
+        changed: { memory: { label: '给老师写东西用书面语', before, after } },
+      }) as unknown as AssistantEdit
+    const view = writesView([memory(1, null, 'a'), memory(2, 'a', 'b'), memory(3, 'b', null)], terms, null)
+
+    expect(view.changes.map((c) => [c.title, c.rows[0].value, c.rows[0].label, c.canUndo])).toEqual([
+      [
+        t('tasks.assistant.changes.memory.title'),
+        '给老师写东西用书面语',
+        t('tasks.assistant.changes.memory.saved'),
+        true,
+      ],
+      [
+        t('tasks.assistant.changes.memory.title'),
+        '给老师写东西用书面语',
+        t('tasks.assistant.changes.memory.changed'),
+        true,
+      ],
+      [
+        t('tasks.assistant.changes.memory.title'),
+        '给老师写东西用书面语',
+        t('tasks.assistant.changes.memory.forgotten'),
+        true,
+      ],
+    ])
+  })
 })

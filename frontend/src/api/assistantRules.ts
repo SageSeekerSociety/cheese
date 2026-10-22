@@ -80,3 +80,42 @@ export function setAssistantRoutine(id: string, action: 'pause' | 'resume' | 'de
     ? request<AssistantRoutines>(`/assistant/routines/${id}`, { method: 'DELETE' })
     : request<AssistantRoutines>(`/assistant/routines/${id}/${action}`, { method: 'POST' })
 }
+
+/** 芝士记得的一件事：一句描述（列在每段新对话开头）和正文。 */
+export interface AssistantMemoryItem {
+  name: string
+  description: string
+  /** `user` 你是谁，`feedback` 做事的要求，`project` 进行中的安排，`reference` 外部资料。 */
+  type: string
+  text: string
+  updatedAt: string
+}
+
+export interface AssistantMemory {
+  /** 关掉时记下的保留，芝士不用也不记。 */
+  enabled: boolean
+  items: AssistantMemoryItem[]
+}
+
+export function getAssistantMemory(): Promise<AssistantMemory> {
+  return request<AssistantMemory>('/assistant/memory')
+}
+
+export function setAssistantMemoryEnabled(enabled: boolean): Promise<AssistantMemory> {
+  return request<AssistantMemory>('/assistant/memory', { method: 'PUT', body: JSON.stringify({ enabled }) })
+}
+
+export function saveAssistantMemoryItem(name: string, description: string, text: string): Promise<AssistantMemory> {
+  return request<AssistantMemory>(`/assistant/memory/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ description, text }),
+  })
+}
+
+export function deleteAssistantMemoryItem(name: string): Promise<AssistantMemory> {
+  return request<AssistantMemory>(`/assistant/memory/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
+export function clearAssistantMemory(): Promise<AssistantMemory> {
+  return request<AssistantMemory>('/assistant/memory', { method: 'DELETE' })
+}

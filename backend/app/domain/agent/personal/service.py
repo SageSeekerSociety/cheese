@@ -61,7 +61,8 @@ from app.domain.agent.session_host.contract import (
     StartAbandoned,
 )
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.assistant import proposals
+from app.domain.assistant import gate, proposals
+from app.domain.assistant import memory as assistant_memory
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -585,6 +586,13 @@ async def ask(
         )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         timezone = (await timezones_by_ids(session, [user_id])).get(user_id)
+        # What it remembers of them goes with the start of a conversation, never
+        # in the rules, which stay the same for everyone.
+        remembered = (
+            await assistant_memory.index(session, handle)
+            if handle and (await gate.rules_of(session, user_id)).memory
+            else None
+        )
         # Cards the person decided on after the answer that put them up had
         # ended: that answer never heard how they ended, so this one is told.
         decided = await proposals.untold(
@@ -630,7 +638,10 @@ async def ask(
         said += "\n\n" + now_line(timezone)
         preface = "\n\n".join(
             part
-            for part in (about(handle or str(user_id), timezone), earlier(before))
+            for part in (
+                about(handle or str(user_id), timezone, remembered),
+                earlier(before),
+            )
             if part
         )
         return Prompt(work, said, acting=acting, preface=preface)

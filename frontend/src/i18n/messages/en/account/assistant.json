@@ -19,6 +19,21 @@
     "remove": "Delete",
     "empty": "None"
   },
+  "memory": {
+    "title": "Memory",
+    "count": "{n}",
+    "use": "Use memory",
+    "desc": "What Cheese noted about you in your panel conversations. Every new conversation uses it. Only your own Cheese uses it; it never appears in channels.",
+    "off": "Off: Cheese neither uses it nor adds to it. What it noted is kept.",
+    "empty": "No memories",
+    "description": "Description",
+    "text": "Content",
+    "save": "Save",
+    "edit": "Edit",
+    "clear": "Clear all",
+    "clearTitle": "Clear all memories?",
+    "clearBody": "Cheese forgets these {n}. This cannot be undone."
+  },
   "routines": {
     "title": "Routines",
     "desc": "Cheese runs these on a schedule or when something happens, and notifies you of the result. To create or change one, tell Cheese in the panel.",

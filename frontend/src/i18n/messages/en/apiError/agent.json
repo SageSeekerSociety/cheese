@@ -24,6 +24,8 @@
   "assistantProposalSettled": "This draft has already been handled",
   "assistantRefUnknown": "\"{ref}\" is not a reference. A project's things are its short name and a path, such as ml-course/channels/3, ml-course/tasks/12, ml-course/tasks/12/review or ml-course/docs/5; the project itself is its short name.",
   "assistantGateNotPassed": "This action has not been authorized",
+  "assistantMemoryOff": "The person has turned memory off in their settings; nothing is saved or changed.",
+  "assistantMemoryNotInRuns": "A routine's run does not save memories: the person is not there, and what it read is other people's words and the platform's records.",
   "assistantActNeeds": "Missing {what}",
   "assistantActReturned": "Not done. The reason, written to the person (\"you\" is the person): {reason}\nAct on that reason: if it strays from what the person said, change it to what they said and try again; if the person has to decide or add something (whether to, which option, what to answer), ask them in your reply and act once they have said; if only their yes is missing, call again with confirm=true and they decide on a card in the panel. Do not reword it to get past the check.",
   "assistantNoReviewCard": "This task has no review card yet",
