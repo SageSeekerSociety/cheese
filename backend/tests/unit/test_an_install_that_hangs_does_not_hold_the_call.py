@@ -45,7 +45,7 @@ async def _start(hub, lease):
         hub,
         lease,
         device_id="machine",
-        project_id=uuid.uuid4(),
+        namespace=uuid.uuid4(),
         work_resource=str(uuid.uuid4()),
         setup={},
         sandbox=False,
@@ -189,18 +189,14 @@ class _Row:
         self.conversation_id = uuid.uuid4()
 
 
-class _Topic:
-    resource_id = "resource"
-
-
-class _Topics:
+class _Holder:
     """The room, enough of it for the installation to hand its lease over."""
 
-    def __init__(self, db):
-        pass
+    generation = "resource"
 
-    async def lock_for_execution(self, topic_id):
-        return _Topic()
+
+async def _lock_for_work(db, holder_id):
+    return _Holder()
 
 
 class _Sessions:
@@ -262,7 +258,7 @@ def _install_case(
     monkeypatch.setattr(session_work, "AsyncSession", _Db)
     monkeypatch.setattr(session_work, "AgentSessionService", _Sessions)
     monkeypatch.setattr(session_work, "HostPool", _Pool)
-    monkeypatch.setattr(session_work, "TopicService", _Topics)
+    monkeypatch.setattr(session_work.holders, "lock_for_work", _lock_for_work)
     monkeypatch.setattr(session_work, "publish_line", AsyncMock())
     monkeypatch.setattr(
         session_work, "bind_resource_token", lambda *a, **k: "scoped-token"
@@ -312,9 +308,10 @@ def _install_case(
         env={},
         api="http://localhost:8000",
         host_api="http://localhost:8000",
+        namespace=uuid.uuid4(),
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
-        room_id=uuid.uuid4(),
+        holder_id=uuid.uuid4(),
         actor_handle="someone",
         work_resource=str(uuid.uuid4()),
         hub=hub,

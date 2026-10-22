@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import alerting
 from app.core.config import settings
+from app.domain.machine import holder as holders
 from app.domain.machine.models import (
     CloudHost,
     HostReading,
@@ -129,7 +130,9 @@ async def record(
         load1=machine.get("load1"),
         sandboxes=len(groups) if groups is not None else None,
     )
-    homes = {(str(home.project_id), home.resource_id): home.id for home in live}
+    homes = {
+        (str(holders.namespace_of(home)), home.resource_id): home.id for home in live
+    }
     by_resource = {home.resource_id: home.id for home in live}
     usage: dict[uuid.UUID, dict] = {}
     for home in reading.get("homes") or []:

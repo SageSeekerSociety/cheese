@@ -1,12 +1,13 @@
 """Who may run a room on the team's cloud: anyone on the project, nobody else."""
 
 import asyncio
+import uuid
 
 import pytest
 
 from app.core.errors import ForbiddenError
 from app.domain.identity.actor import Actor
-from app.domain.machine.services import HostPool
+from app.domain.machine.holder import require_project_member
 from tests.conftest import seed_user
 from tests.integration.conftest import add_external_member, post_project
 
@@ -17,8 +18,10 @@ def _may_use(client, project_id: str, handle: str) -> bool:
     async def _check() -> bool:
         async with client.test_factory() as session:  # type: ignore[attr-defined]
             try:
-                await HostPool(session).require_use_authority(
-                    project_id, Actor(handle=handle, user_id=user_id, via="token")
+                await require_project_member(
+                    session,
+                    uuid.UUID(project_id),
+                    Actor(handle=handle, user_id=user_id, via="token"),
                 )
             except ForbiddenError:
                 return False
