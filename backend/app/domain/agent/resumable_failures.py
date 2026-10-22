@@ -35,7 +35,11 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
-from app.domain.agent.platform_failures import RUNNER_REPLACED_CODE, is_request_refused
+from app.domain.agent.platform_failures import (
+    RUNNER_REPLACED_CODE,
+    is_provider_out_of_credit,
+    is_request_refused,
+)
 
 #: One kind of transient failure, and how the platform waits it out.
 #:
@@ -96,17 +100,13 @@ class Resumable:
         return POLICIES[self.kind]
 
 
-# Ruled out before anything else is read. Each names a state no wait changes.
+# Ruled out before anything else is read. Each names a state no wait changes;
+# so does a provider account out of credit (`is_provider_out_of_credit`).
 _NEVER = re.compile(
-    r"insufficient[ _](balance|quota|funds)"
-    r"|余额不足|请充值|\bbilling\b"
-    r"|quota (exceeded|exhausted)"
-    r"|usage limit (exceeded|reached)|UsageLimitError"
+    r"usage limit (exceeded|reached)|UsageLimitError"
     r"|(reached|hit) your (usage )?limit"
-    r"|\bsuspended\b"
     r"|invalid[ _](api[ _]key|x-api-key|request|_request_error)"
     r"|authentication_error|permission_error|\bunauthori[sz]ed\b"
-    r"|credit balance is too low"
     # Our own gateway's lifetime cap on an upstream key
     # (`deploy/gateway/spend_cap.py`): past it every call is refused until
     # somebody raises the cap or moves the model off that key. LiteLLM words
@@ -215,7 +215,12 @@ def classify(
     said = (text or "").strip()
     if not said:
         return None
-    if _NEVER.search(said) or is_request_refused(said) or _CLIENT_ERROR.search(said):
+    if (
+        is_provider_out_of_credit(said)
+        or _NEVER.search(said)
+        or is_request_refused(said)
+        or _CLIENT_ERROR.search(said)
+    ):
         stated = reset_wait_s if reset_wait_s is not None else stated_wait(said)
         # A quota that names its own reset is a wait after all.
         if stated is not None and _QUOTA_WITH_RESET.search(said):

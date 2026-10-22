@@ -173,7 +173,9 @@ function reopen() {
           :title="q.content"
           @click="(at = i), (reviewing = false)"
         >
-          <span class="ask-group__tab-no" aria-hidden="true">{{ answeredText(i) ? '✓' : i + 1 }}</span>
+          <span v-if="askHeader(q) || answeredText(i)" class="ask-group__tab-no" aria-hidden="true">{{
+            answeredText(i) ? '✓' : i + 1
+          }}</span>
           <span class="ask-group__tab-label">{{ askHeader(q) || i + 1 }}</span>
         </button>
       </div>
