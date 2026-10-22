@@ -103,6 +103,15 @@ describe('authorizing from the app', () => {
     expect(opened.searchParams.get('challenge')).toBe(hash)
   })
 
+  it("carries a friend's invite code to the browser, and nothing when there is none", async () => {
+    desktopApp(app)
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    await signInInBrowser('signup', '/', 'K7Q2M9')
+    expect(new URL(String(open.mock.calls[0][0])).searchParams.get('invite')).toBe('K7Q2M9')
+    await signInInBrowser('signup', '/')
+    expect(new URL(String(open.mock.calls[1][0])).searchParams.has('invite')).toBe(false)
+  })
+
   it('uses the secret at most once', async () => {
     desktopApp(app)
     vi.spyOn(window, 'open').mockReturnValue(null)
