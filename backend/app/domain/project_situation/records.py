@@ -31,6 +31,11 @@ from app.domain.room_task.models import Task, TaskStatus
 WINDOW = timedelta(days=14)
 #: 一个任务交给模型的改动标题最多几条（最近的在前）：多步交付的任务不刷屏。
 _SUBJECTS_PER_TASK = 3
+
+#: 一张卡被采纳的时刻。在平台上点的采纳记在 ``decided_at``；有人在 GitHub 上直接合
+#: 了 PR，卡也是 accepted，那一刻只记在 ``pr_merged_at``（``review`` 的
+#: ``_settle_external_merge``），``decided_at`` 是空的。
+_ACCEPTED_AT = func.coalesce(AcceptCard.decided_at, AcceptCard.pr_merged_at)
 #: 项目目标最多取多少字：比项目目标的写作预算（1500）宽，人写超了也看得到。
 _GOAL_CHARS = 6000
 
@@ -118,15 +123,16 @@ async def gather(
             Task.title,
             AcceptCard.change_subject,
             AcceptCard.deliverable_name,
-            AcceptCard.decided_at,
+            _ACCEPTED_AT,
         )
         .join(Task, Task.id == AcceptCard.task_id)
         .where(
             Task.project_id == project_id,
             Task.room_id.in_(rooms),
             AcceptCard.status == AcceptStatus.accepted,
+            _ACCEPTED_AT.isnot(None),
         )
-        .order_by(AcceptCard.decided_at.desc())
+        .order_by(_ACCEPTED_AT.desc())
     )
     deliveries: dict[uuid.UUID, Delivery] = {}
     for card_id, task_id, room_id, title, subject, deliverable, at in accepted:
@@ -182,7 +188,7 @@ async def mark(session: AsyncSession, project_id: uuid.UUID) -> str:
         )
     ).one()
     accepted = await session.scalar(
-        select(func.max(AcceptCard.decided_at))
+        select(func.max(_ACCEPTED_AT))
         .join(Task, Task.id == AcceptCard.task_id)
         .where(
             Task.project_id == project_id,

@@ -90,9 +90,16 @@ def _close(client, task: str) -> None:
 
 
 def _accepted(
-    client, channel: str, task: str, subject: str, *, ago: timedelta = timedelta(0)
+    client,
+    channel: str,
+    task: str,
+    subject: str,
+    *,
+    ago: timedelta = timedelta(0),
+    on_github: bool = False,
 ) -> str:
-    """这个任务的一次交付被采纳了，``ago`` 以前。"""
+    """这个任务的一次交付被采纳了，``ago`` 以前。``on_github``：没在平台上点采纳，
+    是有人在 GitHub 上直接合了它的 PR。"""
 
     async def seed() -> str:
         async with client.test_factory() as session:
@@ -102,8 +109,9 @@ def _accepted(
                 reviewer_handle="alice",
                 change_subject=subject,
                 status=AcceptStatus.accepted,
-                decided_by="alice",
-                decided_at=datetime.now(UTC) - ago,
+                decided_by=None if on_github else "alice",
+                decided_at=None if on_github else datetime.now(UTC) - ago,
+                pr_merged_at=datetime.now(UTC) - ago if on_github else None,
             )
             session.add(card)
             await session.commit()
@@ -337,6 +345,30 @@ def test_a_part_delivered_long_ago_is_still_usable(client, monkeypatch):
     assert "数据统计" in model.materials[0]
     assert [(p["name"], p["status"]) for p in parts] == [
         ("统计", "usable"),
+        ("报名", "underway"),
+    ]
+
+
+def test_a_delivery_merged_on_github_is_usable(client, monkeypatch):
+    project = _project(client)
+    channel = _channel(client, project)
+    export = _task(client, channel, "报名数据导出")
+    _accepted(client, channel, export, "按场次导出", on_github=True)
+    _close(client, export)
+    _task(client, channel, "报名与候补")
+    model = _Model(
+        [
+            {"name": "导出", "text": "可以按场次导出", "sources": ["D1"]},
+            {"name": "报名", "text": "正在补候补", "sources": ["T1"]},
+        ]
+    )
+    monkeypatch.setattr(writer, "write", model.write)
+    started = _quiet_rewrites(monkeypatch)
+
+    parts = _card(client, project, started)
+
+    assert [(p["name"], p["status"]) for p in parts] == [
+        ("导出", "usable"),
         ("报名", "underway"),
     ]
 
