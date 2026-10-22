@@ -364,6 +364,9 @@ class ActIn(BaseModel):
     #: A web page, and what to learn from it.
     url: str = ""
     prompt: str = ""
+    #: Put it to the person if the gate stops it, rather than hand it back:
+    #: 芝士 has nothing to put right, only the person's yes is missing.
+    confirm: bool = False
 
 
 def _need(value: str, what: str) -> str:
@@ -797,8 +800,11 @@ async def agent_act(
     questions: Questions,
 ) -> dict:
     """An action 芝士 is about to take for the person, through its gate: let
-    through (``done``, with the pass and the calls that do it) or turned into
-    a card the person confirms (``asked``, and why)."""
+    through (``done``, with the pass and the calls that do it), handed back to
+    芝士 with the reason (``returned``), or turned into a card the person
+    confirms (``card``). A look's stop goes back to 芝士 the first few times in
+    an answer (``gate.RETURNS_PER_ANSWER``) unless it asks for a card
+    (``confirm``) or nobody is there to ask."""
     started = time.monotonic()
     claims = resolver.delegation()
     if claims is None or claims.user_id is None or not claims.work:
@@ -823,6 +829,14 @@ async def agent_act(
     verdict = await gate.judge(
         db, user_id=me.user_id, conversation_id=conversation, action=plan.action
     )
+    returned = (
+        not verdict.allowed
+        and verdict.stage in ("quick", "reasoned")
+        and not body.confirm
+        and not await _unattended(questions, claims.work)
+        and await gate.returned_in(db, me.user_id, claims.work)
+        < gate.RETURNS_PER_ANSWER
+    )
     await gate.keep(
         db,
         user_id=me.user_id,
@@ -831,8 +845,18 @@ async def agent_act(
         action=plan.action,
         verdict=verdict,
         started=started,
+        returned=returned,
     )
     await db.commit()
+    if returned:
+        return ok(
+            {
+                "done": False,
+                "returned": True,
+                "reason": verdict.reason,
+                "said": say("assistantActReturned", reason=verdict.reason),
+            }
+        )
     if verdict.allowed:
         token = await passes.issue(claims.work, plan.doors)
         if token is not None:

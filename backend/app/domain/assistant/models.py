@@ -202,8 +202,8 @@ class AssistantRules(Timestamps, Base):
 
 class AssistantGateCheck(Base):
     """One action a 芝士 was about to take for a person, and what the gate made
-    of it (``assistant.gate``): done (``allowed``) or turned into a card for
-    the person (``asked``), at which ``stage`` that was settled — by one of
+    of it (``assistant.gate``): done (``allowed``), turned into a card for
+    the person (``asked``) or handed back to 芝士 (``returned``), at which ``stage`` that was settled — by one of
     the person's rules, by the gate's quick look, or by its second, reasoned
     look — why, and what the look cost. The platform pays for the looks; these
     rows are how it sees them, and how the person sees what was done for them.
