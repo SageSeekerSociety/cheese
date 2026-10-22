@@ -148,6 +148,26 @@ def test_skipping_a_group_question_removes_only_that_persons_wait(
             assert row["awaits_me"] is expected
 
 
+@pytest.mark.parametrize("mutation", ["rename", "collaborators"])
+def test_updating_a_task_keeps_the_callers_personal_question_marker(
+    client, stub_hooks, monkeypatch, mutation
+):
+    project, room, task = _setup(client)
+    question = _ask(client, stub_hooks, monkeypatch, task, to=("alice", "bob"))
+    headers = session_auth_headers("alice")
+    if mutation == "rename":
+        response = client.post(
+            f"/topics/{task}/title", json={"title": "预算统计口径"}, headers=headers
+        )
+    else:
+        response = client.patch(
+            f"/topics/{task}/task", json={"contributor_handles": []}, headers=headers
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["awaits_me"] is True
+    _still_waits(client, project, room, task, question)
+
+
 def test_taking_back_an_answer_reopens_the_question_in_every_task_view(
     client, stub_hooks, monkeypatch
 ):
