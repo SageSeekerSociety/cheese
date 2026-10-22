@@ -207,6 +207,21 @@ def test_what_people_said_is_not_material(client, monkeypatch):
     assert "只给几个人看的事" not in model.materials[0]
 
 
+def test_a_closed_task_is_not_offered_as_work_still_going(client, monkeypatch):
+    model = _Model()
+    monkeypatch.setattr(writer, "write", model.write)
+    started = _quiet_rewrites(monkeypatch)
+    project = _project(client)
+    channel = _channel(client, project)
+    _task(client, channel, "报名表单")
+    _close(client, _task(client, channel, "已经关掉的事"))
+
+    _card(client, project, started)
+
+    assert "报名表单" in model.materials[0]
+    assert "已经关掉的事" not in model.materials[0]
+
+
 def test_a_part_without_a_valid_source_is_dropped(client, monkeypatch):
     project = _project(client)
     _goals(client, project, "做一个活动报名小程序，支持候补。")
@@ -217,7 +232,11 @@ def test_a_part_without_a_valid_source_is_dropped(client, monkeypatch):
             {"name": "状态灯", "text": "红灯判定仍在讨论", "sources": []},
             {"name": "统计", "text": "按月导出", "sources": ["T9", "D4"]},
             {"name": "后台", "text": "订单查询", "sources": [], "goal": "后台管理"},
-            {"name": "报名", "text": "报名表单正在补", "sources": ["T1", "T7"]},
+            {
+                "name": "报名",
+                "text": "报名表单正在补",
+                "sources": ["T1", "T7", {"ref": "T1"}],
+            },
         ]
     )
     monkeypatch.setattr(writer, "write", model.write)
@@ -307,7 +326,7 @@ def test_talk_does_not_rewrite_and_a_finished_task_does_in_minutes(client, monke
     # 任务做完了：几分钟后就重写。
     _close(client, task)
     assert _read(client, project, at=now + timedelta(minutes=2)).writing is False
-    assert _read(client, project, at=now + timedelta(hours=3)).writing is True
+    assert _read(client, project, at=now + timedelta(minutes=6)).writing is True
 
 
 def test_a_project_where_nothing_happened_asks_no_model(client, monkeypatch):

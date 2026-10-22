@@ -184,9 +184,13 @@ async def mark(session: AsyncSession, project_id: uuid.UUID) -> str:
             AcceptCard.status == AcceptStatus.accepted,
         )
     )
+    # The leading "records" sets this mark apart from the one the Markdown card
+    # stored: a row the previous release rewrites during a deploy carries that
+    # older mark, so it reads as due here instead of as an empty card in date.
     return "|".join(
         str(part)
         for part in (
+            "records",
             overview.version if overview is not None else 0,
             *tasks,
             accepted,

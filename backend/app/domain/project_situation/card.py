@@ -64,10 +64,11 @@ def build(answer: object, records: Records) -> list[dict[str, Any]]:
         if not name or not text:
             continue
         refs = part.get("sources")
+        listed = refs if isinstance(refs, list) else []
         cited = [
             known[ref]
-            for ref in dict.fromkeys(refs if isinstance(refs, list) else [])
-            if isinstance(ref, str) and ref in known
+            for ref in dict.fromkeys(r for r in listed if isinstance(r, str))
+            if ref in known
         ]
         quote = _text(part.get("goal"))
         quoted = bool(quote) and _squash(quote) in goal
