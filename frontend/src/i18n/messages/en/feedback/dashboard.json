@@ -6,8 +6,8 @@
     "title": "New / resolved / deployed per day"
   },
   "column": {
-    "agent": "Agent-filed",
-    "note": "These four are filters, not a partition: \"Agent-filed\" is a source and overlaps public/private, so they don't sum to the total.",
+    "agent": "Found by AI teammates",
+    "note": "These four are filters, not a partition: \"Found by AI teammates\" is a source and overlaps public/private, so they don't sum to the total.",
     "private": "Private",
     "public": "Public",
     "security": "Security",
@@ -23,7 +23,7 @@
     "eta": "Exhaust eta",
     "exhausted": "Exhausted",
     "low": "Running low",
-    "note": "Exhausted / low / unlimited are three mutually exclusive sets — unlimited is the ABSENCE of a grant. Burn rate is derived from resource_usage (compute_grants has no deduction ledger). ETA is linear extrapolation; unlimited and zero-burn both render —.",
+    "note": "Exhausted / low / unlimited are three mutually exclusive sets: unlimited means no credits were ever granted, not that they ran out. Burn rate is derived from usage records (credit grants carry no deduction history), not from balance differences. ETA is a linear extrapolation; unlimited and zero burn both show —.",
     "title": "Credits burnout",
     "unlimited": "Unlimited"
   },
@@ -41,11 +41,11 @@
   },
   "extras": {
     "disk": {
-      "note": "Covers only this host's workspace_root. Remote devices and cloud machines have their own disks and are invisible here.",
+      "note": "Covers only this backend host's workspace directory. Remote devices and cloud machines have their own disks and are invisible here.",
       "title": "Disk (this backend)"
     },
     "hostSlots": {
-      "note": "Slots held by sessions / all slots across the host pool.",
+      "note": "Slots held by AI teammates / all slots across the host pool.",
       "title": "Sandbox slots"
     },
     "hostStates": "Cloud hosts by status",
@@ -94,19 +94,19 @@
     "oauth": {
       "expired": "Expired",
       "expiring": "Expiring in 7 days",
-      "noRefresh": "No refresh_token",
-      "note": "Missing refresh_token is not the same as expired: an expired one can still be refreshed, one without refresh is permanently dead on expiry. token_expires is a fixed expiry, not a recent failure.",
-      "title": "OAuth credentials",
+      "noRefresh": "No refresh token",
+      "note": "No refresh token is not the same as expired: an expired one can still be refreshed, one with no refresh token stops working for good on expiry. The expiry time is fixed when access is granted; it does not mean a recent failure.",
+      "title": "OAuth authorizations",
       "total": "Connections"
     },
     "passkey": {
-      "note": "Denominator is all non-deleted accounts, not active ones (user has no last_login). TOTP lives in Redis, not the database — so this reports passkey, not 2FA coverage.",
+      "note": "The denominator is all non-deleted accounts, not active ones (accounts don't record their last sign-in). Two-step verification settings live in Redis, not the database, so this reports passkeys, not 2FA coverage.",
       "title": "Passkey coverage"
     },
     "unavailable": {
-      "githubAppMintFailureRate": "GitHub App mint failure rate: logged only, never counted.",
-      "githubAppPermissionGaps": "GitHub App permission gaps: granted_permissions() lives 10 minutes in process memory and is never stored.",
-      "loginLockoutStockAndRate": "Login lockout history: login_security rate-limiters are Redis keys with no history.",
+      "githubAppMintFailureRate": "GitHub App token issuing failure rate: logged only, never counted.",
+      "githubAppPermissionGaps": "GitHub App permission gaps: the granted permissions stay 10 minutes in process memory and are never stored.",
+      "loginLockoutStockAndRate": "Login lockout history: sign-in rate limits live only in Redis and keep no history.",
       "meteringPostFreeze": "Metering posting freeze: admission fails open on transport errors and leaves no trace outside the log.",
       "note": "Needs instrumentation. A zero here would mean checked and empty.",
       "title": "Not observable today"
@@ -138,7 +138,7 @@
   },
   "people": {
     "admins": "Platform admins",
-    "agents": "Agents",
+    "agents": "AI teammates",
     "chart": "New accounts per day",
     "humans": "Humans",
     "newInWindow": "New ({d}d)",
@@ -193,13 +193,13 @@
       "prompt_undelivered": "Prompt undelivered",
       "runtime_image_missing": "Runtime image missing",
       "storage_exhausted": "Storage exhausted",
-      "subscription_credential_expired": "Subscription credential expired",
-      "turn_timeout": "Turn timeout",
+      "subscription_credential_expired": "Subscription sign-in expired",
+      "turn_timeout": "Run timed out",
       "workspace_vcs_perms": "Workspace VCS perms"
     },
     "failures": {
-      "note": "Structured source is blocks.meta code, not agent_turns — that table has no failure column. Credits refusals are counted separately via credits_refused_at.",
-      "title": "Turn failures"
+      "note": "Counted from the reason on the platform notice each failure posts in the channel, not from run records: run records have no failure field. Refusals for lack of credits are counted separately, from the recorded refusal time.",
+      "title": "AI teammate run failures"
     },
     "host": {
       "empty": "No hosts with a failure streak",
@@ -216,7 +216,7 @@
     "needs": {
       "breakdown": "Reviewer {r} · Reporter {p} · Mentioned {a}",
       "empty": "Nothing is waiting on you",
-      "note": "Three reasons only — the closed set in delivery/addressing.py (reviewer / reporter / asked).",
+      "note": "Three reasons only, a closed set (reviewer / reporter / asked).",
       "room": "Room",
       "task": "Task",
       "title": "Needs you"
@@ -229,7 +229,7 @@
     },
     "stuck": {
       "empty": "Nothing is stuck",
-      "note": "Stuck is judged by note_code in the stuck set, never by note text — a code left out of the set is silent forever.",
+      "note": "Stuck is judged by whether the notice's code is in the stuck set, never by its text; a new code left out of the set never shows as stuck.",
       "title": "Stuck cards"
     }
   },
@@ -243,7 +243,7 @@
     "earliest": "earliest recovery {time}",
     "failures": "{n} consecutive failures",
     "needsReset": "the disabled ones need a manual reset",
-    "note": "Read from a snapshot the metering proxy writes beside the usage ledger (accounts.json), not from the database — the accounts behind the subscription route live only on the proxy's machine. The states are the proxy's own: cooling is a rate limit with a reset time, disabled has none and needs a manual reset. The snapshot ages, so when it is old it says when it was written.",
+    "note": "Read from a snapshot the metering proxy writes beside the usage ledger, not from the database: the accounts behind the subscription route live only on the proxy's machine. The states are the proxy's own: cooling is a rate limit with a reset time, disabled has none and needs a manual reset. The snapshot ages, so when it is old it says when it was written.",
     "reason": {
       "malformed": "The pool snapshot is not in a shape we can read",
       "missing": "The metering proxy has not written a pool snapshot yet (it may not be running)",
@@ -265,7 +265,7 @@
   },
   "product": {
     "northStar": "Accepted in {d}d",
-    "northStarNote": "Bucketed by decided_at. It is the LAST decision time and revoke overwrites it — a card accepted then revoked loses its accept moment.",
+    "northStarNote": "Counted by the time of the last decision. Revoking overwrites it, so a card accepted then revoked loses its accept moment.",
     "rejection": {
       "conflict": "Merge conflict",
       "gate": "Gate red / blocked",
@@ -277,9 +277,9 @@
       "voided": "Voided"
     },
     "unavailable": {
-      "churn": "Churn after credits exhausted: compute_grants has no exhausted_at, user has no last_login.",
+      "churn": "Churn after credits run out: credit grants don't record when they ran out, and accounts don't record their last sign-in.",
       "note": "No data source. Any number here would have to be invented.",
-      "summon": "Acceptance rate after summoning the agent: agent_turns has no summon flag and accept_cards has no origin turn — there is no foreign key between them.",
+      "summon": "Acceptance rate after mentioning the AI teammate: run records don't mark whether a mention started them, and acceptance cards don't record which run they came from, so the two can't be joined.",
       "title": "Not computable today"
     }
   },
@@ -290,7 +290,7 @@
   "retry": "Retry",
   "spine": {
     "dwellDetail": "p90 {p90} · max {max}",
-    "note": "Four stations are throughput at different moments, not a funnel over one cohort. The merge station counts PR cards only — a card without a PR has pr_merged_at empty forever. The machine gate is retired and not on the chain (#296).",
+    "note": "Four stations are throughput at different moments, not a funnel over one cohort. The merge station counts only cards with a PR: a card without one never gets a merge time. The machine gate is retired and not on the chain (#296).",
     "title": "Delivery chain"
   },
   "status": {
@@ -312,7 +312,7 @@
     "byRoute": "By supply route",
     "byRouteNote": "The unpriced column is tokens with no rate; split by route, it shows which route they came from, and where the KPI's number comes from.",
     "byUser": "Who triggered the usage",
-    "byUserNote": "Calls inside a project count for the person who started the turn; calls outside a project count for the person who made them. This is who triggered how much, not who contributed. Turns the platform started count for nobody: {tokens} tokens, {cost} in this window.",
+    "byUserNote": "Calls inside a project count for the person who started the AI teammate; calls outside a project count for the person who made them. This is who triggered how much, not who contributed. Runs the platform started count for nobody: {tokens} tokens, {cost} in this window.",
     "cacheCell": "cache {pct}",
     "cacheKpi": "Cache hits",
     "cacheNote": "Cache-read tokens ÷ input tokens (input includes cache reads and writes). Only calls that recorded their cache count: each route and kind of call counts from its first recorded cache read in the window. Gateway calls written before the gateway recorded cache show 0 only because nothing was recorded, so they are left out. {tokens} input tokens in this window are left out.",
@@ -335,10 +335,10 @@
     "hourly": "Tokens per hour (Beijing time)",
     "projectModels": "Models each project used",
     "recent": "Recent usage rows",
-    "recentNote": "The latest {n} usage rows in the window, in Beijing time. A row is not always one request: a subscription row is one request; a gateway row (marked “batch”) is what the gateway totalled for one model over a stretch of time and can cover many requests; a row from own credentials or a member's own Claude Code totals one model over one turn. The ledger does not record how many requests a row covers. A — in the cache column means the row did not record its cache.",
+    "recentNote": "The latest {n} usage rows in the window, in Beijing time. A row is not always one request: a subscription row is one request; a gateway row (marked “batch”) is what the gateway totalled for one model over a stretch of time and can cover many requests; a row from an own API key or a member's own Claude Code totals one model over one run. The ledger does not record how many requests a row covers. A — in the cache column means the row did not record its cache.",
     "route": {
       "gateway": "Gateway",
-      "native": "Pinned credentials",
+      "native": "Own API key",
       "own": "Member's own Claude Code",
       "subscription": "Subscription",
       "unknown": "(old row, unlabelled)"

@@ -15,6 +15,7 @@
 // 凑数的行不画，后端也只让参加这件活的人改。
 import type { MenuCommand } from '@/commands'
 import type { RowLight } from '@/lib/roomLight'
+import type { TaskState } from '@/lib/taskState'
 import type { RailTask } from './moreTasks'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -23,6 +24,7 @@ import TopicRailLight from './TopicRailLight.vue'
 
 import { menuActionOf } from '@/commands'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
 
@@ -32,6 +34,8 @@ const props = withDefaults(
     selected: boolean
     /** 这一行此刻画哪盏灯（父级带钟算的）；不亮是 null。 */
     light?: RowLight | null
+    /** 行首的状态记号和标题下面那一行（父级按 `lib/taskState.ts` 算好）；不给就不画。 */
+    state?: TaskState | null
     /** 任务里别人说了几句我还没读（只对负责人和协作者算，人和 AI 都算）。 */
     unread?: number
     // 它的频道在树里的第几层：竖线跟着频道的图标列走。
@@ -45,7 +49,7 @@ const props = withDefaults(
      *  （组件预览、只画一行的宿主）就没有 ⋯，不是少传了参数。 */
     actions?: (task: RailTask) => MenuCommand[]
   }>(),
-  { depth: 0, unread: 0, light: null, page: false, renaming: false, actions: undefined }
+  { depth: 0, unread: 0, light: null, state: null, page: false, renaming: false, actions: undefined }
 )
 
 const fillingIn = computed(() => props.task.filling_in === true)
@@ -173,13 +177,17 @@ function onMenuToggle(open: boolean) {
           emit('press', { roomId: task.room_id, taskId: task.id })
       "
     >
-      <!-- 任务名是人起的（占位名除外，那是界面上的字）。 -->
-      <span
-        class="rail-task__title"
-        :class="{ 'rail-task__title--unread': unread > 0 }"
-        :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
-        >{{ taskTitle(task) }}</span
-      >
+      <TaskStateMark v-if="state" class="rail-task__state" :state="state" :size="14" icon-only />
+      <span class="rail-task__text">
+        <!-- 任务名是人起的（占位名除外，那是界面上的字）。 -->
+        <span
+          class="rail-task__title"
+          :class="{ 'rail-task__title--unread': unread > 0 }"
+          :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
+          >{{ taskTitle(task) }}</span
+        >
+        <span v-if="state?.line" class="rail-task__line" data-testid="rail-task-line">{{ state.line }}</span>
+      </span>
       <TopicRailLight v-if="light" :light="light" />
     </button>
     <!-- hover 浮出的操作入口：一颗 ⋯，覆盖在行尾，不占布局宽度。整页形态（手机）
@@ -224,7 +232,9 @@ function onMenuToggle(open: boolean) {
   width: 100%;
   min-height: 32px;
   padding-block: 0;
-  padding-inline-start: var(--task-indent);
+  /* 文字的左缘；行首的状态记号按它往左摆（`.rail-task__state`）。 */
+  --text-start: calc(var(--task-indent) + 20px);
+  padding-inline-start: var(--text-start);
   padding-inline-end: 12px;
   border: 0;
   border-radius: var(--radius-md);
@@ -271,12 +281,32 @@ function onMenuToggle(open: boolean) {
   width: 1px;
   background: var(--line-2);
 }
-.rail-task__title {
+/* 记号挂在文字前面的缩进里，文字的左缘不动（和频道行、「展开其余」那一行对齐）。 */
+.rail-task__state {
+  position: absolute;
+  left: calc(var(--text-start) - 22px);
+  top: 9px;
+}
+.rail-task__text {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  padding-block: 6px;
+}
+.rail-task__title,
+.rail-task__line {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 标题下面那一行：在做什么、在等什么、卡在哪、待谁审阅。 */
+.rail-task__line {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: var(--lh-13);
 }
 /* 未读只给名称加粗，不再另挂数字。 */
 .rail-task__title--unread {

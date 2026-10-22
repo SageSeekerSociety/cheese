@@ -41,7 +41,7 @@ from app.domain.block.waits import MemberWaits
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review.queries import latest_cards_by_task
+from app.domain.review.queries import latest_cards_and_counts_by_task
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
@@ -86,6 +86,27 @@ async def task_out(db, task, card=None) -> dict:
     return out
 
 
+def card_row(card, version: int | None) -> dict | None:
+    """The card a task row carries: where it rides (PR) and, for a card in
+    review, what the row's second line says — whom it waits on (the card's own
+    reviewer), 「第 N 版」 (``version``, how many cards the task has filed),
+    what was handed in, and since when. ``card`` is
+    the `AcceptCard` row or the `RailCard` value; both carry these fields."""
+    if card is None:
+        return None
+    return {
+        "id": str(card.id),
+        "status": str(card.status),
+        "pr_number": card.pr_number,
+        "pr_url": card.pr_url,
+        "version": version,
+        # 卡递给谁审阅：改由别人审阅之后，任务上建时定的那位就不对了。
+        "reviewer": card.reviewer_handle,
+        "subject": card.change_subject or card.deliverable_name or None,
+        "since": _iso(card.created_at),
+    }
+
+
 async def task_rows(
     db: AsyncSession,
     actor: Actor,
@@ -98,7 +119,9 @@ async def task_rows(
     # 人验收" are indistinguishable on screen — both are quiet — and the room
     # overview would have to ask per thread to tell them apart.
     thread_ids = [t.id for t, _ in threads]
-    cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
+    cards, versions = await AcceptCardRepository(db).latest_and_counts_by_task(
+        thread_ids
+    )
     asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
     # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
     landed: dict[uuid.UUID, list] = {}
@@ -152,14 +175,7 @@ async def task_rows(
                 )
                 if task.id in said
                 else None,
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
+                "card": card_row(card, versions.get(task.id)),
             }
         )
     return items
@@ -268,7 +284,7 @@ async def project_task_rows(
     sessions are running answer it without a query; when it is not given, this
     reads the task conversations once."""
     task_ids = [t.id for t in tasks]
-    cards = await latest_cards_by_task(db, task_ids)
+    cards, versions = await latest_cards_and_counts_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
     # （`ix_blocks_questions`）。它压过队友报的「在做」，所以不能留给调用方
     # 各自去问。
@@ -341,14 +357,7 @@ async def project_task_rows(
                     shown, last_activity=last_activity, now=now
                 ),
                 "last_activity_at": last_activity.isoformat(),
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
+                "card": card_row(card, versions.get(task.id)),
             }
         )
     return items
@@ -485,7 +494,9 @@ async def task_page_row(db: AsyncSession, place, task) -> dict:
     """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
     snapshot a subscription to it opens with. The caller has authorised the
     reader."""
-    cards = await AcceptService(db).latest_by_task([task.id])
+    cards, versions = await AcceptCardRepository(db).latest_and_counts_by_task(
+        [task.id]
+    )
     out = await task_out(db, task, cards.get(task.id))
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
@@ -495,17 +506,10 @@ async def task_page_row(db: AsyncSession, place, task) -> dict:
         spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
         choices=catalog(project.settings if project else None),
     )
-    card = cards.get(task.id)
-    out["card"] = (
-        None
-        if card is None
-        else {
-            "id": str(card.id),
-            "status": str(card.status),
-            "pr_number": card.pr_number,
-            "pr_url": card.pr_url,
-        }
-    )
+    out["card"] = card_row(cards.get(task.id), versions.get(task.id))
+    # 它的会话此刻在不在跑（runner 报的，不是队友自己说的「在做」）：页头那颗
+    # 「在做」只在这时候动，会话闲着就静止。
+    out["session_running"] = task.id in await running_conversations(db, [task.id])
     out["opening"] = await _opening(db, task)
     return out
 

@@ -12,6 +12,7 @@ import { useProjectAgentName } from '@/composables/useProjectAgentName'
 
 import { useMailDraftActions } from '../../composables/useMailDraftActions'
 import i18n, { t } from '../../i18n'
+import { plainRefs } from '../../lib/refChip'
 import { myHandle } from '../../me'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -22,11 +23,21 @@ const props = defineProps<{
   outcome: MailOutcome | null
   /** 正在看这个房间的人；不给就是当前登录的账号。 */
   me?: string | null
+  /** handle→名字，房间里的那一份。没发出去的原因里会点到队友（「让 <@队友> 重新起草」），
+   *  按它在这里的名字写。 */
+  names?: Record<string, string>
 }>()
 
-const agentName = useProjectAgentName()
+const projectAgentName = useProjectAgentName()
+/** 写这封的队友叫什么：房间名册上它的名字；旧卡没记是谁写的，退回项目的队友。 */
+const agentName = computed(
+  () => (props.mail.draftedBy && props.names?.[props.mail.draftedBy]) || projectAgentName.value
+)
 const { busy, error, local, send, discard } = useMailDraftActions(() => props.mail.draftId)
 const ended = computed(() => local.value ?? props.outcome)
+const shownError = computed(() =>
+  error.value ? plainRefs(error.value, { mentionNames: props.names ?? {}, topicTitles: {} }) : ''
+)
 const mine = computed(() => {
   const me = props.me ?? myHandle()
   return !!me && me === props.mail.owner
@@ -81,7 +92,7 @@ function when(iso: string | null): string {
     <div v-else class="mail-card__state" data-testid="mail-waiting">
       {{ t('work.room.mail.waiting', { owner: mail.owner }) }}
     </div>
-    <div v-if="error" class="mail-card__error" role="alert">{{ error }}</div>
+    <div v-if="shownError" class="mail-card__error" role="alert">{{ shownError }}</div>
   </div>
 </template>
 

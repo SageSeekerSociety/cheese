@@ -26,7 +26,7 @@ session。这里交出去的 `RailCard` 是一份冻结的值：没有 session�
 
 import uuid
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -71,6 +71,12 @@ class RailCard:
     #: 清单那一行的第二行：递的是什么改动，卡停住时卡上那句为什么。
     change_subject: str | None = None
     note: str = ""
+    #: 交的是一份文件时它的名字（`《原型》第 3 版` 里的「原型」）。
+    deliverable_name: str | None = None
+    #: 什么时候递上来的：「等审」那一行写「从几点起等」。
+    created_at: datetime | None = None
+    #: 这条活递过的第几张卡，从 1 数（「第 N 版」）；只有 `listed_cards` 数它。
+    version: int | None = None
 
 
 def _rail_card(card: AcceptCard | Row[Any]) -> RailCard:
@@ -93,6 +99,8 @@ def _rail_card(card: AcceptCard | Row[Any]) -> RailCard:
         task_id=card.task_id,
         change_subject=card.change_subject,
         note=card.note,
+        deliverable_name=card.deliverable_name,
+        created_at=card.created_at,
     )
 
 
@@ -119,13 +127,16 @@ async def listed_cards(
     )
     by_room: dict[uuid.UUID, RailCard] = {}
     by_task: dict[uuid.UUID, RailCard] = {}
-    # Oldest first, so the last write per key is the newest card there.
+    filed: dict[uuid.UUID, int] = {}
+    # Oldest first, so the last write per key is the newest card there, and
+    # counting as they come gives the newest card its 「第 N 版」.
     for row in rows:
         card = _rail_card(row)
         if row.task_id is None:
             by_room[row.topic_id] = card
         else:
-            by_task[row.task_id] = card
+            filed[row.task_id] = filed.get(row.task_id, 0) + 1
+            by_task[row.task_id] = replace(card, version=filed[row.task_id])
     return by_room, by_task
 
 
@@ -141,8 +152,16 @@ async def latest_cards_by_task(
     Callers authorize and own this session and its transaction. This read
     does not explicitly begin, commit or roll back.
     """
-    cards = await AcceptCardRepository(db).latest_by_task(task_ids)
-    return {task_id: _rail_card(card) for task_id, card in cards.items()}
+    return (await latest_cards_and_counts_by_task(db, task_ids))[0]
+
+
+async def latest_cards_and_counts_by_task(
+    db: AsyncSession, task_ids: list[uuid.UUID]
+) -> tuple[dict[uuid.UUID, RailCard], dict[uuid.UUID, int]]:
+    """`latest_cards_by_task`, plus how many cards each task has filed in all:
+    「等审」那一行写「第 N 版」，N 就是它。同一趟查询。"""
+    cards, counts = await AcceptCardRepository(db).latest_and_counts_by_task(task_ids)
+    return {task_id: _rail_card(card) for task_id, card in cards.items()}, counts
 
 
 #: 轮询隔多久看一次每张卡的 PR（``accept_pr_poll_interval_s``）。镜像的新鲜度

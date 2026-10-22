@@ -57,7 +57,7 @@ _AI_COPY: dict[str, tuple[str, str]] = {
         "平台托管的通用大模型，开箱即用，适合绝大多数项目。",
     ),
 }
-_TIER_PRICE = {"byo": "自带凭证"}
+_TIER_PRICE = {"byo": "自带 API 密钥"}
 
 
 def ai_listings(registry: ProfileRegistry) -> list[PoolListing]:

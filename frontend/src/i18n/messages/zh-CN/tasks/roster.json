@@ -34,7 +34,7 @@
   "filterLabel": "按状态筛选",
   "inProgress": "暂无提交",
   "latest": "第 {n} 版 · {when}",
-  "loadFailed": "领取者名单没读出来",
+  "loadFailed": "领取者名单加载失败",
   "loading": "加载中",
   "memberWithId": "{name}（{id}）",
   "more": "更多",

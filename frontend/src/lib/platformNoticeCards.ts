@@ -95,6 +95,7 @@ function mailDraftView(block: Block): MailDraftView | null {
   return {
     draftId,
     owner: str(mail.owner),
+    draftedBy: str(mail.drafted_by),
     account: str(mail.account),
     to: list(mail.to),
     cc: list(mail.cc),

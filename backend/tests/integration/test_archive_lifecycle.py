@@ -227,7 +227,7 @@ async def test_uncertain_stop_blocks_reuse_until_device_confirms(client, monkeyp
     )
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, cleanup_id)).state == "preparing"
-        with pytest.raises(ConflictError, match="正在停止"):
+        with pytest.raises(ConflictError, match="正在停下"):
             await TopicService(session).unarchive(
                 room_id,
                 by="owner",

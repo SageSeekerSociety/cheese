@@ -4,6 +4,7 @@ from app.core.obs import scrub_secrets
 from app.core.sentences import NoticeText, say
 from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.platform_failures import (
+    RUNNER_REPLACED_CODE,
     SESSION_START_CODES,
     classify_platform_failure,
     is_provider_out_of_credit,
@@ -12,6 +13,7 @@ from app.domain.agent.platform_failures import (
 from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
+    SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
     notice,
@@ -42,6 +44,15 @@ def _turn_failure_notice(
     all along). The platform's own one-line sentences (a runner that stopped
     answering) are already written for people and stay on the line.
     """
+    if code == RUNNER_REPLACED_CODE and isinstance(text, NoticeText):
+        # The platform's own upgrade cut the turn short. When the platform
+        # starts it again by itself the room hears that instead
+        # (`turnResumeWaitRunnerReplaced`); this line is for the case it did
+        # not, so it says the work is safe and one retry carries on — one line,
+        # not 「这次没做完」 wrapped around a sentence that already says so.
+        return text, notice(
+            EVENT_TURN_FAILED, severity=SEVERITY_WARN, who=WHO_HUMAN, retryable=True
+        )
     failure = classify_platform_failure(text, code=code)
     if failure is not None:
         if failure.code in SESSION_START_CODES and text.strip():
