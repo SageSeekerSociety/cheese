@@ -1,13 +1,10 @@
 {
-  "cancel": "取消",
   "collapse": "收起书签",
   "expand": "展开书签",
   "jump": "跳到这一条",
   "menu": "书签的操作",
-  "pinnedBy": "{name} 加的 · {when}",
   "rename": "重命名",
   "renameHint": "书签名字",
-  "save": "保存",
   "title": "书签 · {count}",
   "untitled": "（没有字的书签）",
   "unpin": "取消书签",

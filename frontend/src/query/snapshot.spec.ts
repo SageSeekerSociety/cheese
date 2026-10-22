@@ -19,7 +19,12 @@ vi.mock('@/api/pins', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/pins')>()),
   listPins: api.listPins,
 }))
-vi.mock('@/api/chapters', () => ({ listChapters: async () => [], addChapter: vi.fn(), removeChapter: vi.fn(), renameChapter: vi.fn() }))
+vi.mock('@/api/chapters', () => ({
+  listChapters: async () => [],
+  addChapter: vi.fn(),
+  removeChapter: vi.fn(),
+  renameChapter: vi.fn(),
+}))
 
 const { queryClient } = await import('@/query/client')
 const { keys } = await import('@/query/keys')

@@ -1,13 +1,10 @@
 {
-  "cancel": "Cancel",
   "collapse": "Collapse bookmarks",
   "expand": "Expand bookmarks",
   "jump": "Go to this message",
   "menu": "Bookmark actions",
-  "pinnedBy": "Added by {name} · {when}",
   "rename": "Rename",
   "renameHint": "Bookmark name",
-  "save": "Save",
   "title": "Bookmarks · {count}",
   "untitled": "(a bookmark with no words)",
   "unpin": "Remove bookmark",

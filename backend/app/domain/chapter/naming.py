@@ -144,12 +144,13 @@ async def _write(
     answer,
 ) -> bool:
     async with factory() as session:
-        changed = await session.execute(
+        changed = await session.scalar(
             update(Chapter)
             .where(Chapter.block_id == block.id, Chapter.title == rule_title)
             .values(title=title)
+            .returning(Chapter.id)
         )
-        if not changed.rowcount:
+        if changed is None:
             # Somebody renamed it while the model was thinking; theirs wins,
             # and the call cost nothing to keep.
             await session.rollback()

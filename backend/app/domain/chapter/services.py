@@ -72,15 +72,16 @@ class Chapters:
             raise ValidationError(say("chapterTitleRequired"))
         if len(name) > 80:
             raise ValidationError(say("chapterTitleTooLong"))
-        changed = await self._session.execute(
+        changed = await self._session.scalar(
             update(Chapter)
             .where(
                 Chapter.conversation_id == place.conversation_id,
                 Chapter.block_id == block_id,
             )
             .values(title=name)
+            .returning(Chapter.id)
         )
-        if not changed.rowcount:
+        if changed is None:
             raise NotFoundError(say("chapterMessageNotHere"))
         return name
 
