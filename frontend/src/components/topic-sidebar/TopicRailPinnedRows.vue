@@ -158,10 +158,6 @@ const entries = computed(() =>
   margin-block: 1px;
 }
 @media (hover: none) {
-  .row-slot {
-    width: 44px;
-    height: 44px;
-  }
   .nav-row.pinned-row,
   .nav-row.pinned-row.v-list-item.v-list-item,
   .v-list.v-list .nav-row.pinned-row.v-list-item--nav {

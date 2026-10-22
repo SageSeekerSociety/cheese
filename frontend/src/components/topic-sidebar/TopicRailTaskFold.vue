@@ -46,14 +46,4 @@ const title = computed(() => t(props.collapsed ? 'work.sidebar.expandTasks' : 'w
 .task-fold__btn--collapsed :deep(.v-icon) {
   color: var(--muted);
 }
-.task-fold__btn--page {
-  width: 44px;
-  height: 44px;
-}
-@media (hover: none) {
-  .task-fold__btn {
-    width: 44px;
-    height: 44px;
-  }
-}
 </style>

@@ -344,21 +344,8 @@ function onMenuToggle(open: boolean) {
   background: var(--fill);
   color: var(--text);
 }
-/* 整页形态（手机）把频道记号那一列也让出来，任务行跟着再缩进一截。 */
-.topic-rail--page .rail-task {
-  padding-inline-start: calc(var(--task-indent) + 28px);
-}
-.topic-rail--page .rail-task::before {
-  left: calc(var(--guide-x) + 14px);
-}
-/* 触摸屏没有 hover：⋯ 常驻，缩进也跟着让出来。键盘焦点照样够得着它。 */
+/* 触摸屏没有 hover：⋯ 常驻。键盘焦点照样够得着它。 */
 @media (hover: none) {
-  .rail-task {
-    padding-inline-start: calc(var(--task-indent) + 28px);
-  }
-  .rail-task::before {
-    left: calc(var(--guide-x) + 14px);
-  }
   .rail-task__actions {
     opacity: 1;
     pointer-events: auto;
