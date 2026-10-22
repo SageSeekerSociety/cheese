@@ -153,13 +153,31 @@ export const USAGE_ENTRIES: CatalogEntry[] = [
       {
         name: '个人奖励',
         note: '每个账号可领取一次；反馈奖励在采纳后入个人额度。',
-        props: { beta: { credits: 500, claimed: false, feedback_credits: 100 } },
+        props: {
+          beta: {
+            credits: 500,
+            claimed: false,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+        },
         expect: '领取 500 点',
       },
       {
         name: '已领取',
         note: '领取后按钮停用，仍可通过反馈获得奖励。',
-        props: { beta: { credits: 500, claimed: true, feedback_credits: 100 } },
+        props: {
+          beta: {
+            credits: 500,
+            claimed: true,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+        },
         expect: '已领取',
       },
       {
@@ -210,7 +228,14 @@ export const USAGE_ENTRIES: CatalogEntry[] = [
           teamHandle: 'alice',
           personal: true,
           currentPlan: PERSON.plan,
-          beta: { credits: 500, claimed: false, feedback_credits: 100 },
+          beta: {
+            credits: 500,
+            claimed: false,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
           requests: [],
           canManage: false,
           loading: false,
@@ -308,7 +333,14 @@ export const USAGE_ENTRIES: CatalogEntry[] = [
           personal: true,
           teamHandle: 'alice',
           canManage: true,
-          beta: { credits: 500, claimed: false, feedback_credits: 100 },
+          beta: {
+            credits: 500,
+            claimed: false,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
           rewards: {
             feedback_count: 1,
             feedback_credits: 100,

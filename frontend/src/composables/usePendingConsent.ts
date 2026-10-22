@@ -26,12 +26,15 @@ export function usePendingConsent() {
   const pending = ref<LegalDocumentSummary[]>([])
   const accepting = ref(false)
   const error = ref('')
+  /** 这个人有没有待同意的协议已经问过了：没问完之前，别的一次性弹窗先别出来。 */
+  const checked = ref(false)
 
   watch(
     currentUserId,
     async (id) => {
       pending.value = []
       error.value = ''
+      checked.value = false
       if (id === undefined) return
       try {
         const { pending: list } = await LegalApi.getPendingConsents()
@@ -39,6 +42,8 @@ export function usePendingConsent() {
         if (currentUserId.value === id) pending.value = list
       } catch {
         // 查不到就不拦：这个弹窗挡住的是整个应用，一次失败的查询不该把人关在门外。
+      } finally {
+        if (currentUserId.value === id) checked.value = true
       }
     },
     { immediate: true }
@@ -71,5 +76,5 @@ export function usePendingConsent() {
     }
   }
 
-  return { pending, accepting, error, accept, decline }
+  return { pending, checked, accepting, error, accept, decline }
 }

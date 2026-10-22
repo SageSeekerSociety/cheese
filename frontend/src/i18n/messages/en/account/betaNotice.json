@@ -1,0 +1,22 @@
+{
+  "eyebrow": "Beta",
+  "title": "Cheese is in beta",
+  "body": "We're still polishing Cheese. During the beta, on top of your monthly plan credits, these also earn you extra credits.",
+  "points": "{n} credits",
+  "plan": "Monthly plan credits",
+  "planRule": "Reset on the 1st of each month",
+  "beta": "Beta credits",
+  "betaRule": "Once per account",
+  "betaClaimed": "You've already claimed these",
+  "feedback": "Accepted feedback",
+  "feedbackRule": "Once per report",
+  "invite": "Inviting a friend",
+  "inviteRule": "Paid when your friend first accepts a delivery; your friend also gets up to {n} credits",
+  "lifetime": "Reward credits last 12 months from when they're issued and are used after the month's plan credits run out.",
+  "more": "About credit rewards",
+  "later": "Later",
+  "ok": "Got it",
+  "claim": "Claim {n} credits",
+  "claimed": "Claimed {n} beta credits",
+  "claimFailed": "Claim failed"
+}
