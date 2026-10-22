@@ -306,7 +306,7 @@ useCommands(() =>
            （.claude/rules/project-sidebar.md）。 -->
       <template v-if="page || column" #top>
         <button type="button" class="overview-entry t-body" data-testid="overview-entry" @click="openOverview">
-          <v-icon size="18" class="overview-entry__icon">mdi-view-dashboard-outline</v-icon>
+          <v-icon size="16" class="overview-entry__icon">mdi-view-dashboard-outline</v-icon>
           <span class="overview-entry__label">{{ t('navigation.project.overview') }}</span>
           <v-icon size="18" class="overview-entry__go">mdi-chevron-right</v-icon>
         </button>
@@ -323,7 +323,7 @@ useCommands(() =>
 .overview-entry {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   min-height: 44px;
   padding: 0 16px;

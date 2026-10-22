@@ -77,18 +77,4 @@ const emit = defineEmits<{
 .rail-more__chevron {
   color: var(--faint);
 }
-.topic-rail--page .rail-more {
-  padding-inline-start: calc(var(--task-indent) + 28px);
-}
-.topic-rail--page .rail-more::before {
-  left: calc(var(--guide-x) + 14px);
-}
-@media (hover: none) {
-  .rail-more {
-    padding-inline-start: calc(var(--task-indent) + 28px);
-  }
-  .rail-more::before {
-    left: calc(var(--guide-x) + 14px);
-  }
-}
 </style>
