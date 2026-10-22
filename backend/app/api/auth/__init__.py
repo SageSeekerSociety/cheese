@@ -93,7 +93,9 @@ DELEGATED_ROUTES: dict[str, bool] = {
 #: The routes a person's own 芝士 reaches only with a pass its gate issued for
 #: that call (`assistant.gate`, `assistant.passes`): what others see — a
 #: message, a task, a decision, a member, a channel — and reading a web page,
-#: whose address can carry what it read out to the host it names. The pass is
+#: whose address can carry what it read out to the host it names (a page on a
+#: documentation site Claude Code reads freely gets its pass with no look,
+#: ``fetch.preapproved``). The pass is
 #: the gate's verdict; without one the route refuses the credential.
 GATED_ROUTES: frozenset[str] = frozenset(
     {
