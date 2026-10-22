@@ -13,7 +13,8 @@ ask for it (C4 `routes-independent`).
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
+from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.chapter_rows import chapter_rows
@@ -24,7 +25,8 @@ from app.core.errors import AuthenticationRequiredError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
-from app.domain.chapter.schemas import ChapterMarkOut, ChapterOut
+from app.domain.chapter import naming
+from app.domain.chapter.schemas import ChapterMarkOut, ChapterOut, ChapterTitleOut
 from app.domain.chapter.services import Chapters
 from app.domain.room_task.place import place_or_404
 
@@ -56,6 +58,11 @@ async def list_chapters(
     return ok(await chapter_rows(db, place.conversation_id))
 
 
+async def _refine_name(conversation_id: uuid.UUID, block_id: uuid.UUID) -> None:
+    if await naming.refine(conversation_id, block_id):
+        await announce_stale(conversation_id, "chapters")
+
+
 @router.put(
     "/{topic_id}/chapters/{block_id}",
     dependencies=[ROUTE_DECIDES],
@@ -66,15 +73,49 @@ async def add_chapter(
     block_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    background: BackgroundTasks,
 ) -> dict:
     """Mark one of this conversation's messages as the start of a chapter. Says
-    nothing in the conversation; marking it twice changes nothing."""
+    nothing in the conversation; marking it twice changes nothing.
+
+    The name is read off the message at once and the model gets its own short
+    look after this response (`app.domain.chapter.naming`): the click must not
+    wait for a model, and a failed look leaves the name it already has.
+    """
     place, actor = await _conversation(db, resolver, topic_id, acting=True)
     added = await Chapters(db, team=project_team).add(place, block_id, by=actor.handle)
     await db.commit()
     if added:
         await announce_stale(place.conversation_id, "chapters")
+        background.add_task(_refine_name, place.conversation_id, block_id)
     return ok({"block_id": str(block_id), "chapter": True})
+
+
+class ChapterTitleIn(BaseModel):
+    title: str
+
+
+@router.patch(
+    "/{topic_id}/chapters/{block_id}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ChapterTitleOut),
+)
+async def rename_chapter(
+    topic_id: uuid.UUID,
+    block_id: uuid.UUID,
+    body: ChapterTitleIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Give a bookmark a name of one's own. A name somebody typed is final: the
+    model's later look does not overwrite it."""
+    place, actor = await _conversation(db, resolver, topic_id, acting=True)
+    title = await Chapters(db, team=project_team).rename(
+        place, block_id, body.title, by=actor.handle
+    )
+    await db.commit()
+    await announce_stale(place.conversation_id, "chapters")
+    return ok({"block_id": str(block_id), "title": title})
 
 
 @router.delete(
