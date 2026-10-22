@@ -6979,7 +6979,9 @@ def _transcript_digest(topic: str, *, turn, author, grep, limit: int) -> None:
         if step["turn"] != current:
             current = step["turn"]
             heading = f"轮 {current or '（不在轮次里）'} · {counts.get(current, 0)} 条"
-        if shown >= limit:
+        # 轮标题也算一行:封顶说的是这一屏能放下多少,不是能列多少步。所以标题
+        # 和它下面那一步要一起判 —— 先把标题算进去,再看还剩不剩得下这一步。
+        if shown + (1 if heading else 0) >= limit:
             left_out += 1
             continue
         if heading:
@@ -7294,12 +7296,12 @@ def build_parser() -> argparse.ArgumentParser:
             "\n"
             "默认落 ~/attachments/transcript/<话题>.jsonl,不在检出目录里,不会变成 git 改动。\n"
             "\n"
-            "只读本会话,别人的会话不碰。分身和留在同一份里,`cheese_file` 那些记录带\n"
-            "`agent_id`,标明是哪一次工具调用起的。\n"
+            "只读本会话,别人的会话不碰。分身写下的和本会话的在同一份里,`agent_id` 标明\n"
+            "是哪一次工具调用起的。\n"
             "\n"
             "--digest 不落文件:把压缩过的索引打到 stdout(轮次、步骤、工具名、一行结果、\n"
-            "记录号),先看形状,再决定要不要落文件翻原文。默认打到一屏就停,超了会说还有\n"
-            "多少条、怎么取。"
+            "记录号),先看形状,再决定要不要落文件翻原文。默认打到一屏就停(轮标题也算一行),\n"
+            "超了会说还有多少条、怎么取。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -7328,7 +7330,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=TRANSCRIPT_DIGEST_LINES,
         metavar="N",
-        help=f"--digest 最多打多少行(默认 {TRANSCRIPT_DIGEST_LINES})",
+        help=f"--digest 最多打多少行,含轮标题(默认 {TRANSCRIPT_DIGEST_LINES})",
     )
 
     ptpl = sub.add_parser(

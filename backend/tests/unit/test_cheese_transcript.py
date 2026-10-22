@@ -360,6 +360,54 @@ def test_the_main_sessions_own_records_are_not_marked_as_a_subagent(cli, capsys)
     assert "分身" not in capsys.readouterr().out
 
 
+def test_the_line_budget_counts_the_turn_heading_too(cli, capsys):
+    """轮标题也是索引里的一行。只数步骤的话，每进一轮就超一行 —— 封顶封不住，
+    而封顶正是这条命令存在的理由之一（agent 不知道自己上下文还剩多少）。
+
+    末尾那行「还有 N 条」不算在预算里：它只在超了的时候出现，数它就得先知道
+    要不要数它。"""
+    two_turns = [
+        {
+            "sequence": 1,
+            "at": "2026-10-22T08:11:00+00:00",
+            "turn_id": "t1",
+            "agent_handle": "cheese",
+            "harness": "claude-code",
+            "record": {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "一"}],
+                },
+            },
+        },
+        {
+            "sequence": 2,
+            "at": "2026-10-22T08:12:00+00:00",
+            "turn_id": "t2",
+            "agent_handle": "cheese",
+            "harness": "claude-code",
+            "record": {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "二"}],
+                },
+            },
+        },
+    ]
+    cli._call = Platform([two_turns])
+    _run(cli, "--digest", "--lines", "3")
+    index = [
+        line
+        for line in capsys.readouterr().out.strip().splitlines()
+        if not line.startswith("……")
+    ]
+    # 只数步骤时这里会打出四行（两个标题加两步），超出的那一行就是没算标题。
+    assert len(index) <= 3, index
+    assert index[:2] == ["轮 t1 · 1 条", "  #1 说 一"], index
+
+
 def test_digest_and_a_destination_path_are_not_both_asked_for(cli):
     """`--digest` 说不落文件；两个一起给时定不了听谁的，宁可当场拒绝。"""
     with pytest.raises(SystemExit) as exited:
