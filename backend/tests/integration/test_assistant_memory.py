@@ -195,3 +195,27 @@ def test_nothing_personal_reaches_a_project(client):
     assert "书面语" not in json.dumps(
         [s.text for s in got.sections], ensure_ascii=False
     )
+
+
+def test_a_personal_memory_is_not_pruned_through_a_project(client):
+    """The project memory panel prunes by id; a person's own memory is in no
+    project, and its id is answered there as one that does not exist."""
+    me, acting = _auth(client, "alice"), _acting(client, "alice")
+    _remember(client, acting)
+
+    async def ids():
+        async with client.test_factory() as db:
+            from app.domain.memory.models import MemoryFileRecord
+
+            return [
+                str(i)
+                for i in await db.scalars(
+                    select(MemoryFileRecord.id).where(
+                        MemoryFileRecord.scope == MemoryFileScope.personal
+                    )
+                )
+            ]
+
+    for row_id in asyncio.run(ids()):
+        assert client.delete(f"/memory/{row_id}", headers=me).status_code == 404
+    assert [i["name"] for i in _memory(client, me)["items"]] == ["formal-to-teachers"]
