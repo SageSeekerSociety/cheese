@@ -37,6 +37,7 @@ describe('platformErrorPresentation', () => {
       title: '运行环境存储空间不足',
       body: '这轮因运行环境存储空间不足而暂停，项目文件和已完成的改动都还在。',
       status: expect.any(String),
+      statusKind: 'cleaning',
       retryable: true,
     })
   })
