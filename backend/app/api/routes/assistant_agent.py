@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.assistant_deps import ProjectPages, show_proposal, tell_change, where_of
 from app.api.auth import ActorResolverDep
@@ -42,6 +42,7 @@ from app.domain.project import address
 from app.domain.project.services import ProjectService
 from app.domain.review.services import deliverable_revision
 from app.domain.room_task.awaiting import WaitingItem
+from app.domain.routine import personal as routine_personal
 from app.domain.topic.services import TopicService
 from app.domain.user.services import search_accounts, timezones_by_ids, user_by_handle
 
@@ -867,8 +868,19 @@ class WaitIn(BaseModel):
     card: int
 
 
+async def _unattended(questions: Consumptions, work: str) -> bool:
+    """Is this answer a routine's run, with nobody there to confirm?"""
+    try:
+        asked = await questions.get(work)
+    except RuntimeError:  # no Valkey: nothing runs on its own
+        return False
+    return asked is not None and bool(asked.data.get("run"))
+
+
 @router.post("/wait", include_in_schema=False)
-async def agent_wait(body: WaitIn, resolver: ActorResolverDep, db: DbSession) -> dict:
+async def agent_wait(
+    body: WaitIn, resolver: ActorResolverDep, db: DbSession, questions: Questions
+) -> dict:
     """How a card 芝士 put up ended: ``sent`` (the person confirmed it, and
     it was done as them) or ``dismissed``; still ``pending`` after
     ``WAIT_S``, when the tool asks again. The answer told is the answer that
@@ -876,6 +888,10 @@ async def agent_wait(body: WaitIn, resolver: ActorResolverDep, db: DbSession) ->
     claims = resolver.delegation()
     if claims is None or claims.user_id is None or not claims.work:
         raise AuthenticationRequiredError(say("invalidToken"))
+    if await _unattended(questions, claims.work):
+        # A routine running on its own: nobody is there to decide now. The
+        # card stays for the person (``routine.personal.KEPT_FOR``).
+        return ok({"state": "pending", "said": say("assistantCardLeftForLater")})
     until = time.monotonic() + WAIT_S
     while True:
         row = await proposals.mine(db, claims.user_id, body.card)
@@ -958,3 +974,170 @@ async def _notify_back(db, resolver, same, parts: list[str], redo: bool) -> dict
 
 
 changes.register("notify", parts=lambda payload: ["level"], apply=_notify_back)
+
+
+# --- what 芝士 does on its own ----------------------------------------------
+
+#: How many notifications 芝士 may send the person in an hour.
+NOTIFY_ME_PER_HOUR = 10
+
+
+class RoutineIn(BaseModel):
+    action: Literal["create", "list", "change", "pause", "resume", "delete"]
+    #: The routine's id, for all but ``create`` and ``list``.
+    routine: str = ""
+    title: str = Field(default="", max_length=120)
+    #: What each run does, in 芝士's words.
+    note: str = Field(default="", max_length=4000)
+    trigger: str = ""
+    #: A schedule: ``once`` (``at``), ``hourly`` (``minute``), ``daily``,
+    #: ``weekly`` (``weekdays``, 0 for Monday) or ``monthly`` (``day``), at
+    #: ``time`` (HH:MM) on the person's clock.
+    freq: str = ""
+    time: str = ""
+    minute: int | None = None
+    weekdays: list[int] | None = None
+    day: int | None = None
+    at: str = ""
+    #: An event routine's project, by its short name: only what happens there.
+    project: str = ""
+
+
+def _routine_line(row, tz: str | None) -> str:
+    state = {"credits": "（额度用完，已暂停）", "away": "（长时间未登录，已暂停）"}.get(
+        row.paused, "（已暂停）" if row.state == "paused" else ""
+    )
+    nxt = (
+        f"，下次运行 {_when(row.next_run_at, tz)}"
+        if row.next_run_at and row.state == "active"
+        else ""
+    )
+    return (
+        f"- 「{row.title}」{state}：{routine_personal.describe(row)}{nxt}；"
+        f"要做的事：{row.note or row.title}（编号 {row.id}）"
+    )
+
+
+async def _routine_spec(db, access, body: RoutineIn) -> tuple[str, dict]:
+    trigger = body.trigger or "schedule"
+    if trigger == "schedule":
+        spec = {
+            k: v
+            for k, v in {
+                "freq": body.freq,
+                "time": body.time,
+                "minute": body.minute,
+                "weekdays": body.weekdays,
+                "day": body.day,
+                "at": body.at,
+            }.items()
+            if v not in ("", None)
+        }
+        return trigger, spec
+    if not body.project:
+        return trigger, {}
+    project = await address.project_by_ref(db, body.project)
+    if project is None:
+        raise NotFoundError.for_resource("project", body.project)
+    await access.project(project.id)
+    return trigger, {"project": str(project.id), "projectName": project.name}
+
+
+@router.post("/routine", include_in_schema=False)
+async def agent_routine(
+    body: RoutineIn, resolver: ActorResolverDep, db: DbSession, questions: Questions
+) -> dict:
+    """cheese_routine: the person's routines, made and changed by 芝士 when
+    they ask for one. Only the person is affected, so it is done at once; a
+    run cannot make or change one, since nobody asked it to."""
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    me = await _person(resolver, db)
+    if body.action == "list":
+        rows = await routine_personal.mine(db, me.user_id)
+        if not rows:
+            return ok({"text": "用户还没有例行事务。"})
+        return ok(
+            {
+                "text": f"用户的例行事务（{len(rows)} 条，最多 "
+                f"{routine_personal.MAX_ROUTINES} 条）：\n"
+                + "\n".join(_routine_line(r, me.timezone) for r in rows)
+            }
+        )
+    if await _unattended(questions, claims.work) or not claims.conversation:
+        raise BadRequestError(say("assistantRoutineInRun"))
+    conversation = uuid.UUID(claims.conversation)
+    if body.action == "create":
+        trigger, spec = await _routine_spec(db, ProjectPages(db, resolver), body)
+        row = await routine_personal.create(
+            db,
+            user_id=me.user_id,
+            conversation_id=conversation,
+            title=_need(body.title, "title"),
+            note=body.note,
+            trigger=trigger,
+            spec=spec,
+        )
+        await db.commit()
+        return ok({"text": "已建好例行事务：\n" + _routine_line(row, me.timezone)})
+    try:
+        routine_id = uuid.UUID(_need(body.routine, "routine"))
+    except ValueError as exc:
+        raise NotFoundError.for_resource("routine", body.routine) from exc
+    row = await routine_personal.one(db, me.user_id, routine_id)
+    if row is None:
+        raise NotFoundError.for_resource("routine", body.routine)
+    if body.action == "delete":
+        title = row.title
+        await db.delete(row)
+        await db.commit()
+        return ok({"text": f"已删除例行事务「{title}」。"})
+    if body.action == "pause":
+        routine_personal.pause(row)
+    elif body.action == "resume":
+        routine_personal.resume(row)
+    else:
+        trigger, spec = (
+            await _routine_spec(db, ProjectPages(db, resolver), body)
+            if body.trigger or body.freq or body.project
+            else (None, None)
+        )
+        await routine_personal.change(
+            db,
+            row,
+            conversation_id=conversation,
+            title=body.title or None,
+            note=body.note or None,
+            trigger=trigger,
+            spec=spec,
+        )
+    await db.commit()
+    return ok({"text": "例行事务现在是：\n" + _routine_line(row, me.timezone)})
+
+
+class NotifyMeIn(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/notify-me", include_in_schema=False)
+async def agent_notify_me(
+    body: NotifyMeIn, resolver: ActorResolverDep, db: DbSession
+) -> dict:
+    """cheese_notify_me: a notification to the person, from their 芝士, that
+    opens this conversation."""
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    sent = await routine_personal.notified_lately(db, claims.user_id)
+    if sent >= NOTIFY_ME_PER_HOUR:
+        raise BadRequestError(say("assistantNotifyMeLimit", max=NOTIFY_ME_PER_HOUR))
+    await routine_personal.notify_me(
+        db,
+        user_id=claims.user_id,
+        conversation_id=uuid.UUID(claims.conversation) if claims.conversation else None,
+        work=claims.work,
+        text=body.text,
+    )
+    await db.commit()
+    return ok({"text": "已通知用户。"})

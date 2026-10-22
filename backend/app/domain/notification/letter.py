@@ -214,6 +214,19 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             link=link,
         )
 
+    if type_ == "ASSISTANT_NOTICE":
+        # 个人芝士自己做的事（`routine.personal`）：那句话就是标题，芝士说的放引文，
+        # 按钮打开那段对话。
+        content = _text(payload, "content") or "芝士有一条新消息"
+        return Letter(
+            subject=_clip(content, _SUBJECT_LIMIT),
+            eyebrow="你的芝士",
+            headline=content,
+            quote=_clip(_text(payload, "quote"), _QUOTE_LIMIT),
+            action="查看对话" if _text(payload, "assistantConversation") else "查看",
+            link=link,
+        )
+
     if type_ == "ROOM_NOTICE":
         content = _text(payload, "content") or "平台有一条提示"
         return Letter(

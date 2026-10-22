@@ -56,8 +56,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import model_roles
 from app.domain.assistant.models import (
+    AssistantConversation,
     AssistantGateCheck,
     AssistantMessage,
+    AssistantRoutine,
     AssistantRules,
 )
 from app.domain.gateway_chat import Completion, GatewayCallError, GatewayChat, Usage
@@ -161,6 +163,11 @@ class Verdict:
     cost_usd: float = 0.0
 
 
+def entries(text: str) -> list[str]:
+    """A person's list of what needs or needs no confirming: one entry a line."""
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
 async def rules_of(session: AsyncSession, user_id: int) -> AssistantRules:
     """The person's rules; the defaults when they have set none (not stored)."""
     row = await session.get(AssistantRules, user_id)
@@ -171,12 +178,18 @@ async def rules_of(session: AsyncSession, user_id: int) -> AssistantRules:
 
 def _rules_text(rules: AssistantRules) -> str:
     always = "、".join(CATEGORIES[c] for c in rules.ask if c in CATEGORIES) or "无"
+
+    def listed(text: str) -> list[str]:
+        return [f"- {e}" for e in entries(text)] or ["无"]
+
     return "\n".join(
         [
             "<用户的设置>",
             f"始终需要确认：{always}",
-            f"无需确认：{rules.allow_text.strip() or '无'}",
-            f"需要确认：{rules.ask_text.strip() or '无'}",
+            "需要确认：",
+            *listed(rules.ask_text),
+            "无需确认：",
+            *listed(rules.allow_text),
             "</用户的设置>",
         ]
     )
@@ -189,6 +202,14 @@ async def _said_and_done(
     the order it happened."""
     if conversation_id is None:
         return []
+    # A routine's run: what the person said when they asked for it is theirs,
+    # said before anything in the run.
+    first: list[str] = []
+    conversation = await session.get(AssistantConversation, conversation_id)
+    if conversation is not None and conversation.place_kind == "routine":
+        routine = await session.get(AssistantRoutine, uuid.UUID(conversation.place_id))
+        if routine is not None and routine.words:
+            first = [f"[用户（建这条例行事务时说）] {routine.words}"]
     said = await session.execute(
         select(AssistantMessage.created_at, AssistantMessage.text).where(
             AssistantMessage.conversation_id == conversation_id,
@@ -211,7 +232,7 @@ async def _said_and_done(
         )
         for at, summary, verdict in done.all()
     ]
-    return [line for _, _, line in sorted(events, key=lambda e: (e[0], e[1]))]
+    return first + [line for _, _, line in sorted(events, key=lambda e: (e[0], e[1]))]
 
 
 def _prompt(rules: AssistantRules, history: list[str], action: Action) -> str:

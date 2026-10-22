@@ -116,6 +116,10 @@
     "confirm": "Confirm",
     "dismiss": "Set aside",
     "view": "View",
-    "failed": "Couldn't send"
+    "failed": "Couldn't send",
+    "expired": "Expired"
+  },
+  "run": {
+    "routine": "Routine “{title}” started"
   }
 }
