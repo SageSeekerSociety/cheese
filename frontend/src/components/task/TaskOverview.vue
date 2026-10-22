@@ -6,11 +6,13 @@
 // 「重试」，也可以自己写。
 import type { ProjectMemberRow, RoomTask, TodoItem, Topic } from '@/cx_types'
 import type { DocReviewRequest } from '@/lib/docReview'
+import type { ChapterRow } from '@/types/chapters'
 import type { TaskRelated, TaskSource } from '@/types/taskOrigin'
 
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import ChapterList from '@/components/channel/ChapterList.vue'
 import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 import TaskOutputs from '@/components/task/TaskOutputs.vue'
 import TaskRelatedList from '@/components/task/TaskRelatedList.vue'
@@ -36,6 +38,10 @@ const props = defineProps<{
   /** AI 队友这一轮的清单；没在干活时是空的。 */
   checklist: TodoItem[]
   related: TaskRelated | null
+  /** 这段对话的章节，按对话里的顺序。 */
+  chapters?: ChapterRow[]
+  /** 能不能取消章节：看得见这件任务的人都能（任务里项目的人都能说话）。 */
+  canChapter?: boolean
   /** 能不能让 AI 队友的第一轮再来一次：做这件任务的人才能。 */
   canRetry: boolean
   retrying: boolean
@@ -46,6 +52,8 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'retry-opening'): void
+  (e: 'jump', blockId: string): void
+  (e: 'unchapter', blockId: string): void
   (e: 'open-output', path: string): void
   (e: 'open-source', source: TaskSource): void
   (e: 'open-document', id: string, title: string): void
@@ -57,6 +65,8 @@ const emit = defineEmits<{
 const conclusionHtml = computed(() =>
   props.task.conclusion ? renderPlain(props.task.conclusion, { mentionNames: props.memberNames, topicTitles: {} }) : ''
 )
+// 章节标题里的 @ 和 <#话题> 要读成名字，和消息正文用同一套。
+const refs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
 function onConclusionClick(event: MouseEvent): void {
   const el = (event.target as HTMLElement | null)?.closest<HTMLElement>('.mention, .name-ref')
   if (!el) return
@@ -134,6 +144,17 @@ defineExpose({
       <p class="t-body task-overview__conclusion-text" @click="onConclusionClick" v-html="conclusionHtml" />
     </div>
 
+    <section v-if="chapters?.length" class="task-overview__chapters">
+      <ChapterList
+        :chapters="chapters ?? []"
+        :can-chapter="!!canChapter"
+        :member-names="memberNames"
+        :refs="refs"
+        @jump="emit('jump', $event)"
+        @unpin="emit('unchapter', $event)"
+      />
+    </section>
+
     <section v-if="opening" class="task-overview__opening" role="status" data-testid="task-opening">
       <template v-if="opening === 'failed'">
         <p class="task-overview__opening-head t-body">{{ t('work.task.opening.failed', { name: agentName }) }}</p>
@@ -208,6 +229,10 @@ defineExpose({
   margin: 4px 0 0;
   color: var(--ink);
   white-space: pre-wrap;
+}
+.task-overview__chapters {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
 }
 .task-overview__opening {
   display: flex;

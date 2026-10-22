@@ -3,6 +3,7 @@
 import type { Component } from 'vue'
 import type { Block, ReplyPreview } from '../../cx_types'
 import type { TaskLine } from '../../lib/channelTasks'
+import type { ChapterRow } from '../../types/chapters'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -221,5 +222,34 @@ describe('every row in the timeline has a name, on screen or not', () => {
     expect(screen.getByRole('article', { name: '芝士，10:00：林 更新了文档「周报」' })).toBeTruthy()
     expect(screen.getByRole('article', { name: '林，10:00：新建了任务 Fix the login redirect' })).toBeTruthy()
     expect(screen.getByRole('article', { name: 'me，10:00：second' })).toBeTruthy()
+  })
+})
+
+describe('a chapter starts where someone marked it', () => {
+  function chapter(block: Block): ChapterRow {
+    return { pinned_by: 'alice', pinned_at: '2026-10-21T00:00:00Z', block }
+  }
+
+  it('writes the chapter number and the message it starts, right above that message', () => {
+    const { container, getAllByRole } = mount({ chapters: [chapter(BLOCKS[1])] })
+    const marks = getAllByRole('heading', { level: 3 })
+    expect(marks).toHaveLength(1)
+    expect(marks[0]!.textContent).toContain('书签 1')
+    expect(marks[0]!.textContent).toContain('second')
+    expect(container.querySelector('[data-mid="b"]')!.previousElementSibling).toBe(marks[0])
+  })
+
+  it('numbers chapters in reading order, not the order they were marked', () => {
+    const { getAllByRole } = mount({ chapters: [chapter(BLOCKS[2]), chapter(BLOCKS[0])] })
+    const texts = getAllByRole('heading', { level: 3 }).map((mark) => mark.textContent)
+    expect(texts[0]).toContain('书签 1')
+    expect(texts[0]).toContain('first')
+    expect(texts[1]).toContain('书签 2')
+    expect(texts[1]).toContain('third')
+  })
+
+  it('says nothing above a message nobody marked', () => {
+    const { queryAllByRole } = mount({ chapters: [] })
+    expect(queryAllByRole('heading', { level: 3 })).toHaveLength(0)
   })
 })
