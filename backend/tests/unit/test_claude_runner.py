@@ -691,6 +691,57 @@ async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("previous", ["idle", "running", "restarted"])
+async def test_a_queued_input_is_not_filed_under_the_previous_work(
+    tmp_path, monkeypatch, previous
+):
+    """The next input can queue long after the last result, or while another
+    work is running. Its queue notice names its delivery, but queueing alone
+    does not make it part of any execution work."""
+    state = tmp_path / "state"
+    runner = Runner(state)
+    runner.session_id = "session-queue"
+    runner.outbox.register(1)
+
+    async def written(message):
+        pass
+
+    monkeypatch.setattr(runner, "_write", written)
+    old_input, old_work = str(uuid.uuid4()), str(uuid.uuid4())
+    await runner.send(old_input, "first", work_id=old_work)
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": old_input, "state": "started"}
+    )
+    if previous != "running":
+        runner.observe({"type": "result", "result": "done"})
+    next_input, next_work = str(uuid.uuid4()), str(uuid.uuid4())
+    await runner.send(next_input, "next", work_id=next_work)
+    if previous == "restarted":
+        runner = Runner(state)
+        runner.session_id = "session-queue"
+        runner.outbox.register(1)
+        monkeypatch.setattr(runner, "_write", written)
+
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": next_input, "state": "queued"}
+    )
+    queued = runner.journal.read(0)[-1]["record"]
+    assert queued["cheese"].get("work_id") is None
+    assert queued["cheese"]["input_work_id"] == next_work
+    assert runner.working is (previous == "running")
+    assert runner.work == (old_work if previous == "running" else None)
+
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": next_input, "state": "started"}
+    )
+    started = runner.journal.read(0)[-1]["record"]
+    execution = old_work if previous == "running" else next_work
+    assert started["cheese"]["work_id"] == execution
+    assert started["cheese"]["input_work_id"] == next_work
+    assert runner.working and runner.work == execution
+
+
+@pytest.mark.anyio
 async def test_a_turn_aborted_before_its_prompt_was_checked_still_lets_the_session_go(
     tmp_path, monkeypatch
 ):
