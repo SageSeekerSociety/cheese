@@ -98,6 +98,7 @@ description: 在知是里交付工作时使用：创建任务、在任务里准�
 | `cheese show <路径> [--as <类型>] [--note <一句话>]` | 把工作区里的一份东西摆到预览里给人看；改的是已经摆出来的一份时，用 `--note` 写一句改了什么 |
 | `cheese check <路径> [--width <像素>] [--dark]` | 让平台的浏览器把一份 HTML 按手机宽和桌面宽各截一张整页，报出撑破页面的元素、脚本报错和没加载的图；截图存到 `~/.cache/cheese-check/`。摆出来之前跑一次 |
 | `cheese serve <端口> [<一句话说明>]` | 把这台机器上跑起来的应用设为当前预览。先在 `127.0.0.1` 上把服务起起来、放到后台，端口固定住（比如 `vite --strictPort`），再报端口；默认先探到应用应答才报，最多等 30 秒（`--wait <秒>`、`--no-wait`）。平台会当场再敲一次，敲不通就拒绝。前端怎么起最快见 `references/artifacts.md`。沙箱没人用一段时间后会被换成新的，后台起的服务和预览跟着停；之后再要预览，重新起它、再报一次 |
+| `cheese transcript [--turn <轮次>] [--grep <词>] [--author <handle>] [--digest] [--out <路径>]` | 把本会话的原始记录（含分身做过的事）写成一份 JSONL，落在 `~/attachments/transcript/` 下，stdout 只回路径和统计；要翻就 grep 那个文件。`--digest` 不落文件，直接把索引打到 stdout（轮次、步骤、工具名、一行结果） |
 | `cheese pull <路径> [-o <路径>]` | 把文件区里一份文件最新保存的那一版取到这台机器上。用户可能在编辑器里改过，接着改之前先 pull |
 | `cheese library get <名字> [--out <路径>]` | 把资料库里的一份文件取到 `~/attachments/library/<名字>`。用户提到一份你手上没有的文件，就用它取，不要让人重传 |
 | `cheese mail attachment <连接> <uid> <序号>` | 把一封邮件的附件取到 `~/attachments/mail/` 下，见 `references/mail-and-feishu.md` |

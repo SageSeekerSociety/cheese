@@ -236,6 +236,8 @@ PLATFORM_RULES = (
     "- 用户问这个平台怎么用，先用 `cheese_docs_search` 查官方说明书再答，不凭印象。\n"
     "- 会话可能是新开的：不记得之前聊过什么时，用 `cheese_chat_list`、"
     "`cheese_chat_search` 读记录，不要猜，也不要问人「之前说到哪了」。\n"
+    "- 你能读自己这个会话的原始记录，包括分身做过的事。要翻就 `cheese transcript` "
+    "落成文件再 grep / Read；`--digest` 先看形状。原文不要拉进上下文。\n"
     "- 加载一个技能：有 Skill 工具就用它，没有就读技能列表里它的那个文件，不要自己"
     "拼路径去找。"
 )

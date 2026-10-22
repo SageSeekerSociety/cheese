@@ -127,6 +127,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_mail_attachment: 'toolLabels.cheeseMailAttachment',
   cheese_show: 'toolLabels.cheeseShow',
   cheese_pull: 'toolLabels.cheesePull',
+  cheese_transcript: 'toolLabels.cheeseTranscript',
   cheese_template_list: 'toolLabels.cheeseTemplateList',
   cheese_template_new: 'toolLabels.cheeseTemplateNew',
   cheese_convert: 'toolLabels.cheeseConvert',

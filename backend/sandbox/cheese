@@ -32,6 +32,8 @@
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
   cheese library get 预算表.xlsx             # 取一份资料到 ~/attachments/library/
   cheese mail attachment <连接> <UID> 0     # 取邮件附件到 ~/attachments/mail/
+  cheese transcript                        # 本会话的原始记录落到 ~/attachments/transcript/
+  cheese transcript --digest               # 只看索引:轮次、步骤、工具名、一行结果
 """
 
 from __future__ import annotations
@@ -6651,6 +6653,341 @@ def source_fingerprint() -> str:
         return "unknown"
 
 
+# --- transcript: 本会话的原始记录,落到这台机器上用 grep 翻 ---------------------
+
+#: 落点目录,在会话自己 home 的 `STAGED_DIR` 下 —— 和 `library get` 落的那类文件
+#: 同一个理由:工作目录是被托管的检出,往那里写就是别人仓库里一个没人加过的未跟踪文件。
+TRANSCRIPT_DIR = "transcript"
+#: 接口一页最多 500 条。`next` 是接着读的位置,和每页多大无关。
+TRANSCRIPT_PAGE = 500
+#: `--digest` 默认最多打这么多行。agent 没有「自己上下文还剩多少」的概念,不封顶
+#: 就会把自己灌满;超了就停,并说清还有多少、怎么取。20 行的意思是「不到一屏」——
+#: 终端默认 24 行,再多就得滚。
+TRANSCRIPT_DIGEST_LINES = 20
+#: 统计里最多列这么多轮,再多只报轮数。和 `--digest` 同一个理由:默认这一次调用
+#: 打出来的东西,加起来要在屏幕以内。
+TRANSCRIPT_TURNS_LISTED = 10
+#: 读一页的等待上限。页大(500 条、几 MB),默认的 20 秒会在真读完之前先超时。
+TRANSCRIPT_TIMEOUT = 120
+
+#: 一次工具调用跟在名字后面最能说明这一步在干什么的那个参数,按先后试。
+_HINT_KEYS = (
+    "description",
+    "command",
+    "file_path",
+    "path",
+    "pattern",
+    "query",
+    "url",
+    "skill",
+    "prompt",
+    "title",
+    "subject",
+    "question",
+    "note",
+    "content",
+    "text",
+)
+
+
+def _transcript_pages(topic: str, *, turn, author, grep):
+    """本会话的原始记录,按写下的先后一页一页地来。
+
+    翻页用接口给的 `next` 游标,不用自己拼位置:封存进私有桶的那几段只有在
+    游标上才读得到顺序。
+    """
+    query = {"limit": TRANSCRIPT_PAGE}
+    if turn:
+        query["turn_id"] = turn
+    if author:
+        query["author"] = author
+    if grep:
+        query["q"] = grep
+    cursor = None
+    while True:
+        params = dict(query)
+        if cursor:
+            params["after"] = cursor
+        page = _call(
+            "GET",
+            f"/topics/{urllib.parse.quote(topic, safe='')}/session-records?"
+            + urllib.parse.urlencode(params),
+            # 一页最多 500 条,记录本身可以很长,几 MB 是常见的;20s 的默认
+            # 超时读不完一整页,而那看起来像平台挂了。
+            timeout=TRANSCRIPT_TIMEOUT,
+        )["data"]
+        yield from page["items"]
+        cursor = page.get("next")
+        if not cursor:
+            return
+
+
+def _transcript_path(topic: str, *, turn, author, grep) -> Path:
+    """默认落点。带了筛选就把筛选写进文件名:否则一次窄查会盖掉刚落的整份。"""
+    name = topic
+    if turn:
+        name += "." + turn
+    if author:
+        name += "." + re.sub(r"[^\w-]+", "-", author).strip("-")[:32]
+    if grep:
+        slug = re.sub(r"[^\w-]+", "-", grep).strip("-")[:24]
+        name += ".grep-" + (slug or "search")
+    return Path.home() / STAGED_DIR / TRANSCRIPT_DIR / (name + ".jsonl")
+
+
+def _transcript_when(at: str, *, date: bool = False) -> str:
+    """记录里的时刻写给人看:同一份里都用 UTC,末尾标 Z,不猜读的人在哪个时区。"""
+    try:
+        when = datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        return str(at or "")
+    return when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ" if date else "%H:%M:%SZ")
+
+
+def _transcript_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} GB"
+
+
+def _transcript_summary(out: Path, *, count: int, turns: dict, first, last) -> None:
+    """stdout 只回路径和统计:原文永远在文件里,进上下文的是这几行。"""
+    print(out)
+    size = out.stat().st_size if out.exists() else 0
+    span = (
+        f" · {_transcript_when(first, date=True)} → {_transcript_when(last)}"
+        if first
+        else ""
+    )
+    print(f"{count} 条记录 · {len(turns)} 轮 · {_transcript_size(size)}{span}")
+    listed = sorted(turns.items(), key=lambda pair: pair[1][1] or "")
+    for turn_id, (seen, _start, _end) in listed[:TRANSCRIPT_TURNS_LISTED]:
+        print(f"  轮 {turn_id or '（不在轮次里）'} · {seen} 条")
+    if len(listed) > TRANSCRIPT_TURNS_LISTED:
+        print(
+            f"  …… 还有 {len(listed) - TRANSCRIPT_TURNS_LISTED} 轮没列（都在文件里，"
+            "grep 它，或者 --digest 只看形状）"
+        )
+    if not count:
+        print("没有记录。检查一下筛选条件,或者这一轮还没有写下任何记录。")
+
+
+def _transcript_write(topic: str, out: Path, *, turn, author, grep) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    turns: dict = {}
+    first = last = None
+    with open(out, "w", encoding="utf-8") as f:
+        for item in _transcript_pages(topic, turn=turn, author=author, grep=grep):
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+            count += 1
+            at = item.get("at")
+            first = first or at
+            last = at
+            key = item.get("turn_id")
+            slot = turns.setdefault(key, [0, at, at])
+            slot[0] += 1
+            slot[2] = at
+    _transcript_summary(out, count=count, turns=turns, first=first, last=last)
+
+
+def _transcript_text(value, limit: int = 80) -> str:
+    """一段可能嵌套的正文压成一行:换行折成空格,超了截断加省略号。"""
+    if isinstance(value, list):
+        value = " ".join(_transcript_text(v, limit=limit) for v in value)
+    elif isinstance(value, dict):
+        value = value.get("text") or value.get("content") or ""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _transcript_hint(arguments) -> str:
+    """这次调用在动什么。按 `_HINT_KEYS` 的顺序试,都不像就取第一个字符串参数。"""
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except ValueError:
+            return _transcript_text(arguments, limit=40)
+    if not isinstance(arguments, dict):
+        return ""
+    for key in _HINT_KEYS:
+        if isinstance(arguments.get(key), str) and arguments[key].strip():
+            return _transcript_text(arguments[key], limit=40)
+    for value in arguments.values():
+        if isinstance(value, str) and value.strip():
+            return _transcript_text(value, limit=40)
+    return ""
+
+
+def _transcript_parts(record: dict) -> list[tuple[str, str, str, str]]:
+    """一条 harness 记录里的 (种类, 工具名, 文本, 调用 id)。
+
+    三种骨架写下来的形状不一样(Claude Code 是 stream-json 行,Codex 是
+    app-server 通知,pi 是自己的 message 条目),分身那一份还多包一层
+    `cheese_file`。认不出来的就跳过 —— digest 是索引,不是原文。
+    """
+    if record.get("type") == "cheese_file":
+        record = record.get("entry") or {}
+    if record.get("method"):  # Codex:一条通知里装着一个 item
+        params = record.get("params") or {}
+        entry = params.get("item") if isinstance(params, dict) else None
+        if isinstance(entry, dict):
+            kind = entry.get("type")
+            if kind in ("dynamicToolCall", "functionCall"):
+                call = entry.get("id") or entry.get("callId")
+                return [
+                    (
+                        "tool",
+                        str(entry.get("tool") or entry.get("name") or "?"),
+                        _transcript_hint(entry.get("arguments")),
+                        str(call or ""),
+                    ),
+                    (
+                        "result",
+                        "",
+                        _transcript_text(entry.get("contentItems"), limit=60),
+                        str(call or ""),
+                    ),
+                ]
+            if kind in ("agentMessage", "assistantMessage"):
+                return [("text", "", _transcript_text(entry.get("text")), "")]
+        return []
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return []
+    role = message.get("role")
+    if role == "toolResult":  # pi 的结果是单独一条
+        return [
+            (
+                "result",
+                "",
+                _transcript_text(message.get("content"), limit=60),
+                str(message.get("toolCallId") or ""),
+            )
+        ]
+    content = message.get("content")
+    if isinstance(content, str):
+        return (
+            [("text", "", _transcript_text(content), "")] if role == "assistant" else []
+        )
+    parts: list[tuple[str, str, str, str]] = []
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind == "text" and block.get("text"):
+            if role == "assistant":
+                parts.append(("text", "", _transcript_text(block["text"]), ""))
+        elif kind in ("tool_use", "toolCall"):
+            parts.append(
+                (
+                    "tool",
+                    str(block.get("name") or "?"),
+                    _transcript_hint(block.get("input") or block.get("arguments")),
+                    str(block.get("id") or ""),
+                )
+            )
+        elif kind == "tool_result":
+            parts.append(
+                (
+                    "result",
+                    "",
+                    _transcript_text(block.get("content"), limit=60),
+                    str(block.get("tool_use_id") or ""),
+                )
+            )
+    return parts
+
+
+def _transcript_digest(topic: str, *, turn, author, grep, limit: int) -> None:
+    """先把形状看清:每一轮做了哪几步、用的什么工具、一步的结果是什么。"""
+    if limit < 1:
+        print("[cheese] --lines 至少是 1", file=sys.stderr)
+        sys.exit(2)
+    steps: list[dict] = []
+    counts: dict = {}
+    open_calls: dict = {}
+    for item in _transcript_pages(topic, turn=turn, author=author, grep=grep):
+        turn_id = item.get("turn_id")
+        counts[turn_id] = counts.get(turn_id, 0) + 1
+        record = item.get("record") or {}
+        sub = record.get("agent_id") if record.get("type") == "cheese_file" else ""
+        for kind, name, text, call in _transcript_parts(record):
+            step = {
+                "turn": turn_id,
+                "seq": item.get("sequence"),
+                "kind": kind,
+                "name": name,
+                "text": text,
+                "result": "",
+                "sub": sub,
+            }
+            if kind == "tool":
+                steps.append(step)
+                if call:
+                    open_calls[call] = step
+            elif kind == "result":
+                paired = open_calls.pop(call, None) if call else None
+                if paired is not None and not paired["result"]:
+                    paired["result"] = text
+            else:
+                steps.append(step)
+    shown = 0
+    left_out = 0
+    current = object()
+    heading = ""
+    for step in steps:
+        if step["turn"] != current:
+            current = step["turn"]
+            heading = f"轮 {current or '（不在轮次里）'} · {counts.get(current, 0)} 条"
+        if shown >= limit:
+            left_out += 1
+            continue
+        if heading:
+            print(heading)
+            shown += 1
+            heading = ""
+        who = f"分身{step['sub'][:6]} " if step["sub"] else ""
+        if step["kind"] == "text":
+            line = f"  #{step['seq']} {who}说 {step['text']}"
+        else:
+            line = f"  #{step['seq']} {who}{step['name']} {step['text']}"
+            if step["result"]:
+                line += f" → {step['result']}"
+        print(line)
+        shown += 1
+    if not steps:
+        print(
+            "没有步骤可列。没有记录时检查筛选条件;有记录但没有工具调用时,用不带 --digest 的写法落文件翻原文。"
+        )
+    elif left_out:
+        print(
+            f"…… 还有 {left_out} 条没显示。只看一轮加 --turn <轮次 id>,"
+            f"只留命中的加 --grep <词>,看更多加 --lines <N>。"
+        )
+
+
+def _transcript(a) -> None:
+    topic = _need("CHEESE_TOPIC", TOPIC)
+    if a.digest:
+        _transcript_digest(
+            topic,
+            turn=a.turn,
+            author=a.author,
+            grep=a.grep,
+            limit=a.lines,
+        )
+        return
+    out = (
+        Path(a.out)
+        if a.out
+        else _transcript_path(topic, turn=a.turn, author=a.author, grep=a.grep)
+    )
+    _transcript_write(topic, out, turn=a.turn, author=a.author, grep=a.grep)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cheese",
@@ -6908,6 +7245,50 @@ def build_parser() -> argparse.ArgumentParser:
     ppull.add_argument("path", help="文件区里的路径,如 output/报告.docx")
     ppull.add_argument(
         "-o", "--output", default=None, help="写到别处(默认写回同一个工作区路径)"
+    )
+
+    ptr = sub.add_parser(
+        "transcript",
+        help="把本会话的原始记录落到这台机器上,用 grep / Read 翻",
+        description=(
+            "本会话的原始记录 —— harness 写下的每一条,思考、工具输入输出、分身做过的事都\n"
+            "在里面 —— 写成一份 JSONL。stdout 只回路径和统计(多少条、哪几轮、多大),原文\n"
+            "永远在文件里:要翻就用 grep / Read 那个文件,别整份读进上下文。\n"
+            "\n"
+            "默认落 ~/attachments/transcript/<话题>.jsonl,不在检出目录里,不会变成 git 改动。\n"
+            "\n"
+            "只读本会话,别人的会话不碰。分身和留在同一份里,`cheese_file` 那些记录带\n"
+            "`agent_id`,标明是哪一次工具调用起的。\n"
+            "\n"
+            "--digest 不落文件:把压缩过的索引打到 stdout(轮次、步骤、工具名、一行结果、\n"
+            "记录号),先看形状,再决定要不要落文件翻原文。默认打到一屏就停,超了会说还有\n"
+            "多少条、怎么取。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ptr.add_argument("--turn", default=None, metavar="轮次", help="只要某一轮(轮次 id)")
+    ptr.add_argument(
+        "--grep", default=None, metavar="词", help="只留正文里有这个词的记录(先搜后落)"
+    )
+    ptr.add_argument(
+        "--author",
+        default=None,
+        metavar="handle",
+        help="只要这个来源写的(默认全部,含分身)",
+    )
+    ptrmode = ptr.add_mutually_exclusive_group()
+    ptrmode.add_argument(
+        "--digest",
+        action="store_true",
+        help="不落文件,把压缩过的索引打到 stdout",
+    )
+    ptrmode.add_argument("--out", default=None, metavar="FILE", help="落到别处")
+    ptr.add_argument(
+        "--lines",
+        type=int,
+        default=TRANSCRIPT_DIGEST_LINES,
+        metavar="N",
+        help=f"--digest 最多打多少行(默认 {TRANSCRIPT_DIGEST_LINES})",
     )
 
     ptpl = sub.add_parser(
@@ -7203,6 +7584,8 @@ def main() -> None:
         )
     elif a.cmd == "check":
         _check_page(a)
+    elif a.cmd == "transcript":
+        _transcript(a)
     elif a.cmd == "pull":
         topic = _need("CHEESE_TOPIC", TOPIC)
         rel = _worktree_relative(a.path)

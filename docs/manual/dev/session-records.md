@@ -48,4 +48,6 @@ Codex 和 pi 的镜像保留（`RETENTION_S`）只删原始记录已经留下的
 
 `GET /topics/{topic_id}/session-records`：按写下的先后排，`turn_id` 只看一轮，`after` / `before` 使用接口给出的不透明游标，`newest` 从最新一页开始，`author` 选择来源，`q` 搜索完整 JSON，`channel=true` 包括房间内任务和支线；`limit` 最多 500。和 `/transcript` 同一道门：能看这段对话现场的人就能读，频道删除立即禁止读取。精确记录和图片接口使用同样的权限检查。
 
+会话里的 agent 读自己那一份不用这个接口，走机器上的 `cheese transcript`：同一条路由取回来写成 JSONL，落在它的 `~/attachments/transcript/` 下，stdout 只回路径和统计，原文用 grep / Read 翻；`--turn`、`--grep`、`--author` 收窄，`--digest` 不落文件、只打索引。分身的记录和主会话在同一份里，`cheese_file` 那些带 `agent_id`。见[cheese CLI 原理](/dev/cli#sandbox)。
+
 `/transcript` 将原始记录、平台状态和上线前轮次说明合并翻页。平台状态每次变化追加一行，概览显示同一状态的最新变化，原始视图显示全部变化。上线前没有原始记录的轮次只显示一行说明。现场不再写入或读取隐藏的 `blocks.kind=event`。
