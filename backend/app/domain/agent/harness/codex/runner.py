@@ -133,6 +133,17 @@ class Runner(runner.Runner[Journal]):
             return
         if compaction_turn and event.get("method") == "turn/started":
             return
+        if (
+            self.compacting_turn is not None
+            and event.get("method") == "turn/started"
+            and turn_id != self.compacting_turn
+        ):
+            # A different turn replacing the compaction's — a person wrote
+            # while it ran, and app-server swapped the task. The compaction is
+            # gone, so it will never report: without this the request would sit
+            # at `sent` for ever and the session would never go idle.
+            self.compacting_turn = None
+            self.compact_request = ""
         ends = (
             self.session is not None
             and event.get("method") == "turn/completed"

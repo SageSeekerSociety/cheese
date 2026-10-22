@@ -462,3 +462,40 @@ async def test_the_compaction_s_own_turn_is_not_a_room_turn(tmp_path):
         assert len(results) == 1, results
     finally:
         await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_turn_replacing_the_compaction_clears_the_request(tmp_path):
+    """A person can write while the compaction runs; app-server swaps the task,
+    and the compaction's turn then never completes. Without clearing the state,
+    the request would sit at `sent` for good — and a session that never reports
+    it finished is a session that never goes idle."""
+    runner = Runner(tmp_path, AsyncMock())
+    compacted = AsyncMock()
+    session = SimpleNamespace(
+        thread_id="thread", turn_id=None, compact=compacted, observe=lambda _: None
+    )
+    runner.session = session
+    try:
+        runner.request_compact()
+        await asyncio.sleep(0.05)
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "compact-turn"}},
+            }
+        )
+        assert runner.compacting_turn == "compact-turn"
+
+        # The person's turn takes over.
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "person-turn"}},
+            }
+        )
+        assert runner.compacting_turn is None
+        assert runner.compact_request == ""
+        assert runner.busy() is False
+    finally:
+        await runner.close()
