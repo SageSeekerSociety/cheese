@@ -439,6 +439,38 @@ describe('这一支的活', () => {
     await waitFor(() => expect(getGitDiff.mock.calls.length).toBeGreaterThan(before))
     expect(getGitDiff).toHaveBeenLastCalledWith('p1', 'room-1', 't-1', 'live')
   })
+
+  // 手机上一屏只有一格：从对话切回「改动」不等于重新打开这一页。重取一次就是
+  // 整格清空、转圈、再整片重画——那一段里界面动不了。
+  it('从别处切回来不重取，屏幕上那份留着', async () => {
+    const { rerender } = mount()
+    await waitFor(() => expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy())
+    const before = getGitDiff.mock.calls.length
+
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: false })
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(getGitDiff.mock.calls.length).toBe(before)
+    // 也没退回转圈：差异还在屏幕上。
+    expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy()
+  })
+
+  // 离开期间 AI 干完了一轮：回来补一次静默重读（不转圈，只是把新差异换上）。
+  it('离开期间有一轮收工，切回来补读一次', async () => {
+    const { rerender } = mount()
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalled())
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: false })
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalledTimes(1))
+
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: false, refreshTick: 1 })
+    await new Promise((r) => setTimeout(r, 20))
+    // 不在这一格的时候不取；回来才取。
+    expect(getGitDiff).toHaveBeenCalledTimes(1)
+
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true, refreshTick: 1 })
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalledTimes(2))
+    expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy()
+  })
 })
 
 describe('还没有东西可看的时候', () => {
