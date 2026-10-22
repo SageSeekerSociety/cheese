@@ -136,10 +136,6 @@ _AWAITING_PLACES_SELECT = re.compile(
     r"^\s*SELECT\b[^;]*?\bFROM\s+\(SELECT DISTINCT ON \(blocks\.conversation_id\)",
     re.IGNORECASE,
 )
-_AWAITING_SPOKE_SELECT = re.compile(
-    r"^\s*SELECT anon_1\.place,\s*said_since\.author,\s*said_since\.at\s+FROM unnest\(",
-    re.IGNORECASE,
-)
 _UNDERWAY_TASKS_SELECT = re.compile(
     r"^\s*SELECT\b[^;]*?\bFROM tasks\s+WHERE tasks\.room_id IN\b[^;]*?\btasks\.closing_since IS NULL",
     re.IGNORECASE,
@@ -338,13 +334,10 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monke
         s for s in seen if _TASK_CARDS_SELECT.search(s)
     ]
 
-    # 4. `blocks` awaiting_an_answer (places + unnest lateral) is read once
-    #    across the room list and all sidebar task rows.
+    # 4. Question records are read once across the room list and all sidebar
+    #    task rows. Later speech no longer determines whether they are settled.
     assert _count(seen, _AWAITING_PLACES_SELECT) == 1, [
         s for s in seen if _AWAITING_PLACES_SELECT.search(s)
-    ]
-    assert _count(seen, _AWAITING_SPOKE_SELECT) == 1, [
-        s for s in seen if _AWAITING_SPOKE_SELECT.search(s)
     ]
 
     # 5. Underway `tasks` (tasks_of_rooms, underway_counts, underway_with,
