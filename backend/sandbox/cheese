@@ -6504,6 +6504,7 @@ def _transcript(args) -> None:
         rows = _all_rows(topic, params)
     else:
         rows = _recent_rows(topic, params, args.turns)
+    rows = _mark_subagents(rows)
     if args.digest:
         lines = _digest_lines(rows)
         print("\n".join(lines) if lines else "这个范围里没有记录。")
@@ -6623,14 +6624,34 @@ def _subagent_threads(rows: list[dict]) -> set:
     return {thread for thread in declared | marked if thread}
 
 
+def _mark_subagents(rows: list[dict]) -> list[dict]:
+    """把「这条是分身写的」在整份读取上补齐,再落盘或算摘要。
+
+    服务端每页只看得见自己的那 500 条,而 codex 声明子线程的那一条可能落在前一页:
+    那样后一页那些行服务端只能按记录自己标的字段判,标不出分身。整份在手里时才判得
+    准——这也是文件里那一列存在的全部意义,漏标就把分身做的事记成了这一轮做的。
+    """
+    children = _subagent_threads(rows)
+    if not children:
+        return rows
+    return [
+        row
+        if row.get("subagent") or row.get("thread") not in children
+        else {**row, "subagent": True}
+        for row in rows
+    ]
+
+
 def _digest_lines(rows: list[dict]) -> list[str]:
     """每轮一行:什么时候、多少步、动了什么、最后说了什么、成没成。
 
-    分身的记录算另一条线程,不进这一轮的步数——它做的不是这一轮的事。
+    分身的记录算另一条线程,不进这一轮的步数——它做的不是这一轮的事。哪些行是分身
+    写的由 ``_mark_subagents`` 在整份读取上补齐;这里再补一次(= 已标过的原样返回),
+    这样它自己的输入是什么标法都算得对。
     什么都不剩的一组不占一行:会话自己的那几条记录(启动、命令生命周期、限流通知)
     不属于任何一轮,列出来只有时间戳,读的人会以为漏了什么。
     """
-    children = _subagent_threads(rows)
+    rows = _mark_subagents(rows)
     groups = []
     for row in rows:
         turn = row.get("turn")
@@ -6640,7 +6661,7 @@ def _digest_lines(rows: list[dict]) -> list[str]:
             groups.append((turn, [row]))
     lines = []
     for turn, entries in groups:
-        main = [row for row in entries if row.get("thread") not in children] or entries
+        main = [row for row in entries if not row.get("subagent")] or entries
         tools = []
         said = []
         asked = []

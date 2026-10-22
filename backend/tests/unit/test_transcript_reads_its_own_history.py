@@ -51,6 +51,67 @@ def tool(name, preview="", failed=False):
     return {"kind": "tool", "name": name, "preview": preview, "failed": failed}
 
 
+def test_the_written_file_marks_a_child_thread_whose_declaration_is_on_another_page(
+    monkeypatch, tmp_path
+):
+    """The server decides `subagent` per page, and codex declares a child thread
+    only in the record that started it — which may be on an earlier page. The
+    file is where a reader keeps the spawner's steps apart from the spawned
+    thing's, so the marking has to be completed over everything pulled."""
+    module = cheese()
+    # Page one holds the declaration; page two is the same child's later rows,
+    # which the server alone cannot tell from the session's own.
+    first = {
+        "seq": 1,
+        "at": "2026-10-22T08:00:00+00:00",
+        "turn": "a",
+        "thread": "child",
+        "subagent": True,
+        "parent_thread": "a",
+        "parts": [],
+        "role": None,
+    }
+    later = {
+        "seq": 2,
+        "at": "2026-10-22T08:00:01+00:00",
+        "turn": "a",
+        "thread": "child",
+        "subagent": False,
+        "parent_thread": None,
+        "parts": [tool("Bash", "跑构建")],
+        "role": None,
+    }
+    start = {
+        "seq": 0,
+        "at": "2026-10-22T08:00:00+00:00",
+        "turn": "a",
+        "thread": None,
+        "subagent": False,
+        "parts": [text("开始")],
+        "role": None,
+    }
+    pages = {None: ([start, first], "c1"), "c1": ([later], None)}
+
+    def fake(method, path, *args, **kwargs):
+        cursor = None if "after=" not in path else path.split("after=")[1].split("&")[0]
+        items, following = pages[cursor]
+        return {"data": {"items": items, "next": following}}
+
+    monkeypatch.setattr(module, "_call", fake)
+    monkeypatch.setattr(module, "TOPIC", "topic-1")
+    monkeypatch.setattr(module.Path, "home", classmethod(lambda cls: tmp_path))
+    module._transcript(module.build_parser().parse_args(["transcript", "--all"]))
+
+    written = [
+        json.loads(line)
+        for line in (tmp_path / "attachments" / "transcript" / "topic-1.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [row["seq"] for row in written] == [0, 1, 2]
+    assert [row["subagent"] for row in written] == [False, True, True]
+
+
 def test_a_thread_declared_only_once_is_still_known_to_be_a_subagent():
     """Codex says a thread is a child in the record that started it and nowhere
     else, so a row of that thread says nothing on its own — the union over the
