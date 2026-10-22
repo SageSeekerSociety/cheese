@@ -103,3 +103,23 @@ export function withdrawAnswer(questionId: string): Promise<Block> {
     })
   )
 }
+
+/** 一道题的答案：选了哪些选项，或者自己写的一句话。两个都空 = 这题没答。 */
+export type GroupAnswer = { options?: string[]; note?: string }
+
+/** 整组提交回了什么：落下的那一条消息，和几道题改完之后的样子。 */
+export interface AnswerGroupResult {
+  block: Block
+  questions: Block[]
+}
+
+// 一次答掉整组题。`questionId` 是组里任意一道；服务端按题上的组编号找出整组。
+// 房间里只多一条消息（正文逐题列出答案），一组里任何一题不合规就整组拒绝。
+export function answerGroup(questionId: string, answers: Record<string, GroupAnswer>): Promise<AnswerGroupResult> {
+  return changesAwaiting(
+    request<AnswerGroupResult>(`/blocks/${encodeURIComponent(questionId)}/answers`, {
+      method: 'POST',
+      body: JSON.stringify({ answers }),
+    })
+  )
+}

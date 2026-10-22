@@ -243,6 +243,7 @@ const {
   prState,
   composerHint,
   rows,
+  askGroups,
   hiddenRows,
   refMaps,
   hasMore,
@@ -455,6 +456,7 @@ useComposerShortcut({
           :tasks-under="tasksUnder"
           :name-of="nameOf"
           :rows="rows"
+          :ask-groups="askGroups"
           :hidden-rows="hiddenRows"
           :day-labels="dayLabels"
           :unread-anchor-id="unreadAnchorId"

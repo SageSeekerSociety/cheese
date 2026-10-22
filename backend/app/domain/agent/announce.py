@@ -351,7 +351,9 @@ async def answer_questions(
             },
         ]
         question.meta = meta
-    await finish_answering(session, reply=reply, questions=questions, said=said, recipient=recipient)
+    await finish_answering(
+        session, reply=reply, questions=questions, said=said, recipient=recipient
+    )
     return questions
 
 

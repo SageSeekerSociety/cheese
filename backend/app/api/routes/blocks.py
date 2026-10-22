@@ -262,9 +262,7 @@ async def _answer_group(block_id, body, db, resolver, broker, chat, runner) -> d
     if unknown:
         raise ValidationError(say("askAnswerNotInGroup", ids=", ".join(unknown)))
 
-    touched = record_answers(
-        questions, answers, by=actor.handle, at=datetime.now(UTC)
-    )
+    touched = record_answers(questions, answers, by=actor.handle, at=datetime.now(UTC))
     note = summary_line(questions, answers)
     reply = await repo.add(
         project_id=question.project_id,
@@ -281,9 +279,7 @@ async def _answer_group(block_id, body, db, resolver, broker, chat, runner) -> d
     )
     payload = BlockOut.model_validate(reply).model_dump(mode="json")
     payload["reactions"] = await repo.reactions_for_block(reply.id)
-    updated = [
-        BlockOut.model_validate(q).model_dump(mode="json") for q in questions
-    ]
+    updated = [BlockOut.model_validate(q).model_dump(mode="json") for q in questions]
     await db.commit()
     await broker.publish(
         str(question.conversation_id), {"type": "block_added", "block": payload}

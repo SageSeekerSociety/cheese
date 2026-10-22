@@ -189,9 +189,7 @@ def summary_line(questions: list[Block], answers: dict[uuid.UUID, Answer]) -> st
     和他在输入框里打出来的一样，不存在「按读者语言再渲染一次」这回事。
     """
     answered_count = sum(
-        1
-        for q in questions
-        if (a := answers.get(q.id)) is not None and not a.empty
+        1 for q in questions if (a := answers.get(q.id)) is not None and not a.empty
     )
     lines = [f"已回答上面的 {answered_count} 个问题"]
     for index, question in enumerate(questions):
