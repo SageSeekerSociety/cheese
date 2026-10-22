@@ -133,8 +133,10 @@ class Runner(runner.Runner[Journal]):
         # in is still running, "sent" once pi has it and the compaction has not
         # finished. Set from the thread the tool call runs on (`run_cli`).
         self.compact_request = ""
-        #: The loop `request_compact` hops onto from that thread.
-        self.loop = asyncio.get_running_loop()
+        #: The loop `request_compact` hops onto from the tool call's thread.
+        #: `start` sets it for sure; a runner built outside a loop (a sync
+        #: test, `test_tool_pictures_reach_the_model`) has none yet.
+        self.loop: asyncio.AbstractEventLoop | None = runner.current_loop()
         # The platform asked pi to stop: a retry cut short by it is not a
         # failure of anything.
         self.aborting = False
@@ -821,6 +823,9 @@ class Runner(runner.Runner[Journal]):
         env = {**env, "TMPDIR": str(scratch)}
         self.cwd, self.env = cwd, env
         self.binary, self.args = binary, list(args)
+        # This runs on the loop the runner will keep working on, which is the
+        # one `request_compact` hops onto from a tool call's own thread.
+        self.loop = asyncio.get_running_loop()
         self.model = opening.model or ""
         self.extension_files = dict(extension or {})
         if target is None or tools is not None:
@@ -1104,7 +1109,11 @@ class Runner(runner.Runner[Journal]):
         self.compact_request = "asked"
         # From the loop: a platform tool call runs in a worker thread
         # (`run_cli`).
-        self.loop.call_soon_threadsafe(self._compact_when_settled)
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self._compact_when_settled)
+        else:  # no loop of our own: nobody to hop onto, none to ask
+            self.compact_request = ""
+            raise RuntimeError("This session has no loop to compact on")
         return "requested"
 
     def _compact_when_settled(self) -> None:

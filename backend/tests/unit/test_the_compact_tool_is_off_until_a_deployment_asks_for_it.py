@@ -125,3 +125,43 @@ def test_a_harness_that_cannot_compact_refuses_rather_than_pretending():
     with pytest.raises(cheese.PlatformToolError) as refused:
         cheese.run_platform_tool("cheese_compact", {}, host)
     assert "骨架" in str(refused.value)
+
+
+# --- a runner built before there is a loop -------------------------------------
+#
+# pi's and Codex's runners reach their own loop from a platform tool call's
+# worker thread. Taking the loop in `__init__` broke every caller that builds a
+# runner outside one — a sync test, or any code that prepares a runner before
+# its loop exists — with `RuntimeError: no running event loop`. The reference is
+# taken where it exists and set again in `start`.
+
+
+def test_a_pi_runner_can_be_built_with_no_loop_running(tmp_path):
+    from app.domain.agent.harness.pi.runner import Runner
+
+    runner = Runner(tmp_path / "pi")  # no loop here, and that must be fine
+    try:
+        assert runner.loop is None
+    finally:
+        runner.journal.close()
+
+
+def test_a_codex_runner_can_be_built_with_no_loop_running(tmp_path):
+    from app.domain.agent.harness.codex.runner import Runner
+
+    runner = Runner(tmp_path / "codex", lambda *_args: None)  # no loop here
+    try:
+        assert runner.loop is None
+    finally:
+        runner.journal.close()
+
+
+@pytest.mark.anyio
+async def test_a_runner_started_on_a_loop_remembers_it(tmp_path):
+    """`start` runs on the loop the runner keeps working on, and that is the
+    one a tool call's thread has to hop onto."""
+    import asyncio as _asyncio
+
+    from app.domain.agent.harness.driven.runner import current_loop
+
+    assert current_loop() is _asyncio.get_running_loop()

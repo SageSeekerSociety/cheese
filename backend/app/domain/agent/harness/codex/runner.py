@@ -62,8 +62,10 @@ class Runner(runner.Runner[Journal]):
         # thread's compaction has not finished. Set from the thread the tool
         # call runs on (`tools.RemoteTools`), read here.
         self.compact_request = ""
-        #: The loop `request_compact` hops onto from that thread.
-        self.loop = asyncio.get_running_loop()
+        #: The loop `request_compact` hops onto from the tool call's thread.
+        #: `start` sets it for sure; a runner built outside a loop (a sync
+        #: test) has none yet and gets it there.
+        self.loop: asyncio.AbstractEventLoop | None = runner.current_loop()
 
     async def _catch_up(self) -> bool:
         """The project's skills as they are on the machine now; whether they
@@ -198,6 +200,9 @@ class Runner(runner.Runner[Journal]):
         self.compact_request = "asked"
         # From the loop: a platform tool call runs in a worker thread
         # (`tools.RemoteTools.__call__`).
+        if self.loop is None:  # nobody to hop onto, none to ask
+            self.compact_request = ""
+            raise RuntimeError("This session has no loop to compact on")
         self.loop.call_soon_threadsafe(self._compact_when_idle)
         return "requested"
 
@@ -236,6 +241,9 @@ class Runner(runner.Runner[Journal]):
         """``overrides`` are `app-server` configuration overrides (``-c``):
         the project's MCP servers, at the session's gateway."""
         self.claim()
+        # This runs on the loop the runner will keep working on, which is the
+        # one `request_compact` hops onto from a tool call's own thread.
+        self.loop = asyncio.get_running_loop()
         saved = self.journal.recall("thread_id")
         if saved is not None:
             if opening.resume_token not in (None, saved):
