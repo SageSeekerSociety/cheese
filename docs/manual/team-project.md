@@ -227,7 +227,7 @@ parts:
   - kind: head
     room: 综合
     title: B 树的插入和查找
-    status: 进行中
+    status: 在做
     owner: 你 负责
     at: 2
     until: 3
@@ -261,7 +261,7 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 进行中
+    status: 在做
     at: 3
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
@@ -295,7 +295,7 @@ parts:
   - kind: head
     room: 综合
     title: B 树的插入和查找
-    status: 进行中
+    status: 在做
     owner: 你 负责
   - kind: bars
     lines: 2
@@ -384,7 +384,7 @@ parts:
   - kind: task
     title: B 树的删除
     owner: 陈默 负责
-    status: 待你审阅
+    status: 待审阅
     at: 1
     until: 3
   - kind: line
@@ -394,13 +394,13 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 进行中
+    status: 在做
     at: 1
     until: 2
   - kind: task
     title: 实验报告
     owner: 王珊 负责
-    status: 芝士在做
+    status: 在做
     at: 1
     until: 2
   - kind: head
@@ -416,7 +416,7 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 进行中
+    status: 在做
     at: 3
   - kind: bars
     who: 陈默
@@ -425,7 +425,7 @@ parts:
   - kind: task
     title: B 树的删除
     owner: 陈默 负责
-    status: 待你审阅
+    status: 待审阅
     at: 3
   - kind: bars
     who: 王珊
@@ -434,7 +434,7 @@ parts:
   - kind: task
     title: 实验报告
     owner: 王珊 负责
-    status: 芝士在做
+    status: 在做
     at: 3
 ```
 :::
