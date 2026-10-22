@@ -145,6 +145,23 @@ def test_a_checkout_that_does_not_carry_the_fact_says_so(tmp_path):
     assert found == {"searched": True, "hits": []}
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["docs/build:guide.md", "docs/构建.md", "docs/build\nnotes.md"],
+)
+def test_search_returns_the_actual_filename_and_complete_matching_line(tmp_path, name):
+    """A search hit names a file the caller can open, with its original line."""
+    fact = "build with pnpm\u2028and keep the lockfile"
+    checkout = _a_checkout(tmp_path / "web", {name: f"# Build\n{fact}\n"})
+
+    found = _executor(checkout).repo_search({"terms": ["pnpm"]})
+
+    assert found == {
+        "searched": True,
+        "hits": [{"path": name, "line": 2, "text": fact}],
+    }
+
+
 def test_a_search_that_could_not_run_is_not_an_empty_repo(tmp_path):
     """「repo 里确实没写」和「这次没查成」是相反的两个答案。
 
