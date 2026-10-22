@@ -151,5 +151,7 @@
   "turnForceStopped": "本轮已被强制停止",
   "upstreamModelRequired": "上游模型标识不能为空",
   "sourceNeedsPrices": "每条线路都要写输入与输出单价，其中一向可以是 0（比如语音转写的输出），两向都是 0 就要标为免费线路：平台按模型名的单价给它的全部用量计费",
-  "sourcePriceCleared": "单价可以改，不能清空：这次编辑清空了 {prices}"
+  "sourcePriceCleared": "单价可以改，不能清空：这次编辑清空了 {prices}",
+  "assistantCardLeftForLater": "用户现在不在，这项操作已留给用户确认，没有执行。接着做别的，或者结束。",
+  "assistantNotifyMeLimit": "一小时内最多给用户发 {max} 条通知，把要说的合在一条里。"
 }

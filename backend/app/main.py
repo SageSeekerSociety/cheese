@@ -29,7 +29,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
 from app.api.admin_deps import PlatformAdminDep
-from app.api.deps import get_consumptions, get_llm_gateway, get_ownership
+from app.api.deps import (
+    get_consumptions,
+    get_llm_gateway,
+    get_ownership,
+    get_session_host,
+)
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
@@ -220,6 +225,7 @@ async def lifespan(application: FastAPI):
         compute=ComputeMeterSweeper(async_session_factory).sweep,
         sessions=async_session_factory,
         get_runner=get_work_runner,
+        assistants=lambda: (get_session_host(), get_consumptions()),
     )
     runs = JobRuns(async_session_factory)
 

@@ -315,6 +315,7 @@ export function panelMessages(
     stopped: m.stopped,
     at: m.at,
     files: m.files,
+    shown: m.shown,
     steps: (m.steps ?? []).map(stepView),
     ...writesView(m.edits ?? [], terms, current, canUndo, ordinal),
     results: (m.published ?? []).map(resultView),

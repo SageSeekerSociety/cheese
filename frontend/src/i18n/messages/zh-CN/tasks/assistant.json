@@ -116,6 +116,10 @@
     "confirm": "确认",
     "dismiss": "不用了",
     "view": "查看",
-    "failed": "发送失败"
+    "failed": "发送失败",
+    "expired": "已过期"
+  },
+  "run": {
+    "routine": "例行事务「{title}」开始运行"
   }
 }

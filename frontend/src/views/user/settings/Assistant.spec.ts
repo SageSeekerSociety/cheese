@@ -1,5 +1,5 @@
-// 「芝士」：勾选「始终需要确认」的一类就存一次；两段补充说明点「保存」才存；最近的操作
-// 写已执行还是已请你确认，请你确认的写原因。
+// 「芝士」：勾选一类、添加或删除一条都立即保存；例行事务列出何时运行、最近一次的结果，
+// 暂停立即生效，删除先确认。
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -8,50 +8,88 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Assistant from './Assistant.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
-const { rulesMock, saveMock, activityMock } = vi.hoisted(() => ({
+const { rulesMock, saveMock, activityMock, routinesMock, setRoutineMock } = vi.hoisted(() => ({
   rulesMock: vi.fn(),
   saveMock: vi.fn(),
   activityMock: vi.fn(),
+  routinesMock: vi.fn(),
+  setRoutineMock: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
   getAssistantRules: rulesMock,
   saveAssistantRules: saveMock,
   getAssistantActivity: activityMock,
+  getAssistantRoutines: routinesMock,
+  setAssistantRoutine: setRoutineMock,
 }))
+
+vi.mock('@/stores/agent', () => ({ openAgentConversation: vi.fn() }))
 
 const CATEGORIES = [
   { code: 'remove_member', label: '移除成员' },
   { code: 'to_everyone', label: '在综合频道发消息' },
 ]
 
+const ROUTINE = {
+  id: 'r1',
+  title: '每日待办',
+  note: '列出待办',
+  when: '每天 08:00（Asia/Shanghai）',
+  state: 'active',
+  paused: '',
+  nextRunAt: new Date(Date.now() + 3600_000).toISOString(),
+  lastRun: { status: 'done', at: new Date().toISOString(), asked: 2, conversationId: 'c1' },
+  weekCredits: 3.2,
+}
+
+// The dialog itself is `ConfirmDialog`'s to test; here, only what confirming it does.
+const ConfirmStub = {
+  props: ['modelValue', 'title', 'confirmLabel'],
+  emits: ['confirm'],
+  template:
+    '<div v-if="modelValue"><p>{{ title }}</p><button @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
+}
+
 function mount() {
-  return render(Assistant, { global: { plugins: [createVuetify({ components, directives })] } })
+  return render(Assistant, {
+    global: { plugins: [createVuetify({ components, directives }), i18n], stubs: { ConfirmDialog: ConfirmStub } },
+  })
 }
 
 beforeEach(() => {
   setLocale('zh-CN')
-  rulesMock.mockResolvedValue({ ask: ['remove_member'], allowText: '', askText: '', categories: CATEGORIES })
+  rulesMock.mockResolvedValue({
+    ask: ['remove_member', 'to_everyone'],
+    askItems: ['发给老师的消息'],
+    allowItems: [],
+    categories: CATEGORIES,
+  })
   saveMock.mockImplementation(async (r) => ({ ...r, categories: CATEGORIES }))
+  routinesMock.mockResolvedValue({ routines: [ROUTINE], limit: 20 })
+  setRoutineMock.mockImplementation(async (_id: string, action: string) => ({
+    routines: action === 'delete' ? [] : [{ ...ROUTINE, state: 'paused', paused: 'person' }],
+    limit: 20,
+  }))
   activityMock.mockResolvedValue({
     items: [
       {
         id: 2,
-        kind: 'member',
-        summary: '将 bob 移出频道「综合」（项目「P」）',
+        kind: 'message',
+        summary: '在频道「综合」（项目「P」）发消息：\n收到',
         verdict: 'asked',
         stage: 'rule',
-        reason: '你设置了「移除成员」需要确认',
+        reason: '你设置了「在综合频道发消息」需要确认',
         at: new Date().toISOString(),
       },
       {
         id: 1,
-        kind: 'message',
-        summary: '在频道「综合」（项目「P」）发消息：\n收到',
+        kind: 'channel',
+        summary: '在项目「P」新建频道「论文」',
         verdict: 'allowed',
-        stage: 'quick',
+        stage: 'low',
         reason: '',
         at: new Date().toISOString(),
       },
@@ -65,31 +103,44 @@ afterEach(() => {
 })
 
 describe('芝士 settings', () => {
-  it('lists recent actions, saying which were confirmed by the person and why', async () => {
+  it('adding and deleting an entry each save at once', async () => {
     const view = mount()
-    await waitFor(() => expect(view.getByText('最近的操作')).toBeTruthy())
-    expect(view.getByText('已请你确认')).toBeTruthy()
-    expect(view.getByText('原因：你设置了「移除成员」需要确认')).toBeTruthy()
-    expect(view.getByText('已执行')).toBeTruthy()
-  })
+    await waitFor(() => expect(view.getByText('发给老师的消息')).toBeTruthy())
 
-  it('ticking a kind saves at once; the notes save when asked', async () => {
-    const view = mount()
-    await waitFor(() => expect(view.getByLabelText('在综合频道发消息')).toBeTruthy())
-
-    await fireEvent.change(view.getByRole('checkbox', { name: '在综合频道发消息' }))
-    await waitFor(() =>
-      expect(saveMock).toHaveBeenCalledWith({ ask: ['remove_member', 'to_everyone'], allowText: '', askText: '' })
-    )
-
-    await fireEvent.update(view.getByLabelText('需要确认'), '发给老师的消息')
-    await fireEvent.click(view.getByRole('button', { name: '保存' }))
+    const allow = view.getByRole('textbox', { name: '无需确认' })
+    await fireEvent.update(allow, '在我负责的频道里回答问题')
+    await fireEvent.submit(allow.closest('form') as HTMLFormElement)
     await waitFor(() =>
       expect(saveMock).toHaveBeenLastCalledWith({
         ask: ['remove_member', 'to_everyone'],
-        allowText: '',
-        askText: '发给老师的消息',
+        askItems: ['发给老师的消息'],
+        allowItems: ['在我负责的频道里回答问题'],
       })
     )
+
+    const [removeAsk] = view.getAllByRole('button', { name: '删除' })
+    await fireEvent.click(removeAsk)
+    await waitFor(() => expect(saveMock).toHaveBeenLastCalledWith(expect.objectContaining({ askItems: [] })))
+  })
+
+  it('lists routines with when they run and how the last run went; deleting asks first', async () => {
+    const view = mount()
+    await waitFor(() => expect(view.getByText('每日待办')).toBeTruthy())
+    expect(view.getByText('每天 08:00（Asia/Shanghai）')).toBeTruthy()
+    expect(view.getByText('最近一次：2 项操作待你确认')).toBeTruthy()
+    expect(view.getByText('近 7 天 3.2 点')).toBeTruthy()
+
+    await fireEvent.click(view.getByRole('button', { name: '暂停' }))
+    await waitFor(() => expect(view.getByText('已暂停')).toBeTruthy())
+    expect(setRoutineMock).toHaveBeenCalledWith('r1', 'pause')
+
+    const deletes = view.getAllByRole('button', { name: '删除' })
+    await fireEvent.click(deletes[deletes.length - 1])
+    expect(setRoutineMock).not.toHaveBeenCalledWith('r1', 'delete')
+    await waitFor(() => expect(view.getByText('删除例行事务「每日待办」？')).toBeTruthy())
+    const confirm = view.getAllByRole('button', { name: '删除' })
+    await fireEvent.click(confirm[confirm.length - 1])
+    await waitFor(() => expect(setRoutineMock).toHaveBeenCalledWith('r1', 'delete'))
+    await waitFor(() => expect(view.getByText('暂无例行事务')).toBeTruthy())
   })
 })

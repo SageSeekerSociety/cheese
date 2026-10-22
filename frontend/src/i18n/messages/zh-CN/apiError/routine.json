@@ -30,5 +30,9 @@
   "scheduleTimeFormat": "执行时间要写成 HH:MM，例如 09:00",
   "scheduleWeeklyDays": "每周执行要给出星期几（0=周一 … 6=周日）",
   "timezoneUnknown": "不认识的时区：{name}",
-  "routineResumeNeedsTrigger": "先给它定个触发方式，它才知道什么时候跑"
+  "routineResumeNeedsTrigger": "先给它定个触发方式，它才知道什么时候跑",
+  "assistantRoutineOnceAt": "运行时间要在现在之后的一年内，写成 2026-10-23T08:00 这样",
+  "assistantRoutineTrigger": "触发方式只能是 schedule、mention、review、due 或 invite",
+  "assistantRoutineLimit": "例行事务最多 {max} 条，删掉不用的再新建",
+  "assistantRoutineInRun": "例行事务运行时不能新建或修改例行事务"
 }
