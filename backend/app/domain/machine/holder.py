@@ -172,12 +172,12 @@ async def require_project_member(
         user = await user_by_handle(db, actor.handle)
         user_id = user.id if user else None
     elif actor.via != "token":
-        raise AuthenticationRequiredError("Login required to use cloud compute")
+        raise AuthenticationRequiredError()
     if user_id is None:
-        raise AuthenticationRequiredError("Login required to use cloud compute")
+        raise AuthenticationRequiredError()
     project = await ProjectService(db).get(project_id)
     if project is None:
-        raise NotFoundError("Project not found")
+        raise NotFoundError(say("projectNotFound"))
 
     if not any(
         m.handle == actor.handle
