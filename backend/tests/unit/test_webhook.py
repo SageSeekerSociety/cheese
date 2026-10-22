@@ -358,3 +358,10 @@ async def test_receive_webhook_refuses_a_room_of_an_archived_project(monkeypatch
             db=None,
         )
     post_mock.assert_not_awaited()
+
+
+def test_non_ascii_webhook_signature_is_rejected():
+    """An invalid webhook header must be refused without crashing the ingress."""
+    from app.core.webhook_auth import webhook_token_claims
+
+    assert webhook_token_claims("body.é", topic_id="T") is None
