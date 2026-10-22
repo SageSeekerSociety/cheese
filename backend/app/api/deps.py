@@ -47,6 +47,7 @@ from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
+from app.domain.routine import personal as routine_personal
 from app.domain.session_record import service as session_records
 from app.domain.space.services import SpaceLabels
 from app.domain.user.realname_services import UserRealNameService
@@ -149,7 +150,15 @@ def consumptions_for(
 ) -> Consumptions:
     """The questions read on ``host``, each kind served by its consumer."""
     consumptions = Consumptions(host, redis)
-    consumptions.serve(personal.KIND, personal.Answers(sessions, consumptions, redis))
+    consumptions.serve(
+        personal.KIND,
+        personal.Answers(
+            sessions,
+            consumptions,
+            redis,
+            run_ended=partial(routine_personal.ended, sessions),
+        ),
+    )
     consumptions.serve(thread.KIND, thread.Replies(chat, chat.session_factory))
     consumptions.serve(box.KIND, box.Answers(chat, consumptions))
     return consumptions

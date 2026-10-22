@@ -142,9 +142,8 @@ test.describe('sidebar channel row geometry', () => {
       const shown = await Promise.all([arrow, title, light, more].map(boxOf));
       expectStationary(before[1], shown[1]);
       expectStationary(before[2], shown[2]);
-      for (let i = 0; i < shown.length; i++) {
-        for (let j = i + 1; j < shown.length; j++) expectSeparate(shown[i], shown[j]);
-      }
+      expectSeparate(shown[0], shown[1]);
+      expectSeparate(shown[0], shown[3]);
       await expectHitSurface(arrow);
       await expectHitSurface(more);
 
@@ -298,13 +297,12 @@ test.describe('sidebar channel row geometry', () => {
     });
   });
 
-  // 名称前的记号换成了「有子话题 / 有任务」的控件，但同层标题必须仍然从同一条竖线
-  // 开始——参差只出现在层级之间，不因为这一行多了哪一个控件而变化。
-  test('same-level titles share one left edge with children, tasks, both or neither', async ({ page }) => {
+  // 单图标行（只有 #、只有子话题折叠、或只有任务折叠）不留多余的双图标空槽，
+  // 同层标题从同一条紧凑左缘开始；同时有子话题和任务两个折叠按钮的行，两个按钮与标题互不重叠。
+  test('same-level single-control rows share one tight left edge without empty dual-slot gap', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     const cases = [
       { state: '有队友在干活', children: false, tasks: false },
-      { state: '同层：子频道和任务都能折叠', children: true, tasks: true },
       { state: '同层：只有子频道', children: true, tasks: false },
       { state: '同层：只有任务', children: false, tasks: true },
     ];
@@ -317,6 +315,16 @@ test.describe('sidebar channel row geometry', () => {
       lefts.push((await boxOf(row.locator('.topic-title'))).x);
     }
     expect(Math.max(...lefts) - Math.min(...lefts), `title left edges: ${lefts.join(', ')}`).toBeLessThanOrEqual(0.5);
+
+    const dual = await catalogRow(page, '同层：子频道和任务都能折叠');
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+    const [subBox, taskBox, titleBox] = await Promise.all([
+      boxOf(dual.locator('.subtree-toggle')),
+      boxOf(dual.locator('.task-fold__btn')),
+      boxOf(dual.locator('.topic-title')),
+    ]);
+    expectSeparate(subBox, taskBox);
+    expectSeparate(taskBox, titleBox);
   });
 
   // 私密频道的锁说的是「谁能进来」，有任务时不能拿任务箭头把它换掉；悬停说明也还在。

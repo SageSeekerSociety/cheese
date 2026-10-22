@@ -38,8 +38,10 @@ function readPayload(event) {
       // 这两个 id 缺一个就退回待办列表：那里一定列着这件事。
       // 空间里的一道题目（后端 `task_notices`）：落到题目页。它的号叫 `spaceTaskId`，
       // `taskId` 说的是项目里的任务。
-      url:
-        data.spaceId && data.spaceTaskId
+      // 个人芝士自己做的事（后端 `routine.personal`）：在待办页打开那段对话。
+      url: data.assistantConversation
+        ? `/inbox?assistant=${data.assistantConversation}`
+        : data.spaceId && data.spaceTaskId
           ? `/spaces/${data.spaceId}/tasks/${data.spaceTaskId}`
           : projectId && topicId && taskId
             ? `/projects/${projectId}/topics/${topicId}/tasks/${taskId}`

@@ -18,14 +18,13 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { agentIdentities, agentNames } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
-import { waitStalled, waitText } from '../lib/replyWait'
-import { lightOf as lightFor, MINE_LIGHT } from '../lib/roomLight'
+import { waitStalled } from '../lib/replyWait'
+import { lightOf as lightFor } from '../lib/roomLight'
 import { ancestorPathIds, inferTopicKind, loadExpandedTopics, saveExpandedTopics, visibleRows } from '../lib/topicTree'
 import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
 import { getAvatarUrl } from '../utils/materials'
 
 import { t } from '@/i18n'
-import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 /** 侧栏要画的东西全在父级的这几个 props 里；这一层不自己取数。 */
@@ -189,59 +188,33 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   //
   // 蓝灯（我负责的活）是这一层唯一自己下的判断：它不看状态，只看这条活归谁——而且要
   // 状态那几盏都没话说的时候才画。
-  /** 这条活归不归我。没有主的算我这边的：没主的活频道里谁都能接，先当自己的。 */
-  function isMine(task: { owner_handle?: string | null }): boolean {
-    const owner = task.owner_handle
-    return !owner || owner === myHandle()
-  }
   function lightOf(id: string): RowLight | null {
     const topic = topicById.value.get(id)
     if (!topic) return null
-    const stalled = stalledWaits(topic)
-    const light = lightFor(
+    return lightFor(
       {
         awaitsMe: topic.awaits_me === true,
         repliedToMe: topic.replied_to_me === true,
         // 房间里、支线里、名下的活里有会话在跑，或者有活走在交付链路上：呼吸绿。
         moving: topic.moving === true,
-        unseenDelivery: topic.unseen_delivery === true,
-        // 房间在等一位队友、等太久了：红灯（`waiting`）。
-        waitStalled: stalled.length > 0,
-        // 频道自己不是一条活，没有「被退回」这一格：它名下哪条活被退了，走的是
-        // `waits`（`waiting`）。
-        bounced: false,
-        incompleteSince: topic.incomplete_since,
       },
       clock.value
     )
-    // 红灯说什么，那一句还是「在等谁、为什么」：头像不画了，这句话不能跟着丢。
-    if (light?.kind === 'red' && light.why === 'waiting' && stalled[0]) {
-      const who = memberOf(stalled[0].member)
-      return { ...light, title: waitText(stalled[0], who.name, clock.value) }
-    }
-    return light
   }
 
   /** 挂在频道下面的一条活。和频道行同一个判据，只是事实来自这条活自己那一份 ——
-   *  我负责的（以及没主的）活，状态那几盏都不亮时才补一盏蓝灯；别人的活不画蓝灯。
-   *  「有人回复了我」也不在这一份里：后端只给频道行算（见上），活这一行照旧读 false。 */
+   *  只保留「有事等我（黄灯）」和「正在跑（呼吸绿）」。 */
   function taskLight(task: RailTask): RowLight | null {
-    const light = lightFor(
+    return lightFor(
       {
         awaitsMe: task.awaits_me === true,
         repliedToMe: false,
         // 这条活的会话在跑，或者它走在交付链路上：呼吸绿。
         moving: task.moving === true,
-        unseenDelivery: task.unseen_delivery === true,
-        waitStalled: false,
-        // 交付被退回了，还没有人来改：这不是「有事等你」，是一颗红灯。
         bounced: task.presentation?.phrase === 'bounced',
-        incompleteSince: task.incomplete_since,
       },
       clock.value
     )
-    if (light) return light
-    return isMine(task) ? MINE_LIGHT : null
   }
 
   // 房间在等的成员里，此刻算卡住了的那几位：它那一轮报错了（立刻算），或等满了阈值。

@@ -1543,6 +1543,53 @@ DELEGATED_TOOLS = ToolTable(
             ["key", "value"],
         ),
         _tool(
+            "cheese_routine",
+            "用户的例行事务：用户让你定时做一件事，或在某件事发生时做一件事（有人 @ 他、"
+            "有审阅待他处理、空间题目快到截止、收到邀请），就建一条。到时平台自己开一段新"
+            "对话让你做，结果通知用户。action：create 新建（title 名称、note 每次要做的事、"
+            "trigger 和时间）；list 列出全部；change 修改、pause 暂停、resume 恢复、delete "
+            "删除（routine 给编号）。trigger：schedule 定时（freq 为 once 一次，at 写 "
+            "2026-10-23T08:00；hourly 每小时，minute；daily 每天、weekly 每周（weekdays，"
+            "0 是周一）、monthly 每月（day），time 写 08:00），mention、review、due、invite "
+            "为事件（project 给项目短名时只看那个项目）。时间按用户的时区。运行时只照用户"
+            "这次说过的话办事，所以建之前把要做什么跟用户说清楚。",
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "list", "change", "pause", "resume", "delete"],
+                },
+                "routine": _text("例行事务的编号"),
+                "title": _text("名称，几个字，如「每日待办」"),
+                "note": _text("每次运行要做的事"),
+                "trigger": {
+                    "type": "string",
+                    "enum": ["schedule", "mention", "review", "due", "invite"],
+                },
+                "freq": {
+                    "type": "string",
+                    "enum": ["once", "hourly", "daily", "weekly", "monthly"],
+                },
+                "time": _text("几点，HH:MM"),
+                "minute": {"type": "integer", "description": "每小时的第几分钟"},
+                "weekdays": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "星期几，0 是周一",
+                },
+                "day": {"type": "integer", "description": "每月几号"},
+                "at": _text("只运行一次的时间，如 2026-10-23T08:00"),
+                "project": _text("事件只看这个项目（项目短名）"),
+            },
+            ["action"],
+        ),
+        _tool(
+            "cheese_notify_me",
+            "给用户发一条通知（站内、推送和邮件按他的设置），点开就是这段对话。用于用户让你"
+            "提醒他的事，或例行事务运行中有必须让他知道的结果；一次说完，不要连发。",
+            {"text": _text("通知的内容，一两句话")},
+            ["text"],
+        ),
+        _tool(
             "cheese_web_fetch",
             "读一个网页（平台去抓，读不出正文时会换办法再试）。带 prompt 返回答案，不带"
             "返回整页 Markdown。它读一个网址，不是搜索引擎；网址里不要写进用户工作里的"
@@ -2139,6 +2186,14 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": "/notifications/preferences/agent/set",
             "body": body,
+        }
+    if tool == "cheese_routine":
+        return {"method": "POST", "path": "/assistant/agent/routine", "body": args}
+    if tool == "cheese_notify_me":
+        return {
+            "method": "POST",
+            "path": "/assistant/agent/notify-me",
+            "body": _given(args, "text"),
         }
     if tool == "cheese_find":
         where = (args.get("where") or "").strip().strip("/")
@@ -4424,6 +4479,8 @@ _SAY = {
     "cheese_inbox": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_read": _say_read,
     "cheese_settings_set": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_routine": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_notify_me": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_find": lambda a, d, e: (
         _say_task_search(a, d, e)
         if "tasks" in (d or {})
