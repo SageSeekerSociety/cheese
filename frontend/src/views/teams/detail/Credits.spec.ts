@@ -52,7 +52,14 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.resetAllMocks()
   api.usage.mockResolvedValue(usage)
-  api.beta.mockResolvedValue({ credits: 500, claimed: false, feedback_credits: 100 })
+  api.beta.mockResolvedValue({
+    credits: 500,
+    claimed: false,
+    feedback_credits: 100,
+    plan_credits: 1000,
+    invite_credits: 150,
+    invitee_credits: 150,
+  })
   api.rewards.mockResolvedValue({ feedback_count: 0, feedback_credits: 0, items: [] })
   api.requests.mockResolvedValue({ items: [] })
   api.claim.mockResolvedValue({ credits: 500, issued: true })

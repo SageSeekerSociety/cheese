@@ -2,6 +2,11 @@ export interface BetaCredits {
   credits: number
   claimed: boolean
   feedback_credits: number
+  /** What the person's own plan issues a month; null for an unlimited plan or one billed by time windows. */
+  plan_credits: number | null
+  /** What inviting a friend earns the inviter, and the friend. */
+  invite_credits: number
+  invitee_credits: number
 }
 
 export interface CreditRewards {
