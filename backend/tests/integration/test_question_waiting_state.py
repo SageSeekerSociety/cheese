@@ -27,16 +27,17 @@ def _setup(client):
     return project["id"], room, task
 
 
-def _ask(client, stub_hooks, monkeypatch, task, *, to=("alice",)):
+def _ask(client, stub_hooks, monkeypatch, task, *, to=("alice",), question_count=1):
     with active_ask(
         client, stub_hooks, monkeypatch, task, actor="alice", platform_turn=to is None
     ) as headers:
         body = {
             "questions": [
                 {
-                    "question": "预算按哪个口径统计？",
+                    "question": f"预算按哪个口径统计（{i + 1}）？",
                     "options": [{"text": "按部门"}, {"text": "按项目"}],
                 }
+                for i in range(question_count)
             ]
         }
         if to is not None:
@@ -104,11 +105,14 @@ def test_talking_to_someone_else_does_not_clear_a_task_question(
         assert row["awaits_me"] is False
 
 
+@pytest.mark.parametrize("question_count", [1, 3])
 def test_an_agents_followup_does_not_answer_its_task_question(
-    client, stub_hooks, monkeypatch
+    client, stub_hooks, monkeypatch, question_count
 ):
     project, room, task = _setup(client)
-    question = _ask(client, stub_hooks, monkeypatch, task)
+    question = _ask(
+        client, stub_hooks, monkeypatch, task, question_count=question_count
+    )
 
     response = client.post(
         f"/topics/{task}/messages",
