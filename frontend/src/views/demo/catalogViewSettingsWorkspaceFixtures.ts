@@ -74,6 +74,7 @@ export const NOTIF_PREFS: NotificationPreferences = {
     invitation: { inApp: true, push: false, email: true },
     announcement: { inApp: true, push: false, email: false },
     billing: { inApp: true, push: false, email: true },
+    assistant: { inApp: true, push: true, email: true },
   },
 }
 
