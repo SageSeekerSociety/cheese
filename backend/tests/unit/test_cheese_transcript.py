@@ -261,11 +261,38 @@ def test_a_subagents_record_is_marked_as_the_subagents(cli, capsys):
             },
         },
     }
-    cli._call = Platform([[from_file]])
+    # 而现在这一版把它直接交上来：`agent_id` 盖在记录本身上，没有那层包装。
+    # 两种都要认 —— 现场视图认的就是这两个位置。
+    plain = {
+        "sequence": 10,
+        "at": "2026-10-22T08:41:00+00:00",
+        "turn_id": "t1",
+        "agent_handle": "cheese",
+        "harness": "claude-code",
+        "record": {
+            "type": "assistant",
+            "agent_id": "e5f6a7b8",
+            "parent_tool_use_id": "tool-1",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "c10",
+                        "name": "Bash",
+                        "input": {"command": "pytest -q", "description": "跑测试"},
+                    }
+                ],
+            },
+        },
+    }
+    cli._call = Platform([[from_file, plain]])
     _run(cli, "--digest")
     out = capsys.readouterr().out
     assert "分身a1b2c3d4" in out
     assert "Read /work/backend/app/main.py" in out
+    assert "分身e5f6a7b8" in out
+    assert "Bash 跑测试" in out
 
 
 def test_a_subagent_of_another_harness_is_marked_too(cli, capsys):

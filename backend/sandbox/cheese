@@ -6912,6 +6912,11 @@ def _transcript_subagent(record: dict, children: dict) -> str:
     """
     if record.get("type") == "cheese_file":
         return str(record.get("agent_id") or "")
+    # 这一版 Claude Code 把分身的记录直接交上来,`agent_id` 就盖在记录本身上,
+    # 不再包一层 `cheese_file`;平台的现场视图也是这么认的
+    # (`session_record.views`: `record.get("agent_id") or entry.agentId`)。
+    if record.get("agent_id"):
+        return str(record["agent_id"])
     thread = record.get("subagent")
     if isinstance(thread, dict) and thread.get("id"):
         return str(thread["id"])
