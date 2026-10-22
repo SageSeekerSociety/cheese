@@ -43,6 +43,7 @@ const catalogTargets = [
   { path: '/spaces/:spaceId/manage/settings/guidance', name: 'SpacesDetailSettingsGuidance', component: blank },
   { path: '/spaces/:spaceId/manage/settings/materials', name: 'SpacesDetailSettingsMaterials', component: blank },
   { path: '/users/:handle', name: 'UserPage', component: blank },
+  { path: '/users/settings/invites', name: 'UserSettingsInvites', component: blank },
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
   { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
