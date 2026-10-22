@@ -15,6 +15,13 @@ on:
         type: boolean
         required: true
         default: false
+      allow_drop:
+        description: >-
+          Models this release may stop serving, comma-separated. Removing a name from
+          config.yaml does not by itself drop it: the release refuses to switch while
+          the running gateway serves a name the new one does not.
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -57,4 +64,5 @@ jobs:
         env:
           RELEASE_SHA: ${{ inputs.sha }}
           GATEWAY_ALLOW_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}
+          GATEWAY_ALLOW_DROP: ${{ inputs.allow_drop }}
         run: bash deploy/release-gateway.sh "$RELEASE_SHA"
