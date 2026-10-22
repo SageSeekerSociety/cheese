@@ -57,9 +57,6 @@ export type RowLight =
   | { kind: 'blue'; title?: string }
   | { kind: 'green'; breathe: boolean; title?: string }
 
-/** 我负责的活那一盏灯：`lightOf` 不产它，调用方在前面几盏都不亮时盖上（见文件头）。 */
-export const MINE_LIGHT: RowLight = { kind: 'blue' }
-
 /** 亮到暗。`brightest` 用它排序。蓝垫底：它说的是这条归谁，不是这条怎么了。 */
 const BRIGHTNESS: Record<LightKind, number> = { red: 3, yellow: 2, green: 1, blue: 0 }
 

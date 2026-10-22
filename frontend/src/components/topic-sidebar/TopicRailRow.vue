@@ -70,8 +70,6 @@ const rowLight = computed<RowLight | null>(() =>
   brightest([props.light, props.row.hiddenLight, props.tasksCollapsed ? props.taskLight : null])
 )
 
-const rowLightLabel = computed(() => undefined)
-
 // Status: only show when notable (archived / draft); active is implicit. Shown as a
 // small neutral dot + text, never a colored chip.
 function statusBadge(status: string): string | null {
@@ -229,7 +227,7 @@ onBeforeUnmount(() => window.clearTimeout(pendingTimer))
       </template>
     </v-list-item-title>
     <template #append>
-      <TopicRailLight v-if="rowLight" :light="rowLight" :label="rowLightLabel" />
+      <TopicRailLight v-if="rowLight" :light="rowLight" />
       <!-- The menu has its own layout slot, including on touch screens. -->
       <div class="row-actions" @click.stop>
         <AdaptiveMenu
