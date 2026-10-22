@@ -351,6 +351,27 @@ async def answer_questions(
             },
         ]
         question.meta = meta
+    await finish_answering(session, reply=reply, questions=questions, said=said, recipient=recipient)
+    return questions
+
+
+async def finish_answering(
+    session: AsyncSession,
+    *,
+    reply: Block,
+    questions: list[Block],
+    said: str,
+    recipient: dict,
+) -> None:
+    """答过之后那一半：结掉题的通知，并把 ``reply`` 送到提问的那位手上。
+
+    答案本身已经记在题上（`block.questions` 的题、`block.answer_groups` 的整组提交
+    各写各的）；这里只管两件两边一样的事——一组题都了结了就把那条通知结掉，以及
+    这句话没点任何 agent 的名时指到提问的席位，好开它的下一轮。
+
+    单独拎出来，是因为整组提交（`block.answer_groups`）一次答几道题、走的是另一扇
+    写答案的门，但收尾这一步和单答一模一样，不该有两份。
+    """
     excerpt = said[:ANSWER_EXCERPT_CHARS] + (
         "…" if len(said) > ANSWER_EXCERPT_CHARS else ""
     )
@@ -368,7 +389,6 @@ async def answer_questions(
         # seat IS the agent the room points at: the recipient already names it.
         recipient["mentioned"] = True
         reply.meta = {**(reply.meta or {}), "agent_recipient": dict(recipient)}
-    return questions
 
 
 def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
