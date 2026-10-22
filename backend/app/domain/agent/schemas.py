@@ -409,6 +409,8 @@ class GatewaySourceOut(BaseModel):
     header_names: list[str]
     session_header: str | None
     spend_cap_usd: float | None
+    # 上游模型累计已花多少，口径同 spend_cap.py（终身、按上游模型名）；没设上限是 None。
+    spend_cap_used_usd: float | None = None
 
 
 class GatewayUpstreamOut(BaseModel):

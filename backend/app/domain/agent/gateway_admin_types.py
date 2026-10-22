@@ -12,7 +12,7 @@
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # 一条线路自己的 model_info 键：不跟着模型走，加新线路时也不从别的线路抄。名字与网关
 # 侧读它们的钩子（deploy/gateway 的 upstream_headers.py）逐字一致。
@@ -188,3 +188,6 @@ class UsageWindow:
     by_model: dict[str, ModelUsage]  # model_group -> 用量
     by_key: dict[str, ModelUsage]  # key hash -> 用量
     daily: list[dict]  # [{date, totals: ModelUsage, by_model: {name: ModelUsage}}]
+    # 上游模型（``litellm_params.model``）-> 用量：``breakdown.models``，键就是
+    # ``LiteLLM_DailyUserSpend.model``，spend_cap.py 拦截时求和的正是这一列。
+    by_upstream: dict[str, ModelUsage] = field(default_factory=dict)

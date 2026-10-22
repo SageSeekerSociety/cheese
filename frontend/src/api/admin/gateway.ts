@@ -83,6 +83,8 @@ export interface GatewaySource {
   session_header: string | null
   /** 上游模型的累计消费上限（美元），没有上限是 `null`。按上游计：同一上游的每条线路一样。 */
   spend_cap_usd: number | null
+  /** 上游模型累计已花多少（美元），口径同网关拦截时：终身、按上游模型名。没有上限是 `null`。 */
+  spend_cap_used_usd?: number | null
 }
 
 /** 一条线路自己的字段：新建模型时的第一条、加线路、改线路三处共用。
