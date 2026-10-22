@@ -496,6 +496,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("overdue deliveries", 115),
         ("routines", 30),
         ("assistant routines", 30),
+        ("assistant memory tidy", 3600),
         ("task deadline sweep", 116),
         ("memory dream", 117),
         ("platform model roles refresh", 121),

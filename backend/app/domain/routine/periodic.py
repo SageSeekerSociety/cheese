@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import PeriodicJobs
 from app.core.db import SessionFactory
 from app.core.redis import get_redis_client
+from app.domain.assistant import memory_tidy
 from app.domain.routine import personal, service
 
 
@@ -38,3 +39,8 @@ def register_periodic_jobs(
         )
 
     jobs.register("assistant routines", 30, assistant_routines)
+    jobs.register(
+        "assistant memory tidy",
+        3600,
+        lambda: memory_tidy.sweep(cast(async_sessionmaker[AsyncSession], sessions)),
+    )

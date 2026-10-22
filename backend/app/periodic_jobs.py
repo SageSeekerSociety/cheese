@@ -82,6 +82,7 @@ PERIODIC_JOB_NAMES = (
     "overdue deliveries",
     "routines",
     "assistant routines",
+    "assistant memory tidy",
     "task deadline sweep",
     "memory dream",
     "platform model roles refresh",
