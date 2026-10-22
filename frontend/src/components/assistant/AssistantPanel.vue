@@ -52,6 +52,7 @@
               <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
             </p>
           </div>
+          <p v-else-if="m.role === 'platform'" class="ap__run">{{ runLine(m.shown) }}</p>
           <div v-else class="ap__a">
             <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
             <AssistantTurn
@@ -92,6 +93,7 @@
             <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
           </p>
         </div>
+        <p v-else-if="m.role === 'platform'" class="ap__run">{{ runLine(m.shown) }}</p>
         <div v-else class="ap__a">
           <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
           <AssistantTurn
@@ -224,8 +226,10 @@ export interface PanelTopic {
 }
 
 export interface PanelMessage {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'platform'
   text: string
+  /** 平台开始一次运行的那一句：哪条例行事务。 */
+  shown?: { routine?: string }
   /** 回答被停下了，`text` 是停下时写出的部分。 */
   stopped?: boolean
   at: string
@@ -328,6 +332,11 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+/** 平台开始一次运行的那一句：芝士读到的是平台的说明，人看到的是这一行。 */
+function runLine(shown?: { routine?: string }): string {
+  return t('tasks.assistant.run.routine', { title: shown?.routine ?? '' })
+}
 const markdown = new MarkdownRenderer()
 const draft = ref('')
 const scroller = ref<HTMLElement | null>(null)
@@ -514,6 +523,19 @@ watch(
   margin: 0;
   font-size: 12px;
   color: var(--faint);
+}
+
+/* What started a run on its own: not the person's words, so not a bubble on their side. */
+.ap__run {
+  align-self: stretch;
+  padding: 6px 10px;
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  text-align: center;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
 }
 
 .ap__q {

@@ -1,21 +1,51 @@
 {
   "title": "Cheese",
-  "lede": "Before Cheese sends a message, opens a task, decides a review or manages members for you, it checks whether you asked for that action. If you didn't, it asks you to confirm in the panel first. Only you can change this page.",
+  "lede": "Before Cheese sends a message, opens a task, decides a review or manages members for you, it checks whether that is what you want done. When it isn't sure, it asks you to confirm in the panel first. Only you can change this page.",
   "loading": "Loading",
   "loadFailed": "Couldn't load Cheese's settings",
   "saveFailed": "Couldn't save",
-  "always": {
-    "title": "Always confirm",
-    "desc": "Cheese asks you to confirm these actions every time before taking them."
+  "ask": {
+    "title": "Confirmation needed",
+    "desc": "Cheese asks you to confirm these actions every time before taking them.",
+    "hint": "For example: messages to teachers"
   },
-  "words": {
-    "title": "Notes",
-    "desc": "Cheese takes these into account when deciding whether to ask you to confirm.",
-    "allow": "No confirmation needed",
-    "allowHint": "For example: answering questions in channels I run",
-    "ask": "Confirmation needed",
-    "askHint": "For example: messages to teachers",
-    "save": "Save"
+  "allow": {
+    "title": "No confirmation needed",
+    "desc": "Cheese no longer asks you to confirm these actions. It still asks when the target or content doesn't match what you asked for.",
+    "hint": "For example: answering questions in channels I run"
+  },
+  "items": {
+    "add": "Add",
+    "remove": "Delete",
+    "empty": "None"
+  },
+  "routines": {
+    "title": "Routines",
+    "desc": "Cheese runs these on a schedule or when something happens, and notifies you of the result. To create or change one, tell Cheese in the panel.",
+    "count": "{n}/{max}",
+    "empty": "No routines",
+    "next": "Next run: {time}",
+    "paused": {
+      "person": "Paused",
+      "credits": "Paused: out of credits",
+      "away": "Paused: not signed in for a long time"
+    },
+    "last": {
+      "done": "Last run: finished",
+      "asked": "Last run: {n} actions waiting for you to confirm",
+      "failed": "Last run: couldn't finish",
+      "skipped": "Last run: didn't run",
+      "running": "Running",
+      "queued": "Waiting to run"
+    },
+    "cost": "{n} credits in the last 7 days",
+    "view": "View conversation",
+    "pause": "Pause",
+    "resume": "Resume",
+    "delete": "Delete",
+    "deleteTitle": "Delete routine “{title}”?",
+    "deleteBody": "It will no longer run. Its conversations are kept.",
+    "cancel": "Cancel"
   },
   "recent": {
     "title": "Recent actions",

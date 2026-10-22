@@ -167,6 +167,7 @@ covers:
 | timed deliveries | 固定 30s | 定时投递到点派发 |
 | overdue deliveries | `delivery_overdue_check_interval_s` | 给 AI 的投递记下超过 30 分钟还没送出去，就发告警（同一个问题一小时一条） |
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |
+| assistant routines | 固定 30s | 个人芝士的例行事务与跟进：到点和新通知各起一次运行 |
 | task deadline sweep | `task_deadline_sweep_interval_s` | 任务截止 |
 | memory dream | `memory_dream_sweep_interval_s` | 记忆整理 |
 

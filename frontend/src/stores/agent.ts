@@ -156,6 +156,13 @@ export function openAgent() {
   agentThread.load().catch(() => undefined)
 }
 
+/** 打开面板，并打开这段对话：通知和设置页上的「查看对话」。 */
+export function openAgentConversation(id: string) {
+  if (!agentAvailable.value) return
+  agentOpen.value = true
+  agentThread.show(id).catch(() => undefined)
+}
+
 export function toggleAgent() {
   if (agentOpen.value) agentOpen.value = false
   else openAgent()
