@@ -118,6 +118,20 @@ describe('signing in to the desktop app', () => {
     expect(deviceFlow.open).toBe(false)
   })
 
+  it('brings back the enrollment that is away while another one is up', async () => {
+    // A computer serves several teams, each its own connector: one of them
+    // being online says nothing about the other.
+    const up = { device_id: 'd1', team_id: 7, online: true }
+    const away = { device_id: 'd2', team_id: 8, online: false }
+    listAccessibleDevices
+      .mockResolvedValueOnce({ devices: [up, away] })
+      .mockResolvedValueOnce({ devices: [up, away] })
+      .mockResolvedValue({ devices: [up, { ...away, online: true }] })
+    const invoke = desktopHost('d1', 'ok', null, ['d2'])
+    await offerToConnect(10)
+    expect(invoke).toHaveBeenCalledWith('connect_this_machine', expect.objectContaining({ teamId: 8 }))
+  })
+
   it('brings back a computer connected before, without asking', async () => {
     const away = { devices: [{ device_id: 'd1', team_id: 7, online: false }] }
     listAccessibleDevices

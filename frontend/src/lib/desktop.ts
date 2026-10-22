@@ -338,10 +338,13 @@ export async function offerToConnect(userId: number) {
   const [ids, devices] = await Promise.all([bridge.thisDevices(), myDevices().catch(() => null)])
   if (devices === null) return
   const mine = devices.filter((device) => ids.includes(device.device_id))
-  if (mine.some((device) => device.online)) return
   if (mine.length) {
-    // Connected before and away: bring them back, on the teams they serve.
-    for (const device of mine) await startConnecting({ quiet: true, teamId: device.team_id })
+    // Connected before: bring back each one that is away. One enrollment up
+    // says nothing about another — a computer serves several teams, each its
+    // own connector — so this is per device, not "is this computer online".
+    for (const device of mine.filter((d) => !d.online)) {
+      await startConnecting({ quiet: true, teamId: device.team_id })
+    }
     return
   }
   // Enrolled here but none of them this person's: removed from its team, or
