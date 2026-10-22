@@ -6,13 +6,11 @@ import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { TaskState } from '@/lib/taskState'
 import type { ChannelPin } from '@/types/channels'
-import type { ChapterRow } from '@/types/chapters'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
-import ChapterList from '@/components/channel/ChapterList.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
@@ -34,13 +32,9 @@ const props = defineProps<{
   /** 项目总览现在写着什么。这里只读地显示开头，改它是整份打开（`edit-overview`）。 */
   overviewText: string
   pins: ChannelPin[]
-  /** 这段对话的章节，按对话里的顺序。 */
-  chapters?: ChapterRow[]
   tasks: RoomTask[]
   /** 能不能取消置顶：在主线说得上话的人。 */
   canPin: boolean
-  /** 能不能取消章节：在主线说得上话的人。 */
-  canChapter?: boolean
   memberNames: Record<string, string>
   agentName: string
   saveDescription: (text: string) => Promise<boolean>
@@ -48,7 +42,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'unpin', blockId: string): void
-  (e: 'unchapter', blockId: string): void
   (e: 'jump', blockId: string): void
   (e: 'open-task', taskId: string): void
   (e: 'open-all'): void
@@ -240,15 +233,6 @@ async function save() {
       :refs="refs"
       @unpin="emit('unpin', $event)"
       @jump="emit('jump', $event)"
-    />
-
-    <ChapterList
-      :chapters="chapters ?? []"
-      :can-chapter="!!canChapter"
-      :member-names="memberNames"
-      :refs="refs"
-      @jump="emit('jump', $event)"
-      @unpin="emit('unchapter', $event)"
     />
 
     <section class="co-section">

@@ -180,6 +180,14 @@ def test_the_task_session_ending_is_heard_in_its_channel(client):
     room = project["root_topic_id"]
     task = open_task(client, room, owner="alice")["id"]
     seat = room_agent_seat(client, room)
+    # 「已离开」 sits beside a report; with none on the task there is nothing to
+    # mark, and so nothing for the pages to hear.
+    said = client.put(
+        f"/topics/{task}/task/progress",
+        json={"state": "waiting", "note": "等构建"},
+        headers=task_agent_headers(project["id"], task, seat),
+    )
+    assert said.status_code == 200, said.text
     key = session_state.SeatKey(uuid.UUID(task), seat, "claude-code")
     epoch = client.portal.call(session_state.register, client.test_factory, key)
     chat = SimpleNamespace(

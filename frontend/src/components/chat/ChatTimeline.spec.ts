@@ -233,7 +233,7 @@ describe('every row in the timeline has a name, on screen or not', () => {
 
 describe('a chapter starts where someone marked it', () => {
   function chapter(block: Block): ChapterRow {
-    return { pinned_by: 'alice', pinned_at: '2026-10-21T00:00:00Z', block }
+    return { pinned_by: 'alice', pinned_at: '2026-10-21T00:00:00Z', title: null, block }
   }
 
   it('writes the chapter number and the message it starts, right above that message', () => {
@@ -252,6 +252,16 @@ describe('a chapter starts where someone marked it', () => {
     expect(texts[0]).toContain('first')
     expect(texts[1]).toContain('书签 2')
     expect(texts[1]).toContain('third')
+  })
+
+  it('prefers the bookmark’s own title when one is set', () => {
+    const { getAllByRole } = mount({
+      chapters: [{ ...chapter(BLOCKS[1]), title: '空白会话问候' }],
+    })
+    const marks = getAllByRole('heading', { level: 3 })
+    expect(marks).toHaveLength(1)
+    expect(marks[0]!.textContent).toContain('书签 1')
+    expect(marks[0]!.textContent).toContain('空白会话问候')
   })
 
   it('says nothing above a message nobody marked', () => {

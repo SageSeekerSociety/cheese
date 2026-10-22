@@ -17,12 +17,14 @@ Two writers, two columns each, and neither touches the other's:
   (`back_to_work`). Each of those tells the teammate (`heard`); filing is its
   own act, and its tool's reply says so;
 - the session ending after that report: `note_agent_left` — the board puts
-  「已离开」 beside the report, until a session runs in the task again
-  (`note_agent_back`). It never rewrites the report: a teammate that said
-  「在等 CI」 and then left is still the last word on that work. The teammate
-  is not told: the mark is about its own session being gone, and the session
-  coming back is what takes it away, so by the time it could read a word of it
-  the mark is no longer there.
+  「已离开」 beside the report, until the same teammate's session runs in the
+  task again (`note_agent_back`). It never rewrites the report: a teammate that
+  said 「在等 CI」 and then left is still the last word on that work. Both take
+  the teammate that reported (`progress_set_by`): a task's conversation may
+  hold other agents' sessions too, and one of those ending must not say the
+  task's teammate left. The teammate is not told: the mark is about its own
+  session being gone, and the session coming back is what takes it away, so by
+  the time it could read a word of it the mark is no longer there.
 """
 
 import uuid
@@ -40,17 +42,20 @@ NOTE_MAX_CHARS = 200
 
 def clear(task: Task) -> None:
     """What the teammate reported is over: a card was filed (the card says
-    where the task stands now, 等审), or a person reopened the task (开启)."""
+    where the task stands now, 等审), or a person reopened the task (开启).
+    「已离开」 was written beside that report, so it goes with it."""
     task.progress_state = None
     task.progress_note = None
     task.progress_set_at = None
     task.progress_set_by = None
+    task.agent_left_at = None
 
 
 def back_to_work(task: Task, *, at: datetime) -> None:
     """The card was returned or voided: the task is back in its teammate's
-    hands (在做). Nobody reported it, so nobody is named as having said so
-    (``progress_set_by`` stays empty); 「已离开」 stays as it was."""
+    hands (在做). Nobody reported it, so nobody is named as having said so and
+    nobody's session is being watched (``progress_set_by`` stays empty): the
+    mark that sat beside the report the card cleared went with it."""
     task.progress_state = TaskProgress.working
     task.progress_note = None
     task.progress_set_at = at
@@ -75,16 +80,26 @@ def set_progress(
 
 
 async def note_agent_left(
-    session: AsyncSession, conversation_id: uuid.UUID, *, at: datetime
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    by: str,
+    at: datetime,
 ) -> bool:
-    """The session doing this task ended: mark it beside the teammate's last
-    report, leaving the report as it was. ``conversation_id`` is the task's own
-    conversation, whose id is the task's. An open task only — a closed one
-    says how it ended. Says whether anything was marked; a conversation that is
-    not a task marks nothing."""
+    """The session of ``by`` ended: mark ``by``'s last report, leaving the
+    report as it was. ``conversation_id`` is the task's own conversation, whose
+    id is the task's. An open task only — a closed one says how it ended. When
+    the report is not ``by``'s (another agent working in the same task's
+    conversation, its exit is not the teammate's) nothing is marked: the mark
+    would name the teammate that did not leave. Says whether anything was
+    marked; a conversation that is not a task marks nothing."""
     room_id = await session.scalar(
         update(Task)
-        .where(Task.id == conversation_id, Task.status == TaskStatus.open)
+        .where(
+            Task.id == conversation_id,
+            Task.status == TaskStatus.open,
+            Task.progress_set_by == by,
+        )
         .values(agent_left_at=at)
         .returning(Task.room_id)
     )
@@ -94,15 +109,19 @@ async def note_agent_left(
     return True
 
 
-async def note_agent_back(session: AsyncSession, conversation_id: uuid.UUID) -> bool:
-    """A session is running in this task again: the 「已离开」 beside the
-    teammate's last report goes, and the report stays. Says whether there was
-    one to take away."""
+async def note_agent_back(
+    session: AsyncSession, conversation_id: uuid.UUID, *, by: str
+) -> bool:
+    """``by``'s session is running in this task again: the 「已离开」 beside
+    ``by``'s last report goes, and the report stays. Another agent's session
+    running beside that report leaves the mark as it was — ``by`` is still
+    gone. Says whether there was one to take away."""
     room_id = await session.scalar(
         update(Task)
         .where(
             Task.id == conversation_id,
             Task.status == TaskStatus.open,
+            Task.progress_set_by == by,
             Task.agent_left_at.is_not(None),
         )
         .values(agent_left_at=None)

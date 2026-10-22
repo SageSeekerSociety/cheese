@@ -21,6 +21,6 @@
   "title": "个人资料",
   "unsaved": "有未保存的修改",
   "username": "用户名",
-  "usernameNote": "别人 {'@'} 你时用的名字，不能修改",
+  "usernameNote": "账号的唯一用户名，不能修改；对外显示昵称",
   "viewPage": "查看我的主页"
 }

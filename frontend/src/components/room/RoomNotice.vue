@@ -252,7 +252,11 @@ const ACTION_META: Record<string, { btn: string }> = {
     >
       <div class="sys-line">
         <span class="sys-text sys-lead">{{ notice.incident.title }}</span>
-        <span class="sys-who">{{ notice.incident.status }}</span>
+        <!-- 「可以重试」说的是一个动作，只在旁边真有一颗重试按钮时才画得出来。卡上
+             不是此刻能重试的那一张时（后来的事盖过了它、房间还在跑、输入框关着），
+             它一个字的落点都没有 —— 摆出来就是一句点不动的假按钮。其余几档
+             （正在清理 / 正在恢复 / 需要管理员处理）说的是状态，照常画。 -->
+        <span v-if="notice.incident.statusKind !== 'retryable'" class="sys-who">{{ notice.incident.status }}</span>
         <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click="emit('retry')">
           {{ t('work.room.retry.action') }}
         </button>
