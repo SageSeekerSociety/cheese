@@ -14,6 +14,7 @@ function routes(guard = true) {
   const enter = guard ? { beforeEnter: signInHappensInBrowser } : {}
   return [
     { path: '/account/signin', name: 'SignIn', component: page, ...enter },
+    { path: '/account/signin/email', name: 'SignInEmailCode', component: page, ...enter },
     { path: '/account/signup', name: 'SignUpStart', component: page, ...enter },
     { path: '/account/recover/password', name: 'RecoverPasswordRequest', component: page, ...enter },
     { path: '/account/app', name: 'DesktopSignIn', component: page },
@@ -42,6 +43,18 @@ describe('in the app', () => {
     expect(router.currentRoute.value.query.entry).toBe('signup')
     await router.push('/account/recover/password')
     expect(router.currentRoute.value.query.entry).toBe('recover')
+  })
+
+  it("takes a friend's invite code from the sign-up link along to the browser", async () => {
+    ;(window as AppWindow).__TAURI__ = { core: { invoke: async () => undefined } }
+    ;(window as AppWindow).__CHEESE_APP__ = { can: ['links'] }
+    const router = createRouter({ history: createMemoryHistory(), routes: routes() })
+
+    await router.push('/account/signup?code=K7Q2M9')
+    expect(router.currentRoute.value.query).toEqual({ entry: 'signup', invite: 'K7Q2M9' })
+    // Switching to sign-in first still keeps it; a sign-in page's own `code` is not an invite.
+    await router.push('/account/signin/email?code=123456')
+    expect(router.currentRoute.value.query.invite).toBe('K7Q2M9')
   })
 
   it('keeps the old way in an app too old to take links back', async () => {
