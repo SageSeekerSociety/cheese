@@ -11,6 +11,7 @@ import type { Ref } from 'vue'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
+import type { GroupAnswer } from '../../lib/askGroups'
 import type { TaskLine } from '../../lib/channelTasks'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
@@ -31,6 +32,7 @@ import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
+import AskGroupCard from '../ask/AskGroupCard.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
@@ -67,6 +69,11 @@ const props = defineProps<{
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
+  /** 组头块的 id → 这一组的每道题（`lib/askGroups`）；组里其余几行不单独画。 */
+  askGroups?: Map<string, Block[]>
+  /** 整组提交在路上 / 失败时那一句：由面板拿着（`useAskGroupAnswer`）。 */
+  askGroupBusy?: boolean
+  askGroupFailure?: string | null
   /** 开头还没挂上的行数（首屏分批挂行，room/composables/useRowBatch）。 */
   hiddenRows?: number
   dayLabels: Map<string, string>
@@ -166,6 +173,7 @@ const emit = defineEmits<{
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
   (e: 'ask-skip', block: Block): void
+  (e: 'ask-group-submit', questionId: string, answers: Record<string, GroupAnswer>): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -560,6 +568,28 @@ const rowLabels = computed(() =>
               @retry="emit('retry')"
               @jump="emit('jump', $event)"
             />
+            <!-- 一次问的几道题：收成一张卡画（`lib/askGroups` 把同组的行并到组头）。 -->
+            <section
+              v-else-if="!notice && askGroups?.get(m.id)"
+              class="tl-ask-group"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :data-row-id="m.id"
+              :data-feed-item="m.id"
+              role="article"
+              tabindex="-1"
+              :aria-label="rowLabels[i]"
+            >
+              <AskGroupCard
+                :blocks="askGroups!.get(m.id)!"
+                :asker="displayName(m)"
+                :names="refs.mentionNames"
+                :viewer="viewer"
+                :closed="askClosed"
+                :busy="askGroupBusy"
+                :failure="askGroupFailure"
+                @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
+              />
+            </section>
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
