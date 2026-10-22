@@ -110,6 +110,17 @@ describe('signing in to the desktop app', () => {
     expect(invoke).not.toHaveBeenCalledWith('connect_this_machine', expect.anything())
   })
 
+  it('starts again after the first connection failed, not only after a cancel', async () => {
+    desktopHost(null, { step: 'download', detail: 'curl: (56) Recv failure' })
+    await offerToConnect(10)
+    // The second launch: the machine is reachable this time, so the attempt runs
+    // through to the end rather than waiting for a device that never appears.
+    listAccessibleDevices.mockResolvedValue({ devices: [{ device_id: 'd9', team_id: 7, online: true }] })
+    const invoke = desktopHost(null, 'ok', 'd9')
+    await offerToConnect(10)
+    expect(invoke).toHaveBeenCalledWith('connect_this_machine', expect.anything())
+  })
+
   it('leaves a computer that is already one of your online devices alone', async () => {
     listAccessibleDevices.mockResolvedValue({ devices: [{ device_id: 'd1', team_id: 7, online: true }] })
     const invoke = desktopHost('d1')

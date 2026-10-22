@@ -129,11 +129,18 @@ fi
 binary="$ORIGIN/connector/latest/$target/cheesehost"
 # -D keeps the response's headers: the response that carries the bytes also
 # names their sha256, and that number is what the check below compares to.
-# Accept-Encoding names the packed copy by hand instead of curl's --compressed,
-# which decodes as it goes: the bytes on disk stay a gzip stream, so a resumed
-# range still lands on the same file, and the unpack below hands the checksum
-# the bytes the machine runs.
-until curl -fSL "$progress" -C - -D "$headers" -H 'Accept-Encoding: gzip' -o "$partial" "$binary"; do
+# The packed copy is a third of the size, and is asked for only where gzip can
+# unpack it: a machine without gzip would otherwise receive a stream it cannot
+# use. The header carries an empty value there, which sends no header at all.
+# Naming it by hand instead of using curl's --compressed is what keeps a
+# resumed range meaningful: --compressed decodes as it goes, while these bytes
+# stay a gzip stream on disk until the unpack below, which is also where the
+# checksum gets the bytes the machine runs.
+accept="Accept-Encoding:"
+if command -v gzip >/dev/null 2>&1; then
+  accept="Accept-Encoding: gzip"
+fi
+until curl -fSL "$progress" -C - -D "$headers" -H "$accept" -o "$partial" "$binary"; do
   if [ "$attempt" -ge 5 ]; then
     rm -f "$partial" "$headers"
     echo "download failed after $attempt attempts"
@@ -143,15 +150,12 @@ until curl -fSL "$progress" -C - -D "$headers" -H 'Accept-Encoding: gzip' -o "$p
   echo "download interrupted; resuming (attempt $attempt)…"
   sleep 2
 done
-# The gzip magic says which copy arrived, not a header: a resumed transfer's
-# own response may not repeat Content-Encoding, and the file assembled across
-# attempts is what gets unpacked.
-if [ "$(od -An -tx1 -N2 "$partial" 2>/dev/null | tr -d ' \n')" = "1f8b" ]; then
-  if ! command -v gzip >/dev/null 2>&1; then
-    rm -f "$partial" "$headers"
-    echo "the download is gzip and there is no gzip to unpack it; not installing it" >&2
-    exit 1
-  fi
+# Whether the packed copy arrived is decided by the file itself, not by a
+# header: a resumed transfer's own response may not repeat Content-Encoding,
+# and what is measured here is the file assembled across attempts. `gzip -t`
+# says so without another tool to find — it fails on anything that is not a
+# whole gzip stream, which is exactly when unpacking must not be attempted.
+if gzip -t "$partial" >/dev/null 2>&1; then
   if ! gzip -dc "$partial" > "$partial.plain"; then
     rm -f "$partial" "$partial.plain" "$headers"
     echo "cannot unpack cheesehost ($target); not installing it" >&2
