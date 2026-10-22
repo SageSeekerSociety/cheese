@@ -9,6 +9,7 @@ journal keeps every line and everything a person wrote comes through unchanged.
 from app.api.routes.topics_transcript import hide_platform_reminders
 from app.domain.agent.harness.notices import (
     PLATFORM_NOTICE,
+    blocked_report_reminder,
     platform_prompt,
     publication_prompt,
     silence_reminder,
@@ -33,6 +34,7 @@ def test_every_reminder_goes_in_both_languages():
             stale_checklist_reminder(7, language),
             stale_progress_reminder(None, language),
             stale_progress_reminder(42, language),
+            blocked_report_reminder(language),
         ):
             assert without_reminders(platform_prompt(said)) == "", said
 

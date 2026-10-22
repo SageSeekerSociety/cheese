@@ -1,0 +1,178 @@
+# Rows the gateway's build-time tests route through: deepseek-flash as the
+# platform serves it (RUC's self-hosted copy, one row per key, then DeepSeek's
+# API) and qwen-audio-asr. The real rows are in the gateway database, edited on
+# the admin page; these copies hold the shapes the tests check the pinned
+# LiteLLM against (route order, session affinity, web search, search cost,
+# images, the qwen-asr provider). Credentials are read from the environment
+# the tests set up, never a real key.
+model_list:
+  # Speech to text for the composer's voice input. Not a menu item: the
+  # backend's voice service calls it with a service key. DashScope serves it
+  # only on its native API, so `qwen-asr/` is our handler (`qwen_asr.py`),
+  # which reports the audio length as 25 prompt tokens a second.
+  # RMB 0.00022 per second (Beijing), 2026-10-18:
+  # https://help.aliyun.com/zh/model-studio/model-pricing
+  # ÷ 25 tokens ÷ 7.1 RMB/USD = $1.2394e-6 per token.
+  # The base URL is the account's own business: a workspace may hand out a
+  # dedicated `{WorkspaceId}.cn-beijing.maas.aliyuncs.com`, which only that
+  # workspace's key may call. It comes from the environment (compose fills in
+  # the shared DashScope domain when unset), so no workspace id is in the repo.
+  - model_name: qwen-audio-asr
+    litellm_params:
+      model: qwen-asr/qwen-audio-3.0-asr-flash
+      api_base: os.environ/DASHSCOPE_API_BASE
+      api_key: os.environ/DASHSCOPE_API_KEY
+      input_cost_per_token: 0.0000012394
+      output_cost_per_token: 0
+
+  # One model, tried in `order`: RUC's self-hosted copy first, DeepSeek's API
+  # when every RUC key fails or is cooling down. RUC admits 3 parallel
+  # requests per key and the limits are independent, so each of its keys is a
+  # deployment of its own; a 429 on one is retried on another before the
+  # request leaves RUC. RUC sends each key to one of its vLLM nodes, and each
+  # node has a prompt cache of its own, so a conversation keeps its key
+  # (router_settings below) and misses only when it moves: to another key while
+  # its own is busy, or to DeepSeek's API. Every
+  # row carries the same cheese keys because the catalogue reads whichever
+  # row /model/info lists first.
+  - model_name: deepseek-flash
+    litellm_params: &ruc_deepseek_flash_params
+      # anthropic/, not deepseek/: the pinned DeepSeek adapter sends Messages
+      # requests to {api_base}/anthropic/v1/messages, DeepSeek's own path. This
+      # upstream serves Messages at /v1/messages and answers that path with a
+      # 500 after about 130 s. Plain http because that is all it serves.
+      model: anthropic/deepseek-flash
+      # The endpoint admits campus addresses only; the dev box reaches it
+      # through 119pve (docs/infrastructure.md, "Campus model API"). Its
+      # address and key are box settings: it is a service of another team,
+      # not ours to publish.
+      api_base: os.environ/RUC_DEEPSEEK_API_BASE
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_1
+      order: 1
+      # Used internally without a price of its own. The official rates are the
+      # estimate, so the budget brake behaves the same on either backend; that
+      # holds only while RUC's cache hits as DeepSeek's does, which needs
+      # Claude Code's billing line kept out of the prompt
+      # (system_billing_line.py).
+      input_cost_per_token: 0.00000028169
+      output_cost_per_token: 0.0000011268
+      cache_read_input_token_cost: 0.0000000056338
+    # Each row merges its own copy: LiteLLM writes the deployment id into
+    # model_info, and one mapping shared by alias gives every key the same id,
+    # so a 429 on one key cools them all down.
+    model_info: &ruc_deepseek_flash_info
+      cheese_selectable: true
+      # vLLM does not run Anthropic's server tools: asked to search, it answers
+      # without searching. Requests carrying web search go to the rows that
+      # do (web_search.py). Measured on 2026-10-13: DeepSeek's API searched.
+      supports_web_search: false
+      cheese_label: DeepSeek V4.1 Flash
+      # Accepted here without error; low and high gave the same reasoning
+      # length when measured on 2026-10-08, so on this backend they are moot.
+      cheese_efforts: [low, high]
+      supports_reasoning: true
+      supports_vision: true
+      # Accepted a 952,366-token prompt on 2026-10-08; same limit as the
+      # official route, for the same reason.
+      max_input_tokens: 920000
+      # DeepSeek's own Claude Code setup compacts here (75% of its 1M window).
+      # https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code
+      cheese_auto_compact_window: 786432
+      # The group's flag, not this row's: OpenCode's free rows drop a
+      # mid-conversation system message, and the catalogue reads this row first.
+      supports_mid_conversation_system: false
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_2
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_3
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_4
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_5
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_6
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_7
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_8
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_9
+    model_info:
+      <<: *ruc_deepseek_flash_info
+
+  # DeepSeek's API, last: free supplies added from the admin page sit at order
+  # 2. Its alias serves V4.1 Flash 1017 (https://api-docs.deepseek.com/updates/),
+  # but RUC's copy lists only undated aliases, so the label names no checkpoint
+  # date: a request may be answered by either.
+  - model_name: deepseek-flash
+    litellm_params:
+      model: deepseek/deepseek-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
+      order: 3
+    model_info:
+      cheese_selectable: true
+      cheese_label: DeepSeek V4.1 Flash
+      cheese_efforts: [low, high]
+      # Peak rates of the Chinese price list bound the budget estimate
+      # (https://api-docs.deepseek.com/zh-cn/quick_start/pricing, read
+      # 2026-10-21; off-peak billing is half): per million tokens ¥2 input,
+      # ¥8 output, ¥0.04 cache hit, ÷ 7.1 = $0.28169 / $1.1268 / $0.0056338.
+      input_cost_per_token: 0.00000028169
+      output_cost_per_token: 0.0000011268
+      cache_read_input_token_cost: 0.0000000056338
+      # Each search this API runs for Claude Code's WebSearch is billed on its
+      # own: ¥5 per 1,000 successful requests on the Chinese list
+      # (https://api-docs.deepseek.com/zh-cn/guides/search/, read 2026-10-21),
+      # ÷ 7.1 = $0.000704 a search, counted per search by
+      # patch_deepseek_search_cost.py. The platform's own searches
+      # (search_tools below, deepseek_search.py) cost the same; test_deepseek_search.py
+      # holds the two together. LiteLLM reads the medium size; DeepSeek has one
+      # price for all three.
+      search_context_cost_per_query:
+        search_context_size_low: 0.000704
+        search_context_size_medium: 0.000704
+        search_context_size_high: 0.000704
+      # This deployment's alias supports native thinking/effort. Without these
+      # capabilities LiteLLM 1.96 drops thinking when Claude Code sends effort.
+      supports_reasoning: true
+      supports_vision: true
+      supports_adaptive_thinking: true
+      supports_output_config: true
+      supports_mid_conversation_system: false
+      # The window Claude Code is told (CLAUDE_CODE_MAX_CONTEXT_TOKENS), and
+      # LiteLLM's own figure for this model is 1,000,000. DeepSeek counts the
+      # request's max_tokens against its 1,048,576 window, and Claude Code asks
+      # for 128,000 on every request, so a conversation past ~920k tokens is
+      # refused. 1,048,576 - 128,000, rounded down.
+      max_input_tokens: 920000
+      cheese_auto_compact_window: 786432

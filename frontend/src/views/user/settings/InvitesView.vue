@@ -47,6 +47,7 @@
         <p v-if="!invites.unlocked" class="invites__hint" data-testid="invite-unlock-hint">
           {{ t('account.invites.code.unlockHint', { n: invites.unlock_uses }) }}
         </p>
+        <p class="invites__hint">{{ t('account.invites.code.refillHint') }}</p>
         <div class="invites__actions">
           <BaseButton kind="primary" prepend-icon="mdi-link-variant" @click="emit('copyLink')">
             {{ t('account.invites.code.copyLink') }}
@@ -92,6 +93,15 @@
             </dd>
           </div>
         </dl>
+        <!-- This month against the cap: the one limit that still applies once seats come back. -->
+        <div class="invites__month" data-testid="invite-month">
+          <span class="invites__month-text t-num">{{
+            t('account.invites.people.month', { n: fmtNum(invites.month_credits), cap: fmtNum(invites.month_cap) })
+          }}</span>
+          <span class="invites__month-track" aria-hidden="true">
+            <span class="invites__month-fill" :style="{ width: `${monthShare}%` }" />
+          </span>
+        </div>
         <BaseEmptyState
           v-if="!people.length"
           class="settings-empty invites__empty"
@@ -133,7 +143,8 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
+import { fmtPoints } from '@/lib/creditUsage'
 import { absDate } from '@/lib/dateText'
 
 /** One friend as drawn: the page has already turned their avatar id into a URL. */
@@ -163,6 +174,13 @@ const emit = defineEmits<{ copyCode: []; copyLink: []; retry: [] }>()
 const seatsLeft = computed(() => (props.invites ? Math.max(0, props.invites.max_uses - props.invites.use_count) : 0))
 
 const acceptedCount = computed(() => props.people.filter((p) => p.stage === 'activated').length)
+
+/** How far this month's invitation credits are towards the monthly cap, in percent. */
+const monthShare = computed(() =>
+  props.invites && props.invites.month_cap > 0 ? (props.invites.month_credits / props.invites.month_cap) * 100 : 0
+)
+
+const fmtNum = (n: number) => fmtPoints(n, i18n.global.locale.value)
 
 /** Only what inviting these friends earned: invite_credits also counts the person's own rewards as an invitee. */
 const earnedCredits = computed(() => props.people.reduce((sum, p) => sum + p.credits, 0))
@@ -253,6 +271,33 @@ function stageText(person: InviteeRow): string {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
+}
+
+.invites__month {
+  display: grid;
+  gap: 6px;
+  padding: 0 24px 16px;
+}
+
+.invites__month-text {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.invites__month-track {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  background: var(--fill);
+  border-radius: var(--radius-pill);
+}
+
+.invites__month-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
 }
 
 .invites__actions {

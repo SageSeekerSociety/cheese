@@ -152,26 +152,62 @@ for model in json.load(urllib.request.urlopen(request, timeout=20))["data"]:
     print(model["id"])
 ' | sort -u
 }
+# The models container $1 serves from a database row (added on the admin page),
+# by name, from /model/info: a name stays required while any of its rows is one.
+db_model_names() {
+  docker exec "$1" /app/.venv/bin/python -c '
+import json, os, urllib.request
+request = urllib.request.Request(
+    "http://127.0.0.1:4000/model/info",
+    headers={"Authorization": "Bearer " + os.environ["LITELLM_MASTER_KEY"]},
+)
+for row in json.load(urllib.request.urlopen(request, timeout=20))["data"]:
+    if (row.get("model_info") or {}).get("db_model") is True:
+        print(row["model_name"])
+' | sort -u
+}
+# The models container $1 offers people (cheese_selectable, not paused), by
+# name, from /model/info: a color offering none would leave every picker bare.
+selectable_names() {
+  docker exec "$1" /app/.venv/bin/python -c '
+import json, os, urllib.request
+request = urllib.request.Request(
+    "http://127.0.0.1:4000/model/info",
+    headers={"Authorization": "Bearer " + os.environ["LITELLM_MASTER_KEY"]},
+)
+for row in json.load(urllib.request.urlopen(request, timeout=20))["data"]:
+    info = row.get("model_info") or {}
+    if info.get("cheese_selectable") is True and info.get("blocked") is not True:
+        print(row["model_name"])
+' | sort -u
+}
 config_of() { docker inspect "$1" --format '{{range .Mounts}}{{if eq .Destination "/app/config.yaml"}}{{.Source}}{{end}}{{end}}'; }
 declared() { sed -nE "s/^[[:space:]-]*model_name:[[:space:]]*[\"']?([^\"'[:space:]]+)[\"']?[[:space:]]*$/\1/p" "$1" 2>/dev/null; }
 
-# Container $1 (new) serves every model container $2 (serving) serves, except
-# one the serving container's configuration declares and this release's no
-# longer does. Any other missing one was added on the admin page, lives in the
-# database, and has not loaded: the new color would refuse it.
+# Container $1 (new) serves every model container $2 (serving) serves, and
+# offers at least one. A model may go missing only when this release removes it
+# from config.yaml, no database row serves it, and the operator named it in
+# GATEWAY_ALLOW_DROP (names separated by commas or spaces). Removing a name from
+# the file is not by itself a decision to stop serving it: when models move to
+# runtime rows, a release whose rows were never created (or have not loaded)
+# would otherwise take traffic serving nothing.
 serves_the_same_models() {
-  local live new old_declared new_declared missing="" id
+  local live new old_declared new_declared in_db allow_drop missing="" id
   live="$(model_ids "$2")" || { log "the serving gateway does not list its models"; return 1; }
   new="$(model_ids "$1")" || return 1
+  in_db="$(db_model_names "$2")" || { log "the serving gateway does not list its database models"; return 1; }
   old_declared="$(declared "$(config_of "$2")")"
   new_declared="$(declared "$GATEWAY_CONFIG")"
+  allow_drop="$(tr ', ' '\n\n' <<<"${GATEWAY_ALLOW_DROP:-}")"
   while read -r id; do
     [[ -n "$id" ]] || continue
     grep -Fxq -- "$id" <<<"$new" && continue
-    grep -Fxq -- "$id" <<<"$old_declared" && ! grep -Fxq -- "$id" <<<"$new_declared" && continue
+    grep -Fxq -- "$id" <<<"$old_declared" && ! grep -Fxq -- "$id" <<<"$new_declared" \
+      && ! grep -Fxq -- "$id" <<<"$in_db" && grep -Fxq -- "$id" <<<"$allow_drop" && continue
     missing+=" $id"
   done <<<"$live"
   [[ -z "$missing" ]] || { log "not served yet:$missing"; return 1; }
+  [[ -n "$(selectable_names "$1")" ]] || { log "offers no selectable model"; return 1; }
 }
 
 # Starts color $1 on this release's image; it takes no traffic. $2 is the

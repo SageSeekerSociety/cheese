@@ -46,7 +46,7 @@ COPY deepseek_search.py /app/.venv/lib/python3.13/site-packages/cheese_deepseek_
 COPY test_web_search.py /opt/cheese-gateway/
 COPY retry_stream.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/retry_stream.py
 COPY test_retry_stream.py /opt/cheese-gateway/
-COPY patch_deepseek_images.py test_deepseek_images.py test_deepseek_route_order.py test_deepseek_session_affinity.py patch_empty_anthropic_text.py test_empty_anthropic_text.py patch_responses_stream_errors.py test_responses_stream_errors.py patch_responses_done_args.py test_responses_done_args.py patch_anthropic_stream_errors.py test_anthropic_stream_errors.py patch_gemini_generation.py test_gemini_generation.py patch_hosted_vllm_reasoning.py patch_deepseek_search_cost.py test_deepseek_search_cost.py patch_deepseek_search_provider.py test_deepseek_search.py check_config.py config.yaml /opt/cheese-gateway/
+COPY patch_deepseek_images.py test_deepseek_images.py test_deepseek_route_order.py test_deepseek_session_affinity.py patch_empty_anthropic_text.py test_empty_anthropic_text.py patch_responses_stream_errors.py test_responses_stream_errors.py patch_responses_done_args.py test_responses_done_args.py patch_anthropic_stream_errors.py test_anthropic_stream_errors.py patch_gemini_generation.py test_gemini_generation.py patch_hosted_vllm_reasoning.py patch_deepseek_search_cost.py test_deepseek_search_cost.py patch_deepseek_search_provider.py test_deepseek_search.py check_config.py config.yaml test_rows.yaml /opt/cheese-gateway/
 RUN /app/.venv/bin/python /opt/cheese-gateway/patch_stream_timing.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_deepseek_images.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_empty_anthropic_text.py \

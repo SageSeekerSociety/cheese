@@ -26,12 +26,13 @@ from tenacity import AsyncRetrying, RetryCallState, retry_if_result, wait_fixed
 
 from app.core.config import settings
 from app.core.sentences import say
-from app.domain.agent import connector_build
+from app.domain.agent import connector_build, toolchain
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
 )
-from app.domain.machine import claude_dist
+from app.domain.agent.place import footprint_root
+from app.domain.machine import claude_dist, toolchain_dist
 
 logger = logging.getLogger("cheese.machine.enrollment")
 
@@ -67,6 +68,11 @@ SSH_OPTS = [
     "-o",
     "ConnectTimeout=10",
 ]
+
+
+# What a Linux connector places for its rooms' sandboxes whatever the system
+# has (`cli/internal/devenv`), and enrollment hands a cloud machine first.
+SANDBOX_TOOLS = ("bubblewrap", "host-tools")
 
 
 class EnrollmentError(RuntimeError):
@@ -118,14 +124,14 @@ DATA_DISK_LINE = re.compile(r"^CHEESE_SANDBOX_DISK_BYTES=([0-9]+)$", re.MULTILIN
 # wiped. A host with no such disk is not enrolled: it could not hold a sandbox
 # to a disk limit, and no sandbox runs without one.
 #
-# The mkfs.xfs is the platform's, which cheesehost placed with the host tools
-# as it connected (`cli/internal/devenv`), not a package of the machine's. It
-# is told the feature set of the newest long-term kernel no newer than the
-# machine's own (its `lts_*.conf`): a newer mkfs's defaults can make a
-# filesystem an older kernel refuses to mount.
+# The mkfs.xfs is the platform's, placed with the host tools before this runs
+# (`run_bootstrap`, where `cli/internal/devenv` keeps them), not a package of
+# the machine's. It is told the feature set of the newest long-term kernel no
+# newer than the machine's own (its `lts_*.conf`): a newer mkfs's defaults can
+# make a filesystem an older kernel refuses to mount.
 DATA_DISK = """
 # Ubuntu from 23.10 lets a program make a user namespace only where an
-# AppArmor profile names it, and no profile names the bwrap cheesehost placed.
+# AppArmor profile names it, and no profile names the platform's bwrap.
 # On a host the platform opened, the platform is the owner who allows it.
 if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
   sudo -n "$HOME/.local/bin/cheesehost" sandbox allow < /dev/null
@@ -140,7 +146,7 @@ if [ -z "$disk" ]; then
 fi
 tools="$HOME/.cheese/runtime/host-tools"
 if [ ! -x "$tools/bin/mkfs.xfs" ]; then
-  echo "cheesehost placed no mkfs.xfs at $tools" >&2
+  echo "no platform mkfs.xfs at $tools" >&2
   exit 1
 fi
 kernel=$(uname -r | cut -d. -f1,2)
@@ -386,15 +392,19 @@ async def run_bootstrap(
             handle.write(private_key)
         ssh = ["ssh", "-i", key_path, *SSH_OPTS, f"{login_user}@{ip}"]
 
-        async def once(*command: str) -> tuple[int | None, bytes]:
+        async def once(
+            *command: str, stdin: Path | None = None
+        ) -> tuple[int | None, bytes]:
             child = await asyncio.create_subprocess_exec(
                 *command,
+                stdin=asyncio.subprocess.PIPE if stdin else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
             try:
                 output, _ = await asyncio.wait_for(
-                    child.communicate(), timeout=SSH_TIMEOUT_S
+                    child.communicate(stdin.read_bytes() if stdin else None),
+                    timeout=SSH_TIMEOUT_S,
                 )
             except TimeoutError as exc:
                 child.kill()
@@ -402,7 +412,9 @@ async def run_bootstrap(
                 raise EnrollmentError("transfer to the machine timed out") from exc
             return child.returncode, output
 
-        async def run(*command: str, wait_for_ssh: bool = False) -> bytes:
+        async def run(
+            *command: str, wait_for_ssh: bool = False, stdin: Path | None = None
+        ) -> bytes:
             deadline = asyncio.get_running_loop().time() + SSH_READY_WAIT_S
             returncode, output = await AsyncRetrying(
                 # 255 is ssh's own failure — the connection, not the command.
@@ -410,7 +422,7 @@ async def run_bootstrap(
                 stop=lambda _: asyncio.get_running_loop().time() >= deadline,
                 wait=wait_fixed(SSH_READY_POLL_S),
                 retry_error_callback=_last_result,
-            )(once, *command)
+            )(once, *command, stdin=stdin)
             if returncode:
                 raise EnrollmentError(
                     f"transfer to the machine failed ({returncode}): "
@@ -493,6 +505,37 @@ async def run_bootstrap(
         if progress:
             await progress(say("cloudStepConnector"))
         await push(connector, ".local/bin/cheesehost")
+        # What `link connect` places next on Linux for the rooms' sandboxes
+        # (`cli/internal/devenv`), put where it puts them: the archive unpacked
+        # without its top directory into `runtime/<tool>`, and the digest the
+        # toolchain route names in `runtime/<tool>.sha256`, which is how the
+        # connector tells a placed copy is current and skips the download. The
+        # same verified file the route serves, so the connector's check
+        # agrees. A machine of a person's own, and a later bump, still fetch
+        # over HTTP. Unpacked to a staged directory and renamed, so an
+        # interrupted copy is never taken for a placed one.
+        runtime = f"$HOME/{footprint_root()}/runtime"
+        platform_key = f"linux-{'x64' if arch == 'amd64' else arch}"
+        for tool in SANDBOX_TOOLS:
+            try:
+                archive = await toolchain_dist.ensure_cached(
+                    connector_build.dist_dir(), tool, platform_key
+                )
+            except toolchain_dist.ToolchainDistError as exc:
+                raise EnrollmentError(  # i18n-exempt: an enrollment failure, kept on the host row for operators
+                    f"the platform cannot serve {tool} for {platform_key}"
+                ) from exc
+            digest = toolchain.ARTIFACTS[(tool, platform_key)].sha256
+            placed, staged = f"{runtime}/{tool}", f"{runtime}/{tool}.ssh-new"
+            await run(
+                *ssh,
+                f'set -e; mkdir -p "{runtime}"; rm -rf "{staged}"; '
+                f'mkdir -m 700 "{staged}"; '
+                f'tar -xzf - -C "{staged}" --strip-components=1; '
+                f'rm -rf "{placed}"; mv "{staged}" "{placed}"; '
+                f'(umask 077; echo {digest} > "{placed}.sha256")',
+                stdin=archive,
+            )
         command = [
             "ssh",
             "-i",
