@@ -285,8 +285,11 @@ def _dark_css() -> str:
     return f"@media (prefers-color-scheme:dark){{{body}}}"
 
 
-def _page(*, title: str, preview: str, card: list[str], why: str) -> str:
-    """外框：画布、卡片（标志在最上面，`card` 接在它下面）、卡片下面一行来由。"""
+def _page(
+    *, title: str, preview: str, card: list[str], why: str, inbox: bool = True
+) -> str:
+    """外框：画布、卡片（标志在最上面，`card` 接在它下面）、卡片下面一行来由。
+    ``inbox`` 时来由后面接一个「查看全部通知」：一封不是从通知来的信不接。"""
     c = _LIGHT
     e = html.escape
     base = settings.frontend_url.rstrip("/")
@@ -318,8 +321,13 @@ def _page(*, title: str, preview: str, card: list[str], why: str) -> str:
             "</td></tr>",
             f'<tr><td class="c-faint" style="padding:20px 36px 0;font-family:{_FONT};'
             f'font-size:12px;line-height:20px;color:{c["faint"]};">{e(why)}'
-            f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
-            f'style="color:{c["faint"]};">查看全部通知</a></td></tr>',
+            + (
+                f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
+                f'style="color:{c["faint"]};">查看全部通知</a>'
+                if inbox
+                else ""
+            )
+            + "</td></tr>",
             "</table></td></tr></table></body></html>",
         ]
     )
