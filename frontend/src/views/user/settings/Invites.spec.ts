@@ -28,6 +28,8 @@ const base: MyInvites = {
   unlocked: true,
   unlock_uses: 3,
   invite_credits: 150,
+  month_credits: 150,
+  month_cap: 1500,
   invitees: [],
 }
 
@@ -81,6 +83,13 @@ describe('邀请好友', () => {
     const link = new URL(writeText.mock.calls[0][0])
     expect(link.pathname).toBe('/account/signup')
     expect(link.searchParams.get('code')).toBe('K7Q2M9')
+  })
+
+  it('本月邀请所得对着每月上限写出来，进度条画到相应位置', async () => {
+    const view = await open({ month_credits: 600, month_cap: 1500 })
+    const month = view.getByTestId('invite-month')
+    expect(month.textContent).toContain(t('account.invites.people.month', { n: '600', cap: '1,500' }))
+    expect(month.querySelector<HTMLElement>('.invites__month-fill')!.style.width).toBe('40%')
   })
 
   it('复制邀请码复制的就是这个码', async () => {

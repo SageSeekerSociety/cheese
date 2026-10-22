@@ -9,7 +9,8 @@
     "unlockHint": "Accept your first delivery to add {n} more seats",
     "copyCode": "Copy code",
     "copyLink": "Copy sign-up link",
-    "copied": "Invite code copied"
+    "copied": "Invite code copied",
+    "refillHint": "Each friend who accepts a first delivery gives their seat back"
   },
   "steps": {
     "title": "What your friend and you get",
@@ -28,7 +29,7 @@
     "accepted": "Accepted",
     "credits": "Credits from invitations",
     "creditsValue": "{n} credits",
-    "capNote": "Invitations earn at most 1,500 credits a month; once you reach it, friends who accept their first delivery that month earn you nothing more. Credits last 365 days from when they are paid and are used after the month's plan credits.",
+    "capNote": "Past the monthly limit, friends who accept a first delivery still give their seat back, but earn you no more credits. Credits last 365 days from when they are paid and are used after the month's plan credits.",
     "empty": "No one yet",
     "registeredOn": "Joined {date}",
     "stage": {
@@ -37,6 +38,7 @@
       "activated": "Accepted · +{n} credits",
       "activatedNoCredits": "Accepted",
       "lapsed": "7 days passed"
-    }
+    },
+    "month": "{n} / {cap} credits from invitations this month"
   }
 }
