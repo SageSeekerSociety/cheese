@@ -254,13 +254,16 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     // Agent 排在最前，群播让位。第一格就是 Enter 的默认答案，而「打一个 @ 然后回
     // 车」在这个产品里压倒性地是「交给芝士」——把 @all 摆在那个位置，等于让最常见
     // 的一次输入默认去打扰整个话题的所有人。群播是 fixed-literal token，换个位置
-    // 它还是那两个 token。
-    const agents = named.filter((i) => i.agent)
+    // 它还是那两个 token。不在这个频道里的队友不占这一格：跟着频道外的人一起
+    // 排在后面（见下）。
+    const agents = named.filter((i) => i.agent && !i.outsideTopic)
     // 频道里的人在前，没加入的人跟在后面（和 Slack 一样）：在这里说话的多半是在找
-    // 频道里的人。
+    // 频道里的人。后面那一组挂一个分组标题——候选行长得都一样，只靠先后顺序看不
+    // 出谁不在频道里。
+    const outsideGroup = t('work.room.mention.outsideGroup')
     const rest = [
       ...named.filter((i) => !i.agent && !i.outsideTopic),
-      ...named.filter((i) => !i.agent && i.outsideTopic),
+      ...named.filter((i) => i.outsideTopic).map((i) => ({ ...i, group: outsideGroup })),
     ]
     // 没打字：资料库是一行入口。打了字：文件和人、话题一起被搜出来。
     const files = ql ? libraryItems(ql) : []
@@ -276,7 +279,9 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
             },
           ]
         : []
-    return [...agents, ...library, ...broadcast, ...rest, ...files].slice(0, 7)
+    // 不截断：菜单自己有高度上限、自己滚（MentionMenu 的 .mention-menu）。以前截在
+    // 7 条，第 8 个人就永远挑不到——项目里人一多，「@ 一个人」这件事直接失效。
+    return [...agents, ...library, ...broadcast, ...rest, ...files]
   })
 
   // # 的频道候选：私密频道的名字不在别处变成链接（后端也不认），所以不给它候选。

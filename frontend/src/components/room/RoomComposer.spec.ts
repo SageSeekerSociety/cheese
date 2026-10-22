@@ -389,6 +389,49 @@ describe('@ 候选：没加入频道的人', () => {
     expect(labels(container)).toEqual(['芝士', '所有人', '在线成员', 'Alice', 'Carol'])
   })
 
+  it('没加入的人上面挂一条分组标题，频道里的人不挂', async () => {
+    const { container, box } = mount({ pool: MIXED })
+
+    await fillComposer(box(), '@')
+    await flush()
+
+    const groups = Array.from(container.querySelectorAll('.mention-menu-group')).map((el) => el.textContent?.trim())
+    expect(groups).toEqual(['不在频道'])
+    // 标题在 Carol 那一行上面，不是在最上头。
+    const group = container.querySelector('.mention-menu-group')!
+    const carol = menuItems(container).find((el) => el.textContent?.includes('Carol'))!
+    expect(group.compareDocumentPosition(carol) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('名单比 7 长也全列出来：后面的人不用再靠「打对名字」才找得到', async () => {
+    const many: MentionPoolEntry[] = Array.from({ length: 10 }, (_, i) => ({
+      handle: `u${i}`,
+      label: `同事${i}`,
+      avatar: null,
+      agent: false,
+      outsideTopic: true,
+    }))
+    const { container, box } = mount({ pool: many })
+
+    await fillComposer(box(), '@')
+    await flush()
+
+    expect(labels(container)).toEqual([
+      '所有人',
+      '在线成员',
+      '同事0',
+      '同事1',
+      '同事2',
+      '同事3',
+      '同事4',
+      '同事5',
+      '同事6',
+      '同事7',
+      '同事8',
+      '同事9',
+    ])
+  })
+
   it('没加入的人照样挑得中，写进正文的是他', async () => {
     const { container, box, draft } = mount({ pool: MIXED })
 
