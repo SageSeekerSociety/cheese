@@ -6732,16 +6732,24 @@ def _transcript_pages(topic: str, *, turn, author, grep):
         seen.add(cursor)
 
 
+def _transcript_slug(value: str, limit: int) -> str:
+    """把 --turn / --author / --grep 的值变成一个文件名。
+
+    这三个都是人给的,原样拼进路径的话,一个 `/` 或 `..` 就把落点搬到目录外面去
+    —— 而这条命令的默认落点「在检出目录之外」正是它敢不问就写文件的前提。
+    """
+    return re.sub(r"[^\w-]+", "-", value).strip("-")[:limit]
+
+
 def _transcript_path(topic: str, *, turn, author, grep) -> Path:
     """默认落点。带了筛选就把筛选写进文件名:否则一次窄查会盖掉刚落的整份。"""
-    name = topic
+    name = _transcript_slug(topic, 64)
     if turn:
-        name += "." + turn
+        name += "." + _transcript_slug(turn, 36)
     if author:
-        name += "." + re.sub(r"[^\w-]+", "-", author).strip("-")[:32]
+        name += "." + _transcript_slug(author, 32)
     if grep:
-        slug = re.sub(r"[^\w-]+", "-", grep).strip("-")[:24]
-        name += ".grep-" + (slug or "search")
+        name += ".grep-" + (_transcript_slug(grep, 24) or "search")
     return Path.home() / STAGED_DIR / TRANSCRIPT_DIR / (name + ".jsonl")
 
 

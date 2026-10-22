@@ -184,6 +184,24 @@ def test_the_filters_reach_the_platform_and_name_the_file(cli, tmp_path, capsys)
     )
 
 
+def test_a_filter_never_steers_the_default_place_out_of_its_directory(cli, capsys):
+    """`--turn`/`--grep`/`--author` 都是人给的值。原样拼进文件名的话，一个 `/` 或
+    `..` 就把落点搬到目录外面 —— 而「落在检出目录之外」正是这条命令敢不问就写
+    文件的前提。"""
+    cli._call = Platform([[_record(1)]])
+    for flag, value in (
+        ("--turn", "../../escape"),
+        ("--grep", "../a/b"),
+        ("--author", "../../../etc"),
+    ):
+        _run(cli, flag, value)
+        path = Path(capsys.readouterr().out.splitlines()[0])
+        assert path.parent == (Path.home() / "attachments" / "transcript"), (
+            f"{flag} 把落点搬出去了：{path}"
+        )
+        assert "/" not in path.name and ".." not in path.name
+
+
 def test_out_wins_over_the_default_place(cli, tmp_path, capsys):
     elsewhere = tmp_path / "elsewhere" / "翻.jsonl"
     cli._call = Platform([FIRST_PAGE])
