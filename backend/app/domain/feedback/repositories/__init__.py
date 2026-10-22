@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.feedback.models import (
     Feedback,
+    FeedbackAttachment,
     FeedbackComment,
     FeedbackKind,
     FeedbackNote,
@@ -80,7 +81,7 @@ from app.domain.feedback.queries import (  # noqa: F401
     visible_to,
 )
 
-from . import comments, reads, stats, writes
+from . import attachments, comments, reads, stats, writes
 
 #: 一次 `IN (...)` 里最多放几个值。**这不是微优化**：asyncpg 把参数个数编进 int16，
 #: 超过 32767 直接抛 `InterfaceError` —— 那是谁都过不去的 500，而且楼里评论一多，
@@ -432,6 +433,50 @@ class FeedbackRepository(ListingQueries):
         return await writes.add_note(
             self, feedback_id=feedback_id, author_handle=author_handle, body=body
         )
+
+    # --- 附件 -----------------------------------------------------------------
+
+    async def add_attachment(
+        self,
+        *,
+        attachment_id: uuid.UUID,
+        uploader_handle: str,
+        name: str,
+        content_type: str,
+        size: int,
+        location: str,
+        blob_key: str,
+    ) -> FeedbackAttachment:
+        return await attachments.add(
+            self,
+            attachment_id=attachment_id,
+            uploader_handle=uploader_handle,
+            name=name,
+            content_type=content_type,
+            size=size,
+            location=location,
+            blob_key=blob_key,
+        )
+
+    async def get_attachment(
+        self, attachment_id: uuid.UUID
+    ) -> FeedbackAttachment | None:
+        return await attachments.get(self, attachment_id=attachment_id)
+
+    async def get_attachments(
+        self, ids: list[uuid.UUID]
+    ) -> list[FeedbackAttachment]:
+        return await attachments.get_many(self, ids=ids)
+
+    async def list_attachments(
+        self, feedback_id: uuid.UUID
+    ) -> list[FeedbackAttachment]:
+        return await attachments.list_for_feedback(self, feedback_id=feedback_id)
+
+    async def attach_attachments(
+        self, *, rows: list[FeedbackAttachment], feedback_id: uuid.UUID
+    ) -> None:
+        return await attachments.attach(self, rows=rows, feedback_id=feedback_id)
 
     # --- 未读 cursor ----------------------------------------------------------
 

@@ -40,6 +40,9 @@ export type FeedbackComment = Schemas['CommentOut']
 /** 管理员之间的内部备注，只增不改。 */
 export type FeedbackNote = Schemas['NoteOut']
 export type FeedbackDetail = Schemas['FeedbackDetail']
+/** 报告带着的一份文件。**不含字节、也没有地址** —— 图片和下载都由
+ *  `feedbackAttachmentUrl` 现取，那一条路上服务端会再判一次可见性。 */
+export type FeedbackAttachment = FeedbackDetail['attachments'][number]
 /** 标签页上的数。`unassigned` 只在管理端列表里有（`FeedbackAdminCounts`）。 */
 export type FeedbackCounts = Schemas['FeedbackCounts'] & Partial<Pick<Schemas['FeedbackAdminCounts'], 'unassigned'>>
 export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
@@ -68,6 +71,10 @@ export interface FeedbackCreateBody {
   session_id?: string | null
   environment?: string | null
   tags?: string[]
+  /** 已经传上去、要挂到这条反馈上的附件 id，**按要显示的顺序**。字节早在选文件/
+   *  粘贴那一刻就上传了（见 `uploadFeedbackAttachment`），这里只是把 id 交给服务端；
+   *  不是本人上传的 id 会被拒（服务端 `attach` 的说明）。 */
+  attachment_ids?: string[]
 }
 
 /** 提案卡上的那份 payload（`Block.meta.feedback_proposal`）。 */

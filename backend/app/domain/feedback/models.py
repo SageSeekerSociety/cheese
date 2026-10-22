@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -257,6 +258,71 @@ class Feedback(UuidPk, Timestamps, Base):
 
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class FeedbackAttachment(UuidPk, Base):
+    """A file a report carries: a screenshot, a log, a screen recording.
+
+    **Two states in one table, and they are the same thing.** `feedback_id is
+    None` is an upload nobody has filed yet — the form uploads the moment a
+    file is picked or pasted, long before the report exists, and
+    ``POST /feedback`` hands the ids back with the report. The row is one
+    kind of thing throughout: a file that exists for a report; only its
+    ``feedback_id`` is not known yet. (The alternative — a link table beside
+    a generic attachment table — is what `task_attachment` does, and it
+    cannot work here: that table's bytes live under the public ``/uploads``
+    tree, see below.)
+
+    **Why not ``app.domain.attachment``.** The 1.0 attachment table stores no
+    owner and hands out a URL served from the public uploads tree; image
+    rows are readable by every signed-in person through
+    ``GET /attachments/{id}`` (its own module docstring calls that a gap).
+    A private report's screenshot reachable from a public address would make
+    「私密」 false — the hard requirement 方案稿 §8.7 wrote down before this
+    feature existed. So bytes live in ``app.core.blob_store`` instead, which
+    has no public URL at all (a local directory under ``workspace_root``, or
+    the private files bucket), and the only way to them is a route that asks
+    ``may_see`` about the report this row belongs to.
+
+    ``name`` is the name the browser reported, kept for display and for the
+    download's filename; it never becomes a path. ``content_type`` is what we
+    will serve it as, which for images is what the bytes themselves say
+    (``core.raster_images.sniff``), not what the client claimed — a file
+    named ``.png`` that is not one is stored as an opaque download.
+    """
+
+    __tablename__ = "feedback_attachments"
+    __table_args__ = (
+        # The detail page's one query: this report's files, oldest first.
+        Index(
+            "ix_feedback_attachments_feedback_created",
+            "feedback_id",
+            "created_at",
+        ),
+    )
+
+    #: NULL until the report is filed; CASCADE because a file nobody can
+    #: reach any more is not worth keeping a row for.
+    feedback_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("feedback.id", ondelete="CASCADE"), nullable=True
+    )
+    #: Who uploaded it. The upload and the report are two requests, so this is
+    #: also the answer to 「他能不能把这些 id 挂到自己的反馈上」: only the
+    #: uploader can (the ids travel through the browser, and the cheap way to
+    #: publish someone else's private screenshot would be to attach its id).
+    uploader_handle: Mapped[str] = mapped_column(String(64))
+    #: What the browser called the file — display and download name only.
+    name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(255))
+    bytes: Mapped[int] = mapped_column(BigInteger)
+    #: Where the bytes are (`app.core.blob_store`): a location and a key in it,
+    #: exactly like `library_files`. Changing `settings.files_store` moves
+    #: nothing — each row says where its own bytes went.
+    location: Mapped[str] = mapped_column(String(16), default="local")
+    blob_key: Mapped[str] = mapped_column(String(1024))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
 

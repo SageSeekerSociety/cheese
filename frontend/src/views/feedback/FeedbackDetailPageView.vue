@@ -14,6 +14,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
+import FeedbackAttachmentList from '@/components/feedback/FeedbackAttachmentList.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import FeedbackClaimCard from '@/components/feedback/FeedbackClaimCard.vue'
 import FeedbackCommentsThread from '@/components/feedback/FeedbackCommentsThread.vue'
@@ -300,6 +301,13 @@ function postComment() {
                 <template v-if="item.environment">{{ item.environment }}</template>
               </div>
             </div>
+          </section>
+
+          <!-- 附件。摆在评论之前、正文之后：它是这条反馈**自己的**内容，而评论是别人
+               添上去的。一份都没有时整块不出现（提交表单里那一栏是选填的）。 -->
+          <section v-if="item.attachments.length" class="fb-section">
+            <div class="t-eyebrow mb-2">{{ t('feedback.detail.attachments.title') }}</div>
+            <FeedbackAttachmentList :attachments="item.attachments" />
           </section>
 
           <section class="fb-section">

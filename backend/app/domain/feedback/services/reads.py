@@ -442,6 +442,11 @@ async def detail_of(
         comments=(await svc._repo.comment_counts([row.id])).get(row.id, 0),
         avatars=avatars,
         last_activity_at=activity.get(row.id),
+        # 附件和这条反馈同一道门：能走到这里就说明 `may_see` 已经过了，所以这一份
+        # 清单不必再判一次。**字节**不是这样发的：每一份都由
+        # `GET /feedback/attachments/{id}` 重新问一遍（见 `attachments.for_read`）——
+        # 这条响应里的清单只是「有哪些」，不是「谁都能打开」。
+        attachments=await svc._repo.list_attachments(row.id),
         # The page-wide map goes straight back in: the comment authors are a
         # subset of the handles resolved above, so this costs nothing.
         thread=await svc.comments_out(
