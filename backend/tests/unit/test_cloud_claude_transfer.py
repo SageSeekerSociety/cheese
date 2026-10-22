@@ -464,3 +464,47 @@ async def test_a_whole_vm_enrolls_without_the_sandbox_tools(
 
     assert output == "enrolled"
     assert not (home / ".cheese/runtime").exists()
+
+
+async def test_an_attempt_cut_off_mid_copy_leaves_nothing_the_next_one_keeps(
+    tmp_path, monkeypatch
+):
+    """An archive that breaks off mid-copy fails that attempt; the next one
+    leaves exactly the placement the connector reads, nothing of the first."""
+    home = _guest_with_claude(tmp_path)
+    fake_transports(tmp_path / "bin", home)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    served = toolchain_dist.ensure_cached
+    cut = tmp_path / "cut-off.tar.gz"
+
+    async def cut_off(root, tool, platform_key):
+        whole = (await served(root, tool, platform_key)).read_bytes()
+        cut.write_bytes(whole[: len(whole) // 2])
+        return cut
+
+    monkeypatch.setattr(toolchain_dist, "ensure_cached", cut_off)
+    with pytest.raises(enrollment.EnrollmentError):
+        await enrollment.run_bootstrap(
+            ip="guest",
+            login_user="cheese",
+            private_key="test",
+            sandboxes=True,
+            script="true",
+        )
+    monkeypatch.setattr(toolchain_dist, "ensure_cached", served)
+
+    output = await enrollment.run_bootstrap(
+        ip="guest",
+        login_user="cheese",
+        private_key="test",
+        sandboxes=True,
+        script='"$HOME/.cheese/runtime/bubblewrap/bwrap"',
+    )
+
+    assert output.startswith("bubblewrap ")
+    assert sorted(p.name for p in (home / ".cheese/runtime").iterdir()) == [
+        "bubblewrap",
+        "bubblewrap.sha256",
+        "host-tools",
+        "host-tools.sha256",
+    ]
