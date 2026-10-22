@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { FeedbackKind } from '@/cx_types'
 
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 
+import { useFeedbackAttachments } from '@/composables/useFeedbackAttachments'
+
+import FeedbackAttachmentField from './FeedbackAttachmentField.vue'
 import { kindLabel } from './feedbackLabels'
 import { useFeedbackSubmitCopy } from './useFeedbackSubmitCopy'
 import { useFeedbackTags } from './useFeedbackTags'
@@ -65,6 +68,7 @@ const emit = defineEmits<{ (e: 'submitted', id: string): void; (e: 'cancel'): vo
 const store = useFeedbackStore()
 const { kinds, titlePlaceholder, bodyLabel, bodyPlaceholder, kindHint } = useFeedbackSubmitCopy()
 const { tagDraft, tagFocused, tagSuggestions, addTag, removeTag, onTagKeydown } = useFeedbackTags()
+const attachments = useFeedbackAttachments()
 
 /** 从提案卡打开的那条：作者是提案的 agent、提交者是我，所以两个入口的说法不一样。 */
 const fromProposal = computed(() => !!store.draft.proposal)
@@ -84,8 +88,36 @@ const restoredNotice = computed(() => store.draftRestored)
 const askRepro = computed(() => REPRO_KINDS.includes(store.draft.kind))
 const askExpectation = computed(() => EXPECTATION_KINDS.includes(store.draft.kind))
 
-/** 提交按钮能不能按。查的是**同一个门槛**，见文件头。 */
-const canSubmit = computed(() => !!store.draft.title.trim() && !!store.draft.body.trim() && !store.submitting)
+/** 提交按钮能不能按。查的是**同一个门槛**，见文件头。
+ *
+ *  `!attachments.uploading.value` 也是其中一条：还在传的时候按下去，那条请求带的是
+ *  一个**没有这几份附件**的条 —— 屏幕上明明列着它们，发出去却没有，而人不会回头
+ *  再看一遍。宁可让人多等一秒（进度条就在那一行上），也不静默丢东西。 */
+const canSubmit = computed(
+  () => !!store.draft.title.trim() && !!store.draft.body.trim() && !store.submitting && !attachments.uploading.value
+)
+
+// 附件的两个上限跟着服务端报的数走（`GET /feedback/meta` 的 `max_attachments` /
+// `max_attachment_bytes`）：一份文件多大算大是服务端执行的规则，客户端先拦一道只是
+// 为了让用户在选中的那一刻就知道，而不是传完才被拒。meta 没到或拿不到时用默认值
+// （见 composable 里那两条常量）。
+watch(
+  () => store.meta,
+  (meta) => {
+    if (!meta) return
+    attachments.setLimits(meta.max_attachments ?? 0, meta.max_attachment_bytes ?? 0)
+  },
+  { immediate: true }
+)
+
+/** 表单里任何地方按 Ctrl+V：剪贴板里的图片和文件都进附件栏，正文粘贴照旧。
+ *
+ *  挂在 `form` 上而不是那一栏上：人刚截完图时焦点可能在标题框里，点回附件那一栏才
+ *  能粘贴，就把这个功能最顺手的部分拿掉了。 */
+function onPaste(event: ClipboardEvent) {
+  const files = attachments.fromClipboard(event)
+  if (files.length) void attachments.add(files)
+}
 
 /** 类型那一排按钮就地改草稿。分成一个函数是因为它同时要落盘 —— 不落盘的话，选完类型
  *  刷新回来又变回 Bug，而这一页的其余部分（正文那一栏的问法）是跟着类型变的。 */
@@ -115,7 +147,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <form class="sb-form" :class="`sb-form--${shell}`" @submit.prevent="submit">
+  <form class="sb-form" :class="`sb-form--${shell}`" @submit.prevent="submit" @paste="onPaste">
     <!-- 从 agent 提案卡进来的那条：先把「这条从哪来」说完，再说字段。以前那三样
          （说明、勾选框、隐私提示）散在表单中段，读起来像三件互不相干的事。 -->
     <section v-if="origin" class="sb-origin">
@@ -306,6 +338,21 @@ onMounted(() => {
         </button>
       </div>
       <p class="sb-hint t-meta-read">{{ t('feedback.submit.field.tags.helper') }}</p>
+    </div>
+
+    <!-- 附件。摆在可见范围**之前**：它和正文、复现步骤是同一类东西（这条反馈说的是
+         什么、证据是什么），而可见范围是「提完之后谁能看见」那一个决定 —— 表单最后
+         两栏问的是发布，不是内容。
+         这一栏也是**粘贴的来源**：`@paste` 听的是整个表单，理由见 `onPaste`。 -->
+    <div class="sb-field">
+      <FeedbackAttachmentField
+        :rows="attachments.rows.value"
+        :max-bytes="attachments.maxBytes.value"
+        :max-files="attachments.maxFiles.value"
+        @add="(files) => void attachments.add(files)"
+        @remove="attachments.remove"
+        @retry="(key) => void attachments.retry(key)"
+      />
     </div>
 
     <!-- 可见范围是一次**决定**，不是一栏「选填」：它有默认值（公开），而且提完之后

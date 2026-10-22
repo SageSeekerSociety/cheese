@@ -50,6 +50,7 @@ const ROW = {
   environment: null,
   topic_id: null,
   project_id: null,
+  attachments: [],
   timeline: [],
   thread: [],
   thread_next_cursor: null,

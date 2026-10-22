@@ -27,6 +27,13 @@ export type AdminSort = 'new' | 'supports'
  *
  *  **「表单开着没有」不在这里**：壳自己知道自己在不在屏幕上（路由在不在、对话框开不
  *  开），store 里再留一个布尔就是同一个事实的第二份拷贝。 */
+export interface AttachmentDraft {
+  /** 服务端给的 id。提交时只发它。 */
+  id: string
+  name: string
+  bytes: number
+}
+
 export interface FeedbackDraft {
   kind: FeedbackKind
   title: string
@@ -40,6 +47,12 @@ export interface FeedbackDraft {
   /** 标签。后端 `FeedbackCreate.tags` 一直收（`list[str]`，上限 20），卡片也一直在
    *  渲染 `item.tags`，只是表单以前没做。用来横向归类（登录 / 移动端 / 性能）。 */
   tags: string[]
+  /** 已经传上去的附件，**按选中的顺序**。表单在选文件（或粘贴）那一刻就上传，这里
+   *  存的是服务端给回来的 id 和显示要用的名字与大小 —— 提交时只把 id 发出去。
+   *
+   *  草稿落盘时它们**跟着一起存**（`lib/feedbackDraft.ts`）：一份 8MB 的截图在选了
+   *  之后、提交之前刷新页面，字节早在服务端了，丢掉这三个 id 就得让人重选一遍。 */
+  attachments: AttachmentDraft[]
   /** 「附带现场」：把 `fromAgent` 那三段会话信息一起提交。 */
   attachContext: boolean
   visibility: FeedbackVisibility

@@ -9,6 +9,18 @@
     "title": "From Cheese's investigation",
     "whatHappened": "What happened"
   },
+  "attachments": {
+    "add": "Add images or files",
+    "failed": "Upload failed",
+    "helper": "You can also paste a screenshot (Ctrl+V / ⌘V)",
+    "limit": "Up to {size} per file, {max} files",
+    "remove": "Remove {name}",
+    "retry": "Retry",
+    "tooLarge": "{name} is too large — up to {size} per file",
+    "tooMany": "{max} files at most",
+    "unnamed": "Unnamed file",
+    "uploading": "Uploading {name} ({percent}%)"
+  },
   "back": "Back",
   "cancel": "Cancel",
   "draft": {
