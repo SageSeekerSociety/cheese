@@ -98,4 +98,7 @@ class MyInvitesOut(BaseModel):
     unlocked: bool
     unlock_uses: int
     invite_credits: int
+    #: Credits inviting friends has paid this month (Asia/Shanghai), against ``month_cap``.
+    month_credits: int
+    month_cap: int
     invitees: list[InviteeOut]
