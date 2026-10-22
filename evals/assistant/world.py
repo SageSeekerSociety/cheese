@@ -120,7 +120,6 @@ CHATTER = {
 @dataclass
 class World:
     url: str
-    tokens: dict[str, str]
     users: dict[str, int]
     projects: dict[str, dict] = field(default_factory=dict)
     #: name → {"id", "number", "ref"} per project name.
@@ -131,7 +130,12 @@ class World:
     space_id: int | None = None
 
     def headers(self, handle: str) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.tokens[handle]}"}
+        """A login minted now: one minted at the start runs out
+        (``access_token_expires_seconds``) before the last task does."""
+        from app.common.auth import create_access_token
+
+        token = create_access_token(self.users[handle], handle=handle)
+        return {"Authorization": f"Bearer {token}"}
 
     def channel(self, project: str, name: str) -> dict:
         return self.channels[project][name]
@@ -150,7 +154,6 @@ def _ok(response: httpx.Response) -> dict:
 async def build(url: str, sessions) -> World:
     """Seed the workspace; ``sessions`` is an async sessionmaker on the run's
     database."""
-    from app.common.auth import create_access_token
     from app.domain.user.models import User
     from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -173,11 +176,7 @@ async def build(url: str, sessions) -> World:
             else:
                 profile.nickname = name
         await s.commit()
-    world = World(
-        url,
-        {h: create_access_token(i, handle=h) for h, i in users.items()},
-        users,
-    )
+    world = World(url, users)
     async with httpx.AsyncClient(base_url=url, timeout=120, trust_env=False) as http:
         await _projects(world, http)
         await _channels(world, http)
