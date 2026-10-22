@@ -27,7 +27,11 @@ from app.domain.agent.gateway_admin import (
     UsageWindow,
 )
 from app.domain.agent.gateway_models.cache import _cached, reset_cache
-from app.domain.agent.gateway_models_helpers import _key_snapshot, _model_snapshot
+from app.domain.agent.gateway_models_helpers import (
+    LEDGER_START,
+    _key_snapshot,
+    _model_snapshot,
+)
 
 if TYPE_CHECKING:
     from app.domain.agent import gateway_models as pkg
@@ -63,6 +67,12 @@ async def _usage_window(
     assert admin is not None
     key = f"usage:{start.isoformat()}:{end.isoformat()}"
     return await _cached(key, lambda: admin.usage(start.isoformat(), end.isoformat()))
+
+
+async def _ledger_window(service: pkg.GatewayModelsService, end: date) -> UsageWindow:
+    """消费上限的那份终身账：从 `LEDGER_START` 到 ``end``，与 spend_cap.py 拦截时
+    同一张表、同一种求和（按上游模型名、不分窗口）。只在有线路设了上限时读。"""
+    return await service._usage_window(LEDGER_START, end)
 
 
 async def _require_models(service: pkg.GatewayModelsService) -> list[AdminModel]:

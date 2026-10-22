@@ -20,6 +20,7 @@ from app.core import model_roles
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.agent.gateway_admin import GatewayAdminError
 from app.domain.agent.gateway_models_helpers import (
+    _capped,
     _config_yaml,
     _daily_tokens,
     _host_of,
@@ -98,11 +99,16 @@ async def _read_back(
     try:
         models = await service._models_raw()
         usage = await service._usage_window(start, end)
+        found = next((m for m in models if m.name == name), None)
+        ledger = (
+            await service._ledger_window(end)
+            if found is not None and _capped([found])
+            else None
+        )
     except GatewayAdminError:
         return _item_from_payload(name, data, model_id)
-    found = next((m for m in models if m.name == name), None)
     if found is not None:
-        return service._item(found, usage)
+        return service._item(found, usage, ledger)
     return _item_from_payload(name, data, model_id, usage.by_model.get(name))
 
 
@@ -135,7 +141,9 @@ async def _record(
     await service._db.commit()
 
 
-def _item(model: AdminModel, usage: UsageWindow) -> dict:
+def _item(
+    model: AdminModel, usage: UsageWindow, ledger: UsageWindow | None = None
+) -> dict:
     offered = model.selectable and model.priced and not model.blocked
     item = {
         "name": model.name,
@@ -164,7 +172,8 @@ def _item(model: AdminModel, usage: UsageWindow) -> dict:
         # 还会让两处的数对不上）。
         "series": _daily_tokens(model.name, usage),
         # 这个模型的全部线路，按网关试它们的先后排好；config 的也在，只是只读。
-        "sources": [_source_item(source) for source in model.sources],
+        # ``ledger`` 是终身账（`answers._ledger_window`），给每条线路「上限已用多少」。
+        "sources": [_source_item(source, ledger) for source in model.sources],
     }
     if model.origin == "config":
         # 只对 config 模型给这段可复制文本：它唯一的改法是编辑 config.yaml，

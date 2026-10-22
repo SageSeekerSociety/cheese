@@ -12,6 +12,8 @@ import type { useWorkspaceStore } from '@/stores/workspace'
 
 import { ref } from 'vue'
 
+import { noteAccepted } from '@/composables/useInvitePrompt'
+
 import {
   acceptCard,
   approveCard,
@@ -116,6 +118,7 @@ export function useAcceptCardActions(host: AcceptCardActionsHost) {
       if (updated.status === 'conflict') {
         store.error = t('topic.accept.conflict', { agent: store.agentName })
       }
+      if (updated.status === 'accepted') void noteAccepted()
       // 卡已经定了：开着的退回框和里面那半句理由不再适用。
       showRejectInput.value = false
       rejectNote.value = ''

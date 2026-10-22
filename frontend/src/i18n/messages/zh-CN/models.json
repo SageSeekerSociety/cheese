@@ -38,6 +38,8 @@
     "empty": "暂无模型",
     "calls": "次调用",
     "blocked": "已停用",
+    "capWarn": "上限已用 {pct}",
+    "capOver": "已达消费上限",
     "blockedReason": {
       "blocked": "已在网关停用，选择器不会提供它",
       "unlisted": "未上架（网关里没有标 cheese_selectable）",
@@ -265,6 +267,9 @@
     "free": "免费",
     "headers": "请求头",
     "session": "会话头",
+    "cap": "消费上限",
+    "capUsed": "已用 {used} / 上限 {cap}（{pct}）",
+    "capOver": "已达上限，网关拒绝调用",
     "readonly": "配置文件声明，只读",
     "testSoon": "测试线路要等一致性测试套件上线",
     "failed": "线路操作失败",

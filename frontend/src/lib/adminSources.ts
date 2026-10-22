@@ -333,3 +333,33 @@ export function priceChanges(before: GatewayPrices, after: GatewayPrices | undef
 export function perMillionUsd(v: number | null): string {
   return v === null ? '—' : `$${Number((v * 1_000_000).toFixed(6))}`
 }
+
+/** 上限用到这个比例起，页面标成警告色。 */
+export const CAP_WARN_AT = 0.8
+
+export interface CapProgress {
+  used: number
+  cap: number
+  /** 已用 / 上限，可能超过 1：拦截之前已经在跑的调用会越过上限一点。 */
+  ratio: number
+  level: 'ok' | 'warn' | 'over'
+}
+
+/** 一条线路的消费上限用到了哪里；没设上限、或服务端没读到已用多少时是 null。 */
+export function capProgress(source: Pick<SourceRow, 'spend_cap_usd' | 'spend_cap_used_usd'>): CapProgress | null {
+  const cap = source.spend_cap_usd
+  const used = source.spend_cap_used_usd
+  if (cap == null || cap <= 0 || used == null) return null
+  const ratio = used / cap
+  return { used, cap, ratio, level: ratio >= 1 ? 'over' : ratio >= CAP_WARN_AT ? 'warn' : 'ok' }
+}
+
+/** 一个模型各条线路里用得最满的那份上限进度：列表上只给一眼。 */
+export function fullestCap(sources: SourceRow[] | undefined): CapProgress | null {
+  let best: CapProgress | null = null
+  for (const s of sources ?? []) {
+    const p = capProgress(s)
+    if (p && (!best || p.ratio > best.ratio)) best = p
+  }
+  return best
+}

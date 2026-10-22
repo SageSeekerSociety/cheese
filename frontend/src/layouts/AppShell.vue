@@ -130,6 +130,14 @@
       @back="guide.back()"
       @skip="guide.skip()"
     />
+    <!-- 第一次采纳之后提醒一次：可以邀请好友了（composables/useInvitePrompt.ts）。 -->
+    <InvitePromptCard
+      v-if="invitePrompt.open.value"
+      open
+      :invites-to="{ name: 'UserSettingsInvites' }"
+      @copy-link="invitePrompt.copySignupLink()"
+      @dismiss="invitePrompt.dismiss()"
+    />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
   </my-app>
@@ -157,6 +165,7 @@ import { pendingSudo } from '@/utils/sudo'
 
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
+import { useInvitePrompt } from '@/composables/useInvitePrompt'
 import { teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
@@ -266,6 +275,7 @@ const CommandPalette = defineAsyncComponent(() => import('@/commands/palette/Com
 const DeviceConnect = defineAsyncComponent(() => import('@/views/desktop/DeviceConnect.vue'))
 const GuideBubble = defineAsyncComponent(() => import('@/components/common/GuideBubble.vue'))
 const LeaveProjectDialog = defineAsyncComponent(() => import('@/components/LeaveProjectDialog.vue'))
+const InvitePromptCard = defineAsyncComponent(() => import('@/components/invites/InvitePromptCard.vue'))
 const sudoWanted = ref(false)
 watch(pendingSudo, (request) => {
   if (request) sudoWanted.value = true
@@ -471,6 +481,8 @@ onBeforeUnmount(
 // 新手引导此刻在哪一步、指着什么。动作步做到了自己往下走（`settle`），所以页面上一
 // 出现新东西（登记表一变）、服务端的事实一变，就重新判一次。
 const guide = useProjectTour()
+// 新手引导还在带、或者协议弹窗还开着，邀请提醒就等一等，不和它们抢。
+const invitePrompt = useInvitePrompt(() => guide.active.value || pendingConsents.value.length > 0)
 const guideRevision = useGuideAnchorRevision()
 const guideHas = (name: string) => !!guideAnchor(name)
 watch(

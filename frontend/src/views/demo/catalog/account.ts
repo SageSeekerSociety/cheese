@@ -1,6 +1,6 @@
 /**
  * 账号与反馈那一册：注册表单底下那两句协议（`LegalLinks`）、反馈列表里的一行
- * （`FeedbackCard`）。
+ * （`FeedbackCard`）、第一次采纳之后那张邀请小卡（`InvitePromptCard`）。
  *
  * 反馈那几行的样例（公开、支持过了、私密、芝士提的、办完了的）在
  * `../catalogFixtures.ts`。
@@ -11,6 +11,7 @@ import { FEEDBACK_ROWS } from '../catalogFixtures'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
+import InvitePromptCard from '@/components/invites/InvitePromptCard.vue'
 
 export const ACCOUNT_ENTRIES: CatalogEntry[] = [
   {
@@ -83,6 +84,24 @@ export const ACCOUNT_ENTRIES: CatalogEntry[] = [
         note: '已上线的条目支持按钮变灰、提示语换成「这条已经处理完了」——它已经做完了，不该再喊人支持。',
         props: { item: FEEDBACK_ROWS.closed },
         expect: '导出一个月的数据要等四十秒',
+      },
+    ],
+  },
+  {
+    id: 'invite-prompt-card',
+    title: 'InvitePromptCard',
+    about: '第一次采纳之后提醒一次「可以邀请好友了」：浮在右下角，不挡刚采纳的那一份。',
+    file: 'src/components/invites/InvitePromptCard.vue',
+    component: InvitePromptCard,
+    // 复制链接、关掉都只发事件，取邀请码和记「提醒过」在 composables/useInvitePrompt.ts。
+    // 目录里画在页面里（`inline`），真用时浮在右下角。
+    needs: ['vuetify', 'i18n', 'router'],
+    states: [
+      {
+        name: '刚采纳完',
+        note: '多了 3 个名额；好友和自己各得多少写成两行。',
+        props: { open: true, inline: true, invitesTo: { name: 'UserSettingsInvites' } },
+        expect: '复制注册链接',
       },
     ],
   },

@@ -110,7 +110,7 @@ description: >-
 ### 走流程时发现 bug
 
 为写文档走流程时碰到的产品 bug，直接修，不先问（项目负责人的决定）：先查有没有开着的 PR 已经在修，
-没有就每个根因一个 PR，经合并队列合入，在 dev 上确认修好。文档写产品修好之后的行为，不为 bug 写绕过办法。
+没有就每个根因一个 PR，按 `AGENTS.md` 用 `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>` squash 合入 main，在 dev 上确认修好。文档写产品修好之后的行为，不为 bug 写绕过办法。
 
 ## 句子
 

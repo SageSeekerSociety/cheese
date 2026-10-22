@@ -143,7 +143,8 @@ class Action:
     summary: str
     categories: tuple[str, ...] = ()
     #: Done with no look: the person can undo it themselves, and nobody is
-    #: harmed by it meanwhile.
+    #: harmed by it meanwhile; or reading a page on a documentation site
+    #: (``fetch.preapproved``).
     low: bool = False
     #: Asked whatever was said, and why, in the person's words.
     always_ask: str = ""
