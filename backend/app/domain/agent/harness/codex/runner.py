@@ -131,6 +131,12 @@ class Runner(runner.Runner[Journal]):
                 self.reply_settled()
             self.turn_ended()
 
+    def turn_work(self) -> str | None:
+        """The work the finished thread was in: Codex names it per thread and
+        keeps it after the turn ends (``work:<thread id>``)."""
+        thread = self.session.thread_id if self.session is not None else None
+        return self.journal.recall(f"work:{thread}") if thread else None
+
     async def _hold_to_reply(self, reason: str, ending: dict) -> None:
         assert self.session is not None
         try:

@@ -515,12 +515,12 @@ def test_failed_push_leaves_work_and_a_durable_failure_log(device):
 
 
 def test_failed_push_is_shown_in_the_site(device):
-    """A failed push is a platform line in 现场, not a chat message.
+    """A failed push is a line in 现场, not a chat message.
 
     Nobody in the room can retry the turn, and the message that said to read
     like one for a person. It goes to this session's own conversation, naming
-    the branch — a sibling task's failure cannot be written into that task's
-    现场 with this credential."""
+    the branch and the turn the checkpoint ended — a sibling task's failure
+    cannot be written into that task's 现场 with this credential."""
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
@@ -537,9 +537,9 @@ def test_failed_push_is_shown_in_the_site(device):
     ]
     assert report["path"] == f"/topics/{os.environ['CHEESE_TOPIC']}/session-records"
     assert report["token"] == "test-secret"
-    # Even with CHEESE_TURN set, no turn goes with a note written after the
-    # turn: the header would name the wrong 过程.
-    assert report["turn"] is None
+    # The turn the checkpoint ended travels with the sync, so the failure is
+    # filed under that turn's 过程 rather than guessed when it is written.
+    assert report["turn"] == os.environ["CHEESE_TURN"]
     assert report["body"]["subtype"] == "sync_failed"
     assert tasks[task]["branch"] in report["body"]["text"]
 

@@ -315,11 +315,19 @@ def control(self, params):
         self.hooks("Stop", "", {}, params["request_id"])
         # The platform's own command, not a call of the agent's: the
         # project's tool hooks never see it, as they never would natively.
+        args: dict = {"command": "cheese-sync"}
+        turn = params.get("turn")
+        if turn:
+            # A sync's failure is reported with this turn, so the note lands
+            # in that turn's process view rather than being guessed later.
+            # Named apart from the Bash tool's own arguments: only a platform
+            # call sets it, and no model can.
+            args["platform_env"] = {"CHEESE_TURN": str(turn)}
         return self.invoke(
             {
                 "id": params["request_id"],
                 "tool": "Bash",
-                "args": {"command": "cheese-sync"},
+                "args": args,
                 "platform": True,
             }
         )

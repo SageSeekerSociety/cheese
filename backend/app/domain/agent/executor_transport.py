@@ -1505,14 +1505,21 @@ class RemoteClient:
     def control(self, request, preparing=None):
         return self.call("control", dict(request), preparing=preparing)
 
-    def checkpoint(self, request_id):
+    def checkpoint(self, request_id, turn=None):
         """A turn's Stop checkpoint: its work synced into the project. A
         session whose work is not kept (a 支线) has none
         to sync, and the executor route would refuse it. Nor does a session
         that never held a sandbox: its turn did nothing on a machine. (One
-        whose sandbox was destroyed while idle is the route's to answer.)"""
+        whose sandbox was destroyed while idle is the route's to answer.)
+
+        `turn` is the work id of the turn that ended. The machine runs its
+        sync with it (``CHEESE_TURN``), so a push failure is filed under that
+        turn instead of being guessed from whatever is newest later."""
         if self.config.get("kind") == "deferred" or keeps_nothing(
             self.execution_token()
         ):
             return {}
-        return self.control({"subtype": "checkpoint", "request_id": request_id})
+        request = {"subtype": "checkpoint", "request_id": request_id}
+        if turn:
+            request["turn"] = str(turn)
+        return self.control(request)

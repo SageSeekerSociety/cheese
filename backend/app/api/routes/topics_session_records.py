@@ -7,8 +7,9 @@ harness wrote them, oldest first and paged. `turn_id` narrows it to one turn.
 
 `POST /topics/{topic_id}/session-records`: one status record the machine
 itself reports for 现场 (a sync that failed). It is not a harness journal
-entry; `harness` keeps it apart from every agent's run, and it carries no
-turn — 现场 draws it as a platform line of its own.
+entry; `harness` keeps it apart from every agent's run. It joins the turn the
+checkpoint names (`X-Cheese-Turn`), and with no turn is drawn as a platform
+line of its own.
 
 The same door as 现场 (`topics_transcript.py`): whoever may read the
 conversation's transcript may read its raw record.
@@ -29,6 +30,7 @@ from app.api.topics_deps import _actor_in_place
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.errors import NotFoundError
 from app.core.sentences import say
+from app.core.work_context import current_work_id
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.room_task.place import place_or_404
 from app.domain.session_record import service
@@ -221,10 +223,10 @@ async def note_machine_record(
     failure is not in the agent's journal — and posting it into the room as a
     chat message told a person to do something only the machine could. Here it
     is what it is: one status record in the 现场 of the conversation the
-    credential was minted for, drawn as a platform line of its own. It carries
-    no turn: the request's turn header names the caller's own turn, which after
-    a sync is not reliably the one this failure belongs to. A sibling task's
-    branch may be what failed, and the text names it.
+    credential was minted for. It joins the turn the checkpoint names, so the
+    failure sits in that turn's process view; with no turn (a sync outside any
+    turn) 现场 draws it as a platform line of its own. A sibling task's branch
+    may be what failed, and the text names it.
     """
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
@@ -234,6 +236,7 @@ async def note_machine_record(
         db,
         place.conversation_id,
         agent_handle=actor.handle,
+        turn_id=current_work_id.get(),
         record={
             "type": "system",
             "subtype": body.subtype,

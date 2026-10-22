@@ -291,11 +291,11 @@ async def note(
     so it gets a sequence of its own and `harness` keeps it out of every
     agent's run. It is sealed and read back exactly like a harness record.
 
-    It carries no turn unless the caller names one: the sync runs after the
-    turn ended, and guessing which turn it was (the newest, the newest of this
-    seat) picks a co-seated agent's turn or the next turn when they arrive
-    first. 现场 draws it as a platform line of its own (`as_block` marks
-    harness "machine" as platform), which is what it is."""
+    The turn is the caller's to name, not this function's to guess: the sync
+    runs after the turn ended, and the newest turn then (of the conversation,
+    or of this seat) can be a co-seated agent's or the next one. A checkpoint
+    names the turn it ended; a sync with none is drawn by 现场 as a platform
+    line of its own (`as_block` marks harness "machine" as platform)."""
     when = at or datetime.now(UTC)
     sequence = int(when.timestamp() * 1_000_000)
     entry = {"sequence": sequence, "at": when.isoformat(), "record": scrubbed(record)}

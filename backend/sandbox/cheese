@@ -19,7 +19,8 @@
   CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用任务的实况文档）
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
   CHEESE_TOKEN   会话凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
-  CHEESE_TURN    可选的一轮 id；启动器今天不注入，有就让块归到这一轮
+  CHEESE_TURN    可选的一轮 id；平台每次检查点单独给它一个（那一轮 sync），
+                 有就让块和同步失败的记录归到这一轮
 
 例:
   cheese worktree <task_id>                 # 准备任务工作目录,输出路径
@@ -5049,14 +5050,15 @@ def _report_sync_failure(
     success the work is already visible in the branch, and a note per turn
     saying so would be noise that trains people to skip it.
 
-    An ordinary failed push is a platform line in the 现场 of the conversation
-    whose checkpoint ran — the only conversation this credential may write. It
-    carries no turn: the sync runs after the turn ended, and the newest turn
-    then is not reliably the one. It names the branch, which is how a sibling
-    task's commit is identified when a room's `sync --all` picked it up: a
-    task credential may not write into another task's conversation. The queue
-    case is different — retrying cannot help and a person has to choose — so
-    that one is still said in the room.
+    An ordinary failed push goes into the 现场 of the conversation whose
+    checkpoint ran — the only conversation this credential may write. The
+    checkpoint names its turn (`CHEESE_TURN`), so the note joins that turn's
+    process view; a sync with no turn behind it is drawn as a platform line.
+    It names the branch, which is how a sibling task's commit is identified
+    when a room's `sync --all` picked it up: a task credential may not write
+    into another task's conversation. The queue case is different — retrying
+    cannot help and a person has to choose — so that one is still said in the
+    room.
     """
     if not (API and TOPIC and TOKEN):
         return  # A human using the CLI directly already receives its exit status.
@@ -5086,10 +5088,10 @@ def _report_sync_failure(
 def _tell_site(content: str) -> bool:
     """Put `content` in 现场 as the machine's own status line; whether it arrived.
 
-    No turn header on purpose: this runs after the turn, and the id `CHEESE_TURN`
-    would carry (when anything sets it) names that ended turn or a newer one. A
-    note with no turn is drawn as a platform line; a guessed one would file the
-    failure under the wrong 过程."""
+    `CHEESE_TURN` is set by the platform for the one command that is a turn's
+    checkpoint (`cheese sync --all`), so the note joins that turn and shows in
+    its process view. A sync outside any turn (a commit's own) carries none and
+    is drawn as a platform line of its own."""
     body = {"subtype": "sync_failed", "text": content}
     req = urllib.request.Request(
         f"{API}/topics/{TOPIC}/session-records",
@@ -5098,6 +5100,8 @@ def _tell_site(content: str) -> bool:
     )
     req.add_header("Content-Type", "application/json")
     req.add_header("X-Cheese-Token", TOKEN)
+    if TURN:
+        req.add_header("X-Cheese-Turn", TURN)
     try:
         with urllib.request.urlopen(req, timeout=30):
             pass

@@ -207,6 +207,25 @@ def reply_hook(payload: dict) -> dict | None:
     return {"decision": "block", "reason": reason} if reason else None
 
 
+def checkpoint_turn() -> str | None:
+    """The work id of the turn whose checkpoint this is: the runner's answer on
+    the socket it gave this session. None when there is no runner to ask, which
+    ends with the sync reported as a platform line instead of a turn's step."""
+    path = os.environ.get(SESSION_SOCKET)
+    if not path:
+        return None
+    try:
+        with dial_runner(path, 10) as connection:
+            connection.sendall(
+                json.dumps({"method": "checkpoint_turn", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+    except (OSError, ValueError):
+        return None
+    work = (answer.get("result") or {}).get("work_id")
+    return str(work) if work else None
+
+
 def cheese_source() -> Path:
     """The platform tool table: shipped beside this helper, or the checkout's."""
     shipped = Path(__file__).with_name("cheese.py")
@@ -1126,7 +1145,9 @@ def main():
                 json.dumps(payload, sort_keys=True) + str(transcript.stat().st_size)
             ).encode()
         ).hexdigest()
-        result = RemoteClient(config).checkpoint("checkpoint-" + identifier)
+        result = RemoteClient(config).checkpoint(
+            "checkpoint-" + identifier, turn=checkpoint_turn()
+        )
         if "error" in result:
             raise RuntimeError(result["error"])
     elif args.mode == "reply":
