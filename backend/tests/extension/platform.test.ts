@@ -317,6 +317,45 @@ describe("没有手的那条路：人自己的芝士，没有机器", () => {
     // in tests/unit/test_personal_sessions.py.
     assert.equal(event.systemPromptOptions.cwd, "");
   });
+
+  it("同一个调用第三次不执行，告诉模型换个做法；下一个问题重新算", async () => {
+    const { pi } = await load({ hands: false, workspace: "" });
+    await pi.emit("before_agent_start", beforeAgentStart(""));
+    let ran = 0;
+    const read = () => {
+      ran += 1;
+      return { content: [{ type: "text", text: "频道内容" }] };
+    };
+
+    for (let i = 0; i < 2; i++) {
+      // The same input with its keys in another order is the same call.
+      const input = i ? { page: 1, ref: "p/channels/3" } : { ref: "p/channels/3", page: 1 };
+      assert.equal((await pi.run("cheese_read", input, read)).isError, false);
+    }
+    const third = await pi.run("cheese_read", { ref: "p/channels/3", page: 1 }, read);
+    const other = await pi.run("cheese_read", { ref: "p/channels/3", page: 2 }, read);
+
+    assert.equal(third.isError, true);
+    assert.match(third.content[0].text, /同样的参数.*换个做法/);
+    assert.equal(other.isError, false);
+    assert.equal(ran, 3);
+    await pi.emit("before_agent_start", beforeAgentStart(""));
+    assert.equal((await pi.run("cheese_read", { ref: "p/channels/3", page: 1 }, read)).isError, false);
+  });
+
+  it("一个问题里调用到上限之后不再调用，告诉模型停下来说明进展", async () => {
+    const { pi } = await load({ hands: false, workspace: "" });
+    await pi.emit("before_agent_start", beforeAgentStart(""));
+    const search = () => ({ content: [{ type: "text", text: "没有搜到" }] });
+
+    for (let i = 0; i < 200; i++) {
+      assert.equal((await pi.run("cheese_find", { query: `词${i}` }, search)).isError, false);
+    }
+    const over = await pi.run("cheese_find", { query: "再一个" }, search);
+
+    assert.equal(over.isError, true);
+    assert.match(over.content[0].text, /200 次.*「继续」/);
+  });
 });
 
 describe("pi 自己的工具，手在执行机上", () => {

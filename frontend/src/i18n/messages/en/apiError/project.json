@@ -74,6 +74,7 @@
   "inviteRole": "An invitation can only be for a member or a mentor",
   "inviteSelf": "You don't need to invite yourself",
   "inviteWhom": "Choose who to invite",
+  "inviteNoSuchPerson": "No one has the handle \"{handle}\"",
   "itemVersionMissing": "This item doesn't have this version",
   "leaveProjectSignIn": "Sign in to leave the project",
   "maxConcurrentTurnsInvalid": "max_concurrent_turns must be from {min} to {max}, or null to follow the deployment default",

@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.core.storage import get_storage_backend
-from app.domain.agent.personal import billing
+from app.domain.agent.personal import billing, people
 from app.domain.agent.personal.prompt import task_brief
 from app.domain.assistant import refs
 from app.domain.block.queries import latest_messages
@@ -180,9 +180,11 @@ async def _topic(reader: Reader, page_id: str) -> Shown:
             if place.thread is not None
             else f"频道「{place.room.title}」（{here}）"
         )
+    latest = await latest_messages(reader.session, place.conversation_id, RECENT)
+    named = await people.names(reader.session, ((b.author, b.content) for b in latest))
     lines = [
-        f"{b.author}：{' '.join(b.content.split())[:RECENT_CHARS]}"
-        for b in await latest_messages(reader.session, place.conversation_id, RECENT)
+        f"{named.of(b.author)}：{named.said(' '.join(b.content.split()))[:RECENT_CHARS]}"
+        for b in latest
     ]
     recent = (
         f"<最近 {len(lines)} 条>\n" + "\n".join(lines) + "\n</最近>"
