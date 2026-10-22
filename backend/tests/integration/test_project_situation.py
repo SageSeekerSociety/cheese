@@ -89,8 +89,10 @@ def _close(client, task: str) -> None:
     assert r.status_code == 200, r.text
 
 
-def _accepted(client, channel: str, task: str, subject: str) -> str:
-    """这个任务的一次交付被采纳了。"""
+def _accepted(
+    client, channel: str, task: str, subject: str, *, ago: timedelta = timedelta(0)
+) -> str:
+    """这个任务的一次交付被采纳了，``ago`` 以前。"""
 
     async def seed() -> str:
         async with client.test_factory() as session:
@@ -101,7 +103,7 @@ def _accepted(client, channel: str, task: str, subject: str) -> str:
                 change_subject=subject,
                 status=AcceptStatus.accepted,
                 decided_by="alice",
-                decided_at=datetime.now(UTC),
+                decided_at=datetime.now(UTC) - ago,
             )
             session.add(card)
             await session.commit()
@@ -291,8 +293,9 @@ def test_the_status_follows_the_records_not_the_model(client, monkeypatch):
         ("内测", "underway"),
         ("统计", "not_started"),
     ]
-    assert [(s["kind"], s["card_id"]) for s in parts[0]["sources"]] == [
-        ("delivery", card)
+    # 交付的出处写它所在任务的标题：人用项目自己的语言起的，改动标题常是英文。
+    assert [(s["kind"], s["card_id"], s["title"]) for s in parts[0]["sources"]] == [
+        ("delivery", card, "报名与候补")
     ]
     assert {s["card_id"] or s["task_id"] for s in parts[1]["sources"]} == {first, beta}
     assert parts[2]["sources"] == [
@@ -304,6 +307,37 @@ def test_the_status_follows_the_records_not_the_model(client, monkeypatch):
             "title": "",
             "quote": "数据统计",
         }
+    ]
+
+
+def test_a_part_delivered_long_ago_is_still_usable(client, monkeypatch):
+    project = _project(client)
+    _goals(client, project, "活动报名与候补；数据统计按月导出。")
+    channel = _channel(client, project)
+    stats = _task(client, channel, "数据统计")
+    _accepted(client, channel, stats, "按月导出报名数据", ago=timedelta(days=21))
+    _close(client, stats)
+    _task(client, channel, "报名与候补")
+    model = _Model(
+        [
+            {
+                "name": "统计",
+                "text": "报名数据可以按月导出",
+                "sources": ["D1"],
+                "goal": "数据统计",
+            },
+            {"name": "报名", "text": "正在补候补", "sources": ["T1"]},
+        ]
+    )
+    monkeypatch.setattr(writer, "write", model.write)
+    started = _quiet_rewrites(monkeypatch)
+
+    parts = _card(client, project, started)
+
+    assert "数据统计" in model.materials[0]
+    assert [(p["name"], p["status"]) for p in parts] == [
+        ("统计", "usable"),
+        ("报名", "underway"),
     ]
 
 

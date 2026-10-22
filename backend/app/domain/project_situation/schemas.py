@@ -16,7 +16,7 @@ class SituationSource(BaseModel):
     card_id: uuid.UUID | None = None
     task_id: uuid.UUID | None = None
     room_id: uuid.UUID | None = None
-    #: 交付的改动标题或任务标题；``goal`` 没有。
+    #: 任务标题（交付也写它所在任务的标题，人用项目自己的语言起的）；``goal`` 没有。
     title: str = ""
     quote: str = ""
 

@@ -35,7 +35,7 @@ def _source(record: Delivery | OpenTask) -> dict[str, Any]:
             "card_id": str(record.card_id),
             "task_id": str(record.task_id),
             "room_id": str(record.room_id),
-            "title": record.subject or record.task_title,
+            "title": record.task_title,
         }
     return {
         "kind": "task",

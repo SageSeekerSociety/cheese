@@ -14,7 +14,7 @@ export interface SituationSource {
   card_id: string | null
   task_id: string | null
   room_id: string | null
-  /** 交付的改动标题或任务标题；`goal` 是空串。 */
+  /** 任务标题，交付也是它所在任务的；`goal` 是空串。 */
   title: string
   /** `goal` 引的那句原话；别的是空串。 */
   quote: string
