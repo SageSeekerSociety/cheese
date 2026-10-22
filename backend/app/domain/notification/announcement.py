@@ -38,29 +38,35 @@ def _points(n: int) -> str:
 
 
 def rows(offer: BetaOffer) -> list[tuple[str, str, str]]:
-    """(哪一样, 多少, 怎么得)，和站内那张表一行一行对得上。"""
-    out = []
-    if offer.plan_credits is not None:
-        out.append(("每月方案额度", _points(offer.plan_credits), "每月 1 日重置"))
-    out += [
+    """(哪一样, 多少, 怎么得)，和站内那张表一行一行对得上。
+
+    方案额度不进这张表：表里是方案之外多拿的，方案只在开头那句当背景提一句。
+    """
+    return [
         (
             "内测体验额度",
             _points(offer.beta_credits),
-            "你已经领过了" if offer.beta_claimed else "每个账号领取一次，你还没领",
+            "你已经领取过了" if offer.beta_claimed else "每个账号领取一次，你还没领取",
         ),
         ("反馈被采纳", _points(offer.feedback_credits), "每条反馈一次"),
         (
             "邀请好友",
             _points(offer.invite_credits),
-            f"好友首次采纳后到账，好友自己最多也得 {offer.invitee_credits:,} 点",
+            "好友第一次采纳芝士的交付后到账，"
+            f"好友自己最多也能得到 {offer.invitee_credits:,} 点",
         ),
     ]
-    return out
 
 
-INTRO = (
-    "我们还在打磨知是。这段时间里，除了每月的方案额度，下面几件事也会给你额外的额度。"
-)
+def intro(offer: BetaOffer) -> str:
+    plan = (
+        "方案里每月的额度"
+        if offer.plan_credits is None
+        else f"方案里每月 {offer.plan_credits:,} 点的额度（每月 1 日重置）"
+    )
+    return f"我们还在打磨知是。除了你{plan}，这段时间里下面几件事还会给你额外的额度。"
+
+
 LIFETIME = "奖励额度自发放起 12 个月内有效，在当月方案额度用完后使用。"
 CLOSING = "用得不顺的地方，直接在反馈中心告诉我们。"
 SIGNATURE = "知是团队"
@@ -94,7 +100,7 @@ def render_html(offer: BetaOffer) -> str:
         f'<h1 class="c-ink" style="margin:28px 0 0;font-size:20px;line-height:30px;'
         f'font-weight:600;color:{c["ink"]};">知是正在内测</h1>',
         f"<p {p}>{e(offer.name)}，你好：</p>",
-        f"<p {p}>{e(INTRO)}</p>",
+        f"<p {p}>{e(intro(offer))}</p>",
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'border="0" class="c-rule" style="margin:16px 0 0;'
         f'border-top:1px solid {c["line"]};font-family:{_FONT};">{table}</table>',
@@ -105,7 +111,7 @@ def render_html(offer: BetaOffer) -> str:
     ]
     return _page(
         title=SUBJECT,
-        preview=INTRO,
+        preview=intro(offer),
         card=card,
         why=WHY,
         inbox=False,
@@ -113,7 +119,7 @@ def render_html(offer: BetaOffer) -> str:
 
 
 def render_text(offer: BetaOffer) -> str:
-    lines = ["知是正在内测", "", f"{offer.name}，你好：", "", INTRO, ""]
+    lines = ["知是正在内测", "", f"{offer.name}，你好：", "", intro(offer), ""]
     lines += [f"· {what} {amount}：{rule}" for what, amount, rule in rows(offer)]
     lines += [
         "",
