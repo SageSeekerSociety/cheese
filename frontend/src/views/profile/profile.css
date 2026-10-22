@@ -52,9 +52,71 @@
   gap: 2px;
   min-width: 0;
 }
+.profile__name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .profile__name {
   margin: 0;
   overflow-wrap: anywhere;
+}
+.profile__original-name {
+  overflow-wrap: anywhere;
+}
+.profile__remark-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  cursor: pointer;
+  transition:
+    color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
+}
+.profile__remark-btn:hover {
+  border-color: var(--faint);
+  background: var(--fill);
+  color: var(--ink);
+}
+.profile__remark-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.profile__remark-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+}
+.profile__remark-input:focus {
+  border-color: var(--accent-ink);
+  outline: none;
+}
+.profile__remark-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.profile__remark-error {
+  margin: 0;
+  color: var(--danger-ink);
 }
 .profile__role {
   margin-top: 8px;

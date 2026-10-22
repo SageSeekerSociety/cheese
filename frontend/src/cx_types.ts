@@ -463,10 +463,9 @@ export interface ProjectMemberRow {
   team_name?: string
   name?: string
   name_source?: 'default' | 'human'
-  // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
-  // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
-  // 全局默认头像，后端已替我们判掉）。两种都用彩色首字母兜底 —— 别去取
-  // /avatars/default，那会让所有没设过头像的人共用同一张脸。
+  remark?: string | null
+  // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况为 null：
+  // 没有用户档案或还指着默认头像。两种都用彩色首字母兜底 —— 别去取 /avatars/default。
   avatar_id?: number | null
   // `agent` marks an AI teammate — server-side it is a row that came from the
   // project's agent instances, never a guess at the handle string.
@@ -511,6 +510,7 @@ export interface TopicMemberRow {
   // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
   name_source?: 'default' | 'human'
+  remark?: string | null
   // 这个人**自己挑的**头像素材 id（同 ProjectMemberRow.avatar_id）：没挑过是 null，画彩色首字母，别拿它取 /avatars/default。
   avatar_id?: number | null
   agent?: boolean

@@ -27,6 +27,12 @@ export function useUserRef(
     return directory.name(h) || h
   })
 
+  const title = computed(() => {
+    const h = toValue(handle)
+    if (!h) return null
+    return directory.title?.(h) ?? null
+  })
+
   const to = computed<UserRefTarget | null>(() => {
     const h = toValue(handle)
     if (!h) return null
@@ -39,5 +45,5 @@ export function useUserRef(
     if (target) directory.navigate(target)
   }
 
-  return { label, to, navigate }
+  return { label, title, to, navigate }
 }

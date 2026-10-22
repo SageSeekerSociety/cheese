@@ -18,9 +18,12 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.repositories import AgentBindingRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.services import remarks_by_handles
 
 
-async def roster_rows(db: AsyncSession, topic) -> list[dict]:
+async def roster_rows(
+    db: AsyncSession, topic, *, viewer: str | None = None
+) -> list[dict]:
     """A room's roster as `GET /topics/{id}/members` lists it; also the
     `members` of the room snapshot a subscription opens with (`room_snapshot`).
     The caller has authorised the reader."""
@@ -32,7 +35,9 @@ async def roster_rows(db: AsyncSession, topic) -> list[dict]:
     bindings = AgentBindingRepository(db)
     # Resolve handles → users once, then derive is-agent from the binding (never
     # a hard-coded handle check): a member is an agent iff it carries a binding.
-    rows = await users.get_by_handles([m.member_handle for m in seats])
+    handles = [m.member_handle for m in seats]
+    rows = await users.get_by_handles(handles)
+    remarks = await remarks_by_handles(db, viewer, handles)
     user_ids = [u.id for u in rows.values()]
     agent_ids = await bindings.agent_user_ids(user_ids)
     # The human-readable display name lives on the profile (nickname); the core
@@ -76,5 +81,6 @@ async def roster_rows(db: AsyncSession, topic) -> list[dict]:
         # Absent = this person never picked an avatar; the UI draws its coloured
         # initial rather than the one face everybody else who never picked has.
         d["avatar_id"] = avatar_by_uid.get(user.id) if user is not None else None
+        d["remark"] = remarks.get(m.member_handle)
         items.append(d)
     return items

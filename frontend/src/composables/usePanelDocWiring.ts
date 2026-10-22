@@ -12,13 +12,14 @@ import { useMentionOutside } from './useMentionOutside'
 import { usePanelDoc } from './usePanelDoc'
 
 export function usePanelDocWiring(props: PanelDocProps & { members?: ProjectMemberRow[] }) {
-  const docPanel = usePanelDoc(props)
-  const docThreads = useDocThreads(() => docPanel.documentId.value)
+  // 名册那一包先建：评论发送前的 `@名字` → 点名要靠它，而它只读 props，不依赖文档那份。
   const docPeople = useDocPeople({
     members: () => props.members ?? [],
     agentHandle: () => props.agentHandle ?? null,
     agentName: () => props.agentName ?? '',
   })
+  const docPanel = usePanelDoc(props, () => docPeople.people.value)
+  const docThreads = useDocThreads(() => docPanel.documentId.value)
   // 评论 @ 了打不开这份文档的人：问写的人要不要把他们加进频道（和对话里一样）。
   const commentOutside = useMentionOutside({
     place: () => docPanel.documentId.value,

@@ -27,6 +27,8 @@ import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 export interface MentionPoolEntry {
   handle: string
   label: string
+  /** 设了个人备注时保留的原名，供副标题与搜索匹配。 */
+  originalName?: string | null
   /**
    * 这个人**自己挑过的**头像地址；没挑过、或名册上没他时是 null（画彩色首字母）。
    * AI 队友没有这一步，一律画 CheeseAvatar，这里是 null。
@@ -58,6 +60,8 @@ export interface MentionItem {
   group?: string
   /** 人的 handle：头像的底色按它算，和时间线上这个人的头像同一个颜色。 */
   handle?: string
+  /** 设了个人备注时保留的原名。 */
+  originalName?: string | null
   /** 人自己挑过的头像地址；没挑过是 null（画彩色首字母）。见 `MentionPoolEntry.avatar`。 */
   avatar?: string | null
 }
@@ -230,17 +234,23 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
         kind: 'member' as const,
         insert: m.label,
         token: `<@${m.handle}>`,
-        sub: m.handle,
+        sub: m.originalName && m.originalName !== m.label ? `${m.originalName} · ${m.handle}` : m.handle,
         agent: m.agent,
         external: !!m.external,
         outsideTopic: !!m.outsideTopic,
         handle: m.handle,
+        originalName: m.originalName,
         avatar: m.avatar,
       })),
       // 人按**名字**搜；人还多认一个 handle（`sub` 里那个 `@xxx`）——有人记
       // 得住 `@cheese-topica`，记不住中文名叫什么，只按名字搜等于他默写一遍也找不到。
       // 群播是 fixed-literal token，它的 insert（`all` / `here`）在别处单独匹配。
-    ].filter((i: MentionItem) => i.label.toLowerCase().includes(ql) || !!i.handle?.toLowerCase().includes(ql))
+    ].filter(
+      (i: MentionItem) =>
+        i.label.toLowerCase().includes(ql) ||
+        !!i.originalName?.toLowerCase().includes(ql) ||
+        !!i.handle?.toLowerCase().includes(ql)
+    )
     // Agent 排在最前，群播让位。第一格就是 Enter 的默认答案，而「打一个 @ 然后回
     // 车」在这个产品里压倒性地是「交给芝士」——把 @all 摆在那个位置，等于让最常见
     // 的一次输入默认去打扰整个话题的所有人。群播是 fixed-literal token，换个位置

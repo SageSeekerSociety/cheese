@@ -18,6 +18,8 @@ import { lookupRef } from './refDirectory'
 export interface RefNames {
   /** handle → display name. */
   mentionNames: Record<string, string>
+  /** handle → hover tooltip when display name is a personal remark (original name + @handle). */
+  mentionTitles?: Record<string, string>
   /** Titles the page already holds (its channels and tasks), by id. Any other
    *  `<#id>` is looked up (lib/refDirectory). */
   topicTitles: Record<string, string>
@@ -117,6 +119,8 @@ export function refChip(
     }
   } else if (kind === '@') {
     el.dataset.handle = id
+    const hoverTitle = names.mentionTitles?.[id]
+    if (hoverTitle) el.title = hoverTitle
     if (didNotify(id, names) && names.agentFaces && isAgentHandle(id)) {
       el.classList.add('agent-ref')
       el.append(agentFace(id), document.createTextNode(names.mentionNames[id] || id))
