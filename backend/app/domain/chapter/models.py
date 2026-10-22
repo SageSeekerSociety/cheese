@@ -40,3 +40,8 @@ class Chapter(UuidPk, Base):
     pinned_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    #: What the bookmark is called. NULL on a message with no words (the screen
+    #: says what an unnamed bookmark is) and on rows made before names were
+    #: stored. A person's rename and a model's better name both land here; the
+    #: model only writes while the rule name it was asked with still stands.
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)

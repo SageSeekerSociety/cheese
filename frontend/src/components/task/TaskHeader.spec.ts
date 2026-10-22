@@ -180,6 +180,21 @@ describe('任务页头', () => {
     expect(gone.getByTestId('task-agent-left').textContent).toContain('已离开')
   })
 
+  // 名字跟的是报那句话的队友：任务中途换过人时，两处不是同一个，照任务当前的队友
+  // 写就把别人的「离开」栽到了还在干活的那位头上。
+  it('已离开说的是报那一句的队友，不是任务现在的队友', () => {
+    const swapped = mount({
+      agent_handle: 'cheese-02',
+      presentation: { column: 'building', phrase: 'running' },
+      progress_state: 'working',
+      progress_note: '在改页头',
+      progress_set_by: 'cheese-01',
+      progress_set_at: '2026-10-05T00:00:00Z',
+      agent_left_at: '2026-10-05T01:00:00Z',
+    })
+    expect(swapped.getByTestId('task-agent-left').textContent).toBe('小苔已离开')
+  })
+
   it('任务关了，就不再摆它报过的状态', () => {
     const { queryByTestId } = mount({
       status: 'closed',

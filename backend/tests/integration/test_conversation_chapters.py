@@ -10,7 +10,9 @@ The rules, stated before the code:
 - marking twice leaves one chapter and says nothing, and unmarking says
   nothing;
 - a message from another conversation cannot be marked here;
-- nothing is marked in an archived channel.
+- nothing is marked in an archived channel;
+- a bookmark is named from its message at once, and the person who may mark
+  one may rename it; a name may not be empty.
 """
 
 import uuid
@@ -54,10 +56,58 @@ def _mark(client, tid, block, who):
     )
 
 
-def _chapters(client, tid, who="bob"):
+def _chapter_rows(client, tid, who="bob"):
     r = client.get(f"/topics/{tid}/chapters", headers=session_auth_headers(who))
     assert r.status_code == 200, r.text
-    return [row["block"]["id"] for row in r.json()["data"]]
+    return r.json()["data"]
+
+
+def _chapters(client, tid, who="bob"):
+    return [row["block"]["id"] for row in _chapter_rows(client, tid, who)]
+
+
+def _rename(client, tid, block, title, who="alice"):
+    return client.patch(
+        f"/topics/{tid}/chapters/{block}",
+        json={"title": title},
+        headers=session_auth_headers(who),
+    )
+
+
+def test_a_bookmark_is_named_from_its_message(client):
+    tid = _setup(client)
+    message = _say(client, tid, "alice", "登录报错：token 刷新之后仍然 401")
+
+    _mark(client, tid, message, "alice")
+
+    assert _chapter_rows(client, tid)[0]["title"] == "登录报错"
+
+
+def test_a_member_renames_a_bookmark(client):
+    tid = _setup(client)
+    message = _say(client, tid, "alice", "先看登录")
+    _mark(client, tid, message, "alice")
+
+    r = _rename(client, tid, message, "登录页")
+    assert r.status_code == 200, r.text
+
+    assert _chapter_rows(client, tid)[0]["title"] == "登录页"
+
+
+def test_a_name_cannot_be_empty(client):
+    tid = _setup(client)
+    message = _say(client, tid, "alice", "先看登录")
+    _mark(client, tid, message, "alice")
+
+    assert _rename(client, tid, message, "   ").status_code == 422
+
+
+def test_someone_who_has_not_joined_cannot_rename(client):
+    tid = _setup(client)
+    message = _say(client, tid, "alice", "先看登录")
+    _mark(client, tid, message, "alice")
+
+    assert _rename(client, tid, message, "登录页", who="bob").status_code == 403
 
 
 def test_a_member_marks_a_chapter_and_everyone_reads_it(client):
