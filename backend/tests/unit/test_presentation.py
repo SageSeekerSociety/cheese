@@ -335,7 +335,7 @@ TASK_CASES = [
         Column.building,
         Building.running,
     ),
-    # 它的会话在跑，但 runner 没说是哪一次（还没被换掉的旧版 runner）：它在这一次
+    # 它的会话在跑，但平台没记下是哪一次：它在这一次
     # 里说过什么，平台认不出来，在做。
     (
         "会话在跑、runner 没说是哪一次",

@@ -393,7 +393,7 @@ class TaskFacts:
     #: None = 不是在会话里说的（平台自己写的，或者没有 runner 报会话的座位）。
     progress_run: Run | None = None
     #: 做这条活的那位队友此刻在跑的会话各在哪一次（`agent.teammate_runs`）；空集 =
-    #: 在跑、但 runner 没说是哪一次（还没被换掉的旧版 runner）；
+    #: 在跑、但平台没记下是哪一次（那次「开始跑」在记录这一项之前就应用了）；
     #: None = 它的会话没在跑。别的 agent 在这段对话里跑，不算。
     teammate_runs: frozenset[Run] | None = None
     #: 关闭时留下过结论（`Task.conclusion`）。

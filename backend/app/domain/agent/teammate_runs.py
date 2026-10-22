@@ -56,10 +56,10 @@ async def teammate_runs(
 ) -> dict[uuid.UUID, frozenset[Run]]:
     """{task: the runs its own teammate's running sessions are in} for the
     tasks whose teammate has a session running; the others are left out. A
-    running session whose runner named no run (one of a release before runs
-    were named) adds none, so its task is in the answer with no run a report
-    could match. Only the tasks with some session running are resolved to a
-    teammate, so a page of quiet tasks costs one query."""
+    running session with no run recorded (its running event was applied before
+    runs were recorded) adds none, so its task is in the answer with no run a
+    report could match. Only the tasks with some session running are resolved
+    to a teammate, so a page of quiet tasks costs one query."""
     by_id = {task.id: task for task in tasks}
     busy = await running_conversations(session, list(by_id))
     if not busy:
