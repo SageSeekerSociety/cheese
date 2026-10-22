@@ -28,6 +28,7 @@ cheese recover <任务 id>       把最近一次备份恢复到一个独立目�
 cheese push-fix                把任务的新提交同步到它的 PR
 cheese serve <端口> "说明"      把跑在本机端口上的应用设为当前预览
 cheese show <路径>              把一份东西摆到房间里给人看
+cheese check <路径>             让平台的浏览器把一份 HTML 截成图并报出撑破版面的元素
 cheese pull <路径>              把房间里一份文件的最新保存取到这台机器上
 cheese transcript              把本会话的会话记录拉到本机（归一化后的 JSONL，含分身的）
 cheese library get <名字>       取一份项目资料到本机
