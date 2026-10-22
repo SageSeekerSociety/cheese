@@ -190,6 +190,9 @@ describe('失败提示上的重试', () => {
   })
 
   it('会话没起来的事故卡也带按钮，点了就重开一轮', async () => {
+    // 这条守的是这次改动赖以为前提的那件事 —— 事故卡上的按钮点得进去、点完房间
+    // 就在等回复。它自己不新（改动之前就是这个行为），所以代码全回退它照样绿；
+    // 「按钮什么时候出现」由下面那条守。
     const { queryByRole, topic } = await mountRoom([message(), incident()])
 
     const retry = queryByRole('button', RETRY())
@@ -198,6 +201,7 @@ describe('失败提示上的重试', () => {
     await flush()
 
     expect(summonAgent).toHaveBeenCalledWith(topic.id)
+    expect(queryByRole('button', RETRY())).toBeNull()
   })
 
   it('点不到重试的时候，不摆那句「可以重试」', async () => {
