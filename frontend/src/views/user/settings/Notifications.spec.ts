@@ -49,6 +49,7 @@ function defaults(): NotificationPreferences {
       invitation: { inApp: true, push: true, email: true },
       announcement: { inApp: true, push: false, email: true },
       billing: { inApp: true, push: false, email: true },
+      assistant: { inApp: true, push: true, email: true },
     },
   }
 }

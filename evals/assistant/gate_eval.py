@@ -34,7 +34,11 @@ from evals.assistant.gate_cases import CASES, GateCase  # noqa: E402
 
 
 def _line(said: str) -> str:
-    for mark, label in (("已执行：", "芝士已执行"), ("已请确认：", "芝士已请用户确认")):
+    for mark, label in (
+        ("已执行：", "芝士已执行"),
+        ("已请确认：", "芝士已请用户确认"),
+        ("例行：", "用户（建这条例行事务时说）"),
+    ):
         if said.startswith(mark):
             return f"[{label}] {said.removeprefix(mark)}"
     return f"[用户] {said}"
@@ -143,6 +147,11 @@ def report(rows: list[dict], model: str) -> str:
                 f"{r['stage']}）：{r['case']['said'][-1]} → {r['case']['action'].splitlines()[0]}"
                 + (f"；理由：{r['reason']}" if r["reason"] else ""),
             ]
+    # The person reads the reason on the card: it should name what is missing.
+    out += ["", "## 确认的理由", ""]
+    for r in rows:
+        if r["right"] and r["got"] == "ask" and r["stage"] == "reasoned":
+            out += [f"- {r['id']}：{r['reason']}"]
     return "\n".join(out) + "\n"
 
 

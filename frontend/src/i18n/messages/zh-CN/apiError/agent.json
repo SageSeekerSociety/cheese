@@ -25,6 +25,7 @@
   "assistantRefUnknown": "认不出「{ref}」这个编号。项目里的东西写成项目短名加路径，如 ml-course/channels/3、ml-course/tasks/12、ml-course/tasks/12/review、ml-course/docs/5；项目本身就是短名。",
   "assistantGateNotPassed": "这项操作没有获得授权",
   "assistantActNeeds": "还缺 {what}",
+  "assistantActReturned": "没有执行。判断的原因（写给用户的，「你」指用户）：{reason}\n按这个原因办：和用户说的有出入，就改成用户说的样子再执行；要用户决定或补充的（做不做、选哪一项、怎么答复），在回复里问用户，用户说了再执行；只差用户同意的，带 confirm=true 再调用一次，用户会在面板的确认卡片上决定。不要换个说法绕过判断。",
   "assistantNoReviewCard": "这个任务还没有审阅卡",
   "assistantCannotAnswerHere": "这件事要用户在「待办」页自己答复",
   "assistantInviteThenAdmin": "不在项目里的人要先以成员身份邀请，加入后才能设为管理员",

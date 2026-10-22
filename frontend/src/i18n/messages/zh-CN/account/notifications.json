@@ -15,6 +15,7 @@
   "loadFailed": "通知设置没读出来",
   "loading": "正在读取通知设置",
   "matrix": {
+    "assistant": "芝士发来的通知",
     "announcement": "空间公告",
     "billing": "额度与计费提醒",
     "desc": "每一类都能单独挑渠道",
