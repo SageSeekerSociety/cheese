@@ -2,6 +2,7 @@
 skipping a question asked with quick replies or taking back an answer to one."""
 
 import uuid
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated
 
@@ -14,18 +15,34 @@ from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.sentences import say
-from app.domain.agent.ask import skip, withdraw
+from app.domain.agent.announce import finish_answering
+from app.domain.agent.ask import publish_answered, skip, withdraw
 from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.intake.rewrite import text_as_sent
+from app.domain.block.answer_groups import (
+    answers_from,
+    group_of,
+    record_answers,
+    summary_line,
+)
 from app.domain.block.editing import edit_message
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut, ReactionToggleIn
+
+# `BlockKind` comes from the schemas module, not `block.models`: a route may not
+# import a domain's models directly (C2 in `.importlinter`), and `schemas` is
+# the module that re-exports the two enums a route writes with.
+from app.domain.block.schemas import BlockKind, BlockOut, ReactionToggleIn
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending, record_task_instruction
+from app.domain.event_author import AuthorType
 
 router = APIRouter(prefix="/blocks", tags=["blocks"])
 
@@ -33,6 +50,16 @@ router = APIRouter(prefix="/blocks", tags=["blocks"])
 class MessageEditIn(BaseModel):
     # The same ceiling as sending a message (`ChatMessageIn`).
     content: str = Field(min_length=1, max_length=100000)
+
+
+class AnswerGroupResult(BaseModel):
+    """整组提交回了什么：落下的那一条消息，和几道题改完之后的样子。
+
+    和 `block_added` / `block_updated` 两条实时帧带的是同一份东西，发起的页面拿它
+    直接换掉，不必再取一次。"""
+
+    block: dict
+    questions: list[dict] = []
 
 
 class WithdrawnAnswer(BaseModel):
@@ -189,6 +216,84 @@ async def withdraw_answer(
     agent that asked it runs another turn, because the turn it had been going
     on was decided on an answer that no longer counts."""
     return await _respond(block_id, db, resolver, broker, chat, runner, act=withdraw)
+
+
+@router.post(
+    "/{block_id}/answers",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(AnswerGroupResult),
+)
+async def answer_group(
+    block_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    broker: Annotated[InProcessBroker, Depends(get_broker)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+) -> dict:
+    """一次答掉整组题：`block_id` 是其中任意一道，`body["answers"]` 是题 id 到回答。
+
+    回答是 `{"options": ["..."], "note": "..."}`，两个都空表示这题没答——允许留白。
+    提交后房间里只多一条消息，正文是逐题的答案；提问的那位读的就是它。
+
+    整组一次写、一次结，任何一道题不合规（不在等他、已经有人答过、他跳过的那题）
+    就整组拒绝，不留半组答案。
+    """
+    return await _answer_group(block_id, body, db, resolver, broker, chat, runner)
+
+
+async def _answer_group(block_id, body, db, resolver, broker, chat, runner) -> dict:
+    repo = BlockRepository(db)
+    question = await repo.get(block_id)
+    if question is None:
+        raise NotFoundError(say("cursorMessageNotFound"))
+    actor = await resolver.resolve(
+        topic_id=question.conversation_id, project_id=question.project_id
+    )
+    room_id = await room_of(db, question.conversation_id)
+    await resolver.authorize_topic(
+        actor, project_id=question.project_id, topic_id=room_id, enforce=True
+    )
+    if not actor.authenticated:
+        raise AuthenticationRequiredError(say("signInRequired"))
+
+    questions = await group_of(db, question)
+    answers = answers_from(body)
+    known = {q.id for q in questions}
+    unknown = [str(qid) for qid in answers if qid not in known]
+    if unknown:
+        raise ValidationError(say("askAnswerNotInGroup", ids=", ".join(unknown)))
+
+    touched = record_answers(questions, answers, by=actor.handle, at=datetime.now(UTC))
+    note = summary_line(questions, answers)
+    reply = await repo.add(
+        project_id=question.project_id,
+        conversation_id=question.conversation_id,
+        author=actor.handle,
+        author_type=AuthorType.participant,
+        content=note,
+        kind=BlockKind.message,
+    )
+    # 这条消息自己就是那几道题的答案：把它指给提问的席位，并结掉那一组通知。
+    recipient: dict = {"handle": None, "instance_id": None, "mentioned": False}
+    await finish_answering(
+        db, reply=reply, questions=touched, said=note, recipient=recipient
+    )
+    payload = BlockOut.model_validate(reply).model_dump(mode="json")
+    payload["reactions"] = await repo.reactions_for_block(reply.id)
+    updated = [BlockOut.model_validate(q).model_dump(mode="json") for q in questions]
+    await db.commit()
+    await broker.publish(
+        str(question.conversation_id), {"type": "block_added", "block": payload}
+    )
+    for block in updated:
+        await broker.publish(
+            str(question.conversation_id), {"type": "block_updated", "block": block}
+        )
+    await publish_answered(question.conversation_id, questions)
+    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
+    return ok({"block": payload, "questions": updated})
 
 
 async def _respond(block_id, db, resolver, broker, chat, runner, *, act) -> dict:
