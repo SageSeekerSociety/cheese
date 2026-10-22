@@ -156,6 +156,13 @@ export function openAgent() {
   agentThread.load().catch(() => undefined)
 }
 
+/** 打开面板，并打开这段对话：通知和设置页上的「查看对话」。 */
+export function openAgentConversation(id: string) {
+  if (!agentAvailable.value) return
+  agentOpen.value = true
+  agentThread.show(id).catch(() => undefined)
+}
+
 export function toggleAgent() {
   if (agentOpen.value) agentOpen.value = false
   else openAgent()
@@ -258,7 +265,14 @@ export async function sendProposal(id: number, edited: { title?: string; text: s
   sendingProposal.value = id
   try {
     let result: Record<string, string>
-    if (p.kind === 'task') {
+    if (p.kind === 'act') {
+      let made: string | undefined
+      for (const call of p.calls ?? []) {
+        const answered = await AgentProposalsApi.run(call, made)
+        made = answered && typeof answered.id === 'string' ? answered.id : undefined
+      }
+      result = { done: 'true' }
+    } else if (p.kind === 'task') {
       const task = opened.get(id) ?? (await createRoomTask(p.channel ?? '', edited.title)).id
       opened.set(id, task)
       const posted = await postChatMessage(task, { content: edited.text, request_id: p.request })
@@ -274,6 +288,15 @@ export async function sendProposal(id: number, edited: { title?: string; text: s
     toast.error(error instanceof ApiError ? error.message : t('tasks.assistant.proposal.failed'))
   } finally {
     sendingProposal.value = null
+  }
+}
+
+/** 撤销芝士改的一项，在没有自己撤销办法的页面上（改通知设置、频道提醒是在哪都能撤的）。 */
+export async function undoChange(change: number, key?: string) {
+  try {
+    await agentThread.undo(change, key)
+  } catch (error) {
+    toast.error(error instanceof ApiError ? error.message : t('tasks.assistant.changes.undoFailed'))
   }
 }
 

@@ -81,8 +81,7 @@ on:
     # and outlasts the image build, so the images are there by the time it
     # finishes; a build still running is waited for by the eligibility job
     # below. `branches: [main]` keeps this to runs that landed on main: a
-    # pull_request run's head branch is the PR's, and a merge queue entry's is
-    # the queue's temporary branch.
+    # pull_request run's head branch is the PR's.
     workflows: ["Required CI"]
     types: [completed]
     branches: [main]
@@ -514,9 +513,8 @@ jobs:
       # live, which is here: every step above succeeded. Only the commits since
       # the replaced release are read, so a report someone reopened later is not
       # moved back by an unrelated deploy. The merge time is the PR's
-      # `merged_at`: the commit's own dates are from when it entered the merge
-      # queue, which is minutes earlier. A commit pushed without a PR falls back
-      # to its committer date, which is when it was pushed. The same lookup
+      # `merged_at`; a commit pushed without a PR falls back to its committer
+      # date, which is when it was pushed. The same lookup
       # gives the PR's `created_at`, recorded as 处理中 on a report nobody
       # assigned; without a PR there is none.
       # The status change goes through the backend's own service in the running

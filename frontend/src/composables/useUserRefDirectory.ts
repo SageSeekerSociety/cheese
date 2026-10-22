@@ -6,7 +6,7 @@
 import { provide } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { memberName } from '@/lib/agentNames'
+import { memberHoverTitle, memberName } from '@/lib/agentNames'
 import { userRefRoute } from '@/lib/userRef'
 import { USER_REF_DIRECTORY, type UserRefDirectory } from '@/lib/userRefDirectory'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -17,6 +17,12 @@ export function createUserRefDirectory(): UserRefDirectory {
   return {
     name(handle) {
       return memberName(store.members.find((m) => m.user_handle === handle)) || null
+    },
+    title(handle) {
+      return memberHoverTitle(
+        store.members.find((m) => m.user_handle === handle),
+        handle
+      )
     },
     target(handle, projectId) {
       const pid =

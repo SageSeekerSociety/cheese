@@ -5,6 +5,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import { useFeedbackAttachmentImages } from '@/composables/useFeedbackAttachmentImages'
+
 import FeedbackDetailPageView from './FeedbackDetailPageView.vue'
 
 import { ApiError, getFeedback } from '@/api'
@@ -174,6 +176,15 @@ async function changeClaim(take: boolean) {
   claiming.value = false
 }
 
+/** 附件的字节归这一层取（`useFeedbackAttachmentImages`）：那条端点按这条反馈的可见性
+ *  判人，而 `<img src>` 带不上 Authorization，所以要先取回来做成 object URL。画面那一
+ *  半只收结果 —— 判据见 `.claude/rules/architecture.md`（组件不取数）。 */
+const {
+  urls: attachmentUrls,
+  downloading: downloadingAttachment,
+  download: downloadAttachment,
+} = useFeedbackAttachmentImages(() => item.value?.attachments)
+
 async function share() {
   try {
     await navigator.clipboard.writeText(window.location.href)
@@ -193,6 +204,8 @@ async function share() {
     :error="store.error"
     :gone="gone"
     :status-ladder="store.statusLadder"
+    :attachment-urls="attachmentUrls"
+    :downloading-attachment="downloadingAttachment"
     :more-comments-loading="store.moreCommentsLoading"
     :more-replies-loading="store.moreRepliesLoading"
     :deleting="deletingDelete"
@@ -210,5 +223,6 @@ async function share() {
     @share="share"
     @change-claim="changeClaim"
     @delete-confirm="doDelete"
+    @download-attachment="downloadAttachment"
   />
 </template>

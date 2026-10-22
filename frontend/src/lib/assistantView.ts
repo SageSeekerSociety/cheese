@@ -31,6 +31,8 @@ export interface PanelChangeRow {
 
 export interface PanelChange {
   id: number
+  /** 不是写草稿的改动（通知设置、频道提醒）：卡头写它，不写「表单改动」。 */
+  title?: string
   draft: number
   /** 新建的草稿：卡上写它的名字，点开切过去。 */
   created: boolean
@@ -60,9 +62,20 @@ export interface PanelProposal {
   text: string
   /** 开出的任务：卡上给「查看」。 */
   task?: string
+  /** `act`：为什么先问人。 */
+  reason?: string
 }
 
 export function proposalView(p: AssistantProposal): PanelProposal {
+  if (p.kind === 'act')
+    return {
+      id: p.id,
+      kind: p.kind,
+      state: p.state,
+      where: '',
+      text: p.summary ?? '',
+      reason: p.reason ?? '',
+    }
   return {
     id: p.id,
     kind: p.kind,
@@ -83,13 +96,27 @@ export interface PanelResult {
 /** 每种工具这一行跟的那个参数。 */
 const STEP_ARG: Record<string, string> = {
   cheese_task_search: 'query',
-  cheese_task_write: 'name',
+  cheese_problem_write: 'name',
   cheese_file_read: 'pages',
   cheese_docs_search: 'query',
   cheese_docs_read: 'page',
   cheese_chat_search: 'query',
   cheese_project_search: 'query',
   cheese_task_draft: 'title',
+  cheese_read: 'ref',
+  cheese_find: 'query',
+  cheese_help: 'query',
+  cheese_message_send: 'where',
+  cheese_task_open: 'title',
+  cheese_review_decide: 'ref',
+  cheese_inbox_respond: 'ref',
+  cheese_member_set: 'who',
+  cheese_channel_create: 'title',
+  cheese_web_fetch: 'url',
+  cheese_web_search: 'query',
+  cheese_settings_set: 'key',
+  cheese_routine: 'title',
+  cheese_notify_me: 'text',
 }
 
 export function stepView(step: AssistantStep): PanelStep {

@@ -120,6 +120,10 @@ export interface Topic {
   // （`lib/roomLight.ts`）。点开会推已读位，服务端下一份就不再这么说，之前由本地先灭
   // （`stores/workspace` 的 `forgetReadLights`）。只对负责人和协作者算，没登录一律 false。
   unseen_delivery?: boolean
+  // 这间房此刻在不在往前走：自己那条线、它的支线、名下的活里有会话在跑，或者有活
+  // 走在交付链路上——侧栏的呼吸绿看它（`lib/roomLight.ts`）。和 `unseen_delivery`
+  // 是两档绿。只有 list/get 话题时才带。
+  moving?: boolean
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
@@ -315,6 +319,9 @@ export interface RoomTask {
   // （`lib/roomLight.ts`），和频道行那一头同一个来源。别的调用方（项目级列表、
   // 频道里的全部任务）不带这一位，读作 false——不亮，不是「亮着但说不清」。
   unseen_delivery?: boolean
+  // 这条活此刻在不在往前走（侧栏的呼吸绿）：它自己的会话在跑，或者卡走在交付链路
+  // 上。和 `unseen_delivery` 是两档绿。侧栏行和项目级列表都带。
+  moving?: boolean
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
   // 落在哪一格、写哪句话。必有：状态只在后端算一次，前端不另推（见 lib/board.ts）。
@@ -456,10 +463,9 @@ export interface ProjectMemberRow {
   team_name?: string
   name?: string
   name_source?: 'default' | 'human'
-  // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
-  // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
-  // 全局默认头像，后端已替我们判掉）。两种都用彩色首字母兜底 —— 别去取
-  // /avatars/default，那会让所有没设过头像的人共用同一张脸。
+  remark?: string | null
+  // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况为 null：
+  // 没有用户档案或还指着默认头像。两种都用彩色首字母兜底 —— 别去取 /avatars/default。
   avatar_id?: number | null
   // `agent` marks an AI teammate — server-side it is a row that came from the
   // project's agent instances, never a guess at the handle string.
@@ -474,6 +480,8 @@ export interface ProjectMemberRow {
   // 队友自己的 handle（`cheese-kimi` 这种）：它的会话、轮次按这个记，消息的收件人也
   // 写这个。只知道这个 handle 的地方靠它找到这一行。人没有这一项。
   instance_handle?: string
+  // 成员自己的私人助手归谁（主人的 handle）。项目自己的队友和人都没有这一项。
+  owner_handle?: string | null
   [key: string]: unknown
 }
 
@@ -502,6 +510,7 @@ export interface TopicMemberRow {
   // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
   name_source?: 'default' | 'human'
+  remark?: string | null
   // 这个人**自己挑的**头像素材 id（同 ProjectMemberRow.avatar_id）：没挑过是 null，画彩色首字母，别拿它取 /avatars/default。
   avatar_id?: number | null
   agent?: boolean

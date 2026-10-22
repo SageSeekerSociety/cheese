@@ -24,7 +24,7 @@ import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
 
 import { brightest } from '../lib/roomLight'
 import { DEFAULT_SHELL, projectPageLayout, shellFor, termParams } from '../lib/shell'
-import { topicTitle } from '../lib/topicState'
+import { taskTitle, topicTitle } from '../lib/topicState'
 import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
 import { myHandle } from '../me'
@@ -63,8 +63,6 @@ const props = defineProps<{
   activeDocs?: string | null
   // 频道和任务在等我的东西（数字已按我的通知档位算过）；缺键 = 没有。
   unreadMap?: Record<string, TopicUnread>
-  /** 这间房我静音了没有：行上画一个静音标记。 */
-  mutedOf?: (topicId: string) => boolean
   // 私聊未读: {peerHandle: count}, `cheese` = 和芝士那一间。侧栏只用它的**总数**，
   // 挂在「成员」那一行上；是谁找你在成员页里说（每个人的私聊按钮上各带各的）。
   // 和 unreadMap 分开是因为私聊是按对方 handle 编址的，没有话题 id。
@@ -80,7 +78,7 @@ const props = defineProps<{
   roomTaskTotals?: Record<string, number>
   /** 就地展开了的频道（频道 id → 它其余进行中的任务读到哪一步）；不在里面的就是收着的。 */
   moreTasks?: Record<string, MoreTasks>
-  /** 收起了任务块的频道（频道 id 的集合）：不挂它下面的任务，只在频道行上留条数和灯。 */
+  /** 收起了任务块的频道（频道 id 的集合）：不挂它下面的任务，由频道行合并显示状态灯。 */
   foldedChannels?: Record<string, boolean>
   /** 正打开的任务。 */
   selectedTaskId?: string | null
@@ -97,7 +95,7 @@ const emit = defineEmits<{
   (e: 'select-task', task: { roomId: string; taskId: string }): void
   // 频道下面最后那一行：展开或收起这个频道其余进行中的任务（读失败时是再读一次）。
   (e: 'toggle-tasks', channelId: string): void
-  // 频道行右边那个把手：把挂在它下面的一整块任务收起来或展开。
+  // 频道名前的任务箭头：把挂在它下面的一整块任务收起来或展开。
   (e: 'toggle-tasks-fold', channelId: string): void
   // 「全部频道」：去看这个项目的全部频道（侧栏只列加入了的）。
   (e: 'browse-channels'): void
@@ -118,6 +116,9 @@ const emit = defineEmits<{
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
   // final: the platform stops renaming that room from then on.
   (e: 'rename-topic', payload: { id: string; title: string }): void
+  // 任务行 ⋯ 里的「重命名」。和频道那一条同一个道理：人起的名字就是最终版，落盘在
+  // 父级（这一层不认识 store）。
+  (e: 'rename-task', payload: { id: string; roomId: string; title: string }): void
   // Open 项目文档 in the main area. The rail always asks for 项目目标 — the page
   // itself carries the tabs that reach the other two.
   (e: 'select-docs', kind: 'charter' | 'weeklies' | 'memory'): void
@@ -154,18 +155,21 @@ const {
   topicById,
 } = useTopicRail(props, { scrollToIndex: (key, index) => railLists.get(key)?.scrollToIndex(index) })
 
-// 频道下面的任务：先挂和我有关的几条，最后一行就地展开这个频道其余进行中的任务。
-// 「其余几个」= 频道里进行中的总数减去已经挂着的，展开后接上的就是这几个。
+function ownTasks(channelId: string): RailTask[] {
+  return props.roomTasks?.[channelId] ?? []
+}
+
+function taskCountOf(channelId: string): number {
+  return props.roomTasks ? ownTasks(channelId).length : props.roomTaskTotals?.[channelId] ?? 0
+}
+
 function hiddenTasks(channelId: string): number {
-  return Math.max(0, (props.roomTaskTotals?.[channelId] ?? 0) - (props.roomTasks?.[channelId]?.length ?? 0))
+  return Math.max(0, (props.roomTaskTotals?.[channelId] ?? 0) - ownTasks(channelId).length)
 }
 
 function moreTaskRows(channelId: string) {
   const more = props.moreTasks?.[channelId]
   return !tasksFoldOf(channelId) && more?.state === 'ready' ? more.rows : []
-}
-function hasMoreRow(channelId: string): boolean {
-  return !!props.moreTasks?.[channelId] || hiddenTasks(channelId) > 0
 }
 function moreLabel(channelId: string): string {
   const more = props.moreTasks?.[channelId]
@@ -185,20 +189,17 @@ function tasksFoldOf(channelId: string): boolean {
 }
 /** 展开着才挂任务行：收起来时一条都不画。 */
 function taskRows(channelId: string): RailTask[] {
-  return tasksFoldOf(channelId) ? [] : props.roomTasks?.[channelId] ?? []
+  return tasksFoldOf(channelId) ? [] : ownTasks(channelId)
 }
-/** 「展开其余 N 个」那一行也一样：收起来就跟着那一块一起走。 */
-function showMoreRow(channelId: string): boolean {
-  return !tasksFoldOf(channelId) && hasMoreRow(channelId)
+/** 侧栏只挂与当前用户有关的任务，不再在底部挂「展开其余 N 个」。 */
+function showMoreRow(): boolean {
+  return false
 }
-/** 这块任务此刻该画的灯：里面所有行里最亮的那一盏（`brightest`）——黄压过绿，红压过黄。
- *  开着的时候不画（每行自己的灯就在下面）；收起时才用它替这一块报信。
- *  只说这一块里的任务，不含这个频道自己那盏（频道行已经在左边画过了）——同一行上那个
- *  管子话题的开关有同一条规矩：「不含这一行自己的灯…不重复画」（`TopicRailRow`）。 */
+/** 收起任务时保留已有状态信号，交给频道行与频道自身信号合成一盏灯。 */
 function tasksLight(channelId: string): RowLight | null {
   if (!tasksFoldOf(channelId)) return null
   return brightest([
-    ...(props.roomTasks?.[channelId] ?? []).map((task) => taskLight(task)),
+    ...ownTasks(channelId).map((task) => taskLight(task)),
     ...(props.moreTasks?.[channelId]?.state === 'ready' ? props.moreTasks[channelId].rows : []).map((task) =>
       taskLight(task)
     ),
@@ -211,10 +212,11 @@ function tasksLight(channelId: string): RowLight | null {
 // 一行在改，而草稿放在这一层的话，改两行时上一次的草稿会漏到下一行。
 const renamingTopicId = ref<string | null>(null)
 
-const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsFor } = useTopicRailRoutes(
-  () => props.selectedProjectId,
-  { rename: (topic) => (renamingTopicId.value = topic.id) }
-)
+const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsFor, taskActionsFor } =
+  useTopicRailRoutes(() => props.selectedProjectId, {
+    rename: (topic) => (renamingTopicId.value = topic.id),
+    renameTask: (task) => startTaskRename(task),
+  })
 
 // 项目级页面：项目名下那一行是总览和资料库，其余几页（全部任务、项目文档、项目设置、
 // 转让或退出）都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，只换内容区。
@@ -363,6 +365,21 @@ function cancelRename() {
   renamingTopicId.value = null
 }
 
+// 任务行的改名和频道行同一套：这一层只说「哪一行在改」，名字交回去由父级落盘。
+// 起点是它现在的名字，改过才发；空的不发、没改也不发。
+const renamingTaskId = ref<string | null>(null)
+function startTaskRename(task: { id: string }) {
+  renamingTaskId.value = task.id
+}
+function commitTaskRename(task: RailTask, draft: string) {
+  const title = draft.trim()
+  renamingTaskId.value = null
+  if (title && title !== task.title) emit('rename-task', { id: task.id, roomId: task.room_id, title })
+}
+function cancelTaskRename() {
+  renamingTaskId.value = null
+}
+
 // 行操作收进一颗 ⋯ (C5): hover 只浮出一个入口，不再是三颗并排的按钮盖住标题
 // 尾巴。菜单展开期间那一颗必须留在屏幕上——它是菜单的 activator，跟着 hover
 // 一起消失的话，鼠标一移进菜单，菜单自己就塌了。哪一行开着记在这里，是因为同时
@@ -392,22 +409,44 @@ const rowSheetTopic = computed(() =>
   rowSheetTopicId.value ? topicById.value.get(rowSheetTopicId.value) ?? null : null
 )
 
+// 任务行也一样：长按升起的是这一行的操作。任务行分两处来（挂在频道下面的那几条和
+// 展开后接上的「其余任务」），查的时候两边都看。
+const rowSheetTaskId = ref<string | null>(null)
+const taskById = computed(() => {
+  const map = new Map<string, RailTask>()
+  for (const rows of Object.values(props.roomTasks ?? {})) for (const task of rows) map.set(task.id, task)
+  for (const more of Object.values(props.moreTasks ?? {}))
+    if (more.state === 'ready') for (const task of more.rows) map.set(task.id, task)
+  return map
+})
+const rowSheetTask = computed(() => (rowSheetTaskId.value ? taskById.value.get(rowSheetTaskId.value) ?? null : null))
+
 useLongPress(
   railScroll,
   (event) => {
-    const row = (event.target as HTMLElement | null)?.closest?.('[data-row-actions]')
+    const row = (event.target as HTMLElement | null)?.closest?.('[data-row-actions], [data-task-actions]')
     const id = row?.getAttribute('data-row-actions')
-    if (!id || !topicById.value.has(id)) return
-    rowSheetTopicId.value = id
+    if (id && topicById.value.has(id)) {
+      rowSheetTaskId.value = null
+      rowSheetTopicId.value = id
+      if (rowSheetActions.value.length) rowSheetOpen.value = true
+      return
+    }
+    const taskId = row?.getAttribute('data-task-actions')
+    if (!taskId || !taskById.value.has(taskId)) return
+    rowSheetTopicId.value = null
+    rowSheetTaskId.value = taskId
     if (rowSheetActions.value.length) rowSheetOpen.value = true
   },
   // 正在改名时手指按在输入框里是在选字，不是要这一行的操作。
-  { disabled: () => renamingTopicId.value !== null }
+  { disabled: () => renamingTopicId.value !== null || renamingTaskId.value !== null }
 )
 
-const rowSheetActions = computed<MenuAction[]>(() =>
-  rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
-)
+const rowSheetActions = computed<MenuAction[]>(() => {
+  const task = rowSheetTask.value
+  if (task) return taskActionsFor(task).map(menuActionOf)
+  return rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
+})
 
 // 项目文档 (C4): 项目目标 / 周报集 / 记忆 在侧栏只占一行，点开进项目目标；
 // 三选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
@@ -507,7 +546,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
       <MobileActionSheet
         v-model="rowSheetOpen"
         :actions="rowSheetActions"
-        :title="rowSheetTopic ? topicTitle(rowSheetTopic) : undefined"
+        :title="rowSheetTask ? taskTitle(rowSheetTask) : rowSheetTopic ? topicTitle(rowSheetTopic) : undefined"
       />
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
@@ -557,11 +596,10 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :page="page === true"
             :unread-of="unreadOf"
             :fresh-of="freshOf"
-            :muted-of="mutedOf"
             :light-of="lightOf"
             :root-actions="rootTopic ? actionsFor(rootTopic).map(menuActionOf) : []"
             :tasks-collapsed="!!rootTopic && tasksFoldOf(rootTopic.id)"
-            :task-count="rootTopic ? roomTaskTotals?.[rootTopic.id] : undefined"
+            :task-count="rootTopic ? taskCountOf(rootTopic.id) : undefined"
             :task-light="rootTopic ? tasksLight(rootTopic.id) : null"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
@@ -578,8 +616,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :selected="task.id === selectedTaskId"
                 :light="taskLight(task)"
                 :unread="unreadOf(task.id)"
+                :actions="taskActionsFor"
+                :page="page === true"
+                :renaming="renamingTaskId === task.id"
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
+                @commit-rename="(draft: string) => commitTaskRename(task, draft)"
+                @cancel-rename="cancelTaskRename()"
               />
               <TopicRailTaskRow
                 v-for="task in rootTopic ? moreTaskRows(rootTopic.id) : []"
@@ -588,11 +631,16 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :selected="task.id === selectedTaskId"
                 :light="taskLight(task)"
                 :unread="unreadOf(task.id)"
+                :actions="taskActionsFor"
+                :page="page === true"
+                :renaming="renamingTaskId === task.id"
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
+                @commit-rename="(draft: string) => commitTaskRename(task, draft)"
+                @cancel-rename="cancelTaskRename()"
               />
               <TopicRailMoreTasksRow
-                v-if="rootTopic && showMoreRow(rootTopic.id)"
+                v-if="rootTopic && showMoreRow()"
                 :channel-id="rootTopic.id"
                 :label="moreLabel(rootTopic.id)"
                 :expanded="!!moreTasks?.[rootTopic.id]"
@@ -657,14 +705,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :renaming="renamingTopicId === item.topic.id"
                         :menu-open="actionsMenuFor === item.topic.id"
                         :stalled="stalledOf(item.topic.id)"
-                        :light="lightOf(item.topic.id)"
-                        :muted="mutedOf?.(item.topic.id) ?? false"
-                        :fresh="freshOf(item.topic.id)"
                         :marks="memberMarks(item.topic)"
+                        :light="lightOf(item.topic.id)"
+                        :fresh="freshOf(item.topic.id)"
                         :toggle-title="toggleTitle(item)"
                         :actions="actionsFor"
                         :tasks-collapsed="tasksFoldOf(item.topic.id)"
-                        :task-count="roomTaskTotals?.[item.topic.id]"
+                        :task-count="taskCountOf(item.topic.id)"
                         :task-light="tasksLight(item.topic.id)"
                         @select="emit('select-topic', $event)"
                         @hover="emit('hover-topic', $event)"
@@ -684,8 +731,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :selected="task.id === selectedTaskId"
                         :light="taskLight(task)"
                         :unread="unreadOf(task.id)"
+                        :actions="taskActionsFor"
+                        :page="page === true"
+                        :renaming="renamingTaskId === task.id"
                         @select="emit('select-task', $event)"
                         @press="emit('press-task', $event)"
+                        @commit-rename="(draft: string) => commitTaskRename(task, draft)"
+                        @cancel-rename="cancelTaskRename()"
                       />
                       <TopicRailTaskRow
                         v-for="task in moreTaskRows(item.topic.id)"
@@ -695,11 +747,16 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :selected="task.id === selectedTaskId"
                         :light="taskLight(task)"
                         :unread="unreadOf(task.id)"
+                        :actions="taskActionsFor"
+                        :page="page === true"
+                        :renaming="renamingTaskId === task.id"
                         @select="emit('select-task', $event)"
                         @press="emit('press-task', $event)"
+                        @commit-rename="(draft: string) => commitTaskRename(task, draft)"
+                        @cancel-rename="cancelTaskRename()"
                       />
                       <TopicRailMoreTasksRow
-                        v-if="showMoreRow(item.topic.id)"
+                        v-if="showMoreRow()"
                         :channel-id="item.topic.id"
                         :depth="item.depth"
                         :label="moreLabel(item.topic.id)"

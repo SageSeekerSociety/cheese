@@ -38,7 +38,19 @@
     "ordinal": "No. {n}",
     "days": "{n} days",
     "none": "None",
-    "undoFailed": "Couldn't undo"
+    "undoFailed": "Couldn't undo",
+    "changedCount": "{n} changed",
+    "setting": {
+      "on": "On",
+      "off": "Off",
+      "instant": "Every one",
+      "digest": "Digest",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "all": "All new messages",
+      "mentions": "Only {'@'}me and threads I'm in",
+      "mute": "Muted"
+    }
   },
   "notes": {
     "title": "Needs your check"
@@ -91,15 +103,23 @@
     "sent": "Sent to {where}",
     "opened": "Opened task {title}",
     "dismissed": "Set aside",
+    "done": "Done",
     "to": "To",
     "channel": "Channel",
     "title": "Title",
     "message": "Message",
     "brief": "Brief",
+    "what": "Action",
+    "why": "Reason",
     "send": "Send",
     "openTask": "Open task",
+    "confirm": "Confirm",
     "dismiss": "Set aside",
     "view": "View",
-    "failed": "Couldn't send"
+    "failed": "Couldn't send",
+    "expired": "Expired"
+  },
+  "run": {
+    "routine": "Routine “{title}” started"
   }
 }

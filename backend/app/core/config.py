@@ -293,6 +293,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # through the Anthropic-compatible gateway (spec §9: 不绑定模型). For Zhipu
     # GLM: base_url=https://open.bigmodel.cn/api/anthropic, token=ZHIPU_API_KEY.
     # Swapping to LiteLLM / Anthropic later is just env, no code change.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     agent_model: str = "glm-5.2"
     # Which models each harness that does NOT speak the platform gateway may
     # be pointed at ({"codex": ["gpt-5.2"]}). A harness that speaks the gateway
@@ -422,6 +424,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # The gateway model 问芝士 answers with. Its virtual key is minted through
     # `llm_gateway_admin_base`; what it spends is charged to the asker's
     # personal credits, so the model must be priced on the gateway.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     docs_assistant_model: str = "deepseek-flash"
     # Whether 问芝士 searches and reads the docs itself, over the three tools in
     # `docs_site/tools.py`, instead of answering from one round of retrieval.
@@ -433,6 +437,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # --- A person's 芝士 outside any project (app/domain/agent/personal, #2285) ---
     # The gateway model it answers with; charged to the asker's personal
     # credits at what the gateway spent, so the model must be priced there.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     assistant_model: str = "deepseek-flash"
     docs_question_retention_days: int = 90
     # How long a docs sign-in lasts before the reader goes through the
@@ -444,10 +450,14 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # through the gateway, on a virtual key of its own capped at this budget
     # per 30 days. Unset gateway admin credentials = an unnamed task's own
     # session is reminded to name it with `cheese_title`.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     topic_naming_model: str = "deepseek-flash"
     topic_naming_budget_usd: float = 10.0
     topic_naming_timeout_seconds: float = 15.0
     # 「让芝士看看」：环境准备失败时，读日志和两段脚本给出原因和改法的那一问。
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
@@ -456,6 +466,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # small model that tidies the transcript into a message. Recorded per
     # person in voice_inputs and per project in resource_usage; while
     # voice_input_charged is off the rows cost the project no credits.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     voice_asr_model: str = "qwen-audio-asr"
     voice_polish_model: str = "deepseek-flash"
     voice_input_charged: bool = False
@@ -474,25 +486,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # even without a signal (an accept card, a changed document).
     topic_naming_follow_messages: int = 30
 
-    # ExecutionProfile "claude-opus" (tier=testing): native Claude for the team's
-    # own dogfooding. Only selectable when claude_auth_token is set (an Anthropic
-    # API key). base_url unset → Anthropic's default endpoint. Not the multi-user
-    # product path — that defaults to the pool (see app/domain/agent/profiles.py).
-    claude_model: str = "claude-opus-4-8"
-    claude_base_url: str | None = None
-    claude_auth_token: str | None = None
-    # Subscription auth (走订阅): a long-lived OAuth token from `claude setup-token`
-    # (a personal Max/Pro seat — ToS-compliant for dogfooding). Preferred over an
-    # API key; when set, the sandbox `claude` runs on the subscription, not pay-
-    # per-use API credits. Injected as CLAUDE_CODE_OAUTH_TOKEN.
-    claude_oauth_token: str | None = None
-    # ExecutionProfile "claude-fable" (tier=testing): the Fable frontier model on
-    # the same personal seat/credentials as claude-opus — a second dogfooding
-    # channel so we can compare models on real platform work.
-    fable_model: str = "claude-fable-5"
-    # Owner handles allowed to select tier=testing profiles (dogfooding only —
-    # see profiles.py / review Finding 7). Comma-separated in env.
-    dogfood_owner_handles: list[str] = []
     # Handles that are platform administrators — the people who run the admin
     # screens (members, models, stats, spaces, integrations). Feedback triage is
     # a separate roster, `feedback_triage_handles` below. JSON list in env,
@@ -563,11 +556,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # tester. Not shared with the proposal cap above: that one is per TOPIC and
     # protects a room's reading; this one is per PERSON and protects the list.
     feedback_reports_per_author_per_day: int = 30
-    # Which registered profile is the platform default ("our AI pool"). Normally
-    # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
-    # whole platform on the subscription seat — e.g. a demo where the GLM pool is
-    # out of balance. The chosen profile must have credentials or boot fails fast.
-    agent_default_profile: str = "default"
     agent_system_prompt: str = (
         "你是知是平台里的 AI 队友。你贯穿一个项目的全过程，"
         "了解项目的频道、任务、决策和进展。用自然清楚的语言交流，"
@@ -789,6 +777,15 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # turn, and its whole purpose is catching the case where nothing else will
     # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # Seconds between reads of the platform model roles an administrator
+    # pointed (`app.core.model_roles`), in every process. Another process sees
+    # a role change within this; the key behind a role is narrowed after it
+    # (`gateway_models.roles.NARROW_AFTER_SECONDS`). 0 turns it off (tests).
+    platform_model_roles_refresh_interval_s: float = 30.0
+    # Seconds between reads of every model's spend cap against the gateway's
+    # ledger, saying on the alert webhook when one crosses 80% or reaches it
+    # (`app.domain.agent.spend_cap_alerts`). 0 turns it off.
+    model_spend_cap_alert_interval_s: float = 300.0
     # Seconds between looks, on the process holding the sessions, for work
     # still running in a task that has closed (`stop_work_in_closed_tasks`).
     # One indexed read of the tasks its working seats are in, and none when no
@@ -870,6 +867,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     memory_migration_timeout_s: float = 600.0
     # The gateway model that sorts old memories, and what its key may spend per
     # 30 days: the platform runs it, so no person's credits pay for it.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     memory_migration_model: str = "deepseek-flash"
     memory_migration_budget_usd: float = 10.0
     # 一次问模型的旧记忆条数（见 `migration.MIGRATION_CHUNK`）。

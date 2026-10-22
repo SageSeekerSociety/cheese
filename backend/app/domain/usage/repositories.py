@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.conversation.services import of_room
 from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
-from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage, call_count
+from app.domain.usage.models import NOT_MODEL_CALLS, ResourceUsage, call_count
 
-#: Rows of model calls. A compute charge (``usage.compute``) is a usage row
-#: too, for its credits, but it has no tokens and is no call: every count of
+#: Rows of model calls. A compute charge (``usage.compute``) or a web search
+#: the platform asked for (``SEARCH_ROUTE``) is a usage row too, for its credits, but
+#: it has no tokens and is no call: every count of
 #: tokens, cost and calls below leaves it out, and only the credit reads of a
 #: team's spend take it in.
-MODEL_CALLS = ResourceUsage.route != COMPUTE_ROUTE
+MODEL_CALLS = ResourceUsage.route.notin_(NOT_MODEL_CALLS)
 
 
 def unpriced_tokens() -> Any:

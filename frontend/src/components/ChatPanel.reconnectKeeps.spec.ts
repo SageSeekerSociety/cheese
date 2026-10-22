@@ -13,6 +13,7 @@ const listBlocks = vi.fn()
 vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 // 重连之后，置顶和支线那几行也要重读一次（断线期间它们的通知丢了）：这里都没有。
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
+vi.mock('@/api/chapters', () => ({ listChapters: async () => [], addChapter: vi.fn(), removeChapter: vi.fn() }))
 vi.mock('@/api/threads', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/threads')>()),
   listThreads: async () => [],

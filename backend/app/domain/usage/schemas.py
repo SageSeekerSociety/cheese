@@ -26,18 +26,23 @@ class BetaCreditsOut(BaseModel):
     credits: int
     claimed: bool
     feedback_credits: int
+    #: What the person's own plan issues each month; null when it is unlimited
+    #: or billed by time windows.
+    plan_credits: int | None
+    #: What inviting a friend earns: the inviter on the friend's first
+    #: acceptance, and the friend across onboarding and that acceptance.
+    invite_credits: int
+    invitee_credits: int
 
 
 class CreditRewardOut(BaseModel):
     credits: int
-    points: int
     issued: bool
 
 
 class CreditRewardItemOut(BaseModel):
     kind: Literal["beta", "feedback", "invite"]
     credits: int
-    points: int
     created_at: datetime
 
 
@@ -45,8 +50,6 @@ class CreditRewardsOut(BaseModel):
     feedback_count: int
     feedback_credits: int
     invite_credits: int
-    #: Every contribution point ever earned; it never goes down.
-    points: int
     items: list[CreditRewardItemOut]
 
 
@@ -90,7 +93,7 @@ class InviteeOut(BaseModel):
     #: in time, both sides paid); lapsed when the seven days ran out first.
     stage: Literal["registered", "onboarded", "activated", "lapsed"]
     #: What the inviter was paid for this friend: 0 until activated, and 0
-    #: past the monthly cap, where only the points were recorded.
+    #: past the monthly cap.
     credits: int
 
 
@@ -102,5 +105,7 @@ class MyInvitesOut(BaseModel):
     unlocked: bool
     unlock_uses: int
     invite_credits: int
-    points: int
+    #: Credits inviting friends has paid this month (Asia/Shanghai), against ``month_cap``.
+    month_credits: int
+    month_cap: int
     invitees: list[InviteeOut]

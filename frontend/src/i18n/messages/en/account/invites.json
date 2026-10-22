@@ -1,36 +1,44 @@
 {
   "title": "Invite friends",
-  "lede": "A friend who signs up with your code gets 50 credits after finishing the guide and creating a first project. If they accept a first delivery within 7 days of signing up, they get 100 more, and you get 150 credits and 50 points.",
+  "lede": "Send a friend your sign-up link. Once they sign up and accept a first delivery from Cheese, you both get credits.",
   "loadFailed": "Could not load your invitations",
   "retry": "Retry",
   "code": {
-    "title": "Your invite code",
     "label": "Invite code",
     "remaining": "{left} of {total} seats left",
     "unlockHint": "Accept your first delivery to add {n} more seats",
     "copyCode": "Copy code",
     "copyLink": "Copy sign-up link",
-    "copied": "Invite code copied"
+    "copied": "Invite code copied",
+    "refillHint": "Each friend who accepts a first delivery gives their seat back"
   },
-  "earned": {
-    "title": "Rewards earned",
-    "credits": "Credits",
-    "creditsValue": "{n} credits",
-    "points": "Contribution points",
-    "pointsValue": "{n} points",
-    "note": "Invitations earn at most 1,500 credits a month; beyond that only points are recorded. Credits last 90 days and are used after the month's plan credits.",
-    "viewCredits": "View personal credits"
+  "steps": {
+    "title": "What your friend and you get",
+    "signUp": "Your friend signs up with your link",
+    "signUpGain": "Uses 1 seat",
+    "project": "They create their first project",
+    "projectGain": "Friend +50 credits",
+    "accept": "Within 7 days they accept a first delivery from Cheese",
+    "acceptGain": "Friend +100 credits, you +150",
+    "meaning": "A first acceptance means your friend actually got something done with it."
   },
   "people": {
     "title": "People you invited",
+    "viewCredits": "View personal credits",
+    "invited": "Invited",
+    "accepted": "Accepted",
+    "credits": "Credits from invitations",
+    "creditsValue": "{n} credits",
+    "capNote": "Past the monthly limit, friends who accept a first delivery still give their seat back, but earn you no more credits. Credits last 365 days from when they are paid and are used after the month's plan credits.",
     "empty": "No one yet",
     "registeredOn": "Joined {date}",
     "stage": {
       "registered": "Signed up · no project yet",
       "onboarded": "Awaiting first acceptance",
-      "activated": "Active · +{n} credits",
-      "activatedNoCredits": "Active",
+      "activated": "Accepted · +{n} credits",
+      "activatedNoCredits": "Accepted",
       "lapsed": "7 days passed"
-    }
+    },
+    "month": "{n} / {cap} credits from invitations this month"
   }
 }

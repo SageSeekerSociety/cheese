@@ -223,16 +223,17 @@ export type BrowserSignInEntry = 'signin' | 'signup' | 'recover'
  * secret and gives the browser only its hash; the sign-in comes back as a code
  * that is good only with that secret (views/account/AppSignInFinish.vue).
  * Returns the address opened, which holds no secret and can be pasted into a
- * browser by hand.
+ * browser by hand. A friend's invite code rides along as `invite` (not `code`,
+ * which on these pages means a sign-in code).
  */
-export async function signInInBrowser(entry: BrowserSignInEntry, target: string): Promise<string> {
+export async function signInInBrowser(entry: BrowserSignInEntry, target: string, invite = ''): Promise<string> {
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)))
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
   // If this does not land, the code that comes back has nothing to be traded
   // with and the sign-in fails the way it does for a code this app did not ask
   // for — a browser window the person can close.
   storageSetJson(SIGN_IN_VERIFIER_KEY, { verifier, target })
-  const query = new URLSearchParams({ entry, challenge: base64url(digest) })
+  const query = new URLSearchParams({ entry, challenge: base64url(digest), ...(invite ? { invite } : {}) })
   const url = new URL(`/account/oauth/app?${query}`, window.location.origin).href
   window.open(url, '_blank')
   return url

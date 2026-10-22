@@ -5,11 +5,12 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_access import may_read_project
@@ -28,6 +29,7 @@ from app.domain.space.services import SpaceService
 from app.domain.team.services import team_service
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
+from app.domain.user.services import set_teammate_remark
 
 _log = get_logger("cheesex.dashboard")
 
@@ -203,6 +205,15 @@ async def _signed_in(resolver: ActorResolver, what: str) -> str:
     return viewer.handle
 
 
+class TeammateRemarkIn(BaseModel):
+    remark: str | None = None
+
+
+class TeammateRemarkOut(BaseModel):
+    handle: str
+    remark: str | None = None
+
+
 @router.get("/users/{handle}/profile")
 async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -> dict:
     """个人主页 (spec §7.2): cross-project profile / portfolio.
@@ -213,6 +224,26 @@ async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -
     so there is nothing on it for a caller nobody can identify."""
     viewer = await _signed_in(resolver, say("dashboardViewProfile"))
     return ok(await DashboardService(db).user_profile(handle, viewer=viewer))
+
+
+@router.put(
+    "/users/{handle}/remark",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TeammateRemarkOut),
+)
+async def update_user_remark(
+    handle: str,
+    body: TeammateRemarkIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """设置或清除当前登录用户对 ``handle`` 这位队友的个人备注。"""
+    viewer = await _signed_in(resolver, say("dashboardSetRemark"))
+    saved = await set_teammate_remark(
+        db, viewer_handle=viewer, target_handle=handle, remark=body.remark
+    )
+    await db.commit()
+    return ok({"handle": handle, "remark": saved})
 
 
 @router.get("/users/{handle}/topics")

@@ -11,13 +11,18 @@ Two writers, two columns each, and neither touches the other's:
 
 - the teammate's report: `set_progress` — state, note, when, who. Only while
   no card waits on the task's review (`PUT /topics/{task}/task/progress`
-  refuses it then): the card says where the task stands. The platform's own actions write the same columns: a
-  card filed or the task reopened clears the report (`clear`), a card
-  returned or voided puts the task back to work (`back_to_work`);
+  refuses it then): the card says where the task stands. The platform's own
+  actions write the same columns: a card filed or the task reopened clears the
+  report (`clear`), a card returned or voided puts the task back to work
+  (`back_to_work`). Each of those tells the teammate (`heard`); filing is its
+  own act, and its tool's reply says so;
 - the session ending after that report: `note_agent_left` — the board puts
   「已离开」 beside the report, until a session runs in the task again
-  (`note_agent_back`). It never rewrites the report: a teammate that
-  said 「在等 CI」 and then left is still the last word on that work.
+  (`note_agent_back`). It never rewrites the report: a teammate that said
+  「在等 CI」 and then left is still the last word on that work. The teammate
+  is not told: the mark is about its own session being gone, and the session
+  coming back is what takes it away, so by the time it could read a word of it
+  the mark is no longer there.
 """
 
 import uuid

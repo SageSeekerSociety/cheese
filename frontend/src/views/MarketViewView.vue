@@ -43,7 +43,6 @@ const tab = defineModel<'tasks' | 'pools'>('tab', { default: 'tasks' })
 const TIER_LABEL: Record<string, string> = {
   default: 'market.tier.default',
   included: 'market.tier.included',
-  testing: 'market.tier.testing',
   byo: 'market.tier.byo',
   premium: 'market.tier.premium',
 }

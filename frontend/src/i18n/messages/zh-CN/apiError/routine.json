@@ -13,9 +13,10 @@
   "routineNoNextRun": "这个时间安排算不出下一次执行时间",
   "routineNotFound": "没有这条例行事务",
   "routineOnlyRunnerReports": "只有执行这条例行事务的 AI 队友能交回结果",
-  "routineOwnerNotInProject": "{handle} 不是项目成员，结果无法通知到",
+  "routineOwnerNotInChannel": "{handle} 不在这个频道里：例行事务的结果只交给频道里的人",
   "routineOwnerOrAdmin": "「{title}」是 {owner} 设的例行事务，只有他本人或项目管理员能{what}",
   "routinePauseActiveOnly": "只有执行中的例行事务能暂停",
+  "routineResume": "恢复",
   "routineResumePausedOnly": "只有暂停中的例行事务能恢复",
   "routineRunEnded": "这次执行已经结束了",
   "routineRunNotFound": "没有这次执行",
@@ -29,5 +30,9 @@
   "scheduleTimeFormat": "执行时间要写成 HH:MM，例如 09:00",
   "scheduleWeeklyDays": "每周执行要给出星期几（0=周一 … 6=周日）",
   "timezoneUnknown": "不认识的时区：{name}",
-  "routineResumeNeedsTrigger": "先给它定个触发方式，它才知道什么时候跑"
+  "routineResumeNeedsTrigger": "先给它定个触发方式，它才知道什么时候跑",
+  "assistantRoutineOnceAt": "运行时间要在现在之后的一年内，写成 2026-10-23T08:00 这样",
+  "assistantRoutineTrigger": "触发方式只能是 schedule、mention、review、due 或 invite",
+  "assistantRoutineLimit": "例行事务最多 {max} 条，删掉不用的再新建",
+  "assistantRoutineInRun": "例行事务运行时不能新建或修改例行事务"
 }

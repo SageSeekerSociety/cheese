@@ -113,6 +113,7 @@ CALLS = {
         "/projects/fixture-project/alerts",
     ),
     "cheese_fetch": ({"url": "https://example.test"}, "POST", "/fetch"),
+    "cheese_web_search": ({"query": "芝士"}, "GET", "/web-search"),
     "cheese_docs_search": ({"query": "验收"}, "POST", "/docs/agent/search"),
     "cheese_docs_read": ({"page": "accept"}, "POST", "/docs/agent/read"),
     "cheese_members": ({}, "GET", f"/topics/{TOPIC}/members"),
@@ -169,6 +170,7 @@ CALLS = {
             "title": "每周整理一次进展",
             "instructions": "把这一周的进展整理成一页",
             "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+            "owner_handle": "alice",
         },
         "POST",
         f"/topics/{TOPIC}/routines",
@@ -471,7 +473,9 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
     """
     process, platform_calls, executor_calls = machine_is_gone
 
-    outcome = _call(process, "cheese_routine_draft", arguments)
+    outcome = _call(
+        process, "cheese_routine_draft", {**arguments, "owner_handle": "alice"}
+    )
 
     assert said in outcome["deny"], outcome
     assert platform_calls == [], platform_calls

@@ -20,7 +20,9 @@ export interface MyInvites {
   unlocked: boolean
   unlock_uses: number
   invite_credits: number
-  points: number
+  /** Credits invitations have paid this month (Asia/Shanghai), against `month_cap`. */
+  month_credits: number
+  month_cap: number
   invitees: Invitee[]
 }
 

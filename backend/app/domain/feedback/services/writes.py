@@ -129,6 +129,13 @@ async def create(
     # a report with no `received` entry would show an empty history for the
     # one event that definitely happened.
     await svc._repo.append_timeline(row.id, FeedbackStatus.received, actor_handle)
+    # 附件和这条反馈同一笔事务：报告发出去了、截图没挂上，屏幕上就是一条没有证据的
+    # 报告，而人以为自己传了。有一个 id 挂不上，整条提交退回（`attach` 的说明）。
+    await svc.attach_attachments(
+        feedback_id=row.id,
+        attachment_ids=body.attachment_ids,
+        uploader_handle=actor_handle,
+    )
     announce.after_commit(svc._session, row)
     return row
 
@@ -171,6 +178,12 @@ async def _create_from_proposal(
     # did not move this report into `received`, the person did.
     await svc._repo.append_timeline(
         row.id, FeedbackStatus.received, submitted_by_handle
+    )
+    # 上传者是按下发送的人，不是提案的 agent：文件是他在表单里选（或粘）上去的。
+    await svc.attach_attachments(
+        feedback_id=row.id,
+        attachment_ids=body.attachment_ids,
+        uploader_handle=submitted_by_handle,
     )
     announce.after_commit(svc._session, row)
     return row

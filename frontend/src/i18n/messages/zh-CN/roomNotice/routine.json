@@ -26,5 +26,10 @@
   "routineResultWithFiles": "{body}\n结果文件：{files}",
   "routineRunStarted": "开始执行「{title}」",
   "routineSkipped": "未执行",
-  "routineSucceeded": "已完成"
+  "routineSucceeded": "已完成",
+  "assistantRoutineDone": "例行事务「{routine}」已完成",
+  "assistantRoutineAsked": "例行事务「{routine}」有 {count} 项操作待你确认",
+  "assistantRoutineFailed": "例行事务「{routine}」未能完成",
+  "assistantRoutinesNoCredits": "额度已用完，例行事务已暂停",
+  "assistantRoutinesAway": "你已 {days} 天未登录，例行事务已暂停"
 }

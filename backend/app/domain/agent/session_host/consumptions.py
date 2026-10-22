@@ -403,6 +403,12 @@ class Consumptions:
 
     # --- what viewers see ----------------------------------------------------
 
+    async def halt(self, consumption: Consumption) -> None:
+        """Stop the session answering ``consumption``: its consumer has seen
+        enough. The reading ends as for a stopped session, and the consumer
+        says why when the question ends."""
+        await self._host.stop(consumption.ref)
+
     async def publish(self, consumption: Consumption, event: str, data: dict) -> None:
         """Tell the question's viewers ``event``."""
         stream = _stream(consumption.work_id)

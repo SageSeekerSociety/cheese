@@ -214,6 +214,19 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             link=link,
         )
 
+    if type_ == "ASSISTANT_NOTICE":
+        # 个人芝士自己做的事（`routine.personal`）：那句话就是标题，芝士说的放引文，
+        # 按钮打开那段对话。
+        content = _text(payload, "content") or "芝士有一条新消息"
+        return Letter(
+            subject=_clip(content, _SUBJECT_LIMIT),
+            eyebrow="你的芝士",
+            headline=content,
+            quote=_clip(_text(payload, "quote"), _QUOTE_LIMIT),
+            action="查看对话" if _text(payload, "assistantConversation") else "查看",
+            link=link,
+        )
+
     if type_ == "ROOM_NOTICE":
         content = _text(payload, "content") or "平台有一条提示"
         return Letter(
@@ -285,8 +298,11 @@ def _dark_css() -> str:
     return f"@media (prefers-color-scheme:dark){{{body}}}"
 
 
-def _page(*, title: str, preview: str, card: list[str], why: str) -> str:
-    """外框：画布、卡片（标志在最上面，`card` 接在它下面）、卡片下面一行来由。"""
+def _page(
+    *, title: str, preview: str, card: list[str], why: str, inbox: bool = True
+) -> str:
+    """外框：画布、卡片（标志在最上面，`card` 接在它下面）、卡片下面一行来由。
+    ``inbox`` 时来由后面接一个「查看全部通知」：一封不是从通知来的信不接。"""
     c = _LIGHT
     e = html.escape
     base = settings.frontend_url.rstrip("/")
@@ -318,8 +334,13 @@ def _page(*, title: str, preview: str, card: list[str], why: str) -> str:
             "</td></tr>",
             f'<tr><td class="c-faint" style="padding:20px 36px 0;font-family:{_FONT};'
             f'font-size:12px;line-height:20px;color:{c["faint"]};">{e(why)}'
-            f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
-            f'style="color:{c["faint"]};">查看全部通知</a></td></tr>',
+            + (
+                f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
+                f'style="color:{c["faint"]};">查看全部通知</a>'
+                if inbox
+                else ""
+            )
+            + "</td></tr>",
             "</table></td></tr></table></body></html>",
         ]
     )

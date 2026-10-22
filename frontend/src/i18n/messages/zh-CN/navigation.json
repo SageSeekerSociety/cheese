@@ -65,12 +65,13 @@
     "appearance": "外观",
     "language": "语言",
     "logout": "退出登录",
-    "noIntro": "暂无个人简介",
     "theme": {
       "system": "跟随系统",
       "light": "浅色",
       "dark": "深色"
     },
+    "invites": "邀请好友",
+    "seatsLeft": "剩 {n} 个",
     "archivedProjects": "已归档的项目",
     "download": "下载客户端",
     "usePhone": "在手机上使用"

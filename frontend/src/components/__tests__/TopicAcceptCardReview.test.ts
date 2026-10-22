@@ -25,6 +25,11 @@ const reassignCard = vi.fn()
 const revokeCard = vi.fn()
 
 // 任务页的卡旁边还有这件任务的审阅意见；这里测的是卡，意见是空的。
+// 审阅人是我的卡一出现，会先看一眼我的邀请码（composables/useInvitePrompt.ts）；这里测的是卡。
+vi.mock('@/api/invites', async (actual) => ({
+  ...(await actual<typeof import('@/api/invites')>()),
+  getMyInvites: vi.fn().mockResolvedValue({ unlocked: true }),
+}))
 vi.mock('@/api/reviewComments', () => ({
   listReviewComments: vi.fn(async () => ({ comments: [] })),
   writeReviewComment: vi.fn(),

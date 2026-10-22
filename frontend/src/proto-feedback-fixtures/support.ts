@@ -63,6 +63,9 @@ export const META: FeedbackMeta = {
   hot_min_items: HOT_MIN_ITEMS,
   is_admin: IS_ADMIN,
   is_platform_admin: IS_ADMIN,
+  // 附图的那两个上限跟着服务端报的数（`GET /feedback/meta`）。
+  max_attachments: 10,
+  max_attachment_bytes: 10 * 1024 * 1024,
 }
 
 /** 造一条反馈。卡片字段和详情字段放在一份数据里 —— 详情页要的就是卡片 + 正文，
@@ -101,6 +104,7 @@ export function row(spec: {
   const thread = threadOf(spec.thread ?? [])
   return {
     reward: null,
+    attachments: [],
     id: spec.id,
     display_id: spec.display,
     kind: spec.kind,

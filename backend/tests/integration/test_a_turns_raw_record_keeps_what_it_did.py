@@ -180,6 +180,16 @@ def _codex_records(work: str) -> list[dict]:
     ]
 
 
+def _claude_input(text: str, work: str) -> list[dict]:
+    return [
+        {
+            "type": "user",
+            "message": {"role": "user", "content": [{"type": "text", "text": text}]},
+            "cheese": {"work_id": work},
+        }
+    ]
+
+
 HARNESSES = {
     CLAUDE_CODE: (claude_journal.Journal, _claude_records),
     CODEX: (codex_journal.Journal, _codex_records),
@@ -737,6 +747,105 @@ def test_a_record_nested_deep_is_kept_and_read_back(client, tmp_path):
     assert json.dumps([i["record"] for i in kept], sort_keys=True) == json.dumps(
         expected, sort_keys=True
     )
+
+
+@pytest.mark.parametrize("harness", [CLAUDE_CODE, CODEX])
+def test_the_lines_read_out_is_what_a_transcript_holds(client, tmp_path, harness):
+    """`lines=true` is the shape `cheese transcript` writes to a file: one row
+    per record, the same keys whichever harness wrote it, and the subagent's
+    thread named."""
+    session = _Session(client, tmp_path, harness, _room_for(client))
+    work = str(uuid.uuid4())
+    session.write(session.records(work))
+    session.drain()
+
+    response = client.get(
+        f"/topics/{session.ref.topic_id}/session-records",
+        params={"lines": True, "turn_id": work, "limit": 500},
+    )
+    assert response.status_code == 200, response.text
+    rows = response.json()["data"]["items"]
+    assert rows
+    assert len({tuple(sorted(row)) for row in rows}) == 1
+    assert all(row["turn"] == work for row in rows)
+    assert all(row["harness"] == harness for row in rows)
+    # The subagent's moment is in the same file, marked as its own thread.
+    assert any(row["thread"] == "toolu_task" for row in rows) or any(
+        row["parent_thread"] for row in rows
+    )
+    # A tool call and its return are readable without the raw record.
+    assert any(
+        part["kind"] == "tool"
+        for row in rows
+        for part in row["parts"]
+        if part.get("name")
+    )
+    # Raw records are not in this answer; they are what a caller asks without
+    # `lines` for.
+    assert all("record" not in row for row in rows)
+
+
+def test_the_platforms_repeated_words_are_not_in_the_file(client, tmp_path):
+    """What an input carries is the person's words and the platform's own; a
+    transcript is written to be read, so only the person's come through. Claude
+    Code is the harness that journals an input at all."""
+    from app.domain.agent.harness.notices import (
+        platform_prompt,
+        publication_prompt,
+        silence_reminder,
+    )
+
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    work = str(uuid.uuid4())
+    session.write(
+        _claude_input(
+            publication_prompt("照我说的做")
+            + "\n\n"
+            + platform_prompt(silence_reminder(10)),
+            work,
+        )
+    )
+    session.drain()
+
+    rows = client.get(
+        f"/topics/{session.ref.topic_id}/session-records",
+        params={"lines": True, "turn_id": work, "limit": 500},
+    ).json()["data"]["items"]
+    said = [part["text"] for row in rows for part in row["parts"]]
+    assert "照我说的做" in said
+    assert not any("没听到你说话" in text for text in said)
+    # The journal still holds every word: this is the file's projection only.
+    whole = json.dumps(session.read(turn_id=work), ensure_ascii=False)
+    assert "没听到你说话" in whole
+
+
+def test_the_line_read_hands_out_only_this_conversation(client, tmp_path):
+    """A transcript is this conversation's; another room's records are not
+    reachable through its topic, and a stranger reaches neither."""
+    mine = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    mine.write(_claude_records(str(uuid.uuid4())))
+    mine.drain()
+    other = tmp_path / "other"
+    other.mkdir()
+    theirs = _Session(client, other, CLAUDE_CODE, _room_for(client))
+    theirs.write(_claude_records(str(uuid.uuid4())))
+    theirs.drain()
+
+    rows = client.get(
+        f"/topics/{mine.ref.topic_id}/session-records", params={"lines": True}
+    ).json()["data"]["items"]
+    assert rows
+    assert {row["conversation"] for row in rows} == {None}
+    assert all(row["author"] == mine.ref.agent_handle for row in rows)
+
+    stranger = {"X-Cheese-Token": "", **session_auth_headers("a-stranger")}
+    for params in ({}, {"lines": True}):
+        refused = client.get(
+            f"/topics/{mine.ref.topic_id}/session-records",
+            params=params,
+            headers=stranger,
+        )
+        assert refused.status_code in (401, 403, 404), refused.text
 
 
 def test_who_may_not_read_the_room_may_not_read_its_record(client, tmp_path):

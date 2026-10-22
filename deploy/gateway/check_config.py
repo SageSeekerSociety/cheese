@@ -1,4 +1,8 @@
-"""Run inside the pinned gateway image to check its real request transformation."""
+"""Run inside the pinned gateway image to check its real request transformation.
+
+Usage: check_config.py <config.yaml>. The file supplies the custom providers;
+the deployments are built here.
+"""
 
 import asyncio
 import copy
@@ -24,6 +28,72 @@ from litellm.proxy.utils import create_model_info_response
 from litellm.utils import custom_llm_setup
 
 
+# Deployments the checks below build for themselves. config.yaml declares no
+# models (every model is a row in the gateway database, edited on the admin
+# page, and the backend admin service holds those rows to the pricing rules),
+# so what this script checks is the pinned LiteLLM's behaviour on rows shaped
+# like the real ones, not any real row.
+DEEPSEEK_WINDOW = 920000
+KIMI = {
+    "model_name": "kimi-k3",
+    "litellm_params": {
+        "model": "anthropic/kimi-k3",
+        "api_base": "https://api.moonshot.cn/anthropic",
+        "api_key": "check",
+        # RMB 20 input, 100 output, 2 cache read, 20 cache write (5m), 40 (1h)
+        # per million, at RMB 7.1/USD.
+        "input_cost_per_token": 0.000002816902,
+        "output_cost_per_token": 0.000014084508,
+        "cache_read_input_token_cost": 0.000000281691,
+        "cache_creation_input_token_cost": 0.000002816902,
+        "cache_creation_input_token_cost_above_1hr": 0.000005633803,
+    },
+    "model_info": {"supports_output_config": True, "supports_max_reasoning_effort": True},
+}
+MIMO = {
+    "model_name": "mimo-v2.6-pro",
+    "litellm_params": {
+        "model": "anthropic/mimo-v2.6-pro",
+        "api_base": "https://token-plan-cn.xiaomimimo.com/anthropic",
+        "api_key": "check",
+        "input_cost_per_token": 0.000000422535,
+        "output_cost_per_token": 0.000000845070,
+    },
+    "model_info": {
+        "supports_reasoning": True,
+        "supports_vision": True,
+        "supports_mid_conversation_system": False,
+    },
+}
+DEEPSEEK = {
+    "model_name": "deepseek-flash",
+    "litellm_params": {
+        "model": "deepseek/deepseek-flash",
+        "api_key": "check",
+        "input_cost_per_token": 0.0000003,
+        "output_cost_per_token": 0.0000012,
+    },
+    "model_info": {
+        "supports_reasoning": True,
+        "supports_adaptive_thinking": True,
+        "supports_output_config": True,
+        "max_input_tokens": DEEPSEEK_WINDOW,
+    },
+}
+PRICE_ONLY = {
+    "model_name": "claude-sonnet-5",
+    "litellm_params": {
+        "model": "anthropic/claude-sonnet-5",
+        "input_cost_per_token": 0.000002,
+        "output_cost_per_token": 0.00001,
+        "cache_read_input_token_cost": 0.0000002,
+        "cache_creation_input_token_cost": 0.0000025,
+        "cache_creation_input_token_cost_above_1hr": 0.000004,
+    },
+    "model_info": {"blocked": True},
+}
+
+
 def main() -> None:
     config = yaml.safe_load(Path(sys.argv[1]).read_text())
     # The proxy registers these before it builds its router; a row on one of
@@ -33,7 +103,7 @@ def main() -> None:
         for item in config["litellm_settings"].get("custom_provider_map") or []
     ]
     custom_llm_setup()
-    router = litellm.Router(model_list=config["model_list"])
+    router = litellm.Router(model_list=copy.deepcopy([KIMI, MIMO, DEEPSEEK, PRICE_ONLY]))
     request = {
         "thinking": {"type": "adaptive"},
         "output_config": {"effort": "high"},
@@ -126,69 +196,16 @@ def main() -> None:
     assert "output_config" not in mimo_payload, mimo_payload
     assert mimo_payload["messages"] == messages, mimo_payload
     assert mimo_payload["tools"] == tools and mimo_payload["stream"] is True
-    # Every model offered to people must be billable. A model whose tokens cost
-    # zero is metered at zero, so the project's max_budget never trips and the
-    # first sign of trouble is the invoice. Cheese drops such a model from the
-    # catalogue rather than serving it with a dead brake, so the failure this
-    # guards against is a model that quietly stops being offered — check it here,
-    # where the price is written, instead of wondering there.
-    offered = [
-        item
-        for item in router.model_list
-        if item.get("model_info", {}).get("cheese_selectable") is True
-    ]
-    assert offered, "No model is marked cheese_selectable; agent settings would be bare"
-    free = set()
-    for deployment in offered:
-        name = deployment["model_name"]
-        # Router pricing is registered under the deployment id, including custom
-        # models that do not appear in LiteLLM's built-in provider catalog.
-        info = litellm.model_cost[deployment["model_info"]["id"]]
-        if deployment["model_info"].get("cheese_free") is True:
-            for field in ("input_cost_per_token", "output_cost_per_token"):
-                assert info.get(field) == 0, f"{name}: cheese_free but {field} is not 0"
-            free.add(name)
-            continue
-        assert info["input_cost_per_token"] > 0, (
-            f"{name}: input tokens must remain billable"
-        )
-        assert info["output_cost_per_token"] > 0, (
-            f"{name}: output tokens must remain billable"
-        )
-    # A free upstream is the one zero allowed, and only written out: a zero
-    # LiteLLM fills in for a missing price is the dead brake. Read from the file,
-    # because the router has already turned `false` into 0.0, and `false` is
-    # not a price (type(), not isinstance: False == 0).
-    for entry in config["model_list"]:
-        info = entry.get("model_info") or {}
-        if info.get("cheese_free") is not True:
-            continue
-        declared = {**info, **entry["litellm_params"]}
-        for field in ("input_cost_per_token", "output_cost_per_token"):
-            written = declared.get(field)
-            assert type(written) in (int, float) and written == 0, (
-                f"{entry['model_name']}: cheese_free needs {field} written as 0"
-            )
-    # Per-deployment upstream headers (upstream_headers.py) are text, so
-    # nothing but a header name and value can reach the upstream.
-    for entry in config["model_list"]:
-        info = entry.get("model_info") or {}
-        static = info.get("cheese_upstream_headers", {})
-        assert isinstance(static, dict) and all(
-            isinstance(k, str) and isinstance(v, str) for k, v in static.items()
-        ), (entry["model_name"], static)
-        session = info.get("cheese_session_header", "")
-        assert isinstance(session, str), (entry["model_name"], session)
-    # Price-only entries carry the prices of the Claude models the platform's
+    # A price-only row carries the prices of a Claude model the platform's
     # subscription serves; the backend reads them back through /model/info to
-    # bill that traffic. They must never route, and must carry every price,
-    # the one-hour cache write included.
+    # bill that traffic. A blocked deployment must never route, and its prices,
+    # the one-hour cache write included, must reach the cost map.
     price_only = [
         item
         for item in router.model_list
         if item.get("model_info", {}).get("blocked") is True
     ]
-    assert price_only, "No price-only entry; subscription traffic would go unpriced"
+    assert len(price_only) == 1, price_only
     for deployment in price_only:
         name = deployment["model_name"]
         assert router._is_model_fully_blocked(name), f"{name}: must not route"
@@ -316,20 +333,20 @@ def main() -> None:
     # for 128,000 output tokens; DeepSeek refuses a request whose input plus
     # max_tokens exceeds 1,048,576. A conversation must be compacted before
     # it reaches the size DeepSeek refuses.
+    # So the window /v1/models lists for a row is the one the row declares, not
+    # LiteLLM's own 1,000,000 for the model.
     listed = create_model_info_response(
         model_id="deepseek-flash", provider="deepseek", llm_router=router
     )
     deepseek_input = listed.get("max_input_tokens")
-    assert deepseek_input is not None, listed
+    assert deepseek_input == DEEPSEEK_WINDOW, listed
     assert deepseek_input + 128_000 <= 1_048_576, listed
     print(
         "PASS: DeepSeek thinking, Kimi effort, and MiMo thinking verified; "
         f"deepseek-flash listed at {deepseek_input} input tokens; "
         "Kimi/MiMo image and tool history preserved; "
         "Kimi buffered/streamed cache costs verified; "
-        f"{len(offered) - len(free)} offered model(s) billable on both directions, "
-        f"{len(free)} declared free; "
-        f"{len(price_only)} price-only model(s) refused and fully priced"
+        "a blocked price-only deployment refused and fully priced"
     )
 
 

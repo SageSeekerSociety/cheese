@@ -37,7 +37,7 @@ from app.api.task_deps import (
 from app.api.task_serialization import _enrich_task_models, _task_to_api_model
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.space_access import may_publish_in_space, may_teach_task
-from app.core.config import settings
+from app.core import model_roles
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
@@ -467,7 +467,7 @@ async def agent_write(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_task_write: write fields of a draft — a new one in a space, the
+    """cheese_problem_write: write fields of a draft — a new one in a space, the
     one named, or the person's changes to a published 题目 — and tell the
     page."""
     user_id = await _person(resolver)
@@ -587,7 +587,7 @@ async def agent_publish(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_task_publish: publish a draft as the person would."""
+    """cheese_problem_publish: publish a draft as the person would."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, body.draft)
     missing = drafts.missing(row)
@@ -623,7 +623,7 @@ async def agent_publish(
 
 def _pictures() -> bool:
     """Whether the model a person's 芝士 answers with can look at a page."""
-    return gateway_catalog.sees_pictures(settings.assistant_model)
+    return gateway_catalog.sees_pictures(model_roles.model("assistant_model"))
 
 
 class FileIn(BaseModel):

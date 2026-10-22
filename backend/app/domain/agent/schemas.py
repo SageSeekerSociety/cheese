@@ -27,7 +27,7 @@ _NAME_PATTERN = r"^[A-Za-z0-9._-]+$"
 
 
 class ModelPrices(BaseModel):
-    """一条模型的四个单价。
+    """一条模型的单价。
 
     用 `None` 表示「没定」，不是 0：0 是「定成免费」，`None` 是「这一栏空着」，网关的写
     接口也按这个区分（`GatewayAdmin._price_params` 只传真数字，`None` 一个都不发）。
@@ -38,6 +38,8 @@ class ModelPrices(BaseModel):
     output: float | None = None
     cache_read: float | None = None
     cache_creation: float | None = None
+    # The one-hour cache write (`cache_creation_input_token_cost_above_1hr`).
+    cache_creation_1h: float | None = None
 
 
 class ModelCapabilities(BaseModel):
@@ -333,6 +335,11 @@ class SourceUpdate(_SourceFields):
     api_key: str | None = None
     api_key_unchanged: bool = True
     prices: ModelPrices | None = None
+    # The upstream model's lifetime spend cap in USD (deploy/gateway/spend_cap.py).
+    # Absent leaves it alone, null clears it. The gateway counts the cap against
+    # everything its upstream model has been charged, so the service writes it on
+    # every runtime source on that upstream, not on this one alone.
+    spend_cap_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @field_validator("api_base")
     @classmethod
@@ -366,6 +373,13 @@ class BudgetUpdate(BaseModel):
     max_budget_usd: float | None
 
 
+class RoleUpdate(BaseModel):
+    """`PUT /admin/gateway/roles/{role}` 的体：`model` 为 null 是回到部署的默认值
+    （`Settings` 里那一项）。必须显式给，缺字段 400，免得「忘了传」被读成「清掉」。"""
+
+    model: str | None = Field(min_length=1, max_length=200)
+
+
 class BlockedUpdate(BaseModel):
     """`POST /admin/gateway/models/{name}/blocked` 的体。"""
 
@@ -394,6 +408,9 @@ class GatewaySourceOut(BaseModel):
     priced: bool
     header_names: list[str]
     session_header: str | None
+    spend_cap_usd: float | None
+    # 上游模型累计已花多少，口径同 spend_cap.py（终身、按上游模型名）；没设上限是 None。
+    spend_cap_used_usd: float | None = None
 
 
 class GatewayUpstreamOut(BaseModel):
@@ -424,6 +441,9 @@ class GatewayModelItemOut(BaseModel):
     priced: bool
     tier: str
     offered: bool
+    # The platform model roles that run on it (`app.core.model_roles`); while
+    # any does, it cannot be paused or deleted.
+    roles: list[str]
     blocked_reasons: list[str]
     unpriced_reason: str | None
     upstream: GatewayUpstreamOut
@@ -433,6 +453,24 @@ class GatewayModelItemOut(BaseModel):
     series: list[int]
     sources: list[GatewaySourceOut]
     config_yaml: str | None = None
+
+
+class PlatformRoleOut(BaseModel):
+    role: str
+    model: str | None
+
+
+class PlatformRoleItemOut(PlatformRoleOut):
+    """`fallback`：没人指过时读的 `Settings` 那一项；`chosen`：有人在页面上指过。
+    `offered_only`：只能指到上架的模型（项目默认会被提供给人选）。"""
+
+    fallback: str | None
+    chosen: bool
+    offered_only: bool
+
+
+class PlatformRolesOut(BaseModel):
+    roles: list[PlatformRoleItemOut]
 
 
 class GatewayModelWriteOut(BaseModel):

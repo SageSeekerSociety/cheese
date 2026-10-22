@@ -79,7 +79,12 @@ const hereChannelId = computed(
 // （query/changes）。
 const roomTasks = computed<Record<string, RoomTask[]>>(() =>
   Object.fromEntries(
-    store.topics.filter((topic) => topic.my_tasks?.shown.length).map((topic) => [topic.id, topic.my_tasks!.shown])
+    store.topics
+      .map((topic): [string, RoomTask[]] => [
+        topic.id,
+        (topic.my_tasks?.shown ?? []).filter((task) => !task.filling_in),
+      ])
+      .filter(([, tasks]) => tasks.length > 0)
   )
 )
 const roomTaskTotals = computed<Record<string, number>>(() =>
@@ -279,7 +284,6 @@ useCommands(() =>
       :error="store.topicsError"
       :active-docs="activeDocs"
       :unread-map="store.unreadMap"
-      :muted-of="store.isMuted"
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @select-task="openTask"
@@ -295,6 +299,7 @@ useCommands(() =>
       @select-docs="openDocs"
       @retry="store.reloadTopics()"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
+      @rename-task="(p) => store.renameTask(p.id, p.roomId, p.title)"
     >
       <!-- 手机上进项目落在频道列表上，项目名下那一行不画（总览收进项目名面板），所以去
            项目总览的那一行放在列表最顶上。桌面上总览在项目名下那一行，这一行不画

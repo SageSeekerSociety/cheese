@@ -15,7 +15,7 @@ its conversation stays on disk, and the next question starts it again on it.
 
 import uuid
 
-from app.core.config import settings
+from app.core import model_roles
 from app.core.sandbox_auth import mint_personal_credential
 from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import PI
@@ -45,14 +45,14 @@ GONE_AFTER_S = 15.0
 #: reasoning counts, and so do a tool call's arguments: a 题目's whole
 #: description written into a draft is one answer.
 MAX_TOKENS = 16000
-#: The context the session may grow to, and how much of it compaction keeps
-#: free: pi summarises the older part of the conversation once a question's
-#: context passes ``CONTEXT_TOKENS - RESERVE_TOKENS``, keeping the latest
-#: ``KEEP_TOKENS`` verbatim. What a question costs stays bounded however long
-#: the conversation runs.
-CONTEXT_TOKENS = 64_000
+#: How much of the context compaction keeps free, and how much of the latest
+#: conversation it keeps verbatim: pi's own defaults.
 RESERVE_TOKENS = 16_000
-KEEP_TOKENS = 8_000
+KEEP_TOKENS = 20_000
+#: The window assumed for a model the gateway declares none for: the one
+#: Claude Code assumes for a model it does not know.
+ASSUMED_WINDOW = 200_000
+
 #: How long pi waits before retrying a failed model call, doubling for each of
 #: its three retries: pi's own default, written here so that a test can make a
 #: failing gateway fail at once.
@@ -63,6 +63,19 @@ RETRY_BASE_DELAY_MS = 2000
 EFFORT = "high"
 
 
+def context_tokens(model: str) -> int:
+    """The window pi is told ``model`` has. pi summarises the older part of the
+    conversation once a question's context passes it less ``RESERVE_TOKENS``:
+    where the model's provider recommends compacting
+    (``GatewayModel.compact_window``), else short of the window the gateway
+    declares, else of ``ASSUMED_WINDOW``. Sessions on Claude Code compact by
+    the same rule (``session_launch.compact_windows``)."""
+    known = next((m for m in gateway_catalog.snapshot() if m.id == model), None)
+    window = (known and known.context_window) or ASSUMED_WINDOW
+    recommended = known and known.compact_window
+    return min(window, recommended + RESERVE_TOKENS) if recommended else window
+
+
 def effort(model: str) -> str | None:
     """``EFFORT`` when ``model`` honours it, else the model's own default."""
     honoured = next(
@@ -71,28 +84,31 @@ def effort(model: str) -> str | None:
     return EFFORT if EFFORT in honoured else None
 
 
-#: What a person's 芝士 may do (`sandbox/cheese`), the same wherever it is asked:
-#: what the person may do there, as them. The page they have open is said with
-#: each question (``prompt.page``); it never narrows the tools.
+#: What a person's 芝士 may do (`sandbox/cheese`), the same wherever it is asked
+#: and for everyone, in this order: the list is part of every request's
+#: unchanging start, which the model's cache matches on. One tool per kind of
+#: thing the person deals with; reading and searching are one each, since
+#: everything reads the same way by its ref (`assistant.refs`). What others see
+#: goes through its gate (`assistant.gate`). The page the person has open is
+#: said with each question (``prompt.page``); it never narrows the tools.
 TOOLS = (
-    "cheese_task_search",
-    "cheese_task_get",
-    "cheese_task_write",
-    "cheese_task_publish",
-    "cheese_file_read",
-    "cheese_space_materials",
-    "cheese_my_tasks",
-    "cheese_docs_search",
-    "cheese_docs_read",
-    # In a project (asked from one of its pages): read it, and draft what the
-    # person would say there. Nothing here changes the project.
-    "cheese_chat_list",
-    "cheese_chat_search",
-    "cheese_chat_get",
-    "cheese_doc_get",
-    "cheese_project_search",
-    "cheese_message_draft",
-    "cheese_task_draft",
+    "cheese_inbox",
+    "cheese_inbox_respond",
+    "cheese_read",
+    "cheese_find",
+    "cheese_help",
+    "cheese_message_send",
+    "cheese_task_open",
+    "cheese_review_decide",
+    "cheese_member_set",
+    "cheese_channel_create",
+    "cheese_settings_set",
+    "cheese_routine",
+    "cheese_notify_me",
+    "cheese_web_fetch",
+    "cheese_web_search",
+    "cheese_problem_write",
+    "cheese_problem_publish",
 )
 
 
@@ -110,7 +126,7 @@ def session(
     else (`sandbox_auth.mint_personal_credential`)."""
     spec = SessionSpec(
         system_prompt=system_prompt(),
-        model=settings.assistant_model,
+        model=model_roles.model("assistant_model"),
         tools=TOOLS,
         footprint=Footprint(memory_mb=MEMORY_MB, group_limit=SESSIONS_PER_PERSON),
         idle_exit_s=IDLE_EXIT_S,
@@ -119,9 +135,9 @@ def session(
         model_settings=ModelSettings(
             # It reasons: reading a handout and writing a 题目 from it needs it.
             thinking=True,
-            effort=effort(settings.assistant_model),
+            effort=effort(model_roles.model("assistant_model")),
             max_tokens=MAX_TOKENS,
-            context_tokens=CONTEXT_TOKENS,
+            context_tokens=context_tokens(model_roles.model("assistant_model")),
             reserve_tokens=RESERVE_TOKENS,
             keep_tokens=KEEP_TOKENS,
             retry_base_delay_ms=RETRY_BASE_DELAY_MS,

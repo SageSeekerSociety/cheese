@@ -38,13 +38,17 @@ from app.api.deps import (
     get_session_host,
 )
 from app.api.routes import assistant as route
-from app.api.routes import llm_proxy
+from app.api.routes import assistant_agent, llm_proxy
 from app.core.config import settings
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.assistant import gate
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
+from app.domain.gateway_chat import Completion, Usage
+from app.domain.project.models import Project
 from app.domain.task.models import Task, TaskDraft, TaskMembership
 from app.domain.team.models import Team
+from app.domain.topic.models import Topic
 from app.domain.usage import pricing
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ComputeGrant, ResourceUsage
@@ -78,7 +82,8 @@ def _chat():
 class Gateway:
     """The script: each model request takes the next step; a step is
     ``("tool", name, args)``, ``("text", answer)``, or ``("held", first,
-    rest)``: ``first`` is streamed, then nothing until ``release`` is set."""
+    rest)``: ``first`` is streamed, then nothing until ``release`` is set. A
+    tool or text step may end with the reasoning streamed before it."""
 
     def __init__(self) -> None:
         self.script: list[tuple] = []
@@ -236,6 +241,13 @@ class Gateway:
                         c["usage"] = usage
                     return f"data: {json.dumps(c)}\n\n".encode()
 
+                thought = (
+                    [chunk({"role": "assistant", "reasoning_content": step[3]})]
+                    if step[0] == "tool" and len(step) > 3
+                    else [chunk({"role": "assistant", "reasoning_content": step[2]})]
+                    if step[0] == "text" and len(step) > 2
+                    else []
+                )
                 if step[0] == "tool":
                     call = {
                         "index": 0,
@@ -256,7 +268,9 @@ class Gateway:
                         *(chunk({"content": p}) for p in (step[1][:4], step[1][4:])),
                         chunk({}, finish="stop"),
                     ]
-                data = b"".join([*parts, chunk(None, usage=USAGE), b"data: [DONE]\n\n"])
+                data = b"".join(
+                    [*thought, *parts, chunk(None, usage=USAGE), b"data: [DONE]\n\n"]
+                )
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
                 self.send_header("content-length", str(len(data)))
@@ -586,6 +600,38 @@ def test_an_older_conversation_goes_on_from_what_was_said_in_it(client, gateway)
     ]
 
 
+def test_each_model_call_begins_with_the_whole_of_the_one_before(client, gateway):
+    """The prompt cache matches on the start of a request, byte for byte: every
+    call of a conversation sends the one before it unchanged and adds to its
+    end, its tools and rules too, also after its session exits and starts
+    again on what it kept."""
+    me = _auth(client, "asker")
+    task_id = _task(client)
+    conversation = _start(client, task_id, me)
+    gateway.script = [
+        ("tool", "cheese_task_get", {"task": task_id}, "先读题目。"),
+        ("text", "要先会 PyTorch。", "读完了。"),
+    ]
+    assert _ask(client, conversation, "做这道题要先会什么？", me).status_code == 200
+    stop_all(gateway.host.home)
+    gateway.script = [("text", "从 0.1 起步。", "想一想。")]
+    assert _ask(client, conversation, "学习率设多少？", me).status_code == 200
+
+    calls = gateway.requests
+    assert len(calls) == 3
+    for before, after in zip(calls, calls[1:], strict=False):
+        assert after["tools"] == before["tools"]
+        kept = after["messages"][: len(before["messages"])]
+        assert kept == before["messages"], json.dumps(
+            [before["messages"], kept], ensure_ascii=False, indent=1
+        )
+    # Each answer keeps what each of its calls sent and how much the cache
+    # answered, for watching how well the start holds.
+    shown = client.get(f"/assistant/conversations/{conversation}", headers=me)
+    answers = [m for m in shown.json()["data"]["messages"] if m["role"] == "assistant"]
+    assert [len(m["parts"]["usage"]["calls"]) for m in answers] == [2, 1]
+
+
 def test_a_conversation_is_its_owners_alone(client, gateway):
     me = _auth(client, "asker")
     stranger = _auth(client, "stranger")
@@ -677,13 +723,16 @@ def test_my_tasks_reports_only_what_the_asker_takes_part_in(client, gateway):
 
     asyncio.run(join())
     conversation = _start(client, here, me)
-    gateway.script = [("tool", "cheese_my_tasks", {}), ("text", "你领了一道题。")]
+    gateway.script = [
+        ("tool", "cheese_read", {"ref": "me"}),
+        ("text", "你领了一道题。"),
+    ]
 
     r = _ask(client, conversation, "我领了哪些题？", me)
 
     assert r.status_code == 200
     assert any(
-        event == "tool" and data["name"] == "cheese_my_tasks"
+        event == "tool" and data["name"] == "cheese_read"
         for event, data in _events(r.text)
     )
     tool_result = json.dumps(gateway.requests[-1]["messages"][-1], ensure_ascii=False)
@@ -1028,7 +1077,7 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     page = {"kind": "draft", "id": draft}
 
     gateway.script = [
-        ("tool", "cheese_task_write", {"draft": draft, "difficulty": "高级"}),
+        ("tool", "cheese_problem_write", {"draft": draft, "difficulty": "高级"}),
         ("text", "难度改成了高级。"),
     ]
     r = client.post(
@@ -1050,7 +1099,7 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     # What it did is kept with the answer: the conversation shows it again.
     kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
     parts = kept["data"]["messages"][-1]["parts"]
-    assert [step["name"] for step in parts["steps"]] == ["cheese_task_write"]
+    assert [step["name"] for step in parts["steps"]] == ["cheese_problem_write"]
     assert '"difficulty"' in parts["steps"][0]["args"]
     assert parts["edits"][0]["changed"] == {"rank": {"before": 2, "after": 3}}
 
@@ -1079,8 +1128,8 @@ def test_what_cheese_wrote_into_a_draft_is_undone_by_the_person(client, gateway)
         "id"
     ]
     gateway.script = [
-        ("tool", "cheese_task_write", {"draft": draft, "difficulty": "初级"}),
-        ("tool", "cheese_task_write", {"draft": draft, "difficulty": "高级"}),
+        ("tool", "cheese_problem_write", {"draft": draft, "difficulty": "初级"}),
+        ("tool", "cheese_problem_write", {"draft": draft, "difficulty": "高级"}),
         ("text", "难度改成了高级。"),
     ]
     r = client.post(
@@ -1167,7 +1216,7 @@ def test_files_handed_over_alone_are_a_question_the_page_explains(client, gatewa
     assert r.status_code == 200, r.text
     told = json.dumps(gateway.requests[0], ensure_ascii=False)
     assert "<这一页>" in told and "发布题目页" in told
-    assert "尚未填写" in told and "实验室课题.pdf（文件 id 41）" in told
+    assert "尚未填写" in told and "实验室课题.pdf（files/41）" in told
     kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
     asked = kept["data"]["messages"][0]
     assert asked["text"] == "" and asked["parts"] == {"files": ["实验室课题.pdf"]}
@@ -1209,24 +1258,59 @@ def test_the_thread_lists_every_topic_and_a_new_one_is_the_persons(client, gatew
     asyncio.run(placed())
 
 
+class _Stops:
+    """The gate's model, stopping whatever it is shown."""
+
+    async def complete(self, *, system, prompt, timeout, max_tokens=None, extra=None):
+        said = "拦" if max_tokens and max_tokens < 50 else "用户没说要发。\n结论：拦"
+        return Completion(said, Usage(10, 1), 0.0)
+
+
+def _gate_stops(monkeypatch) -> None:
+    async def looks(session):
+        return _Stops()
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+    # Nobody here decides on the cards it puts up: they are left waiting.
+    monkeypatch.setattr(assistant_agent, "CARD_WAIT_S", 0.0)
+
+
+def _address(client, room: str) -> tuple[str, int]:
+    """The room's project's slug and the room's number."""
+
+    async def read():
+        async with client.test_factory() as db:
+            topic = await db.get(Topic, uuid.UUID(room))
+            project = await db.get(Project, topic.project_id)
+            return project.slug, topic.number
+
+    return asyncio.run(read())
+
+
 def test_asked_in_a_channel_it_reads_the_channel_and_drafts_what_the_person_sends(
-    client, gateway
+    client, gateway, monkeypatch
 ):
     """Asked from a channel's page, 芝士 is told the channel and its latest
-    messages, reads more with the chat tools as the person, and drafts a reply
-    that is not sent: the panel shows it, and only the person marks it sent."""
+    messages, searches as the person, and a reply the gate does not let
+    through is not sent: the panel shows it as a card, and only the person
+    marks it sent."""
     room, _ = _room(client)
+    slug, number = _address(client, room)
     post_message(client, room, "alice", {"content": "中期演示视频谁来负责？"})
     me = _auth(client, "alice")
+    _gate_stops(monkeypatch)
     conversation = client.post("/assistant/conversations", headers=me).json()["data"][
         "id"
     ]
     gateway.script = [
-        ("tool", "cheese_chat_search", {"topic": room, "query": "演示视频"}),
+        ("tool", "cheese_find", {"query": "演示视频", "where": slug}),
         (
             "tool",
-            "cheese_message_draft",
-            {"topic": room, "text": "演示视频我来负责，周五前给初版。"},
+            "cheese_message_send",
+            {
+                "where": f"{slug}/channels/{number}",
+                "text": "演示视频我来负责，周五前给初版。",
+            },
         ),
         ("text", "起草了一条回复，等你确认。"),
     ]
@@ -1241,7 +1325,8 @@ def test_asked_in_a_channel_it_reads_the_channel_and_drafts_what_the_person_send
     events = _events(r.text)
     assert not [d for e, d in events if e == "tool_failed"], events
     told = json.dumps(gateway.requests[0], ensure_ascii=False)
-    assert "频道「话题」" in told and "中期演示视频谁来负责" in told
+    assert f"频道「话题」（{slug}/channels/{number}）" in told
+    assert "中期演示视频谁来负责" in told
     searched = json.dumps(gateway.requests[1], ensure_ascii=False)
     assert "中期演示视频谁来负责" in searched
     drafted = next(d for e, d in events if e == "proposal")
@@ -1270,19 +1355,21 @@ def test_asked_in_a_channel_it_reads_the_channel_and_drafts_what_the_person_send
 
 
 def test_a_task_is_drafted_with_its_brief_for_the_channel_it_is_asked_in(
-    client, gateway
+    client, gateway, monkeypatch
 ):
     room, _ = _room(client)
+    slug, number = _address(client, room)
     me = _auth(client, "alice")
+    _gate_stops(monkeypatch)
     conversation = client.post("/assistant/conversations", headers=me).json()["data"][
         "id"
     ]
     gateway.script = [
         (
             "tool",
-            "cheese_task_draft",
+            "cheese_task_open",
             {
-                "topic": room,
+                "where": f"{slug}/channels/{number}",
                 "title": "排查路线规划超时",
                 "text": "复现超时，修好并补测试。",
             },

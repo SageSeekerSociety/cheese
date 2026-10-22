@@ -593,6 +593,17 @@ def inbox(client, handle: str, kind: str | None = None) -> list[dict]:
     return rows if kind is None else [row for row in rows if row["type"] == kind]
 
 
+def as_read(line: str, names: dict[str, str] | None = None) -> str:
+    """A room line as a notification about it reads: each ``<@handle>`` token
+    the room draws as a name chip, written out as that person's name. Accounts
+    the tests seed have no nickname, so their name is their handle."""
+    import re
+
+    return re.sub(
+        r"<@([\w-]+)>", lambda m: (names or {}).get(m.group(1), m.group(1)), line
+    )
+
+
 def mail(client, token: str, kind: str) -> list[dict]:
     """Every notification of ``kind`` that reached the holder of ``token``, newest
     first, each read the way their browser reads one (``GET /notifications/{id}``).

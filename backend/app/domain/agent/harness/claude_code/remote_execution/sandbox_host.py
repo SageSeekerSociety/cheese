@@ -45,8 +45,9 @@ over TLS, which the sandbox's /etc/hosts gives the site's name
 
 The caller is trusted with nothing but its own processes. Arguments are
 checked to the character, the process must be the caller's, and the only
-programs run are `ip`, `iptables-save` and `iptables-restore` from the
-system's own directories. A sandbox whose processes are gone is cleaned up by
+programs run are root's copies of the platform's own static `ip`, iptables
+(its nf_tables build, as every current distribution's is) and `xfs_quota`, in
+`TOOLS` (`bootstrap.sandbox_tools`), never whatever the system has. A sandbox whose processes are gone is cleaned up by
 the next `up`, so one that died without its `down` leaves nothing for long.
 
 The filter rules name no sandbox: every sandbox's link is `chs<n>` and they
@@ -103,6 +104,13 @@ CHAINS = {
 NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 CLONE_NEWNET = 0x40000000
 SYSTEM_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+# A copy of `bootstrap.SANDBOX_TOOLS`, held to it by test_footprint_root.py.
+TOOLS = "/usr/local/libexec/cheese-sandbox-tools"
+IP = f"{TOOLS}/ip"
+XFS_QUOTA = f"{TOOLS}/xfs_quota"
+# One binary for every iptables command, which it takes as its first argument.
+IPTABLES_SAVE = (f"{TOOLS}/xtables-nft-multi", "iptables-save")
+IPTABLES_RESTORE = (f"{TOOLS}/xtables-nft-multi", "iptables-restore", "--noflush")
 # Where a sandbox dials the site, inside its own loopback range and apart
 # from 127.0.0.1, so a server of the room's own on 127.0.0.1:443 is left
 # alone. A copy is in `confinement.SITE_ADDRESS`, held to this by
@@ -190,27 +198,36 @@ def restore(wanted, saved):
     or "" when `saved` (what `iptables-save` printed) shows they already do.
 
     Each chain is declared, which with `--noflush` empties it first, so the
-    same text written twice leaves the same rules. A chain of ours not yet
-    jumped to is put first in its built-in chain: Docker sets FORWARD's
+    same text written twice leaves the same rules. The jump to each chain of
+    ours is the first rule of its built-in chain: Docker sets FORWARD's
     policy to DROP and ufw INPUT's, and first means neither decides for a
-    sandbox. Whether the tables hold `wanted` is judged by the digest of what
+    sandbox. A jump something else has since put a rule ahead of is moved
+    back to the top: Docker inserts its own at the top of FORWARD and
+    POSTROUTING each time its daemon starts, and a sandbox behind them could
+    reach a container's published port and be reached from it. Whether the tables hold `wanted` is judged by the digest of what
     was last written, kept as a rule comment in our own chain, and the number
     of rules in each chain, so a flush by something else is noticed."""
     digest = hashlib.sha256(json.dumps(wanted, sort_keys=True).encode()).hexdigest()
     marker = f'-m comment --comment "cheese-sandbox {digest[:16]}" -j RETURN'
-    table, counts, present = None, {}, set()
+    table, counts, present, first = None, {}, {}, {}
     for line in saved.splitlines():
         if line.startswith("*"):
             table = line[1:]
         elif line.startswith("-A "):
-            present.add((table, line))
+            present[table, line] = present.get((table, line), 0) + 1
             chain = line.split()[1]
             counts[chain] = counts.get(chain, 0) + 1
+            first.setdefault((table, chain), line)
     jumps = {
         table: [
-            f"-I {parent} 1 -j {chain}"
+            edit
             for chain, parent in chains
-            if (table, f"-A {parent} -j {chain}") not in present
+            if first.get((table, parent)) != f"-A {parent} -j {chain}"
+            for edit in [
+                *[f"-D {parent} -j {chain}"]
+                * present.get((table, f"-A {parent} -j {chain}"), 0),
+                f"-I {parent} 1 -j {chain}",
+            ]
         ]
         for table, chains in CHAINS.items()
     }
@@ -350,7 +367,7 @@ def release(name, record):
     host, _ = links(record["index"])
     if Path("/sys/class/net", host).exists():
         subprocess.run(
-            ["ip", "link", "del", host], capture_output=True, env={"PATH": SYSTEM_PATH}
+            [IP, "link", "del", host], capture_output=True, env={"PATH": SYSTEM_PATH}
         )
     (STATE / f"{name}.json").unlink(missing_ok=True)
 
@@ -369,10 +386,10 @@ def write_rules(records):
             for port in [*record["forward"], *filter(None, [record.get("site")])]
         }
     )
-    saved = run(["iptables-save", "-t", "filter"]) + run(["iptables-save", "-t", "nat"])
+    saved = run([*IPTABLES_SAVE, "-t", "filter"]) + run([*IPTABLES_SAVE, "-t", "nat"])
     text = restore(rules(servers, ports), saved)
     if text:
-        run(["iptables-restore", "--noflush"], text)
+        run([*IPTABLES_RESTORE], text)
 
 
 def enable(directory):
@@ -427,7 +444,7 @@ def connect(index, pid, forward, site=None):
     it costs two."""
     host, peer = links(index)
     gateway, _ = addresses(index)
-    run(["ip", "link", "add", host, "type", "veth", "peer", peer, "netns", str(pid)])
+    run([IP, "link", "add", host, "type", "veth", "peer", peer, "netns", str(pid)])
     sysctl(f"net.ipv6.conf.{host}.disable_ipv6", 1)
     # Strict reverse-path filtering: a packet from the link must carry the
     # sandbox's own address, so no rule has to name it.
@@ -435,9 +452,7 @@ def connect(index, pid, forward, site=None):
     if forward or site:
         sysctl(f"net.ipv4.conf.{host}.route_localnet", 1)
     sysctl("net.ipv4.ip_forward", 1)
-    run(
-        ["ip", "-batch", "-"], f"addr add {gateway}/30 dev {host}\nlink set {host} up\n"
-    )
+    run([IP, "-batch", "-"], f"addr add {gateway}/30 dev {host}\nlink set {host} up\n")
     machine = os.open("/proc/self/ns/net", os.O_RDONLY)
     sandbox = os.open(f"/proc/{pid}/ns/net", os.O_RDONLY)
     try:
@@ -447,10 +462,10 @@ def connect(index, pid, forward, site=None):
         sysctl("net.ipv6.conf.all.disable_ipv6", 1)
         sysctl("net.ipv6.conf.default.disable_ipv6", 1)
         link, nat = inside(index, forward, site)
-        run(["ip", "-batch", "-"], link)
+        run([IP, "-batch", "-"], link)
         if nat:
             sysctl(f"net.ipv4.conf.{peer}.route_localnet", 1)
-            run(["iptables-restore", "--noflush"], nat)
+            run([*IPTABLES_RESTORE], nat)
     finally:
         enter(machine)
         os.close(machine)
@@ -589,7 +604,7 @@ def limit_project(mount, project, disk_mib, inodes):
     """Set a project's limits; 0 for both lifts them."""
     run(
         [
-            "xfs_quota",
+            XFS_QUOTA,
             "-x",
             "-c",
             f"limit -p bhard={disk_mib}m ihard={inodes} {project}",

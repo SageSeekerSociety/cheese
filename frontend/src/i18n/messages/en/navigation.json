@@ -65,12 +65,13 @@
     "appearance": "Appearance",
     "language": "Language",
     "logout": "Log out",
-    "noIntro": "No bio yet",
     "theme": {
       "system": "System",
       "light": "Light",
       "dark": "Dark"
     },
+    "invites": "Invite friends",
+    "seatsLeft": "{n} left",
     "archivedProjects": "Archived projects",
     "download": "Download apps",
     "usePhone": "Use on your phone"

@@ -15,8 +15,8 @@ import { computed, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { t } from '../../../i18n'
-import { agentNames, memberName } from '../../../lib/agentNames'
-import { isAgentBlock } from '../../../lib/authorship'
+import { agentNames, memberHoverTitle, memberName, memberOriginalName } from '../../../lib/agentNames'
+import { isAgentBlock, isAgentHandle } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
 import { isAvatarKnownFailed, rememberAvatarFailure } from '../../../utils/avatarFailures'
 import { getAvatarUrl } from '../../../utils/materials'
@@ -70,6 +70,7 @@ export function useRoomRoster(options: {
   type RosterRow = {
     name?: string
     name_source?: string
+    remark?: string | null
     handle?: string
     member_handle?: string
     user_handle?: string
@@ -129,6 +130,7 @@ export function useRoomRoster(options: {
     const room = (rosterLoaded.value ? roomMembers.value : []).map((m) => ({
       handle: m.member_handle,
       label: memberName(m) || m.member_handle,
+      originalName: m.remark ? memberOriginalName(m) || null : null,
       // 房间名册这一行就带着「他自己挑过的头像」；@ 菜单原来只配色块，所以同一个人
       // 在菜单里只有首字母、在消息行里却有真图。没挑过就是 null，交给首字母。
       avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
@@ -142,13 +144,21 @@ export function useRoomRoster(options: {
     // 已停用的也不列：停用就是为了挡住新的活，补全菜单是派活的入口。
     //
     // 这些人 @ 得到：频道人人能读，被 @ 的人收得到通知，在支线里回得了话。只是他们
-    // 没加入这个频道，所以排在频道里的人后面。名册没到时说不准谁在谁不在，那一刻不分。
+    // 没加入这个频道，所以排在频道里的人后面。名册没到时说不准谁在谁不在，那一刻不分
+    // ——私密频道例外：宁可少列，也不把频道外的人放进来。
+    //
+    // 私密频道只有名册上的人看得到。别人的私人 Claude Code 不在名册上，@ 它会让它
+    // 入座、读到这里的内容，等于把频道外的人拉进来；主人自己在频道里时不算，他的
+    // 助手本来就在替一个能看的人干活。公开频道照旧，项目里的人都能 @ 它。
+    const privateChannel = !!options.topic()?.members_only
     const rest = options
       .members()
       .filter((m) => !inRoom.has(m.user_handle) && (!m.agent || m.owner_handle) && m.active !== false)
+      .filter((m) => !privateChannel || !m.agent || inRoom.has(m.owner_handle ?? ''))
       .map((m) => ({
         handle: m.user_handle,
-        label: m.name || m.user_handle,
+        label: memberName(m) || m.user_handle,
+        originalName: m.remark ? memberOriginalName(m) || null : null,
         avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
         agent: !!m.agent,
         external: isExternalMember(m),
@@ -197,9 +207,29 @@ export function useRoomRoster(options: {
   }
   function displayName(m: Pick<Block, 'author_type' | 'author'>): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)
-    const name = memberByHandle.value.get(m.author)?.name
+    const row = memberByHandle.value.get(m.author)
+    const name = row ? memberName(row) : ''
     if (name) return name
     return options.closed?.().has(m.author) ? t('account.closedUser') : m.author
+  }
+  function authorTitle(m: Block): string | null {
+    if (isAgentBlock(m)) return null
+    return memberHoverTitle(memberByHandle.value.get(m.author), m.author)
+  }
+  /**
+   * 一个 handle 在界面上的名字：队友按名册查（房间名册先说，项目名册补），人按项目
+   * 名册查；都认不出时人显示 handle、队友写「芝士」。
+   *
+   * 列「谁点了这个表情」用它。**不要**拿 `mentionNames` 顶：那张表额外塞了 all/here
+   * 两个保留键（渲染成「所有人」「在线成员」），一个恰好叫 here 的用户会被显示成
+   * 「在线成员」——`here` 在注册校验里是合法 handle。
+   */
+  function nameOfHandle(handle: string): string {
+    if (isAgentHandle(handle)) return agentDisplayName(handle)
+    const row = memberByHandle.value.get(handle)
+    const name = row ? memberName(row) : ''
+    if (name) return name
+    return options.closed?.().has(handle) ? t('account.closedUser') : handle
   }
   // 真头像加载失败过的 URL —— 退回彩色首字母，不留破图。
   //
@@ -240,6 +270,8 @@ export function useRoomRoster(options: {
     agentNameOf,
     agentDisplayName,
     displayName,
+    authorTitle,
+    nameOfHandle,
     isExternal,
     avatarSrc,
     onAvatarError,

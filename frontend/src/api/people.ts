@@ -53,6 +53,14 @@ export function deleteUnderstanding(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/users/me/understanding/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+// Set or clear the signed-in viewer's personal remark for a teammate.
+export function setUserRemark(handle: string, remark: string): Promise<{ handle: string; remark: string | null }> {
+  return request<{ handle: string; remark: string | null }>(`/users/${encodeURIComponent(handle)}/remark`, {
+    method: 'PUT',
+    body: JSON.stringify({ remark }),
+  })
+}
+
 // Of these handles, the ones whose account was closed (注销): their old messages
 // are signed 「已注销用户」 instead of a bare handle.
 export function listClosedAccounts(handles: string[]): Promise<{ handles: string[] }> {

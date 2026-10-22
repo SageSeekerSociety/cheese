@@ -1,15 +1,25 @@
 <template>
-  <!-- What 芝士 drafted for the person to send: a message, or a task with its brief. -->
+  <!-- What 芝士 was about to do and its gate asked the person first: a message, a task, or another action. -->
   <div class="aprop" :class="`aprop--${proposal.state}`" data-testid="agent-proposal">
     <div class="aprop__head">
       <template v-if="proposal.state === 'pending'">{{ t('tasks.assistant.proposal.waiting') }}</template>
       <template v-else-if="proposal.state === 'dismissed'">{{ t('tasks.assistant.proposal.dismissed') }}</template>
+      <template v-else-if="proposal.state === 'expired'">{{ t('tasks.assistant.proposal.expired') }}</template>
+      <template v-else-if="proposal.kind === 'act'">{{ t('tasks.assistant.proposal.done') }}</template>
       <template v-else-if="proposal.kind === 'task'">{{
         t('tasks.assistant.proposal.opened', { title: proposal.title })
       }}</template>
       <template v-else>{{ t('tasks.assistant.proposal.sent', { where: proposal.where }) }}</template>
     </div>
-    <dl class="aprop__rows">
+    <dl v-if="proposal.kind === 'act'" class="aprop__rows">
+      <dt>{{ t('tasks.assistant.proposal.what') }}</dt>
+      <dd class="aprop__said">{{ proposal.text }}</dd>
+      <template v-if="pending && proposal.reason">
+        <dt>{{ t('tasks.assistant.proposal.why') }}</dt>
+        <dd class="aprop__said">{{ proposal.reason }}</dd>
+      </template>
+    </dl>
+    <dl v-else class="aprop__rows">
       <dt>{{ proposal.kind === 'task' ? t('tasks.assistant.proposal.channel') : t('tasks.assistant.proposal.to') }}</dt>
       <dd>{{ proposal.where }}</dd>
       <template v-if="proposal.kind === 'task'">
@@ -47,7 +57,13 @@
     </dl>
     <div v-if="pending" class="aprop__act">
       <BaseButton kind="primary" size="sm" :loading="busy" :disabled="!ready" @click="send">
-        {{ proposal.kind === 'task' ? t('tasks.assistant.proposal.openTask') : t('tasks.assistant.proposal.send') }}
+        {{
+          proposal.kind === 'act'
+            ? t('tasks.assistant.proposal.confirm')
+            : proposal.kind === 'task'
+              ? t('tasks.assistant.proposal.openTask')
+              : t('tasks.assistant.proposal.send')
+        }}
       </BaseButton>
       <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('dismiss', proposal.id)">
         {{ t('tasks.assistant.proposal.dismiss') }}
@@ -62,9 +78,9 @@
 </template>
 
 <script setup lang="ts">
-// 芝士替人起草、等人确认的一件事：一条要发到项目里的消息，或一个要开的任务。确认前正文
-// （和任务的标题）可以改；点了才以这个人的名义发出去，怎么发由外面做。发出、不用了以后
-// 卡上只写结果。
+// 芝士要做、把关先问人的一件事：一条要发到项目里的消息、一个要开的任务（确认前正文和
+// 标题可以改），或别的一件（采纳、退回、加人、建频道……，卡上写要做的事和为什么先问）。
+// 点了才以这个人的名义做，怎么做由外面做。做完、不用了以后卡上只写结果。
 import type { PanelProposal } from '@/lib/assistantView'
 
 import { computed, ref, watch } from 'vue'
@@ -93,7 +109,11 @@ watch(
 )
 
 const pending = computed(() => props.proposal.state === 'pending')
-const ready = computed(() => text.value.trim() !== '' && (props.proposal.kind !== 'task' || title.value.trim() !== ''))
+const ready = computed(
+  () =>
+    props.proposal.kind === 'act' ||
+    (text.value.trim() !== '' && (props.proposal.kind !== 'task' || title.value.trim() !== ''))
+)
 
 function send() {
   emit('send', props.proposal.id, {
@@ -125,7 +145,8 @@ function send() {
 }
 
 .aprop--sent .aprop__head,
-.aprop--dismissed .aprop__head {
+.aprop--dismissed .aprop__head,
+.aprop--expired .aprop__head {
   color: var(--muted);
 }
 
@@ -178,6 +199,7 @@ function send() {
 
 .aprop__act {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 </style>

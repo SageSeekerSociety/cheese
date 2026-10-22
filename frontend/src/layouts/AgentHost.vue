@@ -76,12 +76,14 @@ import {
   attachToAgent,
   dismissProposal,
   earlierView,
+  openAgentConversation,
   projectOfOpenedTask,
   removeAgentFile,
   resetAgent,
   sendingProposal,
   sendProposal,
   toggleAgent,
+  undoChange,
 } from '@/stores/agent'
 
 const { mdAndUp } = useDisplay()
@@ -102,6 +104,20 @@ watch(
   (now) => {
     agentAvailable.value = now
     if (!now) agentOpen.value = false
+  },
+  { immediate: true }
+)
+
+// `?assistant=<对话>`：通知、推送和设置页「查看对话」把人带到这里，打开面板里的那段对话，
+// 再把这个参数从地址栏拿掉，刷新不会再开一次。
+watch(
+  () => [route.query.assistant, available.value] as const,
+  ([id, ready]) => {
+    if (typeof id !== 'string' || !id || !ready) return
+    openAgentConversation(id)
+    const rest = { ...route.query }
+    delete rest.assistant
+    void router.replace({ query: rest })
   },
   { immediate: true }
 )
@@ -178,8 +194,14 @@ const panelEvents = {
   older: () => void agentThread.older().catch(() => undefined),
   close: () => (agentOpen.value = false),
   dock: (next: boolean) => (docked.value = next),
-  undo: (change: number, key: string) => agentSurface.value?.undo?.(change, key),
-  undoAll: (rows: { change: number; key: string }[]) => agentSurface.value?.undoAll?.(rows),
+  undo: (change: number, key: string) =>
+    agentSurface.value?.undo ? agentSurface.value.undo(change, key) : void undoChange(change, key),
+  undoAll: (rows: { change: number; key: string }[]) =>
+    agentSurface.value?.undoAll
+      ? agentSurface.value.undoAll(rows)
+      : void (async () => {
+          for (const row of rows) await undoChange(row.change, row.key)
+        })(),
   jump: (key: string) => (agentSurface.value?.jump ?? layer.jump)(key),
   openDraft: (id: number) => agentSurface.value?.openDraft?.(id),
   openTask: (id: number) => (agentSurface.value?.openTask ?? openTask)(id),

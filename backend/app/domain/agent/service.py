@@ -153,6 +153,10 @@ class AgentUsage:
     # Part of ``input_tokens``, where the source reports them.
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    #: Each model call of the turn, in order, as (input tokens, of them read
+    #: from the provider's cache), where the source reports calls one by one:
+    #: how well a session keeps its prompt's start the same.
+    calls: tuple[tuple[int, int], ...] = ()
 
     @property
     def total_tokens(self) -> int:

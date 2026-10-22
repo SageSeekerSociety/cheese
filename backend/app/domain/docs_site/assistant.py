@@ -44,6 +44,7 @@ import httpx
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import model_roles
 from app.core.config import settings
 from app.core.sentences import say
 from app.domain.docs_site import tools, visits
@@ -263,7 +264,7 @@ async def gateway_key(
         KeySpec(
             name=KEY_NAME,
             alias="docs-assistant",
-            model=settings.docs_assistant_model,
+            model=model_roles.model("docs_assistant_model"),
             budget_usd=None,
             rpm=120,
         ),
@@ -318,7 +319,7 @@ async def stream_answer(
     the gateway refuses (400/422) is dropped and the call made once more, as in
     ``_tool_round``."""
     body = {
-        "model": settings.docs_assistant_model,
+        "model": model_roles.model("docs_assistant_model"),
         "messages": messages,
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -412,7 +413,7 @@ async def _tool_round(
     Returns the first choice. Raises ``Refused`` when the gateway would not
     answer at all."""
     body = {
-        "model": settings.docs_assistant_model,
+        "model": model_roles.model("docs_assistant_model"),
         "messages": messages,
         "tools": tools.SCHEMAS,
         "tool_choice": "auto",
@@ -594,7 +595,7 @@ def record(
             # Which model answered, and whether one was called at all: the
             # one-shot path answers "no_match" without ever reaching the
             # gateway, the agentic path may have searched and found nothing.
-            model=settings.docs_assistant_model
+            model=model_roles.model("docs_assistant_model")
             if result.prompt_tokens is not None
             else None,
             prompt_tokens=result.prompt_tokens,

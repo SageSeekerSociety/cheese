@@ -25,6 +25,7 @@
     "unavailableTeam": "You cannot access this team. Select a team you belong to."
   },
   "rewards": {
+    "inviteCapped": "You've already earned the 1,500-credit monthly maximum from invitations, so this friend's first acceptance adds no credits.",
     "betaTitle": "Beta credits",
     "betaOnce": "Once per account, added to your personal balance.",
     "activity": "Beta rewards",
@@ -51,9 +52,7 @@
     "count": "{n} reports",
     "summaryNote": "Rewards go to your personal balance when your report is accepted.",
     "invite": "Invitation reward",
-    "gainPoints": "+{n} points",
-    "inviteEarned": "{n} credits earned from invitations",
-    "pointsEarned": "{n} contribution points"
+    "inviteEarned": "{n} credits earned from invitations"
   },
   "offers": {
     "feedbackLink": "Open feedback center",

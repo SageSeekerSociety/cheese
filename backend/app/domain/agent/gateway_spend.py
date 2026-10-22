@@ -25,6 +25,7 @@ from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.service import AgentUsage
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, Payer
+from app.domain.usage.models import GATEWAY_SEARCH_MODEL, SEARCH_KIND, SEARCH_ROUTE
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,10 @@ async def _charge_once(
             # `model=""` is the one unattributed migration row
             # (`drain_new_usage`): real spend, named by the default.
             model = usage.model or charge.model
+            # Web searches made on the key (`/web-search`) are charged with
+            # its model calls but are none: their own route keeps them out of
+            # every count of calls and tokens (``NOT_MODEL_CALLS``).
+            search = model == GATEWAY_SEARCH_MODEL
             await ledger.record(
                 payer,
                 credits=spend_to_credits(usage.cost_usd),
@@ -147,8 +152,8 @@ async def _charge_once(
                 cache_write_tokens=usage.cache_write_tokens,
                 output_tokens=usage.output_tokens,
                 cost_usd=usage.cost_usd,
-                route="gateway",
-                kind=charge.kind,
+                route=SEARCH_ROUTE if search else "gateway",
+                kind=SEARCH_KIND if search else charge.kind,
                 topic_id=charge.topic_id,
                 turn_id=charge.turn_id,
                 user_id=charge.user_id,

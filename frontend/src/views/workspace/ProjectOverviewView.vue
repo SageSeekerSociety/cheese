@@ -263,7 +263,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                         >{{ progressTitle(item) }}</span
                       >
                       <span v-if="item.by" class="c-faint">
-                        · <span data-user-content>{{ nameOf(item.by) }}</span></span
+                        · <span data-user-content>{{ item.byGithub ? item.by : nameOf(item.by) }}</span></span
                       >
                     </span>
                     <span class="ov-event__when t-meta c-faint">{{ relTime(item.at) }}</span>

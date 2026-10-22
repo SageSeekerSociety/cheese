@@ -114,4 +114,20 @@ describe('AssistantPanel', () => {
     await fireEvent.click(view.getByRole('button', { name: '固定到右侧' }))
     expect(view.emitted('dock')).toEqual([[true]])
   })
+
+  it('a run the platform started reads as what started it, not as what the platform told 芝士', () => {
+    const view = mount({
+      messages: [
+        {
+          role: 'platform',
+          text: '<平台>\n例行事务「每日待办」现在运行',
+          at: '2026-10-01T00:00:00Z',
+          shown: { routine: '每日待办' },
+        },
+        { role: 'assistant', text: '今天没有待办。', at: '2026-10-01T00:00:05Z' },
+      ],
+    })
+    expect(view.getByText('例行事务「每日待办」开始运行')).toBeTruthy()
+    expect(view.queryByText(/<平台>/)).toBeNull()
+  })
 })

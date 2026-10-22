@@ -137,20 +137,18 @@ def test_it_opens_only_the_routes_that_accept_it(client):
 
 
 def test_it_acts_only_where_it_was_minted(client):
+    """An agent's credential, minted for a room. A person's own 芝士, minted
+    for no room, reads as the person does
+    (`test_a_persons_own_cheese_reads_wherever_the_person_may`)."""
     task, _, _ = _document(client)
     elsewhere, _, _ = _document(client)
-    nowhere = mint_delegated_credential(
-        user_id=None, handle="bob", work=str(uuid.uuid4()), ttl_s=300
-    )
 
     other_room = client.get(
         _path(client, elsewhere), headers=_as(_credential(client, task))
     )
-    no_room = client.get(_path(client, task), headers=_as(nowhere))
     unbound = client.get("/tasks/joined", headers=_as(_credential(client, task)))
 
     assert other_room.status_code == 403
-    assert no_room.status_code == 403
     assert unbound.status_code == 403
 
 
@@ -269,32 +267,37 @@ def test_an_expired_or_forged_credential_is_none(client):
     assert model.status_code in (401, 403)
 
 
-def test_a_persons_own_cheese_in_a_project_reads_it_and_still_reaches_their_own(
-    client,
-):
-    """A person's 芝士 asked from a project's page carries that project: it reads
-    the project's channels as the person, still reaches the routes that name no
-    project (their own drafts and 题目), and no other project. An agent's
-    credential still reaches only its room."""
+def test_a_persons_own_cheese_reads_wherever_the_person_may(client):
+    """A person's own 芝士 reads as the person: the project it was asked from,
+    any other project the person is in, and the routes that name no project
+    (their own drafts and 题目); a project the person is not in, it cannot. An
+    agent's credential still reaches only its room."""
     from tests.integration.test_message_edit import _room
 
     room, project = _room(client)
     other, _ = _room(client)
     alice = _user_id(client, "alice")
+    seed_user(client, "carol")
+    carol = _user_id(client, "carol")
 
-    def personal(project_id: str) -> str:
+    def personal(user_id: int, handle: str, project_id: str) -> str:
         return mint_delegated_credential(
-            user_id=alice,
-            handle="alice",
+            user_id=user_id,
+            handle=handle,
             work=str(uuid.uuid4()),
             project_id=project_id,
             ttl_s=300,
         )
 
-    token = personal(project)
+    token = personal(alice, "alice", project)
     assert client.get(f"/topics/{room}/history", headers=_as(token)).status_code == 200
     assert client.get("/tasks/joined", headers=_as(token)).status_code == 200
-    assert client.get(f"/topics/{other}/history", headers=_as(token)).status_code == 403
+    assert client.get(f"/topics/{other}/history", headers=_as(token)).status_code == 200
+    outsider = personal(carol, "carol", project)
+    assert client.get(f"/topics/{room}/history", headers=_as(outsider)).status_code in (
+        403,
+        404,
+    )
 
     task, seat, _ = _document(client)
     agent = _credential(client, task, agent=seat)

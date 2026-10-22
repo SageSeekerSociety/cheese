@@ -18,6 +18,7 @@ from app.core.sentences import say
 from app.domain.agent.model_catalog import model_choices
 from app.domain.authz import policy
 from app.domain.identity.services import IdentityService
+from app.domain.usage import referrals
 from app.domain.usage.incentives import CreditIncentives
 from app.domain.usage.plans import PlanService
 from app.domain.usage.schemas import (
@@ -64,7 +65,15 @@ async def require_human(
 
 @router.get("/users/me/credits/beta", **typed_response(BetaCreditsOut))
 async def beta_credits(db: DbSession, user: AuthUser) -> dict:
-    return ok(await CreditIncentives(db).beta(user.user_id))
+    # The invite figures live with the referral rules, which build on
+    # CreditIncentives and so cannot be imported by it.
+    return ok(
+        {
+            **await CreditIncentives(db).beta(user.user_id),
+            "invite_credits": referrals.INVITER_CREDITS,
+            "invitee_credits": referrals.JOIN_CREDITS + referrals.ACTIVATED_CREDITS,
+        }
+    )
 
 
 @router.get("/users/me/credits/rewards", **typed_response(CreditRewardsOut))

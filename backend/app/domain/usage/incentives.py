@@ -1,7 +1,7 @@
 """Beta rewards and the purchase enquiries handled in the credit console."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
+from app.domain.team.models import DEFAULT_PLAN_KEY, Team
 from app.domain.team.services import team_service
 from app.domain.usage.ledger import Ledger
 from app.domain.usage.models import (
@@ -16,11 +17,16 @@ from app.domain.usage.models import (
     CreditRequest,
     CreditReward,
     GrantSource,
+    Plan,
 )
 from app.domain.usage.plans import PlanService
 
 BETA_CREDITS = 500
 FEEDBACK_CREDITS = 100
+#: Every reward pack, whatever earned it, can be spent for this long after it
+#: is issued. A fixed 365 days rather than calendar months, so the migration
+#: that dated the earlier packs (``e4a7c2d9b6f1``) applies the same span.
+REWARD_LIFETIME = timedelta(days=365)
 
 
 def reward_kind(key: str) -> str:
@@ -58,7 +64,6 @@ class CreditIncentives:
         reason: str,
         actor: str,
         points: int = 0,
-        expires_at: datetime | None = None,
     ) -> dict:
         """Issue the reward named ``key`` once. A reward of points alone writes
         the row and pays no pack."""
@@ -82,19 +87,20 @@ class CreditIncentives:
                 credits,
                 source=GrantSource.REWARD,
                 reason=reason,
-                expires_at=expires_at,
+                expires_at=datetime.now(UTC) + REWARD_LIFETIME,
             )
-        return {"credits": credits, "points": points, "issued": issued is not None}
+        return {"credits": credits, "issued": issued is not None}
 
     async def beta(self, user_id: int) -> dict:
         return {
             "credits": BETA_CREDITS,
             "claimed": await self.reward(f"beta:{user_id}") is not None,
             "feedback_credits": FEEDBACK_CREDITS,
+            "plan_credits": await self._monthly_plan_credits(user_id),
         }
 
-    async def rewards(self, user_id: int) -> dict:
-        team = next(
+    async def _personal_team(self, user_id: int) -> Team | None:
+        return next(
             (
                 team
                 for team in await team_service(self._session).get_teams_of_user(user_id)
@@ -102,12 +108,26 @@ class CreditIncentives:
             ),
             None,
         )
+
+    async def _monthly_plan_credits(self, user_id: int) -> int | None:
+        """What the person's own plan issues each month; None for a plan that is
+        unlimited or billed by time windows, which has no monthly figure. A
+        person whose personal team is not made yet will start on the default."""
+        team = await self._personal_team(user_id)
+        plan = await self._session.get(
+            Plan, team.plan_key if team else DEFAULT_PLAN_KEY
+        )
+        if plan is None or plan.unlimited or plan.credits_per_period is None:
+            return None
+        return int(plan.credits_per_period)
+
+    async def rewards(self, user_id: int) -> dict:
+        team = await self._personal_team(user_id)
         if team is None:
             return {
                 "feedback_count": 0,
                 "feedback_credits": 0,
                 "invite_credits": 0,
-                "points": 0,
                 "items": [],
             }
         rows = list(
@@ -124,12 +144,10 @@ class CreditIncentives:
             "invite_credits": sum(
                 row.credits for row in rows if reward_kind(row.key) == "invite"
             ),
-            "points": sum(row.points for row in rows),
             "items": [
                 {
                     "kind": reward_kind(row.key),
                     "credits": row.credits,
-                    "points": row.points,
                     "created_at": row.created_at.isoformat(),
                 }
                 for row in rows[:10]

@@ -2,9 +2,9 @@
 
 The rules are the team's 《内测激励与裂变机制设计方案》:
 a code admits one person until its owner has accepted a delivery, then three
-more; the friend is paid 50 for their first project and 100 for accepting a
-delivery within seven days, which also pays the inviter 150 credits and 50
-points; each friend pays out once.
+more, and every friend who gets started gives their seat back; the friend is paid 50 for their first project and 100 for accepting a
+delivery within seven days, which also pays the inviter 150 credits and records
+50 contribution points (not shown to anyone yet); each friend pays out once.
 """
 
 import asyncio
@@ -41,10 +41,37 @@ def _credits(client, headers) -> float:
     return sum(p["credits_total"] for p in response.json()["data"]["packs"])
 
 
+def _days_left(client, headers) -> set[int]:
+    """Whole days each pack has left before it expires."""
+    response = client.get("/users/me/credits/usage", headers=headers)
+    assert response.status_code == 200, response.text
+    now = datetime.now(UTC)
+    return {
+        (datetime.fromisoformat(p["expires_at"]) - now).days
+        for p in response.json()["data"]["packs"]
+    }
+
+
 def _sources(client, headers) -> set[str]:
     response = client.get("/users/me/credits/usage", headers=headers)
     assert response.status_code == 200, response.text
     return {p["source"] for p in response.json()["data"]["packs"]}
+
+
+def _referrer_points(client, _portal) -> int:
+    """Contribution points recorded for inviters. No page shows them; the
+    record is kept, so it is read from the database."""
+
+    async def read() -> int:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(CreditReward.points).where(
+                    CreditReward.key.like("invite:referrer:%")
+                )
+            )
+            return sum(rows)
+
+    return _portal.call(read)
 
 
 def _register(client, _portal, code: str | None) -> tuple[str, dict]:
@@ -203,8 +230,12 @@ def test_the_friends_first_acceptance_pays_both_sides_once(client, _portal, invi
     assert _credits(client, theirs) == 150
     assert _credits(client, mine) == 150
     seen = _invites(client, mine)
-    assert (seen["invite_credits"], seen["points"]) == (150, 50)
+    assert seen["invite_credits"] == 150
+    assert (seen["month_credits"], seen["month_cap"]) == (150, 1500)
+    assert _referrer_points(client, _portal) == 50
     assert seen["invitees"][0]["stage"] == "activated"
+    # Invitation packs last a year, like every other reward.
+    assert _days_left(client, theirs) == _days_left(client, mine) == {364}
 
 
 def test_an_acceptance_after_seven_days_pays_nobody(client, _portal, inviter):
@@ -239,6 +270,38 @@ def test_my_own_first_acceptance_adds_three_seats(client, inviter):
     assert (seen["max_uses"], seen["unlocked"]) == (4, True)
 
 
+def test_a_friend_who_gets_started_gives_their_seat_back_once(client, _portal, inviter):
+    _, mine = inviter
+    friend, _ = _register(client, _portal, _invites(client, mine)["code"])
+    used_up = _invites(client, mine)
+    assert used_up["max_uses"] - used_up["use_count"] == 0
+
+    _accept_a_delivery(client, friend)
+    _accept_a_delivery(client, friend)
+
+    seen = _invites(client, mine)
+    assert (seen["max_uses"], seen["use_count"]) == (2, 1)
+
+
+def test_a_friend_who_starts_too_late_gives_no_seat_back(client, _portal, inviter):
+    _, mine = inviter
+    friend, _ = _register(client, _portal, _invites(client, mine)["code"])
+
+    async def _eight_days_ago() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                update(InviteReferral).values(
+                    registered_at=datetime.now(UTC) - timedelta(days=8)
+                )
+            )
+            await session.commit()
+
+    _portal.call(_eight_days_ago)
+    _accept_a_delivery(client, friend)
+
+    assert _invites(client, mine)["max_uses"] == 1
+
+
 def test_someone_who_accepted_before_ever_opening_the_page_starts_unlocked(
     client,
     _portal,
@@ -249,7 +312,7 @@ def test_someone_who_accepted_before_ever_opening_the_page_starts_unlocked(
     assert _invites(client, headers)["max_uses"] == 4
 
 
-def test_past_the_monthly_cap_only_points_are_recorded(
+def test_past_the_monthly_cap_the_inviter_gets_no_credits_but_points_are_kept(
     client, _portal, inviter, monkeypatch
 ):
     from app.domain.usage import referrals
@@ -263,9 +326,13 @@ def test_past_the_monthly_cap_only_points_are_recorded(
         _accept_a_delivery(client, friend)
 
     seen = _invites(client, mine)
-    assert (seen["invite_credits"], seen["points"]) == (150, 100)
+    assert seen["invite_credits"] == 150
+    assert seen["month_credits"] == 150
+    assert _referrer_points(client, _portal) == 100
     assert sorted(p["credits"] for p in seen["invitees"]) == [0, 150]
     assert _credits(client, mine) == 150
+    # The cap limits credits, not friends: the unpaid one gave their seat back too.
+    assert seen["max_uses"] == 4 + 2
 
 
 def test_the_monthly_cap_starts_again_next_month(client, _portal, inviter, monkeypatch):
@@ -292,6 +359,7 @@ def test_the_monthly_cap_starts_again_next_month(client, _portal, inviter, monke
     _accept_a_delivery(client, second)
 
     assert _credits(client, mine) == 300
+    assert _invites(client, mine)["month_credits"] == 150
 
 
 def test_two_first_views_at_once_make_one_code(client, _portal, inviter):

@@ -1,4 +1,24 @@
 {
+  "group": {
+    "title": "{asker} 问你 {n} 个问题",
+    "titleBare": "问你 {n} 个问题",
+    "questionOf": "第 {n} 题，共 {total} 题",
+    "multiHint": "可多选，再次点击取消选择",
+    "otherLabel": "其他答案",
+    "previous": "上一题",
+    "next": "下一题",
+    "review": "确认答案",
+    "reviewAllAnswered": "已完成 {total} 题",
+    "reviewMissing": "有 {n} 题未作答，仍可提交",
+    "back": "返回修改",
+    "submit": "提交答案",
+    "submitted": "已提交",
+    "unanswered": "未作答",
+    "edit": "改答案",
+    "editNote": "重新打开整组，改完再提交",
+    "failed": "提交没成功，再试一次",
+    "listSeparator": "、"
+  },
   "replies": {
     "label": "快捷回复",
     "recommended": "推荐",

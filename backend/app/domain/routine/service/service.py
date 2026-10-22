@@ -76,7 +76,7 @@ class RoutineService:
         note: str,
         trigger: str,
         spec: dict,
-        tz: str,
+        tz: str | None,
         owner_handle: str | None,
         agent_handle: str | None,
     ) -> Routine:

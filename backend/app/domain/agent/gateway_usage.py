@@ -39,19 +39,20 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import model_roles
 from app.core.background import hold
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
-from app.domain.agent.model_catalog import catalog, project_pool
+from app.domain.agent.model_catalog import catalog, subagent_default
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.queries import _model_policy_call, _Proposed, task_credit_context
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.session_host.contract import EFFORT_ENV
-from app.domain.agent.supply import SUBSCRIPTION
+from app.domain.agent.supply import GATEWAY, SUBSCRIPTION
 from app.domain.agent_instance.own import owned_instance, unusable
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.conversation.models import Conversation
@@ -175,8 +176,9 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
     The Agent tool takes a model only as one of Claude's family aliases, so a
     session runs a subagent on `kimi-k3` by starting the subagent type of that
     name, whose definition names the model; admission still decides whether
-    it may (`/llm/admission`). Only the project's own pool is listed: a model
-    from the other one is refused there.
+    it may (`/llm/admission`). Only models the platform pool serves (catalogue
+    ``supply`` gateway) are listed: a subscription model is refused there unless
+    the project or the seat already selected it.
 
     Claude Code reads its agent definitions once, when it starts, and a file
     written into a running session's agents directory is never seen by it. So
@@ -184,10 +186,9 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
     configuration hash: a model the gateway adds reaches a running session when
     it is next reopened, at a task boundary.
     """
-    pool = project_pool(project_settings)
     agents: dict[str, str] = {}
     for choice in catalog(project_settings).values():
-        if choice["supply"] != pool:
+        if choice["supply"] != GATEWAY:
             continue
         # Agent names are stricter than model ids; the id itself rides `model`.
         name = re.sub(r"[^a-z0-9._-]+", "-", choice["id"].lower()).strip("-.")
@@ -344,15 +345,16 @@ async def _model_kwargs(
     # 走到这里还没过的，是平台自己发起的那一轮 —— 记忆整理（dream），
     # 它不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
     async with sessions() as session:
+        policy = gate.policy_of(
+            project.settings,
+            (await team_terms(session, project.team_id)).model_tiers,
+            overseas_approved=await overseas_approved(session, project.team_id),
+        )
         proposed = await service._pass_policy_gate(
             session,
             topic_id,
             _model_policy_call(project, agent),
-            gate.policy_of(
-                project.settings,
-                (await team_terms(session, project.team_id)).model_tiers,
-                overseas_approved=await overseas_approved(session, project.team_id),
-            ),
+            policy,
             actor=acting_agent or agent.handle,
         )
         if proposed is not None:
@@ -360,10 +362,8 @@ async def _model_kwargs(
             raise gate.OverTier(proposed.proposal.content)
     supply = bound.supply
     model = bound.wire_model
-    child_default = (project.settings or {}).get("default_subagent_model") or (
-        project.settings or {}
-    ).get("default_model")
     child_choices = catalog(project.settings)
+    child_default = subagent_default(project.settings, child_choices, policy)
     # An unused invalid child default must not block a valid main override.
     # Preserve it for the child request's admission refusal, never replace it.
     child_model = child_default
@@ -446,15 +446,12 @@ async def _model_kwargs(
         return kwargs, supply
     pool_route = True
     if profiles is not None:
-        profile = profiles.resolve(
-            project.settings if project else None,
-            project.owner_handle if project else None,
-        )
+        profile = profiles.resolve(project.settings if project else None)
         kwargs["env"].update(profile.full_env())
         kwargs["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
         kwargs["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
-        # Only the pool profile routes through the gateway; the testing
-        # (native Claude) profiles pin their own base_url + credentials.
+        # Only the pool profile routes through the gateway; a profile with its
+        # own base_url and credentials (a project's own) does not.
         pool_route = profile.base_url == settings.anthropic_base_url
     routed = pool_route and gateway is not None
     if routed:
@@ -755,7 +752,7 @@ async def charge_turn_spend(
         gateway,
         key,
         Charge(
-            model=settings.agent_model,
+            model=model_roles.model("agent_model"),
             topic_id=topic_id,
             turn_id=turn_id,
         ),

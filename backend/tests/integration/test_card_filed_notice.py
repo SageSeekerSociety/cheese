@@ -27,6 +27,7 @@ from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
+    as_read,
     join_project_team,
     mail,
     post_project,
@@ -122,7 +123,7 @@ def test_the_reviewer_and_the_reporter_both_hear_about_it(client):
     for token in (reviewer, reporter):
         (row,) = _notices(client, token)
         # 通知里读到的和回房间看到的是同一句。
-        assert row["contextMetadata"]["content"] == event["content"]
+        assert row["contextMetadata"]["content"] == as_read(event["content"])
         assert row["contextMetadata"]["topicTitle"] == "预算复核"
         assert row["contextMetadata"]["topicId"] == room
         assert row["read"] is False

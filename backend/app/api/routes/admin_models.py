@@ -54,6 +54,9 @@ from app.domain.agent.schemas import (
     GatewayModelWriteOut,
     ModelCreate,
     ModelUpdate,
+    PlatformRoleOut,
+    PlatformRolesOut,
+    RoleUpdate,
     SourceCreate,
     SourceOrder,
     SourceUpdate,
@@ -306,6 +309,30 @@ async def set_source_blocked(
                 handle=handle, name=name, source_id=source_id, blocked=payload.blocked
             )
         )
+    )
+
+
+# ---- 平台模型角色 ----
+
+
+@router.get("/roles", **typed_response(PlatformRolesOut))
+async def list_roles(service: ModelsServiceDep, handle: PlatformAdminDep) -> dict:
+    """每个平台模型角色（默认模型、语音输入、话题命名……）现在跑在哪个网关模型上。"""
+    return ok(await _answered(service.roles()))
+
+
+@router.put(
+    "/roles/{role}", dependencies=[ROUTE_DECIDES], **typed_response(PlatformRoleOut)
+)
+async def set_role(
+    role: str,
+    payload: RoleUpdate,
+    service: ModelsServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """把一个角色指到一个网关模型；`model: null` 回到部署的默认值。立即生效，有审计。"""
+    return ok(
+        await _answered(service.set_role(handle=handle, role=role, model=payload.model))
     )
 
 

@@ -20,28 +20,29 @@ import os
 import re
 import tempfile
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from tenacity import AsyncRetrying, RetryCallState, retry_if_result, wait_fixed
 
 from app.core.config import settings
 from app.core.sentences import say
-from app.domain.agent import connector_build
+from app.domain.agent import connector_build, toolchain
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
 )
-from app.domain.machine import claude_dist
+from app.domain.agent.place import footprint_root
+from app.domain.machine import claude_dist, toolchain_dist
 
 logger = logging.getLogger("cheese.machine.enrollment")
 
-# One attempt should be slow enough to survive a cold apt/curl on a fresh
+# One attempt should be slow enough to survive a cold download on a fresh
 # machine, and fast enough that a stuck one doesn't wedge the sweep.
 SSH_TIMEOUT_S = 180.0
 
 # Only these markers may reach the room; process output can contain credentials.
 STARTUP_STEPS = {
     "tools": say("cloudStepTools"),
-    "connector": say("cloudStepConnector"),
     "connect": say("cloudStepConnect"),
     "verify": say("cloudStepVerify"),
 }
@@ -67,6 +68,11 @@ SSH_OPTS = [
     "-o",
     "ConnectTimeout=10",
 ]
+
+
+# What a Linux connector places for its rooms' sandboxes whatever the system
+# has (`cli/internal/devenv`), and enrollment hands a cloud machine first.
+SANDBOX_TOOLS = ("bubblewrap", "host-tools")
 
 
 class EnrollmentError(RuntimeError):
@@ -117,7 +123,19 @@ DATA_DISK_LINE = re.compile(r"^CHEESE_SANDBOX_DISK_BYTES=([0-9]+)$", re.MULTILIN
 # mkfs.xfs without -f: a disk that carries any signature is refused, not
 # wiped. A host with no such disk is not enrolled: it could not hold a sandbox
 # to a disk limit, and no sandbox runs without one.
+#
+# The mkfs.xfs is the platform's, placed with the host tools before this runs
+# (`run_bootstrap`, where `cli/internal/devenv` keeps them), not a package of
+# the machine's. It is told the feature set of the newest long-term kernel no
+# newer than the machine's own (its `lts_*.conf`): a newer mkfs's defaults can
+# make a filesystem an older kernel refuses to mount.
 DATA_DISK = """
+# Ubuntu from 23.10 lets a program make a user namespace only where an
+# AppArmor profile names it, and no profile names the platform's bwrap.
+# On a host the platform opened, the platform is the owner who allows it.
+if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+  sudo -n "$HOME/.local/bin/cheesehost" sandbox allow < /dev/null
+fi
 disk=""
 for link in /dev/disk/by-id/*drive-scsi1; do
   [ -e "$link" ] && disk=$(readlink -f "$link")
@@ -126,16 +144,26 @@ if [ -z "$disk" ]; then
   echo "no data disk (scsi1) for the sandboxes' homes" >&2
   exit 1
 fi
-for tool in mkfs.xfs xfs_quota; do
-  command -v "$tool" >/dev/null 2>&1 && continue
-  sudo -n apt-get install -y -q xfsprogs >/dev/null 2>&1 \\
-    || {{ sudo -n apt-get update -q >/dev/null 2>&1 \\
-          && sudo -n apt-get install -y -q xfsprogs >/dev/null 2>&1; }} \\
-    || {{ echo "$tool is missing and could not be installed" >&2; exit 1; }}
+tools="$HOME/.cheese/runtime/host-tools"
+if [ ! -x "$tools/bin/mkfs.xfs" ]; then
+  echo "no platform mkfs.xfs at $tools" >&2
+  exit 1
+fi
+kernel=$(uname -r | cut -d. -f1,2)
+features=""
+for conf in $(ls "$tools"/mkfs/lts_*.conf | sort -V); do
+  lts=${{conf##*/lts_}}
+  lts=${{lts%.conf}}
+  [ "$(printf '%s\\n%s\\n' "$lts" "$kernel" | sort -V | head -n 1)" = "$lts" ] \\
+    && features=$conf
 done
+if [ -z "$features" ]; then
+  echo "kernel $kernel is older than any the platform's mkfs.xfs formats for" >&2
+  exit 1
+fi
 kind=$(sudo -n blkid -o value -s TYPE "$disk" || true)
 if [ -z "$kind" ]; then
-  sudo -n mkfs.xfs -q "$disk"
+  sudo -n "$tools/bin/mkfs.xfs" -q -c options="$features" "$disk"
 elif [ "$kind" != xfs ]; then
   echo "the data disk $disk holds $kind, not XFS" >&2
   exit 1
@@ -175,8 +203,8 @@ def bootstrap_script(
     With ``sandbox_disk``, first sets up the data disk a pool host keeps its
     sandboxes' homes on (``DATA_DISK``); a whole VM runs none.
 
-    Deliberately arch-agnostic: the download target is resolved on the
-    machine rather than guessed from here.
+    The connector is already on the machine: ``run_bootstrap`` put it there
+    over the same SSH connection before this runs.
     """
     config = json.dumps(
         {
@@ -211,62 +239,9 @@ def bootstrap_script(
     data_disk = DATA_DISK.format() if sandbox_disk else ""
     return f"""set -eu
 arch=$(uname -m)
-case "$arch" in
-  x86_64|amd64) target=linux-amd64 ;;
-  aarch64|arm64) target=linux-arm64 ;;
-  *) echo "unsupported arch: $arch" >&2; exit 1 ;;
-esac
-# Tools the machine must have before it is worth enrolling. Every one of these
-# failures is SILENT if left to be discovered later, which is why they are fatal
-# here:
-#   tmux    — the connector hosts every session in it and exits immediately
-#     without one, yet `link connect` still reports success (systemctl returns
-#     before the process falls over);
-#   git     — the agent clones the project into its work dir and pushes the topic
-#     branch back. Without git the turn runs in an EMPTY directory, reports
-#     success, and the work is never seen by anyone.
-#   python3 — the platform's own programs ON a machine are python3, not shell:
-#     `cheese` (the agent's whole platform surface — publishing a message, a
-#     document, an artifact) and the environment helper the launcher runs before
-#     every agent start, whose exit code it propagates (`agent/device_provider`).
-#     The connector is Go and comes up fine without python3, so the machine
-#     reports healthy and every room on it dies at environment preparation.
-#   ip, iptables-restore — every session's executor on a Cloud machine runs
-#     in a bubblewrap sandbox (`remote_execution/confinement.sandbox_argv`) with a
-#     network of its own that the machine connects and filters
-#     (`remote_execution/sandbox_host.py`), and a session that cannot have one
-#     does not start. Both are root's, in sbin. bwrap itself is not here:
-#     cheesehost places the platform's (`cli/internal/devenv`).
-# None of them is guaranteed by the image: MicroCloud's LXC template lists git
-# but not tmux, and the VM template installs neither (it adds only curl + Docker
-# on top of a stock Debian cloud image). Depending on which offering a machine
-# came from is exactly the kind of assumption that fails quietly.
-echo CHEESE_STARTUP:tools
-PATH="$PATH:/usr/sbin:/sbin"
-# MicroCloud reports a machine running while cloud-init is still at work on it,
-# and on its VM template that work is an `apt-get dist-upgrade` holding the
-# dpkg lock for a minute or two after boot: every install below failed on the
-# lock (dev, 2026-10-04, the VM offering). Let it finish first.
-if command -v cloud-init >/dev/null 2>&1; then
-  cloud-init status --wait >/dev/null 2>&1 || true
-fi
-for tool in tmux git python3 ip iptables-restore; do
-  command -v "$tool" >/dev/null 2>&1 && continue
-  case "$tool" in
-    ip) package=iproute2 ;;
-    iptables-restore) package=iptables ;;
-    *) package="$tool" ;;
-  esac
-  sudo -n apt-get install -y -q "$package" >/dev/null 2>&1 \
-    || {{ sudo -n apt-get update -q >/dev/null 2>&1 \
-          && sudo -n apt-get install -y -q "$package" >/dev/null 2>&1; }} \
-    || {{ echo "$tool is missing and could not be installed" >&2; exit 1; }}
-done
-{data_disk}
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 export PATH="$HOME/.local/bin:$PATH"
-# claude — the agent itself, and the same argument as tmux/git above with one
-# more turn of the screw. A machine with no claude, or one too old, does not
+# claude — the agent itself. A machine with no claude, or one too old, does not
 # fail here: it enrolls cleanly, reports healthy, and then every topic assigned
 # to it never starts, because the launcher refuses a build below the floor.
 # A loud failure now beats a silent one per topic later (#489, #501 are the
@@ -277,7 +252,7 @@ export PATH="$HOME/.local/bin:$PATH"
 # control, and the vendor's own installer names "not available in your region"
 # as a failure mode. Serving it ourselves is what turns the pin from a hope
 # about what the machine downloaded into a fact about what we handed it — the
-# same reason cheesehost is fetched from us two lines below.
+# same reason the cheesehost this script runs is the one we serve.
 #
 # Platform strings are the VENDOR's, and the musl check matters: Alpine-style
 # machines need a different build, and only the machine can tell.
@@ -326,15 +301,6 @@ if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
   echo "claude at $claude_pin is ${{have:-unusable}}, need >= {min_version}" >&2
   exit 1
 fi
-umask 077
-mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
-echo CHEESE_STARTUP:connector
-curl -fsSL --retry 3 --retry-delay 2 -m 120 \\
-  "{origin.rstrip("/")}/connector/latest/$target/cheesehost" \\
-  -o "$HOME/.local/bin/cheesehost.new"
-test -s "$HOME/.local/bin/cheesehost.new"
-chmod +x "$HOME/.local/bin/cheesehost.new"
-mv "$HOME/.local/bin/cheesehost.new" "$HOME/.local/bin/cheesehost"
 # The credential the device flow would have stored. umask first: this file is
 # the machine's identity to the platform.
 umask 077
@@ -347,6 +313,21 @@ CHEESE_CONFIG_EOF
 # from it would eat the rest of the script.
 echo CHEESE_STARTUP:connect
 "$HOME/.local/bin/cheesehost" link connect < /dev/null
+# What the connector and its rooms run on, which `link connect` just placed
+# where the system's own is missing or too old (`cli/internal/devenv`): tmux,
+# which the connector keeps every screen in and exits without, while systemd
+# still reports it started; git, without which a room's turn runs in an empty
+# directory and reports success; python3, which the platform's own programs on
+# a machine are. Nothing comes from the machine's packages, so a machine where
+# one could not be placed is refused here, while somebody reads the output.
+echo CHEESE_STARTUP:tools
+runtime="$HOME/.cheese/runtime"
+for tool in tmux git python3; do
+  case "$tool" in python3) dir=python ;; *) dir=$tool ;; esac
+  PATH="$runtime/$dir/bin:$PATH" command -v "$tool" >/dev/null 2>&1 \\
+    || {{ echo "$tool is missing and cheesehost could not place it" >&2; exit 1; }}
+done
+{data_disk}
 # A retried enrollment writes a new device identity. Starting an active service
 # leaves the old token in memory, so the room waits for a device that never joins.
 systemctl --user restart cheese
@@ -369,7 +350,7 @@ fi
 #
 # The connector asks for itself and never elevates, because the machine it runs
 # on is usually somebody's laptop. This one is not: the platform opened it, and
-# the same passwordless sudo installed tmux above. `enable-linger` needs it only
+# the same passwordless sudo set up its data disk. `enable-linger` needs it only
 # where the image ships no polkit — logind then denies the unprivileged request
 # outright — so try once, and judge on what linger actually says afterwards.
 if [ "$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null)" != "Linger=yes" ]; then
@@ -396,9 +377,12 @@ async def run_bootstrap(
     login_user: str,
     private_key: str,
     script: str,
+    sandboxes: bool,
     progress: Callable[[str], Awaitable[None]] | None = None,
 ) -> str:
-    """Run the bootstrap over SSH and return its output.
+    """Run the bootstrap over SSH and return its output. With ``sandboxes``
+    (a pool host, whose rooms run in sandboxes), first hand the machine what
+    those are made with (`SANDBOX_TOOLS`); a whole VM runs none.
 
     The script is fed on stdin rather than passed as an argument: it carries the
     device token, and an argument would show up in the machine's process list.
@@ -411,23 +395,29 @@ async def run_bootstrap(
             handle.write(private_key)
         ssh = ["ssh", "-i", key_path, *SSH_OPTS, f"{login_user}@{ip}"]
 
-        async def once(*command: str) -> tuple[int | None, bytes]:
+        async def once(
+            *command: str, stdin: Path | None = None
+        ) -> tuple[int | None, bytes]:
             child = await asyncio.create_subprocess_exec(
                 *command,
+                stdin=asyncio.subprocess.PIPE if stdin else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
             try:
                 output, _ = await asyncio.wait_for(
-                    child.communicate(), timeout=SSH_TIMEOUT_S
+                    child.communicate(stdin.read_bytes() if stdin else None),
+                    timeout=SSH_TIMEOUT_S,
                 )
             except TimeoutError as exc:
                 child.kill()
                 await child.wait()
-                raise EnrollmentError("Claude transfer timed out") from exc
+                raise EnrollmentError("transfer to the machine timed out") from exc
             return child.returncode, output
 
-        async def run(*command: str, wait_for_ssh: bool = False) -> bytes:
+        async def run(
+            *command: str, wait_for_ssh: bool = False, stdin: Path | None = None
+        ) -> bytes:
             deadline = asyncio.get_running_loop().time() + SSH_READY_WAIT_S
             returncode, output = await AsyncRetrying(
                 # 255 is ssh's own failure — the connection, not the command.
@@ -435,16 +425,21 @@ async def run_bootstrap(
                 stop=lambda _: asyncio.get_running_loop().time() >= deadline,
                 wait=wait_fixed(SSH_READY_POLL_S),
                 retry_error_callback=_last_result,
-            )(once, *command)
+            )(once, *command, stdin=stdin)
             if returncode:
                 raise EnrollmentError(
-                    f"Claude transfer failed ({returncode}): {output.decode()[-300:]}"
+                    f"transfer to the machine failed ({returncode}): "
+                    f"{output.decode()[-300:]}"
                 )
             return output
 
         # Cloud guests can reach us over SSH while their public HTTP download is
-        # too slow for enrollment. Reuse the platform's verified cache and the
-        # existing bootstrap credential; no extra listener or guest credential.
+        # too slow for enrollment: on dev a guest resolves the public origin to a
+        # gateway proxy's address and fetched the 32 MB connector at 3 MB/s,
+        # where the same file took 0.4 s over this connection. So the binaries
+        # the machine needs before it can talk to us go over the bootstrap
+        # credential, from the files the platform serves and caches; no extra
+        # listener or guest credential.
         pin = CLAUDE_PINNED_VERSION
         remote_dir = ".cheese/claude/versions"
         facts = (
@@ -453,7 +448,7 @@ async def run_bootstrap(
                     *ssh,
                     "uname -m; if ldd /bin/ls 2>&1 | grep -q musl; "
                     "then echo musl; else echo glibc; fi; "
-                    f'mkdir -p "$HOME/{remote_dir}"; '
+                    f'mkdir -p "$HOME/{remote_dir}" "$HOME/.local/bin"; '
                     f'if test -x "$HOME/{remote_dir}/{pin}"; then echo present; fi',
                     wait_for_ssh=True,
                 )
@@ -461,16 +456,36 @@ async def run_bootstrap(
             .decode()
             .splitlines()
         )
+        arch = {
+            "x86_64": "amd64",
+            "amd64": "amd64",
+            "aarch64": "arm64",
+            "arm64": "arm64",
+        }.get(facts[0] if facts else "")
+        if arch is None:
+            raise EnrollmentError("unsupported cloud machine architecture")
+
+        async def push(source: Path, remote: str) -> None:
+            """``source`` to ``remote`` (relative to the login's home), staged
+            beside it and renamed, so an interrupted copy is never run."""
+            await run(
+                "scp",
+                "-i",
+                key_path,
+                *SSH_OPTS,
+                str(source),
+                f"{login_user}@{ip}:{remote}.ssh-new",
+            )
+            await run(
+                *ssh,
+                f'chmod +x "$HOME/{remote}.ssh-new" && '
+                f'mv "$HOME/{remote}.ssh-new" "$HOME/{remote}"',
+            )
+
         if "present" not in facts:
-            arch = {
-                "x86_64": "x64",
-                "amd64": "x64",
-                "aarch64": "arm64",
-                "arm64": "arm64",
-            }.get(facts[0] if facts else "")
-            if arch is None:
-                raise EnrollmentError("unsupported cloud machine architecture")
-            platform = f"linux-{arch}" + ("-musl" if "musl" in facts else "")
+            platform = f"linux-{'x64' if arch == 'amd64' else arch}" + (
+                "-musl" if "musl" in facts else ""
+            )
             try:
                 if progress:
                     await progress(say("cloudStepPreparingClaude"))
@@ -481,18 +496,48 @@ async def run_bootstrap(
                 raise EnrollmentError("platform Claude binary unavailable") from exc
             if progress:
                 await progress(say("cloudStepTransferringClaude"))
-            await run(
-                "scp",
-                "-i",
-                key_path,
-                *SSH_OPTS,
-                str(binary),
-                f"{login_user}@{ip}:{remote_dir}/{pin}.ssh-new",
+            await push(binary, f"{remote_dir}/{pin}")
+        # The connector the origin serves for this machine, every time: a retry
+        # may find an older one an earlier attempt left. People's own machines
+        # and a connector's self-update still download it over HTTP.
+        connector = connector_build.binary_path(f"linux-{arch}")
+        if connector is None:
+            raise EnrollmentError(  # i18n-exempt: an enrollment failure, kept on the host row for operators
+                f"the platform serves no connector for linux-{arch}"
             )
+        if progress:
+            await progress(say("cloudStepConnector"))
+        await push(connector, ".local/bin/cheesehost")
+        # What `link connect` places next on Linux for the rooms' sandboxes
+        # (`cli/internal/devenv`), put where it puts them: the archive unpacked
+        # without its top directory into `runtime/<tool>`, and the digest the
+        # toolchain route names in `runtime/<tool>.sha256`, which is how the
+        # connector tells a placed copy is current and skips the download. The
+        # same verified file the route serves, so the connector's check
+        # agrees. A machine of a person's own, and a later bump, still fetch
+        # over HTTP. Unpacked to a staged directory and renamed, so an
+        # interrupted copy is never taken for a placed one.
+        runtime = f"$HOME/{footprint_root()}/runtime"
+        platform_key = f"linux-{'x64' if arch == 'amd64' else arch}"
+        for tool in SANDBOX_TOOLS if sandboxes else ():
+            try:
+                archive = await toolchain_dist.ensure_cached(
+                    connector_build.dist_dir(), tool, platform_key
+                )
+            except toolchain_dist.ToolchainDistError as exc:
+                raise EnrollmentError(  # i18n-exempt: an enrollment failure, kept on the host row for operators
+                    f"the platform cannot serve {tool} for {platform_key}"
+                ) from exc
+            digest = toolchain.ARTIFACTS[(tool, platform_key)].sha256
+            placed, staged = f"{runtime}/{tool}", f"{runtime}/{tool}.ssh-new"
             await run(
                 *ssh,
-                f'chmod +x "$HOME/{remote_dir}/{pin}.ssh-new" && '
-                f'mv "$HOME/{remote_dir}/{pin}.ssh-new" "$HOME/{remote_dir}/{pin}"',
+                f'set -e; mkdir -p "{runtime}"; rm -rf "{staged}"; '
+                f'mkdir -m 700 "{staged}"; '
+                f'tar -xzf - -C "{staged}" --strip-components=1; '
+                f'rm -rf "{placed}"; mv "{staged}" "{placed}"; '
+                f'(umask 077; echo {digest} > "{placed}.sha256")',
+                stdin=archive,
             )
         command = [
             "ssh",

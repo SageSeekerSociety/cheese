@@ -97,6 +97,7 @@ def test_an_archived_project_is_hidden_frozen_and_comes_back_whole(client):
         client.post(f"/topics/{done}/archive", json={}, headers=AS_OWNER).status_code
         == 200
     )
+    _register(client, "archive-guest")
     invited = client.post(
         f"/projects/{pid}/invitations",
         json={"user_handle": "archive-guest"},

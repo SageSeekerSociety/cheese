@@ -66,7 +66,7 @@ const entries = computed(() =>
 </script>
 
 <template>
-  <!-- 和「# 综合」、频道行同一种行：同一个 16px 图标槽、同一条文字左缘。 -->
+  <!-- Keep the same title column as root and channel rows. -->
   <v-list
     v-if="!page && entries.length"
     density="compact"
@@ -149,7 +149,23 @@ const entries = computed(() =>
 .row-glyph {
   color: var(--faint);
 }
-.nav-row.pinned-row {
-  min-height: 36px;
+.nav-row.pinned-row,
+.nav-row.pinned-row.v-list-item.v-list-item,
+.v-list.v-list .nav-row.pinned-row.v-list-item--nav {
+  min-height: 32px;
+  padding-block: 0;
+  padding-inline-end: 12px;
+  margin-block: 1px;
+}
+@media (hover: none) {
+  .row-slot {
+    width: 44px;
+    height: 44px;
+  }
+  .nav-row.pinned-row,
+  .nav-row.pinned-row.v-list-item.v-list-item,
+  .v-list.v-list .nav-row.pinned-row.v-list-item--nav {
+    min-height: 44px;
+  }
 }
 </style>

@@ -224,6 +224,27 @@ def _poll(client) -> dict:
     )
 
 
+def _backfill_merge_actors(client) -> dict:
+    """跑一次合并人补录（项目总览还看得到的那 14 天，上线时那一次）。"""
+    from app.domain.review import pr_poll
+
+    return client.portal.call(
+        lambda: pr_poll.backfill_missing_merge_actors(_chat_service())
+    )
+
+
+def _stored_merged_by(client, card_id: str) -> dict | None:
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _do():
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(_uuid.UUID(card_id))
+            assert card is not None
+            return card.merged_by
+
+    return asyncio.run(_do())
+
+
 def _room(client, topic_id: str) -> str:
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     return room_text(blocks)
@@ -333,6 +354,7 @@ class FakeGitHubPrClient:
             "merged": False,
             "merge_commit_sha": None,
             "merged_at": None,
+            "merged_by": None,
         }
         return head_sha
 
@@ -342,12 +364,14 @@ class FakeGitHubPrClient:
         *,
         merge_commit_sha: str | None = "human-merge-sha",
         merged_at: datetime | None = None,
+        merged_by: dict | None = None,
     ) -> None:
         self.prs[number].update(
             state="closed",
             merged=True,
             merge_commit_sha=merge_commit_sha,
             merged_at=merged_at,
+            merged_by=merged_by,
         )
 
     def close_unmerged(self, number: int) -> None:
@@ -431,6 +455,8 @@ class FakeGitHubPrClient:
             review_comment_count=sum(
                 1 for s in self.reviews_by_number.get(number, []) if s.kind == "comment"
             ),
+            merged_by_github_id=(pr.get("merged_by") or {}).get("github_id"),
+            merged_by_login=(pr.get("merged_by") or {}).get("login"),
         )
 
     async def task_pr_metadata(self, *, owner, repo, numbers, token):
@@ -2382,12 +2408,12 @@ def test_poll_clean_notifies_the_reviewer_once_per_head(client, app_world):
 
     _poll(client)
     text = _card_events(client, cid)
-    assert "等 alice 采纳" in text
-    first = text.count("等 alice 采纳")
+    assert "等 <@alice> 采纳" in text
+    first = text.count("等 <@alice> 采纳")
 
     _poll(client)  # 同一个 head：不重复
     wait_work_idle()
-    assert _card_events(client, cid).count("等 alice 采纳") == first
+    assert _card_events(client, cid).count("等 <@alice> 采纳") == first
 
     new_sha = fake.push_new_commit(number)  # 新 head 转绿是新事实
     fake.check_state_by_sha[new_sha] = ("success", "全绿")
@@ -2397,11 +2423,11 @@ def test_poll_clean_notifies_the_reviewer_once_per_head(client, app_world):
 
     text = _card_events(client, cid)
     for _ in range(40):
-        if text.count("等 alice 采纳") >= first + 1:
+        if text.count("等 <@alice> 采纳") >= first + 1:
             break
         time.sleep(0.05)
         text = _card_events(client, cid)
-    assert text.count("等 alice 采纳") == first + 1
+    assert text.count("等 <@alice> 采纳") == first + 1
 
 
 def test_poll_red_checks_nudge_cheese_once_with_the_logs(client, app_world, stub_hooks):
@@ -2608,6 +2634,79 @@ def test_a_task_can_be_submitted_again_after_its_pr_was_closed(client, app_world
     assert statuses == {cid: "revoked", fresh["id"]: "pending"}
 
 
+def _set_task_pr(client, topic_id: str, number: int) -> None:
+    """任务行上已经记着某个 PR —— 生产上由开 PR 的那次发布写上去。"""
+    from app.domain.room_task.models import Task
+
+    task_id = delivery_task_id(client, topic_id)
+
+    async def _do() -> None:
+        async with client.test_factory() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            task.pr_number = number
+            task.pr_url = f"https://github.com/{REPO}/pull/{number}"
+            await session.commit()
+
+    asyncio.run(_do())
+
+
+def _publish_the_card(client, card_id: str, topic_id: str, project_id: str) -> int:
+    """递卡时那段 fire-and-forget 的发布，在这里同步跑一遍（`pr_publish._run`
+    的两步：开/认领这条分支的 PR，再把号写回卡和任务）。"""
+    from app.domain.review import pr_publish
+
+    async def _do() -> int:
+        async with client.test_request_factory() as session:
+            pr = await pr_publish.open_pr_for_card(
+                session,
+                card_id=_uuid.UUID(card_id),
+                topic_id=_uuid.UUID(topic_id),
+                project_id=_uuid.UUID(project_id),
+            )
+        assert pr is not None
+        await pr_publish.record_pr(
+            client.test_request_factory, card_id=_uuid.UUID(card_id), pr=pr
+        )
+        return int(pr["number"])
+
+    return client.portal.call(_do)
+
+
+def test_a_card_does_not_ride_a_closed_pr_the_task_still_names(client, app_world):
+    """任务还指着一条已关闭的 PR 时递卡：卡不抄那个号，更不会几秒后被作废。
+
+    复现 2026-10-22 00:55（任务 9bd0b806）：旧草稿 PR 被人关掉、分支又推了新
+    提交，平台为新的 head 另开一条 PR —— 但那个新号要等递卡之后的那次发布才写
+    回来。递卡正落在这一刻：卡把任务上那个旧号抄了过去，轮询器一跳就按「PR 已
+    关闭」把刚递上来的卡作废，新号晚一步才写回一张已经作废的卡。
+    """
+    fake = app_world["fake"]
+    pid, tid = _room_with_work(client)
+    branch = _disk_branch(client, tid)
+    # 旧草稿 PR 曾经开着，被人在 GitHub 上关掉；任务行还挂着它的号。
+    fake.seed_pr(7, head=branch, title="chore(test): file an accept card")
+    _set_task_pr(client, tid, 7)
+    fake.close_unmerged(7)
+
+    cid = _make_card(client, tid)
+
+    # 这个号不是这次交付的 PR：卡不继承它，等发布把新 PR 写回来。
+    assert _cards(client, tid)[0]["pr_number"] is None
+
+    # 轮询一跳：不能因为任务上那条旧的已关闭 PR 就把新卡作废。
+    _poll(client)
+    assert _cards(client, tid)[0]["status"] == "pending"
+
+    # 递卡之后那次发布开出新 PR 并写回卡和任务：卡骑的是它，不是旧的 #7。
+    number = _publish_the_card(client, cid, tid, pid)
+    assert number != 7
+    _poll(client)
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert card["pr_number"] == number
+
+
 def test_poll_settles_an_externally_merged_pr(client, app_world):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
@@ -2631,6 +2730,64 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
         is not None
     )
     assert delivered["accepted_at"] is None
+
+
+def test_poll_records_who_merged_a_pr_on_github(client, app_world):
+    """GitHub 上直接合掉的 PR：卡上留下那个账号，总览那一行才有人可显示。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.merge_externally(number, merged_by={"github_id": "4242", "login": "octocat"})
+
+    _poll(client)
+
+    assert _stored_merged_by(client, cid) == {
+        "github_id": "4242",
+        "login": "octocat",
+    }
+
+
+def test_poll_records_a_card_merged_by_nobody_named(client, app_world):
+    """问过了、GitHub 没报人：记 `{}`，补录不再反复问同一张卡。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.merge_externally(number)
+
+    _poll(client)
+
+    assert _stored_merged_by(client, cid) == {}
+
+
+def test_backfill_records_who_merged_a_card_merged_before_the_column(client, app_world):
+    """存量卡：补录扫到 14 天内、没有平台采纳人的卡，读一次 GitHub 补上。"""
+    from app.domain.review.models import AcceptStatus
+
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.merge_externally(number, merged_by={"github_id": "77", "login": "old-octo"})
+
+    async def _as_already_merged():
+        from app.domain.review.repositories import AcceptCardRepository
+
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(_uuid.UUID(cid))
+            assert card is not None
+            card.status = AcceptStatus.accepted
+            card.pr_merged_at = datetime.now(UTC)
+            card.decided_by = None
+            card.merged_by = None
+            await session.commit()
+
+    asyncio.run(_as_already_merged())
+
+    result = _backfill_merge_actors(client)
+
+    assert result["filled"] == 1
+    assert _stored_merged_by(client, cid) == {
+        "github_id": "77",
+        "login": "old-octo",
+    }
+    # 已有答案的卡不再问第二次。
+    assert _backfill_merge_actors(client)["cards_checked"] == 0
 
 
 def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
@@ -3923,7 +4080,10 @@ def test_ready_rebases_a_behind_branch_then_the_ci_reads_the_new_check_set(
     assert sweeping["readied"] == [pr["node_id"]]
 
     # 转可评审之后 CI 读的是换过基的 head —— 也就是 main 上那套工作流的检查集。
-    _make_card(client, tid)
+    cid = _make_card(client, tid)
+    # 卡骑哪条 PR 由递卡之后那次发布写回：它认领的就是这条已经开着的 draft。
+    # fixture 把 fire-and-forget 关掉了，所以这里同步跑一遍。
+    _publish_the_card(client, cid, tid, pid)
     _poll(client)
     assert read_refs == [new_head]
     assert [run["name"] for run in fake.check_runs_by_sha[read_refs[-1]]] == [

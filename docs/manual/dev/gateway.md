@@ -30,6 +30,12 @@ covers:
 | 归属 | 一个项目一把虚拟 key，花销可归因，沙箱手里永远不是上游 key |
 | 刹车 | 那把 key 上的 `max_budget`，花超了网关直接拒，而不是等到发票上才发现 |
 
+## 平台付钱的调用都从这里走 {#platform-paid}
+
+平台付钱的模型调用和网页搜索，都在付钱那一方的虚拟 key 上经网关发出：项目的、任务的、个人芝士的。网关按那把 key 的预算准入、给这次调用定价，花销再按 key 抽进额度（见[记账口径](#accounting)）。会话里的订阅模型走计量代理，平台的 Claude 订阅凭证只在那里（见[计量代理](/dev/metering-proxy)）。
+
+后端代码不直接调用模型或搜索的服务商，也不把平台付钱的服务商凭据交给会话：那样的调用没有人定价、记不到任何人头上，也不受任何预算约束。唯一直接调用服务商的，是用别人自己账户的调用：成员或团队自己的 API key 或模型服务（`backend/app/domain/agent_instance/account_connections.py`），由他们自己付钱。
+
 ## 独立的一摞 {#stack}
 
 - 它有自己的一套 compose，故意的：`deploy-docker.sh` 只认一个 compose 文件、只拉起 `backend frontend`，而那个文件跟生产共用。**应用发布不碰网关，重启网关也不会重启应用。**
@@ -43,7 +49,7 @@ Claude Code 的一条流常常要几分钟，流到一半断掉的不会重放�
 
 - **拓扑**：地址归 `gateway-netns` 所有，它只占着网络命名空间：发布的端口 `172.17.0.1:4000`、应用网络上的别名 `litellm`、内部网络 `colors` 上的地址。HAProxy（`gateway-proxy-a` 或 `-b`）跑在它的命名空间里，后面是两个颜色 `litellm-blue`、`litellm-green`，同一份 compose 定义，共用 `litellm-db` 和 `litellm-redis`。平时只运行一个代理、一个颜色。
 - **为什么平时只留一个颜色**：路由器的冷却状态和 `deepseek-flash` 的会话亲和都在进程内存里（`router_settings` 没配 Redis），两个颜色同时接流量，各管各的冷却和亲和，同一个会话会在两边的 RUC 节点之间来回、前缀缓存一直不命中。第二个颜色常驻也只有网关自己崩掉时才有用；真到那一步再考虑，并先把路由状态放进 Redis。
-- **一次发布**：先认出正在服务的颜色：容器在运行、在 HAProxy 里既没被排空也不在维护状态的那一个，看的是管理状态而不是某一刻的健康检查。两个都符合（重启发生在排空中途）就取较新的那个；有颜色在运行却一个都不符合，就什么都不动、报失败。然后在空闲的颜色上起新镜像，依次过四关：docker 健康检查；`/health/readiness`（查数据库）；直接对新颜色发一次 `GET /v1/models`（带 master key），它列出的模型必须包括正在服务的颜色列出的每一个，只有本次发布从 `config.yaml` 删掉的除外，所以管理页加在数据库里的模型没加载完不会接流量；HAProxy 自己的检查看到它起来。这里不用 `/health`，它会真的去调每个模型。四关都过，再通过 HAProxy 的运行时 API 一条命令把它设成 ready、把旧颜色设成 drain。HAProxy 不重启，调用方的连接一条都不断；HAProxy 按请求选后端，所以计量代理复用的旧连接，下一个请求就落到新颜色。旧颜色继续把手上的流都传完，脚本每 5 秒读一次它在 HAProxy 里的 `scur`，到 0 才停它，最多等 30 分钟（`GATEWAY_DRAIN_SECONDS`）。到点还有请求没完，就照样停，并在工作流里打一条 `::warning::`，写明切断了几个。
+- **一次发布**：先认出正在服务的颜色：容器在运行、在 HAProxy 里既没被排空也不在维护状态的那一个，看的是管理状态而不是某一刻的健康检查。两个都符合（重启发生在排空中途）就取较新的那个；有颜色在运行却一个都不符合，就什么都不动、报失败。然后在空闲的颜色上起新镜像，依次过四关：docker 健康检查；`/health/readiness`（查数据库）；直接对新颜色发一次 `GET /v1/models`（带 master key），它列出的模型必须包括正在服务的颜色列出的每一个，而且至少上架一个模型，所以管理页加在数据库里的模型没加载完不会接流量。唯一允许缺席的，是本次发布从 `config.yaml` 删掉、正在服务的颜色没有任何数据库行提供（看 `/model/info` 的 `db_model`）、并且由人在发布工作流的 `allow_drop` 输入（`GATEWAY_ALLOW_DROP`）里点了名的模型：从文件里删掉一个名字本身不等于决定不再提供它；HAProxy 自己的检查看到它起来。这里不用 `/health`，它会真的去调每个模型。四关都过，再通过 HAProxy 的运行时 API 一条命令把它设成 ready、把旧颜色设成 drain。HAProxy 不重启，调用方的连接一条都不断；HAProxy 按请求选后端，所以计量代理复用的旧连接，下一个请求就落到新颜色。旧颜色继续把手上的流都传完，脚本每 5 秒读一次它在 HAProxy 里的 `scur`，到 0 才停它，最多等 30 分钟（`GATEWAY_DRAIN_SECONDS`）。到点还有请求没完，就照样停，并在工作流里打一条 `::warning::`，写明切断了几个。
 - **停的时候**：LiteLLM 收到 SIGTERM 会先把在途的流都传完，再把内存里的花销计数和花销日志写进数据库；`stop_grace_period: 60s` 就是留给这一步的，docker 默认的 10 秒到点会 SIGKILL。
 - **重试只在连不上时**：`retry-on conn-failure` 加 `option redispatch`，即颜色拒绝或没接住连接时换另一个颜色再试（HAProxy 3.2 不写 `retry-on` 时默认也是这个，这里写明）。请求已经发出去之后的失败一律不重试：那时 LiteLLM 可能已经调了上游，再发一次就付两次钱。HAProxy 的持续检查用 `/health/liveliness` 而不是 readiness：数据库一抖，readiness 会让两个颜色同时下线。
 - **失败与回滚**：新颜色过不了任何一关，就删掉它，流量一直留在旧颜色上，发布报失败。上线后要回退，就用同一个工作流发布上一个 SHA，走的也是不断流的路。
@@ -89,7 +95,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `patch_hosted_vllm_reasoning.py` | 上游 `hosted_vllm/` 适配器删掉历史 assistant 消息的 `reasoning_content`；补丁让它留着。思考模式的模型要在工具调用的下一轮拿回这段推理，DeepSeek 缺了直接 400「`content[].thinking` … must be passed back」 |
 | `provider_http_timing.py` | 打 `provider_http_timing` 记录：DNS/TLS/超时/401·403/429/1113 配额/其它 HTTP 错误分类，未知的 500 不会被说成网络原因 |
 | `qwen_asr.py` | 不是补丁：经 LiteLLM 公开的 `custom_provider_map` 注册的 `qwen-asr/` 提供方。阿里百炼的 Qwen-Audio 语音识别只有原生接口，它把「最后一条 user 消息里带 `input_audio`」的对话请求转成百炼请求，system 消息作上下文、`vocabulary` 作热词；按百炼每秒 25 token 的口径把音频时长报成 prompt tokens，由这一行的单价计费 |
-| `check_config.py` | 用 config.yaml 建一个 Router，断言 thinking 与 effort 的转换行为 |
+| `check_config.py` | 用自己构造的部署建一个 Router，断言 thinking 与 effort 的转换、缓存计价、停用的行不路由 |
 
 ## 日志里有什么 {#logs}
 
@@ -114,32 +120,67 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 
 ## 怎么加一个模型 {#add-model}
 
-两条路，落点相同，因为平台读的是 `/model/info`：
+在管理页加。`deploy/gateway/config.yaml` 不声明任何模型：网关路由的每一个模型，连同只用来计价、从不路由的那几个，都是网关数据库里的一行（`STORE_MODEL_IN_DB` 打开），改模型、改价格都不用发布。管理员增删改停运行时模型，每次写都记审计（谁做的），写成功后刷新目录，模型立刻可选。数据库因此是模型与价格唯一的来源，定时备份见 `deploy/gateway/README.md`。
 
-- **写 `config.yaml`**：加一条路由和价格，在 `model_info` 下写 `cheese_selectable: true`；`cheese_tier` 写这个模型的档位（included / premium / frontier，缺省 included），方案按它限定可用的模型。这是随镜像发布的基线，改它要发布网关。标记是 opt-in 的，因为网关也路由不上菜单的模型——`glm-4.5` 是分身别名指向的地方。
-- **管理页**：管理员增删改停运行时模型（`STORE_MODEL_IN_DB` 打开），不用发布；每次写都记审计（谁做的），写成功后刷新目录，模型立刻可选。`config.yaml` 里声明的模型在页面上是只读的，网关不许写它们。
+一行的上游凭据写成 `os.environ/<变量名>`（例如 `os.environ/ZHIPU_API_KEY`），LiteLLM 对数据库行同样从网关的环境里解析它，所以这些变量仍放在网关的 `.env` 里，凭据本身不进数据库。
+
+`model_info` 里平台自己的键，网关原样透传：
+
+| 键 | 含义 |
+| --- | --- |
+| `cheese_selectable: true` | 在智能体设置里给人选。opt-in，因为网关也路由不上菜单的模型：平台替人路由过去的模型不该被当成本人选的 |
+| `cheese_label` | 显示名；缺省用 `model_name` |
+| `cheese_tier` | 方案按它限定可用的模型（included / premium / frontier，缺省 included） |
+| `cheese_efforts` | 它接受的思考档（low / medium / high / max），在智能体设置里给出，Claude Code 以 `output_config.effort` 传；缺省用模型自己的默认 |
+| `cheese_auto_compact_window` | 提供方建议比上下文窗口更早压缩时，Claude Code 在这里压缩；缺省按 `max_input_tokens` |
+| `cheese_overseas: true` | 只有平台管理员开通过的团队能用（Claude、GPT、Gemini），别的团队看不到 |
+| `cheese_free: true` | 上游不收钱，输入、输出单价都写明为 0；可选模型唯一合法的零价 |
+| `cheese_upstream_headers`、`cheese_session_header` | 按行（部署）发的请求头，见下面「免费、订阅与中转」 |
+| `cheese_no_explicit_cache: true`、`cheese_spend_cap_usd` | 属于上游模型：去掉 Claude Code 的 `cache_control` 标记（`no_explicit_cache.py`）；上游累计花到这个数就拒（`spend_cap.py`） |
 
 ### 一个模型，几条线路 {#sources}
 
-同一个 `model_name` 在网关里可以有好几行（部署），网关按 `litellm_params.order` 从小到大试，相同的一起分流，没有 order 的只在所有有 order 的都冷却时才轮到。管理页把它们叫「线路」：任何模型都能加运行时线路，包括 `config.yaml` 声明的（`kimi-k3` 的官方行在 config 里，OpenCode Go 那一行可以从页面加），config 的那几行在页面上列出来但只读。不用发布网关，加完立刻生效。
+同一个 `model_name` 在网关里可以有好几行（部署），网关按 `litellm_params.order` 从小到大试，相同的一起分流，没有 order 的只在所有有 order 的都冷却时才轮到。管理页把它们叫「线路」：任何模型都能加线路（`kimi-k3` 有官方 API 一行，也有 OpenCode Go 一行）。不用发布网关，加完立刻生效。
 
 - **模型的元数据每一行都一样**：上架、名字、档位、思考档、能力，目录读 `/model/info` 列出的第一行，而哪一行排第一不由我们定。加线路时服务层从已有那一行抄（`cheese_*` 里属于模型的键，加上每一个显式写了的 `supports_*`，`supports_output_config` 这类决定思考档送不送得到上游），改模型时每一行都改；部署 id 不抄（共用一个 id，一行 429 冷却全组，#3294）。
 - **新线路默认是兜底**：默认优先级排在现有带 order 的线路之后。新线路会接走在用线路的流量时，请求体必须带 `make_primary: true`，页面上要勾「让它成为首选」，不带就 400。这种情况是它的数不大于在用线路里最小的那个，或者旁边的线路都没写 order。给停用的模型加线路，新线路也是停用的。
 - **请求头**：静态头写在这一行的 `litellm_params.extra_headers`，LiteLLM 原样发给上游（`hosted_vllm/` 与 `anthropic/` 两种都实测过）；接收 Claude Code 会话 id 的头名写在 `model_info.cheese_session_header`，由网关侧的钩子填值。`/model/info` 对每一把虚拟 key 都开放：`model_info` 原样回，`litellm_params` 过 LiteLLM 的掩码，而掩码只看头名——名字里有 key、token、secret、auth、password、credential、cookie 这一段的，值被打码，别的原样可读（1.103.3 上实测）。所以头的值按公开对待，上游凭据填 `api_key`；认证与传输相关的头不许按线路写。页面只列头名，审计里也只留头名。
 - **协议**：`anthropic` → `anthropic/<上游名>`（原生 Messages）；`openai-chat` → `hosted_vllm/<上游名>`（只有 chat/completions 的中转站与 OpenCode Go；不能用 `openai/`，那会被翻成 Responses API）；`openai-responses` → `openai/<上游名>`。不选协议时 `upstream_model` 就是完整的 LiteLLM 模型串。原生 Messages 的地址不带 `/v1`（LiteLLM 自己拼 `/v1/messages`，服务层把多填的 `/v1` 去掉）；Chat 线路的地址要带到 `/v1`。
 - **Chat 线路让整组折叠 system 消息**：Messages 翻成 chat/completions 会丢掉对话中间的 system 消息（实测 glm-5.2、MiMo），所以一个模型一旦有 `openai-chat` 线路，组里每一行都标 `supports_mid_conversation_system: false`，服务层加线路时顺手改齐运行时的行；config.yaml 的行没标就拒，先去改 config。
-- **免费**：唯一合法的零价是声明出来的——`cheese_free: true` 且输入、输出都写成 0（`price_is_set` 认它，`check_config.py` 同一条）；没标免费的零价一律拒。免费线路和付费线路在同一个模型里时，用量估价按付费线路里最高的那一档算，免费线路上的流量也一样（`usage.pricing`）。页面在混用时会提示这一点。
+- **消费上限跟着上游走**：`cheese_spend_cap_usd`（`spend_cap.py`）按上游模型（`litellm_params.model`）的总账计，不分是哪一行、哪个模型名打的。所以在页面上改一条运行时线路的上限（请求体 `spend_cap_usd`，`null` 是清掉），服务层把同一上游的每一条运行时线路都改成同一个数；同一上游有 config.yaml 的行且上限不同就拒，先把那一行移出 config 或改 config。改上限不用发布网关。
+- **每条线路都要有价，价只能改不能清空**：平台按模型名的单价给它的全部用量计费（`usage.pricing`；订阅里那几个 Claude 模型停用、不上架，留下的就是单价），所以不管上不上架，每条线路输入、输出都要有价；唯一的零是声明出来的免费（`cheese_free: true`，两向写 0）。一条线路已有的价（五档里的任何一档，包括一小时缓存写入 `cache_creation_1h`，即 `cache_creation_input_token_cost_above_1hr`）编辑时可以改，不能清空，服务层拒绝。页面上改价先弹框列出每一档的改前 → 改后，并说明这个模型此后的全部用量都按新价计。
+- **至少留一个上架的模型**：停用、删除、下架最后一个上架的模型，或停用、删除它最后一条在用的线路，服务层都拒绝，否则智能体设置里没有模型可选。
+- **免费**：唯一合法的零价是声明出来的——`cheese_free: true` 且输入、输出都写成 0（`price_is_set` 认它）；没标免费的零价一律拒。免费线路和付费线路在同一个模型里时，用量估价按付费线路里最高的那一档算，免费线路上的流量也一样（`usage.pricing`）。页面在混用时会提示这一点。
 - 目录对一个模型的判断看整组：有一行没停用就还能选，在用的每一行都有价（或声明免费）才算有价。
 
-还有一项要按模型手动标：**`supports_mid_conversation_system: false`**。Claude Code 会把技能清单、运行环境和日期放在对话中间的 system 消息里；有的线路收不了它，有的是网关转换时丢掉，有的是上游丢掉或整条请求拒绝。标了 `false` 的模型，平台启动 Claude Code 时设 `CLAUDE_CODE_MODEL_CAPABILITIES`，让它把这些内容并进第一条用户消息（`gateway_usage.model_capabilities`）。没标的照 Claude Code 的默认。这一项只在量过之后手动标，不按上游推断：线路以后支持了，把标记去掉就行。量法是从后端经网关发一条对话中间带暗号的 system 消息，问模型暗号是什么。`config.yaml` 里的模型写在条目里，运行时模型在管理页的能力开关里关掉。
+价格只用来计价、从不路由的模型（平台订阅服务的 Claude 模型）也是这样的行：带全五个单价（输入、输出、缓存读、5 分钟与 1 小时缓存写），停用，不配凭据。后端读 `/model/info` 给订阅流量计费（`usage.pricing`），所以它们留在网关里，但路由器拒绝它们。LiteLLM 对数据库行的停用只认 `/model/block` 写的那一列，不认 `model_info.blocked`。
 
-两条路欠同一个不变式，服务层与 `check_config.py` 各守一边：**没价的可选模型等于不上架**。它的 token 会按零计费，项目的 `max_budget` 永远不会跳，第一个征兆是发票——模型从选单里消失会被发现，一个悄悄失灵的刹车不会。唯一的例外是上游真不收钱的模型：`model_info` 里写 `cheese_free: true`，并把输入、输出单价都**写明**为 0（`usage.pricing.declared_free`；`check_config.py` 守同一条）。没有标记的 0 仍是没价。改完清单跑：
+还有一项要按模型手动标：**`supports_mid_conversation_system: false`**。Claude Code 会把技能清单、运行环境和日期放在对话中间的 system 消息里；有的线路收不了它，有的是网关转换时丢掉，有的是上游丢掉或整条请求拒绝。标了 `false` 的模型，平台启动 Claude Code 时设 `CLAUDE_CODE_MODEL_CAPABILITIES`，让它把这些内容并进第一条用户消息（`gateway_usage.model_capabilities`）。没标的照 Claude Code 的默认。这一项只在量过之后手动标，不按上游推断：线路以后支持了，把标记去掉就行。量法是从后端经网关发一条对话中间带暗号的 system 消息，问模型暗号是什么。在管理页的能力开关里关掉。
 
-```sh
-docker exec -i cheese-gateway-litellm-blue-1 python - /app/config.yaml < deploy/gateway/check_config.py   # 或正在服务的 green
-```
+管理页背后的服务守着这条不变式：**没价的可选模型等于不上架**。它的 token 会按零计费，项目的 `max_budget` 永远不会跳，第一个征兆是发票——模型从选单里消失会被发现，一个悄悄失灵的刹车不会。唯一的例外是上游真不收钱的模型：`model_info` 里写 `cheese_free: true`，并把输入、输出单价都**写明**为 0（`usage.pricing.declared_free`）。没有标记的 0 仍是没价。`deploy/gateway/check_config.py` 在镜像构建时验的是固定版本 LiteLLM 的行为（思考档、缓存计价、停用的行不路由），用的是它自己构造的部署，不读任何一行真实配置。
 
-价格用人民币rate 除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率（`kimi-k3`、`mimo-v2.6-pro` 的注释里都写了各自的原始人民币价）。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，发布带它的配置前要在网关 `.env` 里备好 `MOONSHOT_API_KEY`。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
+### 平台模型角色 {#roles}
+
+平台自己挑模型的那几件事叫「平台模型角色」，在模型管理页的「平台模型角色」一段里各选一个网关模型，改了立即生效，不用重新部署后端：
+
+| 角色 | 用在哪 | 没人指过时读的设置项 |
+|---|---|---|
+| `agent_model` | 没设默认模型的项目跑在它上面；网关从没答过话时目录只剩它 | `AGENT_MODEL` |
+| `subagent_model` | 没设分身默认、且有权用这个模型的项目，分身默认跑它。有没有权和它自己的轮次过同一道闸门（`policy.gate.check`：团队方案的档位、管理员的境外开通、项目自己的档位策略）；没权的项目照旧跟着项目的默认模型 | 无：不设就跟着项目的默认模型 |
+| `assistant_model` | 个人芝士、助手的动作闸门 | `ASSISTANT_MODEL` |
+| `docs_assistant_model` | 问芝士 | `DOCS_ASSISTANT_MODEL` |
+| `topic_naming_model` | 话题命名 | `TOPIC_NAMING_MODEL` |
+| `environment_diagnosis_model` | 让芝士看看（环境搭建失败的诊断） | `ENVIRONMENT_DIAGNOSIS_MODEL` |
+| `voice_asr_model` / `voice_polish_model` | 语音输入的转写与整理 | `VOICE_ASR_MODEL` / `VOICE_POLISH_MODEL` |
+| `memory_migration_model` | 旧记忆表的迁移 | `MEMORY_MIGRATION_MODEL` |
+
+- 选择存在平台库的 `platform_model_roles` 里，审计记在 `gateway_admin_audit`（动作 `role.set`）。读的一方在 `app.core.model_roles`，后台每 30 秒从库里刷新一次，写的那个进程写完当场刷新。项目自己设了默认模型、分身默认的，在那个项目里仍以项目的为准。
+- 默认模型与分身默认只能指到上架的模型（它们要提供给项目选），指着它们的模型也不能下架；其余角色只能指到在用、计价的模型：两向都写了价、至少一向 > 0，或者是免费线路（语音转写跑在一个不上架、输出价为 0 的模型上）。
+- 这些工作各用一把平台自己铸的虚拟 key，key 只放行一个模型（`service_keys.KeySpec`）。改角色时服务层先把 key 放宽到新旧两个模型，存好选择；等每个进程都读到新选择（30 秒刷新之后再过 15 秒）再收窄到新模型，所以没有一刻哪个进程用的模型被 key 拒掉。收窄没做成（进程退出、网关拒绝）时 key 多放行一个模型，只记日志。
+- 模型列表里每个模型带着跑在它上面的角色（`roles`）。有角色时停用、删除它，或停用、删除它最后一条在用的线路，服务层都拒绝，要先把角色指走；页面在编辑、停用、删除这个模型之前弹框列出这些角色。没人指过的角色读设置项，那个值也算「跑在它上面」：部署之后 `deepseek-flash`、`qwen-audio-asr`、`glm-5.2` 这几个设置项默认值指着的模型，同样不能直接停用或删除。
+- `agent_haiku_model`、`agent_sonnet_model`、`agent_opus_model` 不是角色：现在的执行通道都自己写模型环境变量，并把这三个别名清掉（`screen_model_env.py`），它们只在没有通道的那条老路上还会被读到。
+
+人民币标价的模型，价格用人民币价除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，它那一行引用的 `MOONSHOT_API_KEY` 要在网关 `.env` 里。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
 
 ## 上线前：跑一遍一致性套件 {#conformance}
 
@@ -181,7 +222,15 @@ GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
 
 上游只有 OpenAI 兼容的 `chat/completions`、没有 Anthropic Messages 时，前缀用 `hosted_vllm/`，`api_base` 写到 `/v1` 为止：`openai/` 会被翻成 Responses API（`/responses`），`custom_openai/` 会丢掉 reasoning effort、还把 OpenAI SDK 的名字拼进 User-Agent。`test_chat_route.py` 用假上游守着 thinking、工具调用、工具历史和图片两个方向都完整，以及下一轮请求里 assistant 消息带回上一轮的推理。有原生 Messages 的上游用 `anthropic/`，`api_base` 写到 `/v1` 之前（LiteLLM 自己拼 `/v1/messages`）。
 
-这类行通常在管理页（数据库）加，不进 `config.yaml`，因为改 `config.yaml` 要发布网关、会打断正在流的会话。数据库行与 `config.yaml` 行可以同名同组，`model_info` 里的自定义键原样到达钩子。生效时间（2026-10-14 在固定版本上实测）：`POST /model/new` 和 `/model/delete` 一两秒内；改一行用 `PATCH /model/{id}/update`（约 1 秒）——`POST /model/update` 会丢掉 `order` 且不改 `model_info`；直接改库要等网关每 30 秒一次的轮询。
+`model_info` 里的自定义键原样到达钩子。生效时间（2026-10-14 在固定版本上实测）：`POST /model/new` 和 `/model/delete` 一两秒内；改一行用 `PATCH /model/{id}/update`（约 1 秒）——`POST /model/update` 会丢掉 `order` 且不改 `model_info`；直接改库要等网关每 30 秒一次的轮询。
+
+## 备份与恢复 {#backup}
+
+网关数据库是管理页加的模型和价格、每个项目的虚拟 key 与预算、花销日志的唯一一份；`config.yaml` 只能找回随镜像发的那几个基线模型。
+
+- **Gateway DB backup** 工作流（`.github/workflows/gateway-db-backup.yml`）在 dev runner 上每 6 小时跑一次（UTC 00:23、06:23、12:23、18:23），也可以手动触发。它调 `deploy/gateway-db-backup.sh`：用容器自己的 `pg_dump -Fc` 转储 `litellm`，`pg_restore --list` 读回来、必须列出 `LiteLLM_ProxyModelTable` 和 `LiteLLM_VerificationToken` 的数据，过了才改名成 `~/backups/gateway/gateway-litellm-<UTC 时间>.dump`。本机留最新 8 份（2 天；2026-10-21 一份约 0.85 GB）。
+- 每份随后用 `deploy/r2-upload.py` 传到 R2 的 dev 前缀下（`db/gateway-litellm-<UTC 时间>.dump`），桶的生命周期规则 30 天后删。数据库和本机那几份在同一台机器上，所以上传失败整次运行就算失败。
+- 恢复命令（看内容、只捞回几行、整库替换）见 `deploy/gateway/README.md` 的 Backups 一节。整库恢复会丢掉转储之后写进去的一切：花销、新项目的 key、模型改动。
 
 ## 边界与坑 {#traps}
 

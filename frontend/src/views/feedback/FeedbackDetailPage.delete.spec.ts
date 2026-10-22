@@ -51,6 +51,7 @@ function detail(over: Partial<FeedbackDetail> = {}): FeedbackDetail {
     comments: 0,
     thread: [],
     thread_next_cursor: null,
+    attachments: [],
     timeline: [],
     author_handle: 'alice',
     can_delete: true,

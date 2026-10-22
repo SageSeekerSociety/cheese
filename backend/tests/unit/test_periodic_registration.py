@@ -450,6 +450,8 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "sandbox_disk_check_s",
         "draft_pr_sweep_interval_s",
         "ci_activity_sweep_interval_s",
+        "platform_model_roles_refresh_interval_s",
+        "model_spend_cap_alert_interval_s",
     )
     for value, field in enumerate(fields, start=101):
         monkeypatch.setattr(settings, field, value)
@@ -493,11 +495,18 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("timed deliveries", 30),
         ("overdue deliveries", 115),
         ("routines", 30),
+        ("assistant routines", 30),
         ("task deadline sweep", 116),
         ("memory dream", 117),
+        ("platform model roles refresh", 121),
+        ("model spend cap alert", 122),
         ("ci activity sweep", 300),
     ]
-    assert all(job.owner_only for job in world.jobs.values())
+    # Every process serves requests that read the platform model roles, so that
+    # one refresh runs everywhere; every other clock only on the lock holder.
+    assert [name for name, job in world.jobs.items() if not job.owner_only] == [
+        "platform model roles refresh"
+    ]
     world.get_runner.assert_not_called()
 
 

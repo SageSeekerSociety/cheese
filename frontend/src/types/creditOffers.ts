@@ -2,6 +2,11 @@ export interface BetaCredits {
   credits: number
   claimed: boolean
   feedback_credits: number
+  /** What the person's own plan issues a month; null for an unlimited plan or one billed by time windows. */
+  plan_credits: number | null
+  /** What inviting a friend earns the inviter, and the friend. */
+  invite_credits: number
+  invitee_credits: number
 }
 
 export interface CreditRewards {
@@ -9,9 +14,7 @@ export interface CreditRewards {
   feedback_credits: number
   /** Credits earned by inviting friends who went on to accept a first delivery. */
   invite_credits: number
-  /** Contribution points (积分) ever earned; they never go down. */
-  points: number
-  items: { kind: 'beta' | 'feedback' | 'invite'; credits: number; points: number; created_at: string }[]
+  items: { kind: 'beta' | 'feedback' | 'invite'; credits: number; created_at: string }[]
 }
 
 export interface PublishedCreditPlan {

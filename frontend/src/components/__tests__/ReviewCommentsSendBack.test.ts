@@ -24,6 +24,11 @@ vi.mock('../../api', async () => {
     getTopic: vi.fn().mockResolvedValue({ id: 't1', status: 'active' }),
   }
 })
+// 审阅人是我的卡一出现，会先看一眼我的邀请码（composables/useInvitePrompt.ts）；这里测的是批注。
+vi.mock('@/api/invites', async (actual) => ({
+  ...(await actual<typeof import('@/api/invites')>()),
+  getMyInvites: vi.fn().mockResolvedValue({ unlocked: true }),
+}))
 vi.mock('../../api/reviewComments', () => ({
   listReviewComments: (...a: unknown[]) => listReviewComments(...a),
   writeReviewComment: vi.fn(),

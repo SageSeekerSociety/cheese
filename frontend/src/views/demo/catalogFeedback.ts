@@ -224,8 +224,15 @@ export const FEEDBACK_ENTRIES: CatalogEntry[] = [
         name: '个人奖励',
         note: '侧栏只显示实际获奖励的反馈数与累计点数，提交不等于获奖。',
         props: {
-          beta: { credits: 500, claimed: true, feedback_credits: 100 },
-          rewards: { feedback_count: 3, feedback_credits: 300, invite_credits: 0, points: 0, items: [] },
+          beta: {
+            credits: 500,
+            claimed: true,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+          rewards: { feedback_count: 3, feedback_credits: 300, invite_credits: 0, items: [] },
         },
         expect: '我的反馈奖励',
       },

@@ -7,6 +7,426 @@ import { fieldDefects, TOKEN_FIELDS } from './field-layout';
 // at a time.
 test.describe.configure({ mode: 'parallel' });
 
+// These are real catalog fixtures, not whatever tasks the shared demo user has.
+// The frame indices are the registered collapsed-task row and page-form row in
+// frontend/src/views/demo/catalogRail.ts. No source-module imports are needed.
+test.describe('sidebar channel row geometry', () => {
+  type Box = { x: number; y: number; width: number; height: number };
+
+  async function boxOf(target: Locator): Promise<Box> {
+    const box = await target.boundingBox();
+    expect(box, 'the measured control must have a rendered box').not.toBeNull();
+    return box!;
+  }
+
+  function expectSeparate(a: Box, b: Box) {
+    const overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+    const overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+    expect(overlapX <= 0.5 || overlapY <= 0.5, 'independent row contents must not overlap').toBe(true);
+  }
+
+  function expectStationary(before: Box, after: Box) {
+    for (const edge of ['x', 'y', 'width', 'height'] as const) {
+      expect(Math.abs(after[edge] - before[edge]), `revealing more must not change ${edge}`).toBeLessThanOrEqual(0.5);
+    }
+  }
+
+  // PinnedRows/RootRow render their own v-list (which carries the nav's horizontal
+  // padding); TopicRailRow is mounted as a bare v-list-item. Comparing absolute title
+  // x across frames would then charge that host padding to the row. Measure the title
+  // relative to the row it belongs to instead — no guessed pixel compensation.
+  async function titleOffsetInRow(title: Locator): Promise<number> {
+    return title.evaluate(el => {
+      const row = el.closest('.v-list-item');
+      if (!row) throw new Error('title is not inside a v-list-item');
+      return el.getBoundingClientRect().x - row.getBoundingClientRect().x;
+    });
+  }
+
+  async function expectHitSurface(target: Locator) {
+    // Check inside the whole button, not only its tiny icon at the centre.
+    // A visually exposed but covered button is not a usable touch target.
+    const hits = await target.evaluate(el => {
+      const r = el.getBoundingClientRect();
+      return [0.25, 0.5, 0.75].flatMap(x => [0.25, 0.5, 0.75].map(y => {
+        const hit = document.elementFromPoint(r.left + r.width * x, r.top + r.height * y);
+        return hit !== null && el.contains(hit);
+      }));
+    });
+    expect(hits).toEqual(Array(9).fill(true));
+  }
+
+  // Dev/nginx rewrite /demo/* to demo.html; Vite preview has no such
+  // middleware. Serve that same built document at the catalog's addresses in both
+  // environments, preserving the pathname/query consumed by demo-main.ts.
+  async function serveDemo(page: Page, entry: string) {
+    await page.route(new RegExp(`/demo/catalog/${entry}(/frame/\\d+)?(\\?|$)`), async route => {
+      if (route.request().resourceType() !== 'document') return route.continue();
+      const url = new URL(route.request().url());
+      url.pathname = '/demo.html';
+      const response = await route.fetch({ url: url.href });
+      await route.fulfill({ response });
+    });
+  }
+
+  // A frame is addressed by its position in the entry's list of states, and entries
+  // gain and lose states as the component changes: a number written here then
+  // measures some other state. So a state is named, and its position read off the
+  // entry's own page, where each case shows its name and its #position.
+  const positions = new Map<string, Map<string, number>>();
+  async function stateIndex(page: Page, entry: string, state: string): Promise<number> {
+    if (!positions.has(entry)) {
+      await serveDemo(page, entry);
+      await page.goto(`/demo/catalog/${entry}`);
+      const heads = page.locator('.catalog-case-head');
+      await expect(heads.first()).toBeVisible({ timeout: 30_000 });
+      const byName = new Map<string, number>();
+      for (const head of await heads.all()) {
+        const name = (await head.locator('.catalog-case-name').innerText()).trim();
+        const index = Number((await head.locator('.catalog-case-index').innerText()).trim().slice(1)) - 1;
+        byName.set(name, index);
+      }
+      positions.set(entry, byName);
+    }
+    const index = positions.get(entry)!.get(state);
+    expect(index, `catalog ${entry} has no state named 「${state}」`).not.toBeUndefined();
+    return index!;
+  }
+
+  // Any catalog entry, not only the channel row: the alignment contracts below compare
+  // independently rendered components, and each has its own frame id.
+  async function catalogFrame(page: Page, entry: string, state: string, theme = 'light') {
+    const index = await stateIndex(page, entry, state);
+    await serveDemo(page, entry);
+    await page.goto(`/demo/catalog/${entry}/frame/${index}?theme=${theme}&motion=off&bg=canvas`);
+    await expect(page.locator('.frame-page')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+  }
+
+  // Give the standalone frame the same constrained width as a sidebar rather than a
+  // whole desktop viewport.
+  async function narrowFrame(page: Page) {
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+  }
+
+  async function catalogRow(page: Page, state: string, theme = 'light') {
+    await catalogFrame(page, 'topic-rail-row', state, theme);
+    const row = page.locator('.frame-page .topic-row');
+    await expect(row).toHaveCount(1);
+    await expect(row).toBeVisible();
+    return row;
+  }
+
+  test('task arrow precedes the name and revealing more neither shifts nor covers the name or light', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    for (const theme of ['light', 'dark']) {
+      const row = await catalogRow(page, '任务块收起：状态合成一盏灯', theme);
+      // The standalone frame supplies real component markup; give it the same
+      // constrained width as a sidebar rather than a whole desktop viewport.
+      await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+      await page.mouse.move(1000, 700);
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const light = row.locator('.row-light');
+      const actions = row.locator('.row-actions');
+      const more = row.locator('.row-actions__btn');
+      await expect(light).toHaveCount(1);
+      await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      await expect(actions).toHaveCSS('opacity', '0');
+      const before = await Promise.all([arrow, title, light, more].map(boxOf));
+      expect(before[0].x + before[0].width).toBeLessThanOrEqual(before[1].x + 0.5);
+
+      await row.hover();
+
+      await expect(actions).toHaveCSS('opacity', '1');
+      const shown = await Promise.all([arrow, title, light, more].map(boxOf));
+      expectStationary(before[1], shown[1]);
+      expectStationary(before[2], shown[2]);
+      expectSeparate(shown[0], shown[1]);
+      expectSeparate(shown[0], shown[3]);
+      await expectHitSurface(arrow);
+      await expectHitSurface(more);
+
+      await page.mouse.move(1000, 700);
+      await expect(actions).toHaveCSS('opacity', '0');
+      expectStationary(before[1], await boxOf(title));
+      expectStationary(before[2], await boxOf(light));
+    }
+  });
+
+  test.describe('400px touch page', () => {
+    test.use({ viewport: { width: 400, height: 844 }, hasTouch: true, isMobile: true });
+
+    // Page form with a real subtree and a collapsed yellow task block.
+    test('subtree and task controls each have separate hittable 44px targets', async ({ page }) => {
+      const row = await catalogRow(page, '手机：两个独立折叠入口');
+      const subtree = row.locator('.subtree-toggle');
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const light = row.locator('.row-light');
+      const more = row.locator('.row-actions__btn');
+      await expect(row.locator('.row-actions')).toHaveCSS('opacity', '1');
+      await expect(light).toHaveCount(1);
+      await expect(light).toHaveClass(/row-light--yellow/);
+      await expect(subtree).toHaveCount(1);
+      // The subtree is expanded here; only the task block is collapsed.
+      await expect(subtree).toHaveAttribute('aria-expanded', 'true');
+      await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      const boxes = await Promise.all([subtree, arrow, title, light, more].map(boxOf));
+      for (const leading of [boxes[0], boxes[1]]) {
+        expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
+      }
+      for (const target of [boxes[0], boxes[1], boxes[4]]) {
+        expect(target.width).toBeGreaterThanOrEqual(44);
+        expect(target.height).toBeGreaterThanOrEqual(44);
+        expect(target.x).toBeGreaterThanOrEqual(0);
+        expect(target.x + target.width).toBeLessThanOrEqual(400);
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
+      }
+      for (const target of [subtree, arrow, more]) {
+        await expectHitSurface(target);
+        // Catalog props are controlled: observe the actual browser-delivered
+        // click rather than expecting an unhandled emit to update the fixture.
+        await target.evaluate(el => el.addEventListener('click', () => {
+          el.setAttribute('data-layout-clicked', 'true');
+        }, { once: true }));
+        await target.tap();
+        await expect(target).toHaveAttribute('data-layout-clicked', 'true');
+      }
+      expectStationary(boxes[2], await boxOf(title));
+      expectStationary(boxes[3], await boxOf(light));
+    });
+  });
+
+  // 触屏不等于「整页形态」。桌面宽度、但输入是手指的机器（触屏笔记本）上，⋯ 也必须
+  // 常驻、两个控件各自撑到 44×44——不能靠 page fixture 改写出来的 44px 规则通过。
+  // 媒体查询用 CDP 明确置为 hover:none，而不是假设某个 Playwright 设备描述符会顺带
+  // 让它成立。
+  test.describe('desktop-width touch', () => {
+    test.use({ viewport: { width: 1280, height: 800 }, hasTouch: true, isMobile: false });
+
+    test('hover:none at desktop width keeps ⋯ resident and both 44px targets separate', async ({ page }) => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'none' },
+          { name: 'pointer', value: 'coarse' },
+        ],
+      });
+
+      // The collapsed row with a yellow task light and menuOpen=false; the
+      // task-only state stays untouched because it is the alignment control.
+      const row = await catalogRow(page, '任务块收起：状态合成一盏灯');
+      await narrowFrame(page);
+
+      expect(
+        await page.evaluate(() => matchMedia('(hover: none)').matches),
+        'this contract is about touch input, not page form'
+      ).toBe(true);
+      expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+      // The row is NOT the page form: page remains false at desktop width.
+      await expect(row).not.toHaveClass(/rail-channel-page/);
+
+      const actions = row.locator('.row-actions');
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const light = row.locator('.row-light');
+      const more = row.locator('.row-actions__btn');
+
+      await expect(actions).toHaveCSS('opacity', '1');
+      // The collapsed fixture really is collapsed and really carries its light;
+      // otherwise the geometry below would be measuring an expanded, lightless row.
+      await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      await expect(light).toHaveCount(1);
+      await expect(light).toHaveClass(/row-light--yellow/);
+      const boxes = await Promise.all([arrow, title, light, more].map(boxOf));
+      expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x + 0.5);
+      for (const target of [boxes[0], boxes[3]]) {
+        expect(target.width).toBeGreaterThanOrEqual(44);
+        expect(target.height).toBeGreaterThanOrEqual(44);
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
+      }
+      for (const target of [arrow, more]) await expectHitSurface(target);
+      // A public channel with tasks gets no redundant #; the task arrow is the only mark.
+      await expect(row.locator('.row-glyph')).toHaveCount(0);
+    });
+
+    // 「同层：子频道和任务都能折叠」 is a channel with both controls, expanded and lightless: measure the
+    // controls, not a light, and do not assume the task arrow is collapsed.
+    test('both fold controls keep separate 44px targets when the row is expanded', async ({ page }) => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'none' },
+          { name: 'pointer', value: 'coarse' },
+        ],
+      });
+
+      const row = await catalogRow(page, '同层：子频道和任务都能折叠');
+      await narrowFrame(page);
+      expect(await page.evaluate(() => matchMedia('(hover: none)').matches)).toBe(true);
+      expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+      await expect(row).not.toHaveClass(/rail-channel-page/);
+
+      const subtree = row.locator('.subtree-toggle');
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const more = row.locator('.row-actions__btn');
+      await expect(row.locator('.row-actions')).toHaveCSS('opacity', '1');
+      await expect(subtree).toHaveCount(1);
+      await expect(arrow).toHaveCount(1);
+      await expect(subtree).toHaveAttribute('aria-expanded', 'true');
+      await expect(arrow).toHaveAttribute('aria-expanded', 'true');
+
+      const boxes = await Promise.all([subtree, arrow, title, more].map(boxOf));
+      for (const leading of [boxes[0], boxes[1]]) {
+        expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
+      }
+      for (const target of [boxes[0], boxes[1], boxes[3]]) {
+        expect(target.width).toBeGreaterThanOrEqual(44);
+        expect(target.height).toBeGreaterThanOrEqual(44);
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
+      }
+      for (const target of [subtree, arrow, more]) await expectHitSurface(target);
+    });
+  });
+
+  // 单图标行（只有 #、只有子话题折叠、或只有任务折叠）不留多余的双图标空槽，
+  // 同层标题从同一条紧凑左缘开始；同时有子话题和任务两个折叠按钮的行，两个按钮与标题互不重叠。
+  test('same-level single-control rows share one tight left edge without empty dual-slot gap', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const cases = [
+      { state: '有队友在干活', children: false, tasks: false },
+      { state: '同层：只有子频道', children: true, tasks: false },
+      { state: '同层：只有任务', children: false, tasks: true },
+    ];
+    const lefts: number[] = [];
+    for (const item of cases) {
+      const row = await catalogRow(page, item.state);
+      await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+      await expect(row.locator('.subtree-toggle')).toHaveCount(item.children ? 1 : 0);
+      await expect(row.locator('.task-fold__btn')).toHaveCount(item.tasks ? 1 : 0);
+      lefts.push((await boxOf(row.locator('.topic-title'))).x);
+    }
+    expect(Math.max(...lefts) - Math.min(...lefts), `title left edges: ${lefts.join(', ')}`).toBeLessThanOrEqual(0.5);
+
+    const dual = await catalogRow(page, '同层：子频道和任务都能折叠');
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+    const [subBox, taskBox, titleBox] = await Promise.all([
+      boxOf(dual.locator('.subtree-toggle')),
+      boxOf(dual.locator('.task-fold__btn')),
+      boxOf(dual.locator('.topic-title')),
+    ]);
+    expectSeparate(subBox, taskBox);
+    expectSeparate(taskBox, titleBox);
+  });
+
+  // 私密频道的锁说的是「谁能进来」，有任务时不能拿任务箭头把它换掉；悬停说明也还在。
+  test('private channel keeps its lock and its private hint while tasks are collapsible', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const row = await catalogRow(page, '私密频道有任务');
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+
+    const glyph = row.locator('.row-glyph');
+    await expect(glyph).toHaveCount(1);
+    await expect(glyph).toHaveClass(/mdi-lock-outline/);
+    await expect(glyph).toHaveAttribute('title', '私密频道');
+    const arrow = row.locator('.task-fold__btn');
+    await expect(arrow).toHaveCount(1);
+    const [glyphBox, arrowBox] = await Promise.all([boxOf(glyph), boxOf(arrow)]);
+    expectSeparate(glyphBox, arrowBox);
+  });
+
+  // 置顶层和频道层用的不是同一个组件，但「左边一列、文字一列」是同一条视觉契约：
+  // 总览、资料库、综合和普通频道的标题必须从同一条竖线开始。
+  test('pinned pages, 综合 and a normal channel share one title left edge', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const offsets: number[] = [];
+    const collect = async (titles: Locator[]) => {
+      for (const title of titles) offsets.push(await titleOffsetInRow(title));
+    };
+
+    await catalogFrame(page, 'topic-rail-pinned', '站在总览上');
+    await narrowFrame(page);
+    const pinned = page.locator('.frame-page .pinned-row .v-list-item-title');
+    await expect(pinned).toHaveCount(2); // 总览、资料库
+    await collect(await pinned.all());
+
+    await catalogFrame(page, 'topic-rail-root', '站在综合里');
+    await narrowFrame(page);
+    const root = page.locator('.frame-page .pinned-row .v-list-item-title');
+    await expect(root).toHaveCount(1);
+    await collect([root]);
+
+    const row = await catalogRow(page, '有队友在干活');
+    await narrowFrame(page);
+    await collect([row.locator('.v-list-item-title')]);
+
+    expect(offsets).toHaveLength(4);
+    expect(
+      Math.max(...offsets) - Math.min(...offsets),
+      `title offsets inside their rows: ${offsets.join(', ')}`
+    ).toBeLessThanOrEqual(0.5);
+  });
+
+  // 任务行和「展开其余」那一行是同一块里的两种行：同一个深度上，字必须从同一个 x
+  // 开始。桌面走普通 context；触屏走真实 hasTouch 上下文，并显式确认两条媒体查询
+  // 都成立，而不是只发一次 CDP 就假定它生效。
+  async function expectTaskMoreAligned(page: Page, mode: string) {
+    for (const depth of [0, 1]) {
+      await catalogFrame(page, 'topic-rail-more-tasks-row', depth === 0 ? '收着' : '挂在子频道下面');
+      await narrowFrame(page);
+      const more = page.locator('.frame-page .rail-more__label');
+      await expect(more).toHaveCount(1);
+      const moreX = (await boxOf(more)).x;
+
+      await catalogFrame(page, 'topic-rail-task-row', depth === 0 ? '频道下面的任务' : '子频道下面的任务');
+      await narrowFrame(page);
+      const task = page.locator('.frame-page .rail-task__title');
+      await expect(task).toHaveCount(1);
+      const taskX = (await boxOf(task)).x;
+
+      expect(Math.abs(moreX - taskX), `depth ${depth} (${mode}): more=${moreX}, task=${taskX}`).toBeLessThanOrEqual(
+        0.5
+      );
+    }
+  }
+
+  test('task and "more" rows share one left edge at each depth (desktop)', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expectTaskMoreAligned(page, 'desktop');
+  });
+
+  test.describe('task/more left edge (touch context)', () => {
+    test.use({ viewport: { width: 1280, height: 800 }, hasTouch: true, isMobile: false });
+
+    test('task and "more" rows share one left edge at each depth (touch)', async ({ page }) => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'none' },
+          { name: 'pointer', value: 'coarse' },
+        ],
+      });
+      expect(
+        await page.evaluate(() => matchMedia('(hover: none)').matches),
+        'touch context must really expose hover:none'
+      ).toBe(true);
+      expect(
+        await page.evaluate(() => matchMedia('(pointer: coarse)').matches),
+        'touch context must really expose pointer:coarse'
+      ).toBe(true);
+      await expectTaskMoreAligned(page, 'touch');
+    });
+  });
+});
+
 // 表单字段的几何不变量。
 //
 // 起因是一类会静悄悄发出去的缺陷：outlined 字段的浮动 label 用 translateY(-50%)

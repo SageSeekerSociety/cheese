@@ -119,17 +119,14 @@ describe('侧栏一行上的成员头像', () => {
     expect(marksOf(container, 't-1')).toEqual([])
   })
 
-  it('房间在等一位队友、等太久了：不画头像，行尾是一盏红灯', async () => {
+  it('房间在等一位队友、等太久了：不画头像，也不画报错红灯', async () => {
     const room = topic('t-1', {
       waits: [{ member: CHEESE_SEAT, reason: 'failed', since: '2026-10-01T00:00:00Z' }],
     })
     const { rail } = await mountRail([room])
 
     expect(rail.memberMarks(room)).toEqual([])
-    // 头像不画了，但「在等谁、为什么」还挂在灯上（悬停那一句）。
-    expect(rail.lightOf('t-1')).toMatchObject({ kind: 'red', why: 'waiting' })
-    expect(rail.lightOf('t-1')?.title).toContain('小知')
-    expect(rail.lightOf('t-1')?.title).toContain('报错')
+    expect(rail.lightOf('t-1')).toBeNull()
   })
 
   it('只画此刻在干活的成员', async () => {
@@ -144,10 +141,7 @@ describe('侧栏一行上的成员头像', () => {
   })
 })
 
-// 「停下来报错」那盏红灯是**时间自己走到**的，不是数据变出来的：列表三十秒才刷一次，
-// 而等满五分钟靠的是侧栏自己那只每 10 秒拨一下的慢钟（`useTopicRail.ts` 的 `clock`）。
-// 这里就拨那只钟：数据一个字节没动，只让系统时间往前走过五分钟，红灯就该自己亮。
-describe('侧栏自己的慢钟把红灯拨亮', () => {
+describe('报错与等待超时不再在侧栏亮红灯', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     setLocale('zh-CN')
@@ -156,60 +150,33 @@ describe('侧栏自己的慢钟把红灯拨亮', () => {
     vi.useRealTimers()
   })
 
-  it('频道行：满五分钟前不红，钟自己走过五分钟就红', async () => {
-    const base = Date.parse('2026-10-14T12:00:00Z')
-    vi.setSystemTime(base)
-    // 挂载这一刻，这间房已经坏了 4m51s——还差九秒。
-    const incompleteSince = new Date(base - 291_000).toISOString()
-    const { rail } = await mountRail([topic('t-stuck', { incomplete_since: incompleteSince })])
-
-    expect(rail.lightOf('t-stuck')).toBeNull()
-
-    // 侧栏那只 10 秒的慢钟拨一下：now -> base+10s，坏了的时长 301s > 5 分钟。
-    vi.advanceTimersByTime(10_000)
-    expect(rail.lightOf('t-stuck')).toEqual({ kind: 'red', why: 'unfinished' })
-  })
-
-  it('等队友也是同一只钟：等满五分钟前不红，钟走过去就红', async () => {
-    const base = Date.parse('2026-10-14T12:00:00Z')
-    vi.setSystemTime(base)
-    // 挂载这一刻，房间已经等了 4m51s——还差九秒。
-    const since = new Date(base - 291_000).toISOString()
-    const { rail } = await mountRail([topic('t-wait', { waits: [{ member: CHEESE_SEAT, reason: 'mention', since }] })])
-
-    expect(rail.lightOf('t-wait')).toBeNull()
-
-    vi.advanceTimersByTime(10_000)
-    expect(rail.lightOf('t-wait')).toMatchObject({ kind: 'red', why: 'waiting' })
-    expect(rail.lightOf('t-wait')?.title).toContain('有人 @ 了小知')
-  })
-
-  it('任务行：同一只钟，活自己那一行也一样', async () => {
+  it('频道行与任务行：未恢复报错和等待超时不亮红灯', async () => {
     const base = Date.parse('2026-10-14T12:00:00Z')
     vi.setSystemTime(base)
     const incompleteSince = new Date(base - 291_000).toISOString()
-    const { rail } = await mountRail([topic('t-1', {})])
-    // 别人的活、状态那几盏都没话说：不补蓝灯，此刻也不红。
+    const { rail } = await mountRail([
+      topic('t-stuck', { incomplete_since: incompleteSince }),
+      topic('t-wait', { waits: [{ member: CHEESE_SEAT, reason: 'mention', since: incompleteSince }] }),
+    ])
     const task = {
       id: 'k-1',
-      room_id: 't-1',
+      room_id: 't-stuck',
       owner_handle: 'cheese-someone',
       incomplete_since: incompleteSince,
     } as RailTask
 
-    expect(rail.taskLight(task)).toBeNull()
-
     vi.advanceTimersByTime(10_000)
-    expect(rail.taskLight(task)).toEqual({ kind: 'red', why: 'unfinished' })
+    expect(rail.lightOf('t-stuck')).toBeNull()
+    expect(rail.lightOf('t-wait')).toBeNull()
+    expect(rail.taskLight(task)).toBeNull()
   })
 })
 
-// 交付被退回不是「有事等你」：退回那一刻平台已经把球交回给队友，侧栏该红的红，
-// 不该让人以为轮到自己了。
+// 交付被退回不是「有事等你」：退回那一刻平台已经把球交回给队友，不该让人以为轮到自己了。
 describe('交付被退回的任务行', () => {
   beforeEach(() => setLocale('zh-CN'))
 
-  it('是红灯，不是黄灯——即使后端此刻还算作「等你」', async () => {
+  it('不亮黄灯——即使后端此刻还算作「等你」', async () => {
     const { rail } = await mountRail([topic('t-1', {})])
     const task = {
       id: 'k-1',
@@ -219,22 +186,46 @@ describe('交付被退回的任务行', () => {
       presentation: { column: 'needs_you', phrase: 'bounced' },
     } as RailTask
 
-    expect(rail.taskLight(task)).toEqual({ kind: 'red', why: 'bounced' })
+    expect(rail.taskLight(task)).toBeNull()
   })
 })
 
-// 收起来的折叠开关替里面的行说了它们的状态（`toggleTitle`）。收起来的那盏红说的是哪一
-// 件，开关就得说哪一件。断的是那句话的关键含义（停下报错），不是整句原文。
+// 有活在往前走：绿灯在闪，而且压过「做完了、还没看过」那一档——同一行两件事都成立时，
+// 先说「还在走」。
+describe('呼吸绿', () => {
+  beforeEach(() => setLocale('zh-CN'))
+
+  it('频道行有活在往前走：绿灯在闪', async () => {
+    const { rail } = await mountRail([topic('t-moving', { moving: true })])
+
+    expect(rail.lightOf('t-moving')).toEqual({ kind: 'green', breathe: true })
+  })
+
+  it('任务行的会话在跑或走在交付链路上：闪绿压过长绿', async () => {
+    const { rail } = await mountRail([topic('t-1', {})])
+    const task = {
+      id: 'k-1',
+      room_id: 't-1',
+      owner_handle: 'cheese-someone',
+      moving: true,
+      unseen_delivery: true,
+      presentation: { column: 'delivering', phrase: 'awaiting_checks' },
+    } as RailTask
+
+    expect(rail.taskLight(task)).toEqual({ kind: 'green', breathe: true })
+  })
+})
+
+// 收起来的折叠开关替里面的行说了它们的状态（`toggleTitle`）。
 describe('折叠开关替收起来的行说话', () => {
   beforeEach(() => {
     setLocale('zh-CN')
   })
 
-  it('里面是「停下报错」的红，开关不说它「在跑」', async () => {
+  it('里面只有停下报错的子行时，开关不报「在跑」', async () => {
     const base = Date.now()
     const { rail } = await mountRail([
       topic('p', {}),
-      // 子行收在 p 里面：它坏在这里，p 的灯和折叠开关都得替它说话。
       topic('c-stopped', {
         parent_id: 'p',
         incomplete_since: new Date(base - 10 * 60_000).toISOString(),
@@ -243,6 +234,16 @@ describe('折叠开关替收起来的行说话', () => {
 
     const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
     expect(title).not.toContain('在跑')
-    expect(title).toContain('报错')
+  })
+
+  it('里面是「有活在往前走」的闪绿，开关说它在走，不说只是刚交付完', async () => {
+    const { rail } = await mountRail([
+      topic('p', {}),
+      // 子行还在往前走：收起来之后，父行的折叠开关要替它说这一件。
+      topic('c-moving', { parent_id: 'p', moving: true }),
+    ])
+
+    const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
+    expect(title).toContain('往前走')
   })
 })

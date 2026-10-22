@@ -1,4 +1,6 @@
 import type {
+  ApiEnvelope,
+  FeedbackAttachment,
   FeedbackComment,
   FeedbackCommentLikeResult,
   FeedbackCounts,
@@ -13,7 +15,11 @@ import type {
   FeedbackSupportResult,
 } from '../cx_types'
 
-import { request } from './http'
+import { t } from '../i18n'
+import { refusalWords } from '../lib/noticeText'
+import { postFormWithProgress } from '../lib/xhrUpload'
+
+import { authHeaders, BASE, request } from './http'
 import { feedbackQuery } from './query'
 
 // ---- 反馈 (feedback) ----
@@ -116,6 +122,67 @@ export function listFeedbackComments(
  *  作者不是参数：它是验证过的会话身份，客户端说了不算。 */
 export function createFeedback(body: FeedbackCreateBody): Promise<FeedbackDetail> {
   return request<FeedbackDetail>('/feedback', { method: 'POST', body: JSON.stringify(body) })
+}
+
+/* ---- 附件 ---- */
+
+/** 传一份文件上去，拿回它的 id；提交那条请求把 id 放进 `attachment_ids`。
+ *
+ *  **为什么是「先传、后提交」而不是把文件塞进提交那条请求**：文件在选中的那一刻就
+ *  开始传，用户在表单上就看得见它失败了，而不是写完几百字按提交才发现；发题目那条路
+ *  也是这么做的（`useAttachmentUploads` 的文件头）。
+ *
+ *  走 XHR（`postFormWithProgress`）是为了拿上传进度：一份 8MB 的截图在慢网络上要
+ *  好几秒，只有 XHR 报得上进度（`fetch` 没有上传进度事件）。
+ *
+ *  字节读回来的那条路见下面的 `feedbackAttachmentUrl` —— 这里的响应里没有地址，
+ *  那是有意的（方案稿 §8.7：私密报告的附件不能有一个公开地址）。 */
+export async function uploadFeedbackAttachment(
+  file: File,
+  onProgress?: (fraction: number) => void
+): Promise<FeedbackAttachment> {
+  const form = new FormData()
+  form.append('file', file)
+  const { status, body } = await postFormWithProgress<ApiEnvelope<FeedbackAttachment>>(
+    `${BASE}/feedback/attachments`,
+    form,
+    authHeaders(),
+    onProgress
+  )
+  if (status < 200 || status >= 300 || !body || body.code !== 200)
+    throw new Error(refusalWords(body) || t('global.request.uploadFailed', { status }))
+  return body.data
+}
+
+/** 一份附件的地址。**不能直接挂到 `<img src>` 上**：那条端点从 Authorization 头
+ *  认人，而浏览器发图片请求时带不了头（也读不到 localStorage），挂上去的结果是
+ *  401 加一张裂图。要显示图片用 `useFeedbackAttachmentImages`，要下载用
+ *  `downloadFeedbackAttachment` —— 两个都是先 fetch 再转 object URL。
+ *
+ *  `download=true` 让浏览器存成文件（`Content-Disposition: attachment`）。 */
+export function feedbackAttachmentUrl(attachmentId: string, download = false): string {
+  return `${BASE}/feedback/attachments/${encodeURIComponent(attachmentId)}${download ? '?download=true' : ''}`
+}
+
+/** 一份附件的字节，做成 object URL —— `<img>` 或 `<a download>` 能用。调用方负责在
+ *  不再需要时 `URL.revokeObjectURL`（它把字节钉在内存里直到被还回去）。 */
+export async function feedbackAttachmentBlobUrl(attachmentId: string): Promise<string> {
+  const res = await fetch(feedbackAttachmentUrl(attachmentId), { headers: authHeaders() })
+  if (!res.ok) throw new Error(t('global.request.fileReadFailed', { status: res.status }))
+  return URL.createObjectURL(await res.blob())
+}
+
+/** 把一份附件存到本地：先取回字节，再点一下一条临时链接。
+ *
+ *  不走 `<a href={url} download>` 那一条，因为那个地址要 Authorization —— 浏览器
+ *  自己发那次导航时带不上，结果是下载到一个 401 的页面。 */
+export async function downloadFeedbackAttachment(attachment: FeedbackAttachment): Promise<void> {
+  const objectUrl = await feedbackAttachmentBlobUrl(attachment.id)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = attachment.name
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
 }
 
 /** 支持。重复点是幂等的，回的是**写完之后**的计数，不是增量 —— 增量会让两个

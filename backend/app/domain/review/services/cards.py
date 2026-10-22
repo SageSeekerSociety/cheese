@@ -56,7 +56,6 @@ from app.domain.review.services._shared import (
     SEVERITY_WARN,
     WHO_HUMAN,
     ReviewerAdmission,
-    _deliverable_revision,
     _hold_deliverable,
     _no_artifact_action,
     _one_artifact_action,
@@ -64,6 +63,9 @@ from app.domain.review.services._shared import (
     _read_deliverable,
     approvals_required_of,
     notice,
+)
+from app.domain.review.services._shared import (
+    deliverable_revision as _deliverable_revision,
 )
 from app.domain.task.teaching import protocol_for_task
 
@@ -285,8 +287,13 @@ async def create_card(
             snapshot[0],
             snapshot[1],
         )
-    if has_branch_changes:
-        card.pr_number, card.pr_url = task.pr_number, task.pr_url
+    # 卡骑哪条 PR 由递卡之后的那次发布写回来（`pr_publish.record_pr`）：它先为
+    # 这条分支开/认领 PR，再把号写到卡和任务上。这里不抄 `task.pr_number` ——
+    # 任务上的号可能已经过期：旧草稿 PR 被人关掉、分支又推了新提交时，平台会为
+    # 新的 head 另开一条 PR，任务要等那次发布写回才改号。把旧号抄过来，这张刚
+    # 递上来的卡就骑着一条已关闭的 PR，轮询器一跳便按「PR 已关闭」把它作废
+    # （2026-10-22 00:55，任务 9bd0b806）。卡上没有号时轮询器不碰它，发布写回
+    # 之后骑的就是新 PR。
     # The card says where the task stands now (等审): what its teammate
     # reported before it is over.
     progress.clear(task)
@@ -373,7 +380,7 @@ async def redeliver(
     await self._tell_the_reviewer(
         card,
         topic,
-        say("cardRedelivered", actor=actor),
+        say("cardRedelivered", actor=f"<@{actor}>"),
         meta=notice(
             EVENT_CARD_REDESCRIBED,
             severity=SEVERITY_INFO,
@@ -558,6 +565,18 @@ async def open_pr_card_ids(
     """
     cards = await self._repo.list_awaiting_merge_on_active_topics(project_id)
     return [c.id for c in cards]
+
+
+async def missing_merge_actor_card_ids(
+    self: pkg.AcceptService, *, since: datetime, limit: int
+) -> list[uuid.UUID]:
+    """已合并、但还没记下合并人的卡：轮询兜底要补的那一批。
+
+    只算平台没点过采纳的（`decided_by` 空）—— 点过采纳的，人就是决议人。
+    窗口由调用方给（项目总览只看最近一段），`merged_by` 非空的不再问：
+    问过 GitHub 的卡，不管是人是空，都有答案了（`github_pr_status.merge_actor`）。
+    """
+    return await self._repo.accepted_missing_merge_actor(since=since, limit=limit)
 
 
 async def anybody_still_waiting(

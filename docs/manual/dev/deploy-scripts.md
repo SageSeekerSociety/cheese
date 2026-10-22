@@ -18,6 +18,7 @@ covers:
   - deploy/r2-upload.py
   - deploy/r2-sync-uploads.py
   - deploy/etrip-backup.sh
+  - deploy/gateway-db-backup.sh
   - deploy/dev-box-disk-cleanup.sh
   - deploy/cheesex-disk-pressure-guard.sh
   - deploy/cheesex-healthcheck.sh
@@ -134,6 +135,7 @@ covers:
 | `r2-upload.py` | 把校验过的转储传到 Cloudflare R2（异地那一份） |
 | `r2-sync-uploads.py` | 把本地 `uploads/` 增量镜像到 R2，只增不删（远端是超集） |
 | `etrip-backup.sh` | etrip 专用备份：两个库 dump + 上传卷 tar → R2，保留 14 天 |
+| `gateway-db-backup.sh` | 网关数据库的转储：`docker exec` 进 `litellm-db` 跑 `pg_dump -Fc`、校验、本机留最新 28 份；由 `gateway-db-backup.yml` 每 6 小时调用，异地那一份由工作流用 `r2-upload.py` 传 |
 | `dev-box-disk-cleanup.sh` | 回收可再生缓存；`--needed` 判断、`--apply` 执行、`--self-test` 自检 |
 | `cheesex-disk-pressure-guard.sh` | 磁盘 85% 的急刹：确认没有活跃会话后删沙箱容器与陈旧 `/tmp` |
 | `cheesex-healthcheck.sh` | 探本机后端 `/health`，连续 3 次失败重启 `cheese.service` |
