@@ -5,7 +5,7 @@
   "downloadVersion": "Download this version",
   "empty": "No saves yet. From the next save on, every version is kept here.",
   "hint": "Every save keeps a version, and any version can be brought back",
-  "loadFailed": "Couldn't read the history",
+  "loadFailed": "Couldn't load the history",
   "loading": "Loading…",
   "restore": "Restore",
   "restoreConfirm": "Restore the file to version {seq}? The current version is not lost; it stays in the history.",

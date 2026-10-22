@@ -516,7 +516,7 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
         monkeypatch.setattr(settings, "agent_session_device_id", "another-host")
         assert await central.precheck(ref(project, topic), needs_place=True) == precheck
         central._hub.is_online = lambda device: device == "executor"
-        with pytest.raises(ScreenSetupError, match="未连接"):
+        with pytest.raises(ScreenSetupError, match="没有连上"):
             await central.precheck(ref(project, topic), needs_place=True)
 
     client.portal.call(exercise)

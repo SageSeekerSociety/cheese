@@ -41,9 +41,9 @@ export const MARKET_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '一台都没有',
-        note: '读回来了但没有节点：卡片区是空的，页头照样报「全平台进行中 0 轮」。',
+        note: '读回来了但没有节点：卡片区是空的，页头照样报「全平台有 0 位 AI 队友在工作」。',
         props: { board: MARKET_NODES_EMPTY, loading: false, error: null },
-        expect: '全平台进行中 0 轮',
+        expect: '全平台有 0 位 AI 队友在工作',
       },
       {
         name: '读失败',
@@ -80,7 +80,7 @@ export const MARKET_ENTRIES: CatalogEntry[] = [
         name: '空',
         note: '目录读回来两组都空、看板一台节点都没有：分组标题照画，下面没有卡片。',
         props: { pools: MARKET_POOLS_EMPTY, nodes: MARKET_NODES_EMPTY },
-        expect: '全平台进行中 0 轮',
+        expect: '全平台有 0 位 AI 队友在工作',
       },
       {
         name: '读失败',

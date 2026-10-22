@@ -627,6 +627,12 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
+    # How long a Claude Code runner another release started may go on with the
+    # work it was doing when this release took it over (`RUNNER_DRAIN_S`),
+    # counted from when the drain began (`agent_sessions.drain_started_at`). It
+    # gets nothing new meanwhile, and the seat's messages wait; past this its
+    # work is interrupted and resumed on a runner of this release.
+    runner_drain_s: float = 1800.0
 
     # --- Subscription compute through the metering proxy ---
     # A turn on the subscription does NOT go through the LLM gateway: there is no

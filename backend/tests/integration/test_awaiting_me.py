@@ -291,3 +291,16 @@ def test_a_visitor_has_nothing_to_process(client):
     r = client.get("/awaiting-me")
     assert r.status_code == 200, r.text
     assert r.json()["data"]["data"] == []
+
+
+def test_a_card_waiting_on_me_says_which_version_and_since_when(client):
+    """等你审阅那一行说这是第几版、什么时候递上来的：只看主题分不出这是第一次交，
+    还是退回后又交的一版。"""
+    project = _project(client, "alice")
+    room = _room(client, project, "alice")
+
+    _file_card(client, room, reviewer="alice")
+
+    (item,) = _mine(client, "alice")
+    assert item["cardVersion"] == 1
+    assert item["cardSince"]

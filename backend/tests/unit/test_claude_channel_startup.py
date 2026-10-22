@@ -288,7 +288,7 @@ async def test_a_runner_that_fails_itself_is_reported_at_once(tmp_path):
             lock.close()
 
     assert waited < 30, f"the room waited {waited:.0f}s for a runner already gone"
-    assert host.refusal == "Claude Code 启动失败：这个频道上一个会话进程还没有退出"
+    assert host.refusal == "Claude Code 启动失败：这个频道上一次运行的程序还没有退出"
     assert host.refused is not None and "BlockingIOError" in host.refused.log
 
 

@@ -77,8 +77,8 @@ def test_what_a_session_opens_with_says_nothing_about_this_particular_turn() -> 
     some of them are continuations."""
     joined = "\n".join(_session_opening_lines(sandbox=(2048, 2)))
 
-    assert "本轮" not in joined
-    assert "本轮接着上一轮跑" in _resume_notice()
+    assert "接着上次做" not in joined
+    assert "这次接着上次做" in _resume_notice()
 
 
 def test_the_roster_tells_the_agent_each_persons_clock() -> None:

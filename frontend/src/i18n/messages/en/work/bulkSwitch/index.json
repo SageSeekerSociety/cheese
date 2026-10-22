@@ -1,12 +1,12 @@
 {
   "done": "Switched",
-  "empty": "No agents",
-  "hidden": "1 more agent is in a channel you cannot open | {count} more agents are in channels you cannot open",
+  "empty": "No AI teammates",
+  "hidden": "1 more AI teammate is in a channel you cannot open | {count} more AI teammates are in channels you cannot open",
   "loadFailed": "Could not load",
   "meta": "{agent} · last active {time}",
   "open": "View and switch…",
-  "pushFirst": "Each agent's changes are pushed to its branch first, and it changes either way; the changes as of each turn's end are kept in a snapshot. Agents that are working are skipped",
+  "pushFirst": "Each AI teammate's changes are pushed to its branch first, and it changes either way; the changes as of each time it stops are kept in a snapshot. AI teammates that are working are skipped",
   "selectAll": "Select all",
-  "title": "Agents on {name}",
+  "title": "AI teammates on {name}",
   "working": "Working"
 }

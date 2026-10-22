@@ -115,7 +115,7 @@ def test_the_questions_go_out_in_one_request_and_the_agent_is_told_to_stop(
     for i in range(total):
         assert f"question-{i}" in result
     assert body["request_id"] in result
-    assert "结束这一轮" in result
+    assert "现在就停下" in result
 
 
 @pytest.mark.parametrize(

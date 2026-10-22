@@ -28,7 +28,7 @@
   "toast": {
     "createFailed": "生成失败",
     "created": "已生成",
-    "loadFailed": "邀请码读不出来",
+    "loadFailed": "邀请码加载失败",
     "maxUsesBelowUsed": "可用人数不能少于已经用掉的 {n} 人",
     "maxUsesInvalid": "可用人数要是正整数",
     "revokeFailed": "撤销失败",

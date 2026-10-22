@@ -120,12 +120,12 @@ describe('出错提示', () => {
     const view = await openRoom()
     frame({
       type: 'error',
-      message: '本轮已被强制停止',
+      message: 'AI 队友这次的工作被平台中止了，已做的改动都还在；发一句「继续」它会接着做',
       persisted: false,
       i18n: { key: 'turnForceStopped', params: {} },
     })
     await vi.advanceTimersByTimeAsync(0)
-    expect(toastText()).toContain('This turn was force-stopped')
+    expect(toastText()).toContain('The platform stopped the AI teammate')
 
     frame({ type: 'error', message: 'server words', i18n: { key: 'noSuchSentence', params: {} } })
     await vi.advanceTimersByTimeAsync(1_000)

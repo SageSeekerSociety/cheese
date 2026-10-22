@@ -247,7 +247,7 @@ async def test_a_turn_the_budget_brake_stopped_says_the_credits_ran_out(
     # credits are spent and when they come back, as admission says it.
     resets = month_end(month_of(datetime.now(UTC)))
     assert [b.content for b in notices] == [
-        f"本月额度已用完，{resets.month}月{resets.day}日重置。这一轮没有执行。"
+        f"本月额度已用完，{resets.month}月{resets.day}日重置。这次没有运行。"
     ]
     assert not any((b.meta or {}).get("retryable") for b in notices)
 

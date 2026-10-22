@@ -385,7 +385,7 @@ describe('名册上每条会话的执行环境', () => {
     machines.get.mockResolvedValue(roomEnvironments({ sessions: [session('s-a', 'cheese-t1')] }))
     await openRoster()
     const row = document.querySelector('[data-testid="future-machine"]')!
-    expect(row.textContent).toContain('新会话默认：沙箱 · 标准')
+    expect(row.textContent).toContain('新 AI 队友默认：沙箱 · 标准')
     expect(row.textContent).toContain('项目默认')
     await fireEvent.click(row.querySelector('.env-action')!)
     await pickSpec('vm')

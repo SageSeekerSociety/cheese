@@ -526,7 +526,7 @@ async def decline_skill(
 ) -> dict:
     """A person turns a teammate's pending proposal down."""
     row, actor = await _load(db, resolver, skill_id, None)
-    _person(actor, say("skillDecline"))
+    _person(actor, say("skillDecline", agent=f"<@{row.proposed_by}>"))
     service = ProjectSkillService(db)
     row = await service.decline(row, by=actor.handle)
     await _settled(db, row, saved=False)

@@ -37,6 +37,7 @@ from app.domain.addressing import (
     address,
 )
 from app.domain.agent.session_state import running_since
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms
 from app.domain.notification.services import (
@@ -44,7 +45,7 @@ from app.domain.notification.services import (
     asks_for_decision,
 )
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review.queries import listed_cards
+from app.domain.review.queries import RailCard, listed_cards
 from app.domain.room_task import awaiting, presentation
 from app.domain.room_task.presentation import hand_of
 from app.domain.room_task.repositories import ListedTask, TaskRepository
@@ -62,6 +63,13 @@ PHRASE_CHANGED = "change_alert"
 
 #: 卡停住时，卡上那句原因就是这一行要说的「等的是什么」。
 _CARD_SAYS_WHY = frozenset({"checks_failed", "bounced"})
+
+
+def _reviewed(reason: str, card: RailCard | None) -> dict:
+    """等你审阅的那一行还说第几版、什么时候递上来的（`card_version` / `card_since`）。"""
+    if reason != REASON_REVIEWER or card is None:
+        return {}
+    return {"card_version": card.version, "card_since": card.created_at}
 
 
 def _one_line(text: str, limit: int = 140) -> str:
@@ -251,6 +259,10 @@ async def waiting_items(
             detail = card.change_subject or ""
         elif card is not None and shown.phrase in _CARD_SAYS_WHY:
             detail = card.note or ""
+        elif shown.phrase == presentation.NeedsYou.blocked.value:
+            # 卡住是队友自己报的，它附的那句就是要你做什么；没写的留空，由屏幕
+            # 说一句「打开看看它需要什么」—— 那句话要按读者的语言画。
+            detail = task.progress_note or ""
         else:
             detail = ""
         left.append((task, shown, reason, detail))
@@ -262,8 +274,18 @@ async def waiting_items(
     topics = [rooms[tid] for tid in topic_ids if tid in rooms]
 
     items: list[awaiting.WaitingItem] = []
+    # 卡住的那几行要叫得出做它的队友：它没留话时，第二行写「某某卡住了」。只为这几
+    # 行去问 —— 一屏卡住的任务通常只有一两件，不为整份清单装配每一位队友。
+    teammates = AgentInstanceService(db)
     for task, shown, reason, detail in left:
         room = rooms.get(task.room_id)
+        named = (
+            await teammates.for_task_by_id(
+                task.project_id, task.room_id, task.agent_handle
+            )
+            if shown.phrase == presentation.NeedsYou.blocked.value
+            else None
+        )
         items.append(
             awaiting.WaitingItem(
                 project_id=task.project_id,
@@ -278,6 +300,9 @@ async def waiting_items(
                 at=task.last_said_at or task.updated_at,
                 block_id=questions[task.id][1] if reason == "asked" else None,
                 detail=_one_line(detail),
+                **_reviewed(reason, task_cards.get(task.id)),
+                agent_name=None if named is None else named.display_name,
+                agent_name_source=None if named is None else str(named.name_source),
             )
         )
 

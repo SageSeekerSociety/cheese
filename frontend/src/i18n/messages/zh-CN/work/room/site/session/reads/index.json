@@ -3,7 +3,7 @@
   "get_context_usage": "上下文用量",
   "get_usage": "账号用量",
   "get_workspace_diff": "工作区变更",
-  "initialize": "会话状态",
+  "initialize": "运行状态",
   "mcp_status": "外部工具连接",
   "read_file": "查看文件"
 }

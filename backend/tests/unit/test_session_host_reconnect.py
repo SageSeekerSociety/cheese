@@ -36,7 +36,7 @@ async def test_startup_stops_when_the_pinned_host_stays_offline():
     channel = DeviceChannel(
         hub=SimpleNamespace(is_online=lambda host: False), reconnect_grace_s=0.02
     )
-    with pytest.raises(ScreenSetupError, match="未连接"):
+    with pytest.raises(ScreenSetupError, match="没有连上"):
         await asyncio.wait_for(
             channel._wait_for_session_host(
                 "chosen-host",

@@ -357,6 +357,43 @@ def test_a_card_names_its_task_to_those_who_may_see_the_task(client):
     assert "公开的事" in text and "私密的事" not in text
 
 
+def _teammate_of(client, pid: str, room: str) -> dict:
+    """The saved teammate seated in this channel, as the project lists it."""
+    seat = room_agent_seat(client, room)
+    agents = client.get(f"/projects/{pid}/agents", headers=ALICE).json()["data"]
+    return next(a for a in agents["data"] if a["seat_handle"] == seat)
+
+
+def test_a_card_names_the_teammate_working_its_task_by_its_given_name(client):
+    """A card's phrase can name the teammate (「{agent}在做」). A project that
+    renamed it reads that name; one that never did reads 「default」, which a
+    screen says in its reader's language rather than as a stored 芝士."""
+    pid, _, _, canvas = _task_canvas(client)
+    room = _channel(client, pid)
+    shown = open_task(client, room, "公开的事")
+    assert (
+        _change(
+            client, canvas, [{"op": "add", "content": "x", "task": shown["id"]}]
+        ).status_code
+        == 200
+    )
+
+    [card] = _board(client, canvas).json()["data"]["cards"]
+    assert card["task"]["agent_name_source"] == "default"
+
+    agent = _teammate_of(client, pid, room)
+    renamed = client.put(
+        f"/projects/{pid}/agents/{agent['id']}",
+        json={"display_name": "Nova"},
+        headers=session_auth_headers("dave"),
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    [card] = _board(client, canvas).json()["data"]["cards"]
+    assert card["task"]["agent_name"] == "Nova"
+    assert card["task"]["agent_name_source"] == "human"
+
+
 def test_reading_the_document_brings_its_canvas_as_text(client):
     pid, task, _, canvas = _task_canvas(client)
     _change(client, canvas, [{"op": "add", "content": "十月上线新版搜索"}])

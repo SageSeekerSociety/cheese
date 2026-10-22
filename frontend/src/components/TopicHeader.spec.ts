@@ -108,7 +108,7 @@ describe('话题头', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: '更多' }))
     await waitFor(() => expect(document.querySelector('.room-menu')).toBeTruthy())
-    expect(document.body.textContent).not.toContain('新会话默认')
+    expect(document.body.textContent).not.toContain('新 AI 队友')
     expect(bar().textContent).not.toContain('沙箱')
   })
 })

@@ -29,12 +29,13 @@ function task(over: Partial<ChannelTask> = {}): ChannelTask {
 
 describe('任务卡', () => {
   it('等的是看的人自己，就对他说；别人看到的是在等谁', () => {
-    const mine = taskLine(task(), 'linxiao', nameOf)
-    const theirs = taskLine(task(), 'chenmo', nameOf)
-    expect(mine.tone).toBe('mine')
-    expect(mine.status).not.toContain('林晓')
-    expect(theirs.tone).toBe('waiting')
-    expect(theirs.status).toContain('林晓')
+    const mine = taskLine(task(), 'linxiao', nameOf, '芝士')
+    const theirs = taskLine(task(), 'chenmo', nameOf, '芝士')
+    expect(mine.mine).toBe(true)
+    expect(mine.state.line).toContain('等你')
+    expect(mine.state.line).not.toContain('林晓')
+    expect(theirs.mine).toBe(false)
+    expect(theirs.state.line).toContain('林晓')
   })
 
   it('最后一步采纳后写出合进去的是哪个 PR', () => {
@@ -47,10 +48,11 @@ describe('任务卡', () => {
         last_accepted_pr: 46,
       }),
       'linxiao',
-      nameOf
+      nameOf,
+      '芝士'
     )
-    expect(line.tone).toBe('done')
-    expect(line.status).toContain('46')
+    expect(line.state.kind).toBe('closed')
+    expect(line.state.label).toContain('46')
     expect(line.accepted).toBeNull()
   })
 
@@ -58,9 +60,10 @@ describe('任务卡', () => {
     const line = taskLine(
       task({ presentation: { column: 'building', phrase: 'running' }, waiting_on: null, accepted_count: 1 }),
       'linxiao',
-      nameOf
+      nameOf,
+      '芝士'
     )
-    expect(line.tone).toBe('running')
+    expect(line.state.kind).toBe('running')
     expect(line.accepted).toContain('1')
   })
 
@@ -68,9 +71,10 @@ describe('任务卡', () => {
     const line = taskLine(
       task({ presentation: { column: 'needs_you', phrase: 'bounced' }, waiting_on: null }),
       'linxiao',
-      nameOf
+      nameOf,
+      '芝士'
     )
-    expect(line.tone).toBe('stuck')
+    expect(line.state.tone).toBe('danger')
   })
 
   it('一条消息下面挂着从它出来的每一件任务，按创建的先后', () => {
