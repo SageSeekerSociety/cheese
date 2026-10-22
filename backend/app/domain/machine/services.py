@@ -881,6 +881,7 @@ class HostPool(PoolSweep):
                 login_user=host.login_user,
                 private_key=host.bootstrap_key,
                 script=script,
+                sandboxes=not host.whole_machine,
             )
             disk_gb = None if host.whole_machine else enrollment.sandbox_disk_gb(output)
         except enrollment.EnrollmentError as exc:
