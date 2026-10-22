@@ -259,7 +259,9 @@ class AssistantRoutine(UuidPk, Timestamps, Base):
     ``routine.schedule`` spec, or ``{"freq": "once", "at": ISO}``) or one of
     ``routines.EVENTS`` (``spec`` may name a ``project`` it is limited to).
     ``paused`` says why a paused rule stopped: ``person``, ``credits`` (out of
-    credits) or ``away`` (not signed in for long).
+    credits) or ``away`` (not signed in for long). ``state`` is ``active``,
+    ``paused``, or ``done``: a one-off that has run, cleared with its runs
+    once the cards they left expire.
     """
 
     __tablename__ = "assistant_routines"

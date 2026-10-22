@@ -8,7 +8,7 @@
  */
 import type { AssistantActivityItem, AssistantRoutine, AssistantRules } from '@/api'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -18,7 +18,7 @@ import SaveStatus from '@/components/base/SaveStatus.vue'
 import { fmtPoints } from '@/lib/creditUsage'
 import { relTime } from '@/lib/relTime'
 
-defineProps<{
+const props = defineProps<{
   rules: AssistantRules | null
   routines: AssistantRoutine[]
   routineLimit: number
@@ -52,6 +52,8 @@ function add(list: 'ask' | 'allow') {
 
 /** 要删除的那条例行事务：先确认。 */
 const deleting = ref<AssistantRoutine | null>(null)
+// A one-off that has run no longer counts toward the limit.
+const counted = computed(() => props.routines.filter((r) => r.state !== 'done').length)
 
 function confirmDelete() {
   if (deleting.value) emit('routine', deleting.value.id, 'delete')
@@ -68,6 +70,7 @@ function when(at: string): string {
 }
 
 function state(r: AssistantRoutine): string {
+  if (r.state === 'done') return t('account.assistant.routines.ran')
   if (r.state === 'paused') return t(`account.assistant.routines.paused.${r.paused || 'person'}`)
   return r.nextRunAt ? t('account.assistant.routines.next', { time: when(r.nextRunAt) }) : ''
 }
@@ -152,7 +155,7 @@ function last(r: AssistantRoutine): string {
         <h2 class="settings-card__title ast__title-row">
           <span>{{ t('account.assistant.routines.title') }}</span>
           <span v-if="routines.length" class="ast__count t-num">{{
-            t('account.assistant.routines.count', { n: routines.length, max: routineLimit })
+            t('account.assistant.routines.count', { n: counted, max: routineLimit })
           }}</span>
         </h2>
         <p class="settings-card__desc">{{ t('account.assistant.routines.desc') }}</p>
@@ -180,6 +183,7 @@ function last(r: AssistantRoutine): string {
                 {{ t('account.assistant.routines.view') }}
               </BaseButton>
               <BaseButton
+                v-if="r.state !== 'done'"
                 kind="ghost"
                 size="sm"
                 :disabled="saving"

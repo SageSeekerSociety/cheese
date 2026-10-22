@@ -1029,7 +1029,8 @@ class RoutineIn(BaseModel):
 
 def _routine_line(row, tz: str | None) -> str:
     state = {"credits": "（额度用完，已暂停）", "away": "（长时间未登录，已暂停）"}.get(
-        row.paused, "（已暂停）" if row.state == "paused" else ""
+        row.paused,
+        {"paused": "（已暂停）", "done": "（已运行过）"}.get(row.state, ""),
     )
     nxt = (
         f"，下次运行 {_when(row.next_run_at, tz)}"

@@ -25,6 +25,7 @@
     "count": "{n}/{max}",
     "empty": "No routines",
     "next": "Next run: {time}",
+    "ran": "Has run; deleted automatically after 3 days",
     "paused": {
       "person": "Paused",
       "credits": "Paused: out of credits",

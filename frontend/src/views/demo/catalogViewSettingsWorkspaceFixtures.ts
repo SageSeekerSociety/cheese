@@ -679,6 +679,17 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     lastRun: { status: 'skipped', at: '2026-10-20T01:00:00Z', asked: 0, conversationId: null },
     weekCredits: 0,
   },
+  {
+    id: 'r4',
+    title: '提醒交开题报告',
+    note: '提醒用户把开题报告发给导师',
+    when: '10月22日 17:00 运行一次',
+    state: 'done',
+    paused: '',
+    nextRunAt: null,
+    lastRun: { status: 'done', at: '2026-10-22T09:00:20Z', asked: 0, conversationId: 'c4' },
+    weekCredits: 0.2,
+  },
 ]
 
 export const ASSISTANT_RECENT: AssistantActivityItem[] = [

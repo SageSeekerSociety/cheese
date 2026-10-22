@@ -143,4 +143,19 @@ describe('芝士 settings', () => {
     await waitFor(() => expect(setRoutineMock).toHaveBeenCalledWith('r1', 'delete'))
     await waitFor(() => expect(view.getByText('暂无例行事务')).toBeTruthy())
   })
+
+  it('a one-off routine that ran says so, can only be deleted and leaves its place free', async () => {
+    routinesMock.mockResolvedValue({
+      routines: [
+        { ...ROUTINE, id: 'r2', title: '提醒交报告', when: '10月22日 17:00 运行一次', state: 'done', nextRunAt: null },
+      ],
+      limit: 20,
+    })
+    const view = mount()
+    await waitFor(() => expect(view.getByText('提醒交报告')).toBeTruthy())
+    expect(view.getByText('已运行，3 天后自动删除')).toBeTruthy()
+    expect(view.getByText('0/20')).toBeTruthy()
+    expect(view.queryByRole('button', { name: '暂停' })).toBeNull()
+    expect(view.queryByRole('button', { name: '恢复' })).toBeNull()
+  })
 })

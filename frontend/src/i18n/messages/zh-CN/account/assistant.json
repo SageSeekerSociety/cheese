@@ -25,6 +25,7 @@
     "count": "{n}/{max}",
     "empty": "暂无例行事务",
     "next": "下次运行：{time}",
+    "ran": "已运行，3 天后自动删除",
     "paused": {
       "person": "已暂停",
       "credits": "额度已用完，已暂停",
