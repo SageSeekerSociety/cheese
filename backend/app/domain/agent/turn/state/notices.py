@@ -6,31 +6,16 @@ from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
     classify_platform_failure,
+    is_provider_out_of_credit,
     is_request_refused,
 )
 from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
     WHO_HUMAN,
+    WHO_PLATFORM,
     notice,
 )
-
-_OUT_OF_CREDIT_MARKERS = (
-    "余额不足",
-    "请充值",
-    "insufficient balance",
-    "insufficient_quota",
-    "quota exceeded",
-    "billing",
-)
-
-
-def _is_out_of_credit(detail: str | None) -> bool:
-    if not detail:
-        return False
-    lowered = detail.lower()
-    return any(m.lower() in lowered for m in _OUT_OF_CREDIT_MARKERS)
-
 
 _TOOL_ACTION = {
     "cheese_notify": "notify",
@@ -65,17 +50,21 @@ def _turn_failure_notice(
             return line, _with_log(failure.meta, log)
         return failure.content, _with_log(failure.meta, log)
     detail = (text or "").strip()
-    if not _is_out_of_credit(detail) and (said := cli_notice(scrub_secrets(detail))):
+    out_of_credit = is_provider_out_of_credit(detail)
+    if not out_of_credit and (said := cli_notice(scrub_secrets(detail))):
         # Claude Code's own one-line refusal ("API Error: ..."): the same card
         # it gets when it is printed as a reply, whose line names the cause.
         return said
-    if _is_out_of_credit(detail):
-        # A spent balance is not a wait — no amount of retrying refills it, and
-        # telling someone to try again later sends them into a loop that cannot
-        # succeed. Say what actually has to happen.
+    who = WHO_HUMAN
+    if out_of_credit:
+        # The platform's own account with a model provider has no money: only
+        # its administrators can top it up, and the gateway has already told
+        # them (deploy/gateway/provider_credit.py). Nothing here is the
+        # reader's to pay for; a retry works once the account is topped up.
         line = say("turnFailedOutOfCredit")
         hint = say("turnFailedOutOfCreditHint")
-        retryable = False
+        who = WHO_PLATFORM
+        retryable = True
     elif is_request_refused(detail):
         # The same conversation goes out again on a retry and is refused the
         # same way, so a retry is not offered.
@@ -96,7 +85,7 @@ def _turn_failure_notice(
     return line, notice(
         EVENT_TURN_FAILED,
         severity=SEVERITY_ERROR,
-        who=WHO_HUMAN,
+        who=who,
         # 原话是唯一的一份——它没有第二个副本可以「去别处看」，所以原样收进
         # detail，不截、不摘要；只把凭据遮成 ***：它会存进对话。
         detail=(

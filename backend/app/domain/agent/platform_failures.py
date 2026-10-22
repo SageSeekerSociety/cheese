@@ -155,6 +155,9 @@ from app.domain.agent.platform_failure_rules import (
     _text_is_storage_exhausted as _text_is_storage_exhausted,
 )
 from app.domain.agent.platform_failure_rules import (
+    is_provider_out_of_credit as is_provider_out_of_credit,
+)
+from app.domain.agent.platform_failure_rules import (
     is_runtime_image_missing,
     is_storage_exhausted,
 )
