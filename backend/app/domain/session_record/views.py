@@ -84,7 +84,11 @@ def parts(record: dict) -> list[dict]:
                 "text": text(record.get("errorMessage")),
             }
         ]
-    message = record.get("message") or {}
+    message = record.get("message")
+    if not isinstance(message, dict):
+        # A machine's note carries its sentence as a string; a harness record
+        # carries a message object. Only the latter has content to read parts from.
+        message = {}
     if message.get("role") == "toolResult":
         # pi keeps a tool's return as a message of its own. Reading it through
         # the content loop below would call it prose.
@@ -146,6 +150,7 @@ def parts(record: dict) -> list[dict]:
     if record.get("subtype") in (
         "api_retry",
         "compact_boundary",
+        "sync_failed",
         "task_started",
         "task_notification",
     ):
@@ -399,6 +404,10 @@ def as_block(item: dict, conversation_id: uuid.UUID) -> dict:
             "parent": parent,
             "tool": tool,
             "narration": not tool,
+            # The machine's own note is not a step of a turn: it counts in no
+            # turn's steps. A note with no turn is drawn as a platform line of
+            # its own; a checkpoint's carries one and joins that turn.
+            "platform": item["harness"] == "machine",
             "in_room": False,
         },
     }

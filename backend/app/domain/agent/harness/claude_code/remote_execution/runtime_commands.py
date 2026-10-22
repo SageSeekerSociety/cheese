@@ -595,6 +595,11 @@ def bash(self, args, key=None):
     command_id = "task-" + uuid.uuid4().hex[:16]
     record = self._record(command_id)
     cwd = self.bash_cwd if self.bash_cwd.is_dir() else self.root
+    env = self.command_env()
+    # A platform call may name variables for this one command (`checkpoint`'s
+    # turn). Its own key, so a Bash argument from anywhere else cannot set one.
+    if isinstance(args.get("platform_env"), dict):
+        env.update({str(k): str(v) for k, v in args["platform_env"].items()})
     self.start_command(
         command_id,
         self.shell_argv(
@@ -602,7 +607,7 @@ def bash(self, args, key=None):
             + shlex.quote(str(record / "cwd"))
         ),
         cwd,
-        self.command_env(),
+        env,
         merge=True,
         watched=False,
         meta={"command": args["command"]},

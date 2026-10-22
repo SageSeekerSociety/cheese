@@ -255,8 +255,9 @@ class Runner(Generic[J]):  # noqa: UP046
         self.live_epoch = uuid.uuid4().hex[:12]
         self.live_count = 0
         # What checkpoints a turn's work on the room's machine, given a request
-        # id (``RemoteClient.checkpoint``); None for a session without hands.
-        self.checkpointer: Callable[[str], dict] | None = None
+        # id and the turn that ended (``RemoteClient.checkpoint``); None for a
+        # session without hands.
+        self.checkpointer: Callable[[str, str | None], dict] | None = None
         self.checkpointing: asyncio.Task | None = None
         self.checkpoint_again = False
 
@@ -331,6 +332,13 @@ class Runner(Generic[J]):  # noqa: UP046
 
     # --- a turn's checkpoint -------------------------------------------------
 
+    def turn_work(self) -> str | None:
+        """The work id of the turn that just ended: the owner of what this
+        session has been doing. None when nothing of the platform's started
+        it — a session that woke for its own reason."""
+        owner = json.loads(self.journal.recall("owner") or "{}")
+        return owner.get("work_id")
+
     def turn_ended(self) -> None:
         """The session's turn ended: checkpoint its work. One at a time; a turn
         that ends while one runs gets one more once it is done, which covers
@@ -340,15 +348,20 @@ class Runner(Generic[J]):  # noqa: UP046
         if self.checkpointing is not None and not self.checkpointing.done():
             self.checkpoint_again = True
             return
-        self.checkpointing = asyncio.ensure_future(self._checkpoint())
+        # The turn this checkpoint syncs, read here and not when the sync runs:
+        # by then another turn may have started, and the machine is told so a
+        # failed push is filed under this turn rather than guessed later.
+        self.checkpointing = asyncio.ensure_future(self._checkpoint(self.turn_work()))
 
-    async def _checkpoint(self) -> None:
+    async def _checkpoint(self, turn: str | None) -> None:
         assert self.checkpointer is not None
         while True:
             self.checkpoint_again = False
             try:
                 result = await asyncio.to_thread(
-                    self.checkpointer, f"checkpoint-{uuid.uuid4().hex}"
+                    self.checkpointer,
+                    f"checkpoint-{uuid.uuid4().hex}",
+                    turn,
                 )
                 if isinstance(result, dict) and result.get("error"):
                     raise RuntimeError(result["error"])
@@ -356,6 +369,9 @@ class Runner(Generic[J]):  # noqa: UP046
                 print(f"turn checkpoint failed: {error!r}", file=sys.stderr, flush=True)
             if not self.checkpoint_again:
                 return
+            # A newer turn ended while this one synced; the retry is that
+            # turn's checkpoint, so it carries that turn instead of the first.
+            turn = self.turn_work()
 
     async def yield_foreground(self) -> None:
         """Give the model its turn back: what it is waiting on moves to the

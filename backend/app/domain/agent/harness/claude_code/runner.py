@@ -1729,6 +1729,12 @@ class Runner(runner.Runner[Journal]):
                 return {}
             reason = self.insist()
             return {"reason": reason} if reason else {}
+        if method == "checkpoint_turn":
+            # The session's Stop checkpoint (`client.py checkpoint`), asking
+            # which turn it is about to sync. `work` while the turn is ending,
+            # `last_work` once it has ended.
+            work = self.work or self.last_work
+            return {"work_id": work} if work else {}
         # Everything else is the platform's, and only the registration it
         # holds now may ask it.
         self.outbox.check(params.get("epoch"))

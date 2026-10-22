@@ -11,7 +11,7 @@
 * **机器上**它是 `cheese` 这条命令：只剩必须在这台机器上作为进程跑的动作——任务
   目录、同步与恢复、预览、取文件、读写工作区文件的转换。
 
-环境变量（启动器注入）：
+环境变量：
   CHEESE_API     平台 API 基址；直连后端用 http://host.docker.internal:8099，
                  经公共网关用 https://example.com/api
   CHEESE_PROJECT 当前项目 id
@@ -19,7 +19,8 @@
   CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用任务的实况文档）
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
   CHEESE_TOKEN   会话凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
-  CHEESE_TURN    当前这一轮的 id，带回去让这一轮写出的块归在一起
+  CHEESE_TURN    可选的一轮 id；平台每次检查点单独给它一个（那一轮 sync），
+                 有就让块和同步失败的记录归到这一轮
 
 例:
   cheese worktree <task_id>                 # 准备任务工作目录,输出路径
@@ -5506,21 +5507,27 @@ class _BranchQueued(RuntimeError):
 def _report_sync_failure(
     task_id: str, branch: str | None, queued_pr: int | None = None
 ) -> None:
-    """Tell the room that a task's work did not reach its branch.
+    """Report that a task's work did not reach its branch.
 
     Only the failure: a turn that ends with its work still on the machine looks
     identical to one that succeeded — that is what let a rejected push read as a
     completed turn until the machine was deleted and the work went with it. On
-    success the work is already visible in the branch, and a message per turn
+    success the work is already visible in the branch, and a note per turn
     saying so would be noise that trains people to skip it.
+
+    An ordinary failed push goes into the 现场 of the conversation whose
+    checkpoint ran — the only conversation this credential may write. The
+    checkpoint names its turn (`CHEESE_TURN`), so the note joins that turn's
+    process view; a sync with no turn behind it is drawn as a platform line.
+    It names the branch, which is how a sibling task's commit is identified
+    when a room's `sync --all` picked it up: a task credential may not write
+    into another task's conversation. The queue case is different — retrying
+    cannot help and a person has to choose — so that one is still said in the
+    room.
     """
     if not (API and TOPIC and TOKEN):
         return  # A human using the CLI directly already receives its exit status.
     where = branch or f"任务 {task_id}"
-    content = (
-        f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
-        "看不到它。请重试本轮；若机器被回收，改动会丢失。"
-    )
     if queued_pr:
         # Retrying cannot help: the branch stays locked until the queue is done.
         content = (
@@ -5528,12 +5535,44 @@ def _report_sync_failure(
             "队列里，排队的分支不能再改。提交留在那台机器上并已备份；PR 合并后"
             "在新任务里交付它们，或由验收人退回这张卡、PR 撤出队列后再推。"
         )
-    if not _tell_room(content):
+        delivered = _tell_room(content)
+    else:
+        content = (
+            f"有改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
+            "看不到它；若机器被回收，改动会丢失。"
+        )
+        delivered = _tell_site(content)
+    if not delivered:
         print(
             f"[cheese] 同步失败的通知未送达，任务 {task_id} 的 "
             "cheese-sync.log 保留了结果",
             file=sys.stderr,
         )
+
+
+def _tell_site(content: str) -> bool:
+    """Put `content` in 现场 as the machine's own status line; whether it arrived.
+
+    `CHEESE_TURN` is set by the platform for the one command that is a turn's
+    checkpoint (`cheese sync --all`), so the note joins that turn and shows in
+    its process view. A sync outside any turn (a commit's own) carries none and
+    is drawn as a platform line of its own."""
+    body = {"subtype": "sync_failed", "text": content}
+    req = urllib.request.Request(
+        f"{API}/topics/{TOPIC}/session-records",
+        data=json.dumps(body).encode(),
+        method="POST",
+    )
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-Cheese-Token", TOKEN)
+    if TURN:
+        req.add_header("X-Cheese-Turn", TURN)
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            pass
+    except Exception:
+        return False
+    return True
 
 
 def _tell_room(content: str) -> bool:
