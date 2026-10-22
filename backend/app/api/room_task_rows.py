@@ -497,8 +497,8 @@ async def room_task_items(
 
 
 async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict]:
-    """Say on each task row whether a session of its AI teammate is running in
-    it right now (`session_running`), as the session protocol declares it.
+    """Say on each task row whether any agent's session is running in it right
+    now (`session_running`), as the session protocol declares it.
 
     For readers that act on whether the teammate is at work — the orchestrator's
     patrol, which must not nudge a session in the middle of a long command. The
