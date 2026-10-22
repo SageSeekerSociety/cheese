@@ -41,7 +41,7 @@ class _ServesBinary(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         body = BINARY
-        encoding = None
+        encoding = ""
         if type(self).require_gzip:
             if "gzip" not in self.headers.get("Accept-Encoding", ""):
                 self.send_response(400)
@@ -49,12 +49,13 @@ class _ServesBinary(http.server.BaseHTTPRequestHandler):
                 return
             body = gzip.compress(BINARY)
             encoding = "gzip"
+        announced = type(self).announced
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         if encoding:
             self.send_header("Content-Encoding", encoding)
-        if type(self).announced:
-            self.send_header("X-Checksum-SHA256", type(self).announced)
+        if announced:
+            self.send_header("X-Checksum-SHA256", announced)
         self.end_headers()
         self.wfile.write(body)
 
