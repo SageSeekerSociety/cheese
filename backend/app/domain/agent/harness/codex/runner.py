@@ -152,8 +152,12 @@ class Runner(runner.Runner[Journal]):
         )
         if announced:
             self.compacting_turn = str(params.get("turnId") or "") or turn_id
-            if held is not None and _turn_of(held) == self.compacting_turn:
-                held = None  # the compaction's own start: the room hears no turn
+            if held is not None and _turn_of(held) != self.compacting_turn:
+                # A start held for a real turn, arriving beside the compaction
+                # instead of before its item. Its own ending still comes — it
+                # is not the compaction's — so journal it, one event late.
+                self.journal.append(held)
+            held = None
             if method == "item/completed":
                 # The compaction is over, however it went; there may be no
                 # `turn/completed` to say so (the shape the pinned build sends).
