@@ -563,6 +563,10 @@ async def _respond(db, body: ActIn, me: Person) -> _Plan:
                 "respond",
                 f"{'允许' if yes else '拒绝'}项目「{run.project_name}」在你的设备 "
                 f"{run.device} 上运行 MCP 服务器 {run.server}（命令：{run.command}）",
+                # Refusing is undone by asking again; allowing runs a command
+                # on the person's own machine.
+                low=not yes,
+                always_ask="在你的设备上运行命令总要你确认" if yes else "",
             ),
             [
                 {
@@ -642,7 +646,11 @@ async def _member(db, access, body: ActIn, me: Person) -> _Plan:
         return _Plan(
             gate.Action(
                 "member",
-                f"将 {shown} 加入频道「{room.title}」（项目「{project.name}」）",
+                f"将 {shown} 加入{'私密' if room.members_only else ''}频道"
+                f"「{room.title}」（项目「{project.name}」）",
+                # An open channel is one they could join themselves; a
+                # private one is let into.
+                low=not room.members_only,
             ),
             [
                 {
@@ -736,6 +744,8 @@ async def _channel(db, access, body: ActIn, me: Person) -> _Plan:
             "channel",
             f"在项目「{project.name}」新建{private}频道「{title}」"
             + (f"，说明：{about}" if about else ""),
+            # Empty until someone writes in it, and archived as easily.
+            low=True,
         ),
         [
             {

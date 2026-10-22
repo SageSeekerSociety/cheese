@@ -81,7 +81,14 @@ const series = computed<ChartSeries[]>(() => [
 ])
 const xLabels = computed(() => report.value?.daily.map((d) => d.date.slice(5)) ?? [])
 
-const STAGES = ['asked:rule', 'allowed:quick', 'allowed:reasoned', 'asked:reasoned', 'asked:error'] as const
+const STAGES = [
+  'asked:rule',
+  'allowed:low',
+  'allowed:quick',
+  'allowed:reasoned',
+  'asked:reasoned',
+  'asked:error',
+] as const
 const stageRows = computed(() =>
   STAGES.map((key) => ({
     label: t(`featureStats.assistant.stages.${key}`),

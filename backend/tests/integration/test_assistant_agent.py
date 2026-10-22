@@ -538,12 +538,6 @@ def test_someone_named_by_their_name_is_added_by_their_handle(client, monkeypatc
 
     asyncio.run(name())
     token = _acting(client, "alice", _asked_in(client, "alice", "把赵一鸣加进综合频道"))
-    keeper = _Gatekeeper("放")
-
-    async def looks(session):
-        return keeper
-
-    monkeypatch.setattr(gate, "gatekeeper", looks)
     where = f"{slug}/channels/{number}"
 
     r = client.post(
@@ -555,7 +549,8 @@ def test_someone_named_by_their_name_is_added_by_their_handle(client, monkeypatc
     assert r.status_code == 200, r.text
     [call] = r.json()["data"]["calls"]
     assert call["body"] == {"handle": "zhaoym"}
-    assert "将 赵一鸣（zhaoym） 加入频道" in keeper.shown[0]
+    [check] = _checks(client, "alice")
+    assert "将 赵一鸣（zhaoym） 加入频道" in check.summary
     unknown = client.post(
         "/assistant/agent/act",
         json={"kind": "member", "where": where, "who": "钱多多"},
@@ -563,6 +558,91 @@ def test_someone_named_by_their_name_is_added_by_their_handle(client, monkeypatc
     )
     assert unknown.status_code == 404
     assert unknown.json()["error"]["i18n"]["key"] == "assistantWhoUnknown"
+
+
+def test_what_the_person_can_undo_is_done_with_no_look(client, monkeypatch):
+    """Adding someone to an open channel — one they could join themselves —
+    and making a channel are done without asking the model; adding them to a
+    private channel lets them in, and is looked at."""
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    seed_user(client, "zhaoym")
+    token = _acting(client, "alice", _asked_in(client, "alice", "整理一下频道"))
+
+    async def no_model(session):
+        raise AssertionError("nothing here needs a look")
+
+    monkeypatch.setattr(gate, "gatekeeper", no_model)
+    added = client.post(
+        "/assistant/agent/act",
+        json={"kind": "member", "where": f"{slug}/channels/{number}", "who": "zhaoym"},
+        headers=_as(token),
+    )
+    made = client.post(
+        "/assistant/agent/act",
+        json={"kind": "channel", "where": slug, "title": "论文阅读"},
+        headers=_as(token),
+    )
+
+    assert added.json()["data"]["done"] is True, added.text
+    assert made.json()["data"]["done"] is True, made.text
+    assert [(c.verdict, c.stage) for c in _checks(client, "alice")] == [
+        ("allowed", "low"),
+        ("allowed", "low"),
+    ]
+
+    async def private():
+        async with client.test_factory() as db:
+            (await db.get(Topic, uuid.UUID(room))).members_only = True
+            await db.commit()
+
+    asyncio.run(private())
+    keeper = _Gatekeeper("拦", "你没有提到要把赵一鸣加进这个频道\n结论：拦")
+
+    async def looks(session):
+        return keeper
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+    let_in = client.post(
+        "/assistant/agent/act",
+        json={"kind": "member", "where": f"{slug}/channels/{number}", "who": "zhaoym"},
+        headers=_as(token),
+    )
+
+    assert let_in.json()["data"]["done"] is False, let_in.text
+    assert "加入私密频道" in keeper.shown[0]
+
+
+def test_what_the_person_wants_asked_about_is_read_even_when_it_is_low(
+    client, monkeypatch
+):
+    """Rules the person wrote in their own words only a look can read, so
+    with them a low action is looked at too."""
+    room, _ = _room(client)
+    slug, _ = _names(client, room)
+    seed_user(client, "alice")
+    r = client.put(
+        "/assistant/rules",
+        json={"ask": [], "allowText": "", "askText": "建频道先问我。"},
+        headers=_auth_headers(client, "alice"),
+    )
+    assert r.status_code == 200, r.text
+    token = _acting(client, "alice", _asked_in(client, "alice", "整理一下频道"))
+    keeper = _Gatekeeper("拦", "你设置了建频道先问你\n结论：拦")
+
+    async def looks(session):
+        return keeper
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+
+    made = client.post(
+        "/assistant/agent/act",
+        json={"kind": "channel", "where": slug, "title": "论文阅读"},
+        headers=_as(token),
+    )
+
+    assert made.json()["data"]["done"] is False, made.text
+    assert "建频道先问我" in keeper.shown[0]
 
 
 def test_the_persons_own_settings_change_at_once_and_undo_from_the_panel(client):

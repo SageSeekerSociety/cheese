@@ -93,7 +93,7 @@ TASKS: list[Task] = [
         "search",
         ("课题组里谁提过 MixUp？结果怎么样？",),
         checks=(
-            ("用了搜索", lambda o: "cheese_search" in o.tools),
+            ("用了搜索", lambda o: "cheese_find" in o.tools),
             ("说出提升 1.2 个点", lambda o: "1.2" in o.answer),
         ),
         points="实验频道里有人说加了 MixUp 涨了 1.2 个点；数据增强对比实验的审阅卡也是 MixUp 与 CutMix 对比。",

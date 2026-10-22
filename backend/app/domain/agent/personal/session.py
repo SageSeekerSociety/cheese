@@ -135,7 +135,7 @@ def session(
             thinking=True,
             effort=effort(model_roles.model("assistant_model")),
             max_tokens=MAX_TOKENS,
-            context_tokens=context_tokens(settings.assistant_model),
+            context_tokens=context_tokens(model_roles.model("assistant_model")),
             reserve_tokens=RESERVE_TOKENS,
             keep_tokens=KEEP_TOKENS,
             retry_base_delay_ms=RETRY_BASE_DELAY_MS,

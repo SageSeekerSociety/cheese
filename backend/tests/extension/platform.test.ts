@@ -349,9 +349,9 @@ describe("没有手的那条路：人自己的芝士，没有机器", () => {
     const search = () => ({ content: [{ type: "text", text: "没有搜到" }] });
 
     for (let i = 0; i < 200; i++) {
-      assert.equal((await pi.run("cheese_search", { query: `词${i}` }, search)).isError, false);
+      assert.equal((await pi.run("cheese_find", { query: `词${i}` }, search)).isError, false);
     }
-    const over = await pi.run("cheese_search", { query: "再一个" }, search);
+    const over = await pi.run("cheese_find", { query: "再一个" }, search);
 
     assert.equal(over.isError, true);
     assert.match(over.content[0].text, /200 次.*「继续」/);

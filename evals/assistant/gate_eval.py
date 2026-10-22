@@ -61,7 +61,9 @@ async def _judge(case: GateCase, chat, gate, models) -> dict:
         None,  # type: ignore[arg-type]  (both readers are replaced above)
         user_id=0,
         conversation_id=None,
-        action=gate.Action(case.action_kind, case.action, case.categories),
+        action=gate.Action(
+            case.action_kind, case.action, case.categories, low=case.low
+        ),
         chat=chat,
     )
     return {
