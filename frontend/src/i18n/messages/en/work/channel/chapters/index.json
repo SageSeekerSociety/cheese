@@ -1,0 +1,9 @@
+{
+  "jump": "Go to this message",
+  "menu": "Bookmark actions",
+  "pinnedBy": "Added by {name} · {when}",
+  "title": "Bookmarks · {count}",
+  "untitled": "(a bookmark with no words)",
+  "unpin": "Remove bookmark",
+  "unpinFailed": "Could not remove the bookmark"
+}

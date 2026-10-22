@@ -72,7 +72,7 @@ export function useTopicLive(opts: {
     void store.refreshUnread()
   }
 
-  const CACHED_RESOURCES: ReadonlySet<string> = new Set(['topics', 'tasks', 'pins', 'threads'])
+  const CACHED_RESOURCES: ReadonlySet<string> = new Set(['topics', 'tasks', 'pins', 'chapters', 'threads'])
   function handleStateChanged(resource: string) {
     if (resource === 'accept') opts.reloadAccept()
     // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
