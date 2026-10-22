@@ -41,9 +41,29 @@ describe('在做', () => {
   })
 
   it('下面一行是它报的那句和已经做了多久', () => {
-    const state = taskState(task('running', { progress_note: '在改登录表单', progress_set_at: minutesAgo(12) }), ctx)
+    const state = taskState(
+      task('running', { progress_state: 'working', progress_note: '在改登录表单', progress_set_at: minutesAgo(12) }),
+      ctx
+    )
     expect(state.line).toContain('在改登录表单')
     expect(state.line).toContain('已做 12 分钟')
+  })
+
+  it('它说过在等、卡住，会话又跑起来了：在做，后面不写那句旧话，也不从那时算已做多久', () => {
+    for (const progress_state of ['waiting', 'blocked'] as const) {
+      const state = taskState(
+        task('running', {
+          session_running: true,
+          progress_state,
+          progress_note: '等 CI 跑完',
+          progress_set_at: minutesAgo(25),
+        }),
+        ctx
+      )
+      expect(state.label).toBe('在做')
+      expect(state.line).not.toContain('等 CI 跑完')
+      expect(state.line).not.toContain('25 分钟')
+    }
   })
 })
 
