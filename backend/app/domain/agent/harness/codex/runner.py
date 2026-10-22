@@ -41,6 +41,40 @@ def _turn_of(event: dict) -> str | None:
 
 
 class Runner(runner.Runner[Journal]):
+    async def _open_turn(self, sending: Awaitable[str]) -> str:
+        """Send, knowing the turn it opens is the room's before app-server
+        answers with its id.
+
+        A `turn/started` can arrive ahead of the answer (`_submit` pins the
+        work id for the same reason). While this is in flight the first one is
+        taken as the room's; if the answer names a different turn, that one was
+        not ours — app-server opened the platform's compaction under us — and
+        is handed back to the compaction's own books.
+        """
+        self.starting_room_turn = True
+        self.started_during_send = None
+        try:
+            turn = await sending
+        finally:
+            self.starting_room_turn = False
+            early, self.started_during_send = self.started_during_send, None
+        self.room_turns.add(turn)
+        if early is not None and early != turn:
+            self.room_turns.discard(early)
+            self.compacting_turn = early
+        return turn
+
+    def _is_room_turn(self, turn: str) -> bool:
+        """Whether a turn is one this runner opened for the room.
+
+        Every turn the room has is opened by a send here; app-server's own
+        turns — the compaction `thread/compact/start` runs — are the ones it
+        opens without one. A turn whose `turn/started` arrived while a send was
+        still in flight was recorded on arrival (``record``), so this is only a
+        membership test.
+        """
+        return bool(turn) and turn in self.room_turns
+
     def __init__(
         self,
         state: Path,
@@ -83,6 +117,18 @@ class Runner(runner.Runner[Journal]):
         #: Turn ids are added when the send answers and dropped when the turn
         #: ends (``record``).
         self.room_turns: set[str] = set()
+        #: A room turn is being started right now: set around every send that
+        #: opens one. app-server can push its `turn/started` before the send's
+        #: answer comes back (`_submit` says so where it pins the work id), and
+        #: an id no send has answered for yet would read as a compaction's —
+        #: the one thing that must never happen, since its ending is dropped.
+        #: So while this is set, the first `turn/started` is taken as the
+        #: room's (`record`), and the send's answer corrects it if not.
+        self.starting_room_turn = False
+        #: The turn a `turn/started` named while a send was in flight. It is
+        #: very likely that send's; the answer says so, and corrects it when
+        #: it is not (``_submit``, `_hold_to_reply`, `tell`).
+        self.started_during_send: str | None = None
         #: The loop `request_compact` hops onto from the tool call's thread.
         #: `start` sets it for sure; a runner built outside a loop (a sync
         #: test) has none yet and gets it there.
@@ -160,13 +206,19 @@ class Runner(runner.Runner[Journal]):
         # much as on, and in any turn that ran pre-, mid- or post-ask.
         item = params.get("item") or {}
         same_thread = self.session is not None and thread_id == self.session.thread_id
+        if method == "turn/started" and same_thread and self.starting_room_turn:
+            # A send in flight is opening this one; its answer names it too.
+            self.room_turns.add(turn_id or "")
+            if self.started_during_send is None:
+                self.started_during_send = turn_id
         held, self.pending_turn = self.pending_turn, None
         candidate = str(params.get("turnId") or "") or turn_id
         announced = (
-            same_thread
+            self.compact_request == "sent"
+            and same_thread
             and method in ("item/started", "item/completed")
             and item.get("type") == "contextCompaction"
-            and candidate not in self.room_turns
+            and not self._is_room_turn(candidate)
         )
         if announced:
             self.compacting_turn = candidate
@@ -267,7 +319,7 @@ class Runner(runner.Runner[Journal]):
         assert self.session is not None
         try:
             async with self.submit_lock:
-                self.room_turns.add(await self.session.send(reason))
+                await self._open_turn(self.session.send(reason))
         except Exception as error:  # the turn ends as it was going to
             print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
             self.journal.append(ending)
@@ -285,7 +337,7 @@ class Runner(runner.Runner[Journal]):
                 work = str(uuid.uuid4())
                 self.journal.remember(f"unsolicited:{work}", "1")
                 self.journal.remember(f"work:{session.thread_id}", work)
-            self.room_turns.add(await session.send(text))
+            await self._open_turn(session.send(text))
 
     # --- the session compacting itself ---------------------------------------
 
@@ -479,12 +531,11 @@ class Runner(runner.Runner[Journal]):
                 # Persist attribution before the call: notifications can
                 # arrive before app-server acknowledges turn/start.
                 self.journal.remember(f"work:{thread_id}", work_id)
-            turn = (
-                await self.session.send(text, images=images)
+            turn = await self._open_turn(
+                self.session.send(text, images=images)
                 if images
-                else await self.session.send(text)
+                else self.session.send(text)
             )
-            self.room_turns.add(turn)
         return {"turn_id": turn, "input_id": identifier}
 
     async def _end_woken_turn(self) -> bool:

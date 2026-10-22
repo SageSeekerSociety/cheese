@@ -775,6 +775,94 @@ async def test_a_turn_beside_the_ask_that_compacts_itself_keeps_its_answer(tmp_p
 
 
 @pytest.mark.anyio
+async def test_a_room_turn_is_known_before_the_send_answers(tmp_path):
+    """app-server can push a turn's `turn/started` before the send that opened
+    it answers — the same reason the work id is pinned before the call. An id
+    nothing has answered for yet must still count as the room's, or the
+    automatic compaction at that turn's start reads as the platform's and the
+    room loses the answer."""
+    from app.domain.agent.harness.codex.events import Assembler
+
+    runner = Runner(tmp_path, AsyncMock())
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def send(text):
+        entered.set()
+        await release.wait()
+        return "person-turn"
+
+    session = SimpleNamespace(
+        thread_id="thread",
+        turn_id=None,
+        compact=AsyncMock(),
+        observe=lambda _: None,
+        send=send,
+    )
+    runner.session = session
+    try:
+        runner.journal.remember("work:thread", "platform-work")
+        assert runner.request_compact() == "requested"
+        await asyncio.sleep(0.05)
+
+        sending = asyncio.create_task(runner.send("input", "hi", work_id="w2"))
+        await entered.wait()
+
+        # The turn is announced before the send comes back with its id.
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "person-turn"}},
+            }
+        )
+        await runner.record(
+            {
+                "method": "item/started",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "person-turn",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            }
+        )
+        await runner.record(
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "person-turn",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            }
+        )
+
+        release.set()
+        await sending
+        await runner.record(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {
+                        "id": "person-turn",
+                        "status": "completed",
+                        "items": [{"type": "agentMessage", "text": "the answer"}],
+                    },
+                },
+            }
+        )
+
+        assert runner.compact_request == ""
+        records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
+        assembler = Assembler()
+        assembled = [event for r in records for event in assembler.accept(r)]
+        results = [e for e in assembled if type(e).__name__ == "AgentResult"]
+        assert [e.text for e in results] == ["the answer"], results
+    finally:
+        release.set()
+        await runner.close()
+
+
+@pytest.mark.anyio
 async def test_a_turn_interrupted_beside_the_ask_does_not_leave_it_hanging(tmp_path):
     """A room turn that started while the ask was outstanding and was then
     interrupted — by a person, not by the compaction — is not a compaction
