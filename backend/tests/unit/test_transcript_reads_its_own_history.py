@@ -112,6 +112,68 @@ def test_the_written_file_marks_a_child_thread_whose_declaration_is_on_another_p
     assert [row["subagent"] for row in written] == [False, True, True]
 
 
+def test_a_child_declared_in_a_turn_the_window_cuts_away_is_still_marked(
+    monkeypatch, tmp_path
+):
+    """`--turns` keeps whole recent turns, and the record that declares a codex
+    child thread may be in an older one it drops. Marking has to happen over
+    everything read, before the cut — else the child's rows inside the window
+    are written as the session's own."""
+    module = cheese()
+    old_decl = {
+        "seq": 1,
+        "at": "2026-10-22T07:00:00+00:00",
+        "turn": "old",
+        "thread": "child",
+        "subagent": True,
+        "parent_thread": "old",
+        "parts": [],
+        "role": None,
+    }
+    child_row = {
+        "seq": 2,
+        "at": "2026-10-22T08:00:01+00:00",
+        "turn": "new",
+        "thread": "child",
+        "subagent": False,
+        "parent_thread": None,
+        "parts": [tool("Bash", "跑构建")],
+        "role": None,
+    }
+    own_row = {
+        "seq": 3,
+        "at": "2026-10-22T08:00:02+00:00",
+        "turn": "new",
+        "thread": None,
+        "subagent": False,
+        "parts": [text("做完了")],
+        "role": "assistant",
+    }
+    # Oldest first, as the route hands a page back.
+    pages = {None: ([child_row, own_row], "older"), "older": ([old_decl], None)}
+
+    def fake(method, path, *args, **kwargs):
+        cursor = (
+            None if "before=" not in path else path.split("before=")[1].split("&")[0]
+        )
+        items, following = pages[cursor]
+        return {"data": {"items": items, "next": following}}
+
+    monkeypatch.setattr(module, "_call", fake)
+    monkeypatch.setattr(module, "TOPIC", "topic-1")
+    monkeypatch.setattr(module.Path, "home", classmethod(lambda cls: tmp_path))
+    module._transcript(module.build_parser().parse_args(["transcript", "--turns", "1"]))
+
+    written = [
+        json.loads(line)
+        for line in (tmp_path / "attachments" / "transcript" / "topic-1.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [row["seq"] for row in written] == [2, 3]
+    assert [row["subagent"] for row in written] == [True, False]
+
+
 def test_a_thread_declared_only_once_is_still_known_to_be_a_subagent():
     """Codex says a thread is a child in the record that started it and nowhere
     else, so a row of that thread says nothing on its own — the union over the

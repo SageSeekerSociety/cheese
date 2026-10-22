@@ -6588,7 +6588,12 @@ def _recent_rows(topic: str, params: dict, turns: int) -> list[dict]:
             if turn and turn not in seen:
                 seen.append(turn)
         if not following or following == cursor or len(seen) > turns:
-            return _latest_turns(rows, turns)
+            # Marked before the cut, on everything read: a codex child thread is
+            # declared by one record, and that record may sit in the older turn
+            # this cut is about to drop. Marking the cut list instead would have
+            # lost the declaration and left the child's rows inside the window
+            # looking like the session's own.
+            return _latest_turns(_mark_subagents(rows), turns)
         cursor = following
 
 
