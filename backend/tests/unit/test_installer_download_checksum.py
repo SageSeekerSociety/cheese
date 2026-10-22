@@ -10,6 +10,7 @@ the check off silently.
 The served script is run for real, with real curl, against a local server.
 """
 
+import gzip
 import hashlib
 import http.server
 import os
@@ -29,26 +30,42 @@ DIGEST = hashlib.sha256(BINARY).hexdigest()
 class _ServesBinary(http.server.BaseHTTPRequestHandler):
     """Serves BINARY, announcing ``announced`` as its sha256.
 
-    ``announced`` is a class attribute because the handler is built by the
-    server; None means the response carries no digest header at all."""
+    Class attributes because the handler is built by the server: ``announced``
+    is None for a response carrying no digest header at all, and
+    ``require_gzip`` serves the bytes only to a request that accepts the packed
+    copy — a request without it is refused, so unpacking is never tested on a
+    body the installer did not ask for."""
 
     announced: str | None = DIGEST
+    require_gzip = False
 
     def do_GET(self):
+        body = BINARY
+        encoding = None
+        if type(self).require_gzip:
+            if "gzip" not in self.headers.get("Accept-Encoding", ""):
+                self.send_response(400)
+                self.end_headers()
+                return
+            body = gzip.compress(BINARY)
+            encoding = "gzip"
         self.send_response(200)
-        self.send_header("Content-Length", str(len(BINARY)))
+        self.send_header("Content-Length", str(len(body)))
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
         if type(self).announced:
             self.send_header("X-Checksum-SHA256", type(self).announced)
         self.end_headers()
-        self.wfile.write(BINARY)
+        self.wfile.write(body)
 
     def log_message(self, *args):
         pass
 
 
-def _install(tmp_path, announced: str | None):
+def _install(tmp_path, announced: str | None, require_gzip: bool = False):
     """Run the served installer against a server announcing ``announced``."""
     _ServesBinary.announced = announced
+    _ServesBinary.require_gzip = require_gzip
     app = FastAPI()
     app.include_router(router)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _ServesBinary)
@@ -102,3 +119,11 @@ def test_a_download_matching_the_announced_digest_is_installed(tmp_path):
     installed = home / ".local/bin/cheesehost"
     assert installed.read_bytes() == BINARY
     assert os.access(installed, os.X_OK)
+
+
+def test_the_packed_copy_is_asked_for_and_unpacked_before_the_install(tmp_path):
+    """On a slow link the packed copy is what fits; the machine still runs the
+    bytes the digest names."""
+    run, home = _install(tmp_path, DIGEST, require_gzip=True)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert (home / ".local/bin/cheesehost").read_bytes() == BINARY

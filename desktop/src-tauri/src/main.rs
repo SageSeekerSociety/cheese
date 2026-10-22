@@ -7,6 +7,10 @@
 mod connect;
 mod links;
 mod notices;
+// Unpacking the packed connector copy. Only Windows downloads it itself, so
+// off Windows the helpers are unused; their tests run wherever the crate is.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod packed;
 mod platform;
 mod resident;
 mod updates;

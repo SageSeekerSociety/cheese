@@ -129,7 +129,11 @@ fi
 binary="$ORIGIN/connector/latest/$target/cheesehost"
 # -D keeps the response's headers: the response that carries the bytes also
 # names their sha256, and that number is what the check below compares to.
-until curl -fSL "$progress" -C - -D "$headers" -o "$partial" "$binary"; do
+# Accept-Encoding names the packed copy by hand instead of curl's --compressed,
+# which decodes as it goes: the bytes on disk stay a gzip stream, so a resumed
+# range still lands on the same file, and the unpack below hands the checksum
+# the bytes the machine runs.
+until curl -fSL "$progress" -C - -D "$headers" -H 'Accept-Encoding: gzip' -o "$partial" "$binary"; do
   if [ "$attempt" -ge 5 ]; then
     rm -f "$partial" "$headers"
     echo "download failed after $attempt attempts"
@@ -139,6 +143,22 @@ until curl -fSL "$progress" -C - -D "$headers" -o "$partial" "$binary"; do
   echo "download interrupted; resuming (attempt $attempt)…"
   sleep 2
 done
+# The gzip magic says which copy arrived, not a header: a resumed transfer's
+# own response may not repeat Content-Encoding, and the file assembled across
+# attempts is what gets unpacked.
+if [ "$(od -An -tx1 -N2 "$partial" 2>/dev/null | tr -d ' \n')" = "1f8b" ]; then
+  if ! command -v gzip >/dev/null 2>&1; then
+    rm -f "$partial" "$headers"
+    echo "the download is gzip and there is no gzip to unpack it; not installing it" >&2
+    exit 1
+  fi
+  if ! gzip -dc "$partial" > "$partial.plain"; then
+    rm -f "$partial" "$partial.plain" "$headers"
+    echo "cannot unpack cheesehost ($target); not installing it" >&2
+    exit 1
+  fi
+  mv "$partial.plain" "$partial"
+fi
 # The server hashes the very bytes it serves, so this comparison says whether
 # what we hold is what it published. A transfer a relay truncated, or anything
 # that substituted one, must not reach PATH as an executable. A missing header
@@ -232,10 +252,14 @@ $partial = "$exe.part"
 $headers = "$exe.headers"
 Remove-Item -Force -ErrorAction SilentlyContinue $partial
 $url = "$origin/connector/latest/windows-$arch/cheesehost.exe"
-# Resume a download cut mid-transfer, as install.sh does.
+# Resume a download cut mid-transfer, as install.sh does. Accept-Encoding names
+# the packed copy by hand instead of curl's --compressed, which decodes as it
+# goes: the file on disk stays a gzip stream, so a resumed range still lands on
+# the same file, and the unpack below hands the checksum the bytes the machine
+# runs.
 for ($attempt = 1; ; $attempt++) {
   Remove-Item -Force -ErrorAction SilentlyContinue $headers
-  & curl.exe -fsSL -C - -D $headers -o $partial $url
+  & curl.exe -fsSL -C - -D $headers -H "Accept-Encoding: gzip" -o $partial $url
   if ($LASTEXITCODE -eq 0) { break }
   if ($attempt -ge 5) {
     Remove-Item -Force -ErrorAction SilentlyContinue $partial
@@ -243,6 +267,30 @@ for ($attempt = 1; ; $attempt++) {
   }
   Write-Host "download interrupted; resuming (attempt $($attempt + 1))..."
   Start-Sleep -Seconds 2
+}
+# The gzip magic says which copy arrived, not a header: a resumed transfer's own
+# response may not repeat Content-Encoding, and the file assembled across
+# attempts is what gets unpacked.
+$magic = New-Object byte[] 2
+$head = [System.IO.File]::OpenRead($partial)
+try { $read = $head.Read($magic, 0, 2) } finally { $head.Dispose() }
+if ($read -eq 2 -and $magic[0] -eq 0x1f -and $magic[1] -eq 0x8b) {
+  try { Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop } catch {}
+  $plain = "$partial.plain"
+  try {
+    $source = [System.IO.File]::OpenRead($partial)
+    try {
+      $target = [System.IO.File]::Create($plain)
+      try {
+        $packed = [System.IO.Compression.GZipStream]::new($source, [System.IO.Compression.CompressionMode]::Decompress)
+        try { $packed.CopyTo($target) } finally { $packed.Dispose() }
+      } finally { $target.Dispose() }
+    } finally { $source.Dispose() }
+  } catch {
+    Remove-Item -Force -ErrorAction SilentlyContinue $partial, $plain
+    throw "cannot unpack cheesehost (windows-$arch): $($_.Exception.Message)"
+  }
+  Move-Item -Force $plain $partial
 }
 # The same response that carried the bytes named their sha256; check the file
 # against it before it replaces anything, as install.sh does.
