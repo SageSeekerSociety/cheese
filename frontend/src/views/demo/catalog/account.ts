@@ -152,7 +152,7 @@ export const ACCOUNT_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '方案不按月计',
-        note: '不限、或者按时间窗口计的方案没有「每月方案额度」这一行。',
+        note: '不限、或者按时间窗口计的方案没有每月的数，开头那句就不写数。',
         props: {
           open: true,
           offer: {

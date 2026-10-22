@@ -5,8 +5,9 @@
     python -m scripts.send_beta_notice --state-dir /data/beta-notice --send     # mails
 
 Who gets it: every live account (``deleted_at IS NULL``) that has signed in to
-this platform at least once (a row in ``user_sessions``; those rows are revoked,
-never deleted), whose address can receive mail and that is a person, not an agent
+this platform since sign-ins were first recorded (a row in ``user_sessions``,
+which exists since 2026-09-24 and was not backfilled; its rows are revoked, never
+deleted), whose address can receive mail and that is a person, not an agent
 identity (no row in ``agent_bindings``). The accounts carried over from the old
 platform that never signed in here are left out: the letter talks about this
 platform's credits page and its 内测 credits, which they have never seen.
