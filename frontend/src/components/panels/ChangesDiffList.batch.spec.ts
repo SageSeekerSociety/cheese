@@ -34,8 +34,7 @@ function diffOf(path: string, lines: number): FileDiff {
   return { path, added: lines, removed: 0, status: 'modified', body }
 }
 
-const mountedPaths = () =>
-  Array.from(document.querySelectorAll<HTMLElement>('.diff-file')).map((el) => el.dataset.path)
+const mountedPaths = () => Array.from(document.querySelectorAll<HTMLElement>('.diff-file')).map((el) => el.dataset.path)
 
 function mount(diffs: FileDiff[]) {
   return render(ChangesDiffList as unknown as Component, { props: { diffs }, global })
