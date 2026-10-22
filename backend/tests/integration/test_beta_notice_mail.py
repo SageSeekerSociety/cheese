@@ -7,13 +7,14 @@ everyone again.
 """
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select, update
 
 import scripts.send_beta_notice as send_beta_notice
 from app.domain.identity.models import AgentBinding
-from app.domain.user.models import User
+from app.domain.user.models import User, UserSession
 from tests.conftest import seed_user
 
 
@@ -46,24 +47,45 @@ class FakeSender:
 @pytest.fixture
 def people(client):
     """A person who has claimed the 内测 credits, one who has not, an agent
-    identity, an account with a placeholder address and a seeded test account
-    under a reserved name."""
+    identity, an account with a placeholder address, a seeded test account under
+    a reserved name, and an account carried over from the old platform that has
+    never signed in here. All but the last have signed in."""
     claimed = _bearer(client, "bn-claimed")
     _bearer(client, "bn-fresh")
     _bearer(client, "bn-agent")
     _bearer(client, "bn-placeholder")
     _bearer(client, "bn-seeded")
+    _bearer(client, "bn-dormant")
     assert client.post("/users/me/credits/beta", headers=claimed).is_success
-    ids = _ids(
-        client, "bn-claimed", "bn-fresh", "bn-agent", "bn-placeholder", "bn-seeded"
+    handles = (
+        "bn-claimed",
+        "bn-fresh",
+        "bn-agent",
+        "bn-placeholder",
+        "bn-seeded",
+        "bn-dormant",
     )
+    ids = _ids(client, *handles)
 
     async def mark() -> None:
         async with client.test_factory() as session:
             session.add(AgentBinding(user_id=ids["bn-agent"]))
+            now = datetime.now(UTC)
+            for handle in handles[:-1]:
+                session.add(
+                    UserSession(
+                        user_id=ids[handle],
+                        current_hash=f"{handle}-session".ljust(64, "0"),
+                        login_method="password",
+                        user_agent="test",
+                        ip="127.0.0.1",
+                        last_used_at=now,
+                        expires_at=now + timedelta(days=30),
+                    )
+                )
             # seed_user gives example.com, a name reserved for examples that the
-            # letter skips; the two real people get an ordinary address.
-            for handle in ("bn-claimed", "bn-fresh"):
+            # letter skips; the real people get an ordinary address.
+            for handle in ("bn-claimed", "bn-fresh", "bn-dormant"):
                 await session.execute(
                     update(User)
                     .where(User.id == ids[handle])
@@ -117,6 +139,7 @@ def test_a_dry_run_lists_the_people_and_mails_nobody(people, run):
     assert people["bn-agent"] not in listed
     assert people["bn-placeholder"] not in listed
     assert people["bn-seeded"] not in listed
+    assert people["bn-dormant"] not in listed
     sample = (run.state / f"sample-{people['bn-fresh']}.txt").read_text()
     assert "Subject: 知是正在内测" in sample
     assert not list((run.state / "sent").iterdir())
@@ -127,12 +150,19 @@ def test_each_person_is_mailed_once_and_their_copy_says_whether_they_claimed(
 ):
     assert run(send=True, sample=None) == 0
     mine = _mine(
-        run.sender.letters, "bn-claimed", "bn-fresh", "bn-agent", "bn-placeholder"
+        run.sender.letters,
+        "bn-claimed",
+        "bn-fresh",
+        "bn-agent",
+        "bn-placeholder",
+        "bn-dormant",
     )
     assert set(mine) == {"bn-claimed", "bn-fresh"}
-    assert "你已经领过了" in mine["bn-claimed"]["text"]
+    assert "你已经领取过了" in mine["bn-claimed"]["text"]
     assert "打开额度页" in mine["bn-claimed"]["text"]
-    assert "你还没领" in mine["bn-fresh"]["text"]
+    assert "你还没领取" in mine["bn-fresh"]["text"]
+    assert "点的额度（每月 1 日重置），这段时间里" in mine["bn-fresh"]["text"]
+    assert "· 每月方案额度" not in mine["bn-fresh"]["text"]
     assert "去领取 500 点" in mine["bn-fresh"]["text"]
     assert "/teams/bn-fresh/credits" in mine["bn-fresh"]["html"]
 

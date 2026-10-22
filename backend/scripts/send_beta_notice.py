@@ -4,8 +4,12 @@
     python -m scripts.send_beta_notice --state-dir /data/beta-notice --sample alice
     python -m scripts.send_beta_notice --state-dir /data/beta-notice --send     # mails
 
-Who gets it: every live account (``deleted_at IS NULL``) whose address can receive
-mail and that is a person, not an agent identity (no row in ``agent_bindings``).
+Who gets it: every live account (``deleted_at IS NULL``) that has signed in to
+this platform at least once (a row in ``user_sessions``; those rows are revoked,
+never deleted), whose address can receive mail and that is a person, not an agent
+identity (no row in ``agent_bindings``). The accounts carried over from the old
+platform that never signed in here are left out: the letter talks about this
+platform's credits page and its 内测 credits, which they have never seen.
 An address cannot receive mail when it is a placeholder
 (``app.core.email.is_placeholder_email``) or sits under a name reserved for tests
 and examples (RFC 2606/6761: ``.test``, ``.example``, ``.invalid``, ``.localhost``,
@@ -55,7 +59,7 @@ from app.domain.notification.announcement import (
 )
 from app.domain.usage import referrals
 from app.domain.usage.incentives import CreditIncentives
-from app.domain.user.models import User, UserProfile
+from app.domain.user.models import User, UserProfile, UserSession
 
 _RESERVED_SUFFIXES = (".test", ".example", ".invalid", ".localhost", ".local")
 _RESERVED_DOMAINS = frozenset({"example.com", "example.net", "example.org"})
@@ -83,10 +87,15 @@ class Log:
 async def recipients(session) -> list[tuple[User, str]]:
     """(account, display name) for everyone the letter goes to, by id."""
     agents = select(AgentBinding.user_id)
+    signed_in = select(UserSession.user_id)
     users = list(
         await session.scalars(
             select(User)
-            .where(User.deleted_at.is_(None), User.id.not_in(agents))
+            .where(
+                User.deleted_at.is_(None),
+                User.id.not_in(agents),
+                User.id.in_(signed_in),
+            )
             .order_by(User.id)
         )
     )
