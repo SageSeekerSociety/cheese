@@ -116,7 +116,7 @@ def _percentile(values: list[float], pct: float) -> float | None:
 async def _names(
     session: AsyncSession, homes: list[SandboxHome], hosts: list[CloudHost]
 ) -> tuple[dict[uuid.UUID, str], dict[uuid.UUID, str]]:
-    project_ids = {h.project_id for h in homes} | {
+    project_ids = {h.project_id for h in homes if h.project_id is not None} | {
         h.project_id for h in hosts if h.project_id is not None
     }
     room_ids = {h.topic_id for h in homes}
@@ -288,8 +288,13 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                         "id": str(home.id),
                         "spec": home.spec,
                         "state": sandbox_state(home, now),
-                        "project_id": str(home.project_id),
-                        "project": projects.get(home.project_id),
+                        # None for a sandbox of a person's own conversation.
+                        "project_id": (
+                            str(home.project_id) if home.project_id else None
+                        ),
+                        "project": (
+                            projects.get(home.project_id) if home.project_id else None
+                        ),
                         "room_id": str(home.topic_id),
                         "room": rooms.get(home.topic_id),
                         "placed_at": _iso(home.created_at),

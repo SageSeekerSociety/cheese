@@ -38,6 +38,12 @@ SANDBOX_LOST = (
     "什么。检查点之后才做的改动、依赖和缓存、生成目录、/tmp、正在运行的进程不在"
     "了，需要的重新做、重新安装、重新启动。"
 )
+# The same, for a sandbox in no project (``holder.Personal``): nothing of it
+# was checkpointed, so nothing comes back.
+SANDBOX_REPLACED = (
+    "沙箱环境已换成新的。之前的文件、装过的软件和正在运行的进程都不在了，需要的重新"
+    "生成、重新安装、重新启动。"
+)
 
 
 async def _home_removed(db, session_id) -> bool:
