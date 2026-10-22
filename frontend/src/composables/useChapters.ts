@@ -7,7 +7,7 @@ import type { Block } from '../cx_types'
 import { computed } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
-import { addChapter, removeChapter } from '../api/chapters'
+import { addChapter, removeChapter, renameChapter } from '../api/chapters'
 
 import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
@@ -59,5 +59,11 @@ export function useChapters(opts: {
       void act(() => removeChapter(id, typeof target === 'string' ? target : target.id), t('work.room.chapter.failed'))
   }
 
-  return { rows, chapterIds, reload, add, remove }
+  /** 给一条书签改个自己的名字。名字有人改过之后，模型的后一次命名不会再盖掉它。 */
+  function rename(blockId: string, title: string) {
+    const id = opts.conversationId()
+    if (id) void act(() => renameChapter(id, blockId, title), t('work.room.chapter.failed'))
+  }
+
+  return { rows, chapterIds, reload, add, remove, rename }
 }

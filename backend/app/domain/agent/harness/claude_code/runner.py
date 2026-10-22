@@ -1071,6 +1071,11 @@ class Runner(runner.Runner[Journal]):
         """Report what one record changes, stamp it with the work it belongs
         to, and journal it."""
         kind = record.get("type")
+        command = (
+            self._sent_input(str(record.get("command_uuid")))
+            if kind == "command_lifecycle"
+            else None
+        )
         main = not from_file and record.get("parent_tool_use_id") is None
         if kind == "system" and record.get("subtype") == "init":
             self.proven = True
@@ -1084,7 +1089,7 @@ class Runner(runner.Runner[Journal]):
             # boundary inside the work it was said to; one the session reads
             # only after that work ended starts work of its own.
             if not self.working:
-                self._open(self._sent_input(str(record.get("command_uuid"))))
+                self._open(command)
         elif kind == "command_lifecycle" and record.get("state") in SETTLED:
             # An input is on its way in until its echo, but work aborted
             # before its prompt was checked never echoes it: it will never be
@@ -1138,10 +1143,21 @@ class Runner(runner.Runner[Journal]):
         if kind == "system":
             self._track(record)
         work = self.work if self.working else self.last_work
+        if kind == "command_lifecycle":
+            if command and command[1] is not None:
+                stamp["input_work_id"] = command[1]
+            # Queueing or settling an input does not prove it executed in any
+            # work. Only started names the execution it actually joined.
+            if record.get("state") != "started" or (
+                command is not None and command[0] == "internal"
+            ):
+                work = None
         owner = json.loads(self.journal.recall("owner") or "{}")
+        owner.pop("work_id", None)
+        owner.pop("unsolicited", None)
         if work is not None:
             owner["work_id"] = work
-            if self.working and self.unsolicited:
+            if self.working and self.unsolicited and work == self.work:
                 owner["unsolicited"] = True
         self.journal.append({**record, "cheese": {**owner, **stamp}})
         if main and kind in ("assistant", "result"):

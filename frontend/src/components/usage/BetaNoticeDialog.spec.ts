@@ -53,7 +53,7 @@ describe('「知是正在内测」说明', () => {
 
   it('方案没有按月的数（不限或按时间窗口计），开头那句就不写数', () => {
     mount({ plan_credits: null })
-    expect(screen.getByText(/除了你方案里每月的额度，/)).toBeTruthy()
+    expect(screen.getByText(/除了你方案里的额度，/)).toBeTruthy()
     expect(screen.getByText('内测体验额度')).toBeTruthy()
   })
 

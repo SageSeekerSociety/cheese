@@ -60,9 +60,11 @@ export interface ChatPanelEmit {
   (e: 'open-thread', block: Block): void
   /** 支线里一条 AI 队友的回复：看它那一轮的过程。 */
   (e: 'open-process', turnId: string): void
-  // 消息的 ⋯ 里「钉成章节」「取消章节」：拿着这段对话地址的页面去改（面板不取这个数）。
+  // 消息的 ⋯ 里「钉成章节」「取消章节」或书签条里取消：拿着这段对话地址的页面去改（面板不取这个数）。
   (e: 'chapter', block: Block): void
-  (e: 'unchapter', block: Block): void
+  (e: 'unchapter', target: Block | string): void
+  // 书签条里就地改名：同样是拿着这段地址的页面去写。
+  (e: 'rename', blockId: string, title: string): void
   // 转为任务：the parent turns this message into a task of the channel.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
