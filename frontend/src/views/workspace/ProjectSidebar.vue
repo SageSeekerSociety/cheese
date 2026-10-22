@@ -79,7 +79,12 @@ const hereChannelId = computed(
 // （query/changes）。
 const roomTasks = computed<Record<string, RoomTask[]>>(() =>
   Object.fromEntries(
-    store.topics.filter((topic) => topic.my_tasks?.shown.length).map((topic) => [topic.id, topic.my_tasks!.shown])
+    store.topics
+      .map((topic): [string, RoomTask[]] => [
+        topic.id,
+        (topic.my_tasks?.shown ?? []).filter((task) => !task.filling_in),
+      ])
+      .filter(([, tasks]) => tasks.length > 0)
   )
 )
 const roomTaskTotals = computed<Record<string, number>>(() =>

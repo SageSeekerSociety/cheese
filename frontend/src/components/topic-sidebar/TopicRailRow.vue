@@ -66,24 +66,11 @@ const emit = defineEmits<{
 }>()
 
 // 每行只显示一盏：保留已有状态事实和优先级，不另取任务或重算状态。
-// 红灯的 `why` 沿用 lib/roomLight.ts：成员卡住等太久是 `waiting`，不是另一套判断。
 const rowLight = computed<RowLight | null>(() =>
-  brightest([
-    props.light,
-    props.row.hiddenLight,
-    props.stalled || props.row.hiddenStalled ? { kind: 'red', why: 'waiting' } : null,
-    props.tasksCollapsed ? props.taskLight : null,
-  ])
+  brightest([props.light, props.row.hiddenLight, props.tasksCollapsed ? props.taskLight : null])
 )
 
-// 合成后的灯若来自「收起的子频道里有成员卡住」，把这件事说出来；
-// 自己或隐藏后代本来就带红灯时，它们的理由更具体，由 `lightTitle` 说。
-const rowLightLabel = computed(() => {
-  const ownOrHiddenRed = props.light?.kind === 'red' || props.row.hiddenLight?.kind === 'red'
-  if (!ownOrHiddenRed && props.row.hiddenStalled && rowLight.value?.kind === 'red')
-    return t('work.sidebar.hiddenStalled')
-  return undefined
-})
+const rowLightLabel = computed(() => undefined)
 
 // Status: only show when notable (archived / draft); active is implicit. Shown as a
 // small neutral dot + text, never a colored chip.

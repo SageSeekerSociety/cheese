@@ -101,23 +101,20 @@ export function lightOf(
     /** 有会话在跑，或者活走在交付链路上：这一行在往前走（呼吸绿）。 */
     moving: boolean
     /** 做完了、交付完了，而我还没点开看过。 */
-    unseenDelivery: boolean
+    unseenDelivery?: boolean
     /** 尚未恢复的失败从什么时候开始。 */
     incompleteSince?: string | null
     /** 房间在等一位队友，而且等过了阈值（`lib/replyWait.ts` 的 `waitStalled`）。 */
-    waitStalled: boolean
+    waitStalled?: boolean
     /** 这条活交付上去被退回了，还没有人来改（`presentation.phrase` 是 `bounced`）。 */
-    bounced: boolean
+    bounced?: boolean
   },
-  now: number
+  now?: number
 ): RowLight | null {
-  const since = facts.incompleteSince ? Date.parse(facts.incompleteSince) : NaN
-  if (!Number.isNaN(since) && now - since > LIGHT_STALL_MS) return { kind: 'red', why: 'unfinished' }
-  if (facts.waitStalled) return { kind: 'red', why: 'waiting' }
-  if (facts.bounced) return { kind: 'red', why: 'bounced' }
+  void now
+  if (facts.bounced) return null
   if (facts.awaitsMe || facts.repliedToMe) return { kind: 'yellow' }
   if (facts.moving) return { kind: 'green', breathe: true }
-  if (facts.unseenDelivery) return { kind: 'green', breathe: false }
   return null
 }
 
