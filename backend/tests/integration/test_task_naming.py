@@ -15,7 +15,8 @@ says which task and why; an answer cut off before the model wrote anything
 leaves the task as it was without counting as a failed call, while one that
 never arrives at all still backs the task off; a title too wide for the
 sidebar is sent back with its width a bounded number of times, inside the one
-naming timeout, and cut to fit when that does not help. The gateway is a MockTransport
+naming timeout, and left unchanged when that does not help; an account alone
+is not a usable replacement. The gateway is a MockTransport
 that answers from a script and records what it was asked.
 """
 
@@ -36,7 +37,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.room_task import naming
 from app.domain.room_task.models import Task, TaskTitle
-from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
+from app.domain.room_task.title_width import TITLE_WIDTH, title_width
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     post_message,
@@ -485,6 +486,56 @@ def test_the_naming_call_still_carries_a_ceiling(client, alice, gateway):
     assert gateway["bodies"][-1]["max_tokens"] >= 700
 
 
+# ---------- a title about the task, not just an account ----------
+
+
+@pytest.mark.parametrize("handle", ["alice", "2026201782", "cheese-c82aeb40555a"])
+@pytest.mark.parametrize("wrapped", ["{}", "@{}", "<@{}>"])
+def test_an_account_alone_does_not_replace_the_task_title(
+    client, alice, gateway, handle, wrapped
+):
+    """A person's or teammate's account is not a description of the work."""
+    if handle != "alice":
+        seed_user(client, handle)
+    rid = _named(client, alice, gateway)
+    before = _shown(client, rid)
+    history = _history(client, rid)
+    gateway["answers"].append({"keep": False, "title": wrapped.format(handle)})
+
+    assert _run(client, rid, "idle") is None
+    assert _shown(client, rid) == before
+    assert _history(client, rid) == history
+
+
+def test_an_account_title_can_be_rewritten_as_the_subject(client, alice, gateway):
+    rid = _unnamed(client, alice)
+    _say(client, rid, "alice 的名字为什么显示成账号？")
+    gateway["answers"] += [
+        {"keep": False, "title": "alice"},
+        {"keep": False, "title": "alice 名字显示"},
+    ]
+
+    renamed = _run(client, rid, "message")
+
+    assert renamed is not None and renamed.title == "alice 名字显示"
+    assert _shown(client, rid) == ("alice 名字显示", "auto")
+
+
+def test_a_shorter_answer_still_cannot_be_just_an_account(client, alice, gateway):
+    rid = _unnamed(client, alice)
+    _say(client, rid, "alice 的名字为什么显示成账号？")
+    gateway["answers"] += [
+        {"keep": False, "title": "alice 的名字为什么显示成账号而不是昵称"},
+        {"keep": False, "title": "alice"},
+        {"keep": False, "title": "账号与昵称显示"},
+    ]
+
+    renamed = _run(client, rid, "message")
+
+    assert renamed is not None and renamed.title == "账号与昵称显示"
+    assert _shown(client, rid) == ("账号与昵称显示", "auto")
+
+
 # ---------- a title that fits the sidebar ----------
 
 
@@ -510,71 +561,78 @@ def test_a_title_too_wide_goes_back_to_the_model_with_its_width(client, alice, g
     assert str(TITLE_WIDTH) in told
 
 
-def test_a_title_that_never_fits_is_cut_to_fit(client, alice, gateway):
-    """However often the model answers too wide, it is asked a bounded number
-    of times and what is stored still fits — at the calibration that wrote the
-    over-wide titles seen on dev as much as at the first name."""
+def test_a_title_that_never_fits_keeps_the_previous_name(client, alice, gateway):
+    """Failed rewrites must not replace a complete name with a cut prefix."""
     rid = _named(client, alice, gateway)
-    asked = len(gateway["asked"])
-    gateway["answers"] += [
-        {"keep": False, "title": "季度预算编制流程说明 Word 文档"}
-    ] * 10
+    before = _shown(client, rid)
+    history = _history(client, rid)
+    gateway["answers"] += [{"keep": False, "title": "lz123y 与 2026201782 显示"}] * 10
 
-    renamed = _run(client, rid, "idle")
-
-    assert renamed is not None
-    assert title_fits(renamed.title)
-    assert "季度预算编制流程说明 Word 文档".startswith(renamed.title)
-    assert title_fits(_row(client, rid).title)
-    assert 1 < len(gateway["asked"]) - asked <= 3
+    assert _run(client, rid, "idle") is None
+    assert _shown(client, rid) == before
+    assert _history(client, rid) == history
 
 
-def test_keep_on_a_retry_cuts_the_title_it_was_asked_about(client, alice, gateway):
-    """Answering `keep` when asked for something shorter means nothing better
-    came back: the task is still named, with the too-wide title cut to fit."""
+@pytest.mark.parametrize(
+    "retry",
+    [
+        {"keep": True, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        httpx.Response(503, json={"error": "no upstream"}),
+        "not a verdict",
+    ],
+)
+def test_a_failed_rewrite_leaves_an_unnamed_task_unnamed(client, alice, gateway, retry):
+    """No valid replacement means no partial name or title-history entry."""
     rid = _unnamed(client, alice)
     _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
     gateway["answers"] += [
         {"keep": False, "title": "仓库巡检报表自动导出与周报邮件模板"},
-        {"keep": True, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        retry,
     ]
 
-    renamed = _run(client, rid, "message")
+    assert _run(client, rid, "message") is None
+    assert _shown(client, rid) == ("新任务", "placeholder")
+    assert _history(client, rid) == []
+    # The next trigger can still give this unnamed task a complete name.
+    gateway["answers"].append({"keep": False, "title": "巡检报表与周报模板"})
+    assert _run(client, rid, "message").title == "巡检报表与周报模板"
 
-    assert renamed is not None and renamed.title == "仓库巡检报表自动导出与周"
-    assert _shown(client, rid) == ("仓库巡检报表自动导出与周", "auto")
-    assert len(gateway["asked"]) == 2
 
-
-def test_keeping_a_stored_title_too_wide_does_not_leave_it_too_wide(
-    client, alice, gateway
+@pytest.mark.parametrize("previous", ["季度预算编制流程说明 Word 文档", "alice"])
+def test_an_old_unusable_name_is_not_cut_when_the_model_keeps_it(
+    client, alice, gateway, previous
 ):
-    """A title stored before the width was checked is not kept as it is: the
-    model is asked for a shorter one, and when it keeps answering `keep` the
-    stored title is cut to fit."""
+    """An existing name is left whole when no better name comes back."""
     rid = _named(client, alice, gateway)
-    _set(client, rid, title="季度预算编制流程说明 Word 文档")
-    asked = len(gateway["asked"])
+    _set(client, rid, title=previous)
     gateway["answers"] += [
-        {"keep": True, "title": "季度预算编制流程说明 Word 文档"},
-        {"keep": True, "title": "季度预算编制流程说明 Word 文档"},
+        {"keep": True, "title": previous},
+        {"keep": True, "title": previous},
+    ]
+
+    assert _run(client, rid, "idle") is None
+    assert _row(client, rid).title == previous
+
+
+@pytest.mark.parametrize("previous", ["季度预算编制流程说明 Word 文档", "alice"])
+def test_an_old_unusable_name_can_be_rewritten_whole(client, alice, gateway, previous):
+    rid = _named(client, alice, gateway)
+    _set(client, rid, title=previous)
+    gateway["answers"] += [
+        {"keep": True, "title": previous},
+        {"keep": False, "title": "预算文档与名字显示"},
     ]
 
     renamed = _run(client, rid, "idle")
 
-    assert renamed is not None
-    assert renamed.previous == "季度预算编制流程说明 Word 文档"
-    assert renamed.title == "季度预算编制流程说明 Wor"
-    assert _row(client, rid).title == "季度预算编制流程说明 Wor"
-    assert len(gateway["asked"]) - asked == 2
-    assert str(title_width("季度预算编制流程说明 Word 文档")) in gateway["asked"][-1]
+    assert renamed is not None and renamed.title == "预算文档与名字显示"
+    assert _row(client, rid).title == "预算文档与名字显示"
 
 
 def test_asking_again_stays_inside_the_naming_timeout(
     client, alice, gateway, monkeypatch
 ):
-    """A retry gets only what is left of the one budget naming has; with too
-    little left it is not started, and the title is cut instead."""
+    """Too little time to rewrite must leave the task's title unchanged."""
     monkeypatch.setattr(settings, "topic_naming_timeout_seconds", 1.0)
     rid = _unnamed(client, alice)
     _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
@@ -585,7 +643,9 @@ def test_asking_again_stays_inside_the_naming_timeout(
 
     renamed = _run(client, rid, "message")
 
-    assert renamed is not None and title_fits(renamed.title)
+    assert renamed is None
+    assert _shown(client, rid) == ("新任务", "placeholder")
+    assert _history(client, rid) == []
     assert len(gateway["asked"]) == 1
 
 

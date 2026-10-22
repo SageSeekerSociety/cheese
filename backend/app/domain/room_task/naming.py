@@ -461,6 +461,7 @@ async def run(
                 answer.verdict,
                 # At the first name the task has nothing of its own to keep.
                 current=task.title if stage != "name" else None,
+                session=session,
                 transport=transport,
                 factory=factory,
                 deadline=deadline,
