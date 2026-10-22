@@ -18,12 +18,14 @@ from fastapi.responses import JSONResponse
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
+from app.api.session_record_rows import no_platform_reminders
 from app.api.topics_deps import _actor_in_place
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.room_task.place import place_or_404
 from app.domain.session_record import service
+from app.domain.session_record.views import lines
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -41,13 +43,20 @@ async def session_records(
     author: str | None = Query(None, max_length=128),
     q: str | None = Query(None, min_length=1, max_length=1000),
     channel: bool = False,
+    lines: bool = False,
 ) -> JSONResponse:
     """The conversation's raw records after the cursor `after`, oldest first.
 
     `next` is the cursor of the last record on this page while there are more,
     and null once there are none. A cursor this route did not hand out is
     refused rather than read as "from the start", which a caller could not tell
-    from a real page."""
+    from a real page.
+
+    `lines=true` answers in the shape a pulled transcript file holds instead of
+    the raw one: one row per record with the harness-neutral `thread`, `role`,
+    `kind` and `parts` fields of `session_record.views.line`, and the platform's
+    own repeated words taken out of the text (`session_record_rows`). The raw
+    record is not sent — a caller that wants it asks without `lines`."""
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
@@ -65,7 +74,7 @@ async def session_records(
             turn_id=turn_id,
             limit=limit,
         )
-        return JSONResponse(ok(result))
+        return JSONResponse(ok(_shaped(result["items"], result["next"], lines)))
     cursor = end = None
     if after is not None or before is not None:
         try:
@@ -87,7 +96,32 @@ async def session_records(
     # Rendered by the json module rather than the response model: a record
     # is whatever the harness wrote, and pydantic gives up on one nested
     # past about 250 levels, where json goes on.
-    return JSONResponse(ok({"items": page.items, "next": page.next}))
+    return JSONResponse(ok(_shaped(page.items, page.next, lines)))
+
+
+def _shaped(items: list[dict], following: str | None, lines: bool) -> dict:
+    """A page as the caller asked for it: raw records, or transcript rows."""
+    if not lines:
+        return {"items": items, "next": following}
+    return {
+        "items": _rows(items),
+        "next": following,
+    }
+
+
+def _rows(items: list[dict]) -> list[dict]:
+    """A page of records as transcript rows: normalized, reminders taken out.
+
+    A caller paging reads each page on its own, and a subagent's thread can
+    start on one page and go on in the next — which is why the CLI unions
+    `subagent` over everything it pulled. A page holding the rest of a Codex
+    child thread but not the record that declared it marks only what each
+    record says about itself.
+    """
+    rows = lines(items)
+    for row in rows:
+        row["parts"], _ = no_platform_reminders(row["parts"])
+    return rows
 
 
 async def _channel_page(

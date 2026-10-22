@@ -3915,9 +3915,16 @@ def _decided(card: dict, host) -> str:
     have not decided for long, that it still waits (the next question tells
     how it ended)."""
     while True:
-        got = host.request(
-            {"method": "POST", "path": "/assistant/agent/wait", "body": {"card": card["id"]}}
-        ).get("data") or {}
+        got = (
+            host.request(
+                {
+                    "method": "POST",
+                    "path": "/assistant/agent/wait",
+                    "body": {"card": card["id"]},
+                }
+            ).get("data")
+            or {}
+        )
         if got.get("said"):
             return got["said"]
 
@@ -6537,6 +6544,244 @@ def _need(name: str, value: str) -> str:
     return value
 
 
+def _transcript(args) -> None:
+    """写本会话的记录到 ``~/attachments/transcript/<话题>.jsonl``,回一行统计。
+
+    文件是这台机器上的工作副本:服务端的记录才是档案,沙箱回收了随时重拉。原文
+    不进上下文——要翻细节就 grep 那份文件。``--digest`` 不落文件,每轮一行。
+    """
+    topic = _need("CHEESE_TOPIC", TOPIC)
+    params = _transcript_params(args)
+    if args.all or args.turn:
+        rows = _all_rows(topic, params)
+    else:
+        rows = _recent_rows(topic, params, args.turns)
+    rows = _mark_subagents(rows)
+    if args.digest:
+        lines = _digest_lines(rows)
+        print("\n".join(lines) if lines else "这个范围里没有记录。")
+        return
+    if not rows:
+        print("这个范围里没有记录;把 --turns 放宽或加 --all 再看。")
+        return
+    out = (
+        Path(args.out)
+        if args.out
+        else Path.home() / STAGED_DIR / "transcript" / f"{topic}.jsonl"
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    temporary = out.with_name(out.name + ".next")
+    with open(temporary, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    temporary.replace(out)
+    print(_transcript_stats(out, rows))
+
+
+def _transcript_params(args) -> dict:
+    """The query the record route is asked with.
+
+    `lines` is not an option: it is what makes the answer *this* shape — worth a
+    line of its own here rather than at the one call site, because a CLI that
+    stopped asking for it would write raw harness records to the file and the
+    digest would quietly find nothing to say.
+    """
+    params = {"lines": "true"}
+    if args.turn:
+        params["turn_id"] = args.turn
+    if args.grep:
+        params["q"] = args.grep
+    if args.author:
+        params["author"] = args.author
+    return params
+
+
+def _transcript_page(topic: str, query: dict) -> tuple:
+    """One page of normalized rows, and where the next one starts."""
+    path = f"/topics/{topic}/session-records?{urllib.parse.urlencode(query)}"
+    body = _call("GET", path).get("data") or {}
+    items = [row for row in body.get("items") or [] if isinstance(row, dict)]
+    return items, body.get("next")
+
+
+def _all_rows(topic: str, params: dict) -> list[dict]:
+    """Every row this conversation holds, oldest first."""
+    rows = []
+    cursor = None
+    while True:
+        query = {**params, "limit": "500"}
+        if cursor:
+            query["after"] = cursor
+        items, following = _transcript_page(topic, query)
+        rows.extend(items)
+        if not following or following == cursor:
+            return rows
+        cursor = following
+
+
+def _recent_rows(topic: str, params: dict, turns: int) -> list[dict]:
+    """The rows of the most recent `turns` turns, oldest first.
+
+    Read from the newest end so a long conversation costs the pages it needs,
+    not a walk from the beginning. The page that crosses the boundary is read
+    whole: the oldest turn has to be seen complete before it is cut.
+    """
+    rows = []
+    seen = []
+    cursor = None
+    while True:
+        query = {**params, "limit": "500", "newest": "true"}
+        if cursor:
+            query["before"] = cursor
+        items, following = _transcript_page(topic, query)
+        rows[:0] = items
+        for row in items:
+            turn = row.get("turn")
+            if turn and turn not in seen:
+                seen.append(turn)
+        if not following or following == cursor or len(seen) > turns:
+            # Marked before the cut, on everything read: a codex child thread is
+            # declared by one record, and that record may sit in the older turn
+            # this cut is about to drop. Marking the cut list instead would have
+            # lost the declaration and left the child's rows inside the window
+            # looking like the session's own.
+            return _latest_turns(_mark_subagents(rows), turns)
+        cursor = following
+
+
+def _latest_turns(rows: list[dict], turns: int) -> list[dict]:
+    """`rows` cut to the most recent `turns` turns, oldest first."""
+    kept = []
+    seen = set()
+    for row in reversed(rows):
+        turn = row.get("turn")
+        if turn and turn not in seen:
+            if len(seen) >= turns:
+                break
+            seen.add(turn)
+        kept.append(row)
+    kept.reverse()
+    return kept
+
+
+def _clip(value: str, limit: int) -> str:
+    said = " ".join(str(value or "").split())
+    return said if len(said) <= limit else said[: limit - 1] + "…"
+
+
+def _subagent_threads(rows: list[dict]) -> set:
+    """哪些线程是分身写的。
+
+    两个来源合起来:记录自己标的(`subagent`,claude-code 与 pi 这么标),和
+    「某个线程由另一个线程启动」那条声明(codex 这么标,声明落在启动它的那条记录
+    上,所以要在整份读取上收一次,不能只看一页)。
+    """
+    declared = {row.get("thread") for row in rows if row.get("parent_thread")}
+    marked = {row.get("thread") for row in rows if row.get("subagent")}
+    return {thread for thread in declared | marked if thread}
+
+
+def _mark_subagents(rows: list[dict]) -> list[dict]:
+    """把「这条是分身写的」在整份读取上补齐,再落盘或算摘要。
+
+    服务端每页只看得见自己的那 500 条,而 codex 声明子线程的那一条可能落在前一页:
+    那样后一页那些行服务端只能按记录自己标的字段判,标不出分身。整份在手里时才判得
+    准——这也是文件里那一列存在的全部意义,漏标就把分身做的事记成了这一轮做的。
+    """
+    children = _subagent_threads(rows)
+    if not children:
+        return rows
+    return [
+        row
+        if row.get("subagent") or row.get("thread") not in children
+        else {**row, "subagent": True}
+        for row in rows
+    ]
+
+
+def _digest_lines(rows: list[dict]) -> list[str]:
+    """每轮一行:什么时候、多少步、动了什么、最后说了什么、成没成。
+
+    分身的记录算另一条线程,不进这一轮的步数——它做的不是这一轮的事。哪些行是分身
+    写的由 ``_mark_subagents`` 在整份读取上补齐;这里再补一次(= 已标过的原样返回),
+    这样它自己的输入是什么标法都算得对。
+    什么都不剩的一组不占一行:会话自己的那几条记录(启动、命令生命周期、限流通知)
+    不属于任何一轮,列出来只有时间戳,读的人会以为漏了什么。
+    """
+    rows = _mark_subagents(rows)
+    groups = []
+    for row in rows:
+        turn = row.get("turn")
+        if groups and turn is not None and groups[-1][0] == turn:
+            groups[-1][1].append(row)
+        else:
+            groups.append((turn, [row]))
+    lines = []
+    for turn, entries in groups:
+        main = [row for row in entries if not row.get("subagent")] or entries
+        tools = []
+        said = []
+        asked = []
+        failed = any(
+            part.get("failed") for row in main for part in row.get("parts") or []
+        )
+        for row in main:
+            for part in row.get("parts") or []:
+                kind = part.get("kind")
+                if kind == "tool":
+                    name = part.get("name") or "?"
+                    preview = _clip(part.get("preview") or "", 18)
+                    tools.append(f"{name}({preview})" if preview else name)
+                elif kind == "text" and part.get("text"):
+                    (asked if row.get("role") == "user" else said).append(part["text"])
+        if not (tools or said or asked or failed):
+            continue
+        when = str(entries[0].get("at") or "")[11:16]
+        pieces = [f"[{when}] {str(turn)[:8] if turn else '--------'}"]
+        if asked:
+            pieces.append(f"问「{_clip(asked[0], 24)}」")
+        pieces.append(f"{len(tools)} 步")
+        if tools:
+            listed = tools[:5]
+            more = "" if len(tools) <= 5 else f" 等 {len(tools)} 次"
+            pieces.append("、".join(listed) + more)
+        if said:
+            pieces.append(_clip(said[-1], 60))
+        if failed:
+            pieces.append("有失败")
+        lines.append(" · ".join(pieces))
+    return lines
+
+
+def _transcript_stats(path: Path, rows: list[dict]) -> str:
+    turns = []
+    for row in rows:
+        turn = row.get("turn")
+        if turn and turn not in turns:
+            turns.append(turn)
+    first = _short_time(rows[0].get("at") or "")
+    last = _short_time(rows[-1].get("at") or "")
+    return (
+        f"{path}  {len(rows)} 条 · {len(turns)} 轮 · {first}–{last} · "
+        f"{_file_size(path.stat().st_size)}"
+    )
+
+
+def _short_time(at: str) -> str:
+    """A record's UTC time as `10-22 08:12`: one shape, no parsing twice."""
+    return at[5:16].replace("T", " ") + "Z" if len(at) >= 16 else at
+
+
+def _file_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size // 1024} KB"
+    if size < 1024 * 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    return f"{size / (1024 * 1024 * 1024):.1f} GB"
+
+
 def _pulled_path() -> Path:
     return Path.home() / ".cheese" / "pulled-versions.json"
 
@@ -7019,6 +7264,38 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--output", default=None, help="写到别处(默认写回同一个工作区路径)"
     )
 
+    ptr = sub.add_parser(
+        "transcript",
+        help="把本会话的历史记录拉到这台机器上,想怎么查就怎么查",
+        description=(
+            "拉本会话的会话记录(含分身的),归一化成一种形状,落在\n"
+            "~/attachments/transcript/<话题>.jsonl;重复拉就覆盖。stdout 回一行统计。\n"
+            "原文不进上下文——要翻细节就用 grep / Read 翻那份文件;服务端那份才是\n"
+            "档案,这份是这台机器上的工作副本,沙箱回收了就重新拉一次。\n"
+            "\n"
+            "--digest 不落文件,每轮一行,先看个大概;--turn 只看一轮;--grep 只拉\n"
+            "含某个词的记录;--author 只看某个座位。默认拉最近 10 轮,--turns N 改,\n"
+            "--all 拉全部。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ptr.add_argument("--digest", action="store_true", help="不落文件,每轮一行打印摘要")
+    ptr.add_argument(
+        "--turns", type=int, default=10, metavar="N", help="拉最近多少轮(默认 10)"
+    )
+    ptr.add_argument("--all", action="store_true", help="拉全部,不限轮数")
+    ptr.add_argument("--turn", default=None, metavar="ID", help="只看某一轮(轮次 id)")
+    ptr.add_argument("--grep", default=None, metavar="词", help="只拉含这个词的记录")
+    ptr.add_argument(
+        "--author", default=None, metavar="HANDLE", help="只看某个座位(默认含全部分身)"
+    )
+    ptr.add_argument(
+        "--out",
+        default=None,
+        metavar="FILE",
+        help="写到别处(默认覆盖 attachments/transcript 里那份)",
+    )
+
     ptpl = sub.add_parser(
         "template",
         help="平台的标准模板:列出来,或从一份模板在文件区新建一个文件",
@@ -7125,6 +7402,8 @@ def main() -> None:
             print(f"已推到 PR #{r['pr_number']}：{r.get('pr_url') or ''}")
         else:
             print(f"没有推送：{r.get('reason') or '没有可推的东西'}")
+    elif a.cmd == "transcript":
+        _transcript(a)
     elif a.cmd == "library":
         project = _need("CHEESE_PROJECT", PROJECT)
         if a.libcmd == "get":
