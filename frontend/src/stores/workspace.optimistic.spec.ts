@@ -100,18 +100,18 @@ it('归档失败：还原成原来那一行，并记下错误', async () => {
 
 it('归档正记着的那一个：rail 当场忘掉它；失败时退回去', async () => {
   const store = await opened('active')
-  store.rememberPlace('p', { kind: 'channel', id: 't1', room: 't1' })
-  expect(store.placeFor('p')?.id).toBe('t1')
+  store.rememberPlace('p', { path: 'channels/t1', room: 't1' })
+  expect(store.placeFor('p')?.path).toBe('channels/t1')
 
   vi.mocked(archiveTopic).mockRejectedValue(new Error('boom'))
   await store.archive('t1')
   // 失败：rail 还该落回它
-  expect(store.placeFor('p')?.id).toBe('t1')
+  expect(store.placeFor('p')?.path).toBe('channels/t1')
 })
 
 it('归档成功：rail 不再落回已归档的那一个', async () => {
   const store = await opened('active')
-  store.rememberPlace('p', { kind: 'channel', id: 't1', room: 't1' })
+  store.rememberPlace('p', { path: 'channels/t1', room: 't1' })
   vi.mocked(archiveTopic).mockImplementation(() => {
     server = topic('archived')
     return Promise.resolve(server)

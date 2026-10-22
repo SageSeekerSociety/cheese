@@ -66,6 +66,8 @@ function setup() {
         children: [
           { name: 'workspace-topic', path: 'channels/:topicId', component: Stub, props: true },
           { name: 'workspace-task', path: 'tasks/:taskId', component: Stub, props: true },
+          { name: 'workspace-overview', path: 'overview', component: Stub },
+          { name: 'project-search', path: 'search', component: Stub },
         ],
       },
     ],
@@ -83,7 +85,7 @@ describe('the place a project remembers', () => {
     await router.push('/projects/p1/tasks/task-7')
 
     await waitFor(() =>
-      expect(store.value.rememberPlace).toHaveBeenCalledWith('p1', { kind: 'task', id: 'task-7', room: 't9' })
+      expect(store.value.rememberPlace).toHaveBeenCalledWith('p1', { path: 'tasks/task-7', room: 't9' })
     )
   })
 
@@ -93,7 +95,31 @@ describe('the place a project remembers', () => {
     await router.push('/projects/p1/channels/t9')
 
     await waitFor(() =>
-      expect(store.value.rememberPlace).toHaveBeenCalledWith('p1', { kind: 'channel', id: 't9', room: 't9' })
+      expect(store.value.rememberPlace).toHaveBeenCalledWith('p1', { path: 'channels/t9', room: 't9' })
     )
+  })
+
+  // 项目里别的页一样是「地方」：从总览离开再回来，该回到总览，不是频道列表。
+  it('remembers any other page of the project too', async () => {
+    const { router } = setup()
+
+    await router.push('/projects/p1/overview')
+
+    await waitFor(() => expect(store.value.rememberPlace).toHaveBeenCalledWith('p1', { path: 'overview', room: null }))
+  })
+
+  // 搜索结果页只有查询才说得清是哪一页，查询串又不在记忆里：回来是一张空搜索页，
+  // 不如不记。
+  it('does not remember the search page', async () => {
+    const { router } = setup()
+
+    await router.push('/projects/p1/overview')
+    await waitFor(() => expect(store.value.rememberPlace).toHaveBeenCalled())
+    vi.mocked(store.value.rememberPlace).mockClear()
+
+    await router.push('/projects/p1/search')
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    expect(store.value.rememberPlace).not.toHaveBeenCalled()
   })
 })

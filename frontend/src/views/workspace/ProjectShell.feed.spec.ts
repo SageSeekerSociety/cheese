@@ -4,12 +4,20 @@ import { cleanup, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, expect, it, vi } from 'vitest'
 
-const store = vi.hoisted(() => ({ openProject: vi.fn(), error: null }))
+const store = vi.hoisted(() => ({ openProject: vi.fn(), rememberPlace: vi.fn(), error: null }))
 // 这一份只管外框读什么、什么时候读，所以路由是个哑的：跳转计数接管它那两个函数，空闲
-// 预热问到几个页名时一个都找不到（`getRoutes` 空表），两件事都安静地什么都不做。
+// 预热问到几个页名时一个都找不到（`getRoutes` 空表），两件事都安静地什么都不做。给出来
+// 的那几个字段照真路由给（`path`、`name`、`meta`）：外框也从当前这一页读「上次待的地
+// 方」，这几个字段少了是替身不像真路由，不是外框要的少了。
+const route = vi.hoisted(() => ({
+  params: {},
+  path: '/projects/p',
+  name: 'workspace-project',
+  meta: {},
+}))
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), getRoutes: () => [] }))
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: {} }), useRouter: () => router }))
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice', myId: () => '1' }))
 const api = vi.hoisted(() => ({
   listTopics: vi.fn(async () => ({ data: [], total: 0 })),

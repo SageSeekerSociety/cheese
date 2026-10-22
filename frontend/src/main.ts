@@ -32,6 +32,7 @@ import './style.css'
 
 import { createApp, createSSRApp, watch } from 'vue'
 
+import { ensureStackBehind } from './router/pageStack'
 import App from './App.vue'
 import { installErrorReporter } from './errorReporter'
 import { registerPwa } from './pwa'
@@ -110,7 +111,10 @@ installAppRuntime(app, router)
 // 哪一样都不会让挂载失败，都有自己的期限：挂载不能卡在网络上。
 void Promise.all([
   localeReady,
-  firstPageReady(AccountService.sessionRestored, router.isReady()),
+  // 第一页定下来之后、挂载之前，把页面栈垫进浏览器历史（见 router/pageStack.ts）：
+  // 手机冷开落在任务页时，身后那条来路要在系统返回键按下去之前就位，而中间那几屏
+  // 正被启动骨架盖着，谁也看不见。
+  firstPageReady(AccountService.sessionRestored, router.isReady()).then(() => ensureStackBehind(router)),
   stylesheetsLoaded(),
 ]).then(() => {
   app.mount('#app')

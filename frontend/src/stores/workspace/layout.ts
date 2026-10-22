@@ -13,16 +13,18 @@ function loadLayout(): StoredLayout {
   return typeof saved === 'object' && saved !== null ? (saved as StoredLayout) : {}
 }
 
-// 存进来的这份是整个浏览器一份，可能是老版本写的、也可能被人手改过：只留下三项
-// 都齐、而且都说得通的那些，别的当没记过。
+// 存进来的这份是整个浏览器一份，可能是老版本写的、也可能被人手改过：只留下说得通
+// 的那些，别的当没记过。老版本记的是 `{kind, id, room}`（只认任务和频道），读不出来
+// 就是没记过——回落项目首页，不会把人送进一个拼错的地址。
 function validPlaceMap(value: unknown): Record<string, RememberedPlace> {
   if (typeof value !== 'object' || value === null) return {}
   const places: Record<string, RememberedPlace> = {}
   for (const [projectKey, raw] of Object.entries(value as Record<string, unknown>)) {
     if (typeof raw !== 'object' || raw === null) continue
-    const { kind, id, room } = raw as Partial<RememberedPlace>
-    if ((kind !== 'task' && kind !== 'channel') || typeof id !== 'string' || typeof room !== 'string') continue
-    places[projectKey] = { kind, id, room }
+    const { path, room } = raw as { path?: unknown; room?: unknown }
+    if (typeof path !== 'string' || path.startsWith('/')) continue
+    if (room !== null && room !== undefined && typeof room !== 'string') continue
+    places[projectKey] = { path, room: typeof room === 'string' ? room : null }
   }
   return places
 }
@@ -36,11 +38,11 @@ export function lastOpenedProjectId(): string | null {
 }
 
 /**
- * 这个项目上次待的地方（一件任务，或一个频道）；没记过就是 null。和
- * `lastOpenedProjectId` 一样从存储里直接读、不经过 store：手机把后台的页面收走后再
- * 打开，是从入口重新落一次，那一下就得知道该去哪儿（`router/home.ts` 的
- * `landingForMember`）。记着的那件任务/那个频道还在不在，由读这个项目的频道清单时
- * 校验（`queries.ts` 里 `forgetPlace` 那一条），这里只认存储里那份。
+ * 这个项目上次待的那一页；没记过就是 null。和 `lastOpenedProjectId` 一样从存储里
+ * 直接读、不经过 store：手机把后台的页面收走后再打开，是从入口重新落一次，那一下
+ * 就得知道该去哪儿（`router/home.ts` 的 `landingForMember`）。记着的那一页还在不在，
+ * 由读这个项目的频道清单时校验（`queries.ts` 里 `forgetPlace` 那一条），这里只认
+ * 存储里那份。
  */
 export function lastPlaceOf(projectKey: string | null): RememberedPlace | null {
   if (!projectKey) return null
@@ -81,15 +83,15 @@ export function useLayout(projectId: Ref<string | null>) {
   }
 
   /**
-   * 记住正待着的这个**地方**是哪个项目的：回到项目时 rail 那一格落回它。
+   * 记住正待着的这一页是哪个项目的：回到项目时 rail 那一格落回它。
    *
-   * 在任务页上记的是那件任务——只记它所在的频道，回来就只到频道、到不了任务，
-   * 而那正是「回到我昨天做的那件事」差的那一步。
+   * 记的是地址（`tasks/318`、`overview`……），不是「任务」或「频道」那两种：项目里
+   * 的每一页都算一个地方，只认那两种的话，从成员页、资料库离开再回来就掉回频道列表。
    */
   function rememberPlace(projectKey: string, place: RememberedPlace) {
-    if (!projectKey || !place.id || !place.room) return
+    if (!projectKey) return
     const held = lastPlaceByProject.value[projectKey]
-    if (held && held.kind === place.kind && held.id === place.id && held.room === place.room) return
+    if (held && held.path === place.path && held.room === place.room) return
     lastPlaceByProject.value = { ...lastPlaceByProject.value, [projectKey]: place }
     persistLayout()
   }

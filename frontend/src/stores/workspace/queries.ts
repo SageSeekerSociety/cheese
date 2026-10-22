@@ -166,9 +166,11 @@ export function useProjectQueries(deps: QueriesDeps) {
       // 项目归档了没有，看它的总览房间：总览只会随项目一起归档（单独归档它会被后端拒），
       // 所以这一位不用多发一个请求就读得出来。
       if (list.some((topic) => topic.kind === 'root' && topic.status === 'archived')) denied.value = 'archived'
-      // 读到的清单里没有记着的那个地方了：忘掉它，rail 这一格回落项目首页。
+      // 记着的那一页所在的频道不在了（删了、被收成了别的房间）：忘掉它，rail 这一格
+      // 回落项目首页。不在频道里的那些页（总览、成员、资料库）没有这一层校验，它们
+      // 的地址不依赖频道。
       const remembered = lastPlaceByProject.value[projectId.value]
-      if (remembered && list.length > 0 && !list.some((row) => row.id === remembered.room)) {
+      if (remembered?.room && !list.some((row) => row.id === remembered.room)) {
         forgetPlace(projectId.value)
       }
     }
