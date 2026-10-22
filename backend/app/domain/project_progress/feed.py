@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.session_state import running_since
+from app.domain.agent.teammate_runs import teammate_runs
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.deliverables import artifacts
 from app.domain.oauth.services import handles_for_github_ids
@@ -180,14 +180,14 @@ async def recent(
     last_said = await TaskService(session).last_block_at_for_tasks(ids)
     cards = await latest_cards_by_task(session, ids)
     asked = await awaiting_an_answer(session, ids)
-    running = await running_since(session, ids)
+    runs = await teammate_runs(session, open_tasks)
     for task in open_tasks:
         shown = presentation.task_presentation(
             presentation.facts_for_task(
                 task,
                 cards.get(task.id),
                 awaiting_answer=task.id in asked,
-                running_since=running.get(task.id),
+                teammate_run=runs.get(task.id),
             ),
             now=now,
         )

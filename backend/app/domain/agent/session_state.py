@@ -196,6 +196,9 @@ async def declare(session: AsyncSession, key: SeatKey, status: str) -> bool:
         return False
     state.worker_status = status
     state.changed_at = datetime.now(UTC)
+    if status == RUNNING:
+        # A new run: what the seat reports from here on is stamped with it.
+        state.run = state.run + 1
     return True
 
 
@@ -227,28 +230,71 @@ async def running_conversations(
 ) -> set[uuid.UUID]:
     """The conversations at least one seat of which has a session its runner
     declared ``running``; of ``conversation_ids`` only, when given."""
-    return set(await running_since(session, conversation_ids))
-
-
-async def running_since(
-    session: AsyncSession, conversation_ids: Collection[uuid.UUID] | None = None
-) -> dict[uuid.UUID, datetime]:
-    """{conversation: when the latest of its running sessions began running}
-    for the conversations at least one seat of which has a session its runner
-    declared ``running``; of ``conversation_ids`` only, when given. The latest
-    start, because what it is weighed against is a report made before it
-    (`presentation.task_presentation`): any session that began after the
-    report is news the report did not know."""
-    query = (
-        select(SessionState.conversation_id, func.max(SessionState.changed_at))
-        .where(SessionState.worker_status == RUNNING)
-        .group_by(SessionState.conversation_id)
+    query = select(SessionState.conversation_id).where(
+        SessionState.worker_status == RUNNING
     )
     if conversation_ids is not None:
         if not conversation_ids:
-            return {}
+            return set()
         query = query.where(SessionState.conversation_id.in_(set(conversation_ids)))
-    return {conversation: since for conversation, since in await session.execute(query)}
+    return set(await session.scalars(query.distinct()))
+
+
+async def running_runs(
+    session: AsyncSession, seats: Collection[tuple[uuid.UUID, str]]
+) -> dict[tuple[uuid.UUID, str], int]:
+    """{(conversation, agent): its current run} for the given seats whose
+    session the runner declares running. A seat not running is left out."""
+    if not seats:
+        return {}
+    conversations = {conversation for conversation, _ in seats}
+    rows = await session.execute(
+        select(
+            SessionState.conversation_id,
+            SessionState.agent_handle,
+            func.max(SessionState.run),
+        )
+        .where(
+            SessionState.worker_status == RUNNING,
+            SessionState.conversation_id.in_(conversations),
+        )
+        .group_by(SessionState.conversation_id, SessionState.agent_handle)
+    )
+    wanted = set(seats)
+    return {
+        (conversation, agent): run
+        for conversation, agent, run in rows
+        if (conversation, agent) in wanted
+    }
+
+
+async def report_run(
+    session: AsyncSession, conversation_id: uuid.UUID, agent_handle: str
+) -> int | None:
+    """The run of ``agent_handle``'s session in ``conversation_id`` that a
+    report it is making right now belongs to; None when the seat has no
+    session here the runner reports on.
+
+    The report comes from inside the session, so the session is at work while
+    it is made. When the seat reads running, that is its current run. When it
+    reads idle, the runner's ``running`` for this work has not been applied
+    yet — events apply in the order the runner wrote them, and the next one
+    that flips the seat to running is this run's — so the report belongs to
+    the next run."""
+    rows = (
+        await session.execute(
+            select(SessionState.run, SessionState.worker_status).where(
+                SessionState.conversation_id == conversation_id,
+                SessionState.agent_handle == agent_handle,
+            )
+        )
+    ).all()
+    if not rows:
+        return None
+    current = max(run for run, _ in rows)
+    if any(status == RUNNING for _, status in rows):
+        return current
+    return current + 1
 
 
 def reports_lifecycle(harness: str) -> bool:

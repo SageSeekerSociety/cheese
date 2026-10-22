@@ -7,6 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -306,6 +307,11 @@ class Task(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     progress_set_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Which run of ``progress_set_by``'s session the report was made in
+    # (`session_state.report_run`): while that seat's session runs, the report
+    # stands only in the run it was made in. NULL for the platform's own
+    # writes and for a seat with no session the runner reports on.
+    progress_run: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # When the teammate's session ended after its last report: the board says
     # 「已离开」 beside what it said, and never rewrites it. Cleared when the
     # teammate reports again.

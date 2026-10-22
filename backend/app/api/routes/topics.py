@@ -450,7 +450,7 @@ async def list_topics(
         [t.id for t in topics],
         delivered_of=unseen.__contains__,
         incomplete_of=incomplete_tasks.get,
-        running=working.tasks,
+        running_of=working.tasks.__contains__,
     )
     items = [
         {
@@ -611,7 +611,7 @@ async def get_topic(
         [topic.id],
         delivered_of=unseen.__contains__,
         incomplete_of=incomplete_tasks.get,
-        running=working.tasks,
+        running_of=working.tasks.__contains__,
     )
     return ok(
         {

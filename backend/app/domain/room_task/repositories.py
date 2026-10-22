@@ -60,8 +60,10 @@ class ListedTask:
     title_source: TaskTitleSource
     status: TaskStatus
     progress_state: TaskProgress | None
-    #: 队友是什么时候报的那个状态：会话在那之后才开始跑，那句话就让位（`presentation`）。
-    progress_set_at: datetime | None
+    #: 报那个状态的座位、和它是在那个座位的哪一次跑里报的：那位队友在另一次跑里
+    #: 跑着，那句话就让位（`presentation`）。
+    progress_set_by: str | None
+    progress_run: int | None
     #: 队友报那个状态时附的一句（`Task.progress_note`）：「待我处理」里卡住那一行
     #: 的第二行说的就是它要你做什么。
     progress_note: str | None
@@ -173,7 +175,8 @@ class TaskRepository:
                 Task.title_source,
                 Task.status,
                 Task.progress_state,
-                Task.progress_set_at,
+                Task.progress_set_by,
+                Task.progress_run,
                 Task.progress_note,
                 Task.agent_handle,
                 Task.owner_handle,
@@ -197,7 +200,8 @@ class TaskRepository:
                 title_source=row.title_source,
                 status=row.status,
                 progress_state=row.progress_state,
-                progress_set_at=row.progress_set_at,
+                progress_set_by=row.progress_set_by,
+                progress_run=row.progress_run,
                 progress_note=row.progress_note,
                 agent_handle=row.agent_handle,
                 owner_handle=row.owner_handle,

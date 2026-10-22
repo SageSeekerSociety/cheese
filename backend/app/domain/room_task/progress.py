@@ -6,12 +6,13 @@ teammate waiting on a build or a background command back in 「进行中」 the
 moment its turn returned. Once its session stops, only the teammate knows
 whether it is still on the work, so it says so (`cheese_task_state`), and the
 board shows what it said (`presentation.task_presentation`) — except where a
-checkable fact speaks: a card in review, or its session running after the
-report was made.
+checkable fact speaks: a card in review, or the task's teammate's session
+running in a run it has not reported in.
 
 Two writers, two columns each, and neither touches the other's:
 
-- the teammate's report: `set_progress` — state, note, when, who. Only while
+- the teammate's report: `set_progress` — state, note, when, who, and the run
+  of its session it was made in. Only while
   no card waits on the task's review (`PUT /topics/{task}/task/progress`
   refuses it then): the card says where the task stands. The platform's own
   actions write the same columns: a card filed or the task reopened clears the
@@ -50,6 +51,7 @@ def clear(task: Task) -> None:
     task.progress_note = None
     task.progress_set_at = None
     task.progress_set_by = None
+    task.progress_run = None
     task.agent_left_at = None
 
 
@@ -62,6 +64,7 @@ def back_to_work(task: Task, *, at: datetime) -> None:
     task.progress_note = None
     task.progress_set_at = at
     task.progress_set_by = None
+    task.progress_run = None
 
 
 def set_progress(
@@ -71,13 +74,16 @@ def set_progress(
     note: str | None,
     by: str,
     at: datetime,
+    run: int | None,
 ) -> None:
-    """Record the teammate's report. Reporting again means it is back, so the
+    """Record the teammate's report, and the run of its session it was made in
+    (`session_state.report_run`). Reporting again means it is back, so the
     「已离开」 beside an older report goes."""
     task.progress_state = state
     task.progress_note = (note or "").strip() or None
     task.progress_set_at = at
     task.progress_set_by = by
+    task.progress_run = run
     task.agent_left_at = None
 
 

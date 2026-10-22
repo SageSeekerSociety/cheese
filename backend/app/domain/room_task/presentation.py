@@ -128,7 +128,7 @@ class TaskSignals(Protocol):
     声明成 property 是有意的（同 `CardSignals`）：pyright 对只读属性按协变比对，
     所以 `ListedTask` 上的普通字段也接得住。
 
-    六位正好是 `facts_for_task` 读的那六位，多一个就多一条「对方必须记得改」的
+    七位正好是 `facts_for_task` 读的那七位，多一个就多一条「对方必须记得改」的
     绳子，少一个那一格就折不出来。
     """
 
@@ -139,7 +139,10 @@ class TaskSignals(Protocol):
     def progress_state(self) -> TaskProgress | None: ...
 
     @property
-    def progress_set_at(self) -> datetime | None: ...
+    def progress_set_by(self) -> str | None: ...
+
+    @property
+    def progress_run(self) -> int | None: ...
 
     @property
     def accepted_at(self) -> datetime | None: ...
@@ -161,7 +164,8 @@ class TaskRow(Protocol):
 
     status: Mapped[Any]
     progress_state: Mapped[TaskProgress | None]
-    progress_set_at: Mapped[datetime | None]
+    progress_set_by: Mapped[str | None]
+    progress_run: Mapped[int | None]
     accepted_at: Mapped[datetime | None]
     conclusion: Mapped[str | None]
     closing_since: Mapped[datetime | None]
@@ -244,8 +248,8 @@ def hand_of(column: Column) -> Hand:
 class Building(enum.StrEnum):
     """在做，还没递出交付。"""
 
-    #: 房间：本轮在跑。任务：做它的会话在跑、而且是在队友最后一次报状态之后才
-    #: 开始跑的（或者它还没报过），或者队友说它在做（`TaskProgress.working`）。
+    #: 房间：本轮在跑。任务：做它的那位队友的会话在跑、而它在这一次跑里没报过
+    #: 状态，或者队友说它在做（`TaskProgress.working`）。
     running = "running"
     #: 任务才有：队友说它在等自己起的东西跑完——构建、CI、一条长命令。
     waiting = "waiting"
@@ -339,6 +343,15 @@ def _show(phrase: Phrase) -> Presentation:
 
 
 @dataclass(frozen=True, slots=True)
+class Run:
+    """One run of one seat's session: the seat, and which of its runs this is
+    (`SessionState.run`, counted by the runner's declarations)."""
+
+    seat: str
+    number: int
+
+
+@dataclass(frozen=True, slots=True)
 class CardFacts:
     """这条活/这个房间最新那张验收卡，窄到只剩看板要读的部分。"""
 
@@ -364,11 +377,12 @@ class TaskFacts:
     card: CardFacts | None
     #: 做这件活的队友最后一次说它做到哪了（`Task.progress_state`）；None = 还没说过。
     progress: TaskProgress | None = None
-    #: 它是什么时候说的（`Task.progress_set_at`）。
-    progress_at: datetime | None = None
-    #: 这条活的会话此刻在跑：runner 报的（`session_state.running_since`），从什么
-    #: 时候开始跑的；None = 没有会话在跑。
-    running_since: datetime | None = None
+    #: 它是在哪个座位的哪一次跑里说的（`Task.progress_set_by` / `progress_run`）；
+    #: None = 不是在会话里说的（平台自己写的，或者没有 runner 报会话的座位）。
+    progress_run: Run | None = None
+    #: 做这条活的那位队友的会话此刻在跑的那一次（`agent.teammate_runs`）；
+    #: None = 它的会话没在跑。别的 agent 在这段对话里跑，不算。
+    teammate_run: Run | None = None
     #: 关闭时留下过结论（`Task.conclusion`）。
     has_conclusion: bool = False
     #: 最近一条提问消息还没有回答（`BlockRepository.awaiting_an_answer`）。
@@ -421,17 +435,18 @@ def facts_for_task(
     card: CardSignals | CardRow | None = None,
     *,
     awaiting_answer: bool = False,
-    running_since: datetime | None,
+    teammate_run: Run | None,
 ) -> TaskFacts:
     """把一行活（加上它的卡）折成这层要读的事实。
 
     收两种形状是因为活有两处来源：领域内的人手上是 `Task` 那一行，HTTP 路由手上是
     `room_task` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查
-    一行。这一层只读 `status` / `progress_state` / `progress_set_at` / `accepted_at` /
-    `conclusion` / `closing_since` 六个属性 —— `TaskSignals` 和 `TaskRow` 各声明一次这
-    六位，两个调用点上都由 pyright 比对，所以两种形状折出来的 `TaskFacts` 一模一样。
+    一行。这一层只读 `status` / `progress_state` / `progress_set_by` / `progress_run` /
+    `accepted_at` / `conclusion` / `closing_since` 七个属性 —— `TaskSignals` 和
+    `TaskRow` 各声明一次这七位，两个调用点上都由 pyright 比对，所以两种形状折出来的
+    `TaskFacts` 一模一样。
 
-    ``running_since`` 没有默认值：会话在不在跑是这一格的事实之一，调用方不说，
+    ``teammate_run`` 没有默认值：队友的会话在不在跑是这一格的事实之一，调用方不说，
     那一格就会把一条正在做的活说成「开启」。卡和房间那两对
     另有单元测试逐位对过（`tests/unit/test_presentation.py`），这一对没有；窄读那几列
     真的带得回来，押在 `room_task.repositories.listed_by_ids` 的列清单上。
@@ -441,8 +456,10 @@ def facts_for_task(
         accepted_at=task.accepted_at,
         card=facts_for_card(card),
         progress=task.progress_state,
-        progress_at=task.progress_set_at,
-        running_since=running_since,
+        progress_run=None
+        if task.progress_set_by is None or task.progress_run is None
+        else Run(task.progress_set_by, task.progress_run),
+        teammate_run=teammate_run,
         has_conclusion=bool(task.conclusion),
         awaiting_answer=awaiting_answer,
         closing=task.closing_since is not None,
@@ -679,10 +696,13 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
        关闭。卡在等审阅（卡说在哪一步：跑检查、等人审、检查没过……）就是等审，
        验收人被点到；递卡时队友之前报的状态作废，卡在的时候它也报不了
        （`room_task.progress`）。卡被退回、作废，平台把它放回「在做」。
-    4. **会话在跑，又没有比它新的话，就是在做**：队友从没报过（卡退回后也没说
-       自己在改），或者会话是在它最后一次报状态之后才开始跑的——它被叫醒了：
-       构建跑完了、有人回了它——那句话说的是这一轮之前的事，会话在跑是之后的
-       事实。它在这一轮里报的照它说的：说那句话时它知道这一轮在跑。
+    4. **队友的会话在跑，而它在这一次跑里没报过，就是在做**：它从没报过（卡退回
+       后也没说自己在改），或者它报的那句是上一次跑里说的——它被叫醒了：构建跑完
+       了、有人回了它——那句话说的是这一次之前的事。它在这一次跑里报的照它说的：
+       说那句话时它就在这一次跑里。判的是「哪一次跑」这个身份（`Run`），不是两个
+       时刻谁先谁后：runner 的「开始跑」晚到平台，也不会让这一次里报的话变旧。只
+       看这条活自己那位队友的会话：审阅的、被叫进来的别的 agent 在跑，不是这条活
+       在做。
     5. 剩下的才轮到队友自己报的：在做、在等、卡住（卡住点负责人）——「待审阅」和
        「关闭」不是它能报的，那是事实。
 
@@ -701,9 +721,7 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         shown = _card_presentation(facts.card)
         if shown is not None:
             return shown
-    if facts.running_since is not None and (
-        facts.progress_at is None or facts.progress_at < facts.running_since
-    ):
+    if facts.teammate_run is not None and facts.progress_run != facts.teammate_run:
         return _show(Building.running)
     if facts.progress is TaskProgress.blocked:
         return _show(NeedsYou.blocked)
@@ -795,7 +813,7 @@ def room_presentation(facts: RoomFacts, *, now: datetime) -> Presentation:
 
     和一条活共用「关了就是结束」「待回答压过在做」两条。不同的是：房间会归档
     （活不会）；房间的「运行中」看本轮在不在跑（`RoomFacts.running`），而且压过卡；
-    活的会话在跑排在卡后面（卡说的是下一步在谁手上），而且要比队友报的话新。
+    活的队友会话在跑排在卡后面（卡说的是下一步在谁手上），而且要是它没报过的那一次跑。
 
     `now` 收在签名里是为了和 `task_presentation` 同一个形状 —— 房间今天没有需要
     对时间的判据，但调用方不该为这个差别写两种调用。

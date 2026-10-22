@@ -74,6 +74,7 @@ from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.opening import opening_content
 from app.domain.agent.own_calls import ask_owner_to_join
+from app.domain.agent.session_state import report_run
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import (
     project_team,
@@ -338,8 +339,8 @@ async def report_progress(
     resolver: ActorResolverDep,
 ) -> dict:
     """The task's AI teammate says where its work stands (`cheese_task_state`):
-    what the board shows for it until it says again, or until a session of
-    its starts running after the report (`presentation.task_presentation`).
+    what the board shows for it until it says again, or until its session
+    runs again in a run it has not reported in (`presentation.task_presentation`).
     Only the task's own session reports; a person reads it, and says what they
     need in the task.
 
@@ -354,12 +355,14 @@ async def report_progress(
     card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     if card is not None and card.status in OPEN_CARD_STATUSES:
         raise ConflictError(say("taskProgressWhileInReview"))
+    by = actor.handle or ""
     set_progress(
         task,
         body.state,
         note=body.note,
-        by=actor.handle or "",
+        by=by,
         at=datetime.now(UTC),
+        run=await report_run(db, task.id, by),
     )
     await db.flush()
     out = await task_out(db, task)

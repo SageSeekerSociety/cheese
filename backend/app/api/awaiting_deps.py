@@ -36,7 +36,7 @@ from app.domain.addressing import (
     Event,
     address,
 )
-from app.domain.agent.session_state import running_since
+from app.domain.agent.teammate_runs import teammate_runs
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms
@@ -185,8 +185,9 @@ async def waiting_items(
             tasks.append(task)
         elif task.room_id in visible_rooms:
             pointed.append(task)
-    # 哪几条活的会话此刻在跑：会话在跑的活是「在做」（`presentation`），不点到负责人。
-    running = await running_since(db, [task.id for task in tasks])
+    # 哪几条活自己那位队友的会话此刻在跑：它在这一次跑里没报过别的，就是「在做」
+    # （`presentation`），不点到负责人。
+    runs = await teammate_runs(db, tasks)
     # 题文和题一起回来的（`awaiting_answer_blocks`），不再按块 id 取第二趟。
     said = {question[1]: question[2] for question in questions.values()}
     # 一次，给整份清单用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
@@ -229,7 +230,7 @@ async def waiting_items(
                 task,
                 task_cards.get(task.id),
                 awaiting_answer=task.id in asked,
-                running_since=running.get(task.id),
+                teammate_run=runs.get(task.id),
             ),
             now=now,
         )

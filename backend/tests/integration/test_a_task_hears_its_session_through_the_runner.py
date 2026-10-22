@@ -2,10 +2,12 @@
 
 Rules a person can state without the code:
 
-- while the runner says a task's session is running, the task is 在做 unless
-  its teammate said otherwise during that run: a teammate that never said
-  anything, or said 「在等」 before its session woke again, is at work; what
-  it says while the session runs stands;
+- while the runner says the task's own teammate's session is running, the
+  task is 在做 unless the teammate reported in that same run: a teammate that
+  never said anything, or said 「在等」 in an earlier run, is at work; what it
+  says in this run stands, even when the runner's report that the run began
+  reaches the platform after it; another agent's session in the task counts
+  for nothing;
 - a page showing the task hears when its session starts or stops running;
 - when the runner reports a task's session gone, the task says its teammate
   left, and what the teammate last said about its work stays as it said it;
@@ -161,13 +163,48 @@ def test_a_session_woken_after_its_teammate_said_waiting_is_at_work(client):
     project_id, task_id, seat = _a_task(client)
     chat = _Chat(client)
     runner = _Runner(client, task_id, seat)
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
     _say(client, project_id, task_id, seat, "waiting")
+    runner.reports(chat, SessionExited("launch-1"))
     assert _phrases(client, project_id, task_id) == {"waiting"}
 
+    runner.register()
     runner.reports(chat, SessionRunning(uuid.uuid4()))
     assert _phrases(client, project_id, task_id) == {"running"}
 
+    runner.reports(chat, SessionExited("launch-2"))
+    assert _phrases(client, project_id, task_id) == {"waiting"}
+
+
+def test_a_report_made_before_its_runs_start_is_applied_still_stands(client):
+    """The teammate's session started working and said 「卡住」 before the
+    platform had applied the runner's report that the session was running (the
+    runner's events reached it late). The report was made in that run, so the
+    task reads 卡住 once the late report lands, not 在做."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
     runner.reports(chat, SessionExited("launch-1"))
+    runner.register()
+
+    _say(client, project_id, task_id, seat, "blocked")
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+
+    assert _phrases(client, project_id, task_id) == {"blocked"}
+
+
+def test_another_agents_session_running_does_not_make_the_task_in_progress(client):
+    """Another agent works in the task's conversation (it was asked in, it
+    reviews). That is not the task being done: with no report the task stays
+    开启, and a teammate's 「在等」 stays 在等."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    beside = _Runner(client, task_id, "cheese-beside")
+    beside.reports(chat, SessionRunning(uuid.uuid4()))
+    assert _phrases(client, project_id, task_id) == {"started"}
+
+    _say(client, project_id, task_id, seat, "waiting")
     assert _phrases(client, project_id, task_id) == {"waiting"}
 
 
