@@ -37,6 +37,11 @@ test('the page carries its own title and stylesheets', () => {
   assert.match(out, /href="\/assets\/a.css"/)
 })
 
+test('the page names itself as the canonical URL', () => {
+  const out = assemblePage(TEMPLATE, { ...page, url: '/download' })
+  assert.match(out, /<link rel="canonical" href="\/download">/)
+})
+
 test('a template the page no longer fits into fails the build instead of shipping an empty page', () => {
   assert.throws(() => assemblePage(TEMPLATE.replace('<div id="app"></div>', '<div id="root"></div>'), page))
 })
