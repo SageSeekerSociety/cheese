@@ -36,7 +36,7 @@ const vuetify = createVuetify({ components, directives })
 
 function renderCard(blocks: Block[]) {
   setLocale('zh-CN')
-  return render(AskGroupCard as never, {
+  return render(AskGroupCard, {
     props: { blocks, viewer: 'u1', names: {} },
     global: { plugins: [vuetify, i18n] },
   })
@@ -62,10 +62,10 @@ describe('AskGroupCard question numbers', () => {
   it('keeps the number and completion mark when an answer is selected, and still switches questions', async () => {
     const { getAllByRole, getByRole, getByText } = renderCard([question('a'), question('b')])
 
-    await fireEvent.change(getByRole('radio', { name: 'A', exact: true }))
+    await fireEvent.change(getByRole('radio', { name: 'A' }))
     expect(tabTexts(getAllByRole('tab'))).toEqual(['✓1', '2'])
 
-    await fireEvent.click(getByRole('tab', { name: '2', exact: true }))
+    await fireEvent.click(getByRole('tab', { name: '2' }))
     expect(getByText('Question b')).toBeTruthy()
   })
 
