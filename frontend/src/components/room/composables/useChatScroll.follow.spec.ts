@@ -163,4 +163,22 @@ describe('滚动框底下那一块闪了一下', () => {
     expect(scroll.atBottom.value).toBe(true)
     expect(box.el.scrollTop).toBe(1600)
   })
+
+  // 时间线外面又包了一层（左上角书签浮条要靠它定位）：滚动框的父元素不再是这一整栏，
+  // 底下那一块成了它的兄弟。只看父元素就漏掉了这一下改写，停在底部的人被甩上去。
+  it('包了一层之后再闪一下：仍算停在底部，回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    const column = document.createElement('div')
+    const zone = document.createElement('div')
+    zone.append(box.el)
+    column.append(zone, document.createElement('div')) // 后一个就是底下那一块
+    scroll.columnRef.value = column
+    await nextTick()
+    column.lastElementChild!.append(document.createElement('div'))
+    await new Promise((r) => setTimeout(r)) // MutationObserver 的回调
+    box.el.scrollTop = 1600 - 196
+    scroll.rememberScroll('t-wrapped')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+  })
 })

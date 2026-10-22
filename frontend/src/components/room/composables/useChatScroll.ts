@@ -38,6 +38,13 @@ export interface ChatScroll {
   scrollRef: Ref<HTMLElement | null>
   /** 绑在容器里装内容的那一层上——它变高就是「新消息来了」。 */
   contentRef: Ref<HTMLElement | null>
+  /**
+   * 绑在这一栏**最外面**那一层上：时间线，和它底下的输入框那一块，都在它里面。
+   * 滚动框外面再包一层时（左上角书签浮条要一个定位的盒子）必须绑，不然「底下那一
+   * 块闪了一下」不算进「布局刚动过」，停在底部的人会被一起甩上去。没绑就是滚动框
+   * 的父元素。
+   */
+  columnRef: Ref<HTMLElement | null>
   /** 用户此刻是不是停在底部附近。 */
   atBottom: Ref<boolean>
   scrollToBottom(): void
@@ -72,9 +79,13 @@ export function useChatScroll(
   const topicId = options.topicId ?? (() => undefined)
   const scrollRef = ref<HTMLElement | null>(null)
   const contentRef = ref<HTMLElement | null>(null)
+  const columnRef = ref<HTMLElement | null>(null)
 
   /** 用户是不是停在（或接近）底部——决定新消息是自动跟随还是不碰他的位置。 */
   const atBottom = ref(true)
+
+  /** 这一栏最外面那一层：时间线和它底下那一块共用的容器（见 `columnRef`）。 */
+  const column = () => columnRef.value ?? scrollRef.value?.parentElement
 
   function isAtBottom(el: HTMLElement): boolean {
     return el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD
@@ -129,10 +140,11 @@ export function useChatScroll(
     touched()
   })
   useEventListener(window, 'keydown', touched)
-  // The pane's parent too: the composer zone under the pane leaving and coming back in
-  // one task clamps it the same way, with the timeline untouched.
+  // The pane's column too: the composer zone under the pane leaving and coming back in
+  // one task clamps it the same way, with the timeline untouched. 这一栏最外面由
+  // `columnRef` 给（见它的说明），没给就是滚动框的父元素。
   useMutationObserver(
-    () => [contentRef.value, scrollRef.value?.parentElement],
+    () => [contentRef.value, column()],
     () => (rewrittenAt = performance.now()),
     { childList: true, subtree: true, characterData: true }
   )
@@ -309,6 +321,7 @@ export function useChatScroll(
   return {
     scrollRef,
     contentRef,
+    columnRef,
     atBottom,
     scrollToBottom,
     autoScroll,

@@ -11,7 +11,7 @@ import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 import type { ChapterRow } from '../types/chapters'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 
 import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
@@ -257,6 +257,7 @@ const {
   onTimelineScroll,
   scrollRef,
   contentRef,
+  columnRef,
   dayLabels,
   unreadAnchorId,
   runEdges,
@@ -400,6 +401,11 @@ defineExpose({ send, linkDown, submitQuestion })
 
 // 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
 const chatRoot = ref<HTMLElement | null>(null)
+// 时间线外面包了 `.timeline-zone` 给书签浮条定位，滚动框的父元素就不再是这一整栏
+// 了。滚动跟随要知道输入框那一块闪了一下，得看着这一栏（见 useChatScroll 的 columnRef）。
+watchEffect(() => {
+  columnRef.value = chatRoot.value
+})
 useComposerShortcut({
   root: chatRoot,
   open: () => !!props.topic && props.showComposer && !props.composerClosed && !!composerRef.value,
