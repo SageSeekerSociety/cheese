@@ -239,9 +239,9 @@ class Lines:
 
     def feed(self, data: bytes) -> list[str]:
         self.pending += self.decoder.decode(data)
-        if len(self.pending) > PENDING_MAX:
-            self.pending = self.pending[-PENDING_MAX:]
         *whole, self.pending = self.pending.split("\n")
+        if len(self.pending) > PENDING_MAX:
+            self.pending = self.pending[:PENDING_MAX]
         return [
             _cut(line.strip(), LINE_MAX, "...(truncated)")
             for line in whole

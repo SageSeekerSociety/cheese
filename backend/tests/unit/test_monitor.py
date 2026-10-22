@@ -53,6 +53,20 @@ def monitors(target: dict, session: Session) -> Monitors:
     return Monitors(client.control, session.tell, cwd=lambda: target["workspace"])
 
 
+@pytest.mark.parametrize("chunk_size", [16_384, 2_000_000])
+def test_a_long_output_line_keeps_its_beginning_and_the_next_event(chunk_size):
+    """Truncation preserves a line's beginning regardless of read boundaries."""
+    text = "FAILED: " + "x" * 1_100_000
+    data = (text + "\nnext event\n").encode()
+    lines = monitor.Lines()
+    received = []
+    for offset in range(0, len(data), chunk_size):
+        received.extend(lines.feed(data[offset : offset + chunk_size]))
+    received.extend(lines.rest())
+
+    assert received == [text[: monitor.LINE_MAX] + "...(truncated)", "next event"]
+
+
 async def test_each_line_is_told_as_it_is_printed_and_the_exit_ends_the_watch(
     tmp_path,
 ):
