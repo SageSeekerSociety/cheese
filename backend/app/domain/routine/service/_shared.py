@@ -30,6 +30,17 @@ NO_REPORT = "AI 队友一直没有交回结果"
 
 #: Loop breaker: an event rule fires at most this often per hour.
 EVENT_RUNS_PER_HOUR = 6
+#: Why an event past that limit did not run: written on the run, and how the
+#: sweep knows the owner has already been told this hour.
+OVER_EVENT_LIMIT = (
+    f"一小时内已触发 {EVENT_RUNS_PER_HOUR} 次，这一次不执行（防止循环触发）"
+)
+#: How far back each sweep looks again for events: one written before the
+#: last sweep but committed after it carries an earlier time than the cursor.
+#: An event found twice is one run (its occurrence key).
+EVENT_LOOKBACK = timedelta(minutes=2)
+#: Why a moment came while the rule's last run was still going.
+STILL_RUNNING = "上一次执行还没结束，这一次不执行"
 
 EVENT_TRIGGERS = frozenset(
     {
