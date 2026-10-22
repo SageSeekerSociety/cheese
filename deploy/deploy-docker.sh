@@ -21,6 +21,8 @@
 #   UPLOADS_HOST_PATH  host dir holding uploads          (default in compose)
 #   CLAUDE_CACHE_HOST_PATH  host dir holding the claude binaries served to
 #                      enrolling machines (same treatment; default in compose)
+#   TOOLCHAIN_CACHE_HOST_PATH  host dir holding what a connector places on a
+#                      machine it enrols (same treatment; default in compose)
 #   PROJECT            compose project name              (default cheese)
 #   ACTIVE_FRONTEND_DIR  optional api-front active directory. Enable only after
 #                      ingress targets FRONTEND_PROXY_PORT (default 18080).
@@ -1300,6 +1302,10 @@ mkdir -p "$CLAUDE_CACHE_PATH" || fail "cannot create $CLAUDE_CACHE_PATH"
 # And the pi builds, which the backend serves to the same machines.
 PI_CACHE_PATH="${PI_CACHE_HOST_PATH:-/home/nictheboy/cheese-pi-cache}"
 mkdir -p "$PI_CACHE_PATH" || fail "cannot create $PI_CACHE_PATH"
+# And the tools a connector places on a machine it enrols — the largest of the
+# three, because every platform's copy of them is served from here.
+TOOLCHAIN_CACHE_PATH="${TOOLCHAIN_CACHE_HOST_PATH:-/home/nictheboy/cheese-toolchain-cache}"
+mkdir -p "$TOOLCHAIN_CACHE_PATH" || fail "cannot create $TOOLCHAIN_CACHE_PATH"
 
 OWNERSHIP_REPORT="$(mktemp)"
 OWNERSHIP_PATHS=(
@@ -1308,6 +1314,7 @@ OWNERSHIP_PATHS=(
   "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
   "$CLAUDE_CACHE_PATH"
   "$PI_CACHE_PATH"
+  "$TOOLCHAIN_CACHE_PATH"
 )
 OWNERSHIP_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
 log "checking workspace/uploads ownership…"

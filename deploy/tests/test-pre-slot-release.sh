@@ -40,7 +40,7 @@ old_release() {
     API_FRONT_CONF="$run/nginx.conf" BACKEND_PORT=18081 BACKEND_PORT_NEXT=18082 \
     DEPLOY_DRAIN_SECONDS=0 DEPLOY_BACKEND_START_TIMEOUT=3 DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
     BACKEND_ENV_FILE="$run/env" FORGE_EVENTS_ENV_FILE="$run/env.events" FORGEJO_URL=https://cheese.example/forge/ \
-    CLAUDE_CACHE_HOST_PATH="$run/cc" PI_CACHE_HOST_PATH="$run/pc" APPHOME_HOST_PATH="$run/ah" HOME="$run" \
+    CLAUDE_CACHE_HOST_PATH="$run/cc" PI_CACHE_HOST_PATH="$run/pc" TOOLCHAIN_CACHE_HOST_PATH="$run/tc" APPHOME_HOST_PATH="$run/ah" HOME="$run" \
     bash "$OLD/deploy-docker.sh" testsha "$OLD/compose/docker-compose.base.yml" > "$run/release.log" 2>&1
 }
 
