@@ -585,7 +585,8 @@ async def _agent_hits(
             else room_ref(record["room_id"])
         )
         kind = _RECORD_NAMES.get(record["kind"], "文档段落")
-        who = record.get("author_name") or record["author"]
+        name, handle = record.get("author_name"), record["author"]
+        who = f"{name}（{handle}）" if name and name != handle else handle
         lines.append(
             f"- {kind}，{who}，在频道「{record['room_title']}」（{where}）："
             f"{record['snippet']}"

@@ -58,6 +58,8 @@ const props = defineProps<{
   mine: boolean
   topicId: string | null
   authorName: string
+  /** 设了个人备注时悬停看到的原名与 @handle。 */
+  authorTitle?: string | null
   /** 真头像的地址；取不到就画按 handle 哈希的色块。 */
   avatar: string | null
   isAgent: boolean
@@ -113,7 +115,9 @@ const props = defineProps<{
 
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
 const personLabel = computed(() =>
-  props.faceLabel ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceLabel }) : props.authorName
+  props.faceLabel
+    ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceLabel })
+    : props.authorTitle || props.authorName
 )
 const personName = computed(() =>
   props.faceStatus ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceStatus }) : props.authorName
@@ -257,7 +261,9 @@ const told = computed(() => toldByMessage(props.refs))
     <div class="im-main">
       <div class="im-meta">
         <template v-if="runStart">
-          <button type="button" class="im-name im-person" :data-handle="block.author">{{ authorName }}</button>
+          <button type="button" class="im-name im-person" :data-handle="block.author" :title="authorTitle || undefined">
+            {{ authorName }}
+          </button>
           <ExternalTag v-if="external && !isAgent" />
           <span class="im-time">{{ time }}</span>
           <v-icon v-if="pinned && !fileBlock" size="13" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')"

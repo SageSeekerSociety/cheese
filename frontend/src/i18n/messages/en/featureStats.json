@@ -174,8 +174,9 @@
     },
     "stages": {
       "title": "How it was decided",
-      "note": "User settings decide without the model; a quick check gives only a verdict, and one that does not pass is reviewed again",
-      "asked:rule": "Confirmed per the user's settings",
+      "note": "User settings and low-risk actions are decided without the model; a quick check gives only a verdict, and one that does not pass is reviewed again",
+      "asked:rule": "Confirmed per the user's settings or a fixed rule",
+      "allowed:low": "Taken without a check (low risk)",
       "allowed:quick": "Taken after a quick check",
       "allowed:reasoned": "Taken after review",
       "asked:reasoned": "Confirmed after review",

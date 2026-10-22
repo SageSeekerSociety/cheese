@@ -329,6 +329,11 @@ class InvitationService:
             raise ValidationError(say("inviteWhom"))
         if actor.handle == invitee_handle:
             raise ValidationError(say("inviteSelf"))
+        if await user_by_handle(self._session, invitee_handle) is None:
+            # An invitation is answered by the account it names. One to a
+            # handle nobody holds reaches no one, and would admit whoever took
+            # that handle later.
+            raise ValidationError(say("inviteNoSuchPerson", handle=invitee_handle))
         await _reject_execution_identity(self._session, invitee_handle)
         if await self._is_on_project_roster(project_id, invitee_handle):
             # Someone on the team is already in every project of it; an invitation

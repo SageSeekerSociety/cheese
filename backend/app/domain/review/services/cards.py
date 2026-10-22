@@ -56,7 +56,6 @@ from app.domain.review.services._shared import (
     SEVERITY_WARN,
     WHO_HUMAN,
     ReviewerAdmission,
-    _deliverable_revision,
     _hold_deliverable,
     _no_artifact_action,
     _one_artifact_action,
@@ -64,6 +63,9 @@ from app.domain.review.services._shared import (
     _read_deliverable,
     approvals_required_of,
     notice,
+)
+from app.domain.review.services._shared import (
+    deliverable_revision as _deliverable_revision,
 )
 from app.domain.task.teaching import protocol_for_task
 

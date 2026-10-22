@@ -94,6 +94,9 @@ async def open_streams() -> dict:
 # time-to-first-token, not the request's total length.
 _TIMEOUT = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0)
 
+#: The header the gateway names a request's conversation by.
+SESSION_HEADER = "x-litellm-session-id"
+
 # Hop-by-hop and identity-bearing headers: forwarding them would either break
 # the upstream connection or leak the caller's own credential past the swap.
 _DROP_REQUEST_HEADERS = frozenset(
@@ -577,6 +580,13 @@ async def proxy(
     }
     headers["authorization"] = f"Bearer {key}"
     headers["x-api-key"] = key
+    if person is not None:
+        # The gateway keeps a conversation on the upstream node it first used,
+        # whose prompt cache holds it, by the session the request names
+        # (``router_settings`` in deploy/gateway/config.yaml). Claude Code names
+        # its own; pi names none, so each call of a person's 芝士 landed on any
+        # node and its cache hit only the system prompt.
+        headers[SESSION_HEADER] = person.conversation_id
     body = await request.body()
 
     client = httpx.AsyncClient(timeout=_TIMEOUT)

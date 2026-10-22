@@ -38,13 +38,25 @@ function escapeRe(s: string): string {
 /** Every "@name" the composer recognises, longest first, each with the token it
  * stands for and the boundary that keeps it from eating the front of a longer
  * word. `expandMentions` rewrites with these and `mentionSpans` finds them, so
- * "is this a mention" has one answer in the input box. */
-function mentionPatterns(members: MentionMember[], topics: MentionTopic[]): { re: string; tok: string }[] {
+ * "is this a mention" has one answer in the input box.
+ *
+ * `broadcast` turns the two fixed-literal channel-wide tokens on. A surface with
+ * no channel to broadcast to — a document comment, whose picker already offers
+ * neither (`useCommentMentions` sets `broadcast: false`) — must say so: otherwise
+ * a hand-typed "@all" becomes `<@all>`, which notifies nobody and renders as a
+ * name with the @ eaten. */
+function mentionPatterns(
+  members: MentionMember[],
+  topics: MentionTopic[],
+  broadcast: boolean
+): { re: string; tok: string }[] {
   // 群播 (fusion-design §3): @all/@here are fixed-literal tokens, not roster rows.
-  const subs: [string, string][] = [
-    ['@all', '<@all>'],
-    ['@here', '<@here>'],
-  ]
+  const subs: [string, string][] = broadcast
+    ? [
+        ['@all', '<@all>'],
+        ['@here', '<@here>'],
+      ]
+    : []
   for (const m of members) {
     const tok = `<@${m.handle}>`
     for (const key of [m.label, m.handle]) {
@@ -68,9 +80,14 @@ function mentionPatterns(members: MentionMember[], topics: MentionTopic[]): { re
   return out
 }
 
-export function expandMentions(text: string, members: MentionMember[], topics: MentionTopic[] = []): string {
+export function expandMentions(
+  text: string,
+  members: MentionMember[],
+  topics: MentionTopic[] = [],
+  opts: { broadcast?: boolean } = {}
+): string {
   let out = text
-  for (const { re, tok } of mentionPatterns(members, topics)) {
+  for (const { re, tok } of mentionPatterns(members, topics, opts.broadcast !== false)) {
     // The replacement is a function so a "$" in a name can't act as $1.
     // Case-insensitive: "@Alice" and a mis-cased handle both map to the
     // canonical lowercase token, matching the backend.
@@ -88,10 +105,11 @@ export function expandMentions(text: string, members: MentionMember[], topics: M
 export function mentionSpans(
   text: string,
   members: MentionMember[],
-  topics: MentionTopic[] = []
+  topics: MentionTopic[] = [],
+  opts: { broadcast?: boolean } = {}
 ): { start: number; end: number }[] {
   const spans = refTokens(text).map((r) => ({ start: r.index, end: r.index + r.length }))
-  const patterns = mentionPatterns(members, topics)
+  const patterns = mentionPatterns(members, topics, opts.broadcast !== false)
   if (patterns.length) {
     // One alternation, longest first: at any position the longest name wins, the
     // same answer the longest-first rewrite above gives.

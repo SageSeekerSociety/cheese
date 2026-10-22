@@ -38,7 +38,7 @@ from app.api.deps import (
     get_session_host,
 )
 from app.api.routes import assistant as route
-from app.api.routes import llm_proxy
+from app.api.routes import assistant_agent, llm_proxy
 from app.core.config import settings
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.host import SessionHost
@@ -1271,6 +1271,8 @@ def _gate_stops(monkeypatch) -> None:
         return _Stops()
 
     monkeypatch.setattr(gate, "gatekeeper", looks)
+    # Nobody here decides on the cards it puts up: they are left waiting.
+    monkeypatch.setattr(assistant_agent, "CARD_WAIT_S", 0.0)
 
 
 def _address(client, room: str) -> tuple[str, int]:

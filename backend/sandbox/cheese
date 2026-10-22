@@ -625,7 +625,9 @@ PLATFORM_TOOLS = ToolTable(
             "改项目；讨论拆出了几件各自要做的事，here 不填，每件另开一个任务，挂在支线"
             "所在的那条消息下面，由那边的 AI 队友去做，summary 必填。只在有人说要做时"
             "调：是你自己看出来该做的，先用 cheese_ask 问一句要不要转为任务（选项"
-            "「转为任务」「不转」），有人选了「转为任务」再调，owner 就是他。",
+            "「转为任务」「不转」），有人选了「转为任务」再调，owner 就是他。"
+            "已经在任务里时：这条任务里的活由你自己接着做，不要再开一条做同一件事；"
+            "要拆的是**另一件**活时 here 不填。",
             {
                 "title": _text(
                     f"任务标题，{TITLE_WIDTH_NOTE}；超了会被拒绝，改短了再调一次"
@@ -1469,13 +1471,13 @@ DELEGATED_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_member_set",
-            "以用户的名义管成员：where 给项目短名或频道编号，who 给对方的 handle。"
+            "以用户的名义管成员：where 给项目短名或频道编号，who 给对方的 handle 或名字。"
             "项目里：不在项目的人发邀请（role 为 member 或 mentor），已在的人改角色"
             "（admin / member / mentor），remove 为 true 时移出。频道里：加进来，或 "
             "remove 移出。只能做用户自己有权限做的；移出成员、降低权限默认要用户确认。",
             {
                 "where": _text("项目短名或频道编号"),
-                "who": _text("对方的 handle"),
+                "who": _text("对方的 handle 或名字；重名时会列出各人的 handle"),
                 "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
                 "remove": {"type": "boolean"},
             },
@@ -3783,11 +3785,9 @@ def _act(body: dict, host):
     )
     if not data.get("done"):
         why = data.get("reason") or "需要用户确认"
-        if data.get("card"):
-            return None, (
-                f"还没有执行：已在面板中请用户确认（{why}）。告诉用户确认卡片在面板中，"
-                "不要说已经执行。"
-            )
+        card = data.get("card")
+        if card:
+            return None, _decided(card, host)
         return None, f"没有做：{why}。"
     answered, made = None, None
     for call in data.get("calls") or []:
@@ -3798,6 +3798,19 @@ def _act(body: dict, host):
         answered = host.request(plan).get("data")
         made = answered.get("id") if isinstance(answered, dict) else None
     return answered, data.get("said") or "已完成。"
+
+
+def _decided(card: dict, host) -> str:
+    """Wait, as the person reads the card in the panel, for them to confirm
+    it or not (`/assistant/agent/wait`), and say how it ended; or, when they
+    have not decided for long, that it still waits (the next question tells
+    how it ended)."""
+    while True:
+        got = host.request(
+            {"method": "POST", "path": "/assistant/agent/wait", "body": {"card": card["id"]}}
+        ).get("data") or {}
+        if got.get("said"):
+            return got["said"]
 
 
 def _acting(kind: str, *fields: str):
@@ -3857,6 +3870,12 @@ def _say_task(args, data, env) -> str:
     data = data or {}
     owner = data.get("owner_handle") or "负责人"
     title = data.get("title") or args["title"]
+    if data.get("already"):
+        return (
+            f"你要开的就是这条：你已经在这件任务「{title}」里，负责人 {owner}。"
+            "不用再开一条——就在这里做，用 cheese worktree 准备它的工作目录，"
+            "做完提交审阅。"
+        )
     if data.get("here"):
         return (
             f"这条支线已转为任务「{title}」，负责人 {owner}。从现在起你可以改项目："

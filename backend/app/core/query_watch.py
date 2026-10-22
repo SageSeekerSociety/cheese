@@ -71,7 +71,11 @@ DEFAULT_MIN_N_QUERIES = 2
 #: directory: ``domain/topic/repositories/reads.py``. Both layouts trim to
 #: that — the image keeps the package at ``/app/app/...`` and a checkout at
 #: ``backend/app/...`` — so an ``app/domain/...`` prefix matches nothing.
-IGNORED_STACKS: tuple[str, ...] = ()
+IGNORED_STACKS: tuple[str, ...] = (
+    # 芝士 waiting on its card looks at it once a second while the person
+    # decides (``assistant_agent.WAIT_S``): the repeat is the wait.
+    " agent_wait",
+)
 
 #: Legitimate repeats, by statement. Case-insensitive substring of the
 #: whitespace-normalized SQL (``select ... from audit_log``).

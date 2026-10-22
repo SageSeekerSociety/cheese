@@ -31,6 +31,9 @@ from app.domain.assistant.models import AssistantProposal
 KINDS = ("message", "task", "act")
 #: What a pending draft can become.
 SETTLED = ("sent", "dismissed")
+#: Marks, in a settled card's payload, that 芝士 has been told how it ended:
+#: at once, by the tool that waited on it, or with the next question.
+TOLD = "told"
 
 
 async def propose(
@@ -53,7 +56,7 @@ async def propose(
 def view(row: AssistantProposal) -> dict:
     """A draft as the panel takes it."""
     return {
-        **row.payload,
+        **{k: v for k, v in row.payload.items() if k != TOLD},
         "id": row.id,
         "kind": row.kind,
         "state": row.state,
@@ -97,3 +100,58 @@ async def settle(
     row.result = result
     await db.commit()
     return row
+
+
+async def mine(db: AsyncSession, user_id: int, proposal_id: int) -> AssistantProposal:
+    """One of the person's cards, read fresh."""
+    row = await db.scalar(
+        select(AssistantProposal)
+        .where(
+            AssistantProposal.id == proposal_id,
+            AssistantProposal.user_id == user_id,
+        )
+        .execution_options(populate_existing=True)
+    )
+    if row is None:
+        raise NotFoundError.for_resource("proposal", proposal_id)
+    return row
+
+
+def told(row: AssistantProposal) -> None:
+    """Note that 芝士 knows how the card ended; the caller commits."""
+    row.payload = {**row.payload, TOLD: True}
+
+
+async def untold(
+    db: AsyncSession, user_id: int, ids: list[int]
+) -> list[AssistantProposal]:
+    """Of these cards, the ones the person has settled since 芝士 last heard:
+    settled after the answer that put them up had ended."""
+    if not ids:
+        return []
+    rows = await db.scalars(
+        select(AssistantProposal)
+        .where(
+            AssistantProposal.id.in_(ids),
+            AssistantProposal.user_id == user_id,
+            AssistantProposal.state.in_(SETTLED),
+        )
+        .order_by(AssistantProposal.id)
+    )
+    return [r for r in rows if not r.payload.get(TOLD)]
+
+
+def outcome(row: AssistantProposal) -> str:
+    """How a card ended, in a line for 芝士."""
+    p = row.payload
+    what = (
+        {
+            "message": f"在「{p.get('topicName', '')}」发消息",
+            "task": f"在「{p.get('channelName', '')}」开任务「{p.get('title', '')}」",
+        }.get(row.kind)
+        or p.get("summary")
+        or "这项操作"
+    )
+    if row.state == "sent":
+        return f"「{what}」：用户已确认，已执行。"
+    return f"「{what}」：用户选了不用，没有执行。"
