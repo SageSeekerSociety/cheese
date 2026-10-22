@@ -359,6 +359,19 @@ function onFocusOut(event: FocusEvent) {
         >
           <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
         </button>
+        <!-- 钉成书签放在这一排，不埋在 ⋯ 里：钉一下是读对话时随手做的事，多一步
+             就没人用。钉上是实心，再点取消。 -->
+        <button
+          v-if="chapterable && block.kind === 'message'"
+          type="button"
+          class="hover-bar__act"
+          :class="{ 'hover-bar__act--on': chapteredIds?.has(block.id) }"
+          :title="chapteredIds?.has(block.id) ? t('work.room.chapter.unpin') : t('work.room.chapter.pin')"
+          :aria-label="chapteredIds?.has(block.id) ? t('work.room.chapter.unpin') : t('work.room.chapter.pin')"
+          @click="chapteredIds?.has(block.id) ? emit('unchapter', block) : emit('chapter', block)"
+        >
+          <v-icon size="15">{{ chapteredIds?.has(block.id) ? 'mdi-pin' : 'mdi-pin-outline' }}</v-icon>
+        </button>
         <!-- A deep link to this one message. Absent when the host has no router
              (there is no address to build) rather than a button that does nothing. -->
         <button

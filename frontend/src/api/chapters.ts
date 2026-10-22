@@ -19,3 +19,10 @@ export function addChapter(conversationId: string, blockId: string): Promise<unk
 export function removeChapter(conversationId: string, blockId: string): Promise<unknown> {
   return request(`${chaptersPath(conversationId)}/${encodeURIComponent(blockId)}`, { method: 'DELETE' })
 }
+
+export function renameChapter(conversationId: string, blockId: string, title: string): Promise<unknown> {
+  return request(`${chaptersPath(conversationId)}/${encodeURIComponent(blockId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  })
+}
