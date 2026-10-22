@@ -243,9 +243,10 @@ async def run_started(
     """The seat's current process began a run, with the ``running`` event
     ``(epoch, seq)``: the identity its runner names that run by, and that a
     platform tool call made in it carries (`executor_transport.PlatformHost`).
-    Recorded for every such event of the current registration, whether or not
-    the status flips: a process that replaced one still reading running starts
-    a run of its own."""
+    Recorded for every applied running event, whichever registration
+    delivers it and whether or not the status flips: events apply in the order
+    the runner wrote them, so the last one is the run going on. A process that
+    replaced one still reading running starts a run of its own."""
     state = await session.scalar(
         select(SessionState).where(*_key(key)).with_for_update()
     )

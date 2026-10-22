@@ -102,14 +102,15 @@ SUBAGENT_TODO_WRITE = (
 )
 
 
-#: 看板上一件任务的会话在跑就是在做（`presentation.task_presentation`）；会话停下
-#: 以后，队友可能还在等构建，也可能早就做完了，只有它自己知道，看板显示它自己报的
-#: 状态（`cheese_task_state`）。所以什么时候报、报哪一个，要在每一轮都在的规矩里
-#: 说一次。
+#: 看板上一件任务显示做它的队友自己报的状态（`cheese_task_state`）：会话停下以后，
+#: 队友可能还在等构建，也可能早就做完了，只有它自己知道。报会话状态的 harness
+#: （Claude Code）的会话在跑、而它在这一次跑里没报过时是在做
+#: （`presentation.task_presentation`）。所以什么时候报、报哪一个，要在每一轮都在的
+#: 规矩里说一次；这一段每个 harness 都读，所以说的是对三家都成立的话。
 TASK_STATE = (
     "## 任务状态（cheese_task_state）\n"
-    "在任务里干活时，你的会话在跑，看板上这件任务就显示在做；你在这一次跑里用 "
-    "`cheese_task_state` 报的状态会替掉它，你停下了看板照旧显示你最后报的那一条。"
+    "在任务里干活时，看板上这件任务显示你用 `cheese_task_state` 报的状态，你停下了"
+    "也照旧；Claude Code 的会话在跑、而你在这一次跑里还没报过时，看板显示在做。"
     "开工时报 working；起了构建、CI 或长命令在等结果时报 waiting；没人帮忙走不下去"
     "时报 blocked，要人回答的照样用 `cheese_ask` 问。被叫醒接着干时看板回到在做，"
     "还在等、还卡着就再报一次。做完交给人审阅不用报：递了卡（`cheese_accept_request`）看板就"

@@ -124,23 +124,24 @@ async def apply(chat, report: Report) -> Applied | bool:
         elif not new:
             pass
         elif isinstance(fact, SessionRunning):
-            flipped = await session_state.declare(db, key, RUNNING)
+            await session_state.declare(db, key, RUNNING)
+            # The run this event begins, named as the runner names it to a
+            # platform call made in it, so a report carries the same name. Every
+            # running event counts, whichever registration delivers it: events
+            # apply in the order the runner wrote them, so the last one applied
+            # is the run going on, and a backlog a backend re-attaching the
+            # runner reads (written under the epoch before) is still that run.
+            await session_state.run_started(db, key, epoch=report.epoch, seq=report.seq)
             if report.of_this_registration:
-                # The run this event begins, named as the runner names it to a
-                # platform call made in it: a report carries the same name.
-                await session_state.run_started(
-                    db, key, epoch=report.epoch, seq=report.seq
-                )
                 # The seat's current session is at work: the task's teammate is
                 # back, whatever an earlier session's exit said.
                 await note_agent_back(
                     db, report.conversation_id, by=report.agent_handle
                 )
-            if flipped or report.of_this_registration:
-                # A task's state reads whether its teammate's session runs and
-                # which run it is in (`presentation.task_presentation`), so its
-                # pages read it again.
-                await sessions_moved(db, [report.conversation_id])
+            # A task's state reads whether its teammate's session runs and which
+            # run it is in (`presentation.task_presentation`), so its pages read
+            # it again.
+            await sessions_moved(db, [report.conversation_id])
         elif isinstance(fact, SessionIdle):
             if await session_state.declare(db, key, IDLE):
                 await sessions_moved(db, [report.conversation_id])

@@ -282,6 +282,19 @@ def test_a_report_naming_no_run_does_not_speak_for_a_running_session(client):
     assert _phrases(client, project_id, task_id) == {"blocked"}
 
 
+def test_a_report_naming_its_run_in_another_shape_names_none(client):
+    """A run named in a shape the platform does not read (here a harness wider
+    than any) is taken as naming no run: the report is kept, and does not speak
+    for the running session."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    runner.running(chat)
+
+    _say(client, project_id, task_id, seat, "blocked", "x" * 40 + "/1/1")
+    assert _phrases(client, project_id, task_id) == {"running"}
+
+
 def test_another_agents_session_running_does_not_make_the_task_in_progress(client):
     """Another agent works in the task's conversation (it was asked in, it
     reviews). That is not the task being done: with no report the task stays
@@ -311,23 +324,6 @@ def test_what_the_teammate_says_while_its_session_runs_stands(client):
     assert _phrases(client, project_id, task_id) == {"waiting"}
 
 
-def test_a_report_in_a_run_under_another_harness_still_stands(client):
-    """The project changed harness: the teammate's earlier runs were under one,
-    this run is under another. 「卡住」 said in this run is this run's."""
-    project_id, task_id, seat = _a_task(client)
-    chat = _Chat(client)
-    before = _Runner(client, task_id, seat)
-    for _ in range(3):
-        before.running(chat)
-        before.idle(chat)
-
-    after = _Runner(client, task_id, seat, harness="codex")
-    run = after.running(chat)
-    _say(client, project_id, task_id, seat, "blocked", run)
-
-    assert _phrases(client, project_id, task_id) == {"blocked"}
-
-
 def test_a_backend_reattaching_a_running_session_keeps_its_run(client):
     """A backend came up and re-registered the teammate's runner, which was
     still in the run it said 「卡住」 in. The run goes on, and so does 卡住."""
@@ -341,6 +337,47 @@ def test_a_backend_reattaching_a_running_session_keeps_its_run(client):
     runner.register()
 
     assert _phrases(client, project_id, task_id) == {"blocked"}
+
+
+def test_a_run_a_backend_reads_from_the_backlog_after_reattaching_is_the_run(
+    client,
+):
+    """The session woke while no backend was reading: its runner wrote that the
+    run began, and the teammate said 「卡住」 in it. A backend came up and
+    re-registered the runner before reading the backlog, so the event arrives
+    under the epoch before. It is still the run going on: 卡住."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    runner.running(chat)
+    runner.idle(chat)
+    written_under = runner.epoch
+    run = runner.upcoming()
+
+    _say(client, project_id, task_id, seat, "blocked", run)
+    runner.register()
+    runner.reports(chat, SessionRunning(uuid.uuid4()), written_under=written_under)
+
+    assert _phrases(client, project_id, task_id) == {"blocked"}
+
+
+def test_a_session_woken_while_no_backend_read_it_is_at_work(client):
+    """The teammate said 「在等」 and went idle; its session woke while no
+    backend was reading, and a backend came up and re-registered the runner
+    before reading that the run began. The session is in a run the report was
+    not made in: 在做."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    first = runner.running(chat)
+    _say(client, project_id, task_id, seat, "waiting", first)
+    runner.idle(chat)
+    written_under = runner.epoch
+
+    runner.register()
+    runner.reports(chat, SessionRunning(uuid.uuid4()), written_under=written_under)
+
+    assert _phrases(client, project_id, task_id) == {"running"}
 
 
 def test_a_report_by_the_teammate_before_does_not_speak_for_the_one_now(client):

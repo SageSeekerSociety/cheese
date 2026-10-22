@@ -323,6 +323,18 @@ TASK_CASES = [
         Column.needs_you,
         NeedsYou.blocked,
     ),
+    # 换了一个进程、日志从头记：上一个进程那一次和这一次 seq 相同，epoch 不同，
+    # 不是同一次。
+    (
+        "上一个进程里同号的那一次",
+        task(
+            progress=TaskProgress.blocked,
+            progress_run=Run(SEAT, "claude-code", 2, 57),
+            teammate_runs=RUNNING,
+        ),
+        Column.building,
+        Building.running,
+    ),
     # 它的会话在跑，但 runner 没说是哪一次（还没被换掉的旧版 runner）：它在这一次
     # 里说过什么，平台认不出来，在做。
     (

@@ -455,8 +455,8 @@ def facts_for_task(
     收两种形状是因为活有两处来源：领域内的人手上是 `Task` 那一行，HTTP 路由手上是
     `room_task` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查
     一行。这一层只读 `status` / `progress_state` / `progress_set_by` / `progress_run_*` /
-    `accepted_at` / `conclusion` / `closing_since` 七个属性 —— `TaskSignals` 和
-    `TaskRow` 各声明一次这七位，两个调用点上都由 pyright 比对，所以两种形状折出来的
+    `accepted_at` / `conclusion` / `closing_since` 九个属性 —— `TaskSignals` 和
+    `TaskRow` 各声明一次这九位，两个调用点上都由 pyright 比对，所以两种形状折出来的
     `TaskFacts` 一模一样。
 
     ``teammate_runs`` 没有默认值：队友的会话在不在跑是这一格的事实之一，调用方不说，

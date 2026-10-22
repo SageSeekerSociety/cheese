@@ -31,6 +31,7 @@ Two writers, two columns each, and neither touches the other's:
   the time it could read a word of it the mark is no longer there.
 """
 
+import re
 import uuid
 from datetime import datetime
 
@@ -79,14 +80,18 @@ def _forget_run(task: Task) -> None:
     task.progress_run_seq = None
 
 
+#: ``harness/epoch/seq``, the harness no wider than its column.
+_RUN = re.compile(r"([a-z0-9-]{1,32})/([0-9]{1,18})/([0-9]{1,18})")
+
+
 def parse_run(raw: str | None) -> tuple[str, int, int] | None:
     """The run a platform call says it is made in (`RUN_HEADER`,
     ``harness/epoch/seq``), or None when it names none or names it in another
     shape."""
-    harness, _, rest = (raw or "").partition("/")
-    epoch, _, seq = rest.partition("/")
-    if not harness or not epoch.isdigit() or not seq.isdigit():
+    found = _RUN.fullmatch(raw or "")
+    if found is None:
         return None
+    harness, epoch, seq = found.groups()
     return harness, int(epoch), int(seq)
 
 

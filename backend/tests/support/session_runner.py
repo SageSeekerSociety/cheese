@@ -21,8 +21,9 @@ from pathlib import Path
 @contextmanager
 def standing_runner(run: str) -> Iterator[str]:
     """Listen as the session's runner naming ``run``; yields the socket path."""
-    # A short directory: a socket path is capped near 104 bytes on macOS.
-    directory = Path(tempfile.mkdtemp(prefix="cxr"))
+    # Under /tmp, whatever TMPDIR says: a socket path is capped near 104 bytes
+    # on macOS (the convention `test_device_sandbox_macos.py` follows too).
+    directory = Path(tempfile.mkdtemp(prefix="cxr", dir="/tmp"))
     path = directory / "r.sock"
     listening = socket.socket(socket.AF_UNIX)
     listening.bind(str(path))
