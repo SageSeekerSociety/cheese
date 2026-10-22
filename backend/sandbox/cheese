@@ -173,6 +173,14 @@ def _text(description: str) -> dict:
     return {"type": "string", "description": description}
 
 
+#: Every action 芝士 takes as the person carries it: an action the platform
+#: stopped and handed back, asked again this way, becomes a card.
+_CONFIRM = {
+    "type": "boolean",
+    "description": "只差用户同意时为 true：不能直接执行就在面板里请用户确认",
+}
+
+
 FEEDBACK_DESCRIPTION = (
     "你在轮次里发现的问题,提到平台上给人看。\n"
     "\n"
@@ -1377,15 +1385,15 @@ DELEGATED_TOOLS = ToolTable(
     (
         _tool(
             "cheese_inbox",
-            "等用户处理的事，和他「待办」页上的一样：待他审阅的改动、要他回答的问题、"
-            "要他决定的提醒、邀请和申请、出的题目上待批准的领取和待评审的提交。每件写"
+            "等用户处理的事，和用户「待办」页上的一样：待用户审阅的改动、要用户回答的问题、"
+            "要用户决定的提醒、邀请和申请、出的题目上待批准的领取和待评审的提交。每件写"
             "明是什么、在哪、什么时候，以及读它或答复它用的编号。最近的在前。",
             {"project": _text("只看这个项目的（项目短名）；省略看全部")},
         ),
         _tool(
             "cheese_find",
             "按关键词搜用户能看到的工作内容：频道、消息、任务、文档段落、周报、资料库文件、"
-            "产物，或一个空间里的题目和他的草稿。不给 where 搜他最近的几个项目；where "
+            "产物，或一个空间里的题目和用户的草稿。不给 where 搜用户最近的几个项目；where "
             "给项目短名只搜那个项目，给 spaces/4 搜那个空间的题目（query 留空列出最近的"
             "题目）。每条命中写着在哪和读它的编号。每个词都要命中，没找到就换个说法或"
             "少几个词。平台怎么用的问题用 cheese_help。",
@@ -1412,7 +1420,7 @@ DELEGATED_TOOLS = ToolTable(
             "ml-course/tasks/12/review，文档 ml-course/docs/5；项目以外的：题目 "
             "spaces/4/tasks/87，草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
             "（列出全部）和 spaces/4/materials/9；me 是用户参加的题目和各自的截止时间，"
-            "settings 是他的通知设置。"
+            "settings 是用户的通知设置。"
             "编号从当前页面、待办和别的读取结果里来。"
             "长的分段读：结果末尾写着下一段的 page。",
             {
@@ -1427,12 +1435,12 @@ DELEGATED_TOOLS = ToolTable(
         _tool(
             "cheese_message_send",
             "以用户的名义发一条消息到一个频道或任务（where 给它的编号，如 "
-            "ml-course/channels/3）。用户的话具体说到了这条消息（发给谁、说什么）就直接"
-            "发出；否则变成面板里的一张卡片，用户确认后才发。结果会说是哪一种，照实告诉"
-            "用户，没发出的不要说发了。",
+            "ml-course/channels/3）。是用户要发的就直接发出；否则不发，结果写明原因和"
+            "接下来怎么办。照实告诉用户，没发出的不要说发了。",
             {
                 "where": _text("频道或任务的编号"),
                 "text": _text("消息正文，用户的口吻，Markdown"),
+                "confirm": _CONFIRM,
             },
             ["where", "text"],
         ),
@@ -1440,12 +1448,13 @@ DELEGATED_TOOLS = ToolTable(
             "cheese_task_open",
             "以用户的名义开一个任务，交给项目的 AI 队友去做：开在一个频道里（where 给"
             "频道编号），标题和交代写清楚要做什么、依据什么、做到什么算完。要改项目里"
-            "的文档、代码，或做要花时间的活时用它，你自己不动手。和发消息一样，用户没"
-            "具体说到时会变成卡片等他确认。",
+            "的文档、代码，或做要花时间的活时用它，你自己不动手。和发消息一样，不是用户"
+            "要开的就不开，结果写明原因。",
             {
                 "where": _text("频道的编号"),
                 "title": _text("任务标题，一句话"),
                 "text": _text("交代：要做什么、依据什么、做到什么算完"),
+                "confirm": _CONFIRM,
             },
             ["where", "title", "text"],
         ),
@@ -1453,11 +1462,13 @@ DELEGATED_TOOLS = ToolTable(
             "cheese_review_decide",
             "以审阅人（用户）的身份采纳或退回一张审阅卡（ref 给审阅卡编号，如 "
             "ml-course/tasks/12/review）。退回要写说明（text），说清哪里不对、要怎么改。"
-            "先用 cheese_read 读过这张卡再决定。用户没具体说到时会变成卡片等他确认。",
+            "先用 cheese_read 读过这张卡再决定。用户没有对这张卡做决定时不执行，结果写明"
+            "原因。",
             {
                 "ref": _text("审阅卡的编号"),
                 "choice": {"type": "string", "enum": ["accept", "reject"]},
                 "text": _text("退回的说明"),
+                "confirm": _CONFIRM,
             },
             ["ref", "choice"],
         ),
@@ -1465,10 +1476,12 @@ DELEGATED_TOOLS = ToolTable(
             "cheese_inbox_respond",
             "答复待办里要用户选择的一件事（ref 用待办里写的「答复用」或提醒编号）：提醒"
             "的选项（choice 写选项原文），邀请或转让的接受、拒绝（accept / decline），在"
-            "他设备上运行命令的允许、拒绝（allow / refuse）。用户没具体说到时会变成卡片。",
+            "用户设备上运行命令的允许、拒绝（allow / refuse）。用户没有做这个选择时不执行，"
+            "结果写明原因。",
             {
                 "ref": _text("待办里那件事的编号"),
                 "choice": _text("选项原文，或 accept / decline / allow / refuse"),
+                "confirm": _CONFIRM,
             },
             ["ref", "choice"],
         ),
@@ -1483,6 +1496,7 @@ DELEGATED_TOOLS = ToolTable(
                 "who": _text("对方的 handle 或名字；重名时会列出各人的 handle"),
                 "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
                 "remove": {"type": "boolean"},
+                "confirm": _CONFIRM,
             },
             ["where", "who"],
         ),
@@ -1495,16 +1509,17 @@ DELEGATED_TOOLS = ToolTable(
                 "title": _text("频道名称"),
                 "text": _text("频道说明"),
                 "members_only": {"type": "boolean"},
+                "confirm": _CONFIRM,
             },
             ["where", "title"],
         ),
         _tool(
             "cheese_settings_set",
-            "改用户自己的设置，直接改、面板上能撤销，一次一项。where 省略是他的通知设置："
+            "改用户自己的设置，直接改、面板上能撤销，一次一项。where 省略是用户的通知设置："
             "key 为 in_app（站内通知 on/off）、push（推送 on/off）、email（instant / "
             "digest / off）、quiet_hours（off，或 22:00-08:00 这样的时段）、digest（汇总"
-            "频率 daily / weekly / off）。where 给频道编号时改那个频道给他的提醒：key 写 "
-            "level，value 为 all（所有新消息）、mentions（只在 @他和他参与的支线有回复时）"
+            "频率 daily / weekly / off）。where 给频道编号时改那个频道给用户的提醒：key 写 "
+            "level，value 为 all（所有新消息）、mentions（只在 @用户和用户参与的支线有回复时）"
             "或 mute（静音）。改之前可以先用 cheese_read 读 settings 看现在的设置。",
             {
                 "where": _text("频道编号；省略是通知设置"),
@@ -1515,8 +1530,8 @@ DELEGATED_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_routine",
-            "用户的例行事务：用户让你定时做一件事，或在某件事发生时做一件事（有人 @ 他、"
-            "有审阅待他处理、空间题目快到截止、收到邀请），就建一条。到时平台自己开一段新"
+            "用户的例行事务：用户让你定时做一件事，或在某件事发生时做一件事（有人 @ 用户、"
+            "有审阅待用户处理、空间题目快到截止、收到邀请），就建一条。到时平台自己开一段新"
             "对话让你做，结果通知用户。action：create 新建（title 名称、note 每次要做的事、"
             "trigger 和时间）；list 列出全部；change 修改、pause 暂停、resume 恢复、delete "
             "删除（routine 给编号）。trigger：schedule 定时（freq 为 once 一次，at 写 "
@@ -1555,8 +1570,8 @@ DELEGATED_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_notify_me",
-            "给用户发一条通知（站内、推送和邮件按他的设置），点开就是这段对话。用于用户让你"
-            "提醒他的事，或例行事务运行中有必须让他知道的结果；一次说完，不要连发。",
+            "给用户发一条通知（站内、推送和邮件按用户的设置），点开就是这段对话。用于用户让你"
+            "提醒用户的事，或例行事务运行中有必须让用户知道的结果；一次说完，不要连发。",
             {"text": _text("通知的内容，一两句话")},
             ["text"],
         ),
@@ -1568,6 +1583,7 @@ DELEGATED_TOOLS = ToolTable(
             {
                 "url": _text("网址"),
                 "prompt": _text("想从这一页知道什么"),
+                "confirm": _CONFIRM,
             },
             ["url"],
         ),
@@ -3842,6 +3858,8 @@ def _act(body: dict, host):
         or {}
     )
     if not data.get("done"):
+        if data.get("returned"):
+            return None, data["said"]
         why = data.get("reason") or "需要用户确认"
         card = data.get("card")
         if card:
@@ -3880,14 +3898,16 @@ def _decided(card: dict, host) -> str:
 
 def _acting(kind: str, *fields: str):
     def step(args: dict, host) -> str:
-        body = {"kind": kind, **_given(args, *fields)}
+        body = {"kind": kind, **_given(args, *fields, "confirm")}
         return _act(body, host)[1]
 
     return step
 
 
 def _web_fetch(args: dict, host):
-    answered, said = _act({"kind": "fetch", **_given(args, "url", "prompt")}, host)
+    answered, said = _act(
+        {"kind": "fetch", **_given(args, "url", "prompt", "confirm")}, host
+    )
     return _say_fetch(args, answered, host.environ) if answered is not None else said
 
 

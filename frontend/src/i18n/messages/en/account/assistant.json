@@ -1,6 +1,6 @@
 {
   "title": "Cheese",
-  "lede": "Before Cheese sends a message, opens a task, decides a review or manages members for you, it checks whether that is what you want done. When it isn't sure, it asks you to confirm in the panel first. Only you can change this page.",
+  "lede": "Before Cheese sends a message, opens a task, decides a review or manages members for you, it checks whether that is what you want done. When it isn't sure, it asks you in its reply or in the panel first. Only you can change this page.",
   "loading": "Loading",
   "loadFailed": "Couldn't load Cheese's settings",
   "saveFailed": "Couldn't save",
@@ -25,6 +25,7 @@
     "count": "{n}/{max}",
     "empty": "No routines",
     "next": "Next run: {time}",
+    "ran": "Has run; deleted automatically after 3 days",
     "paused": {
       "person": "Paused",
       "credits": "Paused: out of credits",

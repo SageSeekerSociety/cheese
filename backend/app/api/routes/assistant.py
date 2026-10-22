@@ -641,7 +641,8 @@ class RoutineOut(BaseModel):
     note: str
     #: When it runs, in a line.
     when: str
-    state: Literal["active", "paused"]
+    #: ``done``: a one-off that has run; it is cleared once its cards expire.
+    state: Literal["active", "paused", "done"]
     #: Why a paused one stopped: ``person``, ``credits`` or ``away``.
     paused: str
     nextRunAt: str | None = None

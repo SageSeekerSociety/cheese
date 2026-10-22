@@ -42,7 +42,8 @@ export interface AssistantRoutine {
   note: string
   /** 什么时候运行，后端写好的一句。 */
   when: string
-  state: 'active' | 'paused'
+  /** `done`：只运行一次的，已经运行过；3 天后自动删除。 */
+  state: 'active' | 'paused' | 'done'
   /** 暂停的原因：`person` 自己暂停，`credits` 额度用完，`away` 长时间未登录。 */
   paused: string
   nextRunAt: string | null
