@@ -31,24 +31,22 @@ class _ServesBinary(http.server.BaseHTTPRequestHandler):
     """Serves BINARY, announcing ``announced`` as its sha256.
 
     Class attributes because the handler is built by the server: ``announced``
-    is None for a response carrying no digest header at all, and
-    ``require_gzip`` serves the bytes only to a request that accepts the packed
-    copy — a request without it is refused, so unpacking is never tested on a
-    body the installer did not ask for."""
+    is None for a response carrying no digest header at all, and ``asked``
+    records whether the request accepted the packed copy, so a test can see
+    which copy the installer asked for rather than infer it."""
 
     announced: str | None = DIGEST
-    require_gzip = False
+    asked: list[bool] = []
 
     def do_GET(self):
-        body = BINARY
-        encoding = ""
-        if type(self).require_gzip:
-            if "gzip" not in self.headers.get("Accept-Encoding", ""):
-                self.send_response(400)
-                self.end_headers()
-                return
+        accepts_gzip = "gzip" in self.headers.get("Accept-Encoding", "")
+        type(self).asked.append(accepts_gzip)
+        if accepts_gzip:
             body = gzip.compress(BINARY)
             encoding = "gzip"
+        else:
+            body = BINARY
+            encoding = ""
         announced = type(self).announced
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
@@ -63,10 +61,13 @@ class _ServesBinary(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def _install(tmp_path, announced: str | None, require_gzip: bool = False):
-    """Run the served installer against a server announcing ``announced``."""
+def _install(tmp_path, announced: str | None, without=()):
+    """Run the served installer against a server announcing ``announced``.
+
+    ``without`` names tools to keep off the script's PATH, so a machine that
+    lacks one can be exercised."""
     _ServesBinary.announced = announced
-    _ServesBinary.require_gzip = require_gzip
+    _ServesBinary.asked = []
     app = FastAPI()
     app.include_router(router)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _ServesBinary)
@@ -82,10 +83,27 @@ def _install(tmp_path, announced: str | None, require_gzip: bool = False):
         uname = bin_dir / "uname"
         uname.write_text('#!/bin/sh\n[ "$1" = -m ] && echo x86_64 || echo Linux\n')
         uname.chmod(uname.stat().st_mode | stat.S_IEXEC)
+        # A copy of the tools on PATH with the named ones left out: a shim of
+        # every entry that either is not the tool or is not a tool of its own
+        # (a directory, a broken link) still lets the others be found.
+        path = f"{bin_dir}:{os.environ['PATH']}"
+        if without:
+            shims = tmp_path / "without"
+            shims.mkdir()
+            for entry in os.environ["PATH"].split(os.pathsep):
+                if not os.path.isdir(entry):
+                    continue
+                for name in os.listdir(entry):
+                    if name in without or (shims / name).exists():
+                        continue
+                    source = os.path.join(entry, name)
+                    if os.path.isfile(source):
+                        (shims / name).symlink_to(source)
+            path = f"{bin_dir}:{shims}"
         home = tmp_path / "home"
         home.mkdir()
         env = {
-            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "PATH": path,
             "HOME": str(home),
             "NO_PROXY": "*",
             "no_proxy": "*",
@@ -125,6 +143,16 @@ def test_a_download_matching_the_announced_digest_is_installed(tmp_path):
 def test_the_packed_copy_is_asked_for_and_unpacked_before_the_install(tmp_path):
     """On a slow link the packed copy is what fits; the machine still runs the
     bytes the digest names."""
-    run, home = _install(tmp_path, DIGEST, require_gzip=True)
+    run, home = _install(tmp_path, DIGEST)
     assert run.returncode == 0, run.stdout + run.stderr
     assert (home / ".local/bin/cheesehost").read_bytes() == BINARY
+    assert _ServesBinary.asked == [True]
+
+
+def test_a_machine_without_gzip_installs_the_plain_copy(tmp_path):
+    """gzip is what unpacks the packed copy, so a machine without it must not
+    be handed one: it is served the plain copy and installs that."""
+    run, home = _install(tmp_path, DIGEST, without=("gzip",))
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert (home / ".local/bin/cheesehost").read_bytes() == BINARY
+    assert _ServesBinary.asked == [False]
