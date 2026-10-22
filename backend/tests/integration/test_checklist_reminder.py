@@ -28,7 +28,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
-from tests.support.session_records import wait_for_record
+from tests.support.session_records import wait_for_read, wait_for_record
 
 PLAN = [
     {"content": "核实 issue 论断", "status": "completed"},
@@ -114,6 +114,10 @@ def _start(client, ws, topic_id: str, *, handle: str = "user-1") -> uuid.UUID:
     wait_for_record(
         client, topic_id, lambda record: "Internal output" in str(record), owner=handle
     )
+    # Raw records are archived before lifecycle events and input receipts are
+    # applied. Wait for the receipt so the running session owns this work
+    # before its checklist is stamped and the reminder is swept.
+    wait_for_read(client, topic_id)
     live = client.portal.call(
         chat_of(client).live.active_turn_ids.get, uuid.UUID(topic_id)
     )
