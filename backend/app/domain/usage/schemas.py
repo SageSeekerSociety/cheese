@@ -26,6 +26,13 @@ class BetaCreditsOut(BaseModel):
     credits: int
     claimed: bool
     feedback_credits: int
+    #: What the person's own plan issues each month; null when it is unlimited
+    #: or billed by time windows.
+    plan_credits: int | None
+    #: What inviting a friend earns: the inviter on the friend's first
+    #: acceptance, and the friend across onboarding and that acceptance.
+    invite_credits: int
+    invitee_credits: int
 
 
 class CreditRewardOut(BaseModel):
