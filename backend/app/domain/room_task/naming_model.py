@@ -6,9 +6,9 @@ back; this module is everything between the platform and the model.
 `_record_usage` charges what it spent to the task's project. The answer arrives
 as an `Answer` holding a `Verdict`: `parse_verdict` reads the JSON wrapper out
 of it, `normalize_title` cleans the title inside, and `same_title` says whether
-it is the title the task already has. A title too wide for the sidebar or naming
-only an account goes back to the model; without a usable rewrite the task keeps
-its previous title. A generated title is never cut to make it fit.
+it is the title the task already has. A title too wide for the sidebar goes back
+to the model; without a usable rewrite the task keeps its previous title. A
+generated title is never cut to make it fit.
 
 The split is by size, not by layering (`naming.py` was 922 lines): nothing here
 reads a task's conversation or decides whether to ask. Every name it defines is
@@ -24,7 +24,6 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 
 import httpx
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import model_roles
@@ -38,7 +37,6 @@ from app.domain.room_task.title_width import (
 )
 from app.domain.service_keys import gateway_base
 from app.domain.usage.ledger import Ledger
-from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +78,9 @@ SYSTEM_PROMPT = "\n".join(
         "4. 用对话主要使用的语言；不要引号、书名号、表情、句末标点，",
         "   不要冒号后面的解释。",
         "5. 是提问或讨论时，名字就是被讨论的主题，不要编一个用户没提的动作。",
-        "6. 不要把对话里的 @提及或账号单独当成任务名；要写它涉及的具体事情。",
+        "6. 名字必须有材料依据。称呼、@提及、问候不等于任务主题；",
+        "   附件标记只表示有人发了文件，不表示你读到了文件内容。",
+        "   不能确定具体事情时 keep=true，title 留空，等更多文字后再命名。",
         "   名字必须完整，不要为满足宽度限制而截断词语。",
         "",
         "<task> 里是要命名的材料：当前标题、实况文档的开头和最近的对话。",
@@ -271,31 +271,12 @@ async def _record_usage(factory: SessionFactory, answer: Answer, task: Task) -> 
         logger.warning("topic naming usage was not recorded", exc_info=True)
 
 
-async def _title_problem(session: AsyncSession, title: str) -> str | None:
-    if not title_fits(title):
-        return _too_wide(title)
-    mention = re.fullmatch(r"<@([\w-]+)>|@([\w-]+)", title)
-    account = (
-        mention is not None
-        or await session.scalar(select(User.id).where(User.username == title))
-        is not None
-    )
-    if account:
-        return (
-            f"「{title}」只有账号或 @提及，没有说明任务是什么。"
-            "改成描述具体事情的完整短名，可以包含账号，但不能只有账号；"
-            "keep 填 false，只输出 JSON 对象。"
-        )
-    return None
-
-
 async def _fitted(
     key: str,
     material: str,
     verdict: Verdict,
     *,
     current: str | None,
-    session: AsyncSession,
     transport: httpx.AsyncBaseTransport | None,
     factory: SessionFactory,
     deadline: float,
@@ -312,9 +293,9 @@ async def _fitted(
         title = current if verdict.keep else verdict.title
         if title is None:
             return verdict
-        problem = await _title_problem(session, title)
-        if problem is None:
+        if title_fits(title):
             return verdict
+        problem = _too_wide(title)
         left = deadline - loop.time()
         if attempt == _RETRIES or left < _RETRY_FLOOR_S:
             break
