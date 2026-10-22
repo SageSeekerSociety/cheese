@@ -276,6 +276,7 @@ export interface RoomTask {
   owner_handle?: string | null
   contributor_handles?: string[] // 协作者：负责人拉进来的人，说的话和负责人一样是给 AI 队友的指令
   reviewer_handle?: string | null // 谁审阅它的改动，建任务时定下
+  reporter_handle?: string | null // 提需求、需要关注结果的人，不必是下一步的行动人
   created_by?: string | null
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
