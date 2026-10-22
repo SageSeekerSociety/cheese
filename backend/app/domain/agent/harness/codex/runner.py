@@ -130,65 +130,70 @@ class Runner(runner.Runner[Journal]):
         # --- the compaction's own turn -------------------------------------
         #
         # `thread/compact/start` runs the compaction as a turn of its own on
-        # the thread. The room hears the compaction (`AgentCompacting`, from
-        # its `contextCompaction` item) and not a turn: its ending read as a
-        # turn would answer, with nothing, work that had already ended.
+        # the thread, announced by a `contextCompaction` item. The room hears
+        # the compaction (`AgentCompacting`, from that item) and not a turn:
+        # the turn's ending read as a turn would answer, with nothing, work
+        # that had already ended, and its start would open books no ending
+        # closes.
         #
-        # Which turn is the compaction's is decided from its own item, never
-        # from arrival order — a person's message can start their turn beside
-        # the ask, so the first `turn/started` is not necessarily the
-        # compaction's — and the decision is held to the turn's own ending so
-        # a start never reaches the room without the ending that closes it.
+        # The turn is named by that item, never by arrival order: a person's
+        # message can start their turn beside the ask, so the first
+        # `turn/started` is not necessarily the compaction's. A start arriving
+        # while an ask is outstanding is therefore held, and the first event
+        # after it decides: the compaction's item drops it, anything else is a
+        # real turn and journals it — one event late.
         item = params.get("item") or {}
         same_thread = self.session is not None and thread_id == self.session.thread_id
-        if (
+        held, self.pending_turn = self.pending_turn, None
+        announced = (
             same_thread
             and method in ("item/started", "item/completed")
             and item.get("type") == "contextCompaction"
-        ):
-            # The compaction announcing itself: this turn is the platform's.
-            # The item still goes to the room — it is what the room's
-            # 「正在整理上下文」 line comes from — but the turn is not a turn.
+        )
+        if announced:
             self.compacting_turn = str(params.get("turnId") or "") or turn_id
+            if held is not None and _turn_of(held) == self.compacting_turn:
+                held = None  # the compaction's own start: the room hears no turn
+            if method == "item/completed":
+                # The compaction is over, however it went; there may be no
+                # `turn/completed` to say so (the shape the pinned build sends).
+                self.compact_request = ""
+        elif held is not None:
+            # A real turn, one event late by its own start. It also means the
+            # compaction was replaced and will never report.
+            self.journal.append(held)
+            held = None
+            self.compacting_turn = None
+            self.compact_request = ""
+        if (
+            held is None
+            and method == "turn/completed"
+            and self.compacting_turn is not None
+        ):
+            if turn_id == self.compacting_turn or not same_thread:
+                # The compaction's own ending: dropped, the room has the item.
+                self.compacting_turn = None
+                self.compact_request = ""
+                if self.session is not None:
+                    self.session.observe(event)
+                return
+            # A different turn ended while the compaction was still open: it
+            # was replaced and will never report. Left alone, the request would
+            # sit at `sent` for ever and the session would never go idle.
+            self.compacting_turn = None
+            self.compact_request = ""
         if method == "turn/started":
             if (
-                same_thread
+                self.pending_turn is None
+                and same_thread
                 and self.compact_request == "sent"
                 and self.compacting_turn is None
-                and self.pending_turn is None
             ):
-                # Held until this turn ends: only then is it known whether it
-                # was the compaction's. `session.observe` still sees it, so
-                # app-server's own view of which turn is running is current.
+                # Held until the first event after it says what it is.
                 self.pending_turn = event
                 if self.session is not None:
                     self.session.observe(event)
                 return
-        if method == "turn/completed":
-            pending, self.pending_turn = self.pending_turn, None
-            if same_thread and self.compacting_turn == turn_id:
-                # The compaction's turn: its held start and this ending are
-                # both dropped. The room already has the compaction itself.
-                self.compacting_turn = None
-                self.compact_request = ""
-                if self.session is not None:
-                    self.session.observe(event)
-                return
-            if pending is not None:
-                # A real turn, one event late by its own start: journal it, and
-                # let this ending go through the usual way below. A real turn
-                # starting while the ask was outstanding means the compaction
-                # was replaced by it and will never report.
-                self.journal.append(pending)
-                if self.compact_request == "sent":
-                    self.compact_request = ""
-            if self.compacting_turn is not None:
-                # A turn ended that was not the compaction's: the compaction
-                # was replaced and will never report. Left alone, the request
-                # would sit at `sent` for ever and the session would never go
-                # idle.
-                self.compacting_turn = None
-                self.compact_request = ""
         ends = (
             self.session is not None
             and event.get("method") == "turn/completed"
