@@ -95,6 +95,7 @@
   "cheeseTemplateList": "List document templates",
   "cheeseTemplateNew": "New file from a template",
   "cheeseTitle": "Set the title",
+  "cheeseTranscript": "Pull this conversation's records",
   "cheeseWaitMachine": "Wait for the environment",
   "cheeseWorktree": "Prepare the working directory",
   "codemode": "Run script",

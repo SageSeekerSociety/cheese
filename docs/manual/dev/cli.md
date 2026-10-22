@@ -18,7 +18,7 @@ covers:
 `backend/sandbox/cheese` 是一个 Python 文件，一份两用：
 
 - **会话侧**把它当模块读：`PLATFORM_TOOLS` 是平台 MCP 的工具表，`run_platform_tool` 执行其中一项。聊天、任务卡、验收、通知这些只要平台就能做的动作都在这里，其余的平台接口经表上的 `platform_request` 找到再调，所以机器够不着时它们照样能用。这张表怎么变成每种骨架手里的工具，见[平台工具与会话侧 MCP](/dev/mcp)。
-- **机器上**它是 `cheese` 命令，只保留必须在那台机器上作为进程跑的动作。顶层子命令共 14 个：
+- **机器上**它是 `cheese` 命令，只保留必须在那台机器上作为进程跑的动作。顶层子命令共 15 个：
 
 ```text
 cheese worktree <任务 id>      准备任务工作目录并输出路径；新环境里第一次建时恢复平台快照；--prepare 依赖没变也重装
@@ -29,6 +29,7 @@ cheese push-fix                把任务的新提交同步到它的 PR
 cheese serve <端口> "说明"      把跑在本机端口上的应用设为当前预览
 cheese show <路径>              把一份东西摆到房间里给人看
 cheese pull <路径>              把房间里一份文件的最新保存取到这台机器上
+cheese transcript              把本会话的会话记录拉到本机（归一化后的 JSONL，含分身的）
 cheese library get <名字>       取一份项目资料到本机
 cheese mail attachment <连接> <邮件 uid> <序号>   取一封邮件的附件到本机
 cheese template list|new ...   列出平台标准模板，或从模板在房间里新建一份
