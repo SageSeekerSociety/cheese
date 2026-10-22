@@ -173,7 +173,8 @@ function reopen() {
           :title="q.content"
           @click="(at = i), (reviewing = false)"
         >
-          <span class="ask-group__tab-no" aria-hidden="true">{{ answeredText(i) ? '✓' : i + 1 }}</span>
+          <!-- 题号只画一次：题签栏里没有题签时就是题号本身，打勾是它前面的那枚标记。 -->
+          <span v-if="answeredText(i)" class="ask-group__tab-no" aria-hidden="true">✓</span>
           <span class="ask-group__tab-label">{{ askHeader(q) || i + 1 }}</span>
         </button>
       </div>
