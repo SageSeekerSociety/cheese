@@ -3766,7 +3766,7 @@ def _feedback_release(args: dict, host) -> str:
     except Exception as exc:
         status = getattr(exc, "status", None)
         why = _feedback_refusal(exc)
-        if status in (403, 404) and why:
+        if status in (403, 404, 409) and why:
             raise PlatformToolError(f"没放掉：{why.rstrip('。')}。") from exc
         raise
     item = data.get("data") or {}
