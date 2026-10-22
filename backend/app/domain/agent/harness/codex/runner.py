@@ -72,9 +72,9 @@ class Runner(runner.Runner[Journal]):
         #: a compaction runs as a turn on the thread, and it is the platform's,
         #: not the room's — its ending must not close a room turn.
         self.compacting_turn: str | None = None
-        #: A `turn/started` held until its turn's own items say what it is, so
-        #: the compaction's turn is told from a person's by its item and not by
-        #: arrival order (``record``).
+        #: A `turn/started` held until the event after it says whose turn it
+        #: is: the compaction's item drops it, anything else journals it — one
+        #: event late (``record``).
         self.pending_turn: dict | None = None
         #: The loop `request_compact` hops onto from the tool call's thread.
         #: `start` sets it for sure; a runner built outside a loop (a sync
@@ -142,11 +142,20 @@ class Runner(runner.Runner[Journal]):
         # while an ask is outstanding is therefore held, and the first event
         # after it decides: the compaction's item drops it, anything else is a
         # real turn and journals it — one event late.
+        #
+        # Only a compaction the platform asked for is that turn, and only while
+        # an ask is outstanding. Codex also compacts by itself whenever the
+        # context nears its limit, before or partway through a turn: that one
+        # keeps the turn it happened in (`run_inline_auto_compact_task` reuses
+        # the running turn's context), so its item names the turn a person is
+        # waiting on, and reading it as the compaction's would drop that turn's
+        # answer — with the tool off as much as on.
         item = params.get("item") or {}
         same_thread = self.session is not None and thread_id == self.session.thread_id
         held, self.pending_turn = self.pending_turn, None
         announced = (
-            same_thread
+            self.compact_request == "sent"
+            and same_thread
             and method in ("item/started", "item/completed")
             and item.get("type") == "contextCompaction"
         )
@@ -163,18 +172,27 @@ class Runner(runner.Runner[Journal]):
                 # `turn/completed` to say so (the shape the pinned build sends).
                 self.compact_request = ""
         elif held is not None:
-            # A real turn, one event late by its own start. It also means the
-            # compaction was replaced and will never report.
+            # A real turn, one event late by its own start. A turn that ended
+            # because something replaced it — the platform's own compaction is
+            # what does — leaves the ask standing: the compaction's turn is
+            # still to come. One that ended on its own means the ask never got
+            # a turn of its own, and never will report.
+            replaced = (
+                method == "turn/completed"
+                and (params.get("turn") or {}).get("status") != "completed"
+            )
             self.journal.append(held)
             held = None
-            self.compacting_turn = None
-            self.compact_request = ""
+            if not replaced:
+                self.compacting_turn = None
+                self.compact_request = ""
         if (
             held is None
+            and same_thread
             and method == "turn/completed"
             and self.compacting_turn is not None
         ):
-            if turn_id == self.compacting_turn or not same_thread:
+            if turn_id == self.compacting_turn:
                 # The compaction's own ending: dropped, the room has the item.
                 self.compacting_turn = None
                 self.compact_request = ""
@@ -221,16 +239,6 @@ class Runner(runner.Runner[Journal]):
             self.journal.append(event)
         if self.session is not None:
             self.session.observe(event)
-        if (
-            self.compact_request == "sent"
-            and self.session is not None
-            and thread_id == self.session.thread_id
-            and event.get("method") == "item/completed"
-            and (params.get("item") or {}).get("type") == "contextCompaction"
-        ):
-            # The compaction the session asked for is over, however it went:
-            # the turn that carried it says which outcome (`turn/completed`).
-            self.compact_request = ""
         if reason is not None:
             self.continuing = asyncio.ensure_future(self._hold_to_reply(reason, event))
         elif ends:

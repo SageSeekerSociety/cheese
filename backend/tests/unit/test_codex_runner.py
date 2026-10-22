@@ -366,9 +366,16 @@ async def test_a_request_made_mid_turn_waits_for_that_turn_to_end(tmp_path):
         assert runner.request_compact() == "already"
         await runner.record(
             {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "compact-turn"}},
+            }
+        )
+        await runner.record(
+            {
                 "method": "item/completed",
                 "params": {
                     "threadId": "thread",
+                    "turnId": "compact-turn",
                     "item": {"id": "item-1", "type": "contextCompaction"},
                 },
             }
@@ -483,6 +490,12 @@ async def test_a_turn_replacing_the_compaction_clears_the_request(tmp_path):
         await asyncio.sleep(0.05)
         await runner.record(
             {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "compact-turn"}},
+            }
+        )
+        await runner.record(
+            {
                 "method": "item/started",
                 "params": {
                     "threadId": "thread",
@@ -557,9 +570,151 @@ async def test_a_person_s_turn_beside_the_ask_is_not_mistaken_for_it(tmp_path):
             for r in records
             if r.get("method") == "turn/completed"
         ] == ["person-turn"]
+        # Their turn replaced the compaction, which will now never report: the
+        # request goes, so the seat can go idle.
+        assert runner.compact_request == ""
 
-        # The compaction's own turn, when it arrives, is still the platform's.
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_compaction_the_session_did_not_ask_for_keeps_its_turn(tmp_path):
+    """Codex compacts by itself when the context nears its limit, before or
+    partway through a turn. That compaction is the turn's own work: its item
+    names the turn it happened in, so reading it as the platform's would drop
+    that turn's ending — the room's answer — with no request involved at all.
+
+    Seen in the pinned build: `run_inline_auto_compact_task` reuses the running
+    turn's context and sends no `turn/started` of its own.
+    """
+    from app.domain.agent.harness.codex.events import Assembler
+
+    runner = Runner(tmp_path, AsyncMock())
+    session = SimpleNamespace(
+        thread_id="thread",
+        turn_id="turn",
+        compact=AsyncMock(),
+        observe=lambda _: None,
+    )
+    runner.session = session
+    try:
+        runner.journal.remember("work:thread", "platform-work")
+        for event in (
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "turn"}},
+            },
+            {
+                "method": "item/started",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            },
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            },
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {
+                        "id": "turn",
+                        "status": "completed",
+                        "items": [
+                            {"type": "agentMessage", "text": "the answer"},
+                        ],
+                    },
+                },
+            },
+        ):
+            await runner.record(event)
+
+        assert runner.compact_request == ""
+        records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
+        assembler = Assembler()
+        assembled = [event for r in records for event in assembler.accept(r)]
+        results = [e for e in assembled if type(e).__name__ == "AgentResult"]
+        assert [e.text for e in results] == ["the answer"], results
+        assert [e for e in assembled if type(e).__name__ == "AgentCompacting"], (
+            "the compaction itself still reaches the room"
+        )
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_compaction_the_session_did_not_ask_for_leaves_the_ask_alone(tmp_path):
+    """The agent asks to compact in a turn that then compacts by itself: the
+    automatic item is not the platform's, and must not answer for it — the ask
+    still goes when the turn ends."""
+    runner = Runner(tmp_path, AsyncMock())
+    compacted = AsyncMock()
+    session = SimpleNamespace(
+        thread_id="thread", turn_id="turn", compact=compacted, observe=lambda _: None
+    )
+    runner.session = session
+    try:
+        assert runner.request_compact() == "requested"
+        await asyncio.sleep(0.05)
+        assert not compacted.await_count
+
         await runner.record(
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            }
+        )
+        assert runner.compact_request == "asked"
+
+        await runner.record(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {"id": "turn", "status": "completed"},
+                },
+            }
+        )
+        session.turn_id = None
+        await asyncio.sleep(0.05)
+        compacted.assert_awaited_once()
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_child_thread_ending_is_not_dropped_by_the_compaction(tmp_path):
+    """A compaction runs for minutes; a sub-agent's thread can end meanwhile.
+    Its `turn/completed` belongs to that thread and must reach the journal —
+    the room flushes what the child had partially said on it."""
+    runner = Runner(tmp_path, AsyncMock())
+    session = SimpleNamespace(
+        thread_id="thread",
+        turn_id=None,
+        compact=AsyncMock(),
+        observe=lambda _: None,
+    )
+    runner.session = session
+    try:
+        runner.request_compact()
+        await asyncio.sleep(0.05)
+        for event in (
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "compact-turn"}},
+            },
             {
                 "method": "item/started",
                 "params": {
@@ -567,23 +722,24 @@ async def test_a_person_s_turn_beside_the_ask_is_not_mistaken_for_it(tmp_path):
                     "turnId": "compact-turn",
                     "item": {"id": "c1", "type": "contextCompaction"},
                 },
-            }
-        )
-        await runner.record(
+            },
             {
                 "method": "turn/completed",
                 "params": {
-                    "threadId": "thread",
-                    "turn": {"id": "compact-turn", "status": "completed"},
+                    "threadId": "child",
+                    "turn": {"id": "child-turn", "status": "completed"},
                 },
-            }
-        )
+            },
+        ):
+            await runner.record(event)
+
         records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
-        assert "compact-turn" not in [
+        assert [
             r["params"]["turn"]["id"]
             for r in records
-            if r.get("method") in ("turn/started", "turn/completed")
-        ]
-        assert runner.compact_request == ""
+            if r.get("method") == "turn/completed"
+        ] == ["child-turn"]
+        # The child's ending is not the compaction's: it stays open.
+        assert runner.compacting_turn == "compact-turn"
     finally:
         await runner.close()
