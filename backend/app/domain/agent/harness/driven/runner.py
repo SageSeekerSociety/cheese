@@ -89,6 +89,20 @@ LONG_POLL = "long_poll"
 LIVE = "live"
 
 
+def current_loop() -> asyncio.AbstractEventLoop | None:
+    """The loop this is running on, or None outside one.
+
+    A harness runner reaches its own loop from a platform tool call's thread
+    (`call_soon_threadsafe`) and may be constructed before there is a loop at
+    all: a sync test builds one, and only ``start`` is really on the loop. So
+    the reference is taken here where it exists and set again in ``start``.
+    """
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 def socket_path(state: Path) -> str:
     """Where the connector will look, given this state directory.
 

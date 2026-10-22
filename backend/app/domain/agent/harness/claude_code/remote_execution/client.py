@@ -139,6 +139,11 @@ else:
     from shell_stop import deliver_stop
 
 PINNED_VERSION = "2.1.299"
+# How long a request to the runner may take before the session's own helper
+# gives up on it (`compact`). The runner answers at once — the compaction it
+# then writes runs for minutes and is not waited for — so this is only the
+# socket's own patience.
+RUNNER_REQUEST_S = 30.0
 # The preload the device launch hands the build in BUN_OPTIONS
 # (`device_launch.py`); a private chat's WebFetch depends on it.
 PAGE_TRANSPORT = "webfetch_transport.cjs"
@@ -795,8 +800,30 @@ def transport(config, target_path):
     # 活在这条会话的 MCP 进程里：进程重起就当没读过，那是安全的方向。
     doc_versions: dict[str, int] = {}
 
+    def compact_session() -> str:
+        """Ask this session's runner to compact its context (`/compact`).
+
+        The runner is this process's parent's runner, reached at the socket it
+        handed the session — the same door `register_project_hooks` and the
+        Stop hook use. The runner writes the command; it does not wait for it,
+        because a compaction of a long conversation runs for minutes."""
+        path = os.environ.get(SESSION_SOCKET)
+        if not path:
+            # A session built without its socket: an invariant of the launch.
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session has no runner to ask for a compaction"
+            )
+        with dial_runner(path, RUNNER_REQUEST_S) as connection:
+            connection.sendall(
+                json.dumps({"method": "compact", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+        if "error" in answer:
+            raise RuntimeError(str(answer["error"]))
+        return "already" if (answer.get("result") or {}).get("already") else "requested"
+
     def platform_tool(tool, args, call_id, invoke):
-        host = PlatformHost(client, invoke, call_id, doc_versions)
+        host = PlatformHost(client, invoke, call_id, doc_versions, compact_session)
         try:
             text = cheese.run_platform_tool(tool, args, host)
         except Exception as exc:  # the agent reads the reason
@@ -879,7 +906,9 @@ def transport(config, target_path):
                             },
                         },
                     ]
-                    + cheese.PLATFORM_TOOLS.schemas()
+                    # What this session's deployment offers: a tool behind a
+                    # switch it has not turned on is not on the list.
+                    + cheese.offered_tools()
                 }
             elif method == "tools/call":
                 tool = request["params"]["name"]
