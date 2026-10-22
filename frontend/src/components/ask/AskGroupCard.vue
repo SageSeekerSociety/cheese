@@ -135,22 +135,25 @@ function reopen() {
 
 <template>
   <section class="ask-group" :class="{ 'ask-group--closed': !canAnswer }">
-    <!-- 题签栏：每题一枚，答过的打勾；箭头键在题之间切，不选也能走。 -->
-    <div class="ask-group__tabs" role="tablist" :aria-label="t('ask.group.review')">
-      <button
-        v-for="(q, i) in questions"
-        :key="q.id"
-        type="button"
-        role="tab"
-        class="ask-group__tab"
-        :aria-selected="!reviewing && at === i"
-        :disabled="submitted"
-        :title="q.content"
-        @click="(at = i), (reviewing = false)"
-      >
-        <span class="ask-group__tab-no" aria-hidden="true">{{ answeredText(i) ? '✓' : i + 1 }}</span>
-        <span class="ask-group__tab-label">{{ askHeader(q) || i + 1 }}</span>
-      </button>
+    <!-- 题签栏：每题一枚，答过的打勾；点一下切题，不选也能走。
+         「提交」不跟着题签一起滚——窄屏上题签能横向滑，它一直摆在右边。 -->
+    <div class="ask-group__tabsrow">
+      <div class="ask-group__tabs" role="tablist" :aria-label="t('ask.group.review')">
+        <button
+          v-for="(q, i) in questions"
+          :key="q.id"
+          type="button"
+          role="tab"
+          class="ask-group__tab"
+          :aria-selected="!reviewing && at === i"
+          :disabled="submitted"
+          :title="q.content"
+          @click="(at = i), (reviewing = false)"
+        >
+          <span class="ask-group__tab-no" aria-hidden="true">{{ answeredText(i) ? '✓' : i + 1 }}</span>
+          <span class="ask-group__tab-label">{{ askHeader(q) || i + 1 }}</span>
+        </button>
+      </div>
       <button
         type="button"
         class="ask-group__tab ask-group__tab--submit"
@@ -275,14 +278,23 @@ function reopen() {
 }
 
 /* 题签栏：产品里没有这个部件，所以最安静——13px 文字、不加底色块、不用主题色。 */
+.ask-group__tabsrow {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
 .ask-group__tabs {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--line);
+  padding: 6px 0 6px 8px;
   overflow-x: auto;
   scrollbar-width: none;
+  min-width: 0;
+  flex: 1;
+  /* 题签排不下时右边渐隐，看得出还能横滑——最后一枚被切掉一半是条线索，不是提示。 */
+  /* currentColor 只为它的不透明度：遮罩不看颜色，深色主题下同样成立。 */
+  mask-image: linear-gradient(to right, currentColor calc(100% - 20px), transparent);
 }
 .ask-group__tabs::-webkit-scrollbar {
   display: none;
@@ -333,10 +345,10 @@ function reopen() {
   overflow-wrap: anywhere;
 }
 .ask-group__tab--submit {
-  margin-left: auto;
+  flex: none;
   color: var(--ink);
   font-weight: 500;
-  padding-right: 12px;
+  padding: 6px 12px;
 }
 .ask-group__tab--submit:disabled {
   color: var(--faint);
