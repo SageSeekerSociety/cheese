@@ -78,6 +78,14 @@ const taskAgentName = computed(() => {
 // 摆出来。它报完之后会话结束了，旁边写「已离开」，不改它报的。任务关了就不再说。
 const progressNote = computed(() => (isOpen.value ? props.task?.progress_note ?? '' : ''))
 const agentLeft = computed(() => isOpen.value && !!props.task?.progress_state && !!props.task?.agent_left_at)
+// 「已离开」说的是报那一句的那位，不是任务现在的队友：任务换过人时，两处名字不是同一个，
+// 照着任务当前的队友写，就把「离开」栽到了别人的头上。
+const leftName = computed(() => {
+  const by = props.task?.progress_set_by
+  if (!by) return taskAgentName.value
+  // 名册上查不到就用 handle 本身：退回默认的队友名字等于又把别人的名字栽上去。
+  return props.memberNames[by] || by
+})
 const progressTitle = computed(() => {
   const by = props.task?.progress_set_by
   const at = props.task?.progress_set_at
@@ -241,7 +249,7 @@ function actionTestId(id: string): string | undefined {
           >{{ progressNote }}</span
         >
         <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
-          t('work.task.progress.left', { name: taskAgentName })
+          t('work.task.progress.left', { name: leftName })
         }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
           t('work.room.header.disconnected')

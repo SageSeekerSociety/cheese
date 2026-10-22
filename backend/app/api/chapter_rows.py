@@ -30,6 +30,7 @@ async def chapter_rows(db, conversation_id: uuid.UUID) -> list[dict]:
         {
             "pinned_by": chapter.pinned_by,
             "pinned_at": chapter.pinned_at.isoformat(),
+            "title": chapter.title,
             "block": block,
         }
         for (chapter, _), block in zip(pairs, dumped, strict=True)
