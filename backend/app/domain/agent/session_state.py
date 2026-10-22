@@ -14,7 +14,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -48,9 +48,29 @@ def _key(key: SeatKey):
     )
 
 
+def _next_run(key: SeatKey):
+    """The seat's next run, counted across every harness it has a session
+    under in this conversation: a project that changes harness does not start
+    the seat's runs again from one, so a report stamped under one harness is
+    never mistaken for a run under the other."""
+    return (
+        select(func.coalesce(func.max(SessionState.run), 0) + 1)
+        .where(
+            SessionState.conversation_id == key.conversation_id,
+            SessionState.agent_handle == key.agent_handle,
+        )
+        .scalar_subquery()
+    )
+
+
 async def register(sessions: async_sessionmaker[AsyncSession], key: SeatKey) -> int:
     """Issue the seat's runner a new worker epoch, and return it. Every epoch
-    issued before it is stale from this commit on."""
+    issued before it is stale from this commit on.
+
+    A registration is a new runner launch, so a new process: when the seat
+    still reads running, the process it read running was replaced mid-run,
+    and its run is over. The new process's ``running`` will not flip the
+    status, so the new run is counted here."""
     now = datetime.now(UTC)
     async with sessions() as session:
         epoch = await session.scalar(
@@ -65,7 +85,13 @@ async def register(sessions: async_sessionmaker[AsyncSession], key: SeatKey) -> 
             )
             .on_conflict_do_update(
                 index_elements=["conversation_id", "agent_handle", "harness"],
-                set_={"worker_epoch": SessionState.worker_epoch + 1},
+                set_={
+                    "worker_epoch": SessionState.worker_epoch + 1,
+                    "run": case(
+                        (SessionState.worker_status == RUNNING, _next_run(key)),
+                        else_=SessionState.run,
+                    ),
+                },
             )
             .returning(SessionState.worker_epoch)
         )
@@ -198,7 +224,9 @@ async def declare(session: AsyncSession, key: SeatKey, status: str) -> bool:
     state.changed_at = datetime.now(UTC)
     if status == RUNNING:
         # A new run: what the seat reports from here on is stamped with it.
-        state.run = state.run + 1
+        run = await session.scalar(select(_next_run(key)))
+        assert run is not None, "coalesce(max(run), 0) + 1 always has a value"
+        state.run = run
     return True
 
 

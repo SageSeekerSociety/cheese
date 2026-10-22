@@ -281,7 +281,7 @@ class NeedsYou(enum.StrEnum):
     awaiting_review = "awaiting_review"
     bounced = "bounced"
     #: 芝士提出了待确认问题，本轮停止等待回答。这一格压过队友报的状态
-    #: （`task_presentation` 第 2 条）；其余几格看卡或队友自己报的。
+    #: （`task_presentation` 第 2 条）；其余几格看卡、队友的会话在不在跑和它自己报的。
     awaiting_answer = "awaiting_answer"
     #: 队友说它卡住了，没有人帮忙走不下去（`TaskProgress.blocked`）。
     blocked = "blocked"

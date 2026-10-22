@@ -68,9 +68,9 @@ class _Runner:
     is the epoch an event was written under, when it is older than the
     registration delivering it: a backlog the runner before this one left."""
 
-    def __init__(self, client, task_id: str, seat: str) -> None:
+    def __init__(self, client, task_id: str, seat: str, harness: str = HARNESS) -> None:
         self.client = client
-        self.key = session_state.SeatKey(uuid.UUID(task_id), seat, HARNESS)
+        self.key = session_state.SeatKey(uuid.UUID(task_id), seat, harness)
         self.seq = 0
         self.register()
 
@@ -84,7 +84,7 @@ class _Runner:
         report = Report(
             self.key.conversation_id,
             self.key.agent_handle,
-            HARNESS,
+            self.key.harness,
             self.epoch,
             self.epoch if written_under is None else written_under,
             self.seq,
@@ -221,6 +221,68 @@ def test_what_the_teammate_says_while_its_session_runs_stands(client):
 
     _say(client, project_id, task_id, seat, "waiting")
     assert _phrases(client, project_id, task_id) == {"waiting"}
+
+
+def test_a_report_in_a_run_under_another_harness_still_stands(client):
+    """The project changed harness: the teammate's earlier runs were under one,
+    this run is under another. 「卡住」 said in this run is this run's."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    before = _Runner(client, task_id, seat)
+    for launch in range(3):
+        before.reports(chat, SessionRunning(uuid.uuid4()))
+        before.reports(chat, SessionExited(f"launch-{launch}"))
+        before.register()
+
+    after = _Runner(client, task_id, seat, harness="codex")
+    after.reports(chat, SessionRunning(uuid.uuid4()))
+    _say(client, project_id, task_id, seat, "blocked")
+
+    assert _phrases(client, project_id, task_id) == {"blocked"}
+
+
+def test_a_process_replaced_mid_run_starts_a_new_run(client):
+    """The teammate said 「在等」, and its process was replaced while the seat
+    still read running (the old process's exit never landed). The new process
+    working is a run the report was not made in: 在做."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+    _say(client, project_id, task_id, seat, "waiting")
+    assert _phrases(client, project_id, task_id) == {"waiting"}
+
+    runner.register()
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+
+    assert _phrases(client, project_id, task_id) == {"running"}
+
+
+def test_a_report_by_the_teammate_before_does_not_speak_for_the_one_now(client):
+    """The teammate working the task said 「在等」 in its first run; then the
+    task was given to another teammate, whose first run is under way. A run
+    number alone does not say whose run it is: the words are the previous
+    teammate's, and the task is 在做."""
+    project_id, task_id, seat = _a_task(client)
+    chat = _Chat(client)
+    first = _Runner(client, task_id, seat)
+    first.reports(chat, SessionRunning(uuid.uuid4()))
+    _say(client, project_id, task_id, seat, "waiting")
+    first.reports(chat, SessionExited("launch-1"))
+
+    made = client.post(f"/projects/{project_id}/agents", json={"handle": "pai"})
+    assert made.status_code == 200, made.text
+    second_seat = made.json()["data"]["seat_handle"]
+    given = client.patch(
+        f"/topics/{task_id}/task",
+        json={"agent_handle": second_seat},
+        headers=session_auth_headers("alice"),
+    )
+    assert given.status_code == 200, given.text
+    second = _Runner(client, task_id, second_seat)
+    second.reports(chat, SessionRunning(uuid.uuid4()))
+
+    assert _phrases(client, project_id, task_id) == {"running"}
 
 
 @pytest.fixture
