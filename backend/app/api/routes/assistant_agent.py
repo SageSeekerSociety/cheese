@@ -36,6 +36,7 @@ from app.core.sentences import say
 from app.domain.agent.personal import reading
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes, gate, passes, proposals, refs
+from app.domain.fetch.preapproved import preapproved
 from app.domain.notification.preferences import local_time
 from app.domain.project import address
 from app.domain.project.services import ProjectService
@@ -769,7 +770,9 @@ def _fetch(body: ActIn) -> _Plan:
     url = _need(body.url, "url")
     asked = f"，了解：{body.prompt.strip()}" if body.prompt.strip() else ""
     return _Plan(
-        gate.Action("fetch", f"读取网页 {url}{asked}"),
+        # A documentation site Claude Code reads without asking is read with
+        # no look here either.
+        gate.Action("fetch", f"读取网页 {url}{asked}", low=preapproved(url)),
         [
             {
                 "method": "POST",
