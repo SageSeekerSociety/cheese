@@ -12,6 +12,7 @@
     "reviewMissing": "有 {n} 题未作答，仍可提交",
     "back": "返回修改",
     "submit": "提交答案",
+    "submitting": "提交中…",
     "submitted": "已提交",
     "unanswered": "未作答",
     "edit": "改答案",

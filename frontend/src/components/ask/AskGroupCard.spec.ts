@@ -2,12 +2,15 @@
 //
 // 题号只写一次。早先这里画了两遍——一枚是序号、一枚是题签的回退值，两道题就长成
 // 「1 1 2 2」。答过的题在前面打勾，题号（或题签）不被勾替换掉。
+//
+// 右上角那颗只翻到确认那一屏，所以它说「确认答案」，一翻过去它就不画了；真正的
+// 「提交答案」在那一屏底部。早先它在确认屏上变成「已提交」，人以为已经交完了。
 import type { Block } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
 import AskGroupCard from './AskGroupCard.vue'
@@ -74,5 +77,37 @@ describe('AskGroupCard 的题签栏', () => {
     const { container } = renderCard([answered, question('b')])
 
     expect(tabTexts(container)).toEqual(['✓1', '2'])
+  })
+})
+
+describe('AskGroupCard 的确认与提交', () => {
+  function shortcut(container: HTMLElement): HTMLElement | null {
+    return container.querySelector('.ask-group__tab--submit')
+  }
+  function reviewButtons(container: HTMLElement): string[] {
+    return [...container.querySelectorAll('.ask-group__review .ask-group__bar button')].map(
+      (b) => b.textContent?.trim() ?? ''
+    )
+  }
+
+  it('右上角那颗说「确认答案」，翻过去之后它就不画了', async () => {
+    setLocale('zh-CN')
+    const { container } = renderCard([question('a'), question('b')])
+
+    expect(shortcut(container)?.textContent?.trim()).toBe('确认答案')
+    await fireEvent.click(shortcut(container)!)
+
+    expect(shortcut(container)).toBeNull()
+    expect(reviewButtons(container)).toContain('提交答案')
+  })
+
+  it('已经答过的那张卡，右上角才写「已提交」', () => {
+    setLocale('zh-CN')
+    const answered = question('a', {
+      answer_log: [{ kind: 'option', option: '甲', note: null, by: 'u1', at: '2026-08-01T00:01:00Z', reply_id: 'r1' }],
+    })
+    const { container } = renderCard([answered, question('b')])
+
+    expect(shortcut(container)?.textContent?.trim()).toBe('已提交')
   })
 })

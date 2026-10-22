@@ -178,13 +178,16 @@ function reopen() {
           <span class="ask-group__tab-label">{{ askHeader(q) || i + 1 }}</span>
         </button>
       </div>
+      <!-- 这颗只是翻到确认那一屏，不是交出去：文案说「确认」，真提交在那一屏底部
+           （那里才是「提交答案」）。在确认屏上它自己不用留着——那一屏有自己的底栏。 -->
       <button
+        v-if="!reviewing"
         type="button"
         class="ask-group__tab ask-group__tab--submit"
         :disabled="!answering || !canAnswer"
         @click="reviewing = true"
       >
-        {{ answering ? t('ask.group.submit') : t('ask.group.submitted') }}
+        {{ showingAnswers ? t('ask.group.submitted') : t('ask.group.review') }}
       </button>
     </div>
 
@@ -234,7 +237,7 @@ function reopen() {
         <BaseButton v-if="at < total - 1" kind="primary" size="sm" @click="at += 1">{{
           t('ask.group.next')
         }}</BaseButton>
-        <BaseButton v-else kind="primary" size="sm" @click="reviewing = true">{{ t('ask.group.submit') }}</BaseButton>
+        <BaseButton v-else kind="primary" size="sm" @click="reviewing = true">{{ t('ask.group.review') }}</BaseButton>
       </div>
     </template>
 
@@ -274,7 +277,7 @@ function reopen() {
             <BaseButton kind="secondary" size="sm" @click="reviewing = false">{{ t('ask.group.back') }}</BaseButton>
             <span class="ask-group__spacer" />
             <BaseButton kind="primary" size="sm" :disabled="busy || !canAnswer" @click="submit">
-              {{ t('ask.group.submit') }}
+              {{ busy ? t('ask.group.submitting') : t('ask.group.submit') }}
             </BaseButton>
           </template>
         </div>
