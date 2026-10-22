@@ -81,8 +81,7 @@ on:
     # and outlasts the image build, so the images are there by the time it
     # finishes; a build still running is waited for by the eligibility job
     # below. `branches: [main]` keeps this to runs that landed on main: a
-    # pull_request run's head branch is the PR's, and a merge queue entry's is
-    # the queue's temporary branch.
+    # pull_request run's head branch is the PR's.
     workflows: ["Required CI"]
     types: [completed]
     branches: [main]

@@ -76,8 +76,8 @@ jobs:
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
       # Reads the layer cache build.yml writes for this recipe on main. Nothing
-      # is written back: a cache saved from a pull request or merge-queue ref is
-      # visible to that ref alone.
+      # is written back: a cache saved from a pull request ref is visible to
+      # that ref alone.
       - name: Build private execution image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
