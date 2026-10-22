@@ -360,6 +360,28 @@ def test_the_main_sessions_own_records_are_not_marked_as_a_subagent(cli, capsys)
     assert "分身" not in capsys.readouterr().out
 
 
+def test_a_cursor_that_comes_back_again_ends_the_read(cli, capsys):
+    """游标不前进时停下来。一直读下去会把落文件撑成无限大，而那正是这条命令
+    不该做的事 —— 它写的是磁盘，没人看着它什么时候停。"""
+    asked = []
+
+    def call(_method, path, *args, **kwargs):
+        asked.append(path)
+        # 前两次说「同一个游标，还有更多」——不认的话就是一个死循环。第三次
+        # 起答「没有了」，好让不认的那一版跑得完、红得清楚，而不是把整个套件
+        # 挂在那里（CI 上没有谁会来打断它）。
+        if len(asked) > 2:
+            return {"data": {"items": [_record(1)], "next": None}}
+        return {"data": {"items": [_record(1)], "next": "same-cursor"}}
+
+    cli._call = call
+    _run(cli)
+    done = capsys.readouterr()
+    assert len(asked) == 2, f"第二次拿到同一个游标就该停：{len(asked)} 次"
+    assert "同一个游标" in done.err
+    assert Path(done.out.splitlines()[0]).read_text().count("\n") == 2
+
+
 def test_the_line_budget_counts_the_turn_heading_too(cli, capsys):
     """轮标题也是索引里的一行。只数步骤的话，每进一轮就超一行 —— 封顶封不住，
     而封顶正是这条命令存在的理由之一（agent 不知道自己上下文还剩多少）。

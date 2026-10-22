@@ -6704,6 +6704,7 @@ def _transcript_pages(topic: str, *, turn, author, grep):
     if grep:
         query["q"] = grep
     cursor = None
+    seen: set[str] = set()
     while True:
         params = dict(query)
         if cursor:
@@ -6718,8 +6719,17 @@ def _transcript_pages(topic: str, *, turn, author, grep):
         )["data"]
         yield from page["items"]
         cursor = page.get("next")
-        if not cursor:
+        # 同一个游标回来第二次就是转不出来:不认的话这里会一直读下去,把落文件
+        # 撑成无限大。宁可停下来并说清楚。
+        if not cursor or cursor in seen:
+            if cursor:
+                print(
+                    "[cheese] 平台又把同一个游标发了回来,不再往下读;"
+                    "已经落下的那部分在文件里,可以换 --turn / --grep 收窄。",
+                    file=sys.stderr,
+                )
             return
+        seen.add(cursor)
 
 
 def _transcript_path(topic: str, *, turn, author, grep) -> Path:
