@@ -21,6 +21,9 @@ const CHROME_ON_WINDOWS =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 const SAFARI_ON_IPHONE =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+// The desktop app's window: the system webview, which reports Edge on Windows.
+const EDGE_ON_WINDOWS =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0'
 
 function session(id: string, userAgent: string, current: boolean, loginMethod = 'password', trusted = false) {
   return {
@@ -103,6 +106,17 @@ describe('signed-in devices', () => {
     expect(view.getByText('Password sign-in')).toBeTruthy()
     expect(view.getByText('GitHub sign-in')).toBeTruthy()
     expect(view.queryByText('Trusted')).toBeNull()
+  })
+
+  it('names the desktop app as the app, not as the browser its window is built on', async () => {
+    vi.mocked(UserApi.listSessions).mockResolvedValue({
+      sessions: [session('app', EDGE_ON_WINDOWS, true, 'app_sign_in')],
+    } as never)
+    const view = await renderPage()
+
+    await view.findByText('Desktop app on Windows')
+    expect(view.queryByText('Edge on Windows')).toBeNull()
+    expect(view.getByText('Desktop app sign-in')).toBeTruthy()
   })
 
   it('marks a device trusted to skip two-step verification', async () => {
