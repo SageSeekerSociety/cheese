@@ -16,7 +16,7 @@ import UserMenuCard from './UserMenuCard.vue'
 
 import i18n, { setLocale } from '@/i18n'
 
-function fakeMenu(intro: string, seatsLeft: number) {
+function fakeMenu(seatsLeft: number) {
   return {
     menuOpen: ref(true),
     loggedIn: computed(() => true),
@@ -25,13 +25,12 @@ function fakeMenu(intro: string, seatsLeft: number) {
     avatarInitial: computed(() => '爱'),
     avatarColor: computed(() => '#6a5acd'),
     nickname: computed(() => '爱丽丝'),
-    intro: computed(() => intro),
     inviteSeatsLeft: ref(seatsLeft),
     onLogout: vi.fn(),
   }
 }
 
-async function mount(intro = '', seatsLeft = 3) {
+async function mount(seatsLeft = 3) {
   const stub = { template: '<div />' }
   const router = createRouter({
     history: createWebHashHistory(),
@@ -49,7 +48,7 @@ async function mount(intro = '', seatsLeft = 3) {
   const vuetify = createVuetify({ components, directives })
   return render(UserMenuCard, {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    props: { menu: fakeMenu(intro, seatsLeft) as any },
+    props: { menu: fakeMenu(seatsLeft) as any },
     global: { plugins: [vuetify, router] },
   })
 }
@@ -58,23 +57,31 @@ describe('「我」的菜单', () => {
   // 初始语言跟着浏览器（happy-dom 报 en-US），断言写的是中文，所以每条先定成中文。
   beforeEach(() => setLocale('zh-CN'))
 
-  it('「邀请好友」在个人主页下面，写着自己的码还剩几个名额，点进去是邀请页', async () => {
-    const view = await mount()
-    const item = await view.findByText('邀请好友 · 剩 3 个名额')
-    expect(item.closest('a')?.getAttribute('href')).toBe('#/users/settings/invites')
-  })
-
-  it('名额用完了只写「邀请好友」，照样能进邀请页', async () => {
-    const view = await mount('', 0)
-    const item = await view.findByText('邀请好友')
-    expect(item.closest('a')?.getAttribute('href')).toBe('#/users/settings/invites')
-    expect(view.queryByText(/剩 \d+ 个名额/)).toBeNull()
-  })
-
-  it('个人主页、设置、下载客户端都在，并且能退出登录', async () => {
+  it('点头部的名字就是去自己的主页，头部写着 @handle', async () => {
     const view = await mount()
     // 主页按 handle 找人，和 @提及、成员名册同一种地址。
-    expect(view.getByText('个人主页').closest('a')?.getAttribute('href')).toBe('#/users/alice')
+    const head = view.getByRole('link', { name: '个人主页' })
+    expect(head.getAttribute('href')).toBe('#/users/alice')
+    expect(head.textContent).toContain('爱丽丝')
+    expect(head.textContent).toContain('@alice')
+  })
+
+  it('「邀请好友」右边写着自己的码还剩几个，点进去是邀请页', async () => {
+    const view = await mount()
+    const item = view.getByText('邀请好友').closest('a')
+    expect(item?.getAttribute('href')).toBe('#/users/settings/invites')
+    expect(item?.textContent).toContain('剩 3 个')
+  })
+
+  it('名额用完了右边什么也不写，照样能进邀请页', async () => {
+    const view = await mount(0)
+    const item = view.getByText('邀请好友').closest('a')
+    expect(item?.getAttribute('href')).toBe('#/users/settings/invites')
+    expect(view.queryByText(/剩 \d+ 个/)).toBeNull()
+  })
+
+  it('设置、已归档的项目、下载客户端都在，并且能退出登录', async () => {
+    const view = await mount()
     // 上传头像的地方：以前菜单里没有这一项，得先进个人主页再点资料卡上的编辑。
     expect(view.getByText('设置').closest('a')?.getAttribute('href')).toBe('#/users/settings')
     expect(view.getByText('下载客户端').closest('a')?.getAttribute('href')).toBe('#/download')
@@ -88,22 +95,6 @@ describe('「我」的菜单', () => {
     await fireEvent.click(view.getByRole('radio', { name: 'English' }))
     expect(i18n.global.locale.value).toBe('en')
     expect(await view.findByText('Log out')).toBeTruthy()
-  })
-
-  it('没写简介时说「暂无个人简介」', async () => {
-    expect((await mount()).getByText('暂无个人简介')).toBeTruthy()
-  })
-
-  it('写了简介就显示简介', async () => {
-    const view = await mount('研究生，做推荐系统')
-    expect(view.getByText('研究生，做推荐系统')).toBeTruthy()
-    expect(view.queryByText('暂无个人简介')).toBeNull()
-  })
-
-  it('显示名字和 UID', async () => {
-    const view = await mount()
-    expect(view.getByText('爱丽丝')).toBeTruthy()
-    expect(view.getByText('UID 42')).toBeTruthy()
   })
 })
 

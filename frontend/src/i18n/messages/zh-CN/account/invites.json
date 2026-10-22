@@ -1,10 +1,9 @@
 {
   "title": "邀请好友",
-  "lede": "好友用你的邀请码注册，完成新手引导并建好第一个项目，得 50 点；注册 7 天内首次采纳交付，好友再得 100 点，你得 150 点。",
+  "lede": "把注册链接发给好友。好友注册后首次采纳芝士的交付，你们都会得到额度。",
   "loadFailed": "无法读取邀请信息",
   "retry": "重试",
   "code": {
-    "title": "我的邀请码与余量",
     "label": "邀请码",
     "remaining": "剩余 {left} / {total} 个名额",
     "unlockHint": "你首次采纳交付后，再增加 {n} 个名额",
@@ -12,22 +11,31 @@
     "copyLink": "复制注册链接",
     "copied": "邀请码已复制"
   },
-  "earned": {
-    "title": "累计获得激励",
-    "credits": "额度",
-    "creditsValue": "{n} 点",
-    "note": "邀请所得额度每月最多 1,500 点，达到后再有好友激活，你不再得到额度。额度自发放起 365 天内有效，在当月方案额度用完后使用。",
-    "viewCredits": "查看个人额度"
+  "steps": {
+    "title": "好友和你分别得到什么",
+    "signUp": "好友用你的链接注册",
+    "signUpGain": "用掉 1 个名额",
+    "project": "好友建好第一个项目",
+    "projectGain": "好友 +50 点",
+    "accept": "好友 7 天内首次采纳芝士的交付",
+    "acceptGain": "好友 +100 点，你 +150 点",
+    "meaning": "首次采纳，也就是好友真的用知是做成了一件事。"
   },
   "people": {
     "title": "我邀请的人",
+    "viewCredits": "查看个人额度",
+    "invited": "已邀请",
+    "accepted": "已采纳",
+    "credits": "邀请所得额度",
+    "creditsValue": "{n} 点",
+    "capNote": "邀请所得额度每月最多 1,500 点，达到后再有好友首次采纳，你不再得到额度。额度自发放起 365 天内有效，在当月方案额度用完后使用。",
     "empty": "暂无受邀好友",
     "registeredOn": "{date} 注册",
     "stage": {
       "registered": "已注册 · 待建项目",
       "onboarded": "待首次采纳",
-      "activated": "已激活 · +{n} 点",
-      "activatedNoCredits": "已激活",
+      "activated": "已采纳 · +{n} 点",
+      "activatedNoCredits": "已采纳",
       "lapsed": "已过 7 天"
     }
   }
