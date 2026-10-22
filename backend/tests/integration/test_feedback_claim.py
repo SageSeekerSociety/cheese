@@ -4,7 +4,7 @@
 
 * 领到的那一刻，提它的人看到「处理中」，时间线上写着谁、什么时候；
 * 第二个人的领取**失败**，并且说出是谁在修 —— 同时到的也一样，只有一个赢；
-* 放掉之后别人能领；已经修好、上线、不修复的，领了不动它的状态；
+* 放掉之后别人能领；已经修好、上线、不修复的，不能再领、也不能放弃；
 * 能领的是在做这个平台本身的人和 agent，agent 用的就是它手上那样工具。
 """
 
@@ -250,17 +250,43 @@ def test_only_the_holder_or_a_feedback_admin_can_release(client, platform):
 
 
 @pytest.mark.parametrize("closed", ["declined", "resolved", "deployed"])
-def test_claiming_a_finished_report_leaves_its_status_alone(client, platform, closed):
+def test_a_finished_report_cannot_be_claimed(client, platform, closed):
     row = _report(client)
     _set_status(client, row["id"], closed)
 
     r = _claim(client, DEV, row["id"])
 
-    assert r.status_code == 200, r.text
+    assert r.status_code == 409, r.text
+    assert "办完" in r.json()["error"]["message"]
     seen = _view(client, REPORTER, row["id"])
     assert seen["status"] == closed
-    assert seen["assignee_handle"] == DEV
+    assert seen["assignee_handle"] is None
     assert [t["status"] for t in seen["timeline"]] == ["received", closed]
+    # The button follows the same answer: no holder, but nothing to claim.
+    assert _view(client, DEV, row["id"])["can_claim"] is False
+
+
+@pytest.mark.parametrize("closed", ["declined", "resolved", "deployed"])
+def test_a_finished_report_cannot_be_released(client, platform, closed):
+    row = _report(client)
+    assert _claim(client, DEV, row["id"]).status_code == 200
+    _set_status(client, row["id"], closed)
+
+    # Nobody else can take it over, and neither the holder nor an admin can
+    # drop the claim: claiming and releasing are the two ends of fixing it.
+    assert _claim(client, DEV2, row["id"]).status_code == 409
+    for who in (DEV, ADMIN):
+        r = _release(client, who, row["id"])
+        assert r.status_code == 409, r.text
+        assert "办完" in r.json()["error"]["message"]
+
+    seen = _view(client, REPORTER, row["id"])
+    assert seen["assignee_handle"] == DEV
+    assert seen["status"] == closed
+    holder = _view(client, DEV, row["id"])
+    assert (holder["can_claim"], holder["can_release"]) == (False, False)
+    admin = _view(client, ADMIN, row["id"])
+    assert (admin["can_claim"], admin["can_release"]) == (False, False)
 
 
 def test_only_people_working_on_the_platform_can_claim(client, platform):

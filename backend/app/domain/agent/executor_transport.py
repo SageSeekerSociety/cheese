@@ -484,12 +484,15 @@ class PlatformHost:
     breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
     """
 
-    def __init__(self, client, invoke, call_id, doc_versions):
+    def __init__(self, client, invoke, call_id, doc_versions, compact=None):
         self.client = client
         self.invoke = invoke
         self.call_id = call_id
         self.doc_versions = doc_versions
         self.environ = dict(os.environ)
+        #: Ask this session's harness to compact its context, for the one
+        #: tool that does (`cheese_compact`); a session with none refuses.
+        self.compact = compact
 
     def request(self, plan):
         stdout = self.client.platform_request(plan)["value"]["stdout"]

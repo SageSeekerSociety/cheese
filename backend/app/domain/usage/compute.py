@@ -72,14 +72,14 @@ def hourly_price(kind: str, spec: str) -> float | None:
 
 async def admit_start(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    payer: Payer,
     *,
     kind: str = SANDBOX,
     spec: str = SANDBOX,
 ) -> None:
-    """Whether cloud compute may start for this project now. Raises
-    ``ComputeRefused`` when no price is set for it, or when the project's payer
-    has no credits left."""
+    """Whether cloud compute ``payer`` pays for may start now. Raises
+    ``ComputeRefused`` when no price is set for it, or when the payer has no
+    credits left."""
     if hourly_price(kind, spec) is None:
         logger.error(
             "cloud %s %r has no price: set CLOUD_SANDBOX_CREDITS_PER_HOUR "
@@ -90,7 +90,6 @@ async def admit_start(
         raise ComputeRefused(
             say("cloudComputeUnpriced" if kind == SANDBOX else "cloudVmUnpriced")
         )
-    payer = await payer_for_project(session, project_id)
     refusal = await Ledger(session).admit(payer)
     if refusal is not None:
         raise ComputeRefused(refusal.message)

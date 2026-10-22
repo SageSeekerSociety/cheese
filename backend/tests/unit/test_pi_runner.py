@@ -765,3 +765,53 @@ async def test_a_platform_tool_runs_against_the_backend_and_takes_no_machine(
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+# --- the session compacting itself ----------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_an_idle_session_compacts_itself_through_pi(tmp_path):
+    """`cheese_compact` reaches this runner as `request_compact`, and the ask
+    goes to pi as its own `compact` command. Nothing is running, so it goes at
+    once, and what the room reads is the compaction pi reported."""
+    runner, _ = await running(tmp_path)
+    try:
+        assert runner.request_compact() == "requested"
+        for _ in range(200):
+            if not runner.compact_request:
+                break
+            await asyncio.sleep(0.02)
+
+        stats = await runner.client.request("get_session_stats")
+        assert stats["compactions"] == 1
+        entries = (await call(runner.state, "entries"))["entries"]
+        assert any(entry["type"] == "cheese_compacting" for entry in entries)
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_request_made_mid_turn_waits_for_that_turn_to_settle(tmp_path):
+    """pi's `compact` aborts whatever operation it finds running, so the ask
+    waits for the turn that made it to settle — and twice in one turn asks
+    once, because one request already waiting is one request."""
+    runner, _ = await running(tmp_path)
+    try:
+        runner.working = True
+        assert runner.request_compact() == "requested"
+        await asyncio.sleep(0.05)
+        stats = await runner.client.request("get_session_stats")
+        assert stats["compactions"] == 0
+        assert runner.request_compact() == "already"
+
+        # The turn settles; the request goes then.
+        await runner.observe({"type": "agent_settled"})
+        for _ in range(200):
+            if not runner.compact_request:
+                break
+            await asyncio.sleep(0.02)
+        stats = await runner.client.request("get_session_stats")
+        assert stats["compactions"] == 1
+    finally:
+        await runner.close()

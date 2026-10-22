@@ -147,6 +147,28 @@ class ToolTable:
         return name in self.names()
 
 
+#: 默认关着的那样工具，和打开它的那句话：部署在会话的环境里写下
+#: `CHEESE_COMPACT_TOOL=1`，它才在清单上，才调得动。表本身始终是完整的 ——
+#: 三个 harness 的成员判断、`platform_tool_names` 都读这张表 —— 清单则是
+#: 按这份环境挑出来的，所以「没开开关的座位看不到它」只在这一处决定。
+COMPACT_TOOL = "cheese_compact"
+COMPACT_ENV = "CHEESE_COMPACT_TOOL"
+
+
+def switched_on(environ=None) -> bool:
+    """Whether this session's deployment offers `cheese_compact`."""
+    env = os.environ if environ is None else environ
+    return str(env.get(COMPACT_ENV) or "").strip() not in ("", "0", "false", "False")
+
+
+def offered_tools(environ=None) -> list[dict]:
+    """The table's rows this session is offered: everything, minus the tool a
+    deployment has not turned on."""
+    if switched_on(environ):
+        return PLATFORM_TOOLS.schemas()
+    return [row for row in PLATFORM_TOOLS.schemas() if row["name"] != COMPACT_TOOL]
+
+
 #: Which document: one of the project's own, by id (`cheese_doc_list`). Left
 #: out, the session's own document, or its room's living document.
 _DOCUMENT_ARG = {
@@ -1047,6 +1069,13 @@ PLATFORM_TOOLS = ToolTable(
             "文件和命令工具本身也会等，所以只在你想先等好再做别的时候调它。",
         ),
         _tool(
+            "cheese_compact",
+            "请求压缩你自己这个会话的上下文：前面的对话整理成一段摘要，窗口腾出来，"
+            "接着还能用。压缩在这一轮结束后开始，随后可能要几分钟；期间会话不会回复，"
+            "房间里会出现一行「正在整理上下文」，整理完接着处理，上下文用量会掉下来。"
+            "上下文快满、或者正要开始一段长活的时候用它。一轮最多请求一次。",
+        ),
+        _tool(
             "cheese_note",
             "给同一个 handle 的另一条线程留一张便条。它直接进那条线程正在跑的"
             "那一轮，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
@@ -1719,6 +1748,8 @@ _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     # 画布有自己的编号，跟着它的文档走。
     "cheese_canvas_get",
     "cheese_canvas_edit",
+    # 压缩这一样动的是这场会话本身，不是哪个话题。
+    "cheese_compact",
 }
 _NEEDS_DOCUMENT = frozenset({"cheese_doc_get", "cheese_doc_edit"})
 _NEEDS_PROJECT = frozenset(
@@ -2534,6 +2565,8 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
     table = next((t for t in (PLATFORM_TOOLS, DELEGATED_TOOLS) if tool in t), None)
     if table is None:
         raise ValueError(f"Unknown platform tool: {tool}")
+    if tool == COMPACT_TOOL and not switched_on(getattr(host, "environ", None)):
+        raise PlatformToolError("这个部署没有给这个座位打开主动压缩上下文")
     # 拒在发出任何请求、碰任何机器之前：一张已经递出去的卡收不回来。
     schema = next(t for t in table.schemas() if t["name"] == tool)
     missing = [
@@ -3733,7 +3766,7 @@ def _feedback_release(args: dict, host) -> str:
     except Exception as exc:
         status = getattr(exc, "status", None)
         why = _feedback_refusal(exc)
-        if status in (403, 404) and why:
+        if status in (403, 404, 409) and why:
             raise PlatformToolError(f"没放掉：{why.rstrip('。')}。") from exc
         raise
     item = data.get("data") or {}
@@ -3748,6 +3781,24 @@ def _wait_machine(args: dict, host) -> str:
     host.wait_machine()
     waited = round((datetime.now(UTC) - started).total_seconds())
     return f"执行环境已就绪（等了 {waited} 秒）。" if waited else "执行环境已就绪。"
+
+
+def _compact(args: dict, host) -> str:
+    """Ask this session's harness to compact its own context.
+
+    The request goes to the harness, not the platform: only the thing running
+    the conversation can summarise it. It answers as soon as the request is
+    taken — a compaction of a long conversation runs for minutes, and the room
+    already shows when one starts and ends."""
+    compact = getattr(host, "compact", None)
+    if compact is None:
+        raise PlatformToolError("这个会话的骨架不支持主动压缩上下文")
+    if compact() == "already":
+        return "这一轮已经请求过压缩了，等它跑完。"
+    return (
+        "已请求压缩当前会话的上下文：这一轮结束后开始整理，期间不会回复，"
+        "整理完接着处理，上下文用量会降下来。"
+    )
 
 
 def _task(args: dict, host) -> str:
@@ -3968,6 +4019,7 @@ _STEPS = {
     "cheese_feedback_release": _feedback_release,
     "cheese_run_records": _run_records,
     "cheese_wait_environment": _wait_machine,
+    "cheese_compact": _compact,
     "cheese_problem_write": lambda args, host: _task_step(
         "cheese_problem_write", args, host
     ),

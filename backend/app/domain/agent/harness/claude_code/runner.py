@@ -82,6 +82,10 @@ SETTLE_S = 0.5
 RELEASE_GRACE_S = 5.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
+#: How long the runner waits for a compaction it asked the build for to report
+#: its `result`. Summarising a full window takes minutes; this is the outer
+#: bound on believing it will come at all, not an expected duration.
+COMPACT_TIMEOUT_S = 1800.0
 # How long a new turn waits to see the project's context as it is now before it
 # starts on what the session already has.
 CATCH_UP_TIMEOUT_S = 30.0
@@ -517,6 +521,10 @@ class Runner(runner.Runner[Journal]):
         # The platform's inputs read since the session last went idle: what a
         # failure of that work names.
         self.run_inputs: list[str] = []
+        # The session asked to compact its own context (`dispatch`'s `compact`)
+        # and the turn it asked in has not ended yet: `/compact` is written
+        # when it has.
+        self.compact_when_idle = False
         # What the build said of the work under way that its ``result`` does
         # not: the API's refusal, and the account's rate-limit window.
         self.api_error = ""
@@ -1260,6 +1268,9 @@ class Runner(runner.Runner[Journal]):
         # work, and it is that work which owes the answer.
         if self.owed not in self.sent:
             self.reply_settled()
+        if self.compact_when_idle and not self.closing:
+            self.compact_when_idle = False
+            self.helpers.append(asyncio.ensure_future(self._compact_now()))
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -1679,6 +1690,44 @@ class Runner(runner.Runner[Journal]):
             "is_error": bool(record.get("is_error")),
         }
 
+    def request_compact(self) -> dict:
+        """The session asked to compact its own context: `/compact`, written
+        once the turn it asked in has ended.
+
+        Written then, and not mid-turn: a tool call in flight is answered at a
+        tool boundary, and the build takes what comes in on stdin at those
+        boundaries, so a slash command written from inside a tool call arrives
+        as part of that turn — where the pinned build's contract says nothing
+        about what a slash command does. A tool call is always inside a turn,
+        so the request always defers.
+
+        Once a turn is the whole rate limit: a request still waiting and one
+        that has already run look the same to the agent that asked, and a
+        second `/compact` would only summarise the first one's output.
+        """
+        if self.compact_when_idle:
+            return {"already": True}
+        self.compact_when_idle = True
+        # A tool call is answered inside a turn, so `_end` is where this
+        # normally goes. A session already idle has no turn coming.
+        if not self.working and not self.closing:
+            self.compact_when_idle = False
+            self.helpers.append(asyncio.ensure_future(self._compact_now()))
+        return {"requested": True, "already": False}
+
+    async def _compact_now(self) -> None:
+        """Write `/compact` the way `/reload-skills` is written, and wait for
+        the command's `result` in the background.
+
+        Not through `dispatch`: the tool call that asked has been answered
+        already, and a compaction of a full window takes minutes to report.
+        What the room shows meanwhile comes from the build's own
+        `system/status` records (`events._compacting`)."""
+        try:
+            await self.command("/compact", COMPACT_TIMEOUT_S)
+        except Exception as error:  # the session goes on without it
+            print(f"compaction not asked: {error!r}", file=sys.stderr, flush=True)
+
     # --- the socket ----------------------------------------------------------
 
     async def dispatch(self, method: str, params: dict) -> dict:
@@ -1757,6 +1806,8 @@ class Runner(runner.Runner[Journal]):
             return await self.control(params["request"])
         if method == "command":
             return await self.command(params["text"])
+        if method == "compact":
+            return self.request_compact()
         if method == "memory":
             # 不是 accept 那种一次性输入：对账是幂等的（同样的三方合出同样的结
             # 果），重来一次不会多出一条记忆，所以不需要按 id 去重。

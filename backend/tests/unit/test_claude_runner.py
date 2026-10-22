@@ -1258,3 +1258,69 @@ def test_a_skill_the_project_gained_between_turns_is_offered_in_the_next(
     assert calls.read_text().count("called") == 2, "once before each turn"
     assert offered, "the first turn was not offered the skill the project gained"
     assert loaded
+
+
+# --- N. the session compacting itself -------------------------------------------
+
+
+def test_an_idle_session_compacts_itself_when_asked(screen, contract):
+    """`cheese_compact` reaches this runner as `compact`, and the runner writes
+    `/compact` — the same door `/reload-skills` goes through. An idle session
+    has no turn to wait for, so it goes at once, and the build reports the
+    compaction the way the room already reads it (`system/status`)."""
+    work = str(uuid.uuid4())
+    screen.send("hello", work_id=work)
+    screen.wait_event(_status("idle", work))
+
+    answer = screen.call("compact", {})
+
+    assert answer == {"requested": True, "already": False}
+    started = screen.wait(lambda r: r.get("status") == "compacting")
+    ended = screen.wait(
+        lambda r: r.get("compact_result") is not None, after=started["sequence"]
+    )
+    assert ended["record"]["compact_result"] == "success"
+
+
+def test_a_request_made_mid_turn_is_written_when_that_turn_ends(screen, contract):
+    """A tool call is answered at a tool boundary, and the build takes stdin at
+    those boundaries: `/compact` written from inside one would arrive inside the
+    turn that asked. So it waits for that turn's ending — one per request, and
+    the second asking in the same turn is told it is already asked."""
+    work = str(uuid.uuid4())
+    screen.send(
+        contract.do("Bash", command="sleep 4; echo HELD", description="hold the turn"),
+        work_id=work,
+    )
+    # The Bash is really running: asked for a tool call, the build is inside
+    # one, and the turn cannot end before its result comes back.
+    screen.wait(_is("system", "task_started"))
+    assert screen.call("ping")["work_id"] == work
+
+    first = screen.call("compact", {})
+    second = screen.call("compact", {})
+
+    assert first == {"requested": True, "already": False}
+    assert second == {"already": True}
+    held = screen.records()
+    assert not any(
+        block.get("text") == "/compact"
+        for entry in held
+        for block in _blocks(entry["record"])
+    ), "the command went out inside the turn that asked"
+    screen.wait_event(_status("idle", work))
+    screen.wait(lambda r: r.get("status") == "compacting")
+
+    # Once per turn, not once for ever: the session's next turn can ask again,
+    # and this time nothing is running, so the command goes at once.
+    second_work = str(uuid.uuid4())
+    screen.send("again", work_id=second_work)
+    screen.wait_event(_status("idle", second_work))
+    assert screen.call("compact", {}) == {"requested": True, "already": False}
+    started = screen.wait(
+        lambda r: r.get("status") == "compacting", after=held[-1]["sequence"]
+    )
+    ended = screen.wait(
+        lambda r: r.get("compact_result") is not None, after=started["sequence"]
+    )
+    assert ended["record"]["compact_result"] == "success"
