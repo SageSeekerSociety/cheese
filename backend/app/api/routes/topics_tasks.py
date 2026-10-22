@@ -614,6 +614,17 @@ async def create_teammate_task(
     if source is not None and source.project_id != place.project_id:
         raise ForbiddenError(say("resourceNotFound"))
     task_dispatch.refuse_tasks_in_private(place.room)
+    if body.here and place.thread is None and place.task is not None:
+        # 已经在任务里了，而队友说「就在这儿开工」。那不是「这里不能开」，
+        # 是「你要的地方就是这里」：把这条任务交回去，并说明它在。以前这句
+        # 回的是「只有支线可以原地转为任务」——只说了这不是什么，没说人在哪，
+        # 于是队友转头另开了一条，同一件事被两个 AI 干了两遍（2026-10-21）。
+        out = {
+            **TaskOut.model_validate(place.task).model_dump(mode="json"),
+            "here": True,
+            "already": True,
+        }
+        return ok(out)
     if body.here and place.thread is None:
         raise UnprocessableEntityError(say("teammateTaskHereOnlyInThread"))
     if not body.here and not body.summary.strip():

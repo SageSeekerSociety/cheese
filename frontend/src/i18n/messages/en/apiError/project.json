@@ -34,6 +34,7 @@
   "chooseTaskToEdit": "Choose the task to edit",
   "dashboardDeleteMemory": "delete a memory",
   "dashboardNoProject": "You're not a member of any project on this dashboard, so you can't view it",
+  "dashboardSetRemark": "set a teammate remark",
   "dashboardViewProfile": "view this profile",
   "defaultReviewerNul": "default_reviewer can't contain a NUL byte",
   "deliveryVersionsMissing": "This item doesn't have the selected delivered versions",

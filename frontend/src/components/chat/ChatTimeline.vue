@@ -123,6 +123,7 @@ const props = defineProps<{
       文档链）已经统一的名字一致，一个概念只有一个叫法。 */
   avatarOf: (handle: string) => string | null
   displayName: (m: Block | ReplyPreview) => string
+  authorTitle?: (m: Block) => string | null
   noticeAgent: (m: Block, notice: PlatformNotice) => NoticeAgent | null
   parentOf: (m: Block) => Block | ReplyPreview | undefined
   showReplyCue: (m: Block) => boolean
@@ -576,6 +577,7 @@ const rowLabels = computed(() =>
               :mine="isMine(m)"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
+              :author-title="authorTitle?.(m) ?? null"
               :external="isExternal(m.author)"
               :avatar="avatarOf(m.author)"
               :is-agent="isAgentBlock(m)"
@@ -718,6 +720,7 @@ const rowLabels = computed(() =>
           :mine="false"
           :topic-id="topic?.id ?? null"
           :author-name="displayName(m)"
+          :author-title="authorTitle?.(m) ?? null"
           :external="isExternal(m.author)"
           :avatar="avatarOf(m.author)"
           :is-agent="isAgentBlock(m)"

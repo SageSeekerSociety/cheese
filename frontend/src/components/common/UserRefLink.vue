@@ -21,12 +21,12 @@ const props = defineProps<{
   projectId?: string | null
 }>()
 
-const { label, to, navigate } = useUserRef(
+const { label, title, to, navigate } = useUserRef(
   () => props.handle,
   () => props.projectId
 )
 </script>
 
 <template>
-  <UserRef :handle="handle" :name="name || label" :to="to" @navigate="navigate" />
+  <UserRef :handle="handle" :name="name || label" :title="title" :to="to" @navigate="navigate" />
 </template>
