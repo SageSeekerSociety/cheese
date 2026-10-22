@@ -73,6 +73,8 @@ class Outcome:
     _members: dict[tuple[str, str], list[str]]
     #: What the asker's 芝士 remembers of them after the task, file by file.
     memories: list[str] = field(default_factory=list)
+    #: The asker's routines after the task: (trigger, what the person said).
+    routines: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def answer(self) -> str:
@@ -278,6 +280,13 @@ async def read_outcome(
                 "and owner_handle = 'linxi' and path <> 'MEMORY.md'"
             )
         ]
+        routines = [
+            (str(trigger), str(words))
+            for trigger, words in await q(
+                "select trigger, words from assistant_routines where user_id = :u",
+                u=uid,
+            )
+        ]
         members: dict[tuple[str, str], list[str]] = {}
         for topic, handle in await q(
             "select topic_id, member_handle from topic_memberships"
@@ -302,6 +311,7 @@ async def read_outcome(
         prefs,
         members,
         memories,
+        routines,
     )
 
 
