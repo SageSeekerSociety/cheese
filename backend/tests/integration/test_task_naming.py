@@ -589,9 +589,12 @@ def test_a_person_can_supply_the_missing_attachment_context(client, alice, gatew
         kind=BlockKind.attachment,
         mime_type="image/png",
     )
+    gateway["answers"].append({"keep": False, "title": "这张图"})
     assert _run(client, rid, "message") is None
+    assert _shown(client, rid) == ("新任务", "placeholder")
+    assert _history(client, rid) == []
     _say(client, rid, "轮次跑了 21 小时还是 0 步，帮我排查卡在哪里。")
-    gateway["answers"].append({"keep": False, "title": "卡住的轮次排查"})
+    gateway["answers"][:] = [{"keep": False, "title": "卡住的轮次排查"}]
 
     assert _run(client, rid, "message").title == "卡住的轮次排查"
 
