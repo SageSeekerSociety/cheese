@@ -6904,8 +6904,9 @@ def _transcript_parts(record: dict) -> list[tuple[str, str, str, str]]:
 def _transcript_subagent(record: dict, children: dict) -> str:
     """这一条是哪个分身写的,或者空串表示是主会话自己的。
 
-    三种骨架各有各的说法:Claude Code 把分身的记录多包一层 `cheese_file`,分身在
-    `agent_id` 上;pi 给每条盖一个 `subagent` 键;Codex 的 `thread/started` 用
+    三种骨架各有各的说法这一版 Claude Code 把分身在 `agent_id` 上直接盖在记录本身上
+    (早期/另一种写法是包一层 `cheese_file`,分身在那一层);pi 给每条盖一个
+    `subagent` 键;Codex 的 `thread/started` 用
     `parentThreadId` 认领子线程,子线程自己的记录只在 `threadId` 上,要顺着
     `children` 表查。认不出来就是主会话,这是安全的那一边:digest 少标一个分身,
     读的人只是没看见那里有分身;多标一个,读的人会以为主会话做了它没做过的事。
@@ -7310,7 +7311,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--author",
         default=None,
         metavar="handle",
-        help="只要这个来源写的(默认全部,含分身)",
+        help=(
+            "只要这个会话/座位写的(一屋里几条会话时用来分开);"
+            "分身那几行算在起它的那条会话名下,不是单独一个 handle"
+        ),
     )
     ptrmode = ptr.add_mutually_exclusive_group()
     ptrmode.add_argument(
