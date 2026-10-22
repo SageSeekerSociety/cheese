@@ -8,6 +8,7 @@
 import type { Component } from 'vue'
 import type { Notification, NotificationType } from '@/types/apiNotifications'
 
+import RenderAssistantNotification from '@/components/common/Notification/renders/RenderAssistantNotification.vue'
 import RenderDefaultNotification from '@/components/common/Notification/renders/RenderDefaultNotification.vue'
 import RenderDeviceInUseNotification from '@/components/common/Notification/renders/RenderDeviceInUseNotification.vue'
 import RenderMentionNotification from '@/components/common/Notification/renders/RenderMentionNotification.vue'
@@ -40,6 +41,7 @@ const notificationRendererRegistry: Partial<Record<NotificationType, Component>>
   SPACE_ANNOUNCEMENT: RenderSpaceAnnouncementNotification,
   TASK_NOTICE: RenderTaskNotification,
   TASK_DUE_SOON: RenderTaskNotification,
+  ASSISTANT_NOTICE: RenderAssistantNotification,
 }
 
 /** 画这一类的组件；认不出的类型（服务端多了一种、这一版前端还不认识）用默认的那一个。 */
@@ -96,6 +98,8 @@ export function getNotificationIcon(notification: Notification): string {
       return 'mdi-bullhorn-outline'
     case 'TASK_DUE_SOON':
       return 'mdi-alarm'
+    case 'ASSISTANT_NOTICE':
+      return 'mdi-creation-outline'
     case 'TASK_NOTICE':
       return TASK_ICONS[String(notification.contextMetadata?.event ?? '')] ?? 'mdi-trophy-outline'
     default:

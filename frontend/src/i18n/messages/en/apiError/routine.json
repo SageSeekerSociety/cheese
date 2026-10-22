@@ -30,5 +30,9 @@
   "scheduleTimeFormat": "Write the time as HH:MM, e.g. 09:00",
   "scheduleWeeklyDays": "A weekly routine needs the days of the week (0 = Monday … 6 = Sunday)",
   "timezoneUnknown": "Unknown time zone: {name}",
-  "routineResumeNeedsTrigger": "Give it a trigger first — only then does it know when to run"
+  "routineResumeNeedsTrigger": "Give it a trigger first — only then does it know when to run",
+  "assistantRoutineOnceAt": "The run time must be within the next year, written like 2026-10-23T08:00",
+  "assistantRoutineTrigger": "The trigger must be schedule, mention, review, due or invite",
+  "assistantRoutineLimit": "You can keep at most {max} routines. Delete one you no longer use first.",
+  "assistantRoutineInRun": "A routine cannot create or change routines while it runs"
 }
