@@ -790,7 +790,10 @@ def transport(config, target_path):
         because a compaction of a long conversation runs for minutes."""
         path = os.environ.get(SESSION_SOCKET)
         if not path:
-            raise RuntimeError("This session has no runner to ask for a compaction")
+            # A session built without its socket: an invariant of the launch.
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session has no runner to ask for a compaction"
+            )
         with dial_runner(path, RUNNER_REQUEST_S) as connection:
             connection.sendall(
                 json.dumps({"method": "compact", "params": {}}).encode() + b"\n"

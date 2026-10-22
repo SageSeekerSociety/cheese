@@ -230,7 +230,7 @@ class Runner(runner.Runner[Journal]):
                     # The turn the session asked to be compacted in has
                     # settled: pi's `compact` aborts the operation it finds
                     # running, so it could not be asked while one was.
-                    asyncio.ensure_future(self._compact_now())
+                    self._ask()
             else:
                 self.continuing = asyncio.ensure_future(self._hold_to_reply(reason))
         elif kind == "auto_retry_start":
@@ -1105,6 +1105,7 @@ class Runner(runner.Runner[Journal]):
         if self.compact_request:
             return "already"
         if self.client is None:
+            # i18n-exempt: programmer invariant, never shown
             raise RuntimeError("This session has no pi to compact")
         self.compact_request = "asked"
         # From the loop: a platform tool call runs in a worker thread
@@ -1113,6 +1114,7 @@ class Runner(runner.Runner[Journal]):
             self.loop.call_soon_threadsafe(self._compact_when_settled)
         else:  # no loop of our own: nobody to hop onto, none to ask
             self.compact_request = ""
+            # i18n-exempt: programmer invariant, never shown
             raise RuntimeError("This session has no loop to compact on")
         return "requested"
 
@@ -1122,11 +1124,21 @@ class Runner(runner.Runner[Journal]):
         if self.compact_request != "asked":
             return
         if not self.working:
-            asyncio.ensure_future(self._compact_now())
+            self._ask()
+
+    def _ask(self) -> None:
+        """Go from `asked` to `sent` and start the ask, on the loop.
+
+        The transition is here, not inside `_compact_now`: this call's own hop
+        onto the loop and a settling turn can both find pi idle, and only the
+        one that finds `asked` may start it."""
+        if self.compact_request != "asked":
+            return
+        self.compact_request = "sent"
+        asyncio.ensure_future(self._compact_now())
 
     async def _compact_now(self) -> None:
         assert self.client is not None
-        self.compact_request = "sent"
         try:
             # Answered when the compaction is over (`compact` is not a
             # trigger): what the room shows meanwhile comes from pi's own

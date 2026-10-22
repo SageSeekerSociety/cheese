@@ -376,3 +376,89 @@ async def test_a_request_made_mid_turn_waits_for_that_turn_to_end(tmp_path):
         assert runner.compact_request == ""
     finally:
         await runner.close()
+
+
+@pytest.mark.anyio
+async def test_the_compaction_s_own_turn_is_not_a_room_turn(tmp_path):
+    """`thread/compact/start` runs the compaction as a turn of its own on the
+    thread. The room must not read its ending: an `AgentResult` there would
+    answer, with nothing, work that already ended — one extra answer per
+    compaction. The compaction itself still reaches the room, as the
+    `contextCompaction` items always did.
+
+    Found by driving the real pinned app-server: it opened a second
+    `turn/started`/`turn/completed` pair on the same thread after the ask, and
+    the assembled events were `AgentResult("")` behind the real one.
+    """
+    from app.domain.agent.harness.codex.events import Assembler
+
+    runner = Runner(tmp_path, AsyncMock())
+    compacted = AsyncMock()
+    session = SimpleNamespace(
+        thread_id="thread", turn_id="turn", compact=compacted, observe=lambda _: None
+    )
+    runner.session = session
+    try:
+        runner.journal.remember("work:thread", "platform-work")
+        assert runner.request_compact() == "requested"
+        await runner.record(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {"id": "turn", "status": "completed"},
+                },
+            }
+        )
+        session.turn_id = None
+        await asyncio.sleep(0.05)
+        compacted.assert_awaited_once()
+
+        # What app-server reports for the compaction: a turn of its own, with
+        # the compaction's items inside it.
+        for event in (
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "ct"}},
+            },
+            {
+                "method": "item/started",
+                "params": {
+                    "threadId": "thread",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            },
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread",
+                    "item": {"id": "c1", "type": "contextCompaction"},
+                },
+            },
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {"id": "ct", "status": "completed"},
+                },
+            },
+        ):
+            await runner.record(event)
+
+        records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
+        turns = [
+            r for r in records if r.get("method") in ("turn/started", "turn/completed")
+        ]
+        assert [r["params"]["turn"]["id"] for r in turns] == ["turn"]
+
+        assembler = Assembler()
+        assembled = [event for r in records for event in assembler.accept(r)]
+        assert [e for e in assembled if type(e).__name__ == "AgentCompacting"], (
+            "the compaction itself must still reach the room"
+        )
+        results = [e for e in assembled if type(e).__name__ == "AgentResult"]
+        # Exactly one: the real turn's (which says nothing here, because the
+        # fixture gave that turn no message). A second would be the phantom.
+        assert len(results) == 1, results
+    finally:
+        await runner.close()

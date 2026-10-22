@@ -131,6 +131,7 @@ class Session:
         """
         async with self.input_lock:
             if self.thread_id is None:
+                # i18n-exempt: programmer invariant, the runner asks in order
                 raise RuntimeError("Open the Codex thread before compacting it")
             await self.client.request(
                 "thread/compact/start", {"threadId": self.thread_id}
