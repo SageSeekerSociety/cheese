@@ -173,8 +173,32 @@ const SETTING_VALUES: Record<string, string> = {
   mute: 'tasks.assistant.changes.setting.mute',
 }
 
-/** 改的是这个人自己的设置（通知设置、频道提醒），不是题目草稿。 */
-const isSetting = (edit: AssistantEdit) => edit.kind === 'settings' || edit.kind === 'notify'
+/** 改的是这个人自己的设置（通知设置、频道提醒）或芝士对他的记忆，不是题目草稿。 */
+const isSetting = (edit: AssistantEdit) => edit.kind === 'settings' || edit.kind === 'notify' || edit.kind === 'memory'
+
+/** 芝士记下、改写或忘掉的一条记忆：左边写做了哪一种，右边是它的描述，总能撤销。 */
+function memoryView(edit: AssistantEdit): PanelChange {
+  const change = (edit.changed.memory ?? {}) as { label?: string; before?: unknown; after?: unknown }
+  const done = change.after == null ? 'forgotten' : change.before == null ? 'saved' : 'changed'
+  return {
+    id: edit.id,
+    draft: -edit.id,
+    created: false,
+    name: '',
+    title: t('tasks.assistant.changes.memory.title'),
+    rows: [
+      {
+        change: edit.id,
+        key: 'memory',
+        label: t(`tasks.assistant.changes.memory.${done}`),
+        value: change.label ?? '',
+        undone: edit.undone.includes('memory'),
+      },
+    ],
+    notes: [],
+    canUndo: edit.undoable,
+  }
+}
 
 /** 改的是这个人自己的设置：每一项写名字和改成了什么，总能撤销。 */
 function settingsView(edit: AssistantEdit): PanelChange {
@@ -202,6 +226,7 @@ function settingsView(edit: AssistantEdit): PanelChange {
 }
 
 export function changeView(edit: AssistantEdit, terms: DraftTerms, canUndo: boolean): PanelChange {
+  if (edit.kind === 'memory') return memoryView(edit)
   if (isSetting(edit)) return settingsView(edit)
   const rows: PanelChangeRow[] = []
   const seen = new Set<string>()

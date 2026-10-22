@@ -10,12 +10,24 @@ import Assistant from './Assistant.vue'
 
 import i18n, { setLocale } from '@/i18n'
 
-const { rulesMock, saveMock, activityMock, routinesMock, setRoutineMock } = vi.hoisted(() => ({
+const {
+  rulesMock,
+  saveMock,
+  activityMock,
+  routinesMock,
+  setRoutineMock,
+  memoryMock,
+  editMemoryMock,
+  deleteMemoryMock,
+} = vi.hoisted(() => ({
   rulesMock: vi.fn(),
   saveMock: vi.fn(),
   activityMock: vi.fn(),
   routinesMock: vi.fn(),
   setRoutineMock: vi.fn(),
+  memoryMock: vi.fn(),
+  editMemoryMock: vi.fn(),
+  deleteMemoryMock: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
@@ -24,7 +36,20 @@ vi.mock('@/api', () => ({
   getAssistantActivity: activityMock,
   getAssistantRoutines: routinesMock,
   setAssistantRoutine: setRoutineMock,
+  getAssistantMemory: memoryMock,
+  saveAssistantMemoryItem: editMemoryMock,
+  deleteAssistantMemoryItem: deleteMemoryMock,
+  setAssistantMemoryEnabled: vi.fn(),
+  clearAssistantMemory: vi.fn(),
 }))
+
+const MEMORY = {
+  name: 'formal-to-teachers',
+  description: '给老师写东西用书面语',
+  type: 'feedback',
+  text: '不用「哈」「呀」。',
+  updatedAt: new Date().toISOString(),
+}
 
 vi.mock('@/stores/agent', () => ({ openAgentConversation: vi.fn() }))
 
@@ -69,6 +94,12 @@ beforeEach(() => {
   })
   saveMock.mockImplementation(async (r) => ({ ...r, categories: CATEGORIES }))
   routinesMock.mockResolvedValue({ routines: [ROUTINE], limit: 20 })
+  memoryMock.mockResolvedValue({ enabled: true, items: [MEMORY] })
+  editMemoryMock.mockImplementation(async (name: string, description: string, text: string) => ({
+    enabled: true,
+    items: [{ ...MEMORY, name, description, text }],
+  }))
+  deleteMemoryMock.mockResolvedValue({ enabled: true, items: [] })
   setRoutineMock.mockImplementation(async (_id: string, action: string) => ({
     routines: action === 'delete' ? [] : [{ ...ROUTINE, state: 'paused', paused: 'person' }],
     limit: 20,
@@ -142,6 +173,28 @@ describe('芝士 settings', () => {
     await fireEvent.click(confirm[confirm.length - 1])
     await waitFor(() => expect(setRoutineMock).toHaveBeenCalledWith('r1', 'delete'))
     await waitFor(() => expect(view.getByText('暂无例行事务')).toBeTruthy())
+  })
+
+  it('what 芝士 remembers is edited and deleted from the page', async () => {
+    const view = mount()
+    await waitFor(() => expect(view.getByText('给老师写东西用书面语')).toBeTruthy())
+    expect(view.getByText('1 条')).toBeTruthy()
+
+    await fireEvent.click(view.getByRole('button', { name: '编辑' }))
+    const description = view.getByRole('textbox', { name: '描述' })
+    await fireEvent.update(description, '给老师写东西要正式')
+    await fireEvent.submit(description.closest('form') as HTMLFormElement)
+    await waitFor(() =>
+      expect(editMemoryMock).toHaveBeenCalledWith('formal-to-teachers', '给老师写东西要正式', '不用「哈」「呀」。')
+    )
+    await waitFor(() => expect(view.getByText('给老师写东西要正式')).toBeTruthy())
+
+    const [removeMemory] = view
+      .getAllByRole('button', { name: '删除' })
+      .filter((b) => b.closest('li')?.textContent?.includes('给老师写东西要正式'))
+    await fireEvent.click(removeMemory)
+    await waitFor(() => expect(view.getByText('暂无记忆')).toBeTruthy())
+    expect(deleteMemoryMock).toHaveBeenCalledWith('formal-to-teachers')
   })
 
   it('a one-off routine that ran says so, can only be deleted and leaves its place free', async () => {

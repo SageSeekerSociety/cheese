@@ -33,7 +33,12 @@ import {
   TASK_REVIEWS,
   TASK_ROSTER,
 } from './catalogSpaceTasksFixtures'
-import { ASSISTANT_RECENT, ASSISTANT_ROUTINES, ASSISTANT_RULES } from './catalogViewSettingsWorkspaceFixtures'
+import {
+  ASSISTANT_MEMORY,
+  ASSISTANT_RECENT,
+  ASSISTANT_ROUTINES,
+  ASSISTANT_RULES,
+} from './catalogViewSettingsWorkspaceFixtures'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
@@ -265,6 +270,39 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         expect: '已过期',
       },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s8.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s8.note')
+        },
+        // 芝士记下一条关于你的事：面板里一张「记忆」卡片，能撤销。
+        props: {
+          messages: [
+            { role: 'user', text: '记住，我给老师写东西都要用书面语，别太口语。', at: '2026-10-22T10:00:00Z' },
+            {
+              role: 'assistant',
+              text: '记住了。以后替你写给老师的消息和邮件都用书面语。',
+              at: '2026-10-22T10:00:06Z',
+              steps: [{ key: 'm1', verb: '读写记忆', arg: '给老师写东西用书面语', state: 'done' }],
+              changes: [
+                {
+                  id: 21,
+                  draft: -21,
+                  created: false,
+                  name: '',
+                  title: '记忆',
+                  canUndo: true,
+                  rows: [{ change: 21, key: 'memory', label: '已记住', value: '给老师写东西用书面语', undone: false }],
+                  notes: [],
+                },
+              ],
+            },
+          ],
+        },
+        expect: '已记住',
+      },
     ],
   },
   {
@@ -278,6 +316,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     needs: UI_T,
     args: {
       rules: ASSISTANT_RULES,
+      memory: ASSISTANT_MEMORY,
       routines: ASSISTANT_ROUTINES,
       routineLimit: 20,
       recent: ASSISTANT_RECENT,
@@ -305,7 +344,11 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.settingsAssistantView.s2.note')
         },
-        props: { routines: [], rules: { ...ASSISTANT_RULES, askItems: [], allowItems: [] } },
+        props: {
+          routines: [],
+          memory: { enabled: false, items: [] },
+          rules: { ...ASSISTANT_RULES, askItems: [], allowItems: [] },
+        },
         expect: '暂无例行事务',
       },
     ],

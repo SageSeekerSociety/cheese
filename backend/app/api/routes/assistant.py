@@ -52,10 +52,12 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant import changes, gate, proposals
+from app.domain.assistant import memory as assistant_memory
+from app.domain.memory.files import MemoryFileError
 from app.domain.routine import personal as routine_personal
 from app.domain.space.services import SpaceService
 from app.domain.usage.credits import CREDIT_USD
-from app.domain.user.services import timezones_by_ids
+from app.domain.user.services import timezones_by_ids, usernames_by_ids
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -595,6 +597,117 @@ async def put_rules(body: RulesIn, db: DbSession, auth: AuthUser) -> dict:
     )
     await db.commit()
     return ok(_rules_out(row))
+
+
+class MemoryItemOut(BaseModel):
+    name: str
+    description: str
+    type: str
+    text: str
+    updatedAt: str
+
+
+class MemoryOut(BaseModel):
+    """What the person's 芝士 remembers of them, and whether it may."""
+
+    enabled: bool
+    items: list[MemoryItemOut]
+
+
+class MemoryEnabledIn(BaseModel):
+    enabled: bool
+
+
+class MemoryItemIn(BaseModel):
+    description: str = Field(min_length=1, max_length=150)
+    text: str = Field(min_length=1, max_length=1000)
+
+
+async def _handle(db, user_id: int) -> str:
+    handle = (await usernames_by_ids(db, [user_id])).get(user_id)
+    if not handle:
+        raise NotFoundError.for_resource("user", str(user_id))
+    return handle
+
+
+async def _memory_out(db, user_id: int) -> dict:
+    handle = await _handle(db, user_id)
+    rows = await assistant_memory.entries(db, handle)
+    return {
+        "enabled": (await gate.rules_of(db, user_id)).memory,
+        "items": [
+            {
+                "name": e.memory.name,
+                "description": e.memory.description,
+                "type": e.memory.type.value,
+                "text": e.memory.body,
+                "updatedAt": e.updated_at,
+            }
+            for e in rows
+        ],
+    }
+
+
+@router.get("/memory", **typed_response(MemoryOut))
+async def get_memory(db: DbSession, auth: AuthUser) -> dict:
+    """What the person's 芝士 remembers of them. Theirs alone: 芝士's own
+    credential does not reach it, so it cannot change what it was told."""
+    return ok(await _memory_out(db, auth.user_id))
+
+
+@router.put("/memory", dependencies=[ROUTE_DECIDES], **typed_response(MemoryOut))
+async def put_memory_enabled(
+    body: MemoryEnabledIn, db: DbSession, auth: AuthUser
+) -> dict:
+    """Memory on or off. Off keeps what is remembered, neither used nor added
+    to."""
+    await gate.set_memory(db, auth.user_id, body.enabled)
+    await db.commit()
+    return ok(await _memory_out(db, auth.user_id))
+
+
+@router.put("/memory/{name}", dependencies=[ROUTE_DECIDES], **typed_response(MemoryOut))
+async def put_memory_item(
+    name: Annotated[str, Path()], body: MemoryItemIn, db: DbSession, auth: AuthUser
+) -> dict:
+    """The person rewrites one memory: what it says and what it is for."""
+    handle = await _handle(db, auth.user_id)
+    found = await assistant_memory.read(db, handle, name)
+    if found is None:
+        raise NotFoundError.for_resource("memory", name)
+    try:
+        memory = assistant_memory.made(
+            name, body.description, found.type.value, body.text
+        )
+    except MemoryFileError as exc:
+        raise BadRequestError(str(exc)) from exc
+    await assistant_memory.save(db, handle, memory, by=handle)
+    await db.commit()
+    return ok(await _memory_out(db, auth.user_id))
+
+
+@router.delete(
+    "/memory/{name}", dependencies=[ROUTE_DECIDES], **typed_response(MemoryOut)
+)
+async def delete_memory_item(
+    name: Annotated[str, Path()], db: DbSession, auth: AuthUser
+) -> dict:
+    handle = await _handle(db, auth.user_id)
+    before = await assistant_memory.put(
+        db, handle, assistant_memory.path_of(name), None, by=handle
+    )
+    if before is None:
+        raise NotFoundError.for_resource("memory", name)
+    await db.commit()
+    return ok(await _memory_out(db, auth.user_id))
+
+
+@router.delete("/memory", dependencies=[ROUTE_DECIDES], **typed_response(MemoryOut))
+async def clear_memory(db: DbSession, auth: AuthUser) -> dict:
+    """Forget everything the person's 芝士 remembers of them."""
+    await assistant_memory.clear(db, await _handle(db, auth.user_id))
+    await db.commit()
+    return ok(await _memory_out(db, auth.user_id))
 
 
 @router.get("/activity", **typed_response(ActivityOut))

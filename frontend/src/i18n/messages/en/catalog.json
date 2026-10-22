@@ -1628,6 +1628,10 @@
     "s7": {
       "name": "A routine's run",
       "note": "A conversation the platform started: the line on top says the routine started. Cheese drafted a reply; you were away, so the card waits for you. The card the last run left has expired."
+    },
+    "s8": {
+      "name": "A memory saved",
+      "note": "Cheese notes something about you; a Memory card appears in the panel and can be undone"
     }
   },
   "myDraftsView": {

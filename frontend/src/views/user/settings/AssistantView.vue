@@ -2,11 +2,18 @@
 /**
  * 「芝士」设置页的渲染面：只吃 props、只发事件。取数与保存在同目录的 `Assistant.vue`。
  *
- * 四块，自上而下：需要确认（几类勾选，和自己添加的条目），无需确认（自己添加的条目），
+ * 五块，自上而下：需要确认（几类勾选，和自己添加的条目），无需确认（自己添加的条目），
+ * 记忆（芝士记得的关于你的事：开关、逐条改和删、全部清除），
  * 例行事务（芝士自己定时或在某件事发生时做的事：何时运行、最近一次怎样、暂停恢复删除），
  * 最近的操作（做了的、请人确认过的，请人确认的写原因）。
  */
-import type { AssistantActivityItem, AssistantRoutine, AssistantRules } from '@/api'
+import type {
+  AssistantActivityItem,
+  AssistantMemory,
+  AssistantMemoryItem,
+  AssistantRoutine,
+  AssistantRules,
+} from '@/api'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -20,6 +27,7 @@ import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{
   rules: AssistantRules | null
+  memory: AssistantMemory | null
   routines: AssistantRoutine[]
   routineLimit: number
   recent: AssistantActivityItem[]
@@ -36,6 +44,10 @@ const emit = defineEmits<{
   addItem: [list: 'ask' | 'allow', text: string]
   removeItem: [list: 'ask' | 'allow', index: number]
   routine: [id: string, action: 'pause' | 'resume' | 'delete']
+  memoryEnabled: [on: boolean]
+  memoryEdit: [name: string, description: string, text: string]
+  memoryDelete: [name: string]
+  memoryClear: []
   openConversation: [id: string]
 }>()
 
@@ -48,6 +60,26 @@ function add(list: 'ask' | 'allow') {
   if (!text) return
   emit('addItem', list, text)
   drafts.value[list] = ''
+}
+
+/** 正在改的那条记忆，和改到一半的两格。 */
+const editing = ref<{ name: string; description: string; text: string } | null>(null)
+const clearing = ref(false)
+
+function edit(item: AssistantMemoryItem) {
+  editing.value = { name: item.name, description: item.description, text: item.text }
+}
+
+function saveEdit() {
+  const now = editing.value
+  if (!now || !now.description.trim() || !now.text.trim()) return
+  emit('memoryEdit', now.name, now.description.trim(), now.text.trim())
+  editing.value = null
+}
+
+function confirmClear() {
+  emit('memoryClear')
+  clearing.value = false
 }
 
 /** 要删除的那条例行事务：先确认。 */
@@ -151,6 +183,87 @@ function last(r: AssistantRoutine): string {
         </form>
       </section>
 
+      <section v-if="memory" class="settings-card">
+        <div class="ast__memory-head">
+          <h2 class="settings-card__title ast__title-row">
+            <span>{{ t('account.assistant.memory.title') }}</span>
+            <span v-if="memory.items.length" class="ast__count t-num">{{
+              t('account.assistant.memory.count', { n: memory.items.length })
+            }}</span>
+          </h2>
+          <v-switch
+            id="ast-memory"
+            :model-value="memory.enabled"
+            :disabled="saving"
+            :aria-label="t('account.assistant.memory.use')"
+            color="primary"
+            density="compact"
+            inset
+            hide-details
+            @update:model-value="(v) => emit('memoryEnabled', v === true)"
+          />
+        </div>
+        <p class="settings-card__desc">
+          {{ memory.enabled ? t('account.assistant.memory.desc') : t('account.assistant.memory.off') }}
+        </p>
+        <p v-if="!memory.items.length" class="ast__none">{{ t('account.assistant.memory.empty') }}</p>
+        <ul v-else class="ast__recent">
+          <li v-for="item in memory.items" :key="item.name" class="ast__routine">
+            <form v-if="editing?.name === item.name" class="ast__memory-edit" @submit.prevent="saveEdit">
+              <input
+                :id="`ast-memory-${item.name}-description`"
+                v-model="editing.description"
+                class="ast__text"
+                maxlength="150"
+                autocomplete="off"
+                :aria-label="t('account.assistant.memory.description')"
+              />
+              <textarea
+                :id="`ast-memory-${item.name}-text`"
+                v-model="editing.text"
+                class="ast__text ast__textarea"
+                rows="3"
+                maxlength="1000"
+                autocomplete="off"
+                :aria-label="t('account.assistant.memory.text')"
+              />
+              <div class="ast__actions">
+                <BaseButton kind="ghost" size="sm" @click="editing = null">
+                  {{ t('account.assistant.routines.cancel') }}
+                </BaseButton>
+                <BaseButton
+                  kind="secondary"
+                  size="sm"
+                  type="submit"
+                  :disabled="saving || !editing.description.trim() || !editing.text.trim()"
+                >
+                  {{ t('account.assistant.memory.save') }}
+                </BaseButton>
+              </div>
+            </form>
+            <template v-else>
+              <div class="ast__body">
+                <p class="ast__summary">{{ item.description }}</p>
+                <p class="ast__reason ast__memory-text">{{ item.text }}</p>
+              </div>
+              <div class="ast__actions">
+                <BaseButton kind="ghost" size="sm" :disabled="saving" @click="edit(item)">
+                  {{ t('account.assistant.memory.edit') }}
+                </BaseButton>
+                <BaseButton kind="ghost" size="sm" :disabled="saving" @click="emit('memoryDelete', item.name)">
+                  {{ t('account.assistant.items.remove') }}
+                </BaseButton>
+              </div>
+            </template>
+          </li>
+        </ul>
+        <div v-if="memory.items.length" class="ast__memory-foot">
+          <BaseButton kind="ghost" size="sm" :disabled="saving" @click="clearing = true">
+            {{ t('account.assistant.memory.clear') }}
+          </BaseButton>
+        </div>
+      </section>
+
       <section class="settings-card">
         <h2 class="settings-card__title ast__title-row">
           <span>{{ t('account.assistant.routines.title') }}</span>
@@ -232,6 +345,18 @@ function last(r: AssistantRoutine): string {
       @cancel="deleting = null"
     >
       {{ t('account.assistant.routines.deleteBody') }}
+    </ConfirmDialog>
+    <ConfirmDialog
+      :model-value="clearing"
+      :title="t('account.assistant.memory.clearTitle')"
+      :confirm-label="t('account.assistant.memory.clear')"
+      :cancel-label="t('account.assistant.routines.cancel')"
+      danger
+      @update:model-value="(open: boolean) => !open && (clearing = false)"
+      @confirm="confirmClear"
+      @cancel="clearing = false"
+    >
+      {{ t('account.assistant.memory.clearBody', { n: memory?.items.length ?? 0 }) }}
     </ConfirmDialog>
   </div>
 </template>
@@ -378,6 +503,41 @@ function last(r: AssistantRoutine): string {
   border-top: 1px solid var(--line);
 }
 
+.ast__memory-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 24px;
+}
+
+.ast__memory-head .settings-card__title {
+  margin-bottom: 0;
+}
+
+.ast__memory-text {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.ast__memory-edit {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ast__textarea {
+  resize: vertical;
+}
+
+.ast__memory-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 24px 16px;
+  border-top: 1px solid var(--line);
+}
+
 .ast__actions {
   display: flex;
   flex-wrap: wrap;
@@ -452,8 +612,13 @@ function last(r: AssistantRoutine): string {
   .ast__add,
   .ast__none,
   .ast__item,
-  .ast__routine {
+  .ast__routine,
+  .ast__memory-foot {
     padding-inline: 16px;
+  }
+
+  .ast__memory-head {
+    padding-right: 16px;
   }
 
   .ast__routine {
