@@ -255,6 +255,51 @@ def test_sandboxes_cannot_reach_each_other(rooms, machine_service):
     )
 
 
+@pytest.fixture
+def ahead_of_the_sandboxes():
+    """Puts a chain that accepts everything at the top of the machine's
+    FORWARD, ahead of the sandboxes' own, as Docker's restart puts its rules
+    there; taken out again afterwards."""
+    iptables = ["sudo", "-n", f"{sandbox_host.TOOLS}/xtables-nft-multi", "iptables"]
+    chain = "CHEESE-TEST-AHEAD"
+
+    def insert():
+        subprocess.run([*iptables, "-N", chain], check=True)
+        subprocess.run([*iptables, "-A", chain, "-j", "ACCEPT"], check=True)
+        subprocess.run([*iptables, "-I", "FORWARD", "1", "-j", chain], check=True)
+
+    yield insert
+    subprocess.run([*iptables, "-D", "FORWARD", "-j", chain], capture_output=True)
+    subprocess.run([*iptables, "-F", chain], capture_output=True)
+    subprocess.run([*iptables, "-X", chain], capture_output=True)
+
+
+@with_sandbox_host
+def test_sandboxes_stay_apart_after_another_firewall_goes_first(
+    rooms, machine_service, ahead_of_the_sandboxes
+):
+    """A rule something else put ahead of the sandboxes' own, as Docker does
+    each time its daemon starts, decides for no sandbox once the next one
+    starts: two sandboxes still cannot reach each other."""
+    api = f"http://127.0.0.1:{machine_service(b'backend')}"
+    first = rooms(api)
+    first.bash(
+        "setsid nohup python3 -m http.server 8000 >/dev/null 2>&1 </dev/null &"
+        " for i in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/8000) 2>/dev/null"
+        " && break; sleep 0.1; done"
+    )
+    assert first.python(DIAL + "print(dial('127.0.0.1', 8000))").strip() != (
+        "unreachable"
+    )
+    ahead_of_the_sandboxes()
+
+    second = rooms(api)
+
+    assert second.python(DIAL + f"print(dial('{first.address()}', 8000))").strip() == (
+        "unreachable"
+    )
+
+
 @with_sandbox_host
 def test_a_sandbox_over_its_memory_is_killed_and_the_machine_is_not(
     rooms, machine_service, monkeypatch
@@ -906,11 +951,11 @@ def test_the_machines_rules_are_written_once_for_every_sandbox():
     writes nothing; a flushed chain is noticed and written again."""
     wanted = sandbox_host.rules(["10.53.0.1"], [18080])
     first = sandbox_host.restore(wanted, "")
-    assert "-I FORWARD 1 -j CHEESE-SBX-FWD" in first
-    assert "-A CHEESE-SBX-FWD -i chs+ -d 10.53.0.1 -p udp --dport 53 -j ACCEPT" in first
-    assert "-A CHEESE-SBX-FWD -i chs+ -d 192.168.0.0/16 -j DROP" in first
-    assert first.index("--dport 53 -j ACCEPT") < first.index("10.0.0.0/8 -j DROP")
-    saved = _as_saved(first)
+    saved = _applied("", first)
+    assert _first_rule(saved, "filter", "FORWARD") == "-A FORWARD -j CHEESE-SBX-FWD"
+    assert "-A CHEESE-SBX-FWD -i chs+ -d 10.53.0.1 -p udp --dport 53 -j ACCEPT" in saved
+    assert "-A CHEESE-SBX-FWD -i chs+ -d 192.168.0.0/16 -j DROP" in saved
+    assert saved.index("--dport 53 -j ACCEPT") < saved.index("10.0.0.0/8 -j DROP")
 
     assert sandbox_host.restore(wanted, saved) == ""
     flushed = "\n".join(
@@ -919,13 +964,106 @@ def test_the_machines_rules_are_written_once_for_every_sandbox():
     assert sandbox_host.restore(wanted, flushed) != ""
 
 
-def _as_saved(restored: str) -> str:
-    """What `iptables-save` prints after `restored` was applied to empty
-    tables: the jumps appended to their built-in chains."""
+# What Docker's daemon puts at the top of FORWARD and POSTROUTING each time it
+# starts, ahead of whatever was there.
+DOCKER_AHEAD = {
+    ("filter", "FORWARD"): [
+        "-A FORWARD -j DOCKER-USER",
+        "-A FORWARD -j DOCKER-FORWARD",
+    ],
+    ("nat", "POSTROUTING"): [
+        "-A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE"
+    ],
+}
+
+
+def test_the_sandbox_rules_come_first_again_after_docker_restarts():
+    """Docker restarting puts its rules ahead of ours; the next sandbox's
+    start puts ours back on top, once, and leaves Docker's in place."""
+    wanted = sandbox_host.rules(["10.53.0.1"], [18080])
+    saved = _applied("", sandbox_host.restore(wanted, ""))
+    for (table, _), lines in DOCKER_AHEAD.items():
+        saved = _insert_first(saved, table, lines)
+
+    again = _applied(saved, sandbox_host.restore(wanted, saved))
+
+    for (table, chain), ours in (
+        (("filter", "FORWARD"), "CHEESE-SBX-FWD"),
+        (("filter", "INPUT"), "CHEESE-SBX-IN"),
+        (("nat", "PREROUTING"), "CHEESE-SBX-PRE"),
+        (("nat", "POSTROUTING"), "CHEESE-SBX-POST"),
+    ):
+        rules = _rules(again, table, chain)
+        assert rules[0] == f"-A {chain} -j {ours}"
+        assert rules.count(f"-A {chain} -j {ours}") == 1
+        assert set(DOCKER_AHEAD.get((table, chain), [])) <= set(rules[1:])
+    assert sandbox_host.restore(wanted, again) == ""
+
+
+def _rules(saved: str, table: str, chain: str) -> list[str]:
+    found, current = [], None
+    for line in saved.splitlines():
+        if line.startswith("*"):
+            current = line[1:]
+        elif current == table and line.startswith(f"-A {chain} "):
+            found.append(line)
+    return found
+
+
+def _first_rule(saved: str, table: str, chain: str) -> str | None:
+    return next(iter(_rules(saved, table, chain)), None)
+
+
+def _tables(saved: str) -> dict[str, dict[str, list[str]]]:
+    tables: dict[str, dict[str, list[str]]] = {}
+    current = None
+    for line in saved.splitlines():
+        if line.startswith("*"):
+            current = tables.setdefault(line[1:], {})
+        elif line.startswith("-A ") and current is not None:
+            current.setdefault(line.split()[1], []).append(line)
+    return tables
+
+
+def _saved(tables: dict[str, dict[str, list[str]]]) -> str:
+    """`iptables-save`'s shape: per table, every rule in chain order."""
     lines = []
+    for table, chains in tables.items():
+        lines.append(f"*{table}")
+        for rules in chains.values():
+            lines += rules
+        lines.append("COMMIT")
+    return "\n".join([*lines, ""])
+
+
+def _insert_first(saved: str, table: str, lines: list[str]) -> str:
+    tables = _tables(saved)
+    for line in reversed(lines):
+        chain = line.split()[1]
+        tables.setdefault(table, {}).setdefault(chain, []).insert(0, line)
+    return _saved(tables)
+
+
+def _applied(saved: str, restored: str) -> str:
+    """What `iptables-save` prints after `iptables-restore --noflush` applied
+    `restored` to tables holding `saved`: a declared chain is emptied, `-A`
+    appends, `-I <chain> 1` inserts at the top, `-D` removes the first equal
+    rule."""
+    tables = _tables(saved)
+    table = None
     for line in restored.splitlines():
-        if line.startswith("-I "):
-            _, parent, _, *rest = line.split()
-            line = " ".join(["-A", parent, *rest])
-        lines.append(line)
-    return "\n".join(lines)
+        if line.startswith("*"):
+            table = tables.setdefault(line[1:], {})
+        elif line.startswith(":") and table is not None:
+            table[line[1:].split()[0]] = []
+        elif table is not None and line[:3] in ("-A ", "-I ", "-D "):
+            verb, chain, *rest = line.split()
+            rules = table.setdefault(chain, [])
+            if verb == "-I":
+                assert rest[0] == "1"
+                rules.insert(0, " ".join(["-A", chain, *rest[1:]]))
+            elif verb == "-D":
+                rules.remove(" ".join(["-A", chain, *rest]))
+            else:
+                rules.append(line)
+    return _saved(tables)

@@ -25,6 +25,7 @@
     "unavailableTeam": "无法访问此团队，选择你所在的团队。"
   },
   "rewards": {
+    "inviteCapped": "这个月通过邀请得到的额度已满 1,500 点，这位好友首次采纳不再给你额度。",
     "betaTitle": "内测体验额度",
     "betaOnce": "每个账号可领取一次，发放到个人额度。",
     "activity": "内测奖励活动",

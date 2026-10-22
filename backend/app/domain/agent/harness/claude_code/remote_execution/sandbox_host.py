@@ -198,27 +198,36 @@ def restore(wanted, saved):
     or "" when `saved` (what `iptables-save` printed) shows they already do.
 
     Each chain is declared, which with `--noflush` empties it first, so the
-    same text written twice leaves the same rules. A chain of ours not yet
-    jumped to is put first in its built-in chain: Docker sets FORWARD's
+    same text written twice leaves the same rules. The jump to each chain of
+    ours is the first rule of its built-in chain: Docker sets FORWARD's
     policy to DROP and ufw INPUT's, and first means neither decides for a
-    sandbox. Whether the tables hold `wanted` is judged by the digest of what
+    sandbox. A jump something else has since put a rule ahead of is moved
+    back to the top: Docker inserts its own at the top of FORWARD and
+    POSTROUTING each time its daemon starts, and a sandbox behind them could
+    reach a container's published port and be reached from it. Whether the tables hold `wanted` is judged by the digest of what
     was last written, kept as a rule comment in our own chain, and the number
     of rules in each chain, so a flush by something else is noticed."""
     digest = hashlib.sha256(json.dumps(wanted, sort_keys=True).encode()).hexdigest()
     marker = f'-m comment --comment "cheese-sandbox {digest[:16]}" -j RETURN'
-    table, counts, present = None, {}, set()
+    table, counts, present, first = None, {}, {}, {}
     for line in saved.splitlines():
         if line.startswith("*"):
             table = line[1:]
         elif line.startswith("-A "):
-            present.add((table, line))
+            present[table, line] = present.get((table, line), 0) + 1
             chain = line.split()[1]
             counts[chain] = counts.get(chain, 0) + 1
+            first.setdefault((table, chain), line)
     jumps = {
         table: [
-            f"-I {parent} 1 -j {chain}"
+            edit
             for chain, parent in chains
-            if (table, f"-A {parent} -j {chain}") not in present
+            if first.get((table, parent)) != f"-A {parent} -j {chain}"
+            for edit in [
+                *[f"-D {parent} -j {chain}"]
+                * present.get((table, f"-A {parent} -j {chain}"), 0),
+                f"-I {parent} 1 -j {chain}",
+            ]
         ]
         for table, chains in CHAINS.items()
     }

@@ -26,7 +26,6 @@ const menuStub = vi.hoisted(() => ({
   avatarInitial: { value: '爱' },
   avatarColor: { value: '#6a5acd' },
   nickname: { value: '爱丽丝' },
-  intro: { value: '' },
   onLogout: () => {},
 }))
 
