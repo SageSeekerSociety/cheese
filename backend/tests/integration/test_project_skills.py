@@ -194,6 +194,22 @@ def _proposal(name: str = "weekly-report", **extra) -> dict:
     }
 
 
+def test_a_teammate_refused_a_decline_hears_whose_proposal_it_was(client):
+    """Declining is a person's call. The teammate that tries is told so in words
+    that name the teammate who proposed it — by its seat, which reads as the
+    name the project gave it — never a hard-coded 芝士."""
+    project = _project(client)
+    room = _room(client, project)
+    skill = client.post(f"/topics/{room}/skills", json=_proposal()).json()["data"]
+
+    refused = client.post(f"/skills/{skill['id']}/decline")
+
+    assert refused.status_code == 403, refused.text
+    error = refused.json()["error"]
+    assert f"<@{room_agent_seat(client, room)}>" in error["message"]
+    assert "芝士" not in error["message"]
+
+
 def test_a_declined_proposal_is_not_proposed_again_but_a_person_may_write_it(client):
     project = _project(client)
     room = _room(client, project)

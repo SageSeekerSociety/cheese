@@ -21,10 +21,12 @@ from tests.integration.conftest import (
     in_thread,
     inbox,
     join_project_team,
+    open_task,
     post_message,
     post_project,
     room_socket,
     session_auth_headers,
+    task_agent_headers,
 )
 from tests.support.quoted_context import prompt_quote, slide_quote
 
@@ -118,7 +120,9 @@ def test_an_agent_publication_keeps_quoted_mentions_inert(client, stub_hooks):
     assert prompt_quote(arrivals[0][1]) == quote
 
 
-def _room_with_two_agents(client):
+def _channel_with_two_agents(client):
+    """A channel of alice's with two AI seats on it: the seat it falls back
+    to, and the one an @ names."""
     project = post_project(client, json={"name": "Mentions"}, owner="alice").json()[
         "data"
     ]
@@ -139,10 +143,15 @@ def _room_with_two_agents(client):
     assert r.status_code == 200, r.text
     members = client.get(f"/topics/{room['id']}/members").json()["data"]["data"]
     seats = [m["member_handle"] for m in members if m["agent"]]
-    other = next(s for s in seats if s != reviewer["seat_handle"])
+    own = next(s for s in seats if s != reviewer["seat_handle"])
+    return project["id"], room["id"], own, reviewer["seat_handle"]
+
+
+def _room_with_two_agents(client):
+    project_id, room_id, own, reviewer = _channel_with_two_agents(client)
     # Both sit on the channel's roster; they talk in a 支线 of it.
-    thread = in_thread(client, room["id"], "alice")
-    return project["id"], thread, other, reviewer["seat_handle"]
+    thread = in_thread(client, room_id, "alice")
+    return project_id, thread, own, reviewer
 
 
 def _as(project_id, room_id, seat):
@@ -207,6 +216,33 @@ def test_an_agent_naming_a_teammate_starts_the_teammates_turn(client, stub_hooks
     assert row.state == "received", row.last_error
     prompts = [text for _, text in arrivals]
     assert any("帮我复核这段" in p and cheese in p for p in prompts), prompts
+
+
+def test_an_agent_naming_a_teammate_in_a_task_starts_the_teammates_turn(
+    client, stub_hooks
+):
+    """A task is a conversation like any other: the teammate its own session
+    @-mentions is woken, the same as in a channel. Only that task's session
+    speaks there, so this is how the task hands work to another teammate."""
+    project_id, room_id, own, reviewer = _channel_with_two_agents(client)
+    task = open_task(client, room_id, "复核接口")
+    arrivals = _record_arrivals(stub_hooks)
+
+    sent = _publish(
+        client,
+        task["id"],
+        task_agent_headers(project_id, task["id"], own),
+        f"<@{reviewer}> 帮我复核这段",
+    )
+    wait_work_idle()
+
+    [row] = _deliveries(client, task["id"])
+    assert row.recipient_handle == reviewer
+    assert row.payload["eventType"] == mention.BY_AGENT
+    assert row.payload["blockId"] == sent["id"]
+    assert row.state == "received", row.last_error
+    prompts = [text for _, text in arrivals]
+    assert any("帮我复核这段" in p and own in p for p in prompts), prompts
 
 
 def test_publishing_the_same_message_again_does_not_wake_twice(client):

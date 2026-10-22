@@ -70,6 +70,8 @@ export interface NoticeOccurrence {
 export interface MailDraftView {
   draftId: string
   owner: string
+  /** 写这封草稿的队友（座位 handle）；旧的卡没有这一位。 */
+  draftedBy: string
   account: string
   to: string[]
   cc: string[]

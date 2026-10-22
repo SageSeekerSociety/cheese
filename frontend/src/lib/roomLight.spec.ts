@@ -79,7 +79,7 @@ describe('lightTitle —— 灯上悬停那一句', () => {
   it('每种灯各说各的', () => {
     expect(lightTitle({ kind: 'yellow' })).toBe('有事等你')
     expect(lightTitle({ kind: 'green', breathe: false })).toBe('做完了，你还没看过')
-    expect(lightTitle({ kind: 'green', breathe: true })).toBe('有活在往前走')
+    expect(lightTitle({ kind: 'green', breathe: true })).toBe('有任务正在进行')
     expect(lightTitle({ kind: 'blue' })).toBe('我负责的')
   })
 

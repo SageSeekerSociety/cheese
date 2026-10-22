@@ -79,7 +79,7 @@ export const ACCOUNT_ENTRIES: CatalogEntry[] = [
         name: '芝士提的',
         note: '来源那一颗写「Agent 发现」；谁按的发送是另一件事（提案卡那条规矩），这里管不着。',
         props: { item: FEEDBACK_ROWS.agent },
-        expect: 'Agent 发现',
+        expect: 'AI 队友发现',
       },
       {
         name: '办完了的',

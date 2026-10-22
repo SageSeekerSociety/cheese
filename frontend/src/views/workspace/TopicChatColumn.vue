@@ -203,7 +203,7 @@ const madeHere = computed(() => {
         made.id !== conversationId.value &&
         (!made.source_block_id || made.source_block_id === id)
     )
-    .map((made) => taskLine(made, viewer.value, nameOf))
+    .map((made) => taskLine(made, viewer.value, nameOf, madeAgentName(made)))
 })
 // The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
 const refs = computed(() => ({
@@ -211,6 +211,12 @@ const refs = computed(() => ({
   topicTitles: {} as Record<string, string>,
   notified: true,
 }))
+/** 做这件任务的队友叫什么：它单独指定的那位，否则这间房名册上的队友，再否则项目的默认队友。 */
+function madeAgentName(made: RoomTask): string {
+  const seat = made.agent_handle || props.topic.agent_handle || props.taskAgentHandle
+  return (seat && props.memberNames?.[seat]) || store.agentName
+}
+
 function nameOf(handle: string): string {
   return props.memberNames?.[handle] || handle
 }

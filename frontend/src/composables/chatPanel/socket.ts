@@ -186,6 +186,18 @@ export function usePanelSocket(deps: {
     if (b.kind === 'event') deps.emit('site-block', b)
   }
 
+  // `platform_error` 是这一轮以平台故障收场的标志事件：后端发完它紧接着发 `error`
+  // 和 `done`（turn/steps/execute.py）。会话没起来的那一类不会有 `turn_finished`
+  // —— 它由「这一轮已经宣布过自己开始」那条路才发（turn/intake/messages.py）——
+  // 于是这一轮在页面上「还在跑」：重试要等后端每 15 秒一次的对账
+  // （turn_adoption.watch_books 读到库里那一行已结束，替它发 turn_finished）才对上。
+  // 收到这条就当场结掉，其余几类提示（投递降级、机器不在…）都可能在轮次还活着时
+  // 出现，一律不在这里替它做主。
+  function endsTurn(b: Block): boolean {
+    const meta = b.meta as Record<string, unknown> | null | undefined
+    return meta?.event_type === 'platform_error'
+  }
+
   function handleFrame(frame: WsServerFrame) {
     // 平台运行中记下的一件事：不进对话，现场和状态行读它。
     const recorded = runRecordOf(frame)
@@ -220,6 +232,11 @@ export function usePanelSocket(deps: {
         pushBlock(frame.block)
         deps.roomTasks().landed(frame.block)
         toSite(frame.block)
+        // 这一轮已经在这里结束了。按 turn_id 结掉，别的轮次照跑；没有 id 的那种
+        // （关于整个频道的一句话）不替任何一轮做主，`error`/`done` 帧会收尾。
+        if (endsTurn(frame.block) && frame.block.turn_id) {
+          deps.turns.finished(frame.block.turn_id)
+        }
         deps.autoScroll()
         break
       case 'block_updated': {

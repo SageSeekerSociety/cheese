@@ -110,7 +110,7 @@ def test_a_session_with_the_switch_asks_its_harness_once_and_says_what_happens()
     host = Host(environ={"CHEESE_COMPACT_TOOL": "1"}, harness=harness)
     said = cheese.run_platform_tool("cheese_compact", {}, host)
     assert harness.asked == 1
-    assert "这一轮结束" in said
+    assert "这次回复结束" in said
     assert host.requests == []
 
 

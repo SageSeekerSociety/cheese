@@ -58,6 +58,13 @@ class WaitingItem:
     #: 第二行：等的是什么 —— 提问的原话、递上来的改动主题、卡停住的原因、决策请求
     #: 的说明。从已有的事实里取，没有就空着，不替它编一句。
     detail: str = ""
+    #: 等你审阅的那一行才有：这是这件任务递的第几版，什么时候递上来的。
+    card_version: int | None = None
+    card_since: datetime | None = None
+    #: 卡住那一行才有：做这件任务的队友叫什么，和这名字是不是它出生时那个
+    #: （`default` 时屏幕按读者的语言叫它）。它没留话时，第二行要叫得出它。
+    agent_name: str | None = None
+    agent_name_source: str | None = None
     #: 来自一条通知的才有：哪一条通知、它的标题（决策请求要他拍板的问题、变更提醒
     #: 说的那件事），以及决策请求可选的答案。
     alert_id: int | None = None
@@ -80,6 +87,12 @@ class WaitingItem:
             "blockId": str(self.block_id) if self.block_id else None,
             "threadId": str(self.thread_id) if self.thread_id else None,
             "detail": self.detail,
+            "cardVersion": self.card_version,
+            "cardSince": None
+            if self.card_since is None
+            else self.card_since.isoformat(),
+            "agentName": self.agent_name,
+            "agentNameSource": self.agent_name_source,
             "alertId": self.alert_id,
             "options": list(self.options),
             "headline": self.headline,

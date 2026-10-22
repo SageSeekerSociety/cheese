@@ -43,6 +43,7 @@ from app.domain.topic.services import TopicService
 from tests.integration.conftest import (
     join_project_team,
     post_project,
+    room_agent_seat,
     session_auth_headers,
 )
 from tests.support.counting_session import counting_sql
@@ -51,6 +52,7 @@ EXPECTED_TOPIC_KEYS = {
     "accepted_at",
     "accepted_by",
     "activity",
+    "agent_handle",
     "archived_at",
     "awaits_me",
     "can_manage",
@@ -464,3 +466,29 @@ def test_topic_names_list_defers_sandbox_environment_columns(client):
     assert len(topic_selects) == 1
     assert "topics.environment" not in topic_selects[0]
     assert "topics.default_environment" not in topic_selects[0]
+
+
+def test_every_room_row_names_the_seat_its_teammate_sits_in(client):
+    """A row's state can name the room's teammate (「{agent}在做」), and a project
+    may have renamed it, so the row says which seat that is — the one a message
+    nobody addressed goes to — and the list and the header agree on it."""
+    headers = session_auth_headers("alice")
+    pid = post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
+    rooms = [
+        client.post(
+            "/topics", json={"project_id": pid, "title": title}, headers=headers
+        ).json()["data"]["id"]
+        for title in ("甲", "乙")
+    ]
+
+    listed = {
+        row["id"]: row["agent_handle"]
+        for row in client.get(f"/topics?project_id={pid}", headers=headers).json()[
+            "data"
+        ]["data"]
+    }
+    for room in rooms:
+        seat = room_agent_seat(client, room)
+        assert listed[room] == seat
+        header = client.get(f"/topics/{room}", headers=headers).json()["data"]
+        assert header["agent_handle"] == seat

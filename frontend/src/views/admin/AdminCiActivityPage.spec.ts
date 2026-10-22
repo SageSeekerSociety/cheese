@@ -42,12 +42,12 @@ it('replaces a failed window with an error and retries the selected window', asy
 
   await fireEvent.click(page.getByRole('tab', { name: '1 days' }))
 
-  await page.findByText('Could not read the CI data')
+  await page.findByText('Could not load the CI data')
   expect(queueValue()).toBeUndefined()
   expect(page.getByRole('tab', { name: '1 days' }).getAttribute('aria-selected')).toBe('true')
   await fireEvent.click(page.getByRole('button', { name: 'Retry' }))
   await waitFor(() => expect(queueValue()).toBe('4.2 min'))
-  expect(page.queryByText('Could not read the CI data')).toBeNull()
+  expect(page.queryByText('Could not load the CI data')).toBeNull()
   expect(mocks.request.mock.calls.filter(([url]) => url === '/admin/ci-activity?days=1')).toHaveLength(2)
 })
 

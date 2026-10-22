@@ -36,9 +36,9 @@ _PUBLICATION_EN = (
 
 _SILENCE_ZH = (
     "这个房间已经 {minutes} 分钟没听到你说话了，提问的人还在等。"
-    "如果这一轮还在跑，现在就用 chat_send 发一条消息：说清你知道什么、"
+    "如果你还在做，现在就用 chat_send 发一条消息：说清你知道什么、"
     "在等什么——房间不出声，和卡住了分不出来。计划变了就顺手用 todo_write "
-    "改步骤清单。这一轮已经结束的话才不用理会。"
+    "改步骤清单。你已经停下的话才不用理会。"
 )
 _SILENCE_EN = (
     "You have published nothing to this room for {minutes} minutes and the "
@@ -52,7 +52,7 @@ _SILENCE_EN = (
 _CHECKLIST_ZH = (
     "你的步骤清单已经 {minutes} 分钟没动过了，而看的人只能从它知道你做到哪了。"
     "现在就用 todo_write 再写一次：做完的标成 completed，正在做的那一项标成 "
-    "in_progress。这一轮已经结束的话才不用理会。"
+    "in_progress。你已经停下的话才不用理会。"
 )
 _CHECKLIST_EN = (
     "Your step checklist has not moved for {minutes} minutes, and it is the "

@@ -12,6 +12,7 @@ import SubmitFeedbackDialog from './SubmitFeedbackDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { relTime } from '@/lib/relTime'
 import { keys } from '@/query/keys'
 import { fromSnapshot, lastSeen, seen } from '@/query/snapshot'
@@ -68,7 +69,7 @@ function saidNothing(proposal: FeedbackProposal): boolean {
 
 /** 名册上的名字；名册里没有（还没加载、或者不在这个项目里）就退回 handle。 */
 function nameOf(handle: string): string {
-  return workspace.members.find((m) => m.user_handle === handle)?.name || handle
+  return memberName(workspace.members.find((m) => m.user_handle === handle)) || handle
 }
 const navigation = useNavigation()
 
@@ -141,6 +142,7 @@ function openForm(proposal: FeedbackProposal) {
       evidence: p.evidence ?? '',
       sessionId: p.session_id ?? undefined,
       environment: p.environment ?? undefined,
+      agentHandle: proposal.author_handle,
     },
     proposal: { topicId: props.topicId, blockId: proposal.block_id },
   })
