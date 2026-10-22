@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from sqlalchemy import DateTime, String, Uuid, column, table
 
-#: `tasks`, the five columns `project_material` reads. `status` holds the enum
+#: `tasks`, the columns `project_material` reads. `status` holds the enum
 #: member's name (`Enum(native_enum=False)`).
 _tasks = table(
     "tasks",
@@ -33,10 +33,9 @@ _tasks = table(
     column("document_id", Uuid),
     column("created_at", DateTime(timezone=True)),
     column("updated_at", DateTime(timezone=True)),
-    column("closed_at", DateTime(timezone=True)),
 )
 
-#: `accept_cards`, the five columns it reads. `status` is the same shape.
+#: `accept_cards`, the columns it reads. `status` is the same shape.
 _cards = table(
     "accept_cards",
     column("task_id", Uuid),

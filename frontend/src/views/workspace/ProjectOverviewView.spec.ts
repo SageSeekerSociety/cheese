@@ -203,12 +203,53 @@ it('写过项目目标：没有起草的入口', () => {
 it('现状：写成过就在最上面，还没有可写的就不占地方', async () => {
   const written = mount({
     agentName: '芝士',
-    situation: { content: '报名流程已可用，当前重点是内测', written_at: new Date().toISOString(), writing: false },
+    situation: {
+      parts: [{ name: '报名与候补', text: '候补按顺序自动递补', status: 'usable', sources: [] }],
+      written_at: new Date().toISOString(),
+      writing: false,
+    },
   })
-  await vi.waitFor(() =>
-    expect(written.getByTestId('overview-situation').textContent).toContain('报名流程已可用，当前重点是内测')
-  )
+  await vi.waitFor(() => expect(written.getByTestId('overview-situation').textContent).toContain('候补按顺序自动递补'))
   cleanup()
-  const empty = mount({ agentName: '芝士', situation: { content: '', written_at: null, writing: false } })
+  const empty = mount({ agentName: '芝士', situation: { parts: [], written_at: null, writing: false } })
   expect(empty.queryByTestId('overview-situation')).toBeNull()
+})
+
+it('现状：每块的出处点开就是那件任务，引项目目标的去项目目标', async () => {
+  const view = mount({
+    agentName: '芝士',
+    situation: {
+      parts: [
+        {
+          name: '报名与候补',
+          text: '候补按顺序自动递补',
+          status: 'usable',
+          sources: [
+            {
+              kind: 'delivery',
+              card_id: 'c1',
+              task_id: 't-signup',
+              room_id: 'front',
+              title: '支持候补自动递补',
+              quote: '',
+            },
+          ],
+        },
+        {
+          name: '数据统计',
+          text: '按月导出',
+          status: 'not_started',
+          sources: [{ kind: 'goal', card_id: null, task_id: null, room_id: null, title: '', quote: '数据统计' }],
+        },
+      ],
+      written_at: new Date().toISOString(),
+      writing: false,
+    },
+  })
+
+  await fireEvent.click(await view.findByRole('button', { name: '支持候补自动递补' }))
+  await fireEvent.click(view.getByRole('button', { name: t('work.overview.situationGoal') }))
+
+  expect(view.emitted('open-task')).toEqual([[{ taskId: 't-signup', roomId: 'front' }]])
+  expect(view.emitted('edit-overview')).toHaveLength(1)
 })

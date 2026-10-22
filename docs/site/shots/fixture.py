@@ -148,30 +148,39 @@ def library(project_id: str, alice: dict) -> None:
 
 
 async def situation(project_id: str) -> None:
-    """The 现状 at the top of the overview, as the project's model would write
-    it. Stamped with the project's progress as it stands, so opening the page
-    does not ask the (absent) model to rewrite it."""
-    from app.domain import project_material
+    """The 现状 at the top of the overview, as the project's model would group
+    it, checked against the project's records the way the backend checks a real
+    answer. Stamped with the project's progress as it stands, so opening the
+    page does not ask the (absent) model to rewrite it."""
+    from app.domain.project_situation import card, records
     from app.domain.project_situation.models import ProjectSituation
 
     pid = uuid.UUID(project_id)
     async with async_session_factory() as s:
-        marks = await project_material.marks(s, pid)
+        found = await records.gather(s, pid)
+        ref = {task.title: task.ref for task in found.open_tasks}
+        answer = {
+            "parts": [
+                {
+                    "name": "报名表单",
+                    "text": "正在精简表单字段",
+                    "sources": [ref["表单字段精简"]],
+                },
+                {
+                    "name": "提交校验",
+                    "text": "正在补提交校验和错误提示",
+                    "sources": [ref["提交校验与错误提示"]],
+                },
+            ]
+        }
         now = datetime.now(UTC)
         await s.merge(
             ProjectSituation(
                 project_id=pid,
-                content=(
-                    "报名数据导出已可用，当前重点是报名表单和提交校验\n\n"
-                    "- 报名表单 {! 进行中}：必填项减到 4 项，手机上一屏填完\n"
-                    "- 提交校验 {! 进行中}：学号格式校验开发中\n"
-                    "- 迎新海报 {! 进行中}：两版初稿待定稿\n"
-                    "- 报名数据导出 {✓ 可用}：9 月报名数据已在资料库"
-                ),
+                parts=card.build(answer, found),
                 written_at=now,
                 tried_at=now,
-                major=marks.major,
-                minor=marks.minor,
+                major=await records.mark(s, pid),
             )
         )
         await s.commit()

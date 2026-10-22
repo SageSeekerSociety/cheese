@@ -3,6 +3,7 @@
  *
  * 单独一份，和 `catalogDoc.ts` 同一个理由：`catalog.ts` 已经顶到一千行的上限。
  */
+import type { SituationPart } from '@/api/projectProgress'
 import type { CatalogEntry } from './catalog'
 
 import { AGENT_NAME } from './catalogFixtures'
@@ -10,18 +11,38 @@ import { AGENT_NAME } from './catalogFixtures'
 import OverviewDraftForm from '@/components/overview/OverviewDraftForm.vue'
 import SituationCard from '@/components/overview/SituationCard.vue'
 
-const SITUATION = `活动发布到时长核准的流程已可用，当前重点是准备内测
-
-- 活动发布与审批 {✓ 可用}：发布、审批和招募文案已实现
-- 报名与候补 {✓ 可用}：候补按顺序自动递补
-- 内测与上线 {! 进行中}：数据迁移已接入，统一身份认证仍走演示模式
-- 数据统计 {✗ 未开始}：仅有导出`
+const SITUATION: SituationPart[] = [
+  {
+    name: '活动发布与审批',
+    text: '支持发布活动、审批和生成招募文案',
+    status: 'usable',
+    sources: [
+      { kind: 'delivery', card_id: 'c1', task_id: 't1', room_id: 'r1', title: '活动发布与审批流程', quote: '' },
+      { kind: 'delivery', card_id: 'c2', task_id: 't2', room_id: 'r1', title: '招募文案生成', quote: '' },
+    ],
+  },
+  {
+    name: '内测与上线',
+    text: '数据迁移已接入，正在接统一身份认证',
+    status: 'underway',
+    sources: [
+      { kind: 'delivery', card_id: 'c3', task_id: 't3', room_id: 'r1', title: '接入数据迁移', quote: '' },
+      { kind: 'task', card_id: null, task_id: 't4', room_id: 'r1', title: '接入统一身份认证', quote: '' },
+    ],
+  },
+  {
+    name: '数据统计',
+    text: '志愿时长统计和导出',
+    status: 'not_started',
+    sources: [{ kind: 'goal', card_id: null, task_id: null, room_id: null, title: '', quote: '志愿时长统计与导出' }],
+  },
+]
 
 export const OVERVIEW_ENTRIES: CatalogEntry[] = [
   {
     id: 'overview-situation-card',
     title: 'SituationCard',
-    about: '项目总览最上面的「现状」：AI 队友读项目写下的一句判断和各块的状态。',
+    about: '项目总览最上面的「现状」：项目分成的几块，每块的状态由记录定，下面一行是点得开的出处。',
     file: 'src/components/overview/SituationCard.vue',
     component: SituationCard,
     needs: ['vuetify', 'i18n'],
@@ -29,14 +50,14 @@ export const OVERVIEW_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '写成过',
-        note: '右上角写着谁、多久以前整理的；正文和文档里的状态标签同一个样子。',
-        props: { content: SITUATION, writtenAt: new Date(Date.now() - 2 * 3600_000).toISOString(), writing: false },
-        expect: '当前重点是准备内测',
+        note: '右上角写着谁、多久以前整理的；状态标签和文档里同一个样子，出处点开去那件任务或项目目标。',
+        props: { parts: SITUATION, writtenAt: new Date(Date.now() - 2 * 3600_000).toISOString(), writing: false },
+        expect: '正在接统一身份认证',
       },
       {
         name: '正在重写',
         note: '上一版照旧显示，右上角说正在整理。',
-        props: { content: SITUATION, writtenAt: null, writing: true },
+        props: { parts: SITUATION, writtenAt: null, writing: true },
         expect: '正在整理',
       },
     ],

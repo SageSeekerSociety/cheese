@@ -1,12 +1,13 @@
-"""写「现状」时交给模型的那份材料，以及判断「上次之后有没有新进展」的两档记号。
+"""起草项目目标（文档芝士的「起草」）时交给它的项目材料，和项目里人人看得到的频道。
 
-材料按 2026-10-13 定的那版取：项目目标（总览文档）、近两周做完的事（开工时的标题和
-交付时的改动标题）、还在做的事（标题和任务文档开头）、每个频道近两周人说的最后 20
-条，都按频道分组。只取公开频道：私聊和私密频道里的事，项目里不是人人看得到，而现状
-是人人看得到的。
+材料：项目目标（总览文档）、近两周做完的事（开工时的标题和交付时的改动标题）、还在
+做的事（标题和任务文档开头）、每个频道近两周人说的最后 20 条，都按频道分组。起草要
+的正是对话里说定的事，所以人说的话在里面。只取公开频道：私聊和私密频道里的事，项目
+里不是人人看得到，而项目目标是人人看得到的。
 
-起草项目总览（文档芝士的「起草」）读的也是这一份，所以它单独在这一层：写现状的
-``project_situation`` 在最上层，文档芝士在 ``agent`` 那一层，两边都往下读它。
+「现状」读的不是这一份（它只读点得开的记录，``project_situation.records``），只借
+``public_rooms``。它单独在这一层，是因为文档芝士在 ``agent`` 那一层、现状在最上层，
+两边都往下读它。
 """
 
 import uuid
@@ -14,7 +15,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
@@ -117,90 +118,6 @@ async def public_rooms(session: AsyncSession, project_id: uuid.UUID) -> Rooms:
     return Rooms({room: title for room, title in titles.items() if room in shown})
 
 
-@dataclass(frozen=True)
-class Marks:
-    """项目此刻到了哪一步，分两档。
-
-    ``major``：任务开了、做完了、交付被采纳了、项目目标改了——看现状的人会在意的
-    变化，几分钟后就该写进去。``minor``：频道里有人说了话——要写进去，但不急。
-    两者都是不透明的字符串，只拿来和上次写的时候比相等不相等。
-    """
-
-    major: str
-    minor: str
-
-
-async def marks(session: AsyncSession, project_id: uuid.UUID) -> Marks:
-    rooms = await public_rooms(session, project_id)
-    room_ids = list(rooms.names)
-    overview = await pointed_overview(session, project_id)
-    tasks = (
-        await session.execute(
-            select(
-                func.count(_tasks.c.id),
-                func.max(_tasks.c.created_at),
-                func.max(_tasks.c.closed_at),
-            ).where(_tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids))
-        )
-    ).one()
-    accepted = await session.scalar(
-        select(func.max(_cards.c.decided_at))
-        .join(_tasks, _tasks.c.id == _cards.c.task_id)
-        .where(
-            _tasks.c.project_id == project_id,
-            _tasks.c.room_id.in_(room_ids),
-            _cards.c.status == STATUS_ACCEPTED,
-        )
-    )
-    said = await session.scalar(
-        select(func.max(Block.created_at)).where(
-            Block.project_id == project_id,
-            Block.kind == BlockKind.message,
-            Block.conversation_id.in_(
-                await _conversations(session, project_id, room_ids)
-            ),
-        )
-    )
-    major = "|".join(
-        str(part)
-        for part in (
-            overview.version if overview is not None else 0,
-            *tasks,
-            accepted,
-        )
-    )
-    return Marks(major=major, minor=str(said))
-
-
-async def _conversations(
-    session: AsyncSession, project_id: uuid.UUID, room_ids: list[uuid.UUID]
-) -> list[uuid.UUID]:
-    """这些频道里所有对话的 id：频道主线、频道里的任务、频道里的支线。"""
-    if not room_ids:
-        return []
-    tasks = await session.scalars(
-        select(_tasks.c.id).where(
-            _tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids)
-        )
-    )
-    threads = await session.scalars(
-        select(Thread.id).where(
-            Thread.project_id == project_id, Thread.room_id.in_(room_ids)
-        )
-    )
-    return [*room_ids, *tasks, *threads]
-
-
-@dataclass(frozen=True)
-class Material:
-    #: 交给模型的全文。
-    text: str
-    #: 项目目标写了什么（去掉首尾空白）；没写是空串。
-    goal: str
-    #: 近两周既没做完什么、也没人在做什么、也没人说话：没东西可写。
-    quiet: bool
-
-
 async def _names(session: AsyncSession, handles: set[str]) -> dict[str, str]:
     if not handles:
         return {}
@@ -214,7 +131,8 @@ async def _names(session: AsyncSession, handles: set[str]) -> dict[str, str]:
 
 async def gather(
     session: AsyncSession, project_id: uuid.UUID, *, now: datetime | None = None
-) -> Material:
+) -> str:
+    """交给起草的那份材料的全文。"""
     now = now or datetime.now(UTC)
     since = now - WINDOW
     rooms = await public_rooms(session, project_id)
@@ -306,11 +224,7 @@ async def gather(
     if not talk_rooms:
         lines.append("（没有）")
 
-    return Material(
-        text="\n".join(lines),
-        goal=goal,
-        quiet=not (done or going or talk_rooms),
-    )
+    return "\n".join(lines)
 
 
 def _clip(goal: str) -> str:

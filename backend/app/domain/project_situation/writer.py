@@ -1,15 +1,15 @@
-"""写「现状」的那一问：把项目材料交给模型，拿回一段芝士文档写法的 Markdown。
+"""写「现状」的那一问：把项目的记录交给模型，拿回分好的几块（JSON）。
 
-提示词是 2026-10-13 在 dev 上三个真实项目各跑三次后定下的那版：一句整体判断，
-下面按项目要做出来的东西分三到五块，各带「可用 / 进行中 / 未开始」标签。只写项目
-本身，不写人和平台；语气照界面文案规范的 8.0 和 8.6。思考强度不调低：调低以后模型会
-把思考过程漏进正文。
+一次调用，不给工具：材料里已经是它能引的全部记录，它要做的只是分块和写句子。每块
+的出处和状态由 ``card`` 核对和判定，不信模型自己说的。思考强度不调低：调低以后模型
+会把思考过程漏进正文。
 
 用的是项目自己的模型（分身默认模型，没设就是项目默认模型），和文档里的芝士一样走
 项目在网关上的那把钥匙，所以花费和项目里每一轮一样记在项目上，额度和模型档位的
 限制也一样。项目的模型不走网关（成员自己的订阅）时不写：不拿别的模型替它。
 """
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -22,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
 from app.domain.agent.document import question
-from app.domain.agent.harness.prompt import WRITING
 from app.domain.agent.model_catalog import catalog, subagent_default
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
@@ -31,7 +30,6 @@ from app.domain.policy import gate
 from app.domain.project.services import ProjectService
 from app.domain.room_task import binding
 from app.domain.service_keys import gateway_base
-from app.domain.skill_library import SKILL_DIR, parse_frontmatter
 from app.domain.usage.services import UsageService
 
 logger = logging.getLogger(__name__)
@@ -40,13 +38,9 @@ logger = logging.getLogger(__name__)
 _ANSWER_TOKENS = 24000
 
 #: 写现状的要求：长，所以单独放在旁边的 Markdown 里。
-_RULES = (Path(__file__).parent / "situation_prompt.md").read_text(encoding="utf-8")
-
-
-def system_prompt() -> str:
-    guide = parse_frontmatter(SKILL_DIR / "doc_writing.md")[1]
-    blocks = parse_frontmatter(SKILL_DIR / "doc_blocks.md")[1]
-    return f"{_RULES}\n\n{WRITING}\n\n# 文档指南\n{guide}\n\n# 块的写法\n{blocks}"
+SYSTEM_PROMPT = (Path(__file__).parent / "situation_prompt.md").read_text(
+    encoding="utf-8"
+)
 
 
 class ProjectModels(Protocol):
@@ -89,8 +83,20 @@ async def _bind(session: AsyncSession, project_id: uuid.UUID) -> question.Bound 
 
 @dataclass(frozen=True)
 class Written:
-    content: str
+    #: 模型回的那个 JSON 对象，还没核对过。
+    answer: dict
     model: str
+
+
+def _parse(content: str) -> dict | None:
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+    try:
+        answer = json.loads(text)
+    except ValueError:
+        return None
+    return answer if isinstance(answer, dict) else None
 
 
 async def write(
@@ -101,7 +107,7 @@ async def write(
     models: ProjectModels,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> Written | None:
-    """模型写的现状；问不了、或者回来的是空的，是 None。"""
+    """模型分好的那几块；问不了、或者回来的不是一个 JSON 对象，是 None。"""
     try:
         bound = await _bind(session, project_id)
     except UnprocessableEntityError as refused:
@@ -128,7 +134,7 @@ async def write(
                     json={
                         "model": bound.wire_model,
                         "messages": [
-                            {"role": "system", "content": system_prompt()},
+                            {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": material},
                         ],
                         "max_tokens": _ANSWER_TOKENS,
@@ -147,6 +153,11 @@ async def write(
     if asked:
         # 花在项目钥匙上的，和项目里的一轮一样从网关的记录里结算。
         await models.charge_turn_spend(project_id, None, uuid.uuid4())
-    if not content:
+    answer = _parse(content) if content else None
+    if answer is None:
+        if content:
+            logger.warning(
+                "project situation answer is not JSON project=%s", project_id
+            )
         return None
-    return Written(content=content, model=bound.model)
+    return Written(answer=answer, model=bound.model)
