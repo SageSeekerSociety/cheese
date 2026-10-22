@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.routine.models import RoutineRun
 from app.domain.routine.service._shared import REPORT_TIMEOUT
-from app.domain.usage.repositories import UsageRepository
+from app.domain.usage.services import UsageService
 
 
 async def credits_by_rule(
@@ -53,7 +53,7 @@ async def credits_by_rule(
     work_of: dict[uuid.UUID, list[uuid.UUID]] = {}
     for routine_id, turn_id in rows.all():
         work_of.setdefault(routine_id, []).append(turn_id)
-    by_work = await UsageRepository(session).credits_by_work(
+    by_work = await UsageService(session).credits_by_work(
         [turn_id for turn_ids in work_of.values() for turn_id in turn_ids],
         since=since,
         until=until,
@@ -78,7 +78,7 @@ async def credits_by_run(
     写 0 是在说「这一轮没花钱」，写「结算中」才是真的。
     """
     work_ids = [r.turn_id for r in runs if r.turn_id is not None]
-    by_work = await UsageRepository(session).credits_by_work(
+    by_work = await UsageService(session).credits_by_work(
         work_ids, since=since, until=until
     )
     return {

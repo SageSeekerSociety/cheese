@@ -110,7 +110,7 @@ beforeEach(() => {
     ],
     total: 2,
   })
-  vi.mocked(listRoutineRuns).mockResolvedValue({ data: [], total: 0 })
+  vi.mocked(listRoutineRuns).mockResolvedValue({ data: [], total: 0, credits_this_month: 0 })
   // 模板存在项目里（`api/routines.ts` 那三个接口），默认这个项目一条也没有。
   vi.mocked(listRoutineTemplates).mockResolvedValue({ data: [], total: 0 })
 })
@@ -246,7 +246,11 @@ describe('例行事务', () => {
         finished_at: '2026-09-28T01:10:00Z',
       })),
     })
-    vi.mocked(listRoutineRuns).mockResolvedValue({ data: [], total: 34 })
+    vi.mocked(listRoutineRuns).mockResolvedValue({
+      data: [],
+      total: 34,
+      credits_this_month: 0,
+    })
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('已经在跑的日报'))
 
