@@ -80,7 +80,6 @@ EVENTS: dict[str, tuple[NotificationType, ...]] = {
         NotificationType.TEAM_INVITATION,
     ),
 }
-TRIGGERS = ("schedule", *EVENTS)
 #: How a trigger is said to 芝士 and on the settings page.
 _EVENT_SAID = {
     "mention": "有人 @ 你或回复你的支线时",

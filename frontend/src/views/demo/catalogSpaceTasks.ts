@@ -33,6 +33,7 @@ import {
   TASK_REVIEWS,
   TASK_ROSTER,
 } from './catalogSpaceTasksFixtures'
+import { ASSISTANT_RECENT, ASSISTANT_ROUTINES, ASSISTANT_RULES } from './catalogViewSettingsWorkspaceFixtures'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
@@ -48,6 +49,7 @@ import SpaceGuidanceView from '@/views/spaces/detail/settings/SpaceGuidanceView.
 import BriefView from '@/views/tasks/detail/BriefView.vue'
 import InsightsView from '@/views/tasks/detail/InsightsView.vue'
 import RosterView from '@/views/tasks/detail/RosterView.vue'
+import AssistantView from '@/views/user/settings/AssistantView.vue'
 
 /** 画法要 Vuetify、文案要语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -262,6 +264,49 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           ],
         },
         expect: '已过期',
+      },
+    ],
+  },
+  {
+    id: 'settings-assistant-view',
+    title: 'AssistantView',
+    get about() {
+      return t('catalog.settingsAssistantView.about')
+    },
+    file: 'src/views/user/settings/AssistantView.vue',
+    component: AssistantView,
+    needs: UI_T,
+    args: {
+      rules: ASSISTANT_RULES,
+      routines: ASSISTANT_ROUTINES,
+      routineLimit: 20,
+      recent: ASSISTANT_RECENT,
+      loading: false,
+      failed: false,
+      saving: false,
+      saved: false,
+      error: '',
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.settingsAssistantView.s1.name')
+        },
+        get note() {
+          return t('catalog.settingsAssistantView.s1.note')
+        },
+        props: {},
+        expect: '例行事务',
+      },
+      {
+        get name() {
+          return t('catalog.settingsAssistantView.s2.name')
+        },
+        get note() {
+          return t('catalog.settingsAssistantView.s2.note')
+        },
+        props: { routines: [], rules: { ...ASSISTANT_RULES, askItems: [], allowItems: [] } },
+        expect: '暂无例行事务',
       },
     ],
   },
