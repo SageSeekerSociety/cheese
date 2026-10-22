@@ -140,6 +140,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_run_records: 'toolLabels.cheeseRunRecords',
   cheese_environment: 'toolLabels.cheeseEnvironment',
   cheese_wait_environment: 'toolLabels.cheeseWaitMachine',
+  cheese_compact: 'toolLabels.cheeseCompact',
   cheese_note: 'toolLabels.cheeseNote',
   cheese_deliver_at: 'toolLabels.cheeseDeliverAt',
   cheese_routine_draft: 'toolLabels.cheeseRoutineDraft',

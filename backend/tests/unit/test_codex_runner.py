@@ -307,3 +307,72 @@ async def test_a_line_said_mid_turn_goes_into_that_turn(tmp_path):
         assert runner.journal.recall("work:thread") == "platform-work"
     finally:
         await runner.close()
+
+
+# --- the session compacting itself ----------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_an_idle_thread_is_asked_to_compact_at_once(tmp_path):
+    """`cheese_compact` reaches this runner as `request_compact`, and the ask
+    goes to app-server's `thread/compact/start`. Nothing is running, so it goes
+    now; asked twice, the second is told the first is already on its way."""
+    runner = Runner(tmp_path, AsyncMock())
+    compacted = AsyncMock()
+    runner.session = SimpleNamespace(
+        thread_id="thread", turn_id=None, compact=compacted, observe=lambda _: None
+    )
+    try:
+        assert runner.request_compact() == "requested"
+        await asyncio.sleep(0.05)
+        compacted.assert_awaited_once()
+        assert runner.request_compact() == "already"
+        assert compacted.await_count == 1
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_request_made_mid_turn_waits_for_that_turn_to_end(tmp_path):
+    """`thread/compact/start` replaces whatever task the thread has running, so
+    asking mid-turn would cut the turn off: the request waits for
+    `turn/completed`. An `item/completed` for the compaction ends it."""
+    runner = Runner(tmp_path, AsyncMock())
+    compacted = AsyncMock()
+    session = SimpleNamespace(
+        thread_id="thread", turn_id="turn", compact=compacted, observe=lambda _: None
+    )
+    runner.session = session
+    try:
+        assert runner.request_compact() == "requested"
+        await asyncio.sleep(0.05)
+        assert not compacted.await_count
+
+        await runner.record(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {"id": "turn", "status": "completed"},
+                },
+            }
+        )
+        session.turn_id = None
+        await asyncio.sleep(0.05)
+        compacted.assert_awaited_once()
+
+        # The compaction runs on as a turn of its own; nothing is asked again
+        # until it reports its end.
+        assert runner.request_compact() == "already"
+        await runner.record(
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread",
+                    "item": {"id": "item-1", "type": "contextCompaction"},
+                },
+            }
+        )
+        assert runner.compact_request == ""
+    finally:
+        await runner.close()

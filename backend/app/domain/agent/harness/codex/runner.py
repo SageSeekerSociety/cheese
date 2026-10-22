@@ -56,6 +56,14 @@ class Runner(runner.Runner[Journal]):
         # The session's monitors (`tools.RemoteTools.monitors`): what they
         # print is said to the session through `tell`.
         self.monitors: Monitors | None = None
+        # Where the session's own request to compact has got to, if it made
+        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # in is still running, "sent" once app-server has the request and the
+        # thread's compaction has not finished. Set from the thread the tool
+        # call runs on (`tools.RemoteTools`), read here.
+        self.compact_request = ""
+        #: The loop `request_compact` hops onto from that thread.
+        self.loop = asyncio.get_running_loop()
 
     async def _catch_up(self) -> bool:
         """The project's skills as they are on the machine now; whether they
@@ -122,6 +130,16 @@ class Runner(runner.Runner[Journal]):
             self.journal.append(event)
         if self.session is not None:
             self.session.observe(event)
+        if (
+            self.compact_request == "sent"
+            and self.session is not None
+            and thread_id == self.session.thread_id
+            and event.get("method") == "item/completed"
+            and (params.get("item") or {}).get("type") == "contextCompaction"
+        ):
+            # The compaction the session asked for is over, however it went:
+            # the turn that carried it says which outcome (`turn/completed`).
+            self.compact_request = ""
         if reason is not None:
             self.continuing = asyncio.ensure_future(self._hold_to_reply(reason, event))
         elif ends:
@@ -130,6 +148,11 @@ class Runner(runner.Runner[Journal]):
             if not handed_on:
                 self.reply_settled()
             self.turn_ended()
+            if self.compact_request == "asked":
+                # The turn the session asked to be compacted in has ended, so
+                # the request can go now (`Session.compact`: asking mid-turn
+                # replaces that turn).
+                asyncio.ensure_future(self._compact_now())
 
     async def _hold_to_reply(self, reason: str, ending: dict) -> None:
         assert self.session is not None
@@ -154,6 +177,50 @@ class Runner(runner.Runner[Journal]):
                 self.journal.remember(f"unsolicited:{work}", "1")
                 self.journal.remember(f"work:{session.thread_id}", work)
             await session.send(text)
+
+    # --- the session compacting itself ---------------------------------------
+
+    def request_compact(self) -> str:
+        """The session asked to compact its own context (`cheese_compact`):
+        whether this is the request that will be acted on.
+
+        Asked for once — a request still waiting and one already running are
+        the same thing to the agent that asked — and always asked for at the
+        end of the turn it was made in: `thread/compact/start` replaces
+        whatever the thread is doing, so asking mid-turn would abort the turn
+        the asking tool call is in.
+        """
+        if self.compact_request:
+            return "already"
+        session = self.session
+        if session is None or session.thread_id is None:
+            raise RuntimeError("This session has no Codex thread to compact")
+        self.compact_request = "asked"
+        # From the loop: a platform tool call runs in a worker thread
+        # (`tools.RemoteTools.__call__`).
+        self.loop.call_soon_threadsafe(self._compact_when_idle)
+        return "requested"
+
+    def _compact_when_idle(self) -> None:
+        """On the loop: ask now if no turn is running, or let the turn that is
+        ask when it ends (`record`)."""
+        if self.compact_request != "asked":
+            return
+        session = self.session
+        if session is None or session.thread_id is None:
+            self.compact_request = ""
+            return
+        if session.turn_id is None:
+            asyncio.ensure_future(self._compact_now())
+
+    async def _compact_now(self) -> None:
+        assert self.session is not None
+        self.compact_request = "sent"
+        try:
+            await self.session.compact()
+        except Exception as error:  # the session goes on without it
+            self.compact_request = ""
+            print(f"compaction not asked: {error!r}", file=sys.stderr, flush=True)
 
     async def start(
         self,
@@ -321,6 +388,9 @@ class Runner(runner.Runner[Journal]):
             # A watch still running is the session's own work: letting the
             # session go would end it unheard.
             or (self.monitors is not None and self.monitors.count() > 0)
+            # So is a compaction asked for and not finished: between the turn
+            # ending and the compaction being taken there is no turn to say so.
+            or bool(self.compact_request)
         )
 
     async def close(self) -> None:

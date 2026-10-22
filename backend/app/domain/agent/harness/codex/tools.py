@@ -10,6 +10,7 @@ import posixpath
 import re
 import shutil
 import types
+from collections.abc import Callable
 from pathlib import Path
 
 from app.domain.agent.executor_transport import (
@@ -132,6 +133,10 @@ class RemoteTools:
         # The session's monitors, once the runner that tells the session what
         # they print exists (`entry.py`).
         self.monitors: monitor.Monitors | None = None
+        # How to ask the session's own thread to compact itself, for the one
+        # tool that does (`cheese_compact`): the runner's, set beside
+        # `monitors` (`entry.py`). A session without one refuses the call.
+        self.compact: Callable[[], str] | None = None
         # The project's MCP servers the session opened with (`discover`).
         self.mcp_servers: list[str] = []
 
@@ -423,7 +428,7 @@ class RemoteTools:
             cursor = result.get("nextCursor")
             if not cursor:
                 break
-        for tool in self.platform.PLATFORM_TOOLS.schemas():
+        for tool in self.platform.offered_tools():
             if tool["name"] in routes:
                 raise ValueError(f"Duplicate executor tool: {tool['name']}")
             routes[tool["name"]] = (PLATFORM, tool["name"])
@@ -490,7 +495,12 @@ class RemoteTools:
                 return
 
     def _platform_call(
-        self, tool: str, call_id: str, arguments: dict, notice: io.StringIO
+        self,
+        tool: str,
+        call_id: str,
+        arguments: dict,
+        notice: io.StringIO,
+        session_call: bool,
     ) -> dict:
         def invoke(payload, args):
             return self.client.call(
@@ -500,6 +510,10 @@ class RemoteTools:
             )
 
         host = PlatformHost(self.client, invoke, call_id, self.doc_versions)
+        # A subagent's thread is not the room's session: compacting it would
+        # compact the wrong context, and it is not the one the room reads.
+        if session_call:
+            host.compact = self.compact
         try:
             text = self.platform.run_platform_tool(tool, arguments, host)
         except MachineOutOfReach:
@@ -554,6 +568,7 @@ class RemoteTools:
                 params["callId"],
                 params["arguments"],
                 notice,
+                session_call,
             )
         else:
             receipt = await self._executor_call(

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 
 from app.core import model_roles
+from app.core.config import settings
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, mint_session_token
@@ -119,6 +120,10 @@ async def ensure(
                     if session.inner_id is not None
                     else {}
                 ),
+                # 这次部署多给的一张牌：请平台压缩自己这个会话（v1 只在 dev
+                # 开着看）。写进环境是唯一一处决定——`sandbox/cheese` 按它挑
+                # 清单、也按它放行，三个骨架都不各自判断。
+                **({"CHEESE_COMPACT_TOOL": "1"} if settings.agent_compact_tool else {}),
             },
             acting=prepared.agent_handle,
             skills=session_skill_files(session.project_id),
