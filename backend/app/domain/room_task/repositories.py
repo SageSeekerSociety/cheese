@@ -60,6 +60,11 @@ class ListedTask:
     title_source: TaskTitleSource
     status: TaskStatus
     progress_state: TaskProgress | None
+    #: 队友报那个状态时附的一句（`Task.progress_note`）：「待我处理」里卡住那一行
+    #: 的第二行说的就是它要你做什么。
+    progress_note: str | None
+    #: 做它的队友坐的那个座位（`Task.agent_handle`）；空的时候是频道的那位。
+    agent_handle: str | None
     owner_handle: str | None
     reporter_handle: str | None
     contributor_handles: tuple[str, ...]
@@ -166,6 +171,8 @@ class TaskRepository:
                 Task.title_source,
                 Task.status,
                 Task.progress_state,
+                Task.progress_note,
+                Task.agent_handle,
                 Task.owner_handle,
                 Task.reporter_handle,
                 Task.contributor_handles,
@@ -187,6 +194,8 @@ class TaskRepository:
                 title_source=row.title_source,
                 status=row.status,
                 progress_state=row.progress_state,
+                progress_note=row.progress_note,
+                agent_handle=row.agent_handle,
                 owner_handle=row.owner_handle,
                 reporter_handle=row.reporter_handle,
                 contributor_handles=tuple(row.contributor_handles or ()),

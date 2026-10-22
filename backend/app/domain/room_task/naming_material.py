@@ -34,7 +34,11 @@ _CONVERSATION_CHARS = 2400
 _GOAL_CHARS = 600
 
 _STAGE_ASK = {
-    "name": "这个任务还没有名字，给它起一个。keep 填 false。",
+    "name": (
+        "这个任务还没有名字。文字已说明具体事情时，起名并填 keep=false。"
+        "如果只是问候、称呼或指向未读附件，尚不能确定主题，"
+        "填 keep=true、title 留空，等后续文字说明后再起名，不要猜。"
+    ),
     "calibrate": (
         "当前标题是只看开场第一句话起的。结合现在的对话判断它是否准确："
         "准确且具体就保留（keep=true，title 照抄当前标题）；"
@@ -53,6 +57,7 @@ _STAGE_ASK = {
 class Line:
     person: bool
     text: str
+    attachment: str | None = None
 
 
 def _escape(text: str) -> str:
@@ -80,15 +85,25 @@ def _messages(blocks: list[Block]) -> list[Line]:
     are not what the task is about."""
     lines: list[Line] = []
     for block in blocks:
-        if block.kind != BlockKind.message:
+        if block.kind not in (BlockKind.message, BlockKind.attachment):
             continue
         if block.author_type != AuthorType.participant:
             continue
         if (block.meta or {}).get("in_room") is False:
             continue
+        person = names_a_person(block.author)
+        if block.kind == BlockKind.attachment:
+            lines.append(
+                Line(
+                    person=person,
+                    text="",
+                    attachment=block.mime_type or "application/octet-stream",
+                )
+            )
+            continue
         text = (block.content or "").strip()
         if text:
-            lines.append(Line(person=names_a_person(block.author), text=text))
+            lines.append(Line(person=person, text=text))
     return lines
 
 
@@ -97,7 +112,7 @@ async def _newest(
 ) -> list[Block]:
     stmt = select(Block).where(
         Block.conversation_id == conversation_id,
-        Block.kind == BlockKind.message,
+        Block.kind.in_((BlockKind.message, BlockKind.attachment)),
         Block.author_type == AuthorType.participant,
     )
     if before is not None:
@@ -130,7 +145,24 @@ async def _origin(session: AsyncSession, task: Task) -> list[Block]:
         if thread is not None
         else []
     )
-    return [root, *reversed(replies)]
+    attachments = (
+        list(
+            await session.scalars(
+                select(Block)
+                .where(
+                    Block.conversation_id == root.conversation_id,
+                    Block.turn_id == root.turn_id,
+                    Block.kind == BlockKind.attachment,
+                    Block.id != root.id,
+                    Block.created_at < task.created_at,
+                )
+                .order_by(Block.created_at)
+            )
+        )
+        if root.turn_id is not None
+        else []
+    )
+    return [root, *attachments, *reversed(replies)]
 
 
 async def _conversation(session: AsyncSession, task: Task) -> list[Line]:
@@ -152,13 +184,18 @@ def _render(
     rendered: list[str] = []
     # Newest first while cutting to budget, so the latest direction survives.
     for line in reversed(lines):
-        text = line.text[:_MESSAGE_CHARS]
+        text = (
+            f"{line.attachment}；附件正文未读取，主题需从后续文字说明中判断。"
+            if line.attachment is not None
+            else line.text
+        )[:_MESSAGE_CHARS]
         if budget <= 0:
             break
         text = text[:budget]
         budget -= len(text)
         role = "person" if line.person else "agent"
-        rendered.append(f'<message role="{role}">{_escape(text)}</message>')
+        tag = "attachment" if line.attachment is not None else "message"
+        rendered.append(f'<{tag} role="{role}">{_escape(text)}</{tag}>')
     rendered.reverse()
     parts = ["<task>"]
     if current:

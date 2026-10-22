@@ -82,21 +82,6 @@ function mount(extra: Record<string, unknown> = {}) {
   })
 }
 
-it('关注结果而非被问到的人，不被总览写成待你回答', () => {
-  const view = mount({
-    tasks: [
-      task({
-        reporter_handle: 'alice',
-        awaits_me: true,
-        needs_my_action: false,
-        presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
-      }),
-    ],
-  })
-  expect(view.queryByText(t('work.board.mine.awaiting_answer'))).toBeNull()
-  expect(view.getByText(t('work.board.phrase.awaiting_answer'))).toBeTruthy()
-})
-
 it('项目目标照原样显示', async () => {
   const view = mount({ overviewText: '## 现在到哪了\n\n报名和审核已经能用。' })
   const doc = view.getByTestId('overview-document')

@@ -396,7 +396,7 @@ async def instruction(session: AsyncSession, rows: list[ReviewComment]) -> str:
         head = f"- [{row.id}] {_where(row)}"
         if parent is not None:
             said = f"，你上次说：{parent.outcome_note}" if parent.outcome_note else ""
-            head += f"（回复上一轮的批注「{parent.body}」{said}）"
+            head += f"（回复上次审阅时的批注「{parent.body}」{said}）"
         if comment_place.kind_of(row.path) != "line" and row.line_text:
             quote = (
                 row.line_text

@@ -1,5 +1,6 @@
 {
   "action": "重试",
   "failed": "重试失败",
-  "nothingPending": "没有需要重试的消息"
+  "nothingPending": "没有需要重试的消息",
+  "working": "这个频道还在跑上一轮，等它结束再试"
 }

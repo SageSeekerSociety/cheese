@@ -9,6 +9,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { refusalText } from '../../lib/noticeText'
 import { collapseNotices, mailOutcomes } from '../../lib/platformNotice'
 
 import MailDraftCard from './MailDraftCard.vue'
@@ -46,6 +47,7 @@ function drafted(id: string, subject = 'Re: 芝士测试'): Block {
       mail_draft_id: id,
       mail: {
         owner: 'chiruotong',
+        drafted_by: 'cheese-room',
         account: 'me@qq.com',
         to: ['a@ruc.edu.cn'],
         cc: [],
@@ -59,13 +61,14 @@ function drafted(id: string, subject = 'Re: 芝士测试'): Block {
 
 function mount(
   me: string | null,
-  outcome = null as ReturnType<typeof mailOutcomes> extends Map<string, infer V> ? V | null : never
+  outcome = null as ReturnType<typeof mailOutcomes> extends Map<string, infer V> ? V | null : never,
+  names?: Record<string, string>
 ) {
   const [row] = collapseNotices([drafted('d1')])
   expect(row.notice?.mode).toBe('mail-draft')
   if (row.notice?.mode !== 'mail-draft') throw new Error('not a mail card')
   const mail = row.notice.mail
-  return render(MailDraftCard as Component, { props: { mail, outcome, me }, global: { plugins: [vuetify] } })
+  return render(MailDraftCard as Component, { props: { mail, outcome, me, names }, global: { plugins: [vuetify] } })
 }
 
 beforeEach(() => vi.clearAllMocks())
@@ -85,6 +88,25 @@ describe('房间里的邮件确认卡片', () => {
     await fireEvent.click(getByText('放弃'))
     expect(discardMailDraft).toHaveBeenCalledWith('d1')
     await waitFor(() => expect(getByTestId('mail-state').textContent).toContain('已放弃'))
+  })
+
+  it('附件被改过、发不出去时，说让写这封草稿的那位队友重写，叫它在这里的名字', async () => {
+    // 后端拒绝时点的是写草稿那位的席位（`<@handle>`），API 层按读者的语言渲染成这一句。
+    const said = refusalText(
+      { error: { i18n: { key: 'mailAttachmentChanged', params: { name: '摘要.md', agent: '<@cheese-room>' } } } },
+      '附件「摘要.md」在起草之后被改过，现在发出去会和你确认的不一样。草稿还在，让<@cheese-room>重新起草一封'
+    )
+    vi.mocked(sendMailDraft).mockRejectedValueOnce(new Error(said))
+    const { getByText, getByRole } = mount('chiruotong', null, { 'cheese-room': 'Nova' })
+    await fireEvent.click(getByText('确认发送'))
+    await waitFor(() => expect(getByRole('alert').textContent).toContain('Nova'))
+    expect(getByRole('alert').textContent).not.toContain('<@')
+    expect(getByRole('alert').textContent).not.toContain('芝士')
+  })
+
+  it('卡上说这封是哪位队友写的，叫它在这里的名字，不叫默认的「芝士」', () => {
+    const { container } = mount('chiruotong', null, { 'cheese-room': 'Nova' })
+    expect(container.textContent).toContain('Nova不能替你发')
   })
 
   it('别人看不到按钮，只看到在等谁', () => {

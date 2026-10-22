@@ -73,7 +73,7 @@ def _progress_lines(items: list[dict]) -> list[str]:
     """
     if not items:
         return []
-    lines = ["- 上次的任务清单（跨轮、跨机器保留下来的进度，不是这一轮新建的）："]
+    lines = ["- 上次的任务清单（之前几次留下的进度，换了机器也还在，不是这次新建的）："]
     for item in items:
         mark = _PROGRESS_MARK.get(str(item.get("status", "")), " ")
         subject = str(item.get("subject", "")).strip() or "（任务）"
@@ -186,8 +186,8 @@ def _platform_preamble(notices: list[Block]) -> str:
 def _resume_notice() -> str:
     """The one thing that is true of a turn rather than of its session."""
     return (
-        "本轮接着上一轮跑：上一轮中途断了，这是同一件事的继续。"
-        "先确认上一轮做到哪了再继续（翻消息记录、git status），别凭印象重做。"
+        "这次接着上次做：上次中途断了，这是同一件事的继续。"
+        "先确认上次做到哪了再继续（翻消息记录、git status），别凭印象重做。"
     )
 
 

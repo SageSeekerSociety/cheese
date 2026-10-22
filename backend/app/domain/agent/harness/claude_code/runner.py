@@ -93,6 +93,10 @@ TAIL_POLL_S = 0.5
 # How long the runner keeps what it recorded, and how often it looks.
 RETENTION_S = 7 * 24 * 3600
 RETENTION_EVERY_S = 3600
+# How many works' endings the ping carries (``Runner.endings``): enough that a
+# drain polling every few seconds sees the work it waits for even when the
+# runner opened and ended a few more of its own in between.
+ENDED_KEPT = 16
 # A tool result read from a transcript file is not capped the way stdout is.
 # The room reads the tail of a failure and a subagent's conclusion; neither is
 # worth more than stdout would have carried.
@@ -510,6 +514,11 @@ class Runner(runner.Runner[Journal]):
         self.work: str | None = None
         self.unsolicited = False
         self.last_work: str | None = None
+        # How the last few works ended: each one's work id, typed failure
+        # (None when it ended cleanly) and the platform's inputs it read,
+        # oldest first. Kept for the ping, which a release that cannot read
+        # this protocol drains this runner by (``lifecycle``).
+        self.endings: list[dict] = []
         self.interrupting = False
         # What the session reports, as ordered events (``lifecycle``).
         self.outbox = lifecycle.Outbox(self.journal.connection)
@@ -619,6 +628,7 @@ class Runner(runner.Runner[Journal]):
             json.dumps({"harness": CLAUDE_CODE, "agent_handle": agent_handle}),
         )
         self.last_work = self.journal.recall("last_work")
+        self.endings = json.loads(self.journal.recall("endings") or "[]")
         self.errors = (self.state / "claude.log").open("ab")
         # Earlier starts appended here too; this start's words begin here.
         self.errors_from = self.errors.tell()
@@ -1071,6 +1081,11 @@ class Runner(runner.Runner[Journal]):
         """Report what one record changes, stamp it with the work it belongs
         to, and journal it."""
         kind = record.get("type")
+        command = (
+            self._sent_input(str(record.get("command_uuid")))
+            if kind == "command_lifecycle"
+            else None
+        )
         main = not from_file and record.get("parent_tool_use_id") is None
         if kind == "system" and record.get("subtype") == "init":
             self.proven = True
@@ -1084,7 +1099,7 @@ class Runner(runner.Runner[Journal]):
             # boundary inside the work it was said to; one the session reads
             # only after that work ended starts work of its own.
             if not self.working:
-                self._open(self._sent_input(str(record.get("command_uuid"))))
+                self._open(command)
         elif kind == "command_lifecycle" and record.get("state") in SETTLED:
             # An input is on its way in until its echo, but work aborted
             # before its prompt was checked never echoes it: it will never be
@@ -1138,10 +1153,21 @@ class Runner(runner.Runner[Journal]):
         if kind == "system":
             self._track(record)
         work = self.work if self.working else self.last_work
+        if kind == "command_lifecycle":
+            if command and command[1] is not None:
+                stamp["input_work_id"] = command[1]
+            # Queueing or settling an input does not prove it executed in any
+            # work. Only started names the execution it actually joined.
+            if record.get("state") != "started" or (
+                command is not None and command[0] == "internal"
+            ):
+                work = None
         owner = json.loads(self.journal.recall("owner") or "{}")
+        owner.pop("work_id", None)
+        owner.pop("unsolicited", None)
         if work is not None:
             owner["work_id"] = work
-            if self.working and self.unsolicited:
+            if self.working and self.unsolicited and work == self.work:
                 owner["unsolicited"] = True
         self.journal.append({**record, "cheese": {**owner, **stamp}})
         if main and kind in ("assistant", "result"):
@@ -1237,6 +1263,14 @@ class Runner(runner.Runner[Journal]):
 
     def _finish(self, *, failure: dict | None, text: str, usage: dict | None) -> None:
         """The session went idle: report how the work ended, then forget it."""
+        if self.work is not None:
+            ending = {
+                "work": self.work,
+                "failure": failure,
+                "inputs": list(self.run_inputs),
+            }
+            self.endings = [*self.endings, ending][-ENDED_KEPT:]
+            self.journal.remember("endings", json.dumps(self.endings))
         self._emit(
             lifecycle.STATUS,
             worker_status=lifecycle.IDLE,
@@ -1748,6 +1782,16 @@ class Runner(runner.Runner[Journal]):
             self.announce()
             return {"worker_epoch": self.outbox.epoch, "state": self.standing()}
         if method == "ping":
+            # The handshake every release reads, whichever protocol it speaks
+            # (``lifecycle``): ``alive``, ``lifecycle``, ``launch``,
+            # ``session_id``, ``working`` (the busy flag), ``work_id``,
+            # ``worker_epoch`` and ``endings`` keep their names and meanings
+            # (``endings``' entries their ``work``, ``failure`` and ``inputs``).
+            # A later protocol
+            # may add fields here, never drop or change these, so the release
+            # after it can still tell whether this runner is at work, drain it
+            # before replacing it, and know how the work it drained ended and
+            # what it read.
             return {
                 "pid": os.getpid(),
                 "lifecycle": lifecycle.PROTOCOL,
@@ -1756,6 +1800,7 @@ class Runner(runner.Runner[Journal]):
                 "session_id": self.session_id,
                 "working": self.working,
                 "work_id": self.work if self.working else None,
+                "endings": list(self.endings),
                 "tasks": dict(self.tasks),
                 "alive": self.alive(),
                 "starting": self.starting(),

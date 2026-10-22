@@ -49,7 +49,7 @@ def attachment_prompt_line(
         # The file was deleted after the message (see `offered_attachments`).
         return (
             f"[{author}] 发过一个文件 {path}，但这份文件已经不在了"
-            f"（多半是从资料库里删掉了），这一轮读不到它的内容。"
+            f"（多半是从资料库里删掉了），这次读不到它的内容。"
             f"需要它的话，请对方重新发一份。"
         )
     if undecodable:

@@ -1,0 +1,21 @@
+{
+  "blockedFallback": "Open it to see what {name} needs",
+  "bouncedLine": "{name} to revise",
+  "label": {
+    "running": "Working",
+    "waiting": "Waiting",
+    "blocked": "Stuck",
+    "asking": "Needs answer",
+    "review": "In review",
+    "bounced": "Returned",
+    "accepted": "Accepted",
+    "open": "Open",
+    "closed": "Closed"
+  },
+  "submitted": "Submitted {time}",
+  "version": "Version {n}",
+  "waitedFor": "{time} so far",
+  "waitsOn": "{name}'s turn",
+  "waitsOnYou": "Your turn",
+  "workedFor": "{time} so far"
+}

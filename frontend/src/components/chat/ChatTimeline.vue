@@ -385,14 +385,14 @@ function rowLabel(name: string | null, iso: string, text: string): string {
   const time = props.fmtTime(iso)
   return name ? t('work.room.chat.messageLabel', { name, time, text }) : t('work.room.chat.eventLabel', { time, text })
 }
-// 章节刻度：每条被钉成章节的消息是第几章、叫什么。标题取那条消息的第一行；不在
-// 当前窗口里的章节也照样占一个号，所以翻动历史时刻度上的号不会跳。
+// 章节刻度：每条被钉成章节的消息是第几章、叫什么。优先用书签自己的名字（人改的或模型起的），
+// 没有时退回那条消息的第一行；不在当前窗口里的章节也照样占一个号，翻动历史时刻度上的号不会跳。
 const chapterMarks = computed(() => {
   const marks = new Map<string, { no: number; title: string }>()
   inReadingOrder(props.chapters ?? []).forEach((chapter, i) => {
     marks.set(chapter.block.id, {
       no: i + 1,
-      title: replySnippet(chapter.block, props.refs, 60) || t('work.channel.chapters.untitled'),
+      title: chapter.title || replySnippet(chapter.block, props.refs, 60) || t('work.channel.chapters.untitled'),
     })
   })
   return marks
@@ -663,7 +663,7 @@ const rowLabels = computed(() =>
             <div
               v-if="!notice && ((threadable && m.thread) || under(m.id).length)"
               class="tl-thread msg-work"
-              :class="{ 'msg-work--mine': became(m)?.tone === 'mine' }"
+              :class="{ 'msg-work--mine': became(m)?.mine }"
               :data-feed-of="m.id"
             >
               <div v-if="threadable && m.thread" class="msg-work__talk">

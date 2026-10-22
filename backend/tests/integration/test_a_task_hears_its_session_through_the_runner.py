@@ -185,6 +185,51 @@ def test_a_session_running_again_takes_the_left_mark_away(client):
     assert (task["progress_state"], task["progress_note"]) == ("waiting", "等构建")
 
 
+def test_another_agents_session_ending_does_not_mark_the_teammate_left(client):
+    """A task's conversation may hold another agent's session as well (it was
+    asked in the task, or works beside the teammate). That session ending is
+    not the teammate leaving: the task keeps its words unnamed, because the
+    mark would be shown beside them as the teammate's own."""
+    project_id, task_id, seat = _a_task(client)
+    said = client.put(
+        f"/topics/{task_id}/task/progress",
+        json={"state": "working", "note": "在改页头"},
+        headers=task_agent_headers(project_id, task_id, seat),
+    )
+    assert said.status_code == 200, said.text
+    chat = _Chat(client)
+    beside = _Runner(client, task_id, "cheese-beside")
+    beside.reports(chat, SessionRunning(uuid.uuid4()))
+    beside.reports(chat, SessionExited("launch-beside"))
+
+    task = _task(client, task_id)
+    assert task["agent_left_at"] is None
+    assert (task["progress_state"], task["progress_set_by"]) == ("working", seat)
+
+
+def test_another_agents_session_running_does_not_take_the_mark_away(client):
+    """The teammate said where it stands and then ended; another agent's
+    session started working in the same task. The teammate is still gone, so
+    「已离开」 stays beside what it said."""
+    project_id, task_id, seat = _a_task(client)
+    said = client.put(
+        f"/topics/{task_id}/task/progress",
+        json={"state": "working", "note": "在改页头"},
+        headers=task_agent_headers(project_id, task_id, seat),
+    )
+    assert said.status_code == 200, said.text
+    chat = _Chat(client)
+    runner = _Runner(client, task_id, seat)
+    runner.reports(chat, SessionRunning(uuid.uuid4()))
+    runner.reports(chat, SessionExited("launch-1"))
+    assert _task(client, task_id)["agent_left_at"] is not None
+
+    beside = _Runner(client, task_id, "cheese-beside")
+    beside.reports(chat, SessionRunning(uuid.uuid4()))
+
+    assert _task(client, task_id)["agent_left_at"] is not None
+
+
 def _reported_long_ago(client, task_id: str) -> None:
     long_ago = datetime.now(UTC) - timedelta(
         seconds=settings.chat_progress_reminder_after_s + 60

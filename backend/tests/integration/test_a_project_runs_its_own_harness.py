@@ -109,7 +109,7 @@ async def test_a_room_whose_machine_runs_none_of_the_listed_harnesses_does_not_r
 
     said = await _converse(service, topic_id)
 
-    assert any("没有部署 pi" in text for text in said), said
+    assert any("没有安装 pi" in text for text in said), said
     # 一句 prompt 都没有交出去：不是「跑了但结果不要」，是没跑。
     assert screen.last_prompt is None
     async with factory() as session:

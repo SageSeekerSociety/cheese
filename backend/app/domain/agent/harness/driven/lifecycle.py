@@ -57,6 +57,22 @@ used to run on the platform (``Watchdog``): talking without progress, and an
 input left unread. When one runs out it interrupts the agent, and the ``status``
 event that follows names the failure ``stuck`` with the clock that fired.
 
+**The ping is a handshake that outlives the protocol.** A runner lives on the
+session host past the release that started it, so the next release meets
+runners speaking an older version of this protocol, which it does not read. It
+reads their ``ping`` instead, and these fields are the stable handshake every
+version keeps: ``alive``, ``lifecycle`` (``PROTOCOL``), ``launch``,
+``session_id``, ``working`` (the busy flag: a piece of work is under way, from
+its first sign until its ending, while a tool runs included), ``work_id`` (the
+room's work it is doing), ``worker_epoch`` (the registration it holds) and
+``endings`` (its last few works' endings, oldest first, each with its ``work``,
+its typed ``failure``, null when it ended cleanly, and the platform's
+``inputs`` it read). A
+change of ``PROTOCOL`` may add fields to the ping, never drop or redefine
+these: the release that reads them drains a runner at work before replacing it
+(``room.sessions.lifecycle``). ``tests/unit/test_runner_ping_handshake.py``
+holds a runner of this release to them.
+
 Standard library only: this module travels in the runner archive.
 """
 
@@ -64,7 +80,8 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 
-#: The version of this protocol a runner speaks (``ping``'s ``lifecycle``).
+#: The version of this protocol a runner speaks (``ping``'s ``lifecycle``). A
+#: runner of any other version is drained and replaced, never read.
 PROTOCOL = 1
 
 # --- event kinds -------------------------------------------------------------

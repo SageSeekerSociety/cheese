@@ -506,7 +506,7 @@ def test_library_listing_names_each_file():
     ("delivered", "expected"),
     [
         (True, "便条已递给那条线程。"),
-        (False, "那条线程这会儿没有在跑的轮次,便条没人接住。"),
+        (False, "那条线程这会儿没在干活,便条没人接住。"),
     ],
 )
 def test_note_says_whether_anyone_caught_it(delivered, expected):

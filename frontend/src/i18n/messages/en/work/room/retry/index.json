@@ -1,5 +1,6 @@
 {
   "action": "Retry",
   "failed": "Retry failed",
-  "nothingPending": "Nothing to retry"
+  "nothingPending": "Nothing to retry",
+  "working": "This channel is still working on a turn. Try again when it finishes"
 }

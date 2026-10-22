@@ -30,7 +30,13 @@ export function noticeLine(
       parts.push(repeatsLine(notice.rows, actor ?? notice.actor))
       break
     case 'incident':
-      parts.push(notice.incident.title, notice.incident.status, notice.lead)
+      // 行名说屏幕上有的东西：「可以重试」那一档画的是一颗重试按钮，不是这行字
+      // （见 RoomNotice 的事故卡），屏幕上看不到的话行名里也不该有。
+      parts.push(
+        notice.incident.title,
+        notice.incident.statusKind === 'retryable' ? undefined : notice.incident.status,
+        notice.lead
+      )
       break
     case 'turn-summary':
       if (notice.changes)

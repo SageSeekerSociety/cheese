@@ -28,22 +28,23 @@ function task(over: Partial<ChannelTask> = {}): ChannelTask {
 }
 
 describe('任务卡', () => {
-  it('提需求人有关注提醒，但未被问到时不写成待你回答', () => {
+  it('只是关注结果的人不被写成等你回答', () => {
     const line = taskLine(
       task({
         presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
-        waiting_on: 'linxiao',
         awaits_me: true,
         needs_my_action: false,
       }),
-      nameOf
+      'chenmo',
+      nameOf,
+      '芝士'
     )
-    expect(line.status).not.toContain('你')
-    expect(line.status).toContain('林晓')
-    expect(line.tone).toBe('waiting')
+    expect(line.mine).toBe(false)
+    expect(line.state.line).toContain('林晓')
+    expect(line.state.line).not.toContain('等你')
   })
 
-  it('多人或未点名的题，没有单个等待人名也能对被问者显示个人提示', () => {
+  it('多人候答时，当前被问者仍有行动强调', () => {
     const line = taskLine(
       task({
         presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
@@ -51,19 +52,22 @@ describe('任务卡', () => {
         awaits_me: true,
         needs_my_action: true,
       }),
-      nameOf
+      'linxiao',
+      nameOf,
+      '芝士'
     )
-    expect(line.tone).toBe('mine')
-    expect(line.status).toContain('你')
+    expect(line.mine).toBe(true)
+    expect(line.state.line).toContain('等你')
   })
 
   it('等的是看的人自己，就对他说；别人看到的是在等谁', () => {
-    const mine = taskLine(task({ awaits_me: true, needs_my_action: true }), nameOf)
-    const theirs = taskLine(task({ awaits_me: false, needs_my_action: false }), nameOf)
-    expect(mine.tone).toBe('mine')
-    expect(mine.status).not.toContain('林晓')
-    expect(theirs.tone).toBe('waiting')
-    expect(theirs.status).toContain('林晓')
+    const mine = taskLine(task({ needs_my_action: true }), 'linxiao', nameOf, '芝士')
+    const theirs = taskLine(task({ needs_my_action: false }), 'chenmo', nameOf, '芝士')
+    expect(mine.mine).toBe(true)
+    expect(mine.state.line).toContain('等你')
+    expect(mine.state.line).not.toContain('林晓')
+    expect(theirs.mine).toBe(false)
+    expect(theirs.state.line).toContain('林晓')
   })
 
   it('最后一步采纳后写出合进去的是哪个 PR', () => {
@@ -75,25 +79,34 @@ describe('任务卡', () => {
         accepted_count: 2,
         last_accepted_pr: 46,
       }),
-      nameOf
+      'linxiao',
+      nameOf,
+      '芝士'
     )
-    expect(line.tone).toBe('done')
-    expect(line.status).toContain('46')
+    expect(line.state.kind).toBe('closed')
+    expect(line.state.label).toContain('46')
     expect(line.accepted).toBeNull()
   })
 
   it('还开着的任务采纳过几步，就说采纳过几次', () => {
     const line = taskLine(
       task({ presentation: { column: 'building', phrase: 'running' }, waiting_on: null, accepted_count: 1 }),
-      nameOf
+      'linxiao',
+      nameOf,
+      '芝士'
     )
-    expect(line.tone).toBe('running')
+    expect(line.state.kind).toBe('running')
     expect(line.accepted).toContain('1')
   })
 
   it('交付被退回了，是红灯（不是等你）：球已经交回给队友去改', () => {
-    const line = taskLine(task({ presentation: { column: 'needs_you', phrase: 'bounced' }, waiting_on: null }), nameOf)
-    expect(line.tone).toBe('stuck')
+    const line = taskLine(
+      task({ presentation: { column: 'needs_you', phrase: 'bounced' }, waiting_on: null }),
+      'linxiao',
+      nameOf,
+      '芝士'
+    )
+    expect(line.state.tone).toBe('danger')
   })
 
   it('一条消息下面挂着从它出来的每一件任务，按创建的先后', () => {

@@ -2101,6 +2101,67 @@ async def test_a_gateway_body_cut_mid_stream_carries_its_event_count(
     assert "2" not in error["message"]
 
 
+async def _gateway_answer_naming(mod, status: int, body: dict, named: str | None):
+    """A gateway answer, with the rows it names as out of credit, if any."""
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.ADMISSION.check = lambda *args: _verdict(pool="gateway", key="project-key")
+    flow = _make_flow()
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    await mod.requestheaders(flow)
+    flow.response = _make_response(status_code=status, content_type="application/json")
+    if named is not None:
+        flow.response.headers["x-cheese-upstream-out-of-credit"] = named
+    flow.response.content = json.dumps(body).encode()
+    mod.responseheaders(flow)
+    mod.response(flow)
+    return flow.response
+
+
+async def test_rows_the_gateway_found_out_of_credit_are_told_to_the_admins(
+    monkeypatch, tmp_path
+):
+    """Only the platform can top up a provider account. Every row the gateway
+    names as out of credit reaches the error intake as its own record, from
+    the room whose request met it, whether a later row answered the request or
+    no row could; an answer naming none reports nothing."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    answered = {
+        "type": "message",
+        "content": [],
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+
+    await _gateway_answer_naming(
+        mod,
+        200,
+        answered,
+        "deepseek-flash deepseek/deepseek-chat 1a2b3c4d; deepseek-flash opencode/flash 9c0d1e2f",
+    )
+    await _gateway_answer_naming(
+        mod,
+        402,
+        {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": "cheese_upstream_credit_exhausted: ...",
+            },
+        },
+        "glm-5.3 anthropic/glm-5.3 5e6f7a8b",
+    )
+    await _gateway_answer_naming(mod, 200, answered, None)
+    await asyncio.gather(*mod._failure_reports)
+    records = [error for _url, body in posted for error in body["errors"]]
+    assert [r["upstream_failure"] for r in records] == ["provider_credit"] * 3, records
+    named = [r["where"] for r in records]
+    assert any("deepseek/deepseek-chat 1a2b3c4d" in w for w in named), named
+    assert any("opencode/flash 9c0d1e2f" in w for w in named), named
+    assert any("anthropic/glm-5.3 5e6f7a8b" in w for w in named), named
+    assert all(body["project_id"] == "project" for _url, body in posted), posted
+
+
 async def test_a_gateway_that_never_answers_is_recorded_as_a_lost_call(
     monkeypatch, tmp_path
 ):

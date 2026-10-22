@@ -2,7 +2,7 @@
   "alertKindNotFromInbox": "This kind of notification isn't written from the project inbox",
   "alertRecipientOutside": "The recipient isn't in this project or channel",
   "decisionNeedsOptions": "A decision request needs at least two options; when there is nothing to choose, send a change alert (change_alert) instead",
-  "notificationNoRecipients": "This notification has no recipients: the channel's roster only has agents (or the project has no members or owner yet). Name a person and send it again",
+  "notificationNoRecipients": "This notification has no recipients: the channel's roster only has AI teammates (or the project has no members or owner yet). Name a person and send it again",
   "notificationOnlyDecisions": "Only a decision request can be decided",
   "notificationOptionNotOffered": "The chosen option isn't one of the candidates"
 }

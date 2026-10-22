@@ -5,7 +5,7 @@
     "materialsDangling": "IDs {ids} are no longer in the library (deleted, or moved to “admins only”). Remove them before saving.",
     "materialsDanglingDrop": "Remove {id}",
     "materialsEmpty": "The library is still empty. Upload a file on the “Library” page first.",
-    "materialsError": "Could not read the library. Leave this alone for now.",
+    "materialsError": "Could not load the library. Leave this as it is for now.",
     "materialsExpand": "Expand the library list",
     "materialsHint": "Tick files from this board's library. Leave empty to bring no courseware; the “admins only” tier is not listed.",
     "materialsLibrary": "Space library",

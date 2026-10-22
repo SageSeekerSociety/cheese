@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { columnDotStyle, columnLabel, liveTasks, taskDotStyle, taskPhraseLabel } from './board'
+import { columnDotStyle, columnLabel, liveTasks } from './board'
 
 import { setLocale } from '@/i18n'
 
@@ -35,42 +35,12 @@ describe('columnDotStyle', () => {
     }
   })
 
-  it('一件任务的点：已退回画成红的（不是「等你」的暖色）', () => {
-    const task = (phrase: 'bounced' | 'awaiting_review') => ({ presentation: { column: 'needs_you', phrase } }) as never
-    expect(taskDotStyle(task('bounced'))).toEqual({
-      borderColor: 'var(--danger)',
-      background: 'var(--danger)',
-    })
-    expect(taskDotStyle(task('awaiting_review'))).toEqual(columnDotStyle('needs_you'))
-  })
-
   it('把颜色关掉也读得出来 —— 三列的形状互不相同', () => {
     const shape = (c: 'building' | 'delivering' | 'needs_you') => {
       const s = columnDotStyle(c)
       return `${s.borderStyle ?? 'solid'}/${s.background ?? 'none'}`
     }
     expect(new Set([shape('building'), shape('delivering'), shape('needs_you')]).size).toBe(3)
-  })
-})
-
-describe('taskPhraseLabel', () => {
-  it.each(['awaiting_answer', 'awaiting_review'] as const)('关注人不被写成当前动作的执行人：%s', (phrase) => {
-    const task = {
-      presentation: { column: 'needs_you', phrase },
-      awaits_me: true,
-      needs_my_action: false,
-    } as const
-    expect(taskPhraseLabel(task)).not.toContain('你')
-  })
-
-  it('被问者看到个人提示，不要求问题只等一个人', () => {
-    const task = {
-      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
-      waiting_on: null,
-      awaits_me: true,
-      needs_my_action: true,
-    } as const
-    expect(taskPhraseLabel(task)).toContain('你')
   })
 })
 

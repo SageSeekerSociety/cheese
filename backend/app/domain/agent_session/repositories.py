@@ -4,10 +4,13 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    and_,
+    case,
     delete,
     exists,
     func,
     select,
+    update,
 )
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -152,6 +155,53 @@ class AgentSessionRepository:
             return
         row.runtime_location = {**row.runtime_location, "let_go": True}
         await self._session.flush()
+
+    async def drain(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        launch: str,
+    ) -> datetime:
+        """When the drain of runner ``launch`` on this session began: now,
+        unless a drain of that same runner is already under way
+        (``AgentSession.drain_started_at``)."""
+        same = and_(
+            AgentSession.drain_launch == launch,
+            AgentSession.drain_started_at.is_not(None),
+        )
+        started = await self._session.scalar(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(
+                drain_started_at=case(
+                    (same, AgentSession.drain_started_at), else_=func.now()
+                ),
+                drain_launch=launch,
+            )
+            .returning(AgentSession.drain_started_at)
+        )
+        # A seat recovery found has its row; one deleted since starts now.
+        return started or datetime.now(UTC)
+
+    async def drained(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """The drain of this session's runner is over: it was replaced."""
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(drain_started_at=None, drain_launch=None)
+        )
 
     async def _upsert(
         self,

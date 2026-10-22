@@ -382,7 +382,7 @@ async def execute(
         # the books here.
         rec["status"] = "cancelled"
         rec["duration_s"] = round(time.monotonic() - t0, 1)
-        rec["detail"] = rec.get("detail") or "轮次被强制结束"
+        rec["detail"] = rec.get("detail") or "这次运行被强制结束"
         logger.warning(
             "turn %s cancelled for topic %s after %ss",
             turn_id,
