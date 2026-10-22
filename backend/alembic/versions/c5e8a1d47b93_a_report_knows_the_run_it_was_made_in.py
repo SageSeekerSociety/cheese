@@ -1,14 +1,15 @@
-"""session_states.run, tasks.progress_run: which run of a seat's session a report was made in
+"""session_states.run_epoch/run_seq, tasks.progress_run_*: which run a report was made in
 
 Revision ID: c5e8a1d47b93
 Revises: b7d3e19a4c52
 
 A task whose teammate's session is running reads 在做 unless the teammate
-reported during that run. "During that run" is decided by the run's identity,
-not by comparing when the platform applied the runner's event with when the
-report arrived: `session_states.run` counts the seat's runs (it goes up each
-time the runner declares the session running), and `tasks.progress_run` is the
-run of the reporting seat the report was made in.
+reported in that same run. The run is named by the session's runner: the
+(epoch, seq) of the `running` event that began it. `session_states.run_epoch`
+/ `run_seq` hold the run the seat's current process last began, and a report
+carries the run it was made in (the `X-Cheese-Run` header of its platform
+call), kept in `tasks.progress_run_harness` / `progress_run_epoch` /
+`progress_run_seq` beside the seat that made it (`progress_set_by`).
 """
 
 from collections.abc import Sequence
@@ -27,12 +28,25 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     with_lock_retries("session_states, tasks")
     op.add_column(
-        "session_states",
-        sa.Column("run", sa.BigInteger(), nullable=False, server_default="0"),
+        "session_states", sa.Column("run_epoch", sa.BigInteger(), nullable=True)
     )
-    op.add_column("tasks", sa.Column("progress_run", sa.BigInteger(), nullable=True))
+    op.add_column(
+        "session_states", sa.Column("run_seq", sa.BigInteger(), nullable=True)
+    )
+    op.add_column(
+        "tasks", sa.Column("progress_run_harness", sa.String(32), nullable=True)
+    )
+    op.add_column(
+        "tasks", sa.Column("progress_run_epoch", sa.BigInteger(), nullable=True)
+    )
+    op.add_column(
+        "tasks", sa.Column("progress_run_seq", sa.BigInteger(), nullable=True)
+    )
 
 
 def downgrade() -> None:
-    op.drop_column("tasks", "progress_run")
-    op.drop_column("session_states", "run")
+    op.drop_column("tasks", "progress_run_seq")
+    op.drop_column("tasks", "progress_run_epoch")
+    op.drop_column("tasks", "progress_run_harness")
+    op.drop_column("session_states", "run_seq")
+    op.drop_column("session_states", "run_epoch")

@@ -4498,7 +4498,7 @@ _SAY = {
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),
     "cheese_task_state": lambda a, d, e: (
-        "看板上这件任务现在显示你说的状态，直到你再设一次。"
+        "看板上这件任务现在显示你说的状态；你再设一次，或者停下后又被叫醒，它才变。"
     ),
     "cheese_describe": lambda a, d, e: (
         "验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："

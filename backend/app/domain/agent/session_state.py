@@ -48,28 +48,9 @@ def _key(key: SeatKey):
     )
 
 
-def _next_run(key: SeatKey):
-    """The seat's next run, counted across every harness it has a session
-    under in this conversation: a project that changes harness does not start
-    the seat's runs again from one, so a report stamped under one harness is
-    never mistaken for a run under the other."""
-    return (
-        select(func.coalesce(func.max(SessionState.run), 0) + 1)
-        .where(
-            SessionState.conversation_id == key.conversation_id,
-            SessionState.agent_handle == key.agent_handle,
-        )
-        .scalar_subquery()
-    )
-
-
 async def register(sessions: async_sessionmaker[AsyncSession], key: SeatKey) -> int:
     """Issue the seat's runner a new worker epoch, and return it. Every epoch
-    issued before it is stale from this commit on.
-
-    It does not start a run: a backend that comes up re-registers the runners
-    still alive (`session_host.starting.attach`), mid-run ones included, and
-    their run goes on."""
+    issued before it is stale from this commit on."""
     now = datetime.now(UTC)
     async with sessions() as session:
         epoch = await session.scalar(
@@ -215,11 +196,6 @@ async def declare(session: AsyncSession, key: SeatKey, status: str) -> bool:
         return False
     state.worker_status = status
     state.changed_at = datetime.now(UTC)
-    if status == RUNNING:
-        # A new run: what the seat reports from here on is stamped with it.
-        run = await session.scalar(select(_next_run(key)))
-        assert run is not None, "coalesce(max(run), 0) + 1 always has a value"
-        state.run = run
     return True
 
 
@@ -261,61 +237,52 @@ async def running_conversations(
     return set(await session.scalars(query.distinct()))
 
 
+async def run_started(
+    session: AsyncSession, key: SeatKey, *, epoch: int, seq: int
+) -> None:
+    """The seat's current process began a run, with the ``running`` event
+    ``(epoch, seq)``: the identity its runner names that run by, and that a
+    platform tool call made in it carries (`executor_transport.PlatformHost`).
+    Recorded for every such event of the current registration, whether or not
+    the status flips: a process that replaced one still reading running starts
+    a run of its own."""
+    state = await session.scalar(
+        select(SessionState).where(*_key(key)).with_for_update()
+    )
+    if state is None:
+        return
+    state.run_epoch, state.run_seq = epoch, seq
+
+
 async def running_runs(
     session: AsyncSession, seats: Collection[tuple[uuid.UUID, str]]
-) -> dict[tuple[uuid.UUID, str], int]:
-    """{(conversation, agent): its current run} for the given seats whose
-    session the runner declares running. A seat not running is left out."""
+) -> dict[tuple[uuid.UUID, str], frozenset[tuple[str, int, int]]]:
+    """{(conversation, agent): the runs its running sessions are in} for the
+    given seats with a session the runner declares running, each run as
+    (harness, epoch, seq). A seat with none running is left out."""
     if not seats:
         return {}
-    conversations = {conversation for conversation, _ in seats}
+    wanted = set(seats)
     rows = await session.execute(
         select(
             SessionState.conversation_id,
             SessionState.agent_handle,
-            func.max(SessionState.run),
-        )
-        .where(
+            SessionState.harness,
+            SessionState.run_epoch,
+            SessionState.run_seq,
+        ).where(
             SessionState.worker_status == RUNNING,
-            SessionState.conversation_id.in_(conversations),
+            SessionState.conversation_id.in_({c for c, _ in wanted}),
         )
-        .group_by(SessionState.conversation_id, SessionState.agent_handle)
     )
-    wanted = set(seats)
-    return {
-        (conversation, agent): run
-        for conversation, agent, run in rows
-        if (conversation, agent) in wanted
-    }
-
-
-async def report_run(
-    session: AsyncSession, conversation_id: uuid.UUID, agent_handle: str
-) -> int | None:
-    """The run of ``agent_handle``'s session in ``conversation_id`` that a
-    report it is making right now belongs to; None when the seat has no
-    session here the runner reports on.
-
-    The report comes from inside the session, so the session is at work while
-    it is made. When the seat reads running, that is its current run. When it
-    reads idle, the runner's ``running`` for this work has not been applied
-    yet — events apply in the order the runner wrote them, and the next one
-    that flips the seat to running is this run's — so the report belongs to
-    the next run."""
-    rows = (
-        await session.execute(
-            select(SessionState.run, SessionState.worker_status).where(
-                SessionState.conversation_id == conversation_id,
-                SessionState.agent_handle == agent_handle,
-            )
-        )
-    ).all()
-    if not rows:
-        return None
-    current = max(run for run, _ in rows)
-    if any(status == RUNNING for _, status in rows):
-        return current
-    return current + 1
+    runs: dict[tuple[uuid.UUID, str], set[tuple[str, int, int]]] = {}
+    for conversation, agent, harness, epoch, seq in rows:
+        if (conversation, agent) not in wanted:
+            continue
+        found = runs.setdefault((conversation, agent), set())
+        if epoch is not None and seq is not None:
+            found.add((harness, epoch, seq))
+    return {seat: frozenset(found) for seat, found in runs.items()}
 
 
 def reports_lifecycle(harness: str) -> bool:

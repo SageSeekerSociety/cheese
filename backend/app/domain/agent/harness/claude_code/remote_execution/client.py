@@ -822,8 +822,29 @@ def transport(config, target_path):
             raise RuntimeError(str(answer["error"]))
         return "already" if (answer.get("result") or {}).get("already") else "requested"
 
+    def current_run() -> str | None:
+        """Which run of this session a platform call is made in, as its
+        runner names it (`runner.Runner.dispatch` ``run``), at the same door
+        `compact_session` uses."""
+        path = os.environ.get(SESSION_SOCKET)
+        if not path:
+            # A session built without its socket: an invariant of the launch.
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session has no runner to ask which run it is in"
+            )
+        with dial_runner(path, RUNNER_REQUEST_S) as connection:
+            connection.sendall(
+                json.dumps({"method": "run", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+        if "error" in answer:
+            raise RuntimeError(str(answer["error"]))
+        return (answer.get("result") or {}).get("run")
+
     def platform_tool(tool, args, call_id, invoke):
-        host = PlatformHost(client, invoke, call_id, doc_versions, compact_session)
+        host = PlatformHost(
+            client, invoke, call_id, doc_versions, current_run, compact_session
+        )
         try:
             text = cheese.run_platform_tool(tool, args, host)
         except Exception as exc:  # the agent reads the reason

@@ -514,6 +514,11 @@ class Runner(runner.Runner[Journal]):
         self.work: str | None = None
         self.unsolicited = False
         self.last_work: str | None = None
+        # The run this session is in, or was last in: the (epoch, seq) of the
+        # ``running`` status event that began it, the identity the platform
+        # applies that event under. A platform tool call carries it
+        # (``dispatch`` ``run``), so a report says which run it was made in.
+        self.run: tuple[int, int] | None = None
         # How the last few works ended: each one's work id, typed failure
         # (None when it ended cleanly) and the platform's inputs it read,
         # oldest first. Kept for the ping, which a release that cannot read
@@ -812,10 +817,11 @@ class Runner(runner.Runner[Journal]):
 
     # --- what the session reports --------------------------------------------
 
-    def _emit(self, kind: str, *, epoch: int | None = None, **body) -> None:
+    def _emit(self, kind: str, *, epoch: int | None = None, **body) -> int:
         """Report one fact, after every record journaled so far; ``epoch``
-        for a fact about an earlier process (``Outbox.emit``)."""
-        self.outbox.emit(kind, records=self.journal.last(), epoch=epoch, **body)
+        for a fact about an earlier process (``Outbox.emit``). Returns its
+        seq."""
+        return self.outbox.emit(kind, records=self.journal.last(), epoch=epoch, **body)
 
     def _unread(self) -> list[str]:
         return json.loads(self.journal.recall(UNREAD_INPUTS) or "[]")
@@ -1253,13 +1259,16 @@ class Runner(runner.Runner[Journal]):
         self.run_inputs = []
         self.watchdog.started(time.monotonic())
         self._watching()
-        self._emit(
+        seq = self._emit(
             lifecycle.STATUS,
             worker_status=lifecycle.RUNNING,
             session_id=self.session_id,
             work_id=self.work,
             unsolicited=self.unsolicited,
         )
+        # Written before any registration, the event takes the first epoch
+        # this runner is registered under (``Outbox.register``); so does this.
+        self.run = (self.outbox.epoch, seq)
 
     def _finish(self, *, failure: dict | None, text: str, usage: dict | None) -> None:
         """The session went idle: report how the work ended, then forget it."""
@@ -1769,6 +1778,8 @@ class Runner(runner.Runner[Journal]):
             # The platform names this runner's epoch, and the clocks it ends
             # stuck work by (``lifecycle``).
             self.outbox.register(int(params["epoch"]))
+            if self.run is not None and self.run[0] == 0:
+                self.run = (self.outbox.epoch, self.run[1])
             if self.journal.recall(LIVE_LAUNCH) == self.launch:
                 # The live process is this registration's from now on: its
                 # ending, if the next runner reports it, carries this epoch.
@@ -1823,6 +1834,16 @@ class Runner(runner.Runner[Journal]):
                 return {}
             reason = self.insist()
             return {"reason": reason} if reason else {}
+        if method == "run":
+            # The session's own helper making a platform tool call
+            # (`executor_transport.PlatformHost`), asking which run the call
+            # is made in. A call while the session is idle (a background
+            # task's) is the last run's. Before any registration the run has
+            # no identity the platform could have applied, so none is given.
+            if self.run is None or not self.run[0]:
+                return {}
+            epoch, seq = self.run
+            return {"run": f"{CLAUDE_CODE}/{epoch}/{seq}"}
         if method == "checkpoint_turn":
             # The session's Stop checkpoint (`client.py checkpoint`), asking
             # which turn it is about to sync. `work` while the turn is ending,

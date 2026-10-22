@@ -74,7 +74,6 @@ from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.opening import opening_content
 from app.domain.agent.own_calls import ask_owner_to_join
-from app.domain.agent.session_state import report_run
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import (
     project_team,
@@ -97,7 +96,7 @@ from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task import heard
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.place import place_or_404
-from app.domain.room_task.progress import set_progress
+from app.domain.room_task.progress import RUN_HEADER, parse_run, set_progress
 from app.domain.room_task.schemas import ProgressIn, TaskOut
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
@@ -337,6 +336,7 @@ async def report_progress(
     body: ProgressIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    run: str | None = Header(default=None, alias=RUN_HEADER),
 ) -> dict:
     """The task's AI teammate says where its work stands (`cheese_task_state`):
     what the board shows for it until it says again, or until its session
@@ -362,7 +362,9 @@ async def report_progress(
         note=body.note,
         by=by,
         at=datetime.now(UTC),
-        run=await report_run(db, task.id, by),
+        # Which run of its session the call was made in, as its runner
+        # names it (`executor_transport.PlatformHost.run`).
+        run=parse_run(run),
     )
     await db.flush()
     out = await task_out(db, task)

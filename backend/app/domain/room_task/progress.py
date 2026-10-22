@@ -12,7 +12,8 @@ running in a run it has not reported in.
 Two writers, two columns each, and neither touches the other's:
 
 - the teammate's report: `set_progress` — state, note, when, who, and the run
-  of its session it was made in. Only while
+  of its session it was made in, as the session's runner names it (the
+  ``X-Cheese-Run`` header its platform call carries, `RUN_HEADER`). Only while
   no card waits on the task's review (`PUT /topics/{task}/task/progress`
   refuses it then): the card says where the task stands. The platform's own
   actions write the same columns: a card filed or the task reopened clears the
@@ -39,6 +40,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.room_task.live import rows_written
 from app.domain.room_task.models import Task, TaskProgress, TaskStatus
 
+#: The header a platform call names its session's run in. The same name as
+#: `agent.executor_transport.RUN_HEADER`, which sends it: that file ships to
+#: the session's host alone and imports nothing of this one.
+RUN_HEADER = "X-Cheese-Run"
+
 #: The note's width: one line on the task header. The column is this wide.
 NOTE_MAX_CHARS = 200
 
@@ -51,7 +57,7 @@ def clear(task: Task) -> None:
     task.progress_note = None
     task.progress_set_at = None
     task.progress_set_by = None
-    task.progress_run = None
+    _forget_run(task)
     task.agent_left_at = None
 
 
@@ -64,7 +70,24 @@ def back_to_work(task: Task, *, at: datetime) -> None:
     task.progress_note = None
     task.progress_set_at = at
     task.progress_set_by = None
-    task.progress_run = None
+    _forget_run(task)
+
+
+def _forget_run(task: Task) -> None:
+    task.progress_run_harness = None
+    task.progress_run_epoch = None
+    task.progress_run_seq = None
+
+
+def parse_run(raw: str | None) -> tuple[str, int, int] | None:
+    """The run a platform call says it is made in (`RUN_HEADER`,
+    ``harness/epoch/seq``), or None when it names none or names it in another
+    shape."""
+    harness, _, rest = (raw or "").partition("/")
+    epoch, _, seq = rest.partition("/")
+    if not harness or not epoch.isdigit() or not seq.isdigit():
+        return None
+    return harness, int(epoch), int(seq)
 
 
 def set_progress(
@@ -74,16 +97,24 @@ def set_progress(
     note: str | None,
     by: str,
     at: datetime,
-    run: int | None,
+    run: tuple[str, int, int] | None,
 ) -> None:
-    """Record the teammate's report, and the run of its session it was made in
-    (`session_state.report_run`). Reporting again means it is back, so the
-    「已离开」 beside an older report goes."""
+    """Record the teammate's report, and the run of its session it was made
+    in as its runner named it (``parse_run``; None when the call named none).
+    Reporting again means it is back, so the 「已离开」 beside an older report
+    goes."""
     task.progress_state = state
     task.progress_note = (note or "").strip() or None
     task.progress_set_at = at
     task.progress_set_by = by
-    task.progress_run = run
+    if run is None:
+        _forget_run(task)
+    else:
+        (
+            task.progress_run_harness,
+            task.progress_run_epoch,
+            task.progress_run_seq,
+        ) = run
     task.agent_left_at = None
 
 

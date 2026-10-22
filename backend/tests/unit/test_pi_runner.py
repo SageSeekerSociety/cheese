@@ -722,11 +722,13 @@ async def test_a_platform_tool_runs_against_the_backend_and_takes_no_machine(
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     received = []
+    runs = []
 
     class API(BaseHTTPRequestHandler):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             received.append((self.path, self.headers["X-Cheese-Token"], body))
+            runs.append(self.headers.get("X-Cheese-Run"))
             answer = json.dumps({"data": {"id": "m-9", "content": body["content"]}})
             self.send_response(200)
             self.send_header("Content-Length", str(len(answer.encode())))
@@ -760,6 +762,8 @@ async def test_a_platform_tool_runs_against_the_backend_and_takes_no_machine(
             "room-token",
             "第一版好了",
         )
+        # pi's runner reports no session lifecycle, so it names no run.
+        assert runs == [None]
     finally:
         await runner.close()
         server.shutdown()

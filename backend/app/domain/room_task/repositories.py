@@ -63,7 +63,9 @@ class ListedTask:
     #: 报那个状态的座位、和它是在那个座位的哪一次跑里报的：那位队友在另一次跑里
     #: 跑着，那句话就让位（`presentation`）。
     progress_set_by: str | None
-    progress_run: int | None
+    progress_run_harness: str | None
+    progress_run_epoch: int | None
+    progress_run_seq: int | None
     #: 队友报那个状态时附的一句（`Task.progress_note`）：「待我处理」里卡住那一行
     #: 的第二行说的就是它要你做什么。
     progress_note: str | None
@@ -176,7 +178,9 @@ class TaskRepository:
                 Task.status,
                 Task.progress_state,
                 Task.progress_set_by,
-                Task.progress_run,
+                Task.progress_run_harness,
+                Task.progress_run_epoch,
+                Task.progress_run_seq,
                 Task.progress_note,
                 Task.agent_handle,
                 Task.owner_handle,
@@ -201,7 +205,9 @@ class TaskRepository:
                 status=row.status,
                 progress_state=row.progress_state,
                 progress_set_by=row.progress_set_by,
-                progress_run=row.progress_run,
+                progress_run_harness=row.progress_run_harness,
+                progress_run_epoch=row.progress_run_epoch,
+                progress_run_seq=row.progress_run_seq,
                 progress_note=row.progress_note,
                 agent_handle=row.agent_handle,
                 owner_handle=row.owner_handle,

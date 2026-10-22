@@ -1,4 +1,4 @@
-"""Which run of its own teammate's session each task is in, as the runner declares it.
+"""Which runs its own teammate's sessions are in for each task, as their runners name them.
 
 A task reads 在做 while its teammate's session runs, unless the teammate
 reported in that same run (`room_task.presentation.task_presentation`). Two
@@ -7,8 +7,9 @@ any other agent working in the task's conversation is not the task being done.
 The teammate is the seat the task names (`Task.agent_handle`), or — when it
 names none, or that seat has left the project — its room's, then the
 project's default: the same answer `AgentInstanceService.for_tasks` gives
-every other reader. Its session's current run comes from `session_states`
-(`session_state.running_runs`).
+every other reader. Each running session's run is the one its runner named
+when it began (`session_state.run_started`), read back by
+`session_state.running_runs`.
 """
 
 import uuid
@@ -52,11 +53,13 @@ class TaskPlaceRow(Protocol):
 
 async def teammate_runs(
     session: AsyncSession, tasks: Iterable[TaskPlace | TaskPlaceRow]
-) -> dict[uuid.UUID, Run]:
-    """{task: the run its own teammate's session is in} for the tasks whose
-    teammate's session is running; the others are left out. Only the tasks
-    with some session running are resolved to a teammate, so a page of quiet
-    tasks costs one query."""
+) -> dict[uuid.UUID, frozenset[Run]]:
+    """{task: the runs its own teammate's running sessions are in} for the
+    tasks whose teammate has a session running; the others are left out. A
+    running session whose runner named no run (one of a release before runs
+    were named) adds none, so its task is in the answer with no run a report
+    could match. Only the tasks with some session running are resolved to a
+    teammate, so a page of quiet tasks costs one query."""
     by_id = {task.id: task for task in tasks}
     busy = await running_conversations(session, list(by_id))
     if not busy:
@@ -77,7 +80,10 @@ async def teammate_runs(
             seats[task_id] = agent_instance_handle(teammate.instance_id)
     runs = await running_runs(session, list(seats.items()))
     return {
-        task_id: Run(seat, runs[(task_id, seat)])
+        task_id: frozenset(
+            Run(seat, harness, epoch, seq)
+            for harness, epoch, seq in runs[(task_id, seat)]
+        )
         for task_id, seat in seats.items()
         if (task_id, seat) in runs
     }

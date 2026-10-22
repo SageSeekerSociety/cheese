@@ -62,7 +62,7 @@ async def _remind(session: AsyncSession, now: datetime) -> int:
                 task,
                 cards.get(task.id),
                 awaiting_answer=task.id in asked,
-                teammate_run=runs.get(task.id),
+                teammate_runs=runs.get(task.id),
             ),
             now=now,
         )

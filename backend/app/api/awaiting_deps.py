@@ -230,7 +230,7 @@ async def waiting_items(
                 task,
                 task_cards.get(task.id),
                 awaiting_answer=task.id in asked,
-                teammate_run=runs.get(task.id),
+                teammate_runs=runs.get(task.id),
             ),
             now=now,
         )

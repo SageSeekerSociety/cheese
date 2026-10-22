@@ -59,7 +59,7 @@ class TaskProgress(enum.StrEnum):
     where the task's own teammate's session does not speak
     (`presentation.task_presentation`): a teammate waiting on a build is still
     on it after its session stops, and while its session runs, a report stands
-    only in the run it was made in (`Task.progress_run`).
+    only in the run it was made in (`Task.progress_run_*`).
     """
 
     #: Doing the work.
@@ -308,11 +308,14 @@ class Task(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     progress_set_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # Which run of ``progress_set_by``'s session the report was made in
-    # (`session_state.report_run`): while that seat's session runs, the report
-    # stands only in the run it was made in. NULL for the platform's own
-    # writes and for a seat with no session the runner reports on.
-    progress_run: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Which run of ``progress_set_by``'s session the report was made in, as
+    # its runner names it (`X-Cheese-Run`: harness, epoch and seq of the
+    # ``running`` event that began the run): while that seat's session runs,
+    # the report stands only in that run. NULL for the platform's own writes
+    # and for a call that named no run (a harness whose runner names none).
+    progress_run_harness: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    progress_run_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    progress_run_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # When the teammate's session ended after its last report: the board says
     # 「已离开」 beside what it said, and never rewrites it. Cleared when the
     # teammate reports again.

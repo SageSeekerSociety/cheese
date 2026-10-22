@@ -484,17 +484,26 @@ class PlatformHost:
     breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
     """
 
-    def __init__(self, client, invoke, call_id, doc_versions, compact=None):
+    def __init__(self, client, invoke, call_id, doc_versions, run, compact=None):
         self.client = client
         self.invoke = invoke
         self.call_id = call_id
         self.doc_versions = doc_versions
         self.environ = dict(os.environ)
+        #: Which run of its session this call is made in, as the session's
+        #: runner names it (``harness/epoch/seq`` of the ``running`` event that
+        #: began it), or None for a harness whose runner names no runs. Every
+        #: platform request carries it (``X-Cheese-Run``), so what the agent
+        #: reports is known to be that run's (`presentation.task_presentation`).
+        self.run = run
         #: Ask this session's harness to compact its context, for the one
         #: tool that does (`cheese_compact`); a session with none refuses.
         self.compact = compact
 
     def request(self, plan):
+        run = self.run()
+        if run:
+            plan = {**plan, "run": run}
         stdout = self.client.platform_request(plan)["value"]["stdout"]
         return json.loads(stdout) if stdout else {}
 
@@ -513,6 +522,13 @@ class PlatformHost:
             f"{self.call_id}-sync",
             timeout_ms=600000,
         )
+
+
+def no_run():
+    """The run source of a harness whose runner names no runs: it reports no
+    lifecycle (`Harness.reports_lifecycle`), so its sessions have no state on
+    the platform for a run to be compared with, and its reports always stand."""
+    return None
 
 
 def _replace_file(path, text):
@@ -534,6 +550,10 @@ def _replace_file(path, text):
 #: helpers reach the runner there, never the agent, whose commands run on the
 #: room's machine.
 SESSION_SOCKET = "CHEESE_SESSION_SOCKET"
+#: The header a platform request names its session's run in (`PlatformHost.run`).
+#: The same name as `room_task.progress.RUN_HEADER`, which reads it: this file
+#: ships alone and imports nothing of it.
+RUN_HEADER = "X-Cheese-Run"
 
 
 def dial_runner(path: str, timeout: float):
@@ -716,6 +736,9 @@ class RemoteClient:
                         # What a person's 芝士 does for them once its gate let
                         # it (`assistant.passes`).
                         **({"X-Cheese-Pass": args["pass"]} if args.get("pass") else {}),
+                        # The run of the session this call is made in
+                        # (`PlatformHost.run`).
+                        **({RUN_HEADER: args["run"]} if args.get("run") else {}),
                     },
                 )
                 response = connection.getresponse()

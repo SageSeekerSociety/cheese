@@ -75,7 +75,10 @@ async def task_out(db, task, card=None) -> dict:
     out = TaskOut.model_validate(task).model_dump(mode="json")
     shown = presentation.task_presentation(
         presentation.facts_for_task(
-            task, card, awaiting_answer=task.id in asked, teammate_run=runs.get(task.id)
+            task,
+            card,
+            awaiting_answer=task.id in asked,
+            teammate_runs=runs.get(task.id),
         ),
         now=datetime.now(UTC),
     )
@@ -154,7 +157,7 @@ async def task_rows(
                 task,
                 card,
                 awaiting_answer=task.id in asked,
-                teammate_run=runs.get(task.id),
+                teammate_runs=runs.get(task.id),
             ),
             now=now,
         )
@@ -326,7 +329,7 @@ async def project_task_rows(
                 task,
                 card,
                 awaiting_answer=task.id in asked,
-                teammate_run=runs.get(task.id),
+                teammate_runs=runs.get(task.id),
             ),
             now=now,
         )
