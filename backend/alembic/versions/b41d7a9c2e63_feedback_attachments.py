@@ -40,7 +40,12 @@ def upgrade() -> None:
         sa.Column("location", sa.String(length=16), nullable=False),
         sa.Column("blob_key", sa.String(length=1024), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["feedback_id"], ["feedback.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["feedback_id"],
+            ["feedback.id"],
+            ondelete="CASCADE",
+            name="fk_feedback_attachments_feedback_id_feedback",
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(

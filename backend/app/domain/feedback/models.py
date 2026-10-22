@@ -303,9 +303,16 @@ class FeedbackAttachment(UuidPk, Base):
     )
 
     #: NULL until the report is filed; CASCADE because a file nobody can
-    #: reach any more is not worth keeping a row for.
+    #: reach any more is not worth keeping a row for. Named, not anonymous:
+    #: `test_schema_debt` refuses a new unnamed foreign key, and a name is
+    #: what makes it droppable in a later migration.
     feedback_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("feedback.id", ondelete="CASCADE"), nullable=True
+        ForeignKey(
+            "feedback.id",
+            ondelete="CASCADE",
+            name="fk_feedback_attachments_feedback_id_feedback",
+        ),
+        nullable=True,
     )
     #: Who uploaded it. The upload and the report are two requests, so this is
     #: also the answer to 「他能不能把这些 id 挂到自己的反馈上」: only the

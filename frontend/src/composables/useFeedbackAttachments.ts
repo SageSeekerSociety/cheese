@@ -25,6 +25,7 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import { uploadFeedbackAttachment } from '@/api/feedback'
+import { fmtFileSize } from '@/lib/usageFormat'
 import { useFeedbackStore } from '@/stores/feedback'
 
 /** 名单里的一行。三种状态，由这一行自己说清此刻在做什么。 */
@@ -160,7 +161,7 @@ export function useFeedbackAttachments() {
         toast.error(
           t('feedback.submit.attachments.tooLarge', {
             name: file.name || t('feedback.submit.attachments.unnamed'),
-            size: fmtBytes(maxBytes.value),
+            size: fmtFileSize(maxBytes.value),
           })
         )
         continue
@@ -193,15 +194,4 @@ export function useFeedbackAttachments() {
   }
 
   return { rows, uploading, maxFiles, maxBytes, setLimits, add, remove, retry, fromClipboard }
-}
-
-/** 字节数说成人话。和 `fmtFileSize` 同一档（KB / MB）—— 这一份单独写，是因为错误句
- *  要在 composable 里拼，而那个函数住在 `lib/usageFormat.ts`（一个组件层的工具）。 */
-export function fmtBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) {
-    const mb = bytes / (1024 * 1024)
-    return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`
-  }
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${bytes} B`
 }

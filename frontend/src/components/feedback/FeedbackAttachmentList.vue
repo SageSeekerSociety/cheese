@@ -1,93 +1,43 @@
 <script setup lang="ts">
 // 详情页里这条反馈带的文件：图片直接画出来，别的给一行下载。
 //
-// **这一屏上的字节要经过一次请求才拿得到**：附件的端点是按反馈的可见性判人的，
-// `<img src>` 发请求时带不上 Authorization（也读不到 localStorage），直接挂地址拿到
-// 的是 401 加一张裂图。所以先 fetch、转成 object URL 再交给 `<img>` —— 和消息里那张
-// 图（`AttachmentImage`）同一件事，只是那边走的是话题工作区那条约。
+// **这一格只画，不取数。** 附件的字节要经过一次请求才拿得到（那条端点按反馈的可见性
+// 判人，而 `<img src>` 带不上 Authorization），但那次取数**归页面那一层** —— 这里收
+// props 出事件，所以它能在组件预览站里单独渲染。判据见 `.claude/rules/architecture.md`
+// （组件不取数）与 `docs/manual/dev/scenes.md`，取数在
+// `composables/useFeedbackAttachmentImages.ts`。
 //
-// object URL 不会自己消失：它把字节钉在内存里，直到被 revoke。一页可能有几张截图，
-// 所以卸载时（以及列表变化时）把取出来的都还回去。
-//
-// 点图放大看交给 `ImageLightbox`（那一层也是只在当前文档里有效，所以不开新标签页）。
+// `urls` 里**只有图片**那一档的 object URL（页面已经取好了）：8MB 的日志没人想在看页面
+// 时先被下载一遍，而一张截图正是他点开这条反馈要看的东西。没有地址的按「读不到」画 ——
+// 名字和大小还在，人知道少了什么，也不该因为一张图 404 就说整条反馈坏了。
 import type { FeedbackAttachment } from '@/cx_types'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { fmtBytes } from '@/composables/useFeedbackAttachments'
-
-import { downloadFeedbackAttachment, feedbackAttachmentBlobUrl } from '@/api/feedback'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
+import { fmtFileSize } from '@/lib/usageFormat'
 
-const props = defineProps<{ attachments: FeedbackAttachment[] }>()
+defineProps<{
+  attachments: FeedbackAttachment[]
+  /** 图片那一档的 object URL，按附件 id。别的类型不在里面。 */
+  urls: Record<string, string>
+  /** 正在下载的那一份的 id（图片本身不用它，点图是放大看）。 */
+  downloading: string | null
+  /** 放大看的是哪一份；`null` 表示没开着。由页面持有 —— 关掉预览之前不能把那个
+   *  object URL 还回去，而地址也由页面持有。 */
+  viewing: FeedbackAttachment | null
+}>()
+
+const emit = defineEmits<{
+  download: [attachment: FeedbackAttachment]
+  view: [attachment: FeedbackAttachment | null]
+}>()
 
 const { t } = useI18n()
 
-/** 图片那一档的 object URL，按附件 id。**只有图片预取**：8MB 的日志没人想在看页面
- *  时先被下载一遍，而一张截图正是他点开这条反馈要看的东西。 */
-const urls = ref<Record<string, string>>({})
-const viewing = ref<FeedbackAttachment | null>(null)
-const downloading = ref<string | null>(null)
-
 function isImage(attachment: FeedbackAttachment): boolean {
   return attachment.content_type.startsWith('image/')
-}
-
-function release(): void {
-  for (const url of Object.values(urls.value)) URL.revokeObjectURL(url)
-  urls.value = {}
-}
-
-/** 第几轮在取。列表换了（从一条反馈切到另一条）时，上一轮还在飞的请求回来不能把
- *  `urls` 覆盖掉 —— 覆盖了，刚取到的这一批对象地址就再也没人 revoke。 */
-let generation = 0
-
-async function load(): Promise<void> {
-  const mine = ++generation
-  release()
-  const images = props.attachments.filter(isImage)
-  const loaded: Record<string, string> = {}
-  await Promise.all(
-    images.map(async (attachment) => {
-      try {
-        loaded[attachment.id] = await feedbackAttachmentBlobUrl(attachment.id)
-      } catch {
-        // 取不到就按「读不到」画（名字和大小还在，人知道少了什么）。**不弹全局错误**：
-        // 一页里一张图 404 不该让整条反馈看起来坏了。
-      }
-    })
-  )
-  if (mine !== generation) {
-    for (const url of Object.values(loaded)) URL.revokeObjectURL(url)
-    return
-  }
-  urls.value = loaded
-}
-
-watch(
-  () => props.attachments,
-  () => void load(),
-  { immediate: true, deep: false }
-)
-onBeforeUnmount(() => {
-  release()
-})
-
-/** 放大看之前先把预览收起来再还地址 —— 否则那一层手里还举着一个已经 revoke 的地址。 */
-function closeLightbox(): void {
-  viewing.value = null
-}
-
-async function download(attachment: FeedbackAttachment): Promise<void> {
-  if (downloading.value) return
-  downloading.value = attachment.id
-  try {
-    await downloadFeedbackAttachment(attachment)
-  } finally {
-    downloading.value = null
-  }
 }
 </script>
 
@@ -101,7 +51,7 @@ async function download(attachment: FeedbackAttachment): Promise<void> {
         type="button"
         class="fal__thumb"
         :aria-label="t('feedback.detail.attachments.open', { name: attachment.name })"
-        @click="urls[attachment.id] && (viewing = attachment)"
+        @click="urls[attachment.id] && emit('view', attachment)"
       >
         <img v-if="urls[attachment.id]" :src="urls[attachment.id]" :alt="attachment.name" />
         <v-icon v-else size="20" class="fal__thumb-icon" aria-hidden="true">mdi-image-outline</v-icon>
@@ -109,8 +59,8 @@ async function download(attachment: FeedbackAttachment): Promise<void> {
       <v-icon v-else size="18" class="fal__icon" aria-hidden="true">mdi-file-outline</v-icon>
 
       <span class="fal__name">{{ attachment.name }}</span>
-      <span class="fal__size t-num">{{ fmtBytes(attachment.bytes) }}</span>
-      <BaseButton kind="ghost" size="sm" :loading="downloading === attachment.id" @click="download(attachment)">
+      <span class="fal__size t-num">{{ fmtFileSize(attachment.bytes) }}</span>
+      <BaseButton kind="ghost" size="sm" :loading="downloading === attachment.id" @click="emit('download', attachment)">
         {{ t('feedback.detail.attachments.download') }}
       </BaseButton>
     </li>
@@ -120,7 +70,7 @@ async function download(attachment: FeedbackAttachment): Promise<void> {
     v-if="viewing && urls[viewing.id]"
     :src="urls[viewing.id]"
     :alt="viewing.name"
-    @close="closeLightbox"
+    @close="emit('view', null)"
   />
 </template>
 
@@ -142,7 +92,7 @@ async function download(attachment: FeedbackAttachment): Promise<void> {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
 }
-/* 缩略图那一格：固定 36px，图片按 contain 缩进去 —— 一张手机截图和一张桌面截图在
+/* 缩略图那一格：固定 36px，图片按 cover 缩进去 —— 一张手机截图和一张桌面截图在
    这一列里占一样大，行高不会跟着图片的长宽比跳。 */
 .fal__thumb {
   display: flex;

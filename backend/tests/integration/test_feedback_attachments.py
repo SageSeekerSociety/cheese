@@ -66,7 +66,9 @@ def _report_with(client: TestClient, handle: str, attachment_ids: list[str], **b
 
 def _read(client: TestClient, attachment_id: str, handle: str | None, **params):
     headers = session_auth_headers(handle) if handle else None
-    return client.get(f"/feedback/attachments/{attachment_id}", headers=headers, params=params)
+    return client.get(
+        f"/feedback/attachments/{attachment_id}", headers=headers, params=params
+    )
 
 
 # --- 读：判据就是那条反馈的判据 ------------------------------------------------
@@ -104,7 +106,11 @@ def test_the_bytes_are_served_inert(client):
     """这些字节是人上传的，而页面和它同源、token 在 localStorage 里：一个 HTML 当
     文档跑起来就是拿着读者的会话跑（`app/api/inert_headers.py`）。"""
     uploaded = _upload(
-        client, REPORTER, content=b"<script>alert(1)</script>", name="x.html", content_type="text/html"
+        client,
+        REPORTER,
+        content=b"<script>alert(1)</script>",
+        name="x.html",
+        content_type="text/html",
     )
     _report_with(client, REPORTER, [uploaded["id"]])
 
@@ -117,7 +123,11 @@ def test_the_bytes_are_served_inert(client):
 def test_a_png_that_is_not_a_png_is_served_as_an_opaque_download(client):
     """浏览器说它是图片是一句声称，字节说了才算：认不出来的不许进 `<img>`。"""
     uploaded = _upload(
-        client, REPORTER, content=b"not an image at all", name="fake.png", content_type="image/png"
+        client,
+        REPORTER,
+        content=b"not an image at all",
+        name="fake.png",
+        content_type="image/png",
     )
     _report_with(client, REPORTER, [uploaded["id"]])
 
@@ -214,7 +224,10 @@ def test_meta_reports_the_ceiling_the_upload_actually_enforces(client, small_cei
     assert meta["max_attachments"] >= 1
 
     # 正好等于上限的那一份收得下。
-    assert _upload(client, REPORTER, content=b"x" * small_ceiling)["bytes"] == small_ceiling
+    assert (
+        _upload(client, REPORTER, content=b"x" * small_ceiling)["bytes"]
+        == small_ceiling
+    )
 
     # 多一个字节就被拒，而且拒的是「太大」，不是别的。
     r = client.post(

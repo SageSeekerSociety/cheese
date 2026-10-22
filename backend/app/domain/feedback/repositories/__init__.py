@@ -463,9 +463,7 @@ class FeedbackRepository(ListingQueries):
     ) -> FeedbackAttachment | None:
         return await attachments.get(self, attachment_id=attachment_id)
 
-    async def get_attachments(
-        self, ids: list[uuid.UUID]
-    ) -> list[FeedbackAttachment]:
+    async def get_attachments(self, ids: list[uuid.UUID]) -> list[FeedbackAttachment]:
         return await attachments.get_many(self, ids=ids)
 
     async def list_attachments(

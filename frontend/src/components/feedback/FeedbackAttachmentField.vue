@@ -13,9 +13,8 @@ import type { PendingAttachment } from '@/composables/useFeedbackAttachments'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { fmtBytes } from '@/composables/useFeedbackAttachments'
-
 import BaseButton from '@/components/base/BaseButton.vue'
+import { fmtFileSize } from '@/lib/usageFormat'
 
 defineProps<{
   rows: PendingAttachment[]
@@ -47,7 +46,7 @@ function onPicked(event: Event) {
     <div class="sba__label">{{ t('feedback.submit.attachments.add') }}</div>
     <p class="sba__hint t-meta-read">
       {{ t('feedback.submit.attachments.helper') }} ·
-      {{ t('feedback.submit.attachments.limit', { size: fmtBytes(maxBytes), max: maxFiles }) }}
+      {{ t('feedback.submit.attachments.limit', { size: fmtFileSize(maxBytes), max: maxFiles }) }}
     </p>
 
     <ul v-if="rows.length" class="sba__list">
@@ -71,7 +70,7 @@ function onPicked(event: Event) {
           <span class="sba__bar-fill" :style="{ width: `${Math.round(row.progress * 100)}%` }" />
         </span>
         <span v-else-if="row.state === 'failed'" class="sba__error">{{ row.error }}</span>
-        <span v-else class="sba__size t-num">{{ fmtBytes(row.bytes) }}</span>
+        <span v-else class="sba__size t-num">{{ fmtFileSize(row.bytes) }}</span>
 
         <BaseButton v-if="row.state === 'failed'" kind="ghost" size="sm" @click="emit('retry', row.key)">
           {{ t('feedback.submit.attachments.retry') }}
