@@ -195,7 +195,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.identity.services", "app.domain.user.repositories"),
         ("app.domain.knowledge.services", "app.domain.team.repositories"),
         ("app.domain.knowledge.services", "app.domain.user.repositories"),
-        ("app.domain.machine.services", "app.domain.project.repositories"),
         ("app.domain.membership.services", "app.domain.project.repositories"),
         # --- notification（项目收件箱：写入前核项目在不在。拍板时把决定发回房间
         #     那一条已经收进 `notification/ports.py` 的口子，落话的是
