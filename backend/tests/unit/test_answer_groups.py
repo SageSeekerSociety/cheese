@@ -120,21 +120,11 @@ def test_only_someone_it_asks_can_answer():
         )
 
 
-def test_a_question_someone_already_answered_is_refused():
+def test_another_persons_answer_cannot_be_overwritten():
+    """别人答过的那道题交不进去——一道题只有一个回答。"""
     answered = question()
-    answered.meta = {
-        **answered.meta,
-        "answer_log": [
-            {
-                "kind": "option",
-                "option": "按自然周",
-                "note": None,
-                "by": "alice",
-                "at": "",
-                "reply_id": None,
-            }
-        ],
-    }
+    answered.meta = {**answered.meta, "answer_log": [_entry("bob", "按自然周")]}
+
     with pytest.raises(ConflictError):
         record_answers(
             [answered],
@@ -142,6 +132,64 @@ def test_a_question_someone_already_answered_is_refused():
             by="alice",
             at=_at(),
         )
+
+
+def test_the_answerer_can_change_their_own_answer():
+    """答过的人改得动自己那条：撤掉旧的、写上新的一条。"""
+    answered = question()
+    answered.meta = {**answered.meta, "answer_log": [_entry("alice", "按自然周")]}
+
+    record_answers(
+        [answered],
+        {answered.id: Answer(options=("按滚动 7 天",))},
+        by="alice",
+        at=_at(),
+    )
+
+    log = answered.meta["answer_log"]
+    assert [e["by"] for e in log] == ["alice"]
+    assert log[0]["option"] == "按滚动 7 天"
+
+
+def test_editing_leaves_another_persons_skip_alone():
+    """跳过不算回答：改自己的答案时，别人那条跳过要被原样留着。"""
+    answered = question(asked=("alice", "bob"))
+    answered.meta = {
+        **answered.meta,
+        "answer_log": [
+            {
+                "kind": "skipped",
+                "option": None,
+                "note": None,
+                "by": "bob",
+                "at": "",
+                "reply_id": None,
+            },
+            _entry("alice", "按自然周"),
+        ],
+    }
+
+    record_answers(
+        [answered],
+        {answered.id: Answer(options=("按滚动 7 天",))},
+        by="alice",
+        at=_at(),
+    )
+
+    log = answered.meta["answer_log"]
+    assert [e["kind"] for e in log] == ["skipped", "option"]
+    assert log[1]["option"] == "按滚动 7 天"
+
+
+def _entry(by: str, option: str) -> dict:
+    return {
+        "kind": "option",
+        "option": option,
+        "note": None,
+        "by": by,
+        "at": "",
+        "reply_id": None,
+    }
 
 
 def test_summary_lists_every_question_including_the_unanswered():

@@ -13,6 +13,7 @@ import type { ChapterRow } from '../types/chapters'
 
 import { computed, ref, watch } from 'vue'
 
+import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
@@ -339,6 +340,8 @@ const {
 // 撤回一道题上的回答。它要的两样（时间线、错误横幅）都在 `panel` 上，但它自己不在
 // `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
 const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
+// 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
+const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
 
 // 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上 @ 它的那枚标签。只在
 // 打开的那一刻做一次，删掉了不会再长回来。
@@ -457,6 +460,8 @@ useComposerShortcut({
           :name-of="nameOf"
           :rows="rows"
           :ask-groups="askGroups"
+          :ask-group-busy="askGroupBusy"
+          :ask-group-failure="errorMsg"
           :hidden-rows="hiddenRows"
           :day-labels="dayLabels"
           :unread-anchor-id="unreadAnchorId"
@@ -524,6 +529,7 @@ useComposerShortcut({
           @ask-reply="replyToQuestion"
           @ask-withdraw="withdrawQuestionAnswer"
           @ask-skip="skipQuestion"
+          @ask-group-submit="submitAskGroup"
           @checklist="changeChecklist"
           @download="downloadAttachment"
           @jump="openAt"

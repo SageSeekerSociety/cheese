@@ -1,4 +1,5 @@
 import type { Block, ListPayload, ReactionAgg } from '../cx_types'
+import type { GroupAnswer } from '../lib/askGroups'
 
 import { rememberNumbered } from '../lib/addresses'
 
@@ -104,8 +105,8 @@ export function withdrawAnswer(questionId: string): Promise<Block> {
   )
 }
 
-/** 一道题的答案：选了哪些选项，或者自己写的一句话。两个都空 = 这题没答。 */
-export type GroupAnswer = { options?: string[]; note?: string }
+// 答案的形状住在 `lib/askGroups`：组件也要用它，而组件不引 API 层。
+export type { GroupAnswer } from '../lib/askGroups'
 
 /** 整组提交回了什么：落下的那一条消息，和几道题改完之后的样子。 */
 export interface AnswerGroupResult {

@@ -7,6 +7,14 @@ import type { Block } from '../cx_types'
 
 import { askOptions } from './blockDisplay'
 
+/**
+ * 一道题的答案：选了哪些选项，或者自己写的一句话。两个都空 = 这题没答。
+ *
+ * 放在这里而不是 `api/blocks`：组卡片（`src/components`）要用这个形状，而组件不引
+ * API 层（`.claude/rules/architecture.md`）。接口那边从这里引同一份。
+ */
+export type GroupAnswer = { options?: string[]; note?: string }
+
 /** 这道题所属的那一组（`meta.notice_id`）；没有就是单题，自成一组。 */
 export function askGroupKey(block: Block): string | null {
   const notice = (block.meta as Record<string, unknown> | null)?.notice_id

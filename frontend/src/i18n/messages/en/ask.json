@@ -5,7 +5,6 @@
     "questionOf": "Question {n} of {total}",
     "multiHint": "Pick any number; click again to clear",
     "otherLabel": "Other answer",
-    "otherFill": "Fill in",
     "previous": "Previous",
     "next": "Next",
     "review": "Review your answers",

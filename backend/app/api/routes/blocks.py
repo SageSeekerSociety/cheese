@@ -34,9 +34,12 @@ from app.domain.block.answer_groups import (
     summary_line,
 )
 from app.domain.block.editing import edit_message
-from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut, ReactionToggleIn
+
+# `BlockKind` comes from the schemas module, not `block.models`: a route may not
+# import a domain's models directly (C2 in `.importlinter`), and `schemas` is
+# the module that re-exports the two enums a route writes with.
+from app.domain.block.schemas import BlockKind, BlockOut, ReactionToggleIn
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending, record_task_instruction
 from app.domain.event_author import AuthorType

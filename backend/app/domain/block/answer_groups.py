@@ -37,7 +37,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.block.asked import may_answer, settled, skipped_by
+from app.domain.block.asked import SKIPPED, may_answer, skipped_by
 from app.domain.block.models import Block
 
 #: 组里最多几道题，和 `questions.MAX_QUESTIONS` 同一条线。
@@ -126,9 +126,11 @@ def record_answers(
     存逗号连起来的一串，和单答那条路的形状一致），自己写的是 ``kind=note``。没答的
     题（``Answer.empty``）一个字不改，它照旧等回答。
 
-    谁答得了由 `block.asked.may_answer` 定，和点选项、跳过同一条；已经有人答过的题
-    不再收（`block.asked.settled`），他跳过的那题也不收。任何一条不合规都当场拒绝，
-    整组一条不落——半组答案比没有答案更难收拾。
+    谁答得了由 `block.asked.may_answer` 定，和点选项、跳过同一条；别人已经答过的题
+    不再收（`block.asked.settled`），他跳过的那题也不收。**但答过的人可以改自己的
+    答案**：「改答案」就是把这份草稿再交一次，所以 ``by`` 自己留下的那些条目先撤掉
+    再写新的——一道题仍然只有一个人的回答，别人抢不走，答的人改得动。
+    任何一条不合规都当场拒绝，整组一条不落——半组答案比没有答案更难收拾。
     """
     touched: list[Block] = []
     for question in questions:
@@ -140,10 +142,12 @@ def record_answers(
             raise UnprocessableEntityError(say("askNotAQuestion"))
         if not may_answer(meta, by):
             raise ForbiddenError(say("askSkipNotYours"))
-        if settled(meta):
-            raise ConflictError(say("askAlreadyAnswered"))
         if by in skipped_by(meta):
             raise ConflictError(say("askAlreadySkipped"))
+        log = list(meta.get("answer_log") or [])
+        others = [e for e in log if (e or {}).get("by") != by]
+        if _answered_by_anyone(others):
+            raise ConflictError(say("askAlreadyAnswered"))
         picked = _offered(meta)
         chosen = [picked.get(option, option) for option in answer.options]
         entry = {
@@ -154,14 +158,21 @@ def record_answers(
             "at": at.isoformat(),
             "reply_id": None,
         }
-        question.meta = {
-            **meta,
-            "answer_log": [*(meta.get("answer_log") or []), entry],
-        }
+        # 自己那条不算：先拿掉，再按这次的答案写一条。别人的一条都不动。
+        question.meta = {**meta, "answer_log": [*others, entry]}
         touched.append(question)
     if not touched:
         raise ValidationError(say("askAnswersEmpty"))
     return touched
+
+
+def _answered_by_anyone(entries) -> bool:
+    """这些条目里有没有一条是真的回答（跳过不算）。
+
+    和 `block.asked.answered` 是同一条判据，只是按「除了我以外的人」来看：自己的
+    那几条先被拿掉了，所以这里判的是「别人答过没有」。
+    """
+    return any((entry or {}).get("kind") != SKIPPED for entry in entries)
 
 
 def _offered(meta: dict) -> dict[str, str]:

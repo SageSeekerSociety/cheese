@@ -14,10 +14,10 @@
  * 缺的只提醒不拦。
  */
 import type { Block } from '../../cx_types'
+import type { GroupAnswer } from '../../lib/askGroups'
 
 import { computed, ref } from 'vue'
 
-import { answerGroup } from '../../api/blocks'
 import { askHeader, askMultiSelect } from '../../lib/askGroups'
 import { askAnswers, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
@@ -34,18 +34,31 @@ const props = defineProps<{
   closed?: boolean
   /** 看着这间房的人（自己的 handle）。 */
   viewer?: string
+  /** 提交在路上：由面板拿着（`useAskGroupAnswer` 的 busy）。 */
+  busy?: boolean
+  /** 提交失败时那面横幅。 */
+  failure?: string | null
 }>()
 
-const emit = defineEmits<{ (e: 'answered', blocks: Block[]): void }>()
+const emit = defineEmits<{
+  /** 把整组答案交上去；请求由面板发，组件不取数据。 */
+  (e: 'submit', payload: { questionId: string; answers: Record<string, GroupAnswer> }): void
+}>()
 
 type Draft = { options: string[]; note: string }
 
 const questions = computed(() => props.blocks)
 const total = computed(() => questions.value.length)
-/** 已经有人答过的那一道（只有一个回答，谁先答算谁的）。 */
-const answeredElsewhere = computed(() => questions.value.some((q) => askAnswers(q).some((a) => !a.skipped)))
+/** 别人答过的题（一道题只收一个人的回答；自己答过的那几条不算，改得动）。 */
+const answeredByOthers = computed(() =>
+  questions.value.some((q) => askAnswers(q).some((a) => !a.skipped && a.by !== props.viewer))
+)
+/** 我自己答过了没有——「已提交」看的是这个，不是本地的一个标记。 */
+const submitted = computed(() =>
+  questions.value.some((q) => askAnswers(q).some((a) => !a.skipped && a.by === props.viewer))
+)
 const canAnswer = computed(() => {
-  if (props.closed || answeredElsewhere.value) return false
+  if (props.closed || answeredByOthers.value) return false
   return questions.value.some((q) => mayAnswer(q))
 })
 
@@ -55,13 +68,30 @@ function mayAnswer(block: Block): boolean {
   return !!props.viewer && (asked.length === 0 || !!meta.asked_all || asked.includes(props.viewer))
 }
 
-// 每题一个草稿。没交之前它只活在这个组件里，换设备/刷新就没了（v1 的取舍）。
-const drafts = ref<Draft[]>(questions.value.map(() => ({ options: [], note: '' })))
+/** 服务端已经记下的答案：题上的 `answer_log`。提交成没成看它，不看本地标记。 */
+function recordedAnswers(): Draft[] {
+  return questions.value.map((q) => {
+    const entry = askAnswers(q).find((a) => !a.skipped)
+    if (!entry) return { options: [], note: '' }
+    // 多选题记的是一串，拆回每一项；单选记的就是那一个选项。都对不上就是他自己写的话。
+    const offered = askOptions(q) ?? []
+    const picked = entry.text.split(t('ask.group.listSeparator'))
+    const known = picked.filter((text) => offered.some((o) => o.text === text))
+    if (known.length && known.length === picked.length) return { options: known, note: '' }
+    return { options: [], note: entry.text }
+  })
+}
+
+const editing = ref(false)
+/** 现在是不是在答题那一屏：没交过，或者点了「改答案」重开。 */
+const answering = computed(() => (!submitted.value || editing.value) && !reviewing.value)
+/** 已交、且没在改：这一屏是「答案」，不是「确认」。 */
+const showingAnswers = computed(() => submitted.value && !editing.value)
+// 每题一个草稿。没交之前它只活在这个组件里，换设备/刷新就没了（v1 的取舍）；
+// 「改答案」时用服务端记下的答案把它填回去。
+const drafts = ref<Draft[]>(recordedAnswers())
 const at = ref(0)
 const reviewing = ref(false)
-const submitted = ref(false)
-const busy = ref(false)
-const failure = ref<string | null>(null)
 
 const answeredCount = computed(() => drafts.value.filter((d) => d.options.length > 0 || d.note.trim()).length)
 const missing = computed(() => total.value - answeredCount.value)
@@ -74,7 +104,7 @@ function chosen(index: number, text: string): boolean {
 }
 
 function pick(index: number, text: string, multi: boolean) {
-  if (!canAnswer.value || submitted.value) return
+  if (!canAnswer.value || !answering.value) return
   const draft = draftFor(index)
   if (multi) {
     const at2 = draft.options.indexOf(text)
@@ -103,33 +133,26 @@ function answeredText(index: number): string {
   return draft.note.trim()
 }
 
-async function submit() {
-  if (busy.value || !canAnswer.value) return
-  busy.value = true
-  failure.value = null
-  try {
-    const answers: Record<string, { options?: string[]; note?: string }> = {}
-    questions.value.forEach((q, i) => {
-      const draft = draftFor(i)
-      if (draft.options.length) answers[q.id] = { options: [...draft.options] }
-      else if (draft.note.trim()) answers[q.id] = { note: draft.note.trim() }
-    })
-    const result = await answerGroup(questions.value[0]!.id, answers)
-    submitted.value = true
-    reviewing.value = false
-    emit('answered', result.questions)
-  } catch (error) {
-    failure.value = error instanceof Error ? error.message : t('ask.group.failed')
-  } finally {
-    busy.value = false
-  }
+function submit() {
+  if (props.busy || !canAnswer.value) return
+  const answers: Record<string, GroupAnswer> = {}
+  questions.value.forEach((q, i) => {
+    const draft = draftFor(i)
+    if (draft.options.length) answers[q.id] = { options: [...draft.options] }
+    else if (draft.note.trim()) answers[q.id] = { note: draft.note.trim() }
+  })
+  // 意图发上去，请求由面板发（`composables/useAskGroupAnswer`）——组件不取数据。
+  emit('submit', { questionId: questions.value[0]!.id, answers })
+  reviewing.value = false
+  editing.value = false
 }
 
 function reopen() {
-  submitted.value = false
+  // 把服务端记下的答案填回草稿，改的是同一件事的下一版；再交一次整组覆盖。
+  drafts.value = recordedAnswers()
+  editing.value = true
   reviewing.value = false
   at.value = 0
-  // 答案留着，重新打开只是为了改；再次提交会整组覆盖。
 }
 </script>
 
@@ -145,8 +168,8 @@ function reopen() {
           type="button"
           role="tab"
           class="ask-group__tab"
-          :aria-selected="!reviewing && at === i"
-          :disabled="submitted"
+          :aria-selected="answering && at === i"
+          :disabled="!answering"
           :title="q.content"
           @click="(at = i), (reviewing = false)"
         >
@@ -157,15 +180,15 @@ function reopen() {
       <button
         type="button"
         class="ask-group__tab ask-group__tab--submit"
-        :disabled="submitted || !canAnswer"
+        :disabled="!answering || !canAnswer"
         @click="reviewing = true"
       >
-        {{ submitted ? t('ask.group.submitted') : t('ask.group.submit') }}
+        {{ answering ? t('ask.group.submit') : t('ask.group.submitted') }}
       </button>
     </div>
 
     <!-- 一题一屏 -->
-    <template v-if="!submitted && !reviewing">
+    <template v-if="answering">
       <div class="ask-group__slab">
         <p class="ask-group__step">{{ label(questions[at]!, at) }}</p>
         <p class="ask-group__question">{{ questions[at]!.content }}</p>
@@ -219,14 +242,14 @@ function reopen() {
       <div class="ask-group__review">
         <h4>
           {{
-            submitted
+            showingAnswers
               ? asker
                 ? t('ask.group.title', { asker, n: total })
                 : t('ask.group.titleBare', { n: total })
               : t('ask.group.review')
           }}
         </h4>
-        <p v-if="!submitted" class="ask-group__notice" :class="missing ? 'is-warn' : 'is-ok'">
+        <p v-if="!showingAnswers" class="ask-group__notice" :class="missing ? 'is-warn' : 'is-ok'">
           {{ missing ? t('ask.group.reviewMissing', { n: missing }) : t('ask.group.reviewAllAnswered', { total }) }}
         </p>
 
@@ -241,8 +264,10 @@ function reopen() {
         </ul>
 
         <div class="ask-group__bar">
-          <template v-if="submitted">
+          <template v-if="showingAnswers">
             <BaseButton kind="secondary" size="sm" @click="reopen">{{ t('ask.group.edit') }}</BaseButton>
+            <span class="ask-group__spacer" />
+            <span class="ask-group__note">{{ t('ask.group.editNote') }}</span>
           </template>
           <template v-else>
             <BaseButton kind="secondary" size="sm" @click="reviewing = false">{{ t('ask.group.back') }}</BaseButton>
@@ -528,5 +553,10 @@ function reopen() {
   margin: 10px 0 0;
   font-size: 13px;
   color: var(--danger-ink);
+}
+.ask-group__note {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
 }
 </style>
