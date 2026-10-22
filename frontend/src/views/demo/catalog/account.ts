@@ -1,6 +1,7 @@
 /**
  * 账号与反馈那一册：注册表单底下那两句协议（`LegalLinks`）、反馈列表里的一行
- * （`FeedbackCard`）、第一次采纳之后那张邀请小卡（`InvitePromptCard`）。
+ * （`FeedbackCard`）、第一次采纳之后那张邀请小卡（`InvitePromptCard`）、每个账号说一次的
+ * 「知是正在内测」（`BetaNoticeDialog`）。
  *
  * 反馈那几行的样例（公开、支持过了、私密、芝士提的、办完了的）在
  * `../catalogFixtures.ts`。
@@ -12,6 +13,7 @@ import { FEEDBACK_ROWS } from '../catalogFixtures'
 import LegalLinks from '@/components/account/LegalLinks.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import InvitePromptCard from '@/components/invites/InvitePromptCard.vue'
+import BetaNoticeDialog from '@/components/usage/BetaNoticeDialog.vue'
 
 export const ACCOUNT_ENTRIES: CatalogEntry[] = [
   {
@@ -102,6 +104,67 @@ export const ACCOUNT_ENTRIES: CatalogEntry[] = [
         note: '多了 3 个名额；好友和自己各得多少写成两行。',
         props: { open: true, inline: true, invitesTo: { name: 'UserSettingsInvites' } },
         expect: '复制注册链接',
+      },
+    ],
+  },
+  {
+    id: 'beta-notice-dialog',
+    title: 'BetaNoticeDialog',
+    about: '每个账号说一次「知是正在内测」：每样额度多少、怎么得；还没领体验额度的主按钮就是领取。',
+    file: 'src/components/usage/BetaNoticeDialog.vue',
+    component: BetaNoticeDialog,
+    // 领取、关掉都只发事件，取数、领取和记「说过了」在 composables/useBetaNotice.ts。
+    needs: ['vuetify', 'i18n'],
+    // 一个模态框：画在 body 上。
+    teleport: true,
+    states: [
+      {
+        name: '还没领体验额度',
+        note: '主按钮是「领取 500 点」，旁边「稍后」。每月方案那一行是这个人自己方案的数。',
+        props: {
+          open: true,
+          offer: {
+            credits: 500,
+            claimed: false,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+        },
+        expect: '领取 500 点',
+      },
+      {
+        name: '领过了',
+        note: '只剩「知道了」，体验额度那一行写明已经领过。',
+        props: {
+          open: true,
+          offer: {
+            credits: 500,
+            claimed: true,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+        },
+        expect: '知道了',
+      },
+      {
+        name: '方案不按月计',
+        note: '不限、或者按时间窗口计的方案没有「每月方案额度」这一行。',
+        props: {
+          open: true,
+          offer: {
+            credits: 500,
+            claimed: false,
+            feedback_credits: 100,
+            plan_credits: null,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+        },
+        expect: '内测体验额度',
       },
     ],
   },

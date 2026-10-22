@@ -8,7 +8,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const api = vi.hoisted(() => ({ request: vi.fn(), teams: vi.fn(), usage: vi.fn() }))
 vi.mock('@/api/creditOffers', () => ({
   getPublishedCreditPlans: async () => ({ plans: [] }),
-  getBetaCredits: async () => ({ credits: 500, feedback_credits: 100, claimed: false }),
+  getBetaCredits: async () => ({
+    credits: 500,
+    feedback_credits: 100,
+    claimed: false,
+    plan_credits: 1000,
+    invite_credits: 150,
+    invitee_credits: 150,
+  }),
   getCreditRequests: async () => ({ items: [] }),
   createCreditRequest: api.request,
 }))
@@ -119,7 +126,14 @@ describe('Plans and top-ups', () => {
         hotHalfLifeDays: 2,
         hotThreshold: 10,
         hotMinItems: 5,
-        beta: { credits: 500, claimed: true, feedback_credits: 100 },
+        beta: {
+          credits: 500,
+          claimed: true,
+          feedback_credits: 100,
+          plan_credits: 1000,
+          invite_credits: 150,
+          invitee_credits: 150,
+        },
         rewards: { feedback_count: 2, feedback_credits: 200, invite_credits: 0, items: [] },
       },
       global: { plugins: [createVuetify({ components, directives }), router, i18n] },

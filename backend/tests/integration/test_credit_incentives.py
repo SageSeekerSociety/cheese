@@ -28,10 +28,15 @@ def _packs(client, headers):
 
 def test_beta_credits_are_claimed_once_and_go_to_the_personal_balance(client, actors):
     headers = actors["owner"]
-    assert client.get("/users/me/credits/beta", headers=headers).json()["data"] == {
+    offer = client.get("/users/me/credits/beta", headers=headers).json()["data"]
+    # What the free plan issues depends on the environment; the next test pins it.
+    assert isinstance(offer.pop("plan_credits"), int)
+    assert offer == {
         "credits": 500,
         "claimed": False,
         "feedback_credits": 100,
+        "invite_credits": 150,
+        "invitee_credits": 150,
     }
     first = client.post("/users/me/credits/beta", headers=headers)
     assert first.status_code == 200, first.text
@@ -49,6 +54,48 @@ def test_beta_credits_are_claimed_once_and_go_to_the_personal_balance(client, ac
         client.post("/users/me/credits/beta", headers={"Authorization": ""}).status_code
         == 401
     )
+
+
+def test_the_beta_notice_names_the_persons_own_monthly_plan(client, actors):
+    """The 内测 notice states what the person's plan issues a month: an
+    administrator's edit shows up, and a plan with no monthly figure gives
+    none rather than a wrong one."""
+    headers = actors["owner"]
+    admin = actors["admin"]
+
+    def plan_credits():
+        return client.get("/users/me/credits/beta", headers=headers).json()["data"][
+            "plan_credits"
+        ]
+
+    assert client.put(
+        "/admin/plans/free", json={"credits_per_period": 1000}, headers=admin
+    ).is_success
+    assert plan_credits() == 1000
+
+    _packs(client, headers)  # opens the personal team the plan is set on
+    [team] = [
+        t
+        for t in client.get(
+            "/admin/teams", params={"q": "rewards-owner"}, headers=admin
+        ).json()["data"]["items"]
+        if t["personal_owner"]
+    ]
+    windowed = client.post(
+        "/admin/plans",
+        json={
+            "key": "hourly",
+            "name": "Hourly",
+            "audience": "personal",
+            "windows": [{"hours": 5, "credits": 100}],
+        },
+        headers=admin,
+    )
+    assert windowed.status_code == 201, windowed.text
+    assert client.put(
+        f"/admin/teams/{team['id']}/plan", json={"plan_key": "hourly"}, headers=admin
+    ).is_success
+    assert plan_credits() is None
 
 
 def test_every_reward_pack_can_be_spent_for_a_year(client, actors):
