@@ -227,13 +227,14 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   /** 挂在频道下面的一条活。和频道行同一个判据，只是事实来自这条活自己那一份 ——
    *  我负责的（以及没主的）活，状态那几盏都不亮时才补一盏蓝灯；别人的活不画蓝灯。
    *  「有人回复了我」也不在这一份里：后端只给频道行算（见上），活这一行照旧读 false。 */
-  function taskLight(task: RailTask): RowLight | null {
+  function taskLight(task: RailTask, { moving = true }: { moving?: boolean } = {}): RowLight | null {
     const light = lightFor(
       {
         awaitsMe: task.awaits_me === true,
         repliedToMe: false,
-        // 这条活的会话在跑，或者它走在交付链路上：呼吸绿。
-        moving: task.moving === true,
+        // 这条活的会话在跑，或者它走在交付链路上：呼吸绿。任务行自己不画它（见
+        // `taskRowLight`），只在收起来的那一堆里替它们说「有任务正在进行」。
+        moving: moving && task.moving === true,
         unseenDelivery: task.unseen_delivery === true,
         waitStalled: false,
         // 交付被退回了，还没有人来改：这不是「有事等你」，是一颗红灯。
@@ -244,6 +245,12 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     )
     if (light) return light
     return isMine(task) ? MINE_LIGHT : null
+  }
+
+  /** 任务行行尾那颗灯：不画呼吸绿。任务行上「在做」的图标已经在转，同一行只留一样
+   *  在动的东西（design-system §9.0）。 */
+  function taskRowLight(task: RailTask): RowLight | null {
+    return taskLight(task, { moving: false })
   }
 
   /** 挂在频道下面的一条活的状态记号和它下面那一行（`lib/taskState.ts`），和全部任务、
@@ -461,6 +468,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     stalledOf,
     lightOf,
     taskLight,
+    taskRowLight,
     taskStateOf,
     memberMarks,
     toggleTitle,
