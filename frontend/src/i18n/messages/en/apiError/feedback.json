@@ -20,6 +20,7 @@
   "feedbackProposalNotFound": "Feedback proposal not found",
   "feedbackProposalPending": "This proposal was just made, and its card is still in the channel waiting for someone to send it. Don't propose it again. The title, body and visibility (public or private) are set in the form by whoever presses “Submit feedback”. To make it private, ask them to choose private in the form when sending",
   "feedbackReadPlatformRoomsOnly": "The feedback center can be read from a channel only in the project that holds the platform's code repository; this channel's project is not that one",
+  "feedbackReleaseClosed": "This feedback is already finished, so its claim can no longer be released",
   "feedbackReleaseHolderOnly": "{holder} claimed this feedback; only they or a feedback admin can release it",
   "feedbackReplyParentMismatch": "The comment you're replying to doesn't belong to this feedback",
   "feedbackUnknownKind": "Unknown kind: {kind}",

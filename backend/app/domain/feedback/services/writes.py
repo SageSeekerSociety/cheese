@@ -349,11 +349,17 @@ async def release(
     """放弃领取：持有人自己，或反馈管理员。没人领着时是空操作。
 
     状态不退回：「处理中」记的是有人动过它，这件事放弃之后也还是发生过。
+
+    已经办完的（`CLOSED_STATUSES`）不接放弃：领取和放弃是修这件事的两端，办完
+    之后这一组动作一起关掉。管理员要清掉挂错的人走 `patch_admin` 的改派，那是
+    数据修正，不是「放弃领取」。
     """
     row = await svc.visible_ref(ref, handle=handle, is_admin=is_admin)
     locked = await claims.lock(svc._session, row.id)
     if locked is None:
         raise NotFoundError(say("feedbackNotFound"))
+    if locked.status in repo.CLOSED_STATUSES:
+        raise ConflictError(say("feedbackReleaseClosed"))
     holder = locked.assignee_handle
     if holder is None:
         return locked

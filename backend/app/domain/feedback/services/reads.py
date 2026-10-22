@@ -423,7 +423,11 @@ async def detail_of(
             handle, is_admin=is_admin, room_project_id=room_project_id
         )
     )
-    can_release = holder is not None and (is_admin or holder == handle)
+    can_release = (
+        holder is not None
+        and row.status not in repo.CLOSED_STATUSES
+        and (is_admin or holder == handle)
+    )
     # Notes are admin-only, so resolving faces for them is not extra work a
     # non-admin pays for: the list is empty and contributes no handles.
     notes = await svc._repo.list_notes(row.id) if is_admin else []

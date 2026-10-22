@@ -20,6 +20,7 @@
   "feedbackProposalNotFound": "提案不存在",
   "feedbackProposalPending": "这个提案刚提过，那张卡还在频道里等人发送，不要重复提。标题、正文和可见性（公开/私密）都由按「提交反馈」的人在表单里定，想改成私密，请他发送时在表单里选私密",
   "feedbackReadPlatformRoomsOnly": "从频道里读反馈中心，只能在知是代码仓库所在的项目里读；这个频道所在的项目不是它",
+  "feedbackReleaseClosed": "这条反馈已经办完了，不能再放弃领取",
   "feedbackReleaseHolderOnly": "这条反馈由 {holder} 领取，只有 TA 本人或反馈管理员能放弃",
   "feedbackReplyParentMismatch": "回复的评论不属于这条反馈",
   "feedbackUnknownKind": "未知的类型：{kind}",
