@@ -302,7 +302,7 @@ _ROUTINE_SPEC = (
     "没人处理的反馈连同分诊步骤附在工作说明后面，没有就不执行；"
     "只有做平台本身的项目里的频道能用"
 )
-_ROUTINE_TIMEZONE = _text("时区，默认 Asia/Shanghai")
+_ROUTINE_TIMEZONE = _text("时区；不写就用规则主人自己的时区")
 
 #: `cheese_task_state` 能说的状态和那句话的长度。后端 `room_task.models.TaskProgress`
 #: 与 `room_task.progress.NOTE_MAX_CHARS` 的副本：这个文件单独发到机器上，读不到后端。
@@ -1075,10 +1075,13 @@ PLATFORM_TOOLS = ToolTable(
                 },
                 "spec": {"type": "object", "description": _ROUTINE_SPEC},
                 "timezone": _ROUTINE_TIMEZONE,
-                "owner_handle": _text("替谁设的；结果通知给他，不写就是你自己"),
+                "owner_handle": _text(
+                    "必填：替谁设的，就是在这个频道里请你设这条规则的人；"
+                    "结果通知给他，每次执行读他的记忆。他必须已经在这个频道里"
+                ),
                 "agent_handle": _text("由哪个队友执行；不写就是这个频道的队友"),
             },
-            ["title", "instructions"],
+            ["title", "instructions", "owner_handle"],
         ),
         _tool(
             "cheese_routine_list",
@@ -2305,16 +2308,16 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "instructions": args["instructions"],
             "trigger": args.get("trigger") or "schedule",
             "spec": args.get("spec") or {},
-            "timezone": args.get("timezone") or "Asia/Shanghai",
             **_given(
                 args,
                 "note",
+                "timezone",
                 "owner_handle",
                 "agent_handle",
             ),
         }
         routine_spec_checked(
-            trigger=body["trigger"], spec=body["spec"], timezone=body["timezone"]
+            trigger=body["trigger"], spec=body["spec"], timezone=body.get("timezone")
         )
         return {"method": "POST", "path": f"/topics/{topic}/routines", "body": body}
     if tool == "cheese_routine_list":

@@ -35,11 +35,11 @@ covers:
 `agent_handle` 是**这个房间里**的那个芝士席位，`owner_handle` 是安排它的人，也是每次结果的通知对象。两条限制：
 
 - `_agent_for` 只认这个房间里的 AI 队友席位，写别处的 handle 直接拒。
-- 芝士起草时（`by_agent=True`）必须给 `owner_handle`，而且那个人必须**是房间里的人** —— 否则结果没法通知给他。
+- 芝士起草时（`by_agent=True`）必须给 `owner_handle`，而且那个人必须**已经在这个频道里**（`people_in`）：结果通知给他，每次执行还读他的私人记忆、答在这个频道的支线里，和他自己在这里说话时一样。芝士不会为了让谁当主人而把他拉进频道。
 
 **没有待确认这一步**：`create` 当场就 `_activate`，人和芝士建的都停在 `active`。芝士建的那一条**不落任何事件块**：它自己在对话里说一句，话里带上这条规则的链接（`/projects/<项目>/channels/<房间>?tab=routines&routine=<规则 id>`，点开还是这个频道，右栏「例行事务」那一格开在这一条上），平台不加一行、也不在那一行上放按钮。`delete` 里的 `_settled` 只收拾旧版本留在房间里的那些行。`update` 也不再退回任何状态：改的就是现在这条，下一次按改后的来。
 
-路由层的缝只剩删除：暂停 / 恢复 / 立即执行 / 修改和读取同一个口径（读得到就改得动），只有删除要 `_person(actor, …)`，而且得是规则的 `created_by` 或项目管理员（`api/routes/routines.py`）。
+路由层的缝有两处：暂停 / 立即执行 / 修改和读取同一个口径（读得到就改得动）；恢复只能由人来做（`_person`），芝士停下的规则由人决定要不要再跑；删除也要 `_person(actor, …)`，而且得是规则的 `created_by` 或项目管理员（`api/routes/routines.py`）。
 
 ## 两种触发 {#triggers}
 
@@ -52,9 +52,9 @@ covers:
 
 定时规则的 `spec` 还可以带 `feedback_batch`（1–10）：每次执行附上一批没人处理的反馈，没有就记 `skipped`，不派活也不通知；只有做平台本身的项目里的房间能用，见[每日分诊](/dev/feedback#triage)。
 
-钟点一律**按人自己的时区**算（`timezone`，默认 `Asia/Shanghai`），`schedule.next_after` 返回严格晚于给定时刻的下一个 UTC 瞬间：`hourly` 只认第几分钟，`weekly` 的 `weekdays` 是 0=周一，`monthly` 的号数会按当月长度收敛（`min(day, last)`，所以「31 号」在二月落在月末）。`normalize` 把「说不清是哪一刻」的计划全部拒掉，而不是猜一个。
+钟点一律**按人自己的时区**算（`timezone`；建规则时没写，就用主人的浏览器报上来的时区，都没有才是 `Asia/Shanghai`），`schedule.next_after` 返回严格晚于给定时刻的下一个 UTC 瞬间：`hourly` 只认第几分钟，`weekly` 的 `weekdays` 是 0=周一，`monthly` 的号数会按当月长度收敛（`min(day, last)`，所以「31 号」在二月落在月末）。`normalize` 把「说不清是哪一刻」的计划全部拒掉，而不是猜一个。
 
-事件触发靠游标：`event_cursor` 之前的从不算这条规则的事，`_activate` 把它设成「现在」—— 所以一条刚建的规则不会去补跑这个项目的历史。`_events_for` 把项目里的事翻出来（资料库文件按 mtime、任务按 `closed_at`、验收卡按 `decided_at`），排序后取最新的时刻当新游标。
+事件触发靠游标：`event_cursor` 之前的从不算这条规则的事，`_activate` 把它设成「现在」—— 所以一条刚建的规则不会去补跑这个项目的历史。`_events_for` 把项目里的事翻出来（资料库文件按 mtime、任务按 `closed_at`、验收卡按 `decided_at`），排序后取最新的时刻当新游标，但游标最多推到这一趟开始前 `EVENT_LOOKBACK`（2 分钟）：一件事的时间写在提交之前，扫描之后才提交的那件时间比游标早，留这一截才找得到它。同一件事被找到两次还是一次执行（`occurrence_key`）。改一条启用中的规则而触发方式没变，游标不动，改之前发生的事照样算。
 
 ## 一次执行的一生 {#run-life}
 
@@ -94,7 +94,9 @@ covers:
 
 - **错过了就不补**：计划时刻晚于现在超过 `MISSED_GRACE`（15 分钟）的，执行记成 `skipped`，理由写「平台当时没有运行，这一次不补跑」，频道里不落消息。补跑一条几小时前的定时任务，通常比不跑更糟。
 - **不重复**：唯一约束那一步返回空就说明这个时刻已经响过了，`_fire` 直接返回。
-- **不会自己绕圈**：事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`；「任务关闭触发工作、工作又开任务」也绕得起来，靠的是上面那条每小时上限：周期任务跑出来的一轮可以用 `cheese_task` 创建任务。
+- **不叠着跑**：到点时这条规则上一次执行还没结束（`queued` / `running`），这一次记成 `skipped`（`STILL_RUNNING`），不派活。
+- **不会自己绕圈**：规则自己的队友开的任务（`Task.created_by` 是它）关闭，不算这条规则的事；事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`，主人一小时只听说一次（`OVER_EVENT_LIMIT`），不是每件超出的事一条通知。
+- **一条坏规则只坏它自己**：每条规则在自己的保存点里响，出错就退回这一条、记日志，同一趟的别的规则照常；定时规则照样排到下一次，不会每 30 秒重试同一个时刻。
 - **扫描是并发的**：`_fire_schedules` / `_fire_events` / `announce_archived_rooms` / `_settle_open_runs` / `_announce_finished` 都 `with_for_update(skip_locked=True)`，多个后端进程同时在跑也不会互相排队或重复处理。
 
 ## 平台自己的钟：PeriodicRunner {#sweep}
@@ -110,7 +112,7 @@ covers:
 ## 边界与坑 {#traps}
 
 - **执行行是幂等的锚，不是日志。** 想重跑一次，走 `run_now`（`occurrence_key = manual:<新 uuid>`），不要删执行行 —— 删了它就等于允许同一时刻再响一次。
-- **事件驱动的规则和它的产物会互相触发。** 熔断（每小时 6 次）和「自己开的任务不算触发」是两条独立的防线，缺一条就会出现环。
+- **事件驱动的规则和它的产物会互相触发。** 熔断（每小时 6 次）和「自己的队友开的任务不算触发」是两条独立的防线，缺一条就会出现环。
 - **暂停不补、恢复不补。** `resume` 从下一个未来时刻接着算（`_activate` 里 `next_after(…, now)`），中间空过的时段不会被回填。
 - **改了就按新的跑。** `update` 改一条 `active` 的规则会重新算 `next_run_at`，没有人再确认一次；`revision` 加一，已经派出去的执行行留的还是当时那个版本。
 - **契约测试看着 `cheese_*` 工具面。** `backend/sandbox/cheese` 里的工具表和后端是两份，双方不一致由 `backend/tests/contract/` 拦下（同一形状的约束见 `MACHINE_PROFILES`）。
