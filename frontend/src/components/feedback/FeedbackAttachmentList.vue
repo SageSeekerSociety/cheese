@@ -12,6 +12,7 @@
 // 名字和大小还在，人知道少了什么，也不该因为一张图 404 就说整条反馈坏了。
 import type { FeedbackAttachment } from '@/cx_types'
 
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -24,17 +25,18 @@ defineProps<{
   urls: Record<string, string>
   /** 正在下载的那一份的 id（图片本身不用它，点图是放大看）。 */
   downloading: string | null
-  /** 放大看的是哪一份；`null` 表示没开着。由页面持有 —— 关掉预览之前不能把那个
-   *  object URL 还回去，而地址也由页面持有。 */
-  viewing: FeedbackAttachment | null
 }>()
 
 const emit = defineEmits<{
   download: [attachment: FeedbackAttachment]
-  view: [attachment: FeedbackAttachment | null]
 }>()
 
 const { t } = useI18n()
+
+/** 放大看的是哪一份。**这一格自己的界面状态**，不必上交给页面：它不决定任何请求，
+ *  而地址（`urls`）由页面持有、只在换一条反馈或卸载时还回去 —— 那两个时刻这一格
+ *  自己也一起没了。 */
+const viewing = ref<FeedbackAttachment | null>(null)
 
 function isImage(attachment: FeedbackAttachment): boolean {
   return attachment.content_type.startsWith('image/')
@@ -51,7 +53,7 @@ function isImage(attachment: FeedbackAttachment): boolean {
         type="button"
         class="fal__thumb"
         :aria-label="t('feedback.detail.attachments.open', { name: attachment.name })"
-        @click="urls[attachment.id] && emit('view', attachment)"
+        @click="urls[attachment.id] && (viewing = attachment)"
       >
         <img v-if="urls[attachment.id]" :src="urls[attachment.id]" :alt="attachment.name" />
         <v-icon v-else size="20" class="fal__thumb-icon" aria-hidden="true">mdi-image-outline</v-icon>
@@ -70,7 +72,7 @@ function isImage(attachment: FeedbackAttachment): boolean {
     v-if="viewing && urls[viewing.id]"
     :src="urls[viewing.id]"
     :alt="viewing.name"
-    @close="emit('view', null)"
+    @close="viewing = null"
   />
 </template>
 
