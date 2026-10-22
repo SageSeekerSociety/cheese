@@ -171,7 +171,13 @@ def _entries(rows: list[dict]) -> list[dict]:
     ]
 
 
+def _queued(record: dict) -> bool:
+    return record.get("type") == "command_lifecycle" and record.get("state") == "queued"
+
+
 def _turn(record: dict) -> uuid.UUID | None:
+    if _queued(record):
+        return None
     work = (record.get("cheese") or {}).get("work_id")
     try:
         return uuid.UUID(str(work)) if work else None
@@ -548,6 +554,12 @@ async def read(
 
     def collect(entries: list[dict], turn, agent: str, harness: str) -> None:
         for entry in entries:
+            # Old runners stamped a queued command with the last execution.
+            # Keep that evidence intact, but do not treat it as execution;
+            # the row and archive turn indexes are only candidate selectors.
+            execution = str(turn) if turn and not _queued(entry["record"]) else None
+            if turn_id is not None and execution != str(turn_id):
+                continue
             if (
                 search is not None
                 and search.casefold()
@@ -558,7 +570,7 @@ async def read(
             item = {
                 "sequence": int(entry["sequence"]),
                 "at": at.astimezone(UTC).isoformat(),
-                "turn_id": str(turn) if turn else None,
+                "turn_id": execution,
                 "agent_handle": agent,
                 "harness": harness,
                 "record": entry["record"],

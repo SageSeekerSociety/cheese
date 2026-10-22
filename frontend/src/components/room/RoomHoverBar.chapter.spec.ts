@@ -67,22 +67,32 @@ async function mount(extra: Record<string, unknown>) {
 
 beforeEach(() => setLocale('zh-CN'))
 
-describe('消息的 ⋯ 里的书签', () => {
-  it('能把一条消息加书签', async () => {
+function pinButton(container: Element): HTMLButtonElement | null {
+  return container.querySelector<HTMLButtonElement>('button[title="加书签"], button[title="取消书签"]')
+}
+
+describe('消息悬停条上的书签按钮', () => {
+  it('在悬停条上直接就能钉', async () => {
     const ui = await mount({ chapterable: true })
-    await fireEvent.click(ui.getByRole('button', { name: '加书签' }))
+    const button = pinButton(ui.container)
+    expect(button, '能钉的地方悬停条上没有图钉').toBeTruthy()
+
+    await fireEvent.click(button!)
     expect((ui.emitted().chapter as [Block][])[0]![0].id).toBe('b1')
   })
 
-  it('钉过的给的是取消', async () => {
+  it('钉过的图钉是实心，再点取消', async () => {
     const ui = await mount({ chapterable: true, chapteredIds: new Set(['b1']) })
-    expect(ui.queryByRole('button', { name: '加书签' })).toBeNull()
-    await fireEvent.click(ui.getByRole('button', { name: '取消书签' }))
+    const button = pinButton(ui.container)
+    expect(button?.title).toBe('取消书签')
+    expect(button?.querySelector('.mdi-pin')).toBeTruthy()
+
+    await fireEvent.click(button!)
     expect((ui.emitted().unchapter as [Block][])[0]![0].id).toBe('b1')
   })
 
-  it('没有书签的地方不给这一项', async () => {
+  it('没有书签的地方不画这颗按钮', async () => {
     const ui = await mount({ chapterable: false })
-    expect(ui.queryByRole('button', { name: '加书签' })).toBeNull()
+    expect(pinButton(ui.container)).toBeNull()
   })
 })
