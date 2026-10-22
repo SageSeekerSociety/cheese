@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
  * 「芝士」（`/users/settings/assistant`）。取数、保存在这里，画法在同目录的
- * `AssistantView.vue`。勾选、添加、删除一条都是改一下存一下。
+ * `AssistantView.vue`。勾选、添加、删除一条、改一条记忆都是改一下存一下。
  */
-import type { AssistantActivityItem, AssistantRoutine, AssistantRules } from '@/api'
+import type { AssistantActivityItem, AssistantMemory, AssistantRoutine, AssistantRules } from '@/api'
 
 import { onMounted, ref } from 'vue'
 
@@ -12,16 +12,22 @@ import { useSaveState } from '@/composables/useSaveState'
 import AssistantView from './AssistantView.vue'
 
 import {
+  clearAssistantMemory,
+  deleteAssistantMemoryItem,
   getAssistantActivity,
+  getAssistantMemory,
   getAssistantRoutines,
   getAssistantRules,
+  saveAssistantMemoryItem,
   saveAssistantRules,
+  setAssistantMemoryEnabled,
   setAssistantRoutine,
 } from '@/api'
 import { t } from '@/i18n'
 import { openAgentConversation } from '@/stores/agent'
 
 const rules = ref<AssistantRules | null>(null)
+const memory = ref<AssistantMemory | null>(null)
 const routines = ref<AssistantRoutine[]>([])
 const routineLimit = ref(0)
 const recent = ref<AssistantActivityItem[]>([])
@@ -38,8 +44,14 @@ async function load() {
   loading.value = true
   failed.value = false
   try {
-    const [got, done, mine] = await Promise.all([getAssistantRules(), getAssistantActivity(), getAssistantRoutines()])
+    const [got, done, mine, kept] = await Promise.all([
+      getAssistantRules(),
+      getAssistantActivity(),
+      getAssistantRoutines(),
+      getAssistantMemory(),
+    ])
     rules.value = got
+    memory.value = kept
     recent.value = done.items
     routines.value = mine.routines
     routineLimit.value = mine.limit
@@ -94,6 +106,12 @@ function removeItem(list: 'ask' | 'allow', index: number) {
   else void save({ ...now, allowItems: now.allowItems.filter((_, i) => i !== index) })
 }
 
+async function remembered(call: () => Promise<AssistantMemory>) {
+  await run(async () => {
+    memory.value = await call()
+  })
+}
+
 async function routine(id: string, action: 'pause' | 'resume' | 'delete') {
   await run(async () => {
     const now = await setAssistantRoutine(id, action)
@@ -105,6 +123,7 @@ async function routine(id: string, action: 'pause' | 'resume' | 'delete') {
 <template>
   <AssistantView
     :rules="rules"
+    :memory="memory"
     :routines="routines"
     :routine-limit="routineLimit"
     :recent="recent"
@@ -118,6 +137,10 @@ async function routine(id: string, action: 'pause' | 'resume' | 'delete') {
     @add-item="addItem"
     @remove-item="removeItem"
     @routine="routine"
+    @memory-enabled="(on: boolean) => remembered(() => setAssistantMemoryEnabled(on))"
+    @memory-edit="(name: string, d: string, text: string) => remembered(() => saveAssistantMemoryItem(name, d, text))"
+    @memory-delete="(name: string) => remembered(() => deleteAssistantMemoryItem(name))"
+    @memory-clear="remembered(clearAssistantMemory)"
     @open-conversation="openAgentConversation"
   />
 </template>

@@ -71,6 +71,8 @@ class Outcome:
     _notify: dict[tuple[str, str], str]
     prefs: dict | None
     _members: dict[tuple[str, str], list[str]]
+    #: What the asker's 芝士 remembers of them after the task, file by file.
+    memories: list[str] = field(default_factory=list)
 
     @property
     def answer(self) -> str:
@@ -269,6 +271,13 @@ async def read_outcome(
             for k in ("email_mode", "digest_cadence"):
                 if prefs.get(k):
                     prefs[k] = prefs[k].split(".")[-1].lower()
+        memories = [
+            str(c)
+            for (c,) in await q(
+                "select content from memory_files where scope = 'personal' "
+                "and owner_handle = 'linxi' and path <> 'MEMORY.md'"
+            )
+        ]
         members: dict[tuple[str, str], list[str]] = {}
         for topic, handle in await q(
             "select topic_id, member_handle from topic_memberships"
@@ -292,7 +301,20 @@ async def read_outcome(
         notify,
         prefs,
         members,
+        memories,
     )
+
+
+async def seed_memories(sessions, memories) -> None:
+    """What the asker's 芝士 already remembers when the task starts."""
+    from app.domain.assistant import memory
+
+    async with sessions() as s:
+        for name, description, kind, body in memories:
+            await memory.save(
+                s, "linxi", memory.made(name, description, kind, body), by="linxi"
+            )
+        await s.commit()
 
 
 # --- asking ------------------------------------------------------------------
@@ -520,6 +542,8 @@ def main() -> None:
         for task in tasks:
             asyncio.run(restore(platform.database, template))
             _flush_valkey()
+            if task.memories:
+                asyncio.run(seed_memories(sessions, task.memories))
             started = datetime.now(UTC)
             made = _conversation(http, world)
             if made is None:

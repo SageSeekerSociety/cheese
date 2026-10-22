@@ -25,6 +25,7 @@ from sqlalchemy import (
     false,
     func,
     text,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -178,8 +179,9 @@ class AssistantProposal(Timestamps, Base):
 class AssistantRules(Timestamps, Base):
     """What a person tells their 芝士 about acting for them
     (``assistant.gate``): which kinds of action it always asks first
-    (``ask``, codes of ``gate.CATEGORIES``), and in their own words what it may
-    simply do (``allow_text``) and what it should ask about (``ask_text``).
+    (``ask``, codes of ``gate.CATEGORIES``), in their own words what it may
+    simply do (``allow_text``) and what it should ask about (``ask_text``),
+    and whether it keeps a memory of them (``memory``).
     Only the person sets these, on their settings page; 芝士 cannot.
     """
 
@@ -197,6 +199,11 @@ class AssistantRules(Timestamps, Base):
     )
     ask_text: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
+    )
+    #: Whether their 芝士 uses and keeps a memory of them
+    #: (``assistant.memory``); on until they turn it off.
+    memory: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
     )
 
 

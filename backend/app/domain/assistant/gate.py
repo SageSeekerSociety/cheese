@@ -189,7 +189,7 @@ async def rules_of(session: AsyncSession, user_id: int) -> AssistantRules:
     """The person's rules; the defaults when they have set none (not stored)."""
     row = await session.get(AssistantRules, user_id)
     return row or AssistantRules(
-        user_id=user_id, ask=list(DEFAULT_ASK), allow_text="", ask_text=""
+        user_id=user_id, ask=list(DEFAULT_ASK), allow_text="", ask_text="", memory=True
     )
 
 
@@ -409,6 +409,20 @@ async def save_rules(
         session.add(row)
     else:
         row.ask, row.allow_text, row.ask_text = ask, allow_text, ask_text
+    await session.flush()
+    return row
+
+
+async def set_memory(session: AsyncSession, user_id: int, on: bool) -> AssistantRules:
+    """Whether the person's 芝士 uses and keeps a memory of them; the caller
+    commits."""
+    row = await session.get(AssistantRules, user_id)
+    if row is None:
+        row = AssistantRules(
+            user_id=user_id, ask=list(DEFAULT_ASK), allow_text="", ask_text=""
+        )
+        session.add(row)
+    row.memory = on
     await session.flush()
     return row
 

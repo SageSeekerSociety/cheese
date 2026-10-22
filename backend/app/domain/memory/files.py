@@ -29,9 +29,10 @@ INDEX_NAME = "MEMORY.md"
 #: 里往下数，所以「写哪儿」在两端只有这一个答案。
 MEMORY_ROOT = ".cheese/memory"
 
-#: 作用域前缀：team 没有主人，private 的主人在路径里。
+#: 作用域前缀：team 没有主人，private 和 personal 的主人在路径里。
 TEAM_PREFIX = "team"
 PRIVATE_PREFIX = "private"
+PERSONAL_PREFIX = "personal"
 
 #: 注入预算：超过就截断，并明说截断了。
 INDEX_MAX_LINES = 200
@@ -76,14 +77,17 @@ class MemoryType(StrEnum):
 
 
 class MemoryFileScope(StrEnum):
-    """两级作用域。
+    """三级作用域。
 
     `team` 是这个项目所有人和所有芝士共看的一份；`private` 是「这个人 × 这个
-    项目」——同一个人换一个项目读不到，同一个项目换一个人也读不到。
+    项目」——同一个人换一个项目读不到，同一个项目换一个人也读不到；`personal`
+    是这个人自己的芝士记得的事，不在任何项目里，只有本人的芝士在本人的面板里
+    读写（项目里的芝士读不到它：每一次项目里的读都带着项目）。
     """
 
     team = "team"
     private = "private"
+    personal = "personal"
 
 
 class MemoryFileError(ValueError):
@@ -305,10 +309,11 @@ def prompt_path(path: str) -> str:
 
 
 def prefix_of(scope: MemoryFileScope, owner_handle: str | None) -> str:
-    """会话目录里，这个作用域的前缀（`team` 或 `private/<handle>`）。"""
+    """会话目录里，这个作用域的前缀（`team`、`private/<handle>` 或
+    `personal/<handle>`）。"""
     if scope is MemoryFileScope.team:
         return "team"
-    return f"private/{owner_handle or ''}"
+    return f"{scope.value}/{owner_handle or ''}"
 
 
 def check_path(path: str) -> str:
@@ -362,8 +367,8 @@ def scoped_prefix(scope: MemoryFileScope, owner_handle: str | None) -> str:
         return TEAM_PREFIX
     if not owner_handle:
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
-        raise MemoryFileError("private 记忆必须带 owner_handle")
-    return f"{PRIVATE_PREFIX}/{owner_handle}"
+        raise MemoryFileError(f"{scope.value} 记忆必须带 owner_handle")
+    return f"{scope.value}/{owner_handle}"
 
 
 def check_scoped_path(path: str) -> tuple[str, str]:
@@ -375,8 +380,8 @@ def check_scoped_path(path: str) -> tuple[str, str]:
     parts = path.split("/")
     if parts and parts[0] == TEAM_PREFIX:
         prefix, rest = TEAM_PREFIX, parts[1:]
-    elif len(parts) >= 2 and parts[0] == PRIVATE_PREFIX:
-        prefix, rest = f"{PRIVATE_PREFIX}/{parts[1]}", parts[2:]
+    elif len(parts) >= 2 and parts[0] in (PRIVATE_PREFIX, PERSONAL_PREFIX):
+        prefix, rest = f"{parts[0]}/{parts[1]}", parts[2:]
     else:
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(

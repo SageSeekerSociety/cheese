@@ -87,10 +87,11 @@ DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.assistant_agent.agent_notify": True,
     "app.api.routes.notification_preferences.agent_read_preferences": False,
     "app.api.routes.notification_preferences.agent_set_preference": True,
-    # What it does for the person on its own later — routines — and telling
-    # them something: theirs alone, done directly.
+    # What it does for the person on its own later — routines —, telling them
+    # something, and what it remembers of them: theirs alone, done directly.
     "app.api.routes.assistant_agent.agent_routine": True,
     "app.api.routes.assistant_agent.agent_notify_me": True,
+    "app.api.routes.assistant_agent.agent_memory": True,
 }
 
 

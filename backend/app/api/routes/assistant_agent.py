@@ -36,7 +36,9 @@ from app.core.sentences import say
 from app.domain.agent.personal import reading
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes, gate, passes, proposals, refs
+from app.domain.assistant import memory as assistant_memory
 from app.domain.fetch.preapproved import preapproved
+from app.domain.memory.files import MemoryFileError, parse_memory_file
 from app.domain.notification.preferences import local_time
 from app.domain.project import address
 from app.domain.project.services import ProjectService
@@ -998,6 +1000,93 @@ async def _notify_back(db, resolver, same, parts: list[str], redo: bool) -> dict
 
 
 changes.register("notify", parts=lambda payload: ["level"], apply=_notify_back)
+
+
+class MemoryIn(BaseModel):
+    action: Literal["save", "read", "forget"]
+    name: str = ""
+    description: str = ""
+    type: str = "user"
+    text: str = ""
+
+
+@router.post("/memory", include_in_schema=False)
+async def agent_memory(
+    body: MemoryIn, resolver: ActorResolverDep, db: DbSession, questions: Questions
+) -> dict:
+    """cheese_memory: what the person's 芝士 remembers about them
+    (``assistant.memory``), saved, read or forgotten in the person's panel.
+    Each save and forget is kept as a change the person can undo there. A
+    routine's run does not write it, and nothing is kept while the person has
+    turned memory off."""
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    me = await _person(resolver, db)
+    name = _need(body.name, "name")
+    if body.action == "read":
+        found = await assistant_memory.read(db, me.handle, name)
+        if found is None:
+            raise NotFoundError.for_resource("memory", name)
+        return ok({"text": f"{found.description}\n\n{found.body}"})
+    if not (await gate.rules_of(db, me.user_id)).memory:
+        raise BadRequestError(say("assistantMemoryOff"))
+    if await _unattended(questions, claims.work):
+        raise BadRequestError(say("assistantMemoryNotInRuns"))
+    path = assistant_memory.path_of(name)
+    if body.action == "save":
+        try:
+            memory = assistant_memory.made(
+                name, body.description, body.type, _need(body.text, "text")
+            )
+        except MemoryFileError as exc:
+            raise BadRequestError(str(exc)) from exc
+        before = await assistant_memory.save(db, me.handle, memory, by=me.handle)
+        after: str | None = memory.text()
+        label, said = memory.description, "已记住：" + memory.description
+    else:
+        before = await assistant_memory.put(db, me.handle, path, None, by=me.handle)
+        if before is None:
+            raise NotFoundError.for_resource("memory", name)
+        after = None
+        label = _described(before) or name
+        said = "已忘记：" + label
+    row = await changes.report(
+        db,
+        user_id=me.user_id,
+        work=claims.work,
+        kind="memory",
+        target=path,
+        payload={
+            "title": "记忆",
+            "changed": {"memory": {"label": label, "before": before, "after": after}},
+        },
+    )
+    await db.commit()
+    await tell_change(questions, claims, changes.view(row))
+    return ok({"text": said})
+
+
+def _described(content: str) -> str:
+    try:
+        return parse_memory_file(content).description
+    except MemoryFileError:
+        return ""
+
+
+async def _memory_back(db, resolver, same, parts: list[str], redo: bool) -> dict:
+    """Put a memory back as it was before the answer, or as it left it, as
+    the person's own change."""
+    actor = await resolver.resolve()
+    first, last = same[0], same[-1]
+    content = (last if redo else first).payload["changed"]["memory"][
+        "after" if redo else "before"
+    ]
+    await assistant_memory.put(db, actor.handle, first.target, content, by=actor.handle)
+    return {"memory": first.target, "kept": content is not None}
+
+
+changes.register("memory", parts=lambda payload: ["memory"], apply=_memory_back)
 
 
 # --- what 芝士 does on its own ----------------------------------------------

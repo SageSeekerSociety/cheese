@@ -62,7 +62,8 @@ export interface AssistantShown {
 export interface AssistantEdit {
   id: number
   /** `draft` 是写题目草稿；`settings`、`notify` 是改这个人自己的通知设置、频道提醒
-   *  （`title` 是卡头，`changed` 每一项带着它的名字 `label`）。 */
+   *  （`title` 是卡头，`changed` 每一项带着它的名字 `label`）；`memory` 是芝士记下、
+   *  改写或忘掉的一条记忆（`changed.memory` 的 `before`、`after` 是前后的全文）。 */
   kind: string
   title: string
   undoable: boolean
