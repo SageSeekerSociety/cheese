@@ -113,7 +113,7 @@ def test_the_session_leaving_does_not_rewrite_what_the_teammate_said(client):
     async def leave() -> bool:
         async with client.test_factory() as session:
             marked = await note_agent_left(
-                session, uuid.UUID(task_id), at=datetime.now(UTC)
+                session, uuid.UUID(task_id), by=seat, at=datetime.now(UTC)
             )
             await session.commit()
             return marked
@@ -272,6 +272,29 @@ def test_the_teammate_cannot_say_its_task_awaits_review(client):
     assert _task(client, task_id)["progress_state"] is None
 
 
+def test_filing_a_card_takes_the_left_mark_away_with_the_report(client):
+    """「已离开」 was written beside a report; filing a card ends that report, so
+    the mark goes with it rather than sitting on the task through 等审."""
+    project_id, task_id, seat = _a_task(client)
+    assert (
+        _report(client, project_id, task_id, seat, "waiting", "等构建").status_code
+        == 200
+    )
+
+    async def leave() -> bool:
+        async with client.test_factory() as session:
+            marked = await note_agent_left(
+                session, uuid.UUID(task_id), by=seat, at=datetime.now(UTC)
+            )
+            await session.commit()
+            return marked
+
+    assert client.portal.call(leave) is True
+    _file_card(client, project_id, task_id)
+
+    assert _task(client, task_id)["agent_left_at"] is None
+
+
 def test_a_returned_card_puts_the_task_back_to_work(client):
     """The reviewer returns the card: the task is back in its teammate's hands,
     and its teammate may report again."""
@@ -352,13 +375,13 @@ def test_a_closed_task_takes_no_progress_report(client):
 
 def test_a_session_leaving_a_closed_task_marks_nothing(client):
     """「已离开」 is about an open task's work; a closed one says how it ended."""
-    _project_id, task_id, _seat = _a_task(client)
+    _project_id, task_id, seat = _a_task(client)
     _close(client, task_id)
 
     async def leave() -> bool:
         async with client.test_factory() as session:
             marked = await note_agent_left(
-                session, uuid.UUID(task_id), at=datetime.now(UTC)
+                session, uuid.UUID(task_id), by=seat, at=datetime.now(UTC)
             )
             await session.commit()
             return marked
