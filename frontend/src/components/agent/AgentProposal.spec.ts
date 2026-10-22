@@ -86,4 +86,10 @@ describe('AgentProposal', () => {
 
     expect(view.emitted('send')).toEqual([[5, { text: '把 bob 移出频道「综合」' }]])
   })
+
+  it('one a run left that is no longer good says so, and cannot be confirmed', () => {
+    const view = mount({ ...MESSAGE, state: 'expired' })
+    expect(view.getByText('已过期')).toBeTruthy()
+    expect(view.queryByRole('button', { name: '发送' })).toBeNull()
+  })
 })

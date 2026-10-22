@@ -21,6 +21,8 @@ export interface AssistantConversation {
   id: string
   title: string
   lastActiveAt: string
+  /** 例行事务的一次运行：平台开的，不是这个人问的。 */
+  routine?: boolean
   questions?: number
 }
 
@@ -45,6 +47,13 @@ interface StoredParts {
   proposals?: AssistantProposal[]
   /** 问题带的文件名。 */
   files?: string[]
+  /** 平台开始一次运行的那一句（`role` 为 `platform`）：哪条例行事务。 */
+  shown?: AssistantShown
+}
+
+/** 平台说的那一句在面板上怎么写：哪条例行事务开始运行。 */
+export interface AssistantShown {
+  routine?: string
 }
 
 /** 芝士往草稿里写的一次：改了哪几格（各自原来是什么），哪几格因为人改过而没动，以及
@@ -75,7 +84,8 @@ export interface AssistantEdit {
 export interface AssistantProposal {
   id: number
   kind: 'message' | 'task' | 'act'
-  state: 'pending' | 'sent' | 'dismissed'
+  /** `expired`：例行事务运行时留下的，过了保留期或这条例行事务又运行了一次。 */
+  state: 'pending' | 'sent' | 'dismissed' | 'expired'
   request: string
   project: string
   topic?: string
@@ -102,13 +112,14 @@ export interface AssistantPublished {
 }
 
 export interface AssistantMessage {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'platform'
   text: string
   /** 回答被人停下了；`text` 是停下时已经写出的部分。 */
   stopped?: boolean
   at: string
   /** 随问题交给芝士的文件名：只在这次打开的页面里有。 */
   files?: string[]
+  shown?: AssistantShown
   /** 这一轮里芝士调过的工具、写的草稿、发布的题目：只在这次打开的页面里有。 */
   steps?: AssistantStep[]
   edits?: AssistantEdit[]
@@ -257,6 +268,17 @@ export function createAssistant(opts: AssistantOptions = {}) {
     notice.value = null
   }
 
+  /** 打开指定的一段对话（通知、设置页里的「查看对话」）：眼前这段收到上面，像「新话题」一样。 */
+  async function show(id: string) {
+    loaded.value = true
+    if (current.value === id) return open(id)
+    if (busy.value) return
+    startNew()
+    earlier.value = earlier.value.filter((topic) => topic.id !== id)
+    await open(id)
+    await listConversations().catch(() => undefined)
+  }
+
   /** 往上翻：把还没摆出来的、最近的那个更早的话题读回来，摆在最上面。 */
   async function older() {
     const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
@@ -318,9 +340,12 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   /** 存下的那一轮，读回成面板上的步骤、改动和结果。 */
-  function kept(parts: StoredParts): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'proposals' | 'files'> {
+  function kept(
+    parts: StoredParts
+  ): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown'> {
     return {
       ...(parts.files?.length ? { files: parts.files } : {}),
+      ...(parts.shown ? { shown: parts.shown } : {}),
       steps: (parts.steps ?? []).map((step) => ({
         call: step.call,
         name: step.name,
@@ -545,6 +570,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     load,
     reset,
     startNew,
+    show,
     older,
     ask,
     stop,

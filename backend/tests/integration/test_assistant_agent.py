@@ -623,7 +623,7 @@ def test_what_the_person_wants_asked_about_is_read_even_when_it_is_low(
     seed_user(client, "alice")
     r = client.put(
         "/assistant/rules",
-        json={"ask": [], "allowText": "", "askText": "建频道先问我。"},
+        json={"ask": [], "askItems": ["建频道先问我。"]},
         headers=_auth_headers(client, "alice"),
     )
     assert r.status_code == 200, r.text
@@ -707,7 +707,7 @@ def test_the_person_sets_their_rules_and_sees_what_was_done_for_them(
     # Messages to everyone she lets through; she asks about channels.
     saved = client.put(
         "/assistant/rules",
-        json={"ask": ["remove_member"], "allowText": "", "askText": "建频道先问我"},
+        json={"ask": ["remove_member"], "askItems": ["建频道先问我"]},
         headers=me,
     )
     assert saved.json()["data"]["ask"] == ["remove_member"]
@@ -728,7 +728,7 @@ def test_the_person_sets_their_rules_and_sees_what_was_done_for_them(
         json={"kind": "message", "where": f"{slug}/channels/{number}", "text": "收到"},
         headers=_as(token),
     )
-    assert "需要确认：建频道先问我" in keeper.shown[0]
+    assert "需要确认：\n- 建频道先问我" in keeper.shown[0]
 
     done = client.get("/assistant/activity", headers=me).json()["data"]["items"]
     assert [(i["kind"], i["verdict"], i["stage"]) for i in done] == [

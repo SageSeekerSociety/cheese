@@ -25,7 +25,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -33,11 +33,13 @@ from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import model_roles
 from app.core.background import spawn
 from app.core.sandbox_auth import mint_delegated_credential
-from app.core.sentences import error_frame, say
+from app.core.sentences import NoticeText, error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
 from app.domain.agent.personal import billing, loops
+from app.domain.agent.personal.keys import person_key
 from app.domain.agent.personal.prompt import about, earlier, now_line, page
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
 from app.domain.agent.session_host.answer import (
@@ -61,6 +63,8 @@ from app.domain.agent.session_host.contract import (
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant import proposals
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
+from app.domain.usage import pricing
+from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.user.services import timezones_by_ids, usernames_by_ids
 
 logger = logging.getLogger(__name__)
@@ -97,6 +101,49 @@ async def take_conversation(redis: Redis, conversation_id: uuid.UUID) -> Slot | 
     )
     if slot is not None:
         await redis.delete(_stop_key(conversation_id))
+    return slot
+
+
+@dataclass(frozen=True)
+class Refused:
+    """Why a question may not be asked now: ``status`` as a route says it,
+    ``message`` to the person, and how long until it is worth asking again.
+    ``credits``: the person has none left, as opposed to the platform not
+    being able to answer now."""
+
+    status: int
+    message: NoticeText
+    retry_after_s: int
+    credits: bool = False
+
+
+async def admit(
+    session: AsyncSession,
+    redis: Redis | None,
+    people: SessionHost,
+    *,
+    user_id: int,
+    conversation_id: uuid.UUID,
+    sessions: async_sessionmaker[AsyncSession],
+) -> Slot | Refused:
+    """Whether a question may be asked in the conversation now, and the
+    conversation's hold for it when it may: the model is priced, the person
+    has a key and credits left, the session host is there, and no other
+    question of the conversation is being answered. The person asking and a
+    routine running on its own (``routine.personal``) are admitted alike.
+    Commits ``session``."""
+    rates = Rates.of(model_roles.model("assistant_model"), await pricing.model_rates())
+    key = await person_key(session, user_id, sessions)
+    if rates is None or key is None or not people.available():
+        await session.commit()
+        return Refused(503, say("assistantNotOpen"), 60)
+    refused = await Ledger(session).admit(await payer_for_person(session, user_id))
+    await session.commit()
+    if refused is not None:
+        return Refused(429, refused.message, refused.retry_after_s(), credits=True)
+    slot = None if redis is None else await take_conversation(redis, conversation_id)
+    if slot is None:
+        return Refused(429, say("assistantStillAnswering"), 5)
     return slot
 
 
@@ -338,19 +385,28 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
 KIND = "personal"
 
 
+#: What is done when a question asked by a routine (``ask``'s ``run``) has
+#: ended (``routine.personal.ended``): given the run, the answer, and whether
+#: it failed or was stopped.
+RunEnded = Callable[[uuid.UUID, Answer, bool, bool], Awaitable[None]]
+
+
 class Answers:
     """What becomes of a question's answer: shown as it is written, kept in the
-    conversation, and charged to the person."""
+    conversation, and charged to the person; and, for one a routine asked,
+    the run told it ended (``run_ended``)."""
 
     def __init__(
         self,
         sessions: async_sessionmaker[AsyncSession],
         consumptions: Consumptions,
         redis: Callable[[], Redis | None],
+        run_ended: RunEnded | None = None,
     ) -> None:
         self._sessions = sessions
         self._consumptions = consumptions
         self._redis = redis
+        self._run_ended = run_ended
         # What each answer read here has written, and which were stopped for
         # writing the same thing over and over (``loops``).
         self._written: dict[str, tuple[str, int]] = {}
@@ -463,6 +519,14 @@ class Answers:
             ),
             name=f"assistant-charge-{conversation_id}",
         )
+        run = consumption.data.get("run")
+        if run and self._run_ended is not None:
+            try:
+                await self._run_ended(
+                    uuid.UUID(str(run)), answer, bool(failed), stopped
+                )
+            except Exception:  # the answer is kept either way
+                logger.exception("ending routine run %s failed", run)
         closing = [("error", error_frame(refusal))] if failed else []
         return [*closing, ("done", {"stopped": stopped})]
 
@@ -481,6 +545,8 @@ async def ask(
     kind: str = billing.ASKING,
     files: list[tuple[int, str]] | None = None,
     project: uuid.UUID | None = None,
+    run: uuid.UUID | None = None,
+    shown: dict | None = None,
 ) -> Consumption:
     """Ask ``question`` in the conversation; the answer is read to its end in
     the background (``Answers``), and what its readers see of it is the
@@ -495,8 +561,14 @@ async def ask(
     open, when the conversation has not been told it yet (``page_to_say``);
     ``kind`` the line its spend is charged under (``billing``); ``files`` the
     ones handed over with it, as (id, name); ``project`` the one the page is
-    in, which its tools are let into as the person (and into no other)."""
-    work = uuid.uuid4()
+    in, which its tools are let into as the person (and into no other).
+
+    ``run`` is a routine's run asking on its own (``routine.personal``): what
+    it says is the platform's, not the person's (``role`` ``platform``), and
+    the run is told when the answer ends. Its id is the answer's ``work``, so
+    the cards the run puts up are found by it. ``shown`` is how the panel
+    names the routine, in place of what the platform told 芝士."""
+    work = run or uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
         conversation = await store.owned(user_id, conversation_id)
@@ -505,9 +577,11 @@ async def ask(
         # with it, so the conversation shows them when it is read again.
         await store.append(
             conversation,
-            "user",
+            "platform" if run else "user",
             question,
-            parts={"files": [name for _, name in files]} if files else None,
+            parts={"files": [name for _, name in files]}
+            if files
+            else ({"shown": shown} if shown else None),
         )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         timezone = (await timezones_by_ids(session, [user_id])).get(user_id)
@@ -564,7 +638,11 @@ async def ask(
     return await consumptions.begin(
         kind=KIND,
         key=str(conversation_id),
-        data={"user": user_id, "billing": kind},
+        data={
+            "user": user_id,
+            "billing": kind,
+            **({"run": str(run)} if run else {}),
+        },
         work_id=work,
         session=started,
         prompt=said,

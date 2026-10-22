@@ -4,6 +4,7 @@
     <div class="aprop__head">
       <template v-if="proposal.state === 'pending'">{{ t('tasks.assistant.proposal.waiting') }}</template>
       <template v-else-if="proposal.state === 'dismissed'">{{ t('tasks.assistant.proposal.dismissed') }}</template>
+      <template v-else-if="proposal.state === 'expired'">{{ t('tasks.assistant.proposal.expired') }}</template>
       <template v-else-if="proposal.kind === 'act'">{{ t('tasks.assistant.proposal.done') }}</template>
       <template v-else-if="proposal.kind === 'task'">{{
         t('tasks.assistant.proposal.opened', { title: proposal.title })
@@ -144,7 +145,8 @@ function send() {
 }
 
 .aprop--sent .aprop__head,
-.aprop--dismissed .aprop__head {
+.aprop--dismissed .aprop__head,
+.aprop--expired .aprop__head {
   color: var(--muted);
 }
 
@@ -197,6 +199,7 @@ function send() {
 
 .aprop__act {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 </style>

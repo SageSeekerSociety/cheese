@@ -76,6 +76,7 @@ import {
   attachToAgent,
   dismissProposal,
   earlierView,
+  openAgentConversation,
   projectOfOpenedTask,
   removeAgentFile,
   resetAgent,
@@ -103,6 +104,20 @@ watch(
   (now) => {
     agentAvailable.value = now
     if (!now) agentOpen.value = false
+  },
+  { immediate: true }
+)
+
+// `?assistant=<对话>`：通知、推送和设置页「查看对话」把人带到这里，打开面板里的那段对话，
+// 再把这个参数从地址栏拿掉，刷新不会再开一次。
+watch(
+  () => [route.query.assistant, available.value] as const,
+  ([id, ready]) => {
+    if (typeof id !== 'string' || !id || !ready) return
+    openAgentConversation(id)
+    const rest = { ...route.query }
+    delete rest.assistant
+    void router.replace({ query: rest })
   },
   { immediate: true }
 )

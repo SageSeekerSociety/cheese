@@ -11,7 +11,7 @@
  * 那几个 props —— 它们各自承载在页面组件上，从 `$props` 里取（demo 源文件引用旧的
  * 网络层会把 `legacy-network` 的账记上新的一笔）。
  */
-import type { ProjectArtifact } from '@/api'
+import type { AssistantActivityItem, AssistantRoutine, AssistantRules, ProjectArtifact } from '@/api'
 import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, RoomTask } from '@/cx_types'
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
@@ -631,3 +631,73 @@ export function artifactApi(over: Partial<WorkspaceArtifactApi> = {}): Workspace
     ...over,
   }
 }
+
+/** 「芝士」设置页的示例数据，照后端写出的样子。 */
+export const ASSISTANT_RULES: AssistantRules = {
+  ask: ['remove_member', 'lower_role', 'delete'],
+  askItems: ['发给老师的消息'],
+  allowItems: ['在我负责的频道里回答问题', '在项目「机器学习课程」的频道「综合」发消息'],
+  categories: [
+    { code: 'remove_member', label: '移除成员' },
+    { code: 'lower_role', label: '降低成员的角色' },
+    { code: 'delete', label: '删除内容' },
+    { code: 'to_everyone', label: '在综合频道发消息' },
+  ],
+}
+
+export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
+  {
+    id: 'r1',
+    title: '每日待办',
+    note: '列出用户的待办',
+    when: '每天 08:00（Asia/Shanghai）',
+    state: 'active',
+    paused: '',
+    nextRunAt: '2026-10-23T00:00:00Z',
+    lastRun: { status: 'done', at: '2026-10-22T00:00:40Z', asked: 0, conversationId: 'c1' },
+    weekCredits: 4.6,
+  },
+  {
+    id: 'r2',
+    title: '有人找我',
+    note: '有人 @ 用户时读消息，起草回复',
+    when: '有人 @ 你或回复你的支线时',
+    state: 'active',
+    paused: '',
+    nextRunAt: null,
+    lastRun: { status: 'done', at: '2026-10-22T09:00:18Z', asked: 1, conversationId: 'c2' },
+    weekCredits: 12,
+  },
+  {
+    id: 'r3',
+    title: '周一交周报',
+    note: '提醒用户交周报',
+    when: '每周 周一 09:00（Asia/Shanghai）',
+    state: 'paused',
+    paused: 'credits',
+    nextRunAt: null,
+    lastRun: { status: 'skipped', at: '2026-10-20T01:00:00Z', asked: 0, conversationId: null },
+    weekCredits: 0,
+  },
+]
+
+export const ASSISTANT_RECENT: AssistantActivityItem[] = [
+  {
+    id: 12,
+    kind: 'message',
+    summary: '在频道「综合」（项目「机器学习课程」，全体成员都会看到）发消息：\n@李老师 演示视频我来负责',
+    verdict: 'asked',
+    stage: 'rule',
+    reason: '你设置了「在综合频道发消息」需要确认',
+    at: '2026-10-22T09:00:12Z',
+  },
+  {
+    id: 11,
+    kind: 'channel',
+    summary: '在项目「机器学习课程」新建频道「论文阅读」',
+    verdict: 'allowed',
+    stage: 'low',
+    reason: '',
+    at: '2026-10-21T14:20:00Z',
+  },
+]
