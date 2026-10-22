@@ -29,6 +29,8 @@ const mine = (unlocked: boolean): MyInvites => ({
   unlocked,
   unlock_uses: 3,
   invite_credits: 0,
+  month_credits: 0,
+  month_cap: 1500,
   invitees: [],
 })
 
