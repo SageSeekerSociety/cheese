@@ -179,6 +179,37 @@ async def test_task_stop_ends_the_command_and_nothing_more_is_said(tmp_path):
             await watching.close()
 
 
+async def test_expiry_kills_a_command_that_ignores_termination(tmp_path):
+    """A monitor's deadline also stops a script that ignores SIGTERM."""
+    with room_machine(tmp_path / "machine") as target:
+        session = Session()
+        watching = monitors(target, session)
+        client = RemoteClient(dict(target))
+        try:
+            answer = await watching.start(
+                {
+                    "command": "trap '' TERM; echo ready; while true; do sleep 1; done",
+                    "description": "ignores termination",
+                    "timeout_ms": 1000,
+                },
+                "c",
+            )
+            task = answer.split("task ", 1)[1].split(",", 1)[0]
+            await until(lambda: session.events() == ["ready"], timeout=2)
+            await until(lambda: session.said("expired"), timeout=2)
+            await asyncio.gather(*watching.chores)
+
+            def killed():
+                result = client.control(
+                    {"subtype": "shell", "operation": "read", "command_id": task}
+                )
+                return result.get("exit") == -9
+
+            await until(killed, timeout=1)
+        finally:
+            await watching.close()
+
+
 async def test_the_projects_bash_rules_hold_for_its_command(tmp_path):
     with room_machine(tmp_path / "machine") as target:
         settings = Path(target["workspace"]) / ".claude" / "settings.json"
