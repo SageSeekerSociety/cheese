@@ -30,25 +30,6 @@ export function phraseLabel(phrase: BoardPhrase, agent?: string): string {
     : phrase
 }
 
-/** 等的是**看的这个人**时卡面那一句：「待审阅」对他说成「待你审阅」。没有专门说法的
- *  照通用那一句。 */
-export function myPhraseLabel(phrase: BoardPhrase, agent?: string): string {
-  return i18n.global.te(`work.board.mine.${phrase}`, 'zh-CN')
-    ? t(`work.board.mine.${phrase}`)
-    : phraseLabel(phrase, agent)
-}
-
-/** 一件任务的那一句，按看的人说：在等的就是他，用 `myPhraseLabel`。页头、频道概览
- *  和频道里的卡说的是同一件事，对同一个人不能一处「待审阅」一处「待你审阅」。 */
-export function taskPhraseLabel(
-  task: Pick<RoomTask, 'presentation' | 'waiting_on'>,
-  viewer: string,
-  agent?: string
-): string {
-  const { phrase } = task.presentation
-  return task.waiting_on && task.waiting_on === viewer ? myPhraseLabel(phrase, agent) : phraseLabel(phrase, agent)
-}
-
 /** 色点长什么样。
  *
  *  它返回内联样式而不是让三个组件各写一遍 CSS：`scoped` 的样式进不了别的组件，所以

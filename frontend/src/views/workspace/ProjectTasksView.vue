@@ -26,7 +26,7 @@ import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { columnLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
-import { stateLook, taskState } from '@/lib/taskState'
+import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
 const props = defineProps<{
@@ -177,15 +177,9 @@ const nameOf = (handle: string) => props.names[handle] || handle
 const agentNameOf = (task: RoomTask) =>
   (task.agent_handle && props.names[task.agent_handle]) || props.roomAgentNames?.[task.room_id] || props.agentName || ''
 
-// 状态那一格：图标、颜色、动不动和下面那一行都在 `lib/taskState.ts`。已关闭的写「已关闭」；
-// 还开着、最后一步已采纳（队友在写总结）的那一会儿写「进行中」，样子也跟着开启。
+// 状态那一格：图标、颜色、动不动和下面那一行都在 `lib/taskState.ts`。
 function stateOf(task: RoomTask): TaskState {
-  const state = taskState(task, { viewer: props.me, nameOf, agentName: agentNameOf(task) })
-  if (task.status === 'closed') return { ...state, label: t('work.channelTasks.closed') }
-  if (task.presentation.phrase === 'accepted') {
-    return { ...state, ...stateLook('open'), label: t('taskList.open') }
-  }
-  return state
+  return taskState(task, { viewer: props.me, nameOf, agentName: agentNameOf(task) })
 }
 </script>
 

@@ -148,23 +148,29 @@ beforeEach(() => {
 })
 
 describe('任务页头', () => {
-  // 页头那一句和频道里的卡、全部任务、总览说同一件事：在等的是看的人，就写「待你审阅」，
-  // 等的是别人就写出是谁。
-  it('等的是看的人：写「待你审阅」，等的是别人：写出在等谁审阅', () => {
+  // 「未连接」只在真的断了的时候说：页面没告诉页头连没连上，就当连着。
+  it('没说断了就不写「未连接」', () => {
+    const view = mount()
+    expect(view.queryByText('未连接')).toBeNull()
+  })
+
+  // 页头那一格和频道里的卡、全部任务、总览说同一件事：标签只说「待审阅」，后面那一行
+  // 说在等谁——是看的人就说「等你」。
+  it('标签只说待审阅；等的是看的人，后面那一行说等你，等的是别人就写出是谁', () => {
     me = 'alice'
     const mine = mount({ waiting_on: 'alice' })
-    expect(mine.getByTestId('task-phrase').textContent).toBe('等人审阅')
-    expect(mine.getByTestId('task-progress-note').textContent).toContain('待你审阅')
+    expect(mine.getByTestId('task-phrase').textContent).toBe('待审阅')
+    expect(mine.getByTestId('task-progress-note').textContent).toContain('等你')
     mine.unmount()
 
     const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob' })
-    expect(theirs.getByTestId('task-phrase').textContent).toBe('等人审阅')
-    expect(theirs.getByTestId('task-progress-note').textContent).toContain('审阅')
-    expect(theirs.getByTestId('task-progress-note').textContent).not.toContain('待你审阅')
+    expect(theirs.getByTestId('task-phrase').textContent).toBe('待审阅')
+    expect(theirs.getByTestId('task-progress-note').textContent).toContain('等 ')
+    expect(theirs.getByTestId('task-progress-note').textContent).not.toContain('等你')
   })
 
   // 队友报的那一句是看板这一格的出处：页头照说，会话走了也不改它，只在旁边说一声。
-  it('队友说在等结果：页头写它报的状态和原话，会话走了也照旧，旁边写已离开', () => {
+  it('队友说在等：页头写它报的状态和原话，会话走了也照旧，旁边写已离开', () => {
     const said = {
       presentation: { column: 'building', phrase: 'waiting' },
       progress_state: 'waiting',
@@ -173,13 +179,13 @@ describe('任务页头', () => {
       progress_set_at: '2026-10-05T00:00:00Z',
     } as Partial<RoomTask>
     const here = mount(said)
-    expect(here.getByTestId('task-phrase').textContent).toBe('在等结果')
+    expect(here.getByTestId('task-phrase').textContent).toBe('在等')
     expect(here.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
     expect(here.queryByTestId('task-agent-left')).toBeNull()
     here.unmount()
 
     const gone = mount({ ...said, agent_left_at: '2026-10-05T01:00:00Z' })
-    expect(gone.getByTestId('task-phrase').textContent).toBe('在等结果')
+    expect(gone.getByTestId('task-phrase').textContent).toBe('在等')
     expect(gone.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
     expect(gone.getByTestId('task-agent-left').textContent).toContain('已离开')
   })

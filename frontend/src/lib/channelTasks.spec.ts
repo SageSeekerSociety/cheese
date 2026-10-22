@@ -32,7 +32,7 @@ describe('任务卡', () => {
     const mine = taskLine(task(), 'linxiao', nameOf, '芝士')
     const theirs = taskLine(task(), 'chenmo', nameOf, '芝士')
     expect(mine.mine).toBe(true)
-    expect(mine.state.line).toContain('待你审阅')
+    expect(mine.state.line).toContain('等你')
     expect(mine.state.line).not.toContain('林晓')
     expect(theirs.mine).toBe(false)
     expect(theirs.state.line).toContain('林晓')

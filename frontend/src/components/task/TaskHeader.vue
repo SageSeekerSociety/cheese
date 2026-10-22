@@ -29,33 +29,37 @@ import { taskState } from '@/lib/taskState'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
-const props = defineProps<{
-  room: Topic
-  task: RoomTask | null
-  memberNames: Record<string, string>
-  agentName: string
-  people: TopicMemberRow[]
-  /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
-  agents: TopicMemberRow[]
-  machine: TopicEnvironment | null
-  machineError: boolean
-  actionError: string | null
-  connected?: boolean
-  close: (conclusion: string) => Promise<boolean>
-  reopen: () => Promise<boolean>
-  handOver: (owner: string) => Promise<boolean>
-  rename: (title: string) => Promise<boolean>
-  setCollaborators: (handles: string[]) => Promise<boolean>
-  setAgent: (handle: string | null) => Promise<boolean>
-  loadMachine: () => Promise<void>
-  /** 换这个任务里一条会话的环境；换「新会话默认」。 */
-  setMachine: (sessionId: string, env: Environment) => Promise<{ proposal?: { content: string } | null }>
-  setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
-  /** 右侧面板是不是开着——「概览」那颗开关读它。 */
-  panelOpen?: boolean
-  /** 复制这件任务的链接。页面给：这一层不认路由（组件只凭 props 画）。 */
-  copyLink?: () => void
-}>()
+const props = withDefaults(
+  defineProps<{
+    room: Topic
+    task: RoomTask | null
+    memberNames: Record<string, string>
+    agentName: string
+    people: TopicMemberRow[]
+    /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
+    agents: TopicMemberRow[]
+    machine: TopicEnvironment | null
+    machineError: boolean
+    actionError: string | null
+    connected?: boolean
+    close: (conclusion: string) => Promise<boolean>
+    reopen: () => Promise<boolean>
+    handOver: (owner: string) => Promise<boolean>
+    rename: (title: string) => Promise<boolean>
+    setCollaborators: (handles: string[]) => Promise<boolean>
+    setAgent: (handle: string | null) => Promise<boolean>
+    loadMachine: () => Promise<void>
+    /** 换这个任务里一条会话的环境；换「新会话默认」。 */
+    setMachine: (sessionId: string, env: Environment) => Promise<{ proposal?: { content: string } | null }>
+    setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
+    /** 右侧面板是不是开着——「概览」那颗开关读它。 */
+    panelOpen?: boolean
+    /** 复制这件任务的链接。页面给：这一层不认路由（组件只凭 props 画）。 */
+    copyLink?: () => void
+  }>(),
+  // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
+  { connected: true }
+)
 
 const emit = defineEmits<{
   (e: 'open-room'): void
@@ -610,7 +614,7 @@ function actionTestId(id: string): string | undefined {
 }
 .task-header__disconnected {
   flex: 0 0 auto;
-  color: var(--warn-ink);
+  color: var(--muted);
   font-size: 12px;
 }
 .task-header__owner {

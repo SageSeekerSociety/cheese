@@ -308,7 +308,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
             waiting_on: 'bob',
           },
         },
-        expect: '等人审阅',
+        expect: '待审阅',
       },
       {
         name: '递了卡，平台在跑检查',
@@ -332,7 +332,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
             progress_set_at: '2026-10-05T02:00:00Z',
           },
         },
-        expect: '芝士在做',
+        expect: '在做',
       },
       {
         name: '报完之后会话结束了',

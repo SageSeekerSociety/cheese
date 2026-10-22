@@ -47,16 +47,14 @@ function headText(task: RoomTask): string {
   return getByTestId('thread-task-phrase').textContent ?? ''
 }
 
-describe('ThreadHead 状态那一句里的队友', () => {
+describe('ThreadHead 的状态那一格', () => {
   beforeEach(() => setLocale('zh-CN'))
 
-  it('任务没单独指定队友：写项目默认那位现在的名字', () => {
+  // 状态只写状态本身：在做就是「在做」，不再把哪位队友拼进去（改过名的项目里拼出来的
+  // 一直是默认的「芝士」）。
+  it('写的是状态本身，不带默认的队友名字', () => {
     const text = headText(running(null))
-    expect(text).toContain('小 C在做')
+    expect(text).toContain('在做')
     expect(text).not.toContain('芝士')
-  })
-
-  it('任务交给了另一位队友：写那一位的名字', () => {
-    expect(headText(running('cheese-2'))).toContain('阿森在做')
   })
 })

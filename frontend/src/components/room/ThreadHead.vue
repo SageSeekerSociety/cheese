@@ -14,7 +14,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
-import { taskPhraseLabel } from '@/lib/board'
+import { taskState } from '@/lib/taskState'
 
 defineOptions({ name: 'ThreadHead' })
 
@@ -69,7 +69,7 @@ function avatarOf(handle: string): string {
       <h2 class="thread-head__title t-title" :title="heading">{{ heading }}</h2>
       <div v-if="task" class="thread-head__meta">
         <span class="thread-head__state" data-testid="thread-task-phrase">{{
-          taskPhraseLabel(task, viewer, taskAgentName)
+          taskState(task, { viewer, agentName: taskAgentName }).label
         }}</span>
         <span v-if="bar && task.owner_handle" class="thread-head__owner">
           <UserAvatar :size="14" :name="nameOf(task.owner_handle)" :avatar="avatarOf(task.owner_handle)" />

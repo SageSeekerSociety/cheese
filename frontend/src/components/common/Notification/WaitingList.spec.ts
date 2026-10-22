@@ -72,13 +72,13 @@ it('a task whose delivery was sent back still reads as returned', async () => {
 // 卡住了的那一行，第二行是它要你做的事。AI 队友没留话时不能空着：负责人得知道该打开看看。
 it('a stuck task with no note from its teammate says to open it and see what it needs', async () => {
   const view = await mount({ ...ownerItem('blocked'), detail: '' })
-  expect(view.getByText('芝士卡住了，打开看看它需要什么')).toBeTruthy()
+  expect(view.getByText('打开看看芝士需要什么')).toBeTruthy()
 })
 
 it('a stuck task whose teammate said what it needs shows that, not the generic line', async () => {
   const view = await mount({ ...ownerItem('blocked'), detail: '没有预发环境的测试账号' })
   expect(view.getByText('没有预发环境的测试账号')).toBeTruthy()
-  expect(view.queryByText('芝士卡住了，打开看看它需要什么')).toBeNull()
+  expect(view.queryByText('打开看看芝士需要什么')).toBeNull()
 })
 
 // 等你审阅的那一行，改动主题后面说这是第几版：只看主题分不出是第一次交，还是退回后又交的一版。
@@ -97,6 +97,6 @@ it('a card waiting on your review says which version it is', async () => {
 // 项目给队友改过名，卡住那一句就叫它改过的名字，不叫默认的「芝士」。
 it('a stuck task names the teammate by the name its project gave it', async () => {
   const view = await mount({ ...ownerItem('blocked'), detail: '', agentName: '小研', agentNameSource: 'human' })
-  expect(view.getByText('小研卡住了，打开看看它需要什么')).toBeTruthy()
-  expect(view.queryByText('芝士卡住了，打开看看它需要什么')).toBeNull()
+  expect(view.getByText('打开看看小研需要什么')).toBeTruthy()
+  expect(view.queryByText('打开看看芝士需要什么')).toBeNull()
 })

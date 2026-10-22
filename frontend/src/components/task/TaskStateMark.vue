@@ -80,11 +80,12 @@ watch(
   font-weight: 600;
 }
 /* 颜色按 §1.5 的三件套：图标用记号色，字用 -ink。 */
-.task-state[data-tone='accent'] {
-  color: var(--accent-ink);
+.task-state[data-tone='ok'] {
+  color: var(--ok-ink);
 }
-.task-state[data-tone='accent'] .task-state__icon {
-  color: var(--accent);
+.task-state[data-tone='ok'] .task-state__icon,
+.task-state[data-tone='okMark'] .task-state__icon {
+  color: var(--ok);
 }
 .task-state[data-tone='neutral'] .task-state__icon {
   color: var(--muted);

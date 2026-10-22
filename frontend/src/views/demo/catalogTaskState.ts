@@ -50,7 +50,7 @@ interface Case {
 const CASES: Case[] = [
   {
     name: '在做（会话在跑）',
-    note: '琥珀色，图标慢慢转：AI 队友这一刻真的在跑。下面一行是它报的那句和已经做了多久。',
+    note: '绿色，图标慢慢转：AI 队友这一刻真的在跑。下面一行是它报的那句和已经做了多久。',
     column: 'building',
     phrase: 'running',
     over: {
@@ -63,7 +63,7 @@ const CASES: Case[] = [
   },
   {
     name: '在做（会话停着）',
-    note: '还是琥珀色，但换成一个不转的图标：它说过在做，这一刻没有在跑。关掉动画后两种也分得开。',
+    note: '还是绿色，但换成一个不转的图标：它说过在做，这一刻没有在跑。关掉动画后两种也分得开。',
     column: 'building',
     phrase: 'running',
     over: {
@@ -92,7 +92,7 @@ const CASES: Case[] = [
   },
   {
     name: '卡住（没留话）',
-    note: '它没说卡在哪：下面一行请你打开看看它需要什么，点的是做它的那位队友的名字。',
+    note: '它没说卡在哪：下面一行让你打开看看它需要什么，叫的是做它的那位队友的名字。',
     column: 'needs_you',
     phrase: 'blocked',
     over: { progress_note: null, progress_set_at: ago(3 * MIN) },
@@ -107,8 +107,8 @@ const CASES: Case[] = [
     title: '作业截止时间怎么定',
   },
   {
-    name: '等审',
-    note: '强调色，审阅图标。下面一行是待谁审阅、被审阅的是什么、第几版、什么时候提交的。',
+    name: '待审阅',
+    note: '强调色，审阅图标。下面一行是在等谁（是你就写「等你」）、被审阅的是什么、第几版、什么时候提交的。',
     column: 'needs_you',
     phrase: 'awaiting_review',
     over: {
@@ -142,8 +142,8 @@ const CASES: Case[] = [
     title: '换一门课的题目板',
   },
   {
-    name: '关闭',
-    note: '淡色：最后一步采纳的画一个勾，没交付就关掉的画一道横。没有第二行。',
+    name: '已采纳',
+    note: '最后一步被采纳：绿色的勾，字是中性的。没交付就关掉的是淡色的一道横，写「已关闭」。没有第二行。',
     column: 'done',
     phrase: 'accepted',
     over: { status: 'closed', closed_at: ago(60 * MIN) },
@@ -330,7 +330,7 @@ export const TASK_STATE_ENTRIES: CatalogEntry[] = [
     },
     states: [
       {
-        name: '卡住、待回答、等审、退回、检查没过',
+        name: '卡住、待回答、待审阅、退回、检查没过',
         note: '一件任务停在哪一格，行首就是那一格的状态图标；为什么点到你写在最前面。',
         props: {
           items: [

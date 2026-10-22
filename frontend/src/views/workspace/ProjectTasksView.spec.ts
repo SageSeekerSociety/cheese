@@ -87,7 +87,7 @@ it('下一步在人手上的那一组排在最前面', () => {
   expect(titles(view)).toEqual(['等人的', '在检查的', '在做的'])
 })
 
-it('等你的那一件写成「待你…」，等别人的照通用的说法', () => {
+it('等你的那一件在后面那一行说「等你」，两件的标签都只说状态', () => {
   const mine = task({
     title: '我的',
     owner_handle: 'alice',
@@ -96,9 +96,9 @@ it('等你的那一件写成「待你…」，等别人的照通用的说法', (
   })
   const theirs = task({ title: '别人的', presentation: { column: 'needs_you', phrase: 'awaiting_review' } })
   const view = mount([mine, theirs])
-  // 等你的那一件只有一行写「待你审阅」；两件的状态标签都是通用的那一句。
-  expect(view.getAllByText(t('work.taskState.reviewMine'))).toHaveLength(1)
-  expect(view.getAllByText(t('work.board.phrase.awaiting_review'))).toHaveLength(2)
+  // 等你的那一件只有一行写「等你」；两件的状态标签都是「待审阅」。
+  expect(view.getAllByText(t('work.taskState.waitsOnYou'))).toHaveLength(1)
+  expect(view.getAllByText(t('work.taskState.label.review'))).toHaveLength(2)
 })
 
 it('十四天没动静的收进「已停滞」，点开才列出来', async () => {
@@ -175,7 +175,7 @@ it('全部状态同时列进行中与已关闭，并把两边的总数相加', (
   expect(view.getByRole('button', { name: `${t('work.channelTasks.all')} 121` })).toBeTruthy()
   expect(view.getByRole('button', { name: `${t('work.channelTasks.mine')} 41` })).toBeTruthy()
   const row = view.getByRole('button', { name: /结束了/ })
-  expect(row.textContent).toContain(t('work.channelTasks.closed'))
+  expect(row.textContent).toContain(t('work.taskState.label.accepted'))
   expect(row.textContent).toContain(t('taskList.deliveryAccepted'))
 })
 
@@ -208,7 +208,8 @@ it('按采纳记录筛选，保留已采纳前几步和仍在收尾的进行中�
   await fireEvent.click(view.getByRole('button', { name: t('taskList.acceptedDelivery') }))
   expect(titles(view)).toEqual(['前几步采纳了', '正在写总结'])
   expect(view.getByRole('button', { name: /^全部 2$/ })).toBeTruthy()
-  expect(view.getByRole('button', { name: /正在写总结/ }).textContent).toContain(t('taskList.open'))
+  // 最后一步采纳后、任务还开着（在写总结）的那一会儿：还是在做。
+  expect(view.getByRole('button', { name: /正在写总结/ }).textContent).toContain(t('work.taskState.label.running'))
   await fireEvent.click(view.getByRole('button', { name: t('taskList.anyDelivery') }))
   expect(titles(view)).toHaveLength(4)
 })
@@ -245,11 +246,11 @@ it('全部状态为空且关闭任务读失败时，不把失败当成暂无任�
   expect(view.emitted().more).toHaveLength(1)
 })
 
-it('任务没单独指定队友时，状态叫它所在频道那位队友的名字，不叫默认的「芝士」', () => {
-  const view = mount([task({ room_id: 'front', presentation: { column: 'building', phrase: 'running' } })], {
+it('任务没单独指定队友时，卡住那一句叫它所在频道那位队友的名字，不叫默认的「芝士」', () => {
+  const view = mount([task({ room_id: 'front', presentation: { column: 'needs_you', phrase: 'blocked' } })], {
     agentName: '芝士',
     roomAgentNames: { front: 'Nova' },
   })
-  expect(view.container.textContent).toContain('Nova在做')
-  expect(view.container.textContent).not.toContain('芝士在做')
+  expect(view.container.textContent).toContain('打开看看Nova需要什么')
+  expect(view.container.textContent).not.toContain('芝士')
 })
