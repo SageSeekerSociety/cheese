@@ -66,6 +66,12 @@ export function useChatScroll(
     showingNewest?: () => boolean
     /** 此刻这一栏是哪个话题：落到底部时替它记下「停在底部」。 */
     topicId?: () => string | undefined
+    /**
+     * 和滚动面板同处一栏、输入区也在其中的那一层（面板根）。滚动面板的直接父元素
+     * 可能只是时间线自己的包装层，输入区是那个包装层的兄弟——观察它看不到输入区。
+     * 不传就用直接父元素（面板把输入区和滚动框放在同一层时它就够）。
+     */
+    column?: () => HTMLElement | null
   } = {}
 ): ChatScroll {
   const showingNewest = options.showingNewest ?? (() => true)
@@ -129,10 +135,17 @@ export function useChatScroll(
     touched()
   })
   useEventListener(window, 'keydown', touched)
-  // The pane's parent too: the composer zone under the pane leaving and coming back in
-  // one task clamps it the same way, with the timeline untouched.
+  // The pane's column too: the composer zone under the pane leaving and coming back in
+  // one task clamps it the same way, with the timeline untouched. The pane's direct
+  // parent is not that column: the timeline sits in its own wrapper (the floating
+  // bookmark rail is positioned against it), and the composer zone is the wrapper's
+  // sibling. Watching the parent alone, nobody saw the composer come back:
+  // `rewrittenAt` stayed old, the clamp read as the reader scrolling up, and a pane
+  // parked at the bottom was left above it with 「回到最新」 showing — in WebKit (the
+  // desktop app) every time the member-activity line came and went. So the host hands
+  // in the element that holds both; without one, the parent is still the best guess.
   useMutationObserver(
-    () => [contentRef.value, scrollRef.value?.parentElement],
+    () => [contentRef.value, options.column?.() ?? scrollRef.value?.parentElement],
     () => (rewrittenAt = performance.now()),
     { childList: true, subtree: true, characterData: true }
   )
