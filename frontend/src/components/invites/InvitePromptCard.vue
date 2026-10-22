@@ -121,7 +121,8 @@ const emit = defineEmits<{ copyLink: []; dismiss: [] }>()
 
 .invite-prompt__gains {
   display: grid;
-  gap: 4px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
   padding: 10px 12px;
   margin: 0;
   list-style: none;
@@ -130,9 +131,9 @@ const emit = defineEmits<{ copyLink: []; dismiss: [] }>()
 }
 
 .invite-prompt__gains li {
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
@@ -140,7 +141,6 @@ const emit = defineEmits<{ copyLink: []; dismiss: [] }>()
 
 .invite-prompt__gains li > :last-child {
   color: var(--text);
-  text-align: right;
 }
 
 .invite-prompt__foot {
