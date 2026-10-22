@@ -65,7 +65,10 @@ async def _said(redis: Redis | None, upstream: str, cap: float) -> float:
         return 0.0
     if not raw:
         return 0.0
-    said_cap, _, said_level = raw.decode().partition(":")
+    # The client is made without decode_responses (`get_redis_client`), but a
+    # caller may hand one that decodes.
+    text = raw.decode() if isinstance(raw, bytes) else str(raw)
+    said_cap, _, said_level = text.partition(":")
     try:
         return float(said_level) if float(said_cap) == cap else 0.0
     except ValueError:

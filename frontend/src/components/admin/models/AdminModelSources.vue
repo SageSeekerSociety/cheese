@@ -82,7 +82,7 @@ function orderText(s: SourceRow): string {
           <dd class="t-num">{{ s.session_header || '—' }}</dd>
           <template v-if="s.spend_cap_usd != null">
             <dt>{{ t('models.source.cap') }}</dt>
-            <dd class="t-num" :class="`ams__cap--${capProgress(s)?.level ?? 'ok'}`" data-test="source-cap">
+            <dd class="t-num" :class="`ams__cap--${capProgress(s)?.level ?? 'ok'}`" data-testid="source-cap">
               {{ capText(s) }}
             </dd>
           </template>

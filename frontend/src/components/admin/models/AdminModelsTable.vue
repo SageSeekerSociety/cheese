@@ -180,10 +180,10 @@ function rateTitle(row: ModelRow): string {
             <span v-else-if="row.offered" class="amd__tag amd__tag--on">{{ t('models.table.offered.on') }}</span>
             <span v-else class="amd__tag">{{ t('models.table.offered.off') }}</span>
             <!-- 消费上限用到八成起在这里标一下：上限是终身累计的，窗口里的花费看不出离顶多远。 -->
-            <span v-if="capOf(row)?.level === 'over'" class="amd__tag amd__tag--off" data-test="model-cap">{{
+            <span v-if="capOf(row)?.level === 'over'" class="amd__tag amd__tag--off" data-testid="model-cap">{{
               t('models.table.capOver')
             }}</span>
-            <span v-else-if="capOf(row)?.level === 'warn'" class="amd__tag amd__tag--warn" data-test="model-cap">{{
+            <span v-else-if="capOf(row)?.level === 'warn'" class="amd__tag amd__tag--warn" data-testid="model-cap">{{
               t('models.table.capWarn', { pct: capPct(row) })
             }}</span>
             <span
