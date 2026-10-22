@@ -137,6 +137,7 @@ async def test_cloud_bootstrap_receives_cached_pin_and_reuses_it(tmp_path, monke
         ip="guest",
         login_user="cheese",
         private_key="test",
+        sandboxes=True,
         script=streaming_script,
         progress=progress,
     )
@@ -148,7 +149,11 @@ async def test_cloud_bootstrap_receives_cached_pin_and_reuses_it(tmp_path, monke
     # or overwrite it again. The cache is unavailable on this second call.
     cached.unlink()
     second = await enrollment.run_bootstrap(
-        ip="guest", login_user="cheese", private_key="test", script=script
+        ip="guest",
+        login_user="cheese",
+        private_key="test",
+        sandboxes=True,
+        script=script,
     )
     assert second == first
 
@@ -164,7 +169,11 @@ async def test_failed_ssh_stops_before_running_bootstrap(tmp_path, monkeypatch):
         enrollment.EnrollmentError, match="transfer to the machine failed"
     ):
         await enrollment.run_bootstrap(
-            ip="guest", login_user="cheese", private_key="test", script="exit 0"
+            ip="guest",
+            login_user="cheese",
+            private_key="test",
+            sandboxes=True,
+            script="exit 0",
         )
 
 
@@ -185,7 +194,11 @@ async def test_ssh_is_retried_on_its_own_failure_until_the_window_closes(
     monkeypatch.setattr(enrollment, "SSH_READY_POLL_S", 0.1)
     with pytest.raises(enrollment.EnrollmentError) as failed:
         await enrollment.run_bootstrap(
-            ip="guest", login_user="cheese", private_key="test", script="exit 0"
+            ip="guest",
+            login_user="cheese",
+            private_key="test",
+            sandboxes=True,
+            script="exit 0",
         )
     attempts = len(tries.read_text().splitlines())
     assert 3 <= attempts <= 7
@@ -201,7 +214,11 @@ async def test_a_command_failing_after_ssh_is_up_is_not_retried(tmp_path, monkey
     monkeypatch.setattr(enrollment, "SSH_READY_POLL_S", 0.05)
     with pytest.raises(enrollment.EnrollmentError, match=r"\(7\)"):
         await enrollment.run_bootstrap(
-            ip="guest", login_user="cheese", private_key="test", script="exit 0"
+            ip="guest",
+            login_user="cheese",
+            private_key="test",
+            sandboxes=True,
+            script="exit 0",
         )
     assert len(tries.read_text().splitlines()) == 1
 
@@ -240,7 +257,11 @@ exec /bin/bash -c "$last"
 
     starting = asyncio.create_task(sshd_starts())
     output = await enrollment.run_bootstrap(
-        ip="guest", login_user="cheese", private_key="test", script="echo Connected."
+        ip="guest",
+        login_user="cheese",
+        private_key="test",
+        sandboxes=True,
+        script="echo Connected.",
     )
     await starting
     assert output == "Connected."
@@ -282,6 +303,7 @@ async def test_the_machine_runs_the_connector_the_platform_serves_for_it(
         ip="guest",
         login_user="cheese",
         private_key="test",
+        sandboxes=True,
         script='"$HOME/.local/bin/cheesehost"',
         progress=progress,
     )
@@ -303,6 +325,7 @@ async def test_a_retry_replaces_a_connector_an_earlier_attempt_left(
         ip="guest",
         login_user="cheese",
         private_key="test",
+        sandboxes=True,
         script='"$HOME/.local/bin/cheesehost"',
     )
     assert output == f"served {GUEST_TARGET}"
@@ -321,6 +344,7 @@ async def test_no_served_connector_stops_before_the_script(
             ip="guest",
             login_user="cheese",
             private_key="test",
+            sandboxes=True,
             script=f'touch "{ran}"',
         )
     assert not ran.exists()
@@ -351,6 +375,7 @@ async def test_the_sandbox_tools_are_placed_where_the_connector_takes_them_as_cu
         ip="guest",
         login_user="cheese",
         private_key="test",
+        sandboxes=True,
         script='r="$HOME/.cheese/runtime"; "$r/bubblewrap/bwrap"; '
         '"$r/host-tools/bin/mkfs.xfs"',
     )
@@ -373,15 +398,13 @@ async def test_the_sandbox_tools_are_placed_where_the_connector_takes_them_as_cu
 async def test_a_retry_replaces_sandbox_tools_an_earlier_attempt_left(
     tmp_path, monkeypatch
 ):
-    """An older placement, or one an interrupted attempt left half made, is
-    replaced whole: nothing of it is left to run, and the digest is current."""
+    """An older placement is replaced whole: nothing of it is left to run, and
+    the digest beside it is current."""
     home = _guest_with_claude(tmp_path)
     runtime = home / ".cheese/runtime"
     (runtime / "host-tools/bin").mkdir(parents=True)
     (runtime / "host-tools/bin/old-only").write_text("old")
     (runtime / "host-tools.sha256").write_text("0" * 64 + "\n")
-    (runtime / "bubblewrap.ssh-new").mkdir()
-    (runtime / "bubblewrap.ssh-new/partial").write_text("half")
     fake_transports(tmp_path / "bin", home)
     monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
     platform_key = {"linux-amd64": "linux-x64", "linux-arm64": "linux-arm64"}[
@@ -389,11 +412,14 @@ async def test_a_retry_replaces_sandbox_tools_an_earlier_attempt_left(
     ]
 
     await enrollment.run_bootstrap(
-        ip="guest", login_user="cheese", private_key="test", script="true"
+        ip="guest",
+        login_user="cheese",
+        private_key="test",
+        sandboxes=True,
+        script="true",
     )
 
     assert not (runtime / "host-tools/bin/old-only").exists()
-    assert not (runtime / "bubblewrap.ssh-new").exists()
     assert (runtime / "host-tools.sha256").read_text().strip() == (
         await _served_digest("host-tools", platform_key)
     )
@@ -412,6 +438,29 @@ async def test_a_sandbox_tool_the_platform_cannot_serve_stops_before_the_script(
             ip="guest",
             login_user="cheese",
             private_key="test",
+            sandboxes=True,
             script=f'touch "{ran}"',
         )
     assert not ran.exists()
+
+
+async def test_a_whole_vm_enrolls_without_the_sandbox_tools(
+    tmp_path, monkeypatch, served_sandbox_tools
+):
+    """A whole VM runs no sandbox, so it is handed neither tool, and a tool
+    the platform cannot get right now does not keep it from enrolling."""
+    served_sandbox_tools.update({"bubblewrap", "host-tools"})
+    home = _guest_with_claude(tmp_path)
+    fake_transports(tmp_path / "bin", home)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+
+    output = await enrollment.run_bootstrap(
+        ip="guest",
+        login_user="cheese",
+        private_key="test",
+        sandboxes=False,
+        script="echo enrolled",
+    )
+
+    assert output == "enrolled"
+    assert not (home / ".cheese/runtime").exists()

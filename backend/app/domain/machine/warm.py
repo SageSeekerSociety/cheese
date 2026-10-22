@@ -535,6 +535,7 @@ class WarmPoolService:
                 login_user=row.create_request["user"],
                 private_key=row.bootstrap_key,
                 script=script,
+                sandboxes=True,
             )
             row.sandbox_disk_gb = enrollment.sandbox_disk_gb(output)
             row.enrolled_at = datetime.now(UTC)

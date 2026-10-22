@@ -377,9 +377,12 @@ async def run_bootstrap(
     login_user: str,
     private_key: str,
     script: str,
+    sandboxes: bool,
     progress: Callable[[str], Awaitable[None]] | None = None,
 ) -> str:
-    """Run the bootstrap over SSH and return its output.
+    """Run the bootstrap over SSH and return its output. With ``sandboxes``
+    (a pool host, whose rooms run in sandboxes), first hand the machine what
+    those are made with (`SANDBOX_TOOLS`); a whole VM runs none.
 
     The script is fed on stdin rather than passed as an argument: it carries the
     device token, and an argument would show up in the machine's process list.
@@ -516,7 +519,7 @@ async def run_bootstrap(
         # interrupted copy is never taken for a placed one.
         runtime = f"$HOME/{footprint_root()}/runtime"
         platform_key = f"linux-{'x64' if arch == 'amd64' else arch}"
-        for tool in SANDBOX_TOOLS:
+        for tool in SANDBOX_TOOLS if sandboxes else ():
             try:
                 archive = await toolchain_dist.ensure_cached(
                     connector_build.dist_dir(), tool, platform_key
