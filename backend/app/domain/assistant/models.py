@@ -205,6 +205,11 @@ class AssistantRules(Timestamps, Base):
     memory: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=true()
     )
+    #: When that memory was last tidied (``assistant.memory_tidy``); the next
+    #: tidy waits from it, and taking one moves it.
+    memory_tidied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class AssistantGateCheck(Base):

@@ -174,12 +174,11 @@ defineExpose({ scrollActiveIntoView })
      侧算成 `auto`，所以这两条不冲突。 */
   overflow-x: hidden;
   overflow-y: auto;
-  /* 菜单最多 7 项（`mentionMatches` 里 slice(0, 7)），每项 min-height 36px，展开
-     就是 254px；而 `.composer` 是 `.chat`（flex column）里不肯收缩的那一项。面板
-     一矮（尤其手机上），多出来的部分连同输入框一起从 `.chat` 底部溢出、被外壳裁
-     掉，还没有滚动条。给个上限让它自己滚，量的是看得见的那一截：手机上键盘弹起来
-     时 40vh 还是按整屏算，菜单会伸到顶栏底下（--app-height / --keyboard-inset 见
-     lib/keyboardInset.ts）。 */
+  /* 候选不截断：项目里几十号人，一屏放不下就往下翻。而 `.composer` 是
+     `.chat`（flex column）里不肯收缩的那一项。面板一矮（尤其手机上），不设上限
+     菜单就会连同输入框一起从 `.chat` 底部溢出、被外壳裁掉（这一条自己有上限，
+     滚得动）。量的是看得见的那一截：手机上键盘弹起来时 40vh 还是按整屏算，菜单
+     会伸到顶栏底下（--app-height / --keyboard-inset 见 lib/keyboardInset.ts）。 */
   max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.4);
   background: var(--surface);
   box-shadow: var(--shadow-2);
@@ -302,10 +301,19 @@ defineExpose({ scrollActiveIntoView })
 .mention-menu-head:hover {
   background: var(--fill);
 }
+/* 分组标题：一级里是「不在频道」，二级里是「文件 / 图片」。它同时是一条分割线，
+   把这一组和上面的人分开。紧跟在二级菜单头下面的那一条不画线，否则会和头那条
+   下边线叠在一起。 */
 .mention-menu-group {
+  margin-top: 2px;
   padding: 6px 12px 2px;
+  border-top: 1px solid var(--line-2);
   font-size: 12px;
   color: var(--faint);
+}
+.mention-menu-head + .mention-menu-group {
+  margin-top: 0;
+  border-top: 0;
 }
 /* 一条候选都没有。它顶替的是一整列候选行，所以内边距和字号跟着候选行走（13px、
    上下 10px），而不是跟着组标题走——不然空态看起来像一个没写完的小标题。 */
