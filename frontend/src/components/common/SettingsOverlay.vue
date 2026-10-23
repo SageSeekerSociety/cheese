@@ -21,6 +21,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
+import { titleBarOverlay } from '@/lib/desktopApp'
 
 export interface SettingsItem {
   key: string
@@ -60,6 +61,7 @@ defineSlots<{
 }>()
 
 const { mdAndUp } = useDisplay()
+const titleBarInset = titleBarOverlay()
 
 const activeItem = computed(() => {
   for (const group of props.groups) {
@@ -166,6 +168,7 @@ useFocusReturn(ref(true))
         </div>
         <BaseButton
           class="so__close"
+          :class="{ 'so__close--window-buttons': titleBarInset }"
           icon="mdi-arrow-left"
           kind="ghost"
           size="sm"
@@ -374,6 +377,12 @@ useFocusReturn(ref(true))
   top: calc((48px - 40px) / 2);
   left: 24px;
   z-index: var(--z-raised);
+}
+
+/* macOS draws its traffic lights over the page at the left edge. Keep this
+   arrow in the same 72px content start as the app's regular top bar. */
+.so__close--window-buttons {
+  left: 72px;
 }
 
 /* 手机：整屏，一条顶栏加下面会滚的一块。 */
