@@ -256,6 +256,12 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
         newestCursor = null
       }
     }
+    // 窗口被裁过、读的人又在历史中间：这一趟读回来的整页会被下面的守卫整个丢掉，
+    // 白花一次请求（3 秒一次，能一直花下去）。他回到末尾时那次 load 才会真的接上，
+    // 所以这里不必先发。
+    if (hasNewer.value && !hooks.following.value && !firstRead && !switched && !switchedTopic) {
+      return
+    }
     // 接着问「从这一窗最新那条往后有什么」，而不是重读一整页：手上这一窗就是上一次
     // 读回来的，重读只会把同样的 120 条再传一遍。没有游标（第一次读、换了对话）时
     // 才整页读。窗口被裁过（`hasNewer`）也不走这一路——那时中间是断的，接不上。
@@ -300,7 +306,8 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
           }
         } else {
           const reset = switched || firstRead || switchedTopic || hasNewer.value
-          transcript.value = mergeSite(tx.data, transcript.value, switched)
+          // 换了对话就是另一条时间线：手上那几行一条都不能留下。
+          transcript.value = mergeSite(tx.data, transcript.value, switched, switchedTopic)
           if (reset) {
             // 整页：上面有没有、读到哪儿，全以这一页为准。没有 `newest_id`（更旧的
             // 后端）就置空游标，下一次退回整页读。
@@ -382,7 +389,12 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   // `switched` 是另一回事：手上那份是上一个视角的，它的「更早」不是这个人的更早。
   // 那时只留请求在路上时新到的几行 —— 比这一页最新的一条还新的，是真的还没进这一页
   // 的几步，不是翻出来的历史。
-  function mergeSite(page: Block[], held: Block[], switched = false): Block[] {
+  //
+  // `elsewhere` 更彻底：手上那份是**另一段对话**的。那几行一条也不属于这一条，连
+  // 「刚到的」都不该留（`switched` 的「比最新一条还新」在这里没有意义，时间轴根本
+  // 不是同一条）。换对话时整份丢掉。
+  function mergeSite(page: Block[], held: Block[], switched = false, elsewhere = false): Block[] {
+    if (elsewhere) return page
     if (!page.length) return held.length ? held : page
     const ids = new Set(page.map((b) => b.id))
     const first = Date.parse(page[0].created_at)
@@ -422,7 +434,12 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       const follow = hooks.following.value
       const anchor = follow ? null : hooks.captureAnchor()
       const next = transcript.value.slice()
-      next[at] = block
+      // socket 的 `run_record` 帧不带游标（只有读回来的那一页带）。原地换掉时把手上
+      // 那条的游标留着：缓存写回去要靠它定位，丢了就等于告诉下次打开「上面没有更早
+      // 的了」，往上翻整场失效。
+      const cursor = (next[at].meta as { cursor?: unknown } | null | undefined)?.cursor
+      const merged = cursor === undefined ? block : { ...block, meta: { ...block.meta, cursor } }
+      next[at] = merged
       transcript.value = next
       if (follow) hooks.scrollToTail()
       else if (anchor) void nextTick(() => hooks.restoreAnchor(anchor))

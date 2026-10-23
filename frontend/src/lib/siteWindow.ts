@@ -42,12 +42,19 @@ export function cachedWindow(topicId: string, author: string | null, limit: numb
   if (!held || held.blocks.length === 0) return null
   const dropped = Math.max(0, held.blocks.length - limit)
   const blocks = held.blocks.slice(dropped)
-  return {
-    ...held,
-    blocks,
-    hasMore: held.hasMore || dropped > 0,
-    oldestCursor: dropped > 0 ? cursorOf(blocks[0]) : held.oldestCursor,
+  // 裁过之后往上翻的起点要跟着挪：画出来这一页的头一条。但从这一条**本身**取不到
+  // 游标时（socket 换上来的平台记账行不带 `cursor`）不能就这么空着——那等于告诉
+  // 「上面没有了」，往上翻就整场失效。退一步取这一窗里最早那条**带着游标**的：
+  // 它最多让人多读一遍中间那几条（按 id 去重），不会漏。
+  let oldest = held.oldestCursor
+  if (dropped > 0) {
+    oldest = blocks.map(cursorOf).find((c) => c !== null) ?? null
+    if (oldest === null) {
+      // 画出来的这一页里一条带游标的都没有：这批行压根不能定位，退到整页重读。
+      return null
+    }
   }
+  return { ...held, blocks, hasMore: held.hasMore || dropped > 0, oldestCursor: oldest }
 }
 
 /** 把这一窗写回去。整窗留着（到窗口封顶为止）：往上翻过的那几页也在，回来接着翻

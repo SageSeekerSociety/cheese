@@ -16,7 +16,7 @@ vi.mock('./useSessionInspector', () => ({ useSessionInspector: () => ({}) }))
 vi.mock('@/i18n', () => ({ t: (key: string) => key }))
 
 import { storageRemove } from '../lib/browserStorage'
-import { forgetWindows, rememberWindow } from '../lib/siteWindow'
+import { cachedWindow, forgetWindows, rememberWindow } from '../lib/siteWindow'
 
 import { usePanelSite } from './usePanelSite'
 
@@ -92,13 +92,13 @@ async function settle(): Promise<void> {
   }
 }
 
-async function openAtBottom() {
+async function openAtBottom(topic: { id: string } = { id: 'room' }) {
   const box = { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 }
   const el = pane(box)
   const scope = effectScope()
   const site = scope.run(() =>
     usePanelSite({
-      topicId: () => 'room',
+      topicId: () => topic.id,
       active: () => true,
       refreshTick: () => 0,
       runningTurns: () => ({}),
@@ -129,6 +129,52 @@ describe('where 现场 opens', () => {
     await settle()
 
     expect(box.scrollTop).toBe(1500)
+    scope.stop()
+  })
+})
+
+describe('a row the socket updates in place', () => {
+  it('keeps its cursor, so next time can still page up from it', async () => {
+    // 读回来的那一页每条都带游标，socket 的 `run_record` 帧不带。原地换掉时不能把
+    // 游标弄丢：缓存要靠它定位，丢了下次打开就翻不动了。
+    const withCursor = row('a', 1)
+    withCursor.meta = { ...withCursor.meta, cursor: 'c-a' }
+    api.getTranscript.mockResolvedValue(page([withCursor], { newest_id: 'n1' }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    const updated = { ...row('a', 1), content: '后来的一句话' }
+    site.receive(updated)
+    await settle()
+    // 缓存是下一次刷新时才写回去的：等它写一次，再看到底存了什么。
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    const held = cachedWindow('room', null, 120)!
+    expect(held.blocks[0].meta?.cursor, '原地换掉时游标留着').toBe('c-a')
+    scope.stop()
+  })
+})
+
+describe('switching to another conversation', () => {
+  it("does not keep the previous conversation's records", async () => {
+    // 换对话是就地换的（任务路由没有 topicId 这个 key）：手上那几行是上一条对话的，
+    // 不能留在新的这一条里。这里让新对话的最新一页比旧的**更早**——`mergeSite` 那条
+    // 「把更旧的接在前面」的分支正是这么漏出来的。
+    const topic = { id: 'room' }
+    api.getTranscript.mockResolvedValueOnce(page([row('a1', 5), row('a2', 6)]))
+    const { site, scope } = await openAtBottom(topic)
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['a1', 'a2'])
+
+    topic.id = 'task'
+    api.getTranscript.mockResolvedValue(page([row('b1', 1), row('b2', 2)]))
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    expect(
+      site.transcript.value.map((b) => b.id),
+      '只留下新对话的'
+    ).toEqual(['b1', 'b2'])
     scope.stop()
   })
 })
