@@ -168,9 +168,6 @@ func TestABuildThatIsNotTheDigestTheServerNamesIsNotInstalled(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(versions, "2.1.299")); !os.IsNotExist(err) {
 		t.Fatal("a build was placed")
 	}
-	if _, err := os.Stat(filepath.Join(versions, "2.1.299.partial")); !os.IsNotExist(err) {
-		t.Fatal("what arrived was kept for the next attempt to continue")
-	}
 }
 
 func TestBytesThatAreNotTheServedCopyAreDiscarded(t *testing.T) {

@@ -70,7 +70,8 @@ class SandboxUnavailable(RuntimeError):
 
 
 # How the install exits when it refuses a room for `SandboxUnavailable`, with
-# its sentence alone on stderr, as JSON: the backend keeps it for the owner.
+# its sentence as the last line on stderr, as JSON: the backend keeps it for
+# the owner (`launch.refused`).
 SANDBOX_UNAVAILABLE_EXIT = 78
 
 

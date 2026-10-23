@@ -23,6 +23,7 @@ from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     confinement,
+    launch,
     runtime,
 )
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
@@ -87,6 +88,24 @@ def _refusal(payload, capsys) -> dict:
         bootstrap.configure(payload)
     assert exited.value.code == bootstrap.SANDBOX_UNAVAILABLE_EXIT
     return json.loads(capsys.readouterr().err)
+
+
+def test_a_refusal_reaches_the_owner_after_whatever_the_install_said_first():
+    """An install that waited for another install of the executor, or
+    downloaded part of it, said so on stderr before it refused the room; the
+    owner is still told why it was refused."""
+    said = {"key": "sandboxNotPlaced", "params": {}}
+    stderr = (
+        "waiting for another install of the executor on this machine to finish\n"
+        + json.dumps(said)
+        + "\n"
+    )
+
+    refusal = launch.refused(
+        {"exit": bootstrap.SANDBOX_UNAVAILABLE_EXIT, "stderr": stderr}
+    )
+
+    assert refusal is not None and refusal.said == said
 
 
 @linux
