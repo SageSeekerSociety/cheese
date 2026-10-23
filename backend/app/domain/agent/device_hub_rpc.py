@@ -1,6 +1,7 @@
 """HTTP boundary between rolling backends and the stable device connection owner."""
 
 import asyncio
+import contextlib
 import dataclasses
 import logging
 import time
@@ -383,7 +384,13 @@ class RemoteDeviceHub:
         response = await self._call_owner(name, payload)
         result = response.json().get("result")
         if name in {"open_screen", "reassert_screen", "adopt_screen", "close_screen"}:
-            await self.refresh()
+            # The owner has already done it. Reading the new snapshot here is
+            # for our own view of the world, and a hiccup in that read must not
+            # turn a completed screen operation into a failure the caller sees
+            # (it is not retried either — the call may have executed already).
+            # The 1s refresh loop restores the view a moment later.
+            with contextlib.suppress(httpx.HTTPError, OSError, ValueError):
+                await self.refresh()
         return result
 
     def is_online(self, device_id: str) -> bool:

@@ -223,13 +223,13 @@ const menuActions = computed<MenuAction[]>(() => {
         ? {
             key: 'unchapter',
             label: t('work.room.chapter.unpin'),
-            icon: 'mdi-bookmark-minus-outline',
+            icon: 'mdi-bookmark',
             onSelect: () => emit('unchapter', block),
           }
         : {
             key: 'chapter',
             label: t('work.room.chapter.pin'),
-            icon: 'mdi-bookmark-plus-outline',
+            icon: 'mdi-bookmark-outline',
             onSelect: () => emit('chapter', block),
           }
     )
@@ -359,8 +359,9 @@ function onFocusOut(event: FocusEvent) {
         >
           <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
         </button>
-        <!-- 钉成书签放在这一排，不埋在 ⋯ 里：钉一下是读对话时随手做的事，多一步
-             就没人用。钉上是实心，再点取消。 -->
+        <!-- 加书签放在这一排，不埋在 ⋯ 里：加一下是读对话时随手做的事，多一步
+             就没人用。加上是实心，再点取消。图标和长按面板、浮条里的是同一枚书签，
+             不再用图钉——三处说的是同一件事，就该是同一个记号。 -->
         <button
           v-if="chapterable && block.kind === 'message'"
           type="button"
@@ -370,7 +371,7 @@ function onFocusOut(event: FocusEvent) {
           :aria-label="chapteredIds?.has(block.id) ? t('work.room.chapter.unpin') : t('work.room.chapter.pin')"
           @click="chapteredIds?.has(block.id) ? emit('unchapter', block) : emit('chapter', block)"
         >
-          <v-icon size="15">{{ chapteredIds?.has(block.id) ? 'mdi-pin' : 'mdi-pin-outline' }}</v-icon>
+          <v-icon size="15">{{ chapteredIds?.has(block.id) ? 'mdi-bookmark' : 'mdi-bookmark-outline' }}</v-icon>
         </button>
         <!-- A deep link to this one message. Absent when the host has no router
              (there is no address to build) rather than a button that does nothing. -->
