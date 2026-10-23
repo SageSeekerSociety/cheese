@@ -541,35 +541,6 @@ class _Migration(ast.NodeVisitor):
             return
         self.generic_visit(node)
 
-    def visit_For(self, node: ast.For) -> None:
-        """A loop over literal rows (a tuple or list, or a module constant
-        holding one; unpacked or not) is judged once per row, with each loop
-        variable replaced by that row's value, so every rule reads the names it
-        would read had the loop been written out. Any other loop is judged once,
-        as written."""
-        rows = _literal_rows(node.iter, self.constants)
-        targets = node.target.elts if isinstance(node.target, ast.Tuple) else [node.target]
-        if (
-            rows is None
-            or not all(isinstance(t, ast.Name) for t in targets)
-            or any(len(row) != len(targets) for row in rows)
-            # A body that rebinds a loop variable would see a stale value.
-            or any(
-                isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.id in {t.id for t in targets}  # type: ignore[attr-defined]
-                for stmt in node.body
-                for n in ast.walk(stmt)
-            )
-        ):
-            self.generic_visit(node)
-            return
-        self.visit(node.iter)
-        for row in rows:
-            bind = _Bind({t.id: value for t, value in zip(targets, row, strict=True)})  # type: ignore[attr-defined]
-            for stmt in node.body:
-                self.visit(bind.visit(copy.deepcopy(stmt)))
-        for stmt in node.orelse:
-            self.visit(stmt)
-
     def _table_names(self, node: ast.AST | None) -> list[str] | None:
         """The table an argument names (a literal or a module constant),
         ``schema.table`` read as ``table``."""
@@ -791,7 +762,7 @@ class _Migration(ast.NodeVisitor):
             )
 
     def _op_add_column(self, node: ast.Call) -> None:
-        table = _str(node.args[0]) if node.args else None
+        table = (self._table_names(node.args[0]) or [None])[0] if node.args else None
         if len(node.args) > 1 and isinstance(node.args[1], ast.Call):
             keys = _inline_keys(table, node.args[1], self.constants)
             self._fk_created(node, table, keys)
@@ -1120,6 +1091,60 @@ class _Bind(ast.NodeTransformer):
         return ast.copy_location(ast.Constant("".join(parts)), node)  # type: ignore[arg-type]
 
 
+class _Unroll(ast.NodeTransformer):
+    """Write out every loop over literal rows (a tuple or list, or a module
+    constant holding one; unpacked or not): its body once per row, each loop
+    variable replaced by that row's value, then its ``else``. Every rule, and
+    the reading of earlier migrations' keys, then sees the names the written-out
+    form names. A loop whose targets are not plain names, whose rows do not
+    match them, or whose body rebinds one stays as it is."""
+
+    def __init__(self, constants: dict[str, ast.AST]) -> None:
+        self.constants = constants
+
+    def visit_For(self, node: ast.For) -> ast.AST | list[ast.stmt]:
+        self.generic_visit(node)
+        rows = _literal_rows(node.iter, self.constants)
+        targets = node.target.elts if isinstance(node.target, ast.Tuple) else [node.target]
+        names = {t.id for t in targets if isinstance(t, ast.Name)}
+        if (
+            rows is None
+            or len(names) != len(targets)
+            or any(len(row) != len(targets) for row in rows)
+            or any(_rebinds_or_branches(n, names) for stmt in node.body for n in ast.walk(stmt))
+        ):
+            return node
+        out: list[ast.stmt] = []
+        for row in rows:
+            bind = _Bind({t.id: value for t, value in zip(targets, row, strict=True)})  # type: ignore[attr-defined]
+            out += [bind.visit(copy.deepcopy(stmt)) for stmt in node.body]
+        return out + node.orelse
+
+
+def _rebinds_or_branches(node: ast.AST, names: set[str]) -> bool:
+    """Whether written out, the body would not be the same for every row: it
+    rebinds a loop variable (any binding form), skips rows (``continue`` /
+    ``break``), or branches on a loop variable."""
+    if isinstance(node, ast.Continue | ast.Break):
+        return True
+    if isinstance(node, ast.If | ast.IfExp | ast.While | ast.Match):
+        test = node.subject if isinstance(node, ast.Match) else node.test
+        return any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(test))
+    bound: set[str] = set()
+    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+        bound = {node.id}
+    elif isinstance(node, ast.arg):
+        bound = {node.arg}
+    elif isinstance(node, ast.ExceptHandler | ast.MatchAs | ast.MatchStar) and node.name:
+        bound = {node.name}
+    return bool(bound & names)
+
+
+def _unrolled(tree: ast.Module) -> ast.Module:
+    tree = _Unroll(_module_constants(tree)).visit(tree)
+    return ast.fix_missing_locations(tree)
+
+
 def _literal_rows(node: ast.AST | None, constants: dict[str, ast.AST]) -> list[list[ast.AST]] | None:
     """The items of a literal tuple/list (a module constant included), each as
     a row: a tuple item is its elements, anything else a row of one."""
@@ -1169,7 +1194,7 @@ def fk_creations(sources: dict[str, str]) -> dict[str, _Creations]:
     out: dict[str, _Creations] = {}
     for path, source in sources.items():
         try:
-            tree = ast.parse(source)
+            tree = _unrolled(ast.parse(source))
         except SyntaxError:
             continue
         for node in ast.walk(tree):
@@ -1269,7 +1294,7 @@ def analyze(
     pending: list[tuple[list[str], dict[int, tuple[int, int]], list[Finding], _FileFacts]] = []
     for path, source in sorted(migrations.items()):
         try:
-            tree = ast.parse(source)
+            tree = _unrolled(ast.parse(source))
         except SyntaxError as error:
             # A file that does not parse was not read and cleared: every statement
             # in it is unjudged. `unresolved` is a warning for one statement whose
@@ -2069,10 +2094,85 @@ def self_test() -> int:
         "a starred loop target is not unrolled",
         _rules_found(
             "    with_lock_retries('task, users')\n"
-            "    for *rest, ref in (('x', 'y', 'users'),):\n"
+            "    for *rest, ref in (('x', 'users'),):\n"
             "        op.create_foreign_key(None, 'task', ref, ['u'], ['id'], postgresql_not_valid=True)"
         ),
         ["unresolved"],
+    )
+    check(
+        "a loop whose rows do not match its targets is not unrolled",
+        _rules_found(
+            "    with_lock_retries('task, users')\n"
+            "    for t, ref in (('task', 'users', 'extra'),):\n"
+            "        op.create_foreign_key(None, t, ref, ['u'], ['id'], postgresql_not_valid=True)"
+        ),
+        ["unresolved"],
+    )
+    check(
+        "a loop that skips rows is not unrolled",
+        _rules_found(
+            "    for t in ('task', 'legacy'):\n"
+            "        if t == 'task':\n            continue\n"
+            "        op.execute(f'ALTER TABLE {t} DROP COLUMN video_url')"
+        ),
+        ["unresolved"],
+    )
+    check(
+        "a loop that may skip a row on another condition is not unrolled",
+        _rules_found(
+            "    for t in ('task',):\n"
+            "        if ready():\n            continue\n"
+            "        op.execute(f'ALTER TABLE {t} DROP COLUMN video_url')"
+        ),
+        ["unresolved"],
+    )
+    check(
+        "a loop that rebinds its variable as a parameter is not unrolled",
+        _rules_found(
+            "    for t in ('task',):\n"
+            "        f = lambda t: op.create_index('ix', t, ['x'])"
+        ),
+        ["unresolved-table"],
+    )
+    check(
+        "a column added to a table held in a module constant",
+        _rules_found(
+            "    op.add_column(TASK, sa.Column('n', sa.Integer(), nullable=False))",
+            "TASK = 'task'\n",
+        ),
+        ["add-column-not-null"],
+    )
+    check(
+        "a literal loop's else runs once, after it",
+        _rules_found("    for t in ('task',):\n        pass\n    else:\n        op.drop_column('task', 'video_url')"),
+        ["drop-column"],
+    )
+    check(
+        "a statement repeated by a loop is reported once",
+        _rules_found("    for c in ('a', 'b'):\n        op.create_index('ix', 'task', [c])"),
+        ["index-not-concurrent"],
+    )
+    check(
+        "an f-string with a conversion is not folded into a name",
+        _rules_found("    for t in ('task',):\n        op.execute(f'CREATE INDEX ix ON {t!r} (x)')"),
+        ["unresolved"],
+    )
+    looped_history = {
+        "z.py": rev("r1", None) + "def upgrade():\n"
+        "    for t in ('runs',):\n"
+        "        op.create_foreign_key(f'{t}_topic_id_fkey', t, 'topics', ['topic_id'], ['id'])\n",
+    }
+    check(
+        "a key an earlier migration made in a literal loop is read from history",
+        sorted(
+            f.rule
+            for f in analyze(
+                {"m.py": rev("r2", "r1") + f"def upgrade():\n    with_lock_retries('runs')\n{drop_fk}\n"},
+                _BASE_MODELS,
+                looped_history,
+            )
+        ),
+        ["fk-table-not-locked"],
     )
     check(
         "a loop whose body rebinds its variable is not unrolled",

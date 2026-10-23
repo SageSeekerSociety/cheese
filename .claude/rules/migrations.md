@@ -48,6 +48,10 @@ dropped `task.video_url` in the same PR that unmapped it (`694b0dbaf5eb`).
 `.claude/scripts/check-migration-safety.py` enforces the rules marked ✓ on
 every migration a PR **adds** (CI: backend `static` job; locally: the
 `migration-safety` pre-commit hook). Migrations on main are not re-judged.
+It reads a loop over literal rows (a tuple, list or module constant) as if it
+were written out once per row, in the migration under review and in the earlier
+ones it reads keys from, unless the body skips or branches on a row or rebinds
+the loop variable. Any other loop is read once, as written.
 
 1. **One transaction per migration.** `env.py` sets
    `transaction_per_migration=True`: a migration's locks and backfill row locks
@@ -66,11 +70,10 @@ every migration a PR **adds** (CI: backend `static` job; locally: the
    key it then adds or drops by name in that transaction are in the list
    (`create_foreign_key`, `drop_constraint`, keys written into `add_column` /
    `create_table`, and their raw SQL), including in helpers `upgrade()` calls.
-   Every rule here reads a loop over literal rows (a tuple, list or module
-   constant) as if it were written out once per row. A foreign key's table
-   that is still unreadable gets a warning, not an error. Not checked, so list them by hand: the key a `drop_column` or
-   `drop_table` takes with it, and any migration that does not call
-   `with_lock_retries`. ✓ No pasted `DO $$ … lock_not_available` loops.
+   A foreign key's table it cannot read is a warning, not an error. Not
+   checked, so list them by hand: the key a `drop_column` or `drop_table`
+   takes with it, and any migration that does not call `with_lock_retries`.
+   ✓ No pasted `DO $$ … lock_not_available` loops.
 3. **Adding a column**: nullable, or NOT NULL with a `server_default`. ✓
    A value computed per row: add it nullable → backfill → `CHECK (c IS NOT
    NULL) NOT VALID` → `VALIDATE` → `SET NOT NULL` (no full scan once a
