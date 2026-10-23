@@ -385,9 +385,9 @@ async def reopen_task(
     place, actor, task = await task_conversation(db, resolver, topic_id)
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
-            raise ForbiddenError(say("taskOwnerOnly"))
+            raise ForbiddenError(say("taskOwnSessionReopens"))
     elif not actor.authenticated or actor.handle != task.owner_handle:
-        raise ForbiddenError(say("taskOwnerOnly"))
+        raise ForbiddenError(say("taskOwnSessionReopens"))
     # The same test `reopen` moves a task onto a new branch by.
     new_branch = task.branch_name is not None and task.delivered_head is not None
     task = await TaskService(db).reopen(task)

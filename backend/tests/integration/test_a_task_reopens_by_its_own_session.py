@@ -9,6 +9,7 @@ reopen it; a session working another task may do neither.
 
 import uuid
 
+from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import (
     open_task,
     post_project,
@@ -59,3 +60,22 @@ def test_another_tasks_session_does_not(client):
         f"/topics/{task['id']}/task", headers=session_auth_headers("alice")
     ).json()["data"]["status"]
     assert status == "closed"
+
+
+def test_the_rooms_session_does_not(client):
+    """The room's session-wide credential reaches every task of its project, so
+    it is the one that gets past the conversation check to the reopen rule."""
+    task, room = _closed_task(client)
+    token = mint_scoped_token(
+        project_id=task["project_id"],
+        topic_id=room,
+        agent_handle=room_agent_seat(client, room),
+        access_scope="project",
+    )
+
+    refused = client.post(
+        f"/topics/{task['id']}/reopen", headers={"X-Cheese-Token": token}
+    )
+
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "taskOwnSessionReopens"
