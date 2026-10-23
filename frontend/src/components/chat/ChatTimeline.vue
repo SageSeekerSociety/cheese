@@ -94,6 +94,8 @@ const props = defineProps<{
   }
   barBlock: Block | null
   barEditable: boolean
+  /** 上一下是键盘在走这一列（useChatRowActions 的 kbdNav）：焦点框由我们自己画。 */
+  kbdNav?: boolean
   reactionPickerFor: string | null
   loadingHistory: boolean
   hasMore: boolean
@@ -512,6 +514,7 @@ const rowLabels = computed(() =>
            没有自己的盒子样式，排版和直接排在 .tl-content 里一样。 -->
       <div
         class="tl-feed"
+        :class="{ 'tl-feed--kbd': kbdNav }"
         data-chat-feed
         role="feed"
         :aria-label="t('work.room.chat.timelineLabel')"
@@ -939,9 +942,16 @@ const rowLabels = computed(() =>
   }
 }
 
-/* 键盘停在一条上：焦点环画在行内（offset 取负），和 RoomMessage 的 .im-row 一样——行是
-   整宽的，滚动区会把画在外面的环左右切掉。 */
+/* 焦点框不交给浏览器的 :focus-visible 判据：它见到任何一次按键都算「人在用键盘」，
+   有的系统还会把音量/媒体键也递进网页——点过一条消息再按一下音量键（只想调音量），
+   整行就亮起一圈。这里只认这一列自己用的那几个键（useTimelineKeys 的 isTimelineKey），
+   由 kbdNav 决定画不画。环画在行内（offset 取负），和 RoomMessage 的 .im-row 一样——
+   行是整宽的，滚动区会把画在外面的环左右切掉。 */
 .tl-feed > [data-feed-item]:focus-visible {
+  outline: none;
+}
+.tl-feed.tl-feed--kbd > [data-feed-item]:focus {
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 </style>

@@ -14,7 +14,7 @@ import { useEventListener, useResizeObserver } from '@vueuse/core'
 import { useLongPress } from '../../../composables/useLongPress'
 import { messageSelection } from '../../../lib/messageSelection'
 
-import { useTimelineKeys } from './useTimelineKeys'
+import { isTimelineKey, useTimelineKeys } from './useTimelineKeys'
 
 type Timeline = ReturnType<typeof useTimeline>
 
@@ -187,11 +187,23 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
   let dismissedFor: string | null = null
   /** 上一下是键盘还是指针。行可聚焦，点一条消息也会把它聚焦——那是悬停条的旧活儿
    *  （指针悬停本来就亮着），不该再算成「键盘走到这一条」，否则点完把鼠标移开，条
-   *  还留在原地。 */
+   *  还留在原地。
+   *  只认这一列自己用的键（`isTimelineKey`）：音量/媒体键不算一次「在用键盘」。有的
+   *  系统会把它们也递进网页，按一下就把点过的那一条算成键盘停在那儿了。 */
   let keyboardFocus = false
+  /** 用键盘走这一列时，时间线自己画焦点框（见 ChatTimeline 的 .tl-feed--kbd）。浏览器
+   *  的 :focus-visible 见到任何一次按键都画，不能拿来当判据。 */
+  const kbdNav = ref(false)
   const modalityTarget = typeof window === 'undefined' ? undefined : window
-  useEventListener(modalityTarget, 'keydown', () => (keyboardFocus = true))
-  useEventListener(modalityTarget, 'pointerdown', () => (keyboardFocus = false))
+  useEventListener(modalityTarget, 'keydown', (e: KeyboardEvent) => {
+    if (!isTimelineKey(e)) return
+    keyboardFocus = true
+    kbdNav.value = true
+  })
+  useEventListener(modalityTarget, 'pointerdown', () => {
+    keyboardFocus = false
+    kbdNav.value = false
+  })
 
   function onRowFocus(e: FocusEvent) {
     if (touchOnly.value || !keyboardFocus) return
@@ -257,6 +269,7 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     toggleTime,
     bar,
     barBlock,
+    kbdNav,
     showBarAt,
     hideBar,
     onTimelinePointer,

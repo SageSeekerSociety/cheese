@@ -77,6 +77,14 @@ function barShown(container: Element): boolean {
 function useKeyboard() {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }))
 }
+/** 不是这一列自己用的键：音量键/媒体键、F1–F12、字母都算。 */
+function pressOther(key: string) {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key }))
+}
+/** 鼠标按下的那一下：输入方式回到指针。 */
+function usePointer() {
+  window.dispatchEvent(new Event('pointerdown'))
+}
 
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {
@@ -175,5 +183,25 @@ describe('消息动作条的键盘可达性', () => {
     row(container, 'a2').focus()
     await flush()
     expect(barShown(container)).toBe(true)
+  })
+})
+
+describe('只有这一列自己用的键才算「在用键盘」', () => {
+  it('点过一条消息再按音量键，不算在用键盘走这一列', async () => {
+    const { container } = await mount()
+    usePointer()
+    row(container, 'a1').focus()
+    await flush()
+    expect(barShown(container)).toBe(false)
+
+    // 音量键：有的系统会把它也递进网页。它不该让点过的那一条算成键盘停在上面。
+    pressOther('AudioVolumeUp')
+    await flush()
+    expect(barShown(container)).toBe(false)
+
+    // 改之前，上面那一下会让下面这次换焦点亮出动作条。
+    row(container, 'a2').focus()
+    await flush()
+    expect(barShown(container)).toBe(false)
   })
 })
