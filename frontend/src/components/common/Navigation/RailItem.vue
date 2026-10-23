@@ -325,7 +325,7 @@ button.app-rail-item {
 // or the tile reads as a small square framed inside a bigger one.
 .app-rail-item.app-rail-item--tile {
   background-color: transparent;
-  // v-card 默认 overflow: hidden，会把探出格子的件数角标和右边的竖条裁掉。
+  // v-card 默认 overflow: hidden，会把探出格子的件数角标和左边的竖条裁掉。
   overflow: visible;
 
   &:hover,
@@ -334,21 +334,25 @@ button.app-rail-item {
   }
 }
 
-// 竖条放在头像右侧、靠二级侧栏，避免与电脑的黑色屏幕边框混在一起。
-// 格子 48px 居中在 64px 的 rail 里，右侧有 8px：4px 竖条与头像之间仍留 4px。
-// 选中是长的一条，悬停没选中的格子是短的一截；不加外圈或底色。
-// 颜色沿用 on-surface：浅色主题是深墨，深色主题是浅灰。「＋新建项目」不画竖条。
+// 竖条放在头像左侧、贴着 rail 边缘。格子 48px 居中在 64px 的 rail 里，左边刚好 8px，
+// 所以竖条往外挪 8px 贴边。选中是长的一条，悬停没选中的格子是短的一截；不加外圈或底色。
+// 浅色主题的选中条用琥珀：深墨条贴在窗口最左边，会和电脑的黑色屏幕边框混成一条。
+// 深色主题的栏底本来就深，浅灰条已经分得开，那边照旧用 on-surface。
+// 悬停那条保持中性色，这样「我在这儿」和「鼠标在这儿」不只差一截长度。
+// 「＋新建项目」不画竖条。
 .app-rail-item:not(.app-rail-item--add)::before {
   content: '';
   position: absolute;
-  right: -8px;
+  left: -8px;
   top: 50%;
   width: 4px;
   height: 0;
   border-radius: var(--radius-pill);
   background-color: rgb(var(--v-theme-on-surface));
   transform: translateY(-50%);
-  transition: height var(--dur-quick) var(--ease-standard);
+  transition:
+    height var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
   pointer-events: none;
 }
 
@@ -363,6 +367,11 @@ button.app-rail-item {
 
 .app-rail-item:not(.app-rail-item--add)[aria-current]::before {
   height: 36px;
+}
+
+// 浅色下只有选中那一条变琥珀；悬停那条留在中性色上，两个信号不混。
+:root[data-theme='light'] .app-rail-item:not(.app-rail-item--add)[aria-current]::before {
+  background-color: var(--accent);
 }
 
 // 普通图标格（「待办」）：和首页那一格同一块底，选中时用琥珀色的图标说「你在这儿」。
