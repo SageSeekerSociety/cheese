@@ -117,7 +117,7 @@ async def delivery_landed(
         await tell_agent(
             session,
             task,
-            task_summary_prompt(title=task.title),
+            task_summary_prompt(title=task.title, pr_number=pr_number),
             record_instruction=record_instruction,
             closes=True,
         )
@@ -443,12 +443,34 @@ def task_step_landed_while_working_prompt(*, title: str, task_id) -> str:
     )
 
 
-def task_summary_prompt(*, title: str) -> str:
+def task_summary_prompt(*, title: str, pr_number: int | None = None) -> str:
     """What a task's agent is told when its last delivery lands: write the task
-    up, then close it."""
+    up, post the record of it on its own, then close it.
+
+    ``pr_number`` 是这次交付的 PR。有它，AI 队友自己去**这个项目实际用的托管平台**
+    读标题、合并时间和正文全文（这一段话是纯字符串，平台在这一轮取不到远端）；
+    没有 PR 的交付（文件或网址）换成交付物名字和交付说明原文。
+
+    两个命令名都给出来，是因为这一段话写不出项目用的是哪一种：仓库默认
+    `forge_kind=forgejo`，而 `forge_cli` 会**拒掉**在 Forgejo 项目上跑 `gh`
+    （「This project's repository uses fj; run fj instead」），所以只写 `gh`
+    的话，默认那一档上一次都读不到。"""
+    if pr_number is not None:
+        record = (
+            f"先读这次交付的 PR #{pr_number}，用这个项目实际用的那把 CLI："
+            f"GitHub 项目用 `gh pr view {pr_number} --json number,title,mergedAt,url,body`；"
+            "Forgejo 项目用 `fj`（命令和参数看 `fj --help`，别照抄 `gh` 那一串）。"
+            "顺序写：任务名、PR 号加链接、标题、合并时间（写成读它的人当地的时间）、"
+            "「正文：」后面原样贴 PR 正文全文，不概括、不改写。"
+            "读不到的那一项照实写没读到，不要编。"
+        )
+    else:
+        record = (
+            "这次交付没有 PR：顺序写任务名、交付物名字、交付说明原文，原样贴，不概括。"
+        )
     return (
         f"任务「{title}」的最后一次交付已经采纳并合并，写完总结就关闭任务。"
-        "只做三件事：\n"
+        "只做四件事：\n"
         "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
         "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
         "没有就不写；过程中被推翻的计划删掉。\n"
@@ -456,6 +478,9 @@ def task_summary_prompt(*, title: str) -> str:
         "没有处理的发现逐条列出；工作目录里还有这次交付之外的提交或改动的，"
         "写明是什么、没有交付。"
         "没什么可补的，只写一句结果。\n"
-        "3. 用 cheese_close_task 关闭任务，结论写一句结果。\n"
+        "3. 用 chat_send 再单独发一条【留痕记录】，和上一条总结分开、第一行就是"
+        "「【留痕记录】」。" + record + "负责人要把这一条整段抄进另一份表，"
+        "所以它要能直接圈选复制，不要并进总结、也不要分几条发。\n"
+        "4. 用 cheese_close_task 关闭任务，结论写一句结果。\n"
         "不要改动文件，不要提交审阅。"
     )
