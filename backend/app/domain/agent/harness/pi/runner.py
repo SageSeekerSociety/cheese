@@ -68,6 +68,9 @@ SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 #: The tools that only read, which a session reading the room's machine has
 #: (`_start_without_hands`): pi's own, and the checkout's history (`git`).
 READING_TOOLS = ("read", "ls", "find", "grep", "git")
+#: pi's own tools a session working on a machine of its own has beside its
+#: platform tools (`_start_without_hands`): a person's 芝士 in its sandbox.
+WORKING_TOOLS = ("read", "write", "edit", "ls", "find", "grep", "bash")
 
 
 def _said(text: str) -> dict:
@@ -514,8 +517,14 @@ class Runner(runner.Runner[Journal]):
                     "socket": socket_path(self.state),
                     "state": str(self.state),
                     "hands": hands,
-                    # A session without hands that reads the room's machine.
-                    "reading": not hands and self.machine is not None,
+                    # A session without hands that reads the room's machine,
+                    # or works on a machine of its own.
+                    "reading": not hands
+                    and self.machine is not None
+                    and self.machine.reading,
+                    "works": not hands
+                    and self.machine is not None
+                    and not self.machine.reading,
                     # The checkout as the session sees it on the room's machine:
                     # where pi's own tools resolve a path and run a command.
                     "workspace": self.workspace,
@@ -812,9 +821,10 @@ class Runner(runner.Runner[Journal]):
         machine, as `target` names it (`machine.py`).
 
         A `target` of None is a session with no hands at all (`_start_without_
-        hands`): a person's 芝士, which has no project, no machine and no files,
-        and only the tools `tools` lists. A `target` with `tools` is one that
-        only reads the room's machine besides them: a document's 芝士."""
+        hands`): only the tools `tools` lists. A `target` with `tools` is one
+        that only reads the room's machine besides them, a document's 芝士; or,
+        when `tools` says it ``works`` there, one with pi's own tools on a
+        machine of its own, a person's 芝士 in its sandbox."""
         self.claim()
         # pi's own temporary files — the whole output of a long command, which
         # its bash names for the model to read — stay with the session.
@@ -830,7 +840,11 @@ class Runner(runner.Runner[Journal]):
         self.extension_files = dict(extension or {})
         if target is None or tools is not None:
             if target is not None:
-                self.machine = Machine(target, scratch=scratch, reading=True)
+                self.machine = Machine(
+                    target,
+                    scratch=scratch,
+                    reading=not (tools or {}).get("works"),
+                )
                 self.workspace = self.machine.workspace
             return await self._start_without_hands(
                 opening, binary, cwd, env, extension or {}, tools or {}
@@ -951,7 +965,13 @@ class Runner(runner.Runner[Journal]):
         session_id = self._session_id(opening)
         prompt = self.state / "system-prompt.md"
         prompt.write_text(opening.system_prompt, encoding="utf-8")
-        own = READING_TOOLS if self.machine is not None else ()
+        own = (
+            ()
+            if self.machine is None
+            else READING_TOOLS
+            if self.machine.reading
+            else WORKING_TOOLS
+        )
         names = ",".join([*own, *(spec["name"] for spec in specs)])
         flags = ["--system-prompt", str(prompt)]
         flags += ["--tools", names] if names else ["--no-tools"]

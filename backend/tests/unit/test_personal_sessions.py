@@ -327,6 +327,31 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
 
 @pytest.mark.anyio
+async def test_with_a_computer_to_work_on_it_is_given_the_tools_to_work_it(
+    host, platform, monkeypatch
+):
+    monkeypatch.setattr(settings, "agent_session_device_id", DEVICE)
+    monkeypatch.setattr(personal, "cloud_provisionable", lambda _settings: True)
+    _hub, sessions = host
+    fake = platform([{"text": "好。"}])
+    launch = _launch(7)
+
+    await _ask(sessions, launch, "算一下 2 的 100 次方。")
+
+    names = sorted(t["function"]["name"] for t in fake.requests[0]["tools"])
+    assert names == sorted(
+        [*TOOLS, "bash", "edit", "find", "grep", "ls", "read", "write"]
+    )
+    # Its sandbox is the conversation's own, asked for where a room's session
+    # asks for one; nothing is asked for until a tool needs it.
+    conversation = launch.ref.home.rsplit("/", 1)[1]
+    assert launch.access.target["lease_path"] == (
+        f"/topics/{conversation}/sessions/{conversation}/work-lease"
+    )
+    assert fake.tool_calls == []
+
+
+@pytest.mark.anyio
 async def test_an_idle_session_exits_and_comes_back_with_its_conversation(
     host, platform, monkeypatch
 ):
